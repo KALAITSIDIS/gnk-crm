@@ -1,0 +1,28 @@
+{
+  "app": {
+    "name": "GN Real Estate OS",
+    "company": "Kalaitsidis Capital"
+  },
+  "nav": {
+    "dashboard": "Панель управления",
+    "leads": "Лиды",
+    "pipeline": "Воронка сделок",
+    "properties": "Объекты",
+    "contacts": "Контакты",
+    "viewings": "Просмотры",
+    "tasks": "Задачи",
+    "keys": "Ключи",
+    "reports": "Отчёты",
+    "calculators": "Калькуляторы",
+    "settings": "Настройки"
+  },
+  "auth": {
+    "login": "Войти",
+    "email": "Email",
+    "password": "Пароль",
+    "forgotPassword": "Забыли пароль?"
+  },
+  "dashboard": {
+    "title": "Панель управления"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "app": {
+    "name": "GN Real Estate OS",
+    "company": "Kalaitsidis Capital"
+  },
+  "nav": {
+    "dashboard": "Πίνακας ελέγχου",
+    "leads": "Ενδιαφερόμενοι",
+    "pipeline": "Ροή συναλλαγών",
+    "properties": "Ακίνητα",
+    "contacts": "Επαφές",
+    "viewings": "Επισκέψεις",
+    "tasks": "Εργασίες",
+    "keys": "Κλειδιά",
+    "reports": "Αναφορές",
+    "calculators": "Υπολογιστές",
+    "settings": "Ρυθμίσεις"
+  },
+  "auth": {
+    "login": "Σύνδεση",
+    "email": "Email",
+    "password": "Κωδικός πρόσβασης",
+    "forgotPassword": "Ξεχάσατε τον κωδικό;"
+  },
+  "dashboard": {
+    "title": "Πίνακας ελέγχου"
+  }
+}

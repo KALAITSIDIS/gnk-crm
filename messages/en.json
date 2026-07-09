@@ -1,0 +1,28 @@
+{
+  "app": {
+    "name": "GN Real Estate OS",
+    "company": "Kalaitsidis Capital"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "leads": "Leads",
+    "pipeline": "Pipeline",
+    "properties": "Properties",
+    "contacts": "Contacts",
+    "viewings": "Viewings",
+    "tasks": "Tasks",
+    "keys": "Keys",
+    "reports": "Reports",
+    "calculators": "Calculators",
+    "settings": "Settings"
+  },
+  "auth": {
+    "login": "Log in",
+    "email": "Email",
+    "password": "Password",
+    "forgotPassword": "Forgot password?"
+  },
+  "dashboard": {
+    "title": "Dashboard"
+  }
+}
