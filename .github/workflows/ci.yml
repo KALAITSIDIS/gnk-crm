@@ -26,3 +26,26 @@ jobs:
 
       - name: Test
         run: npm run test
+
+  rls:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start local Supabase stack
+        run: supabase start
+
+      - name: RLS suite (12 mandatory tests, doc 04)
+        run: npm run test:rls

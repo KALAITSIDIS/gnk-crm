@@ -9,7 +9,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:rls": "vitest run supabase/tests",
+    "test:rls": "vitest run -c vitest.rls.config.ts",
     "db:types": "supabase gen types typescript --local > lib/supabase/database.types.ts"
   },
   "dependencies": {

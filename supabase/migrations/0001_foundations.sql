@@ -531,7 +531,7 @@ create index events_entity_idx on events(org_id, entity_type, entity_id, occurre
 create index events_time_idx   on events(org_id, occurred_at desc);
 
 create or replace function trg_events_hash() returns trigger
-language plpgsql security definer set search_path = public as $$
+language plpgsql security definer set search_path = public, extensions as $$
 declare p text;
 begin
   select hash into p from events where org_id = new.org_id order by id desc limit 1;
@@ -545,7 +545,7 @@ end $$;
 create trigger events_hash before insert on events for each row execute function trg_events_hash();
 
 create or replace function verify_events_chain(p_org uuid) returns boolean
-language plpgsql stable security definer set search_path = public as $$
+language plpgsql stable security definer set search_path = public, extensions as $$
 declare r record; prev text := null;
 begin
   for r in select * from events where org_id = p_org order by id loop

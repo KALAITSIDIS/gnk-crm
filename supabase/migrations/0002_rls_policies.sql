@@ -40,6 +40,12 @@
 -- ---------- grant hygiene ----------
 revoke all on all tables in schema public from anon, authenticated;
 
+-- service_role: this Supabase generation does not auto-grant new tables to any
+-- role, service_role included. It has BYPASSRLS but still needs table grants.
+-- (Server-only admin client + import scripts + test harness run as service_role.)
+grant all on all tables in schema public to service_role;
+alter default privileges in schema public grant all on tables to service_role;
+
 -- authenticated: per-table grants (rows/roles then constrained by policies)
 grant select, update                 on organizations      to authenticated;
 grant select, insert, update         on profiles           to authenticated;
