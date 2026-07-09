@@ -36,6 +36,15 @@ Legend: ✅ full · 🔒 restricted (condition in Notes) · ❌ denied
 | `documents` | ❌ | ❌ direct — signed URLs generated server-side after RLS check on the `documents` row |
 | `signatures` | ❌ | ❌ direct — signed URLs via server action (admin + viewing agent) |
 
+## Grant model (added at T0.4)
+
+Current Supabase does **not** auto-grant table access to `anon`/`authenticated`.
+Migration 0002 therefore revokes everything and issues explicit per-table grants
+matching this matrix (❌ cells are enforced at grant level too). `anon` receives
+zero grants. Column-level rules (profiles: role changes admin-only; documents:
+title/type-only updates) are enforced with triggers, since all app users share
+the `authenticated` DB role.
+
 ## Policy SQL patterns (use these shapes)
 
 ```sql
@@ -58,9 +67,14 @@ for select using (org_id = current_org_id()
 -- (no update/delete policies exist; grants already revoked in doc 03)
 
 -- mandates commission masking
+-- NOTE (fixed at T0.4): the view is owner-rights (bypasses base RLS), so it MUST
+-- implement org isolation + role row rules itself — the original draft lacked the
+-- WHERE clause, which would have leaked cross-org rows. LM has no base-table
+-- policy at all (reads only via this view); admin/agent may use either path.
 create view mandates_safe as
   select id, org_id, property_id, owner_contact_id, type, status,
          start_date, expiry_date, renewal_reminder_days, notes,
+         signed_document_id, created_by, created_at, updated_at,
          case when current_role_gnk() = 'admin'
                 or exists (select 1 from properties p
                            where p.id = mandates.property_id
@@ -71,7 +85,15 @@ create view mandates_safe as
                            where p.id = mandates.property_id
                              and p.assigned_agent_id = auth.uid())
               then commission_notes end as commission_notes
-  from mandates;
+  from mandates
+  where org_id = current_org_id()
+    and (current_role_gnk() in ('admin','listing_manager')
+         or (current_role_gnk() = 'agent'
+             and (created_by = auth.uid()
+                  or exists (select 1 from properties p
+                             where p.id = mandates.property_id
+                               and p.assigned_agent_id = auth.uid()))));
+grant select on mandates_safe to authenticated;
 ```
 
 ## Mandatory RLS tests (minimum set — one test per line)
