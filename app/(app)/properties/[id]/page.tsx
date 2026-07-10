@@ -126,6 +126,11 @@ export default async function PropertyDetailPage({
           <MandateBadge state={mandateState} />
           <StatusBadge status={p.status} />
           <StatusBadge status={p.visibility} />
+          {p.kind === "project" || p.kind === "phase" ? (
+            <Button asChild variant="outline" size="sm" className="ml-auto">
+              <Link href={`/properties/${p.id}/units`}>Units matrix</Link>
+            </Button>
+          ) : null}
         </div>
         {title ? <p className="mt-1 text-sm text-text-2">{title}</p> : null}
       </div>
