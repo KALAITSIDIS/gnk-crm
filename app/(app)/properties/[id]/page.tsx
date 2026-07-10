@@ -7,6 +7,10 @@ import {
   MarketingForm,
 } from "@/components/features/properties/detail-forms";
 import { MediaTab } from "@/components/features/properties/media-tab";
+import {
+  PriceHistorySection,
+  type PriceHistoryRow,
+} from "@/components/features/properties/price-history";
 import { QualityScoreRing } from "@/components/features/shared/quality-score-ring";
 import { computeQualityScore } from "@/lib/services/quality-score";
 import { getCurrentProfile } from "@/lib/services/auth";
@@ -39,6 +43,13 @@ export default async function PropertyDetailPage({
       .order("sort_order"),
   ]);
 
+  const { data: priceRows } = await supabase
+    .from("price_history")
+    .select("id, old_price, new_price, changed_at, changed_by")
+    .eq("property_id", id)
+    .order("changed_at", { ascending: false })
+    .limit(50);
+
   if (!p) notFound();
 
   const profile = await getCurrentProfile(supabase);
@@ -62,6 +73,19 @@ export default async function PropertyDetailPage({
     permitSet: p.permit_status !== "unknown",
     mandateActive: mandateRows.some((m) => m.status === "active"),
   });
+
+  const changerIds = [...new Set((priceRows ?? []).map((r) => r.changed_by).filter(Boolean))];
+  const { data: changerProfiles } = changerIds.length
+    ? await supabase.from("profiles").select("id, full_name").in("id", changerIds as string[])
+    : { data: [] };
+  const changerName = new Map((changerProfiles ?? []).map((c) => [c.id, c.full_name]));
+  const priceHistory: PriceHistoryRow[] = (priceRows ?? []).map((r) => ({
+    id: r.id,
+    old_price: r.old_price === null ? null : Number(r.old_price),
+    new_price: r.new_price === null ? null : Number(r.new_price),
+    changed_at: r.changed_at,
+    changed_by_name: r.changed_by ? (changerName.get(r.changed_by) ?? null) : null,
+  }));
 
   const areas = (areaRows ?? []).map((a) => ({
     id: a.id,
@@ -166,9 +190,12 @@ export default async function PropertyDetailPage({
                 </div>
               ))}
             </dl>
+            <PriceHistorySection
+              rows={priceHistory}
+              currentPrice={p.asking_price === null ? null : Number(p.asking_price)}
+            />
             <p className="mt-4 text-xs text-text-3">
-              Score ring (T1.5), price history sparkline (T1.7), mandate & key panels (T4.5/T4.6)
-              land here as their tasks ship.
+              Mandate & key panels (T4.5/T4.6) land here as their tasks ship.
             </p>
           </div>
         </TabsContent>

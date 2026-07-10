@@ -282,6 +282,11 @@ begin
   if new.asking_price is distinct from old.asking_price then
     insert into price_history(org_id, property_id, old_price, new_price, changed_by)
     values (new.org_id, new.id, old.asking_price, new.asking_price, auth.uid());
+    -- price change is also an event (doc 02 §C1); updated in migration 0005
+    insert into events(org_id, actor_id, entity_type, entity_id, event_type, payload)
+    values (new.org_id, auth.uid(), 'property', new.id, 'price_changed',
+            jsonb_build_object('reference', new.reference,
+                               'from', old.asking_price, 'to', new.asking_price));
   end if;
   return new;
 end $$;
