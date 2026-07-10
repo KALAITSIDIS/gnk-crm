@@ -7,6 +7,7 @@ import {
   ProfileForm,
 } from "@/components/features/contacts/detail-forms";
 import { MergeDialog } from "@/components/features/contacts/merge-dialog";
+import { ChatLinks } from "@/components/features/shared/chat-links";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -83,6 +84,12 @@ export default async function ContactDetailPage({
             <span className="text-sm tabular-nums text-text-2">{formatPhone(c.phone_e164)}</span>
           ) : null}
           {c.email ? <span className="text-sm text-text-2">{c.email}</span> : null}
+          <ChatLinks
+            phoneE164={c.phone_e164}
+            telegramUsername={c.telegram_username}
+            hasWhatsapp={c.has_whatsapp}
+            contactId={c.id}
+          />
           {c.is_archived ? (
             <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs text-text-3">
               archived{c.merged_into_id ? " (merged)" : ""}

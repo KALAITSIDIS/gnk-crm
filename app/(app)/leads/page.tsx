@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Inbox } from "lucide-react";
 import { AddLeadDialog } from "@/components/features/leads/add-lead-dialog";
 import { LeadRowActions } from "@/components/features/leads/lead-actions";
+import { ChatLinks } from "@/components/features/shared/chat-links";
 import { ResponseClock } from "@/components/features/shared/response-clock";
 import { StatusBadge } from "@/components/features/shared/status-badge";
 import { getCurrentProfile } from "@/lib/services/auth";
@@ -19,7 +20,7 @@ export default async function LeadsPage() {
     .select(
       `id, source, channel, message, status, received_at, first_response_at,
        first_call_at, assigned_agent_id, lost_reason,
-       contacts(id, display_name, phone_e164),
+       contacts(id, display_name, phone_e164, telegram_username, has_whatsapp),
        properties(id, reference)`,
     )
     .order("received_at", { ascending: false })
@@ -60,6 +61,8 @@ export default async function LeadsPage() {
               id: string;
               display_name: string | null;
               phone_e164: string | null;
+              telegram_username: string | null;
+              has_whatsapp: boolean;
             } | null;
             const property = lead.properties as { id: string; reference: string } | null;
             const isOpen = openStatuses.includes(lead.status);
@@ -99,6 +102,14 @@ export default async function LeadsPage() {
                       >
                         {property.reference}
                       </Link>
+                    ) : null}
+                    {contact ? (
+                      <ChatLinks
+                        phoneE164={contact.phone_e164}
+                        telegramUsername={contact.telegram_username}
+                        hasWhatsapp={contact.has_whatsapp}
+                        leadId={lead.id}
+                      />
                     ) : null}
                     {lead.assigned_agent_id ? (
                       <span className="text-xs text-text-2">
