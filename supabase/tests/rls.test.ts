@@ -375,21 +375,24 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(before.error).toBeNull();
     expect(before.data, "chain must verify before tamper").toBe(true);
 
-    // tamper via service role (test-only; app roles cannot do this — see test 6)
+    // Tamper via service role (test-only; app roles cannot do this — see test 6).
+    // Tamper event_type, NOT payload: jsonb numerics don't survive a JS round
+    // trip byte-identically (480000.00 → 480000), which would break the chain
+    // permanently on restore. Strings restore exactly.
     const { data: victim } = await svc
       .from("events")
-      .select("id, payload")
+      .select("id, event_type")
       .eq("org_id", ORG_A)
       .order("id", { ascending: true })
       .limit(1)
       .single();
-    const original = victim!.payload;
-    await svc.from("events").update({ payload: { tampered: true } }).eq("id", victim!.id);
+    const original = victim!.event_type;
+    await svc.from("events").update({ event_type: "tampered" }).eq("id", victim!.id);
 
     const during = await svc.rpc("verify_events_chain", { p_org: ORG_A });
     expect(during.data, "chain must fail after tamper").toBe(false);
 
-    await svc.from("events").update({ payload: original }).eq("id", victim!.id);
+    await svc.from("events").update({ event_type: original }).eq("id", victim!.id);
     const after = await svc.rpc("verify_events_chain", { p_org: ORG_A });
     expect(after.data, "chain must verify after restore").toBe(true);
   });
