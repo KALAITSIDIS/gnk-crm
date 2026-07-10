@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import type { Database } from "@/lib/supabase/database.types";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
 import { generateReference } from "@/lib/services/reference";
@@ -9,6 +10,11 @@ import { createClient } from "@/lib/supabase/server";
 import { createPropertySchema } from "@/lib/validators/properties";
 
 export type PropertyActionState = { error: string | null };
+
+export type UpdateSectionState = {
+  error: string | null;
+  savedAt: number | null;
+};
 
 export async function createProperty(
   _prev: PropertyActionState,
@@ -81,4 +87,157 @@ export async function createProperty(
 
   revalidatePath("/properties");
   redirect(`/properties/${created.id}`);
+}
+
+/** Compare loosely across DB string/number representations. */
+function changedValue(oldVal: unknown, newVal: unknown): boolean {
+  const norm = (v: unknown) =>
+    v === undefined || v === null || v === "" ? null : typeof v === "object" ? JSON.stringify(v) : String(v);
+  return norm(oldVal) !== norm(newVal);
+}
+
+export async function updatePropertySection(
+  _prev: UpdateSectionState,
+  formData: FormData,
+): Promise<UpdateSectionState> {
+  const propertyId = formData.get("property_id");
+  const section = formData.get("section");
+  if (typeof propertyId !== "string" || typeof section !== "string") {
+    return { error: "Missing property or section", savedAt: null };
+  }
+
+  const supabase = await createClient();
+  const profile = await getCurrentProfile(supabase);
+
+  const { data: current, error: fetchErr } = await supabase
+    .from("properties")
+    .select("*")
+    .eq("id", propertyId)
+    .maybeSingle();
+  if (fetchErr || !current) return { error: "Property not found", savedAt: null };
+
+  const raw = Object.fromEntries(formData.entries());
+  let updates: Database["public"]["Tables"]["properties"]["Update"];
+
+  const { detailsSectionSchema, legalSectionSchema, marketingSectionSchema } = await import(
+    "@/lib/validators/properties"
+  );
+
+  if (section === "details") {
+    const parsed = detailsSectionSchema.safeParse({
+      ...raw,
+      features: formData.getAll("features").map(String),
+    });
+    if (!parsed.success) {
+      return { error: parsed.error.issues[0]?.message ?? "Invalid input", savedAt: null };
+    }
+    const d = parsed.data;
+    updates = {
+      status: d.status,
+      visibility: d.visibility,
+      transaction_type: d.transaction_type,
+      area_id: d.area_id ?? null,
+      address: d.address ?? null,
+      postal_code: d.postal_code ?? null,
+      sea_distance_m: d.sea_distance_m ?? null,
+      amenities_notes: d.amenities_notes ?? null,
+      asking_price: d.asking_price ?? null,
+      min_acceptable_price: d.min_acceptable_price ?? null,
+      owner_net_price: d.owner_net_price ?? null,
+      rent_price_month: d.rent_price_month ?? null,
+      vat_status: d.vat_status,
+      covered_area_sqm: d.covered_area_sqm ?? null,
+      plot_area_sqm: d.plot_area_sqm ?? null,
+      veranda_sqm: d.veranda_sqm ?? null,
+      roof_garden_sqm: d.roof_garden_sqm ?? null,
+      basement_sqm: d.basement_sqm ?? null,
+      bedrooms: d.bedrooms ?? null,
+      bathrooms: d.bathrooms ?? null,
+      wc: d.wc ?? null,
+      parking_spaces: d.parking_spaces ?? null,
+      has_storage: d.has_storage ?? null,
+      floor_number: d.floor_number ?? null,
+      total_floors: d.total_floors ?? null,
+      year_built: d.year_built ?? null,
+      energy_class: d.energy_class ?? null,
+      features: d.features,
+      internal_notes: d.internal_notes ?? null,
+      planning_zone_code: d.planning_zone_code ?? null,
+      building_density_pct: d.building_density_pct ?? null,
+      coverage_ratio_pct: d.coverage_ratio_pct ?? null,
+      max_floors: d.max_floors ?? null,
+      max_height_m: d.max_height_m ?? null,
+      road_frontage_m: d.road_frontage_m ?? null,
+      water_available: d.water_available ?? null,
+      electricity_available: d.electricity_available ?? null,
+      constraints_notes: d.constraints_notes ?? null,
+    };
+  } else if (section === "legal") {
+    const parsed = legalSectionSchema.safeParse(raw);
+    if (!parsed.success) {
+      return { error: parsed.error.issues[0]?.message ?? "Invalid input", savedAt: null };
+    }
+    const d = parsed.data;
+    updates = {
+      title_deed_status: d.title_deed_status,
+      permit_status: d.permit_status,
+      share_of_land: d.share_of_land ?? null,
+      encumbrances_notes: d.encumbrances_notes ?? null,
+    };
+  } else if (section === "marketing") {
+    const parsed = marketingSectionSchema.safeParse({
+      title: { en: raw.title_en, el: raw.title_el, ru: raw.title_ru },
+      short_description: {
+        en: raw.short_description_en,
+        el: raw.short_description_el,
+        ru: raw.short_description_ru,
+      },
+      public_description: {
+        en: raw.public_description_en,
+        el: raw.public_description_el,
+        ru: raw.public_description_ru,
+      },
+    });
+    if (!parsed.success) {
+      return { error: parsed.error.issues[0]?.message ?? "Invalid input", savedAt: null };
+    }
+    const strip = (o: Record<string, string | undefined>) =>
+      Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== ""));
+    updates = {
+      title: strip(parsed.data.title),
+      short_description: strip(parsed.data.short_description),
+      public_description: strip(parsed.data.public_description),
+    };
+  } else {
+    return { error: `Unknown section: ${section}`, savedAt: null };
+  }
+
+  // changed-field payload for the event (guardrail: updates must carry their diff)
+  const changed: Record<string, { from: unknown; to: unknown }> = {};
+  for (const [key, next] of Object.entries(updates)) {
+    const prev = (current as Record<string, unknown>)[key];
+    if (changedValue(prev, next)) changed[key] = { from: prev ?? null, to: next ?? null };
+  }
+  if (Object.keys(changed).length === 0) {
+    return { error: null, savedAt: Date.now() }; // nothing to write, still "saved"
+  }
+
+  const { error: updateErr } = await supabase
+    .from("properties")
+    .update(updates)
+    .eq("id", propertyId);
+  if (updateErr) return { error: updateErr.message, savedAt: null };
+
+  await logEvent(supabase, {
+    orgId: profile.orgId,
+    actorId: profile.id,
+    entityType: "property",
+    entityId: propertyId,
+    eventType: "updated",
+    payload: JSON.parse(JSON.stringify({ section, changed })),
+  });
+
+  revalidatePath(`/properties/${propertyId}`);
+  revalidatePath("/properties");
+  return { error: null, savedAt: Date.now() };
 }

@@ -109,7 +109,7 @@ export const PROPERTIES_PAGE_SIZE = 25;
  */
 export const CREATABLE_KINDS = ["standalone", "project"] as const;
 
-const emptyToUndefined = (v: unknown) => (v === "" || v === null ? undefined : v);
+export const emptyToUndefined = (v: unknown) => (v === "" || v === null ? undefined : v);
 
 export const createPropertySchema = z.object({
   kind: z.enum(CREATABLE_KINDS),
@@ -135,3 +135,93 @@ export const createPropertySchema = z.object({
 });
 
 export type CreatePropertyInput = z.infer<typeof createPropertySchema>;
+
+/* ---------- T1.3 detail-page section schemas ---------- */
+
+export const TITLE_DEED_STATUSES = ["separate", "pending", "shared", "none", "unknown"] as const;
+export const PERMIT_STATUSES = ["full", "pending", "partial", "none", "unknown"] as const;
+export const VAT_STATUSES = [
+  "new_vat",
+  "resale_no_vat",
+  "reduced_rate_eligible",
+  "unknown",
+] as const;
+export const ENERGY_CLASSES = ["A", "B+", "B", "C", "D", "E", "F", "G", "none"] as const;
+
+const optNumber = z.preprocess(
+  emptyToUndefined,
+  z.coerce.number().min(0, "Must be ≥ 0").optional(),
+);
+const optInt = z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).optional());
+const optText = (max: number) => z.preprocess(emptyToUndefined, z.string().max(max).optional());
+const optBool = z
+  .string()
+  .optional()
+  .transform((v) => (v === "on" || v === "true" ? true : v === "false" ? false : undefined));
+
+export const detailsSectionSchema = z.object({
+  status: z.enum(PROPERTY_STATUSES),
+  visibility: z.enum(VISIBILITY_LEVELS),
+  transaction_type: z.enum(TRANSACTION_TYPES),
+  area_id: z.preprocess(emptyToUndefined, z.string().uuid().optional()),
+  address: optText(300),
+  postal_code: optText(20),
+  sea_distance_m: optInt,
+  amenities_notes: optText(2000),
+  asking_price: optNumber,
+  min_acceptable_price: optNumber,
+  owner_net_price: optNumber,
+  rent_price_month: optNumber,
+  vat_status: z.enum(VAT_STATUSES),
+  covered_area_sqm: optNumber,
+  plot_area_sqm: optNumber,
+  veranda_sqm: optNumber,
+  roof_garden_sqm: optNumber,
+  basement_sqm: optNumber,
+  bedrooms: optInt,
+  bathrooms: optInt,
+  wc: optInt,
+  parking_spaces: optInt,
+  has_storage: optBool,
+  floor_number: z.preprocess(emptyToUndefined, z.coerce.number().int().optional()),
+  total_floors: optInt,
+  year_built: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1800).max(2100).optional()),
+  energy_class: z.preprocess(
+    emptyToUndefined,
+    z
+      .enum(ENERGY_CLASSES)
+      .optional()
+      .transform((v) => (v === "none" ? undefined : v)),
+  ),
+  features: z.array(z.string()).default([]),
+  internal_notes: optText(5000),
+  // land panel (only meaningful when property_type = land)
+  planning_zone_code: optText(20),
+  building_density_pct: optNumber,
+  coverage_ratio_pct: optNumber,
+  max_floors: optInt,
+  max_height_m: optNumber,
+  road_frontage_m: optNumber,
+  water_available: optBool,
+  electricity_available: optBool,
+  constraints_notes: optText(2000),
+});
+
+export const legalSectionSchema = z.object({
+  title_deed_status: z.enum(TITLE_DEED_STATUSES),
+  permit_status: z.enum(PERMIT_STATUSES),
+  share_of_land: optText(100),
+  encumbrances_notes: optText(2000),
+});
+
+const multilang = z.object({
+  en: optText(10000),
+  el: optText(10000),
+  ru: optText(10000),
+});
+
+export const marketingSectionSchema = z.object({
+  title: multilang,
+  short_description: multilang,
+  public_description: multilang,
+});

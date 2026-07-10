@@ -4,6 +4,7 @@ import { SidebarNav } from "@/components/features/shared/sidebar-nav";
 import { createClient } from "@/lib/supabase/server";
 import { logout } from "@/lib/actions/auth";
 import { Button } from "@/components/ui/button";
+import { Toaster } from "@/components/ui/sonner";
 
 export default async function AppLayout({
   children,
@@ -42,6 +43,7 @@ export default async function AppLayout({
         </header>
         <main className="mx-auto w-full max-w-[1440px] flex-1 p-6">{children}</main>
       </div>
+      <Toaster position="bottom-right" />
     </div>
   );
 }
