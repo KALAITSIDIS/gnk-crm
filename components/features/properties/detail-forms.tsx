@@ -120,9 +120,11 @@ export interface PropertyDetailData {
 export function DetailsForm({
   property,
   areas,
+  isAdmin = false,
 }: {
   property: PropertyDetailData;
   areas: AreaOption[];
+  isAdmin?: boolean;
 }) {
   const districtAreas = areas.filter((a) => a.districtId === property.district_id);
   const isLand = property.property_type === "land";
@@ -148,6 +150,15 @@ export function DetailsForm({
           options={TRANSACTION_TYPES}
           defaultValue={property.transaction_type}
         />
+        {isAdmin ? (
+          <div className="flex items-center gap-2 sm:col-span-2 lg:col-span-3">
+            <Checkbox id="publish_override" name="publish_override" />
+            <Label htmlFor="publish_override" className="text-text-2">
+              Override publish gate (admin) — allows visibility “Public” below score{" "}
+              70; the override is written to the event log
+            </Label>
+          </div>
+        ) : null}
       </div>
 
       <SectionTitle>Location</SectionTitle>

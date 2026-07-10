@@ -212,6 +212,40 @@ export async function updatePropertySection(
     return { error: `Unknown section: ${section}`, savedAt: null };
   }
 
+  // Publish gate (doc 02 §A8): switching visibility to `public` requires
+  // score ≥ PUBLISH_THRESHOLD, unless an admin overrides (logged event).
+  const goingPublic = updates.visibility === "public" && current.visibility !== "public";
+  if (goingPublic) {
+    const { recomputeQualityScore, PUBLISH_THRESHOLD } = await import(
+      "@/lib/services/quality-score"
+    );
+    const result = await recomputeQualityScore(supabase, propertyId);
+    const score = result?.score ?? 0;
+    if (score < PUBLISH_THRESHOLD) {
+      const wantsOverride = formData.get("publish_override") === "on";
+      if (profile.role !== "admin") {
+        return {
+          error: `Quality score ${score} is below ${PUBLISH_THRESHOLD} — publishing blocked. An admin can override.`,
+          savedAt: null,
+        };
+      }
+      if (!wantsOverride) {
+        return {
+          error: `Quality score ${score} is below ${PUBLISH_THRESHOLD}. Tick "Override publish gate" to publish anyway.`,
+          savedAt: null,
+        };
+      }
+      await logEvent(supabase, {
+        orgId: profile.orgId,
+        actorId: profile.id,
+        entityType: "property",
+        entityId: propertyId,
+        eventType: "publish_override",
+        payload: { score, threshold: PUBLISH_THRESHOLD },
+      });
+    }
+  }
+
   // changed-field payload for the event (guardrail: updates must carry their diff)
   const changed: Record<string, { from: unknown; to: unknown }> = {};
   for (const [key, next] of Object.entries(updates)) {
@@ -236,6 +270,11 @@ export async function updatePropertySection(
     eventType: "updated",
     payload: JSON.parse(JSON.stringify({ section, changed })),
   });
+
+  // score is derived state — recompute on every save (doc 02 §A8); the save's
+  // own property.updated event covers auditability, no separate score event
+  const { recomputeQualityScore } = await import("@/lib/services/quality-score");
+  await recomputeQualityScore(supabase, propertyId);
 
   revalidatePath(`/properties/${propertyId}`);
   revalidatePath("/properties");

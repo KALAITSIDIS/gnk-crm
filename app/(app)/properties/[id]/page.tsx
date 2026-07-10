@@ -7,6 +7,9 @@ import {
   MarketingForm,
 } from "@/components/features/properties/detail-forms";
 import { MediaTab } from "@/components/features/properties/media-tab";
+import { QualityScoreRing } from "@/components/features/shared/quality-score-ring";
+import { computeQualityScore } from "@/lib/services/quality-score";
+import { getCurrentProfile } from "@/lib/services/auth";
 import { MandateBadge, type MandateBadgeState } from "@/components/features/shared/mandate-badge";
 import { StatusBadge } from "@/components/features/shared/status-badge";
 import { Button } from "@/components/ui/button";
@@ -37,6 +40,28 @@ export default async function PropertyDetailPage({
   ]);
 
   if (!p) notFound();
+
+  const profile = await getCurrentProfile(supabase);
+
+  const isLand = p.property_type === "land";
+  const media = mediaRows ?? [];
+  const mandateRows = (p.mandates ?? []) as { type: string; status: string }[];
+  const quality = computeQualityScore({
+    isLand,
+    hasCoverPhoto: media.some((m) => m.is_cover),
+    photoCount: media.length,
+    titleEn: (p.title as { en?: string } | null)?.en,
+    publicDescriptionEn: (p.public_description as { en?: string } | null)?.en,
+    hasPrice: p.asking_price !== null || p.rent_price_month !== null,
+    hasArea: isLand ? p.plot_area_sqm !== null : p.covered_area_sqm !== null,
+    hasBedroomsAndBathrooms: p.bedrooms !== null && p.bathrooms !== null,
+    hasPlanningZoneAndDensity:
+      p.planning_zone_code !== null && p.building_density_pct !== null,
+    hasCoords: p.location !== null,
+    titleDeedSet: p.title_deed_status !== "unknown",
+    permitSet: p.permit_status !== "unknown",
+    mandateActive: mandateRows.some((m) => m.status === "active"),
+  });
 
   const areas = (areaRows ?? []).map((a) => ({
     id: a.id,
@@ -82,7 +107,7 @@ export default async function PropertyDetailPage({
       ),
     ],
     ["Bedrooms / Bathrooms", `${p.bedrooms ?? "—"} / ${p.bathrooms ?? "—"}`],
-    ["Quality score", `${p.quality_score}/100`],
+    ["Quality score", `${quality.score}/100`],
     ["Created", formatDateTime(p.created_at)],
     ["Updated", formatDateTime(p.updated_at)],
   ];
@@ -96,6 +121,7 @@ export default async function PropertyDetailPage({
           </Link>
         </Button>
         <div className="flex flex-wrap items-center gap-3">
+          <QualityScoreRing score={quality.score} missing={quality.missing} />
           <h1 className="font-mono text-xl font-semibold text-text-1">{p.reference}</h1>
           <MandateBadge state={mandateState} />
           <StatusBadge status={p.status} />
@@ -150,7 +176,7 @@ export default async function PropertyDetailPage({
 
         <TabsContent value="details" className="mt-4">
           <div className="rounded-[10px] border border-border bg-surface p-6">
-            <DetailsForm property={p} areas={areas} />
+            <DetailsForm property={p} areas={areas} isAdmin={profile.role === "admin"} />
           </div>
         </TabsContent>
 

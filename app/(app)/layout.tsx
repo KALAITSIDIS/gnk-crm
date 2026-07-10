@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { logout } from "@/lib/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 export default async function AppLayout({
   children,
@@ -41,7 +42,9 @@ export default async function AppLayout({
             </form>
           </div>
         </header>
-        <main className="mx-auto w-full max-w-[1440px] flex-1 p-6">{children}</main>
+        <main className="mx-auto w-full max-w-[1440px] flex-1 p-6">
+          <TooltipProvider>{children}</TooltipProvider>
+        </main>
       </div>
       <Toaster position="bottom-right" />
     </div>

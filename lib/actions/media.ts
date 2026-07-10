@@ -10,6 +10,7 @@ import {
   processPropertyImage,
   shouldWatermark,
 } from "@/lib/services/media";
+import { recomputeQualityScore } from "@/lib/services/quality-score";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -125,6 +126,7 @@ export async function uploadPropertyMedia(
     });
   }
 
+  await recomputeQualityScore(supabase, propertyId);
   revalidatePath(`/properties/${propertyId}`);
   revalidatePath("/properties");
   return { error: null, savedAt: Date.now() };
@@ -155,6 +157,7 @@ export async function setMediaCover(propertyId: string, mediaId: string): Promis
     eventType: "media_cover_set",
     payload: { media_id: mediaId },
   });
+  await recomputeQualityScore(supabase, propertyId);
   revalidatePath(`/properties/${propertyId}`);
   revalidatePath("/properties");
 }
@@ -238,6 +241,7 @@ export async function deleteMedia(propertyId: string, mediaId: string): Promise<
     eventType: "media_deleted",
     payload: { media_id: mediaId },
   });
+  await recomputeQualityScore(supabase, propertyId);
   revalidatePath(`/properties/${propertyId}`);
   revalidatePath("/properties");
 }
