@@ -6,6 +6,8 @@ import {
   PreferencesForm,
   ProfileForm,
 } from "@/components/features/contacts/detail-forms";
+import { MergeDialog } from "@/components/features/contacts/merge-dialog";
+import { getCurrentProfile } from "@/lib/services/auth";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -34,18 +36,25 @@ export default async function ContactDetailPage({
   const { id } = await params;
   const supabase = await createClient();
 
-  const [{ data: c }, { data: areaRows }, { data: events }] = await Promise.all([
+  const [{ data: c }, { data: areaRows }, { data: mergedRows }] = await Promise.all([
     supabase.from("contacts").select("*").eq("id", id).maybeSingle(),
     supabase.from("areas").select("id, name"),
-    supabase
-      .from("events")
-      .select("id, occurred_at, event_type, payload")
-      .eq("entity_type", "contact")
-      .eq("entity_id", id)
-      .order("occurred_at", { ascending: false })
-      .limit(30),
+    supabase.from("contacts").select("id, display_name").eq("merged_into_id", id),
   ]);
   if (!c) notFound();
+
+  const profile = await getCurrentProfile(supabase);
+
+  // combined history: this contact + everything merged into it (DECISIONS T2.3)
+  const timelineIds = [id, ...(mergedRows ?? []).map((m) => m.id)];
+  const { data: events } = await supabase
+    .from("events")
+    .select("id, occurred_at, event_type, entity_id, payload")
+    .eq("entity_type", "contact")
+    .in("entity_id", timelineIds)
+    .order("occurred_at", { ascending: false })
+    .limit(50);
+  const mergedName = new Map((mergedRows ?? []).map((m) => [m.id, m.display_name]));
 
   const areaOptions = (areaRows ?? []).map((a) => ({
     id: a.id,
@@ -74,7 +83,22 @@ export default async function ContactDetailPage({
             <span className="text-sm tabular-nums text-text-2">{formatPhone(c.phone_e164)}</span>
           ) : null}
           {c.email ? <span className="text-sm text-text-2">{c.email}</span> : null}
+          {c.is_archived ? (
+            <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs text-text-3">
+              archived{c.merged_into_id ? " (merged)" : ""}
+            </span>
+          ) : null}
+          {profile.role === "admin" && !c.is_archived ? (
+            <div className="ml-auto">
+              <MergeDialog primaryId={c.id} primaryName={c.display_name ?? "this contact"} />
+            </div>
+          ) : null}
         </div>
+        {(mergedRows ?? []).length > 0 ? (
+          <p className="mt-1 text-xs text-text-3">
+            Absorbed: {(mergedRows ?? []).map((m) => m.display_name).join(", ")}
+          </p>
+        ) : null}
       </div>
 
       <Tabs defaultValue="profile">
@@ -121,6 +145,11 @@ export default async function ContactDetailPage({
                   <li key={e.id} className="flex items-baseline justify-between gap-4 py-2 text-sm">
                     <span className="font-medium text-text-1">
                       {e.event_type.replace(/_/g, " ")}
+                      {e.entity_id !== c.id ? (
+                        <span className="ml-2 text-xs font-normal text-text-3">
+                          ({mergedName.get(e.entity_id ?? "") ?? "merged contact"})
+                        </span>
+                      ) : null}
                     </span>
                     <span className="text-text-3">{formatDateTime(e.occurred_at)}</span>
                   </li>

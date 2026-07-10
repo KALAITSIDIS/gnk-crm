@@ -32,3 +32,10 @@ silent. Format: date · task · decision · rationale.
 
 - **2026-07-10 · T1.2** — Reference immutability enforced by DB trigger
   (migration 0004, synced to doc 03), not just a read-only field.
+
+- **2026-07-10 · T2.3** — Merge does NOT rewrite historical events (doc 02 §C3
+  says "move events references", but events are immutable and the hash chain
+  covers entity_id — repointing would break `verify_events_chain` and violate
+  CLAUDE.md guardrail 1, which outranks). Operational tables are repointed via
+  service role; the contact timeline queries events for the contact PLUS all
+  contacts merged into it (`merged_into_id`), so combined history still shows.
