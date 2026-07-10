@@ -39,6 +39,16 @@ export const PSYCHOLOGY_PROFILES = [
 ] as const;
 export const CONTACT_LANGUAGES = ["en", "el", "ru"] as const;
 
+export const COMM_CHANNELS = [
+  "whatsapp",
+  "telegram",
+  "phone",
+  "email",
+  "sms",
+  "in_person",
+  "other",
+] as const;
+
 const emptyToUndefined = (v: unknown) => (v === "" || v === null ? undefined : v);
 const optText = (max: number) => z.preprocess(emptyToUndefined, z.string().max(max).optional());
 
