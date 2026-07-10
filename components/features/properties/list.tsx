@@ -12,6 +12,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatArea, formatMoney } from "@/lib/utils/format";
+import { publicMediaUrl } from "@/lib/utils/storage";
 import { cn } from "@/lib/utils";
 
 export interface PropertyRow {
@@ -56,7 +57,7 @@ function Thumb({ row, className }: { row: PropertyRow; className?: string }) {
   if (row.thumb) {
     return (
       <Image
-        src={row.thumb}
+        src={publicMediaUrl(row.thumb)}
         alt={row.reference}
         width={64}
         height={48}

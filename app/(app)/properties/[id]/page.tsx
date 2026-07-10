@@ -6,6 +6,7 @@ import {
   LegalForm,
   MarketingForm,
 } from "@/components/features/properties/detail-forms";
+import { MediaTab } from "@/components/features/properties/media-tab";
 import { MandateBadge, type MandateBadgeState } from "@/components/features/shared/mandate-badge";
 import { StatusBadge } from "@/components/features/shared/status-badge";
 import { Button } from "@/components/ui/button";
@@ -21,13 +22,18 @@ export default async function PropertyDetailPage({
   const { id } = await params;
   const supabase = await createClient();
 
-  const [{ data: p }, { data: areaRows }] = await Promise.all([
+  const [{ data: p }, { data: areaRows }, { data: mediaRows }] = await Promise.all([
     supabase
       .from("properties")
       .select("*, districts(name), areas(name), mandates(type, status)")
       .eq("id", id)
       .maybeSingle(),
     supabase.from("areas").select("id, district_id, name"),
+    supabase
+      .from("property_media")
+      .select("id, path_thumb, path_card, is_cover, sort_order, watermarked, width, height")
+      .eq("property_id", id)
+      .order("sort_order"),
   ]);
 
   if (!p) notFound();
@@ -104,9 +110,7 @@ export default async function PropertyDetailPage({
           <TabsTrigger value="details">Details</TabsTrigger>
           <TabsTrigger value="legal">Legal</TabsTrigger>
           <TabsTrigger value="marketing">Marketing</TabsTrigger>
-          <TabsTrigger value="media" disabled title="Arrives with T1.4">
-            Media
-          </TabsTrigger>
+          <TabsTrigger value="media">Media ({(mediaRows ?? []).length})</TabsTrigger>
           <TabsTrigger value="mandate" disabled title="Arrives with T4.5/T4.6">
             Mandate & Keys
           </TabsTrigger>
@@ -135,6 +139,12 @@ export default async function PropertyDetailPage({
               Score ring (T1.5), price history sparkline (T1.7), mandate & key panels (T4.5/T4.6)
               land here as their tasks ship.
             </p>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="media" className="mt-4">
+          <div className="rounded-[10px] border border-border bg-surface p-6">
+            <MediaTab propertyId={p.id} items={mediaRows ?? []} />
           </div>
         </TabsContent>
 
