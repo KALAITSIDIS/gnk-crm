@@ -1,12 +1,31 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
+import {
+  ChecklistsForm,
+  PreferencesForm,
+  ProfileForm,
+} from "@/components/features/contacts/detail-forms";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  bankingCompletion,
+  kycCompletion,
+  type BankingReadinessState,
+  type KycState,
+} from "@/lib/constants/checklists";
 import { formatPhone } from "@/lib/services/phone";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTime } from "@/lib/utils/format";
 
-// Minimal detail view (T2.1) — full tabs arrive in T2.2.
+const TEMP_TONES: Record<string, string> = {
+  hot: "bg-danger/10 text-danger",
+  warm: "bg-warning/10 text-warning",
+  cold: "bg-brand-100 text-brand-700",
+  inactive: "bg-surface-2 text-text-3",
+  vip: "bg-accent-500/10 text-accent-500",
+};
+
 export default async function ContactDetailPage({
   params,
 }: {
@@ -15,63 +34,105 @@ export default async function ContactDetailPage({
   const { id } = await params;
   const supabase = await createClient();
 
-  const { data: c } = await supabase
-    .from("contacts")
-    .select("*")
-    .eq("id", id)
-    .maybeSingle();
+  const [{ data: c }, { data: areaRows }, { data: events }] = await Promise.all([
+    supabase.from("contacts").select("*").eq("id", id).maybeSingle(),
+    supabase.from("areas").select("id, name"),
+    supabase
+      .from("events")
+      .select("id, occurred_at, event_type, payload")
+      .eq("entity_type", "contact")
+      .eq("entity_id", id)
+      .order("occurred_at", { ascending: false })
+      .limit(30),
+  ]);
   if (!c) notFound();
 
-  const facts: [string, string][] = [
-    ["Kind", c.contact_kind],
-    ["Phone", c.phone_e164 ? formatPhone(c.phone_e164) : "—"],
-    ["Email", c.email ?? "—"],
-    ["Telegram", c.telegram_username ? `@${c.telegram_username}` : "—"],
-    ["WhatsApp", c.has_whatsapp ? "yes" : "no"],
-    ["Languages", (c.languages ?? []).join(", ").toUpperCase() || "—"],
-    ["Nationality", c.nationality ?? "—"],
-    ["Types", (c.contact_types ?? []).map((t) => t.replace(/_/g, " ")).join(", ") || "—"],
-    ["Temperature", c.temperature],
-    ["Source", c.source ? `${c.source}${c.source_detail ? ` (${c.source_detail})` : ""}` : "—"],
-    ["Psychology", c.psychology ?? "—"],
-    [
-      "Marketing consent",
-      c.consent_marketing ? `yes — ${formatDateTime(c.consent_at)}` : "no",
-    ],
-    ["Created", formatDateTime(c.created_at)],
-  ];
+  const areaOptions = (areaRows ?? []).map((a) => ({
+    id: a.id,
+    name: (a.name as { en?: string })?.en ?? "—",
+  }));
+
+  const kycPct = kycCompletion((c.kyc ?? {}) as KycState);
+  const bankPct = bankingCompletion((c.banking_readiness ?? {}) as BankingReadinessState);
 
   return (
-    <div className="flex max-w-3xl flex-col gap-4">
+    <div className="flex flex-col gap-4">
       <div>
         <Button asChild variant="ghost" size="sm" className="-ml-2 mb-2 text-text-2">
           <Link href="/contacts">
             <ArrowLeft className="size-4" /> Contacts
           </Link>
         </Button>
-        <h1 className="text-xl font-semibold text-text-1">{c.display_name}</h1>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-xl font-semibold text-text-1">{c.display_name}</h1>
+          <span
+            className={`rounded-full px-2 py-0.5 text-xs font-medium ${TEMP_TONES[c.temperature] ?? ""}`}
+          >
+            {c.temperature}
+          </span>
+          {c.phone_e164 ? (
+            <span className="text-sm tabular-nums text-text-2">{formatPhone(c.phone_e164)}</span>
+          ) : null}
+          {c.email ? <span className="text-sm text-text-2">{c.email}</span> : null}
+        </div>
       </div>
 
-      <div className="rounded-[10px] border border-border bg-surface p-6">
-        <dl className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2">
-          {facts.map(([label, value]) => (
-            <div
-              key={label}
-              className="flex items-baseline justify-between gap-4 border-b border-border/60 pb-2"
-            >
-              <dt className="text-[13px] text-text-2">{label}</dt>
-              <dd className="text-right text-sm font-medium text-text-1">{value}</dd>
-            </div>
-          ))}
-        </dl>
-        {c.notes ? (
-          <p className="mt-4 rounded-lg bg-surface-2 p-3 text-sm text-text-2">{c.notes}</p>
-        ) : null}
-      </div>
+      <Tabs defaultValue="profile">
+        <TabsList>
+          <TabsTrigger value="profile">Profile</TabsTrigger>
+          <TabsTrigger value="preferences">Preferences</TabsTrigger>
+          <TabsTrigger value="kyc">
+            KYC & Banking ({kycPct}% / {bankPct}%)
+          </TabsTrigger>
+          <TabsTrigger value="activity">Activity</TabsTrigger>
+          <TabsTrigger value="deals" disabled title="Arrives with T2.5+">
+            Deals
+          </TabsTrigger>
+          <TabsTrigger value="documents" disabled title="Arrives later in Phase 1">
+            Documents
+          </TabsTrigger>
+        </TabsList>
 
-      <p className="text-xs text-text-3">
-        Profile tabs (preferences, KYC & banking checklists, activity, deals) arrive with T2.2.
-      </p>
+        <TabsContent value="profile" className="mt-4">
+          <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-6">
+            <ProfileForm contact={c} />
+          </div>
+        </TabsContent>
+
+        <TabsContent value="preferences" className="mt-4">
+          <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-6">
+            <PreferencesForm contact={c} areaOptions={areaOptions} />
+          </div>
+        </TabsContent>
+
+        <TabsContent value="kyc" className="mt-4">
+          <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-6">
+            <ChecklistsForm contact={c} />
+          </div>
+        </TabsContent>
+
+        <TabsContent value="activity" className="mt-4">
+          <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-6">
+            {(events ?? []).length === 0 ? (
+              <p className="text-sm text-text-3">No activity yet.</p>
+            ) : (
+              <ul className="divide-y divide-border">
+                {(events ?? []).map((e) => (
+                  <li key={e.id} className="flex items-baseline justify-between gap-4 py-2 text-sm">
+                    <span className="font-medium text-text-1">
+                      {e.event_type.replace(/_/g, " ")}
+                    </span>
+                    <span className="text-text-3">{formatDateTime(e.occurred_at)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="mt-3 text-xs text-text-3">
+              Rich timeline with payload summaries arrives with T3.5.
+            </p>
+          </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
