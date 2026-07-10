@@ -102,3 +102,36 @@ export const propertyFiltersSchema = z.object({
 export type PropertyFilters = z.infer<typeof propertyFiltersSchema>;
 
 export const PROPERTIES_PAGE_SIZE = 25;
+
+/**
+ * Create wizard (T1.2). Units/phases are created from their project's units
+ * page (T1.6), not here — the wizard offers standalone and project.
+ */
+export const CREATABLE_KINDS = ["standalone", "project"] as const;
+
+const emptyToUndefined = (v: unknown) => (v === "" || v === null ? undefined : v);
+
+export const createPropertySchema = z.object({
+  kind: z.enum(CREATABLE_KINDS),
+  property_type: z.enum(PROPERTY_TYPES),
+  transaction_type: z.enum(TRANSACTION_TYPES).default("sale"),
+  district_id: z.string().uuid("Pick a district"),
+  area_id: z.preprocess(emptyToUndefined, z.string().uuid().optional()),
+  title_en: z.preprocess(emptyToUndefined, z.string().max(200).optional()),
+  address: z.preprocess(emptyToUndefined, z.string().max(300).optional()),
+  asking_price: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().positive("Price must be positive").optional(),
+  ),
+  rent_price_month: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().positive("Rent must be positive").optional(),
+  ),
+  bedrooms: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).optional()),
+  bathrooms: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).optional()),
+  covered_area_sqm: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
+  plot_area_sqm: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
+  internal_notes: z.preprocess(emptyToUndefined, z.string().max(5000).optional()),
+});
+
+export type CreatePropertyInput = z.infer<typeof createPropertySchema>;

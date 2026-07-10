@@ -603,3 +603,15 @@ alter table documents enable row level security;
 alter table tasks enable row level security;
 alter table cyprus_config enable row level security;
 alter table events enable row level security;
+
+-- ---------- reference immutability (added T1.2, migration 0004) ----------
+create or replace function protect_property_reference() returns trigger
+language plpgsql as $$
+begin
+  if new.reference is distinct from old.reference then
+    raise exception 'property reference is immutable once assigned';
+  end if;
+  return new;
+end $$;
+create trigger properties_reference_immutable before update on properties
+  for each row execute function protect_property_reference();

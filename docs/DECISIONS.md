@@ -20,3 +20,15 @@ silent. Format: date · task · decision · rationale.
 - **2026-07-09 · T0.5** — Login page ships email+password only. The
   forgot-password flow (doc 05) is deferred to the Phase 2 email work (Resend +
   reset page) — see BACKLOG.
+
+- **2026-07-10 · T1.2** — The reference is generated inside the create action at
+  final submit (atomically with the insert), not when step 1 completes —
+  abandoned wizards must not burn sequence numbers. Step 1 shows a
+  `GNK-{DISTRICT}-####` preview instead.
+
+- **2026-07-10 · T1.2** — Wizard offers kinds `standalone` and `project` only;
+  units/phases are created from the project's units page (T1.6) where the parent
+  is known.
+
+- **2026-07-10 · T1.2** — Reference immutability enforced by DB trigger
+  (migration 0004, synced to doc 03), not just a read-only field.
