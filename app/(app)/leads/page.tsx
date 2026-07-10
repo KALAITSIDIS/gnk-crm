@@ -121,6 +121,7 @@ export default async function LeadsPage() {
                   isUnassigned={!lead.assigned_agent_id}
                   isOpen={isOpen}
                   hasResponse={Boolean(lead.first_response_at)}
+                  hasContact={Boolean(contact)}
                 />
               </li>
             );

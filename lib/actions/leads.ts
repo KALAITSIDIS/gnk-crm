@@ -230,3 +230,90 @@ export async function logChatLinkOpened(
   });
   if (leadId) revalidatePath(`/leads/${leadId}`);
 }
+
+const convertSchema = z.object({
+  lead_id: z.string().uuid(),
+  deal_type: z.enum(["sale", "rental", "antiparoxi", "advisory"]),
+});
+
+/** Convert a lead into a deal at the first stage of the chosen type (T2.5). */
+export async function convertLead(
+  _prev: LeadActionState,
+  formData: FormData,
+): Promise<LeadActionState> {
+  const parsed = convertSchema.safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input", savedAt: null };
+  }
+  const { supabase, profile, lead } = await getLead(parsed.data.lead_id);
+
+  if (lead.status === "converted") return { error: "Lead already converted", savedAt: null };
+  if (!lead.contact_id) {
+    return { error: "Link a contact to the lead before converting", savedAt: null };
+  }
+
+  const { data: stage } = await supabase
+    .from("deal_stages")
+    .select("id, name")
+    .eq("deal_type", parsed.data.deal_type)
+    .eq("is_won", false)
+    .eq("is_lost", false)
+    .order("sort_order")
+    .limit(1)
+    .maybeSingle();
+  if (!stage) return { error: "No stages configured for this deal type", savedAt: null };
+
+  const [{ data: contact }, { data: property }] = await Promise.all([
+    supabase.from("contacts").select("display_name").eq("id", lead.contact_id).maybeSingle(),
+    lead.property_id
+      ? supabase.from("properties").select("reference").eq("id", lead.property_id).maybeSingle()
+      : Promise.resolve({ data: null }),
+  ]);
+
+  const title = [contact?.display_name ?? "Deal", property?.reference]
+    .filter(Boolean)
+    .join(" — ");
+
+  const { data: deal, error: dealErr } = await supabase
+    .from("deals")
+    .insert({
+      org_id: profile.orgId,
+      deal_type: parsed.data.deal_type,
+      stage_id: stage.id,
+      title,
+      property_id: lead.property_id,
+      buyer_contact_id: lead.contact_id,
+      agent_id: lead.assigned_agent_id ?? profile.id,
+      created_by: profile.id,
+    })
+    .select("id")
+    .single();
+  if (dealErr) return { error: dealErr.message, savedAt: null };
+
+  const { error: leadErr } = await supabase
+    .from("leads")
+    .update({ status: "converted", converted_deal_id: deal.id })
+    .eq("id", lead.id);
+  if (leadErr) return { error: leadErr.message, savedAt: null };
+
+  await logEvent(supabase, {
+    orgId: profile.orgId,
+    actorId: profile.id,
+    entityType: "lead",
+    entityId: lead.id,
+    eventType: "converted",
+    payload: { deal_id: deal.id, deal_type: parsed.data.deal_type },
+  });
+  await logEvent(supabase, {
+    orgId: profile.orgId,
+    actorId: profile.id,
+    entityType: "deal",
+    entityId: deal.id,
+    eventType: "created",
+    payload: { from_lead: lead.id, stage: stage.name, title },
+  });
+
+  revalidatePath("/leads");
+  revalidatePath("/pipeline");
+  return { error: null, savedAt: Date.now() };
+}

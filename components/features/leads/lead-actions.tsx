@@ -1,11 +1,12 @@
 "use client";
 
 import { useActionState, useEffect, useRef, useState, useTransition } from "react";
-import { Check, Hand, MessageSquarePlus, Phone, XCircle } from "lucide-react";
+import { ArrowRightCircle, Check, Hand, MessageSquarePlus, Phone, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import {
   claimLead,
   closeLead,
+  convertLead,
   logConversation,
   markCalled,
   markContacted,
@@ -43,12 +44,14 @@ export function LeadRowActions({
   isUnassigned,
   isOpen,
   hasResponse,
+  hasContact,
 }: {
   leadId: string;
   isMine: boolean;
   isUnassigned: boolean;
   isOpen: boolean;
   hasResponse: boolean;
+  hasContact: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
   const act = (fn: () => Promise<void>, success: string) =>
@@ -98,8 +101,82 @@ export function LeadRowActions({
         <Phone className="size-3.5" /> Called
       </Button>
       <LogConversationDialog leadId={leadId} />
+      <ConvertLeadDialog leadId={leadId} hasContact={hasContact} />
       <CloseLeadDialog leadId={leadId} />
     </div>
+  );
+}
+
+const DEAL_TYPES = ["sale", "rental", "antiparoxi", "advisory"] as const;
+
+export function ConvertLeadDialog({
+  leadId,
+  hasContact,
+}: {
+  leadId: string;
+  hasContact: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [state, formAction, pending] = useActionState(convertLead, initialState);
+  const lastToasted = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (state.savedAt && state.savedAt !== lastToasted.current) {
+      lastToasted.current = state.savedAt;
+      toast.success("Lead converted to deal");
+      setOpen(false);
+    }
+  }, [state.savedAt]);
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button
+          variant="default"
+          size="sm"
+          className="h-7 text-xs"
+          title={hasContact ? "Create a deal from this lead" : "Link a contact first"}
+        >
+          <ArrowRightCircle className="size-3.5" /> Convert
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Convert to deal</DialogTitle>
+        </DialogHeader>
+        {!hasContact ? (
+          <p className="text-sm text-warning">
+            This lead has no contact linked — link or create the contact first.
+          </p>
+        ) : null}
+        <form action={formAction} className="flex flex-col gap-3">
+          <input type="hidden" name="lead_id" value={leadId} />
+          <div className="flex flex-col gap-1.5">
+            <Label>Deal type</Label>
+            <Select name="deal_type" defaultValue="sale">
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {DEAL_TYPES.map((t) => (
+                  <SelectItem key={t} value={t}>
+                    {labelize(t)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {state.error ? (
+            <p role="alert" className="text-sm text-danger">
+              {state.error}
+            </p>
+          ) : null}
+          <Button type="submit" disabled={pending || !hasContact}>
+            {pending ? "Converting…" : "Create deal at first stage"}
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
