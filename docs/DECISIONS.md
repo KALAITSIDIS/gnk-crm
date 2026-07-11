@@ -39,3 +39,24 @@ silent. Format: date · task · decision · rationale.
   CLAUDE.md guardrail 1, which outranks). Operational tables are repointed via
   service role; the contact timeline queries events for the contact PLUS all
   contacts merged into it (`merged_into_id`), so combined history still shows.
+
+- **2026-07-11 · T3.2** — Offers have no hard delete ("CRUD" in the playbook
+  notwithstanding): offers feed the commission evidence report (doc 02 §C6), so
+  removing rows would orphan evidence. `withdrawn` is the soft delete. Editing
+  (amount/terms/validity/contact) is allowed only while an offer is open
+  (submitted/countered) and is evented with a change diff; decided offers are
+  immutable — record a new offer instead.
+
+- **2026-07-11 · T3.2** — Accepting an offer is refused while the deal already
+  has another accepted offer (one accepted offer per deal keeps the T3.4 won
+  guard unambiguous). Terminal statuses (accepted/rejected/withdrawn/expired)
+  stamp `decided_at` and allow no further transitions.
+
+- **2026-07-11 · T3.2** — UUID form fields validate with `z.guid()`, not Zod
+  4's `z.uuid()`. Postgres' `uuid` type accepts any 32-hex-digit value, but
+  Zod 4 `.uuid()` enforces RFC 4122 variant bits and rejected the seeded
+  `11111111-…` admin id — the silent-drop `optionalUuid` helper then turned a
+  round-tripped agent_id into `null` and deleted the assignment on save
+  (caught in T3.2 browser verification via the event log's change diff).
+  Fixed in deals + properties validators; audit of the remaining strict
+  usages is in BACKLOG.

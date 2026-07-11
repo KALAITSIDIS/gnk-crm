@@ -47,10 +47,13 @@ const optionalEnum = <T extends readonly string[]>(values: T) =>
       v && (values as readonly string[]).includes(v) ? (v as T[number]) : undefined,
     );
 
+// z.guid(), not z.uuid(): Postgres' uuid type accepts any 32-hex-digit value,
+// while Zod 4's uuid() enforces RFC 4122 variant bits and silently rejects
+// fixture ids like the seeded 11111111-… admin — which nulled fields on save.
 const optionalUuid = z
   .string()
   .optional()
-  .transform((v) => (v && z.string().uuid().safeParse(v).success ? v : undefined));
+  .transform((v) => (v && z.guid().safeParse(v).success ? v : undefined));
 
 const optionalInt = z
   .string()

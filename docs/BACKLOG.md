@@ -6,3 +6,10 @@ built without explicit direction.
 - Forgot-password flow on `/login` (doc 05): Supabase `resetPasswordForEmail` +
   reset page + email template. Natural fit with Phase 2 Resend integration.
 - Dark mode (doc 06 lists it as backlog).
+
+- Audit remaining `z.string().uuid()` usages (leads.ts, units.ts,
+  properties.ts required ids) for the Zod 4 strict-RFC-4122 trap: Postgres
+  accepts any 32-hex uuid but Zod 4 `.uuid()` rejects e.g. the seeded
+  `11111111-…` fixture ids. `optionalUuid` in deals/properties validators
+  already fixed to `z.guid()` (T3.2); the rest only ever see
+  `gen_random_uuid()` values today so they are safe in practice.
