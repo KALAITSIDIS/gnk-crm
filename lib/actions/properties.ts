@@ -276,6 +276,12 @@ export async function updatePropertySection(
   const { recomputeQualityScore } = await import("@/lib/services/quality-score");
   await recomputeQualityScore(supabase, propertyId);
 
+  // title deed status is a deal-health factor (doc 02 §C5) — refresh open deals
+  if (section === "legal") {
+    const { recomputeDealsFor } = await import("@/lib/services/health-score");
+    await recomputeDealsFor(supabase, { propertyId });
+  }
+
   revalidatePath(`/properties/${propertyId}`);
   revalidatePath("/properties");
   return { error: null, savedAt: Date.now() };

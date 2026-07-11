@@ -170,6 +170,19 @@ export async function logConversation(
     eventType: "conversation_logged",
     payload: { channel: parsed.data.channel, note: parsed.data.note },
   });
+
+  // Conversations count as deal activity once the lead is converted — the
+  // health activity factor decays from last_activity_at (doc 02 §C5, T3.3)
+  if (lead.converted_deal_id) {
+    await supabase
+      .from("deals")
+      .update({ last_activity_at: new Date().toISOString() })
+      .eq("id", lead.converted_deal_id);
+    const { recomputeDealHealth } = await import("@/lib/services/health-score");
+    await recomputeDealHealth(supabase, lead.converted_deal_id);
+    revalidatePath(`/deals/${lead.converted_deal_id}`);
+  }
+
   revalidatePath("/leads");
   revalidatePath(`/leads/${lead.id}`);
   return { error: null, savedAt: Date.now() };

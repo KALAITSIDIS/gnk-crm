@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import type { Database } from "@/lib/supabase/database.types";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
+import { recomputeDealsFor } from "@/lib/services/health-score";
 import { normalizePhone } from "@/lib/services/phone";
 import { createClient } from "@/lib/supabase/server";
 import { createContactSchema } from "@/lib/validators/contacts";
@@ -302,6 +303,11 @@ export async function updateContactSection(
     eventType: "updated",
     payload: JSON.parse(JSON.stringify({ section, changed })),
   });
+
+  // KYC completion is a deal-health factor (doc 02 §C5) — refresh buyer deals
+  if (section === "kyc_banking") {
+    await recomputeDealsFor(supabase, { buyerContactId: contactId });
+  }
 
   revalidatePath(`/contacts/${contactId}`);
   revalidatePath("/contacts");

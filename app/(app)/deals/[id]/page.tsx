@@ -1,10 +1,16 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, BadgeCheck } from "lucide-react";
-import { CommissionForm, DealDetailsForm } from "@/components/features/deals/detail-forms";
+import {
+  CommissionForm,
+  DealDetailsForm,
+  HealthPanel,
+} from "@/components/features/deals/detail-forms";
 import { OffersCard, type OfferRow } from "@/components/features/deals/offers";
+import { HealthDot } from "@/components/features/shared/health-dot";
 import { Button } from "@/components/ui/button";
 import type { EntityOption } from "@/lib/actions/entity-search";
+import type { HealthFactor } from "@/lib/services/health-score";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTime, formatMoney } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
@@ -15,12 +21,6 @@ const STATUS_TONES: Record<string, string> = {
   won: "bg-success/10 text-success",
   lost: "bg-danger/10 text-danger",
 };
-
-function healthTone(score: number) {
-  if (score >= 70) return "bg-success";
-  if (score >= 40) return "bg-warning";
-  return "bg-danger";
-}
 
 function payloadSummary(payload: unknown): string | null {
   const p = payload as Record<string, unknown> | null;
@@ -126,6 +126,12 @@ export default async function DealDetailPage({
 
   const wonEligible = deal.status === "open" && offers.some((o) => o.status === "accepted");
 
+  const healthJson = (deal.health ?? {}) as {
+    budget_confirmed?: boolean;
+    factors?: HealthFactor[];
+  };
+  const healthFactors = Array.isArray(healthJson.factors) ? healthJson.factors : null;
+
   return (
     <div className="flex flex-col gap-4">
       <div>
@@ -152,10 +158,7 @@ export default async function DealDetailPage({
               {stage.name}
             </span>
           ) : null}
-          <span
-            className={cn("size-2 rounded-full", healthTone(deal.health_score))}
-            title={`Health ${deal.health_score}/100`}
-          />
+          <HealthDot score={deal.health_score} factors={healthFactors} />
           <span className="text-sm tabular-nums text-text-2">
             {formatMoney(deal.expected_value)}
           </span>
@@ -236,16 +239,12 @@ export default async function DealDetailPage({
         <div className="flex flex-col gap-4">
           <section className="rounded-[10px] border border-border bg-surface p-6">
             <h2 className="mb-3 text-sm font-semibold text-text-1">Health</h2>
-            <div className="flex items-center gap-3">
-              <span className={cn("size-3 rounded-full", healthTone(deal.health_score))} />
-              <span className="text-2xl font-semibold tabular-nums text-text-1">
-                {deal.health_score}
-              </span>
-              <span className="text-sm text-text-3">/ 100</span>
-            </div>
-            <p className="mt-3 text-xs text-text-3">
-              Factor breakdown and automatic recompute arrive with T3.3 (health service).
-            </p>
+            <HealthPanel
+              dealId={deal.id}
+              score={deal.health_score}
+              budgetConfirmed={healthJson.budget_confirmed === true}
+              factors={healthFactors}
+            />
           </section>
 
           <section className="rounded-[10px] border border-border bg-surface p-6">

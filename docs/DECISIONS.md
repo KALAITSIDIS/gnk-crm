@@ -52,6 +52,15 @@ silent. Format: date · task · decision · rationale.
   guard unambiguous). Terminal statuses (accepted/rejected/withdrawn/expired)
   stamp `decided_at` and allow no further transitions.
 
+- **2026-07-11 · T3.3** — Health recompute writes NO event: the score is
+  derived state and every trigger (deal save, offer change, KYC save, legal
+  save, conversation log) already writes its own event — same precedent as
+  the property quality score (§A8). The score + factor snapshot live on the
+  deal (`health_score`, `health.factors`) so kanban cards render breakdown
+  tooltips without per-card joins. Mandate CRUD doesn't exist yet (T4.5) —
+  its recompute hook lands there; until then mandate changes surface at the
+  next deal-side mutation.
+
 - **2026-07-11 · T3.2** — UUID form fields validate with `z.guid()`, not Zod
   4's `z.uuid()`. Postgres' `uuid` type accepts any 32-hex-digit value, but
   Zod 4 `.uuid()` enforces RFC 4122 variant bits and rejected the seeded

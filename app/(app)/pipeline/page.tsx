@@ -35,7 +35,7 @@ export default async function PipelinePage({
     supabase
       .from("deals")
       .select(
-        "id, title, stage_id, expected_value, health_score, agent_id, updated_at, created_at, properties(reference)",
+        "id, title, stage_id, expected_value, health_score, health, agent_id, updated_at, created_at, properties(reference)",
       )
       .eq("deal_type", dealType)
       .eq("status", "open"),
@@ -59,6 +59,9 @@ export default async function PipelinePage({
     stage_id: d.stage_id,
     expected_value: d.expected_value === null ? null : Number(d.expected_value),
     health_score: d.health_score,
+    healthFactors: Array.isArray((d.health as { factors?: unknown } | null)?.factors)
+      ? ((d.health as { factors: KanbanDeal["healthFactors"] }).factors ?? null)
+      : null,
     agentInitials: initials(d.agent_id ? agentName.get(d.agent_id) : undefined),
     daysInStage: Math.max(
       0,

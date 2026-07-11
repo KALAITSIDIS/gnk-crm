@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import type { Database } from "@/lib/supabase/database.types";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
+import { recomputeDealHealth } from "@/lib/services/health-score";
 import { createClient } from "@/lib/supabase/server";
 import {
   DECIDED_STATUSES,
@@ -55,6 +56,7 @@ export async function moveDealToStage(dealId: string, stageId: string): Promise<
     payload: { from: fromStage?.name ?? deal.stage_id, to: toStage.name },
   });
 
+  await recomputeDealHealth(supabase, dealId);
   revalidatePath("/pipeline");
 }
 
@@ -95,6 +97,8 @@ export async function updateDealSection(
 
   const raw = Object.fromEntries(formData.entries());
   let updates: Database["public"]["Tables"]["deals"]["Update"];
+  // health section: event the flag change, not the whole jsonb snapshot
+  let changedOverride: Record<string, { from: unknown; to: unknown }> | null = null;
 
   if (section === "details") {
     const parsed = dealDetailsSchema.safeParse(raw);
@@ -116,16 +120,32 @@ export async function updateDealSection(
       return { error: parsed.error.issues[0]?.message ?? "Invalid input", savedAt: null };
     }
     updates = { commission_split_notes: parsed.data.commission_split_notes || null };
+  } else if (section === "health") {
+    // Manual health checklist flag (doc 02 §C5: budget confirmed 25).
+    // Merged into the health jsonb next to the computed factor snapshot.
+    const health = (current.health ?? {}) as Record<string, unknown>;
+    const budgetConfirmed = raw.budget_confirmed === "on";
+    if ((health.budget_confirmed === true) === budgetConfirmed) {
+      return { error: null, savedAt: Date.now() };
+    }
+    updates = {
+      health: JSON.parse(JSON.stringify({ ...health, budget_confirmed: budgetConfirmed })),
+    };
+    changedOverride = {
+      budget_confirmed: { from: health.budget_confirmed === true, to: budgetConfirmed },
+    };
   } else {
     return { error: `Unknown section: ${section}`, savedAt: null };
   }
 
-  const changed: Record<string, { from: unknown; to: unknown }> = {};
-  for (const [key, next] of Object.entries(updates)) {
-    const prev = (current as Record<string, unknown>)[key];
-    if (!normEq(prev, next)) changed[key] = { from: prev ?? null, to: next ?? null };
+  const changed: Record<string, { from: unknown; to: unknown }> = changedOverride ?? {};
+  if (!changedOverride) {
+    for (const [key, next] of Object.entries(updates)) {
+      const prev = (current as Record<string, unknown>)[key];
+      if (!normEq(prev, next)) changed[key] = { from: prev ?? null, to: next ?? null };
+    }
+    if (Object.keys(changed).length === 0) return { error: null, savedAt: Date.now() };
   }
-  if (Object.keys(changed).length === 0) return { error: null, savedAt: Date.now() };
 
   const { error: updateErr } = await supabase
     .from("deals")
@@ -142,6 +162,7 @@ export async function updateDealSection(
     payload: JSON.parse(JSON.stringify({ section, changed })),
   });
 
+  await recomputeDealHealth(supabase, dealId);
   revalidatePath(`/deals/${dealId}`);
   revalidatePath("/pipeline");
   return { error: null, savedAt: Date.now() };
@@ -242,6 +263,7 @@ export async function saveOffer(
     .update({ last_activity_at: new Date().toISOString() })
     .eq("id", deal.id);
 
+  await recomputeDealHealth(supabase, deal.id);
   revalidatePath(`/deals/${deal.id}`);
   revalidatePath("/pipeline");
   return { error: null, savedAt: Date.now() };
@@ -307,6 +329,7 @@ export async function updateOfferStatus(
     .update({ last_activity_at: new Date().toISOString() })
     .eq("id", offer.deal_id);
 
+  await recomputeDealHealth(supabase, offer.deal_id);
   revalidatePath(`/deals/${offer.deal_id}`);
   revalidatePath("/pipeline");
   return { wonEligible: next === "accepted" };

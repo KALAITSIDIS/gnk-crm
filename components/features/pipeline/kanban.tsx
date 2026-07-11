@@ -17,7 +17,9 @@ import {
   type KeyboardCoordinateGetter,
 } from "@dnd-kit/core";
 import { toast } from "sonner";
+import { HealthDot } from "@/components/features/shared/health-dot";
 import { moveDealToStage } from "@/lib/actions/deals";
+import type { HealthFactor } from "@/lib/services/health-score";
 import { formatMoney } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 
@@ -35,6 +37,7 @@ export interface KanbanDeal {
   stage_id: string;
   expected_value: number | null;
   health_score: number;
+  healthFactors: HealthFactor[] | null;
   agentInitials: string;
   daysInStage: number;
   propertyRef: string | null;
@@ -75,12 +78,6 @@ const columnHopCoordinates: KeyboardCoordinateGetter = (event, { context }) => {
   };
 };
 
-function healthTone(score: number) {
-  if (score >= 70) return "bg-success";
-  if (score >= 40) return "bg-warning";
-  return "bg-danger";
-}
-
 function DealCard({ deal, dragging = false }: { deal: KanbanDeal; dragging?: boolean }) {
   return (
     <div
@@ -97,9 +94,10 @@ function DealCard({ deal, dragging = false }: { deal: KanbanDeal; dragging?: boo
         >
           {deal.title}
         </Link>
-        <span
-          className={cn("mt-1 size-2 shrink-0 rounded-full", healthTone(deal.health_score))}
-          title={`Health ${deal.health_score}/100`}
+        <HealthDot
+          score={deal.health_score}
+          factors={deal.healthFactors}
+          className="mt-1"
         />
       </div>
       <div className="flex items-center justify-between text-xs text-text-2">
