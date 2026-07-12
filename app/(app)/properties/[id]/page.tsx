@@ -11,6 +11,7 @@ import {
   PriceHistorySection,
   type PriceHistoryRow,
 } from "@/components/features/properties/price-history";
+import { EventTimeline } from "@/components/features/shared/event-timeline";
 import { QualityScoreRing } from "@/components/features/shared/quality-score-ring";
 import { computeQualityScore } from "@/lib/services/quality-score";
 import { getCurrentProfile } from "@/lib/services/auth";
@@ -43,12 +44,21 @@ export default async function PropertyDetailPage({
       .order("sort_order"),
   ]);
 
-  const { data: priceRows } = await supabase
-    .from("price_history")
-    .select("id, old_price, new_price, changed_at, changed_by")
-    .eq("property_id", id)
-    .order("changed_at", { ascending: false })
-    .limit(50);
+  const [{ data: priceRows }, { data: eventRows }] = await Promise.all([
+    supabase
+      .from("price_history")
+      .select("id, old_price, new_price, changed_at, changed_by")
+      .eq("property_id", id)
+      .order("changed_at", { ascending: false })
+      .limit(50),
+    supabase
+      .from("events")
+      .select("id, occurred_at, event_type, entity_type, payload")
+      .eq("entity_type", "property")
+      .eq("entity_id", id)
+      .order("occurred_at", { ascending: false })
+      .limit(50),
+  ]);
 
   if (!p) notFound();
 
@@ -172,9 +182,7 @@ export default async function PropertyDetailPage({
           <TabsTrigger value="documents" disabled title="Arrives later in Phase 1">
             Documents
           </TabsTrigger>
-          <TabsTrigger value="activity" disabled title="Arrives with T3.5">
-            Activity
-          </TabsTrigger>
+          <TabsTrigger value="activity">Activity</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="mt-4">
@@ -221,6 +229,12 @@ export default async function PropertyDetailPage({
         <TabsContent value="marketing" className="mt-4">
           <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-6">
             <MarketingForm property={p} />
+          </div>
+        </TabsContent>
+
+        <TabsContent value="activity" className="mt-4">
+          <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-6">
+            <EventTimeline events={eventRows ?? []} />
           </div>
         </TabsContent>
       </Tabs>

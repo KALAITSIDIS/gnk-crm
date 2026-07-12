@@ -8,6 +8,7 @@ import {
 } from "@/components/features/contacts/detail-forms";
 import { MergeDialog } from "@/components/features/contacts/merge-dialog";
 import { ChatLinks } from "@/components/features/shared/chat-links";
+import { EventTimeline } from "@/components/features/shared/event-timeline";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -19,7 +20,6 @@ import {
 } from "@/lib/constants/checklists";
 import { formatPhone } from "@/lib/services/phone";
 import { createClient } from "@/lib/supabase/server";
-import { formatDateTime } from "@/lib/utils/format";
 
 const TEMP_TONES: Record<string, string> = {
   hot: "bg-danger/10 text-danger",
@@ -48,14 +48,18 @@ export default async function ContactDetailPage({
 
   // combined history: this contact + everything merged into it (DECISIONS T2.3)
   const timelineIds = [id, ...(mergedRows ?? []).map((m) => m.id)];
-  const { data: events } = await supabase
+  const { data: eventRows } = await supabase
     .from("events")
-    .select("id, occurred_at, event_type, entity_id, payload")
+    .select("id, occurred_at, event_type, entity_type, entity_id, payload")
     .eq("entity_type", "contact")
     .in("entity_id", timelineIds)
     .order("occurred_at", { ascending: false })
     .limit(50);
   const mergedName = new Map((mergedRows ?? []).map((m) => [m.id, m.display_name]));
+  const events = (eventRows ?? []).map((e) => ({
+    ...e,
+    note: e.entity_id !== id ? (mergedName.get(e.entity_id ?? "") ?? "merged contact") : null,
+  }));
 
   const areaOptions = (areaRows ?? []).map((a) => ({
     id: a.id,
@@ -144,28 +148,7 @@ export default async function ContactDetailPage({
 
         <TabsContent value="activity" className="mt-4">
           <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-6">
-            {(events ?? []).length === 0 ? (
-              <p className="text-sm text-text-3">No activity yet.</p>
-            ) : (
-              <ul className="divide-y divide-border">
-                {(events ?? []).map((e) => (
-                  <li key={e.id} className="flex items-baseline justify-between gap-4 py-2 text-sm">
-                    <span className="font-medium text-text-1">
-                      {e.event_type.replace(/_/g, " ")}
-                      {e.entity_id !== c.id ? (
-                        <span className="ml-2 text-xs font-normal text-text-3">
-                          ({mergedName.get(e.entity_id ?? "") ?? "merged contact"})
-                        </span>
-                      ) : null}
-                    </span>
-                    <span className="text-text-3">{formatDateTime(e.occurred_at)}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <p className="mt-3 text-xs text-text-3">
-              Rich timeline with payload summaries arrives with T3.5.
-            </p>
+            <EventTimeline events={events} />
           </div>
         </TabsContent>
       </Tabs>

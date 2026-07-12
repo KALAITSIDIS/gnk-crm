@@ -52,6 +52,14 @@ silent. Format: date · task · decision · rationale.
   guard unambiguous). Terminal statuses (accepted/rejected/withdrawn/expired)
   stamp `decided_at` and allow no further transitions.
 
+- **2026-07-12 · T3.5** — Removed `app/(app)/properties/loading.tsx`. Its
+  Suspense boundary triggers a Next 16.2.10 bug (dev-verified): the segment's
+  suspense reveal stays queued (`<!--$~-->` markers) and NOTHING below
+  `/properties` ever hydrates — tabs, forms, and media DnD were silently dead
+  while SSR HTML looked fine. Isolated by bisection: minimal static page on the
+  route still failed; removing loading.tsx fixed it; error.tsx is innocent and
+  stays. Restore the skeleton when Next ships a fix (BACKLOG).
+
 - **2026-07-11 · T3.3** — Health recompute writes NO event: the score is
   derived state and every trigger (deal save, offer change, KYC save, legal
   save, conversation log) already writes its own event — same precedent as

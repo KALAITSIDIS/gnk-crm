@@ -53,3 +53,117 @@ export async function logEvent(supabase: Client, params: LogEventParams): Promis
     throw new Error(`logEvent failed (${params.entityType}.${params.eventType}): ${error.message}`);
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Human-readable timeline lines (T3.5). One entry per event_type;    */
+/* unknown types fall back to the raw type with underscores spaced,   */
+/* so a new event never breaks a timeline — it just reads plainly     */
+/* until its line is registered here.                                 */
+/* ------------------------------------------------------------------ */
+
+export interface TimelineEvent {
+  id: string | number;
+  occurred_at: string;
+  entity_type: string;
+  event_type: string;
+  payload: Json;
+  /** caller-supplied annotation, e.g. the merged-contact source name */
+  note?: string | null;
+}
+
+type P = Record<string, unknown>;
+
+const asObject = (payload: Json | null | undefined): P =>
+  payload && typeof payload === "object" && !Array.isArray(payload) ? (payload as P) : {};
+
+const asText = (v: unknown): string | null =>
+  typeof v === "string" && v.trim() ? v : null;
+
+const asMoney = (v: unknown): string | null => {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  return new Intl.NumberFormat("de-DE", {
+    style: "currency",
+    currency: "EUR",
+    maximumFractionDigits: 0,
+  }).format(n);
+};
+
+const fromTo = (verb: string, p: P): string => {
+  const from = asText(p.from);
+  const to = asText(p.to);
+  return from && to ? `${verb} ${from} → ${to}` : verb;
+};
+
+const EVENT_LINES: Record<string, (p: P) => string> = {
+  created: (p) => {
+    const amount = asMoney(p.amount);
+    return amount ? `Created — ${amount}` : "Created";
+  },
+  updated: (p) => {
+    const section = asText(p.section);
+    return section ? `Updated — ${section.replace(/_/g, " ")}` : "Updated";
+  },
+  stage_changed: (p) => fromTo("Stage", p),
+  status_changed: (p) => {
+    const line = fromTo("Status", p);
+    const amount = asMoney(p.amount);
+    return amount ? `${line} (${amount})` : line;
+  },
+  won: (p) => (p.override === true ? "Marked won — admin override" : "Marked won"),
+  won_override: () => "Admin override authorized — no accepted offer",
+  lost: (p) => {
+    const reason = asText(p.reason);
+    return reason ? `Marked lost — ${reason}` : "Marked lost";
+  },
+  spam: () => "Marked spam",
+  claimed: () => "Claimed",
+  contacted: () => "Marked contacted",
+  called: () => "Marked called",
+  conversation_logged: (p) => {
+    const channel = asText(p.channel);
+    return channel ? `Conversation logged (${channel})` : "Conversation logged";
+  },
+  chat_link_opened: (p) => {
+    const channel = asText(p.channel);
+    return channel ? `Chat opened (${channel})` : "Chat opened";
+  },
+  converted: () => "Converted to deal",
+  merged: (p) => {
+    const name = asText(p.merged_contact_name);
+    return name ? `Merged in ${name}` : "Merged in a duplicate";
+  },
+  archived: () => "Archived",
+  media_uploaded: (p) => {
+    const file = asText(p.file);
+    return file ? `Photo uploaded — ${file}` : "Photo uploaded";
+  },
+  media_deleted: () => "Photo deleted",
+  // written by the price_history DB trigger (T1.7); from/to are numeric
+  price_changed: (p) => {
+    const from = asMoney(p.from);
+    const to = asMoney(p.to);
+    return from && to ? `Price ${from} → ${to}` : "Price changed";
+  },
+  media_reordered: () => "Photos reordered",
+  media_cover_set: () => "Cover photo set",
+  publish_override: (p) =>
+    `Publish gate overridden (score ${Number(p.score) || 0} < ${Number(p.threshold) || 0})`,
+  payment_plan_created: () => "Payment plan created",
+  price_list_created: () => "Price list created",
+};
+
+/** Entity prefixes for feeds that mix entities (deal page merges offer events). */
+const ENTITY_PREFIX: Partial<Record<string, string>> = {
+  offer: "Offer",
+};
+
+export function describeEvent(
+  e: Pick<TimelineEvent, "entity_type" | "event_type" | "payload">,
+): string {
+  const p = asObject(e.payload);
+  const line = EVENT_LINES[e.event_type]?.(p) ?? e.event_type.replace(/_/g, " ");
+  const prefix = ENTITY_PREFIX[e.entity_type];
+  return prefix ? `${prefix}: ${line}` : line;
+}

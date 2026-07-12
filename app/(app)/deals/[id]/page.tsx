@@ -8,6 +8,7 @@ import {
 } from "@/components/features/deals/detail-forms";
 import { DealOutcomeActions } from "@/components/features/deals/outcome-actions";
 import { OffersCard, type OfferRow } from "@/components/features/deals/offers";
+import { EventTimeline } from "@/components/features/shared/event-timeline";
 import { HealthDot } from "@/components/features/shared/health-dot";
 import { Button } from "@/components/ui/button";
 import type { EntityOption } from "@/lib/actions/entity-search";
@@ -23,15 +24,6 @@ const STATUS_TONES: Record<string, string> = {
   won: "bg-success/10 text-success",
   lost: "bg-danger/10 text-danger",
 };
-
-function payloadSummary(payload: unknown): string | null {
-  const p = payload as Record<string, unknown> | null;
-  if (!p || typeof p !== "object") return null;
-  if (typeof p.from === "string" && typeof p.to === "string") return `${p.from} → ${p.to}`;
-  if (p.amount !== undefined) return formatMoney(p.amount as number | string);
-  if (typeof p.section === "string") return `section: ${p.section}`;
-  return null;
-}
 
 export default async function DealDetailPage({
   params,
@@ -253,29 +245,7 @@ export default async function DealDetailPage({
 
           <section className="rounded-[10px] border border-border bg-surface p-6">
             <h2 className="mb-3 text-sm font-semibold text-text-1">Activity</h2>
-            {events.length === 0 ? (
-              <p className="text-sm text-text-3">No activity yet.</p>
-            ) : (
-              <ul className="divide-y divide-border">
-                {events.map((e) => (
-                  <li key={e.id} className="flex items-baseline justify-between gap-4 py-2 text-sm">
-                    <span className="font-medium text-text-1">
-                      {e.entity_type === "offer" ? "offer " : ""}
-                      {e.event_type.replace(/_/g, " ")}
-                      {payloadSummary(e.payload) ? (
-                        <span className="ml-2 text-xs font-normal text-text-3">
-                          {payloadSummary(e.payload)}
-                        </span>
-                      ) : null}
-                    </span>
-                    <span className="shrink-0 text-text-3">{formatDateTime(e.occurred_at)}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <p className="mt-3 text-xs text-text-3">
-              Rich timeline with payload summaries arrives with T3.5.
-            </p>
+            <EventTimeline events={events} />
           </section>
         </div>
 
