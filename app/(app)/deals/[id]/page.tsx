@@ -6,11 +6,13 @@ import {
   DealDetailsForm,
   HealthPanel,
 } from "@/components/features/deals/detail-forms";
+import { DealOutcomeActions } from "@/components/features/deals/outcome-actions";
 import { OffersCard, type OfferRow } from "@/components/features/deals/offers";
 import { HealthDot } from "@/components/features/shared/health-dot";
 import { Button } from "@/components/ui/button";
 import type { EntityOption } from "@/lib/actions/entity-search";
 import type { HealthFactor } from "@/lib/services/health-score";
+import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTime, formatMoney } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
@@ -38,6 +40,7 @@ export default async function DealDetailPage({
 }) {
   const { id } = await params;
   const supabase = await createClient();
+  const profile = await getCurrentProfile(supabase);
 
   const { data: deal } = await supabase.from("deals").select("*").eq("id", id).maybeSingle();
   if (!deal) notFound();
@@ -165,15 +168,55 @@ export default async function DealDetailPage({
         </div>
       </div>
 
-      {wonEligible ? (
-        <div className="flex items-center gap-2 rounded-[10px] border border-success/30 bg-success/10 px-4 py-3 text-sm text-success">
-          <BadgeCheck className="size-4 shrink-0" />
-          <span>
-            <span className="font-semibold">Won-eligible</span> — this deal has an accepted
-            offer. The guarded Won flow arrives with T3.4.
+      {deal.status === "open" ? (
+        <div
+          className={cn(
+            "flex flex-wrap items-center justify-between gap-3 rounded-[10px] border px-4 py-3 text-sm",
+            wonEligible
+              ? "border-success/30 bg-success/10 text-success"
+              : "border-border bg-surface text-text-2",
+          )}
+        >
+          <span className="flex items-center gap-2">
+            <BadgeCheck className="size-4 shrink-0" />
+            {wonEligible ? (
+              <span>
+                <span className="font-semibold">Won-eligible</span> — this deal has an
+                accepted offer.
+              </span>
+            ) : (
+              <span>No accepted offer yet — Won requires one (admin can override).</span>
+            )}
           </span>
+          <DealOutcomeActions
+            dealId={deal.id}
+            wonEligible={wonEligible}
+            isAdmin={profile.role === "admin"}
+          />
         </div>
-      ) : null}
+      ) : (
+        <div
+          className={cn(
+            "rounded-[10px] border px-4 py-3 text-sm",
+            deal.status === "won"
+              ? "border-success/30 bg-success/10 text-success"
+              : "border-danger/30 bg-danger/10 text-danger",
+          )}
+        >
+          {deal.status === "won" ? (
+            <span>
+              <span className="font-semibold">Won</span>
+              {deal.won_at ? ` on ${formatDateTime(deal.won_at)}` : null}
+            </span>
+          ) : (
+            <span>
+              <span className="font-semibold">Lost</span>
+              {deal.lost_at ? ` on ${formatDateTime(deal.lost_at)}` : null}
+              {deal.lost_reason ? ` — ${deal.lost_reason}` : null}
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="flex flex-col gap-4 lg:col-span-2">

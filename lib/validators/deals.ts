@@ -94,6 +94,24 @@ export const dealCommissionSchema = z.object({
     .optional(),
 });
 
+export const markWonSchema = z.object({
+  deal_id: z.guid("Missing deal"),
+  // checkbox: present as "on" only when ticked
+  override: z
+    .string()
+    .optional()
+    .transform((v) => v === "on"),
+});
+
+export const markLostSchema = z.object({
+  deal_id: z.guid("Missing deal"),
+  lost_reason: z
+    .string({ message: "A reason is required" })
+    .trim()
+    .min(3, "A reason is required")
+    .max(2000, "Keep the reason under 2000 characters"),
+});
+
 export const saveOfferSchema = z.object({
   offer_id: optionalUuid,
   deal_id: z.guid("Missing deal"),

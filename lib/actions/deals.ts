@@ -11,6 +11,8 @@ import {
   OFFER_TRANSITIONS,
   dealCommissionSchema,
   dealDetailsSchema,
+  markLostSchema,
+  markWonSchema,
   saveOfferSchema,
   type OfferStatus,
 } from "@/lib/validators/deals";
@@ -333,4 +335,161 @@ export async function updateOfferStatus(
   revalidatePath(`/deals/${offer.deal_id}`);
   revalidatePath("/pipeline");
   return { wonEligible: next === "accepted" };
+}
+
+/**
+ * Guarded Won flow (T3.4, doc 02 §C5): requires an accepted offer, or an
+ * explicit admin override which writes its own `won_override` event. Also
+ * moves the deal into the pipeline's is_won stage so the kanban reflects it.
+ */
+export async function markDealWon(
+  _prev: DealSectionState,
+  formData: FormData,
+): Promise<DealSectionState> {
+  const supabase = await createClient();
+  const profile = await getCurrentProfile(supabase);
+
+  const parsed = markWonSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input", savedAt: null };
+  }
+  const { deal_id: dealId, override } = parsed.data;
+
+  const { data: deal } = await supabase
+    .from("deals")
+    .select("id, org_id, deal_type, status, stage_id")
+    .eq("id", dealId)
+    .maybeSingle();
+  if (!deal) return { error: "Deal not found", savedAt: null };
+  if (deal.status !== "open") {
+    return { error: `Deal is already ${deal.status}`, savedAt: null };
+  }
+
+  const { data: acceptedOffers } = await supabase
+    .from("offers")
+    .select("id")
+    .eq("deal_id", dealId)
+    .eq("status", "accepted")
+    .limit(1);
+  const hasAccepted = (acceptedOffers ?? []).length > 0;
+
+  if (!hasAccepted) {
+    if (profile.role !== "admin") {
+      return {
+        error: "Won requires an accepted offer — record one first, or ask an admin to override.",
+        savedAt: null,
+      };
+    }
+    if (!override) {
+      return {
+        error: 'No accepted offer on this deal. Tick "Admin override" to mark it won anyway.',
+        savedAt: null,
+      };
+    }
+  }
+
+  const { data: wonStage } = await supabase
+    .from("deal_stages")
+    .select("id, name")
+    .eq("deal_type", deal.deal_type)
+    .eq("is_won", true)
+    .limit(1)
+    .maybeSingle();
+
+  const now = new Date().toISOString();
+  const { error: updateErr } = await supabase
+    .from("deals")
+    .update({
+      status: "won",
+      won_at: now,
+      last_activity_at: now,
+      ...(wonStage ? { stage_id: wonStage.id } : {}),
+    })
+    .eq("id", dealId);
+  if (updateErr) return { error: updateErr.message, savedAt: null };
+
+  if (!hasAccepted) {
+    await logEvent(supabase, {
+      orgId: deal.org_id,
+      actorId: profile.id,
+      entityType: "deal",
+      entityId: dealId,
+      eventType: "won_override",
+      payload: { reason: "marked won without an accepted offer" },
+    });
+  }
+  await logEvent(supabase, {
+    orgId: deal.org_id,
+    actorId: profile.id,
+    entityType: "deal",
+    entityId: dealId,
+    eventType: "won",
+    payload: { override: !hasAccepted, ...(wonStage ? { stage: wonStage.name } : {}) },
+  });
+
+  await recomputeDealHealth(supabase, dealId);
+  revalidatePath(`/deals/${dealId}`);
+  revalidatePath("/pipeline");
+  revalidatePath("/dashboard");
+  return { error: null, savedAt: Date.now() };
+}
+
+/** Guarded Lost flow (T3.4): a reason is mandatory and lands in the event. */
+export async function markDealLost(
+  _prev: DealSectionState,
+  formData: FormData,
+): Promise<DealSectionState> {
+  const supabase = await createClient();
+  const profile = await getCurrentProfile(supabase);
+
+  const parsed = markLostSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input", savedAt: null };
+  }
+  const { deal_id: dealId, lost_reason: lostReason } = parsed.data;
+
+  const { data: deal } = await supabase
+    .from("deals")
+    .select("id, org_id, deal_type, status")
+    .eq("id", dealId)
+    .maybeSingle();
+  if (!deal) return { error: "Deal not found", savedAt: null };
+  if (deal.status !== "open") {
+    return { error: `Deal is already ${deal.status}`, savedAt: null };
+  }
+
+  const { data: lostStage } = await supabase
+    .from("deal_stages")
+    .select("id, name")
+    .eq("deal_type", deal.deal_type)
+    .eq("is_lost", true)
+    .limit(1)
+    .maybeSingle();
+
+  const now = new Date().toISOString();
+  const { error: updateErr } = await supabase
+    .from("deals")
+    .update({
+      status: "lost",
+      lost_at: now,
+      lost_reason: lostReason,
+      last_activity_at: now,
+      ...(lostStage ? { stage_id: lostStage.id } : {}),
+    })
+    .eq("id", dealId);
+  if (updateErr) return { error: updateErr.message, savedAt: null };
+
+  await logEvent(supabase, {
+    orgId: deal.org_id,
+    actorId: profile.id,
+    entityType: "deal",
+    entityId: dealId,
+    eventType: "lost",
+    payload: { reason: lostReason, ...(lostStage ? { stage: lostStage.name } : {}) },
+  });
+
+  revalidatePath(`/deals/${dealId}`);
+  revalidatePath("/pipeline");
+  revalidatePath("/dashboard");
+  return { error: null, savedAt: Date.now() };
 }
