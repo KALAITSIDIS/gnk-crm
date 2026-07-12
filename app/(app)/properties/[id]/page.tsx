@@ -11,6 +11,7 @@ import {
   PriceHistorySection,
   type PriceHistoryRow,
 } from "@/components/features/properties/price-history";
+import { CreateViewingDialog } from "@/components/features/viewings/create-viewing-dialog";
 import { EventTimeline } from "@/components/features/shared/event-timeline";
 import { QualityScoreRing } from "@/components/features/shared/quality-score-ring";
 import { computeQualityScore } from "@/lib/services/quality-score";
@@ -44,7 +45,7 @@ export default async function PropertyDetailPage({
       .order("sort_order"),
   ]);
 
-  const [{ data: priceRows }, { data: eventRows }] = await Promise.all([
+  const [{ data: priceRows }, { data: eventRows }, { data: viewingRows }] = await Promise.all([
     supabase
       .from("price_history")
       .select("id, old_price, new_price, changed_at, changed_by")
@@ -58,6 +59,14 @@ export default async function PropertyDetailPage({
       .eq("entity_id", id)
       .order("occurred_at", { ascending: false })
       .limit(50),
+    supabase
+      .from("viewings")
+      .select("id, scheduled_at, duration_min, status, contacts(display_name), agent:profiles!agent_id(full_name)")
+      .eq("property_id", id)
+      .eq("status", "scheduled")
+      .gte("scheduled_at", new Date().toISOString())
+      .order("scheduled_at", { ascending: true })
+      .limit(10),
   ]);
 
   if (!p) notFound();
@@ -202,6 +211,45 @@ export default async function PropertyDetailPage({
               rows={priceHistory}
               currentPrice={p.asking_price === null ? null : Number(p.asking_price)}
             />
+
+            <div className="mt-6 border-t border-border/60 pt-4">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-sm font-semibold text-text-1">Upcoming viewings</h3>
+                <CreateViewingDialog
+                  defaultProperty={{
+                    id: p.id,
+                    label: title || p.reference,
+                    sublabel: p.reference,
+                  }}
+                  triggerLabel="Schedule"
+                />
+              </div>
+              {(viewingRows ?? []).length === 0 ? (
+                <p className="mt-2 text-sm text-text-3">None scheduled.</p>
+              ) : (
+                <ul className="mt-2 flex flex-col divide-y divide-border/60">
+                  {(viewingRows ?? []).map((v) => (
+                    <li
+                      key={v.id}
+                      className="flex items-baseline justify-between gap-4 py-2 text-sm"
+                    >
+                      <span className="tabular-nums text-text-1">
+                        {formatDateTime(v.scheduled_at)}
+                        <span className="ml-1.5 text-xs text-text-3">{v.duration_min}m</span>
+                      </span>
+                      <span className="truncate text-right text-text-2">
+                        {(v.contacts as { display_name: string | null } | null)?.display_name ??
+                          "—"}
+                        <span className="ml-1.5 text-xs text-text-3">
+                          {(v.agent as { full_name: string } | null)?.full_name ?? "—"}
+                        </span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
             <p className="mt-4 text-xs text-text-3">
               Mandate & key panels (T4.5/T4.6) land here as their tasks ship.
             </p>

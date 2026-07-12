@@ -18,14 +18,21 @@ export function EntityPicker({
   label,
   initial = null,
   placeholder = "Search…",
+  onChange,
 }: {
   name: string;
   kind: EntityKind;
   label: string;
   initial?: EntityOption | null;
   placeholder?: string;
+  /** Fires when the selection changes (choose or clear) — for dependent UI. */
+  onChange?: (option: EntityOption | null) => void;
 }) {
   const [selected, setSelected] = useState<EntityOption | null>(initial);
+  const choose = (option: EntityOption | null) => {
+    setSelected(option);
+    onChange?.(option);
+  };
   const [query, setQuery] = useState("");
   const [options, setOptions] = useState<EntityOption[]>([]);
   const [open, setOpen] = useState(false);
@@ -66,7 +73,7 @@ export function EntityPicker({
           <button
             type="button"
             onClick={() => {
-              setSelected(null);
+              choose(null);
               setQuery("");
               setOptions([]);
             }}
@@ -97,7 +104,7 @@ export function EntityPicker({
                     type="button"
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => {
-                      setSelected(o);
+                      choose(o);
                       setOpen(false);
                     }}
                     className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-surface-2"
