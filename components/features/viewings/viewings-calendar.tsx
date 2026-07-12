@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { CalendarDays, ChevronLeft, ChevronRight, TriangleAlert } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, PenLine, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { ViewingStatus } from "@/lib/validators/viewings";
 import { cn } from "@/lib/utils";
@@ -100,6 +100,14 @@ function ViewingCard({ v, showAgent }: { v: CalendarViewing; showAgent: boolean 
       ) : null}
       <span className="truncate text-text-2">{v.contactName}</span>
       {showAgent ? <span className="truncate text-text-3">{v.agentName}</span> : null}
+      {v.status === "scheduled" ? (
+        <Link
+          href={`/viewings/${v.id}/sign`}
+          className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-medium text-text-2 hover:text-brand-700"
+        >
+          <PenLine className="size-3" /> Sign slip
+        </Link>
+      ) : null}
     </div>
   );
 }

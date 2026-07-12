@@ -130,6 +130,10 @@ const EVENT_LINES: Record<string, (p: P) => string> = {
     return channel ? `Chat opened (${channel})` : "Chat opened";
   },
   converted: () => "Converted to deal",
+  viewing_slip_signed: (p) => {
+    const name = asText(p.signer_name);
+    return name ? `Viewing slip signed by ${name}` : "Viewing slip signed";
+  },
   merged: (p) => {
     const name = asText(p.merged_contact_name);
     return name ? `Merged in ${name}` : "Merged in a duplicate";

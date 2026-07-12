@@ -4,6 +4,13 @@
  * the result to flag agent double-bookings.
  */
 
+/** Consent line shown on the signing screen and printed on the slip (T4.2). */
+export const SLIP_GDPR_LINE =
+  "By signing, I confirm I attended this property viewing on the date shown. " +
+  "I consent to the agency recording this confirmation and my signature for " +
+  "compliance and commission-evidence purposes, retained under the agency's " +
+  "privacy policy and Cyprus/EU data-protection law.";
+
 export interface ConflictItem {
   id: string;
   agentId: string;

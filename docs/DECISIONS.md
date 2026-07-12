@@ -52,6 +52,19 @@ silent. Format: date · task · decision · rationale.
   guard unambiguous). Terminal statuses (accepted/rejected/withdrawn/expired)
   stamp `decided_at` and allow no further transitions.
 
+- **2026-07-12 · T4.2** — Slip signing. Added `@react-pdf/renderer` (the
+  stack's sanctioned PDF lib, also needed for the C6 evidence report) and
+  render the slip PDF server-side inside the sign action. The signature pad is
+  dependency-free — a plain canvas with pointer events on a white background
+  (white so the PNG has no alpha, keeping the PDF embed and SHA-256 stable).
+  Both the PNG and PDF live in the private `signatures` bucket, uploaded with
+  the service role (bucket has no RLS policies by design, doc 04); downloads go
+  through `getSlipDownloadUrl`, which RLS-checks the slip row then mints a
+  120s signed URL. One slip per viewing is enforced three ways: UI (already-
+  signed state), an existence check in the action, and the `viewing_id` unique
+  constraint. Verified end-to-end: the PNG re-downloaded from storage hashes to
+  the stored `signature_sha256`.
+
 - **2026-07-12 · T4.1** — Viewing times convert through an explicit Cyprus
   wall-clock ↔ UTC helper (`lib/utils/tz.ts`), never the browser's local zone:
   `zonedWallClockToUtc` reads a datetime-local value as Asia/Nicosia and stores

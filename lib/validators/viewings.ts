@@ -13,6 +13,18 @@ const optionalUuid = z
   .optional()
   .transform((v) => (v && z.guid().safeParse(v).success ? v : undefined));
 
+const emptyToUndefined = (v: unknown) => (v === "" || v === null ? undefined : v);
+
+export const signSlipSchema = z.object({
+  viewing_id: z.guid("Missing viewing"),
+  signer_name: z.string().trim().min(2, "Signer name is required").max(200),
+  signature_data: z
+    .string()
+    .regex(/^data:image\/png;base64,[A-Za-z0-9+/=]+$/, "Please add a signature"),
+  lat: z.preprocess(emptyToUndefined, z.coerce.number().min(-90).max(90).optional()),
+  lng: z.preprocess(emptyToUndefined, z.coerce.number().min(-180).max(180).optional()),
+});
+
 export const createViewingSchema = z.object({
   property_id: z.guid("Select a property"),
   contact_id: z.guid("Select a contact"),
