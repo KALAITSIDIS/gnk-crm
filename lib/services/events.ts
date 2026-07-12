@@ -134,6 +134,12 @@ const EVENT_LINES: Record<string, (p: P) => string> = {
     const name = asText(p.signer_name);
     return name ? `Viewing slip signed by ${name}` : "Viewing slip signed";
   },
+  viewing_feedback: (p) => {
+    const rating = Number(p.rating);
+    const stars = Number.isFinite(rating) && rating > 0 ? ` ${"★".repeat(rating)}` : "";
+    const note = asText(p.comment) ?? asText(p.liked);
+    return `Viewing feedback${stars}${note ? ` — ${note}` : ""}`;
+  },
   merged: (p) => {
     const name = asText(p.merged_contact_name);
     return name ? `Merged in ${name}` : "Merged in a duplicate";

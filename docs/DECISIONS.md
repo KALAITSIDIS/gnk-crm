@@ -52,6 +52,17 @@ silent. Format: date · task · decision · rationale.
   guard unambiguous). Terminal statuses (accepted/rejected/withdrawn/expired)
   stamp `decided_at` and allow no further transitions.
 
+- **2026-07-12 · T4.3** — Viewing feedback is written as a **property-scoped**
+  event (`entity_type='property'`, `event_type='viewing_feedback'`, payload
+  carries `viewing_id` + rating/notes) so it surfaces directly on the property
+  activity timeline (C7 acceptance) without the timeline query needing to join
+  viewings. Status changes (complete/cancel/no-show) stay viewing-scoped
+  `status_changed {from,to}`, reusing the existing registry line. Feedback is
+  gated to `completed` viewings; the agent-dashboard nudge lists the current
+  user's completed viewings with `feedback is null`. Calendar cards now link to
+  the new `/viewings/[id]` detail (property/sign/status/feedback all live
+  there), so the per-card property and sign links were removed to declutter.
+
 - **2026-07-12 · T4.2** — Slip signing. Added `@react-pdf/renderer` (the
   stack's sanctioned PDF lib, also needed for the C6 evidence report) and
   render the slip PDF server-side inside the sign action. The signature pad is

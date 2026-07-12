@@ -7,7 +7,12 @@ import { intervalsOverlap } from "@/lib/services/viewings";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTime } from "@/lib/utils/format";
 import { zonedWallClockToUtc } from "@/lib/utils/tz";
-import { createViewingSchema } from "@/lib/validators/viewings";
+import {
+  VIEWING_STATUS_ACTIONS,
+  createViewingSchema,
+  viewingFeedbackSchema,
+  type ViewingStatusAction,
+} from "@/lib/validators/viewings";
 
 export type ViewingActionState = {
   error: string | null;
@@ -120,4 +125,111 @@ export async function createViewing(
   revalidatePath("/viewings");
   revalidatePath(`/properties/${d.property_id}`);
   return { error: null, savedAt: Date.now(), viewingId: created.id };
+}
+
+/**
+ * Move a scheduled viewing to a terminal status (T4.3). Only the assigned
+ * agent or an admin; only from `scheduled`. Writes a status_changed event.
+ */
+export async function updateViewingStatus(
+  viewingId: string,
+  next: ViewingStatusAction,
+): Promise<{ error: string | null }> {
+  if (!VIEWING_STATUS_ACTIONS.includes(next)) return { error: "Invalid status" };
+
+  const supabase = await createClient();
+  const profile = await getCurrentProfile(supabase);
+
+  const { data: v } = await supabase
+    .from("viewings")
+    .select("id, org_id, agent_id, status, property_id")
+    .eq("id", viewingId)
+    .maybeSingle();
+  if (!v) return { error: "Viewing not found" };
+  if (profile.role !== "admin" && v.agent_id !== profile.id) {
+    return { error: "You can only update your own viewings." };
+  }
+  if (v.status !== "scheduled") return { error: `Viewing is already ${v.status}.` };
+
+  const { error } = await supabase.from("viewings").update({ status: next }).eq("id", viewingId);
+  if (error) return { error: error.message };
+
+  await logEvent(supabase, {
+    orgId: v.org_id,
+    actorId: profile.id,
+    entityType: "viewing",
+    entityId: viewingId,
+    eventType: "status_changed",
+    payload: { from: "scheduled", to: next },
+  });
+
+  revalidatePath(`/viewings/${viewingId}`);
+  revalidatePath("/viewings");
+  revalidatePath("/dashboard");
+  return { error: null };
+}
+
+export type FeedbackActionState = { error: string | null; savedAt: number | null };
+
+/**
+ * Save viewing feedback (T4.3). Allowed once the viewing is completed. Stored
+ * on the viewing; also recorded as a property-scoped event so it surfaces on
+ * the property's activity timeline (C7 acceptance).
+ */
+export async function saveViewingFeedback(
+  _prev: FeedbackActionState,
+  formData: FormData,
+): Promise<FeedbackActionState> {
+  const parsed = viewingFeedbackSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input", savedAt: null };
+  }
+  const d = parsed.data;
+
+  const supabase = await createClient();
+  const profile = await getCurrentProfile(supabase);
+
+  const { data: v } = await supabase
+    .from("viewings")
+    .select("id, org_id, agent_id, status, property_id, properties(reference)")
+    .eq("id", d.viewing_id)
+    .maybeSingle();
+  if (!v) return { error: "Viewing not found", savedAt: null };
+  if (profile.role !== "admin" && v.agent_id !== profile.id) {
+    return { error: "You can only add feedback to your own viewings.", savedAt: null };
+  }
+  if (v.status !== "completed") {
+    return { error: "Feedback is only available once the viewing is completed.", savedAt: null };
+  }
+
+  const feedback = {
+    rating: d.rating,
+    liked: d.liked ?? null,
+    disliked: d.disliked ?? null,
+    comment: d.comment ?? null,
+  };
+
+  const { error } = await supabase
+    .from("viewings")
+    .update({ feedback })
+    .eq("id", d.viewing_id);
+  if (error) return { error: error.message, savedAt: null };
+
+  await logEvent(supabase, {
+    orgId: v.org_id,
+    actorId: profile.id,
+    entityType: "property",
+    entityId: v.property_id,
+    eventType: "viewing_feedback",
+    payload: {
+      viewing_id: d.viewing_id,
+      reference: (v.properties as { reference: string } | null)?.reference ?? null,
+      ...feedback,
+    },
+  });
+
+  revalidatePath(`/viewings/${d.viewing_id}`);
+  revalidatePath(`/properties/${v.property_id}`);
+  revalidatePath("/dashboard");
+  return { error: null, savedAt: Date.now() };
 }

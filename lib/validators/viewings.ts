@@ -15,6 +15,32 @@ const optionalUuid = z
 
 const emptyToUndefined = (v: unknown) => (v === "" || v === null ? undefined : v);
 
+/** Terminal statuses an agent can move a scheduled viewing into (T4.3). */
+export const VIEWING_STATUS_ACTIONS = ["completed", "cancelled", "no_show"] as const;
+export type ViewingStatusAction = (typeof VIEWING_STATUS_ACTIONS)[number];
+
+const optionalNote = z
+  .string()
+  .trim()
+  .max(2000, "Keep it under 2000 characters")
+  .optional()
+  .transform((v) => v || undefined);
+
+export const viewingFeedbackSchema = z.object({
+  viewing_id: z.guid("Missing viewing"),
+  rating: z.coerce.number().int().min(1, "Pick a rating").max(5),
+  liked: optionalNote,
+  disliked: optionalNote,
+  comment: optionalNote,
+});
+
+export interface ViewingFeedback {
+  rating: number;
+  liked?: string;
+  disliked?: string;
+  comment?: string;
+}
+
 export const signSlipSchema = z.object({
   viewing_id: z.guid("Missing viewing"),
   signer_name: z.string().trim().min(2, "Signer name is required").max(200),

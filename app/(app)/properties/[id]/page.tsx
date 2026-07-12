@@ -229,21 +229,23 @@ export default async function PropertyDetailPage({
               ) : (
                 <ul className="mt-2 flex flex-col divide-y divide-border/60">
                   {(viewingRows ?? []).map((v) => (
-                    <li
-                      key={v.id}
-                      className="flex items-baseline justify-between gap-4 py-2 text-sm"
-                    >
-                      <span className="tabular-nums text-text-1">
-                        {formatDateTime(v.scheduled_at)}
-                        <span className="ml-1.5 text-xs text-text-3">{v.duration_min}m</span>
-                      </span>
-                      <span className="truncate text-right text-text-2">
-                        {(v.contacts as { display_name: string | null } | null)?.display_name ??
-                          "—"}
-                        <span className="ml-1.5 text-xs text-text-3">
-                          {(v.agent as { full_name: string } | null)?.full_name ?? "—"}
+                    <li key={v.id}>
+                      <Link
+                        href={`/viewings/${v.id}`}
+                        className="flex items-baseline justify-between gap-4 py-2 text-sm hover:text-brand-700"
+                      >
+                        <span className="tabular-nums text-text-1">
+                          {formatDateTime(v.scheduled_at)}
+                          <span className="ml-1.5 text-xs text-text-3">{v.duration_min}m</span>
                         </span>
-                      </span>
+                        <span className="truncate text-right text-text-2">
+                          {(v.contacts as { display_name: string | null } | null)?.display_name ??
+                            "—"}
+                          <span className="ml-1.5 text-xs text-text-3">
+                            {(v.agent as { full_name: string } | null)?.full_name ?? "—"}
+                          </span>
+                        </span>
+                      </Link>
                     </li>
                   ))}
                 </ul>
