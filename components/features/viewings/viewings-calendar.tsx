@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { CalendarDays, ChevronLeft, ChevronRight, TriangleAlert } from "lucide-react";
+import { RouteBuilder } from "@/components/features/viewings/route-builder";
 import { Button } from "@/components/ui/button";
 import type { ViewingStatus } from "@/lib/validators/viewings";
 import { cn } from "@/lib/utils";
@@ -13,15 +14,18 @@ export interface CalendarViewing {
   propertyRef: string | null;
   contactName: string;
   agentName: string;
+  agentId: string;
   status: ViewingStatus;
   durationMin: number;
   dayKey: string;
   startMinutes: number;
   timeLabel: string;
   conflict: boolean;
+  routeDate: string | null;
+  routeOrder: number | null;
 }
 
-type ViewMode = "week" | "day" | "list";
+type ViewMode = "week" | "day" | "list" | "route";
 
 const STATUS_TONES: Record<ViewingStatus, string> = {
   scheduled: "bg-brand-100 text-brand-700",
@@ -103,9 +107,13 @@ function ViewingCard({ v, showAgent }: { v: CalendarViewing; showAgent: boolean 
 export function ViewingsCalendar({
   viewings,
   todayKey,
+  currentUserId,
+  isAdmin,
 }: {
   viewings: CalendarViewing[];
   todayKey: string;
+  currentUserId: string;
+  isAdmin: boolean;
 }) {
   const [view, setView] = useState<ViewMode>("week");
   const [anchor, setAnchor] = useState(todayKey);
@@ -137,7 +145,7 @@ export function ViewingsCalendar({
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="inline-flex rounded-lg border border-border p-0.5">
-          {(["week", "day", "list"] as ViewMode[]).map((m) => (
+          {(["week", "day", "list", "route"] as ViewMode[]).map((m) => (
             <button
               key={m}
               type="button"
@@ -216,6 +224,16 @@ export function ViewingsCalendar({
             (byDay.get(anchor) ?? []).map((v) => <ViewingCard key={v.id} v={v} showAgent />)
           )}
         </div>
+      ) : null}
+
+      {view === "route" ? (
+        <RouteBuilder
+          key={anchor}
+          dayKey={anchor}
+          stops={(byDay.get(anchor) ?? []).filter(
+            (v) => v.status === "scheduled" && (isAdmin || v.agentId === currentUserId),
+          )}
+        />
       ) : null}
 
       {view === "list" ? (

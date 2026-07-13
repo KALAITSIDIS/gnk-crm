@@ -29,6 +29,24 @@ export function intervalsOverlap(
   return aStart < bEnd && bStart < aEnd;
 }
 
+export interface RouteSortable {
+  id: string;
+  startMinutes: number;
+  routeDate: string | null;
+  routeOrder: number | null;
+}
+
+/**
+ * Initial ordering for the day-route builder (T4.4): stops already routed for
+ * THIS day keep their saved order; everything else follows by start time.
+ * A route saved for a different date is ignored — it's stale for this day.
+ */
+export function initialRouteOrder<T extends RouteSortable>(items: T[], dayKey: string): T[] {
+  const saved = (v: T) =>
+    v.routeDate === dayKey && v.routeOrder !== null ? v.routeOrder : Number.POSITIVE_INFINITY;
+  return [...items].sort((a, b) => saved(a) - saved(b) || a.startMinutes - b.startMinutes);
+}
+
 /**
  * Ids of viewings that overlap at least one other viewing held by the SAME
  * agent. A zero-duration viewing still can't sit inside another's window.

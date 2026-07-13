@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
 import { intervalsOverlap } from "@/lib/services/viewings";
@@ -166,6 +167,46 @@ export async function updateViewingStatus(
   revalidatePath(`/viewings/${viewingId}`);
   revalidatePath("/viewings");
   revalidatePath("/dashboard");
+  return { error: null };
+}
+
+/**
+ * Persist a day's viewing route (T4.4): stamp route_date + 1-based route_order
+ * across the ordered viewings. RLS limits writes to the caller's own viewings
+ * (admin: any). One summary event per save keeps the log un-spammed.
+ */
+export async function saveViewingRoute(
+  routeDate: string,
+  orderedIds: string[],
+): Promise<{ error: string | null }> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(routeDate)) return { error: "Invalid date" };
+  if (orderedIds.length === 0) return { error: "Nothing to save" };
+  if (!orderedIds.every((id) => z.guid().safeParse(id).success)) {
+    return { error: "Invalid viewing reference" };
+  }
+
+  const supabase = await createClient();
+  const profile = await getCurrentProfile(supabase);
+
+  for (let i = 0; i < orderedIds.length; i++) {
+    const { error } = await supabase
+      .from("viewings")
+      .update({ route_date: routeDate, route_order: i + 1 })
+      .eq("id", orderedIds[i]);
+    if (error) return { error: error.message };
+  }
+
+  await logEvent(supabase, {
+    orgId: profile.orgId,
+    actorId: profile.id,
+    entityType: "viewing",
+    entityId: null,
+    eventType: "route_updated",
+    payload: { route_date: routeDate, stops: orderedIds.length },
+  });
+
+  revalidatePath("/viewings");
+  revalidatePath("/route-sheet");
   return { error: null };
 }
 

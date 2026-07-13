@@ -52,6 +52,19 @@ silent. Format: date · task · decision · rationale.
   guard unambiguous). Terminal statuses (accepted/rejected/withdrawn/expired)
   stamp `decided_at` and allow no further transitions.
 
+- **2026-07-13 · T4.4** — Route builder is a fourth view mode on `/viewings`
+  (doc 05 puts the day route builder on that screen). Saving stamps
+  `route_date` + 1-based `route_order` on each viewing and writes ONE summary
+  `route_updated` event ({route_date, stops}) instead of N per-viewing events
+  — reordering is one user action, and per-stop events would spam the log.
+  Agents see only their own scheduled viewings in the builder (matching the
+  RLS update policy so a save can't half-fail); admin routes across agents.
+  The printable sheet lives at `/route-sheet` in a chromeless `(print)` route
+  group (auth still enforced by proxy.ts), excludes cancelled viewings, and
+  orders by the saved route_order. `initialRouteOrder` (unit-tested) seeds the
+  builder: saved order for that day first, then unrouted stops by start time;
+  a route saved for a different date is treated as stale and ignored.
+
 - **2026-07-12 · T4.3** — Viewing feedback is written as a **property-scoped**
   event (`entity_type='property'`, `event_type='viewing_feedback'`, payload
   carries `viewing_id` + rating/notes) so it surfaces directly on the property

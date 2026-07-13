@@ -24,6 +24,7 @@ export default async function ViewingsPage() {
     .from("viewings")
     .select(
       `id, scheduled_at, duration_min, status, property_id, agent_id,
+       route_date, route_order,
        properties(reference),
        contacts(display_name),
        agent:profiles!agent_id(full_name)`,
@@ -51,12 +52,15 @@ export default async function ViewingsPage() {
       propertyRef: (r.properties as { reference: string } | null)?.reference ?? null,
       contactName: (r.contacts as { display_name: string | null } | null)?.display_name ?? "—",
       agentName: (r.agent as { full_name: string } | null)?.full_name ?? "—",
+      agentId: r.agent_id,
       status: r.status as ViewingStatus,
       durationMin: r.duration_min,
       dayKey,
       startMinutes: minutes,
       timeLabel,
       conflict: conflictIds.has(r.id),
+      routeDate: r.route_date,
+      routeOrder: r.route_order,
     };
   });
 
@@ -85,7 +89,12 @@ export default async function ViewingsPage() {
         <CreateViewingDialog defaultAgent={defaultAgent} />
       </div>
 
-      <ViewingsCalendar viewings={viewings} todayKey={todayKey} />
+      <ViewingsCalendar
+        viewings={viewings}
+        todayKey={todayKey}
+        currentUserId={profile.id}
+        isAdmin={profile.role === "admin"}
+      />
     </div>
   );
 }

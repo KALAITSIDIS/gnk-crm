@@ -134,6 +134,11 @@ const EVENT_LINES: Record<string, (p: P) => string> = {
     const name = asText(p.signer_name);
     return name ? `Viewing slip signed by ${name}` : "Viewing slip signed";
   },
+  route_updated: (p) => {
+    const stops = Number(p.stops) || 0;
+    const date = asText(p.route_date);
+    return `Day route updated — ${stops} stop${stops === 1 ? "" : "s"}${date ? ` (${date})` : ""}`;
+  },
   viewing_feedback: (p) => {
     const rating = Number(p.rating);
     const stars = Number.isFinite(rating) && rating > 0 ? ` ${"★".repeat(rating)}` : "";
