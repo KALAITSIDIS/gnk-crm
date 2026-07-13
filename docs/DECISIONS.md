@@ -52,6 +52,21 @@ silent. Format: date · task · decision · rationale.
   guard unambiguous). Terminal statuses (accepted/rejected/withdrawn/expired)
   stamp `decided_at` and allow no further transitions.
 
+- **2026-07-13 · T5.2** — Evidence report. The footer "report hash" is the
+  SHA-256 of the canonical JSON of the ROWS (recomputable by regenerating with
+  the same filters), not of the PDF file — the file contains the hash, so it
+  cannot contain its own digest; the PDF file's SHA-256 goes into the
+  `evidence_report_generated` event payload instead. Assembly runs on the
+  caller's RLS client (what the agent can't see stays out of the report); the
+  service role is used only for slip PNG downloads and the chain RPC. Stored
+  with doc_type `other` (the enum has no report type — extend it if reports
+  multiply). Scope: events from the contact plus its deals/viewings/offers/
+  leads; a property filter narrows to that property's entities and drops
+  contact-level rows. Preview skips slip-image downloads; the PDF embeds them.
+  `getMandateDocumentUrl` generalized into `lib/actions/documents.ts`
+  (`getDocumentDownloadUrl`) — one RLS-checked signed-URL path for all
+  private documents.
+
 - **2026-07-13 · T5.1** — Calculators. Pure band math in
   `lib/services/calculators.ts` with tolerant config parsers — malformed
   `cyprus_config` renders an explicit error card, never NaN results. C8's

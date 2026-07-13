@@ -235,25 +235,3 @@ export async function uploadMandateDocument(
   return { error: null, savedAt: Date.now() };
 }
 
-/**
- * Signed URL for the mandate agreement. Access = whoever can read the
- * documents row under RLS (doc 04: file bodies via signed URLs only).
- */
-export async function getMandateDocumentUrl(
-  documentId: string,
-): Promise<{ url: string | null; error: string | null }> {
-  const supabase = await createClient();
-  const { data: doc } = await supabase
-    .from("documents")
-    .select("storage_path")
-    .eq("id", documentId)
-    .maybeSingle();
-  if (!doc) return { url: null, error: "Document not found" };
-
-  const admin = createAdminClient();
-  const { data, error } = await admin.storage
-    .from("documents")
-    .createSignedUrl(doc.storage_path, 120);
-  if (error) return { url: null, error: error.message };
-  return { url: data.signedUrl, error: null };
-}

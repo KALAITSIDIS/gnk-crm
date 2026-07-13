@@ -143,6 +143,10 @@ const EVENT_LINES: Record<string, (p: P) => string> = {
     const code = asText(p.key_code);
     return `Key${code ? ` ${code}` : ""} returned to office`;
   },
+  evidence_report_generated: (p) => {
+    const rows = Number(p.rows) || 0;
+    return `Commission evidence report generated (${rows} events, chain ${p.chain_ok === true ? "verified" : "FAILED"})`;
+  },
   document_uploaded: (p) => {
     const title = asText(p.title);
     return title ? `Signed document uploaded — ${title}` : "Signed document uploaded";

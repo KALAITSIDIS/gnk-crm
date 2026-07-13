@@ -4,8 +4,8 @@ import { useActionState, useEffect, useRef, useState, useTransition } from "reac
 import { FileText, Pencil, Plus, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { EntityPicker } from "@/components/features/shared/entity-picker";
+import { getDocumentDownloadUrl } from "@/lib/actions/documents";
 import {
-  getMandateDocumentUrl,
   saveMandate,
   setMandateStatus,
   uploadMandateDocument,
@@ -256,7 +256,7 @@ function MandateCard({
   const openDocument = async () => {
     if (!m.signed_document_id) return;
     setDocBusy(true);
-    const { url, error } = await getMandateDocumentUrl(m.signed_document_id);
+    const { url, error } = await getDocumentDownloadUrl(m.signed_document_id);
     setDocBusy(false);
     if (url) window.open(url, "_blank", "noopener");
     else toast.error(error ?? "Could not open the document");
