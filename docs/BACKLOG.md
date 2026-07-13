@@ -9,6 +9,9 @@ built without explicit direction.
 - Restore `app/(app)/properties/loading.tsx` skeleton once Next.js fixes the
   queued-suspense-reveal hydration bug (see DECISIONS 2026-07-12 · T3.5).
   Re-test: property detail tabs must stay clickable with the file present.
+- Key register: UI for `transfer` and `mark_lost` movements and the
+  `with_owner`/`lost` statuses (enums + append-only log already support them;
+  T4.6 shipped checkout/return only).
 
 - Audit remaining `z.string().uuid()` usages (leads.ts, units.ts,
   properties.ts required ids) for the Zod 4 strict-RFC-4122 trap: Postgres

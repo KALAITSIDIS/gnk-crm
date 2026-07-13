@@ -52,6 +52,17 @@ silent. Format: date · task · decision · rationale.
   guard unambiguous). Terminal statuses (accepted/rejected/withdrawn/expired)
   stamp `decided_at` and allow no further transitions.
 
+- **2026-07-13 · T4.6** — Keys. The movement row is the RLS-checked user
+  action (append-only; new RLS test 13 proves UPDATE/DELETE stick for every
+  role); the key row's status/current-holder is a derived cache updated with
+  the service role AFTER the movement insert succeeds — the matrix allows
+  agents to move keys but reserves register-row edits for admin/LM, so the
+  cache write can't ride the user's client. Checkout requires `in_office`,
+  return requires `checked_out`; `with_owner`/`lost` and the
+  `transfer`/`mark_lost` actions exist in the enums but get UI in a later
+  phase (BACKLOG). Holder can be a staff profile or a free-text external name
+  (lawyer, cleaner) — spec's checkout dialog implies non-staff holders.
+
 - **2026-07-13 · T4.5** — Mandates. `expire_mandates()` (migration 0006, doc 03
   synced) now also creates renewal tasks: one per active mandate inside its
   reminder window, assigned to `properties.assigned_agent_id` (fallback: the

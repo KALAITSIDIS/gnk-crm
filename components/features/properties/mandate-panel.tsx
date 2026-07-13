@@ -388,8 +388,6 @@ export function MandatePanel({
         open={createOpen}
         onOpenChange={setCreateOpen}
       />
-
-      <p className="mt-2 text-xs text-text-3">Key register arrives with T4.6.</p>
     </div>
   );
 }

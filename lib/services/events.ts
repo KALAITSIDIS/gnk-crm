@@ -134,6 +134,15 @@ const EVENT_LINES: Record<string, (p: P) => string> = {
     const name = asText(p.signer_name);
     return name ? `Viewing slip signed by ${name}` : "Viewing slip signed";
   },
+  key_checkout: (p) => {
+    const code = asText(p.key_code);
+    const holder = asText(p.holder);
+    return `Key${code ? ` ${code}` : ""} checked out${holder ? ` to ${holder}` : ""}`;
+  },
+  key_return: (p) => {
+    const code = asText(p.key_code);
+    return `Key${code ? ` ${code}` : ""} returned to office`;
+  },
   document_uploaded: (p) => {
     const title = asText(p.title);
     return title ? `Signed document uploaded — ${title}` : "Signed document uploaded";

@@ -13,6 +13,10 @@ import {
 } from "@/components/features/properties/price-history";
 import { CreateViewingDialog } from "@/components/features/viewings/create-viewing-dialog";
 import {
+  KeyMovementActions,
+  RegisterKeyDialog,
+} from "@/components/features/keys/key-dialogs";
+import {
   MandatePanel,
   type MandateRow,
 } from "@/components/features/properties/mandate-panel";
@@ -37,8 +41,13 @@ export default async function PropertyDetailPage({
 
   // mandates via mandates_safe, NOT the base table: LM has no base-table
   // policy and commission columns are masked in the view (doc 04, T4.5)
-  const [{ data: p }, { data: areaRows }, { data: mediaRows }, { data: mandateSafeRows }] =
-    await Promise.all([
+  const [
+    { data: p },
+    { data: areaRows },
+    { data: mediaRows },
+    { data: mandateSafeRows },
+    { data: keyRows },
+  ] = await Promise.all([
       supabase
         .from("properties")
         .select("*, districts(name), areas(name)")
@@ -55,6 +64,11 @@ export default async function PropertyDetailPage({
         .select("*")
         .eq("property_id", id)
         .order("created_at", { ascending: false }),
+      supabase
+        .from("property_keys")
+        .select("id, key_code, description, status, current_holder_name")
+        .eq("property_id", id)
+        .order("created_at", { ascending: true }),
     ]);
 
   const [{ data: priceRows }, { data: eventRows }, { data: viewingRows }] = await Promise.all([
@@ -190,6 +204,19 @@ export default async function PropertyDetailPage({
     ],
     ["Bedrooms / Bathrooms", `${p.bedrooms ?? "—"} / ${p.bathrooms ?? "—"}`],
     ["Quality score", `${quality.score}/100`],
+    // T4.6 acceptance: current key holder visible on Overview
+    [
+      "Keys",
+      (keyRows ?? []).length === 0
+        ? "—"
+        : (keyRows ?? [])
+            .map((k) =>
+              k.status === "checked_out"
+                ? `${k.key_code} — with ${k.current_holder_name ?? "unknown"}`
+                : `${k.key_code} — ${k.status.replace(/_/g, " ")}`,
+            )
+            .join(" · "),
+    ],
     ["Created", formatDateTime(p.created_at)],
     ["Updated", formatDateTime(p.updated_at)],
   ];
@@ -320,12 +347,52 @@ export default async function PropertyDetailPage({
         </TabsContent>
 
         <TabsContent value="mandate" className="mt-4">
-          <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-6">
-            <MandatePanel
-              propertyId={p.id}
-              mandates={mandatePanelRows}
-              isAdmin={profile.role === "admin"}
-            />
+          <div className="flex max-w-3xl flex-col gap-4">
+            <div className="rounded-[10px] border border-border bg-surface p-6">
+              <MandatePanel
+                propertyId={p.id}
+                mandates={mandatePanelRows}
+                isAdmin={profile.role === "admin"}
+              />
+            </div>
+
+            <div className="rounded-[10px] border border-border bg-surface p-6">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h3 className="text-sm font-semibold text-text-1">Keys</h3>
+                {profile.role === "admin" || profile.role === "listing_manager" ? (
+                  <RegisterKeyDialog
+                    defaultProperty={{
+                      id: p.id,
+                      label: title || p.reference,
+                      sublabel: p.reference,
+                    }}
+                  />
+                ) : null}
+              </div>
+              {(keyRows ?? []).length === 0 ? (
+                <p className="text-sm text-text-3">No keys registered for this property.</p>
+              ) : (
+                <ul className="flex flex-col divide-y divide-border/60">
+                  {(keyRows ?? []).map((k) => (
+                    <li key={k.id} className="flex items-center justify-between gap-4 py-2 text-sm">
+                      <span className="min-w-0">
+                        <span className="font-mono text-xs font-semibold text-text-1">
+                          {k.key_code}
+                        </span>
+                        {k.description ? (
+                          <span className="ml-2 text-text-2">{k.description}</span>
+                        ) : null}
+                        <span className="ml-2 text-xs capitalize text-text-3">
+                          {k.status.replace(/_/g, " ")}
+                          {k.current_holder_name ? ` · ${k.current_holder_name}` : ""}
+                        </span>
+                      </span>
+                      <KeyMovementActions keyId={k.id} status={k.status} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </div>
         </TabsContent>
 

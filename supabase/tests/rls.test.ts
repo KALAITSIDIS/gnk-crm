@@ -34,6 +34,8 @@ let leadOwnedByA1: string;
 let viewingA1: string;
 let slipA1: string;
 let stageSaleNew: string;
+let keyA1: string; // key on propA1
+let keyMoveA1: string; // checkout movement on keyA1 (append-only, test 13)
 
 beforeAll(async () => {
   // org B fixture
@@ -164,6 +166,28 @@ beforeAll(async () => {
     .single();
   if (slipErr) throw slipErr;
   slipA1 = slip.id;
+
+  const { data: key, error: keyErr } = await svc
+    .from("property_keys")
+    .insert({ org_id: ORG_A, property_id: propA1, key_code: `K-${run}` })
+    .select("id")
+    .single();
+  if (keyErr) throw keyErr;
+  keyA1 = key.id;
+
+  const { data: keyMove, error: keyMoveErr } = await svc
+    .from("key_movements")
+    .insert({
+      org_id: ORG_A,
+      key_id: keyA1,
+      action: "checkout",
+      holder_name: "Fixture Holder",
+      created_by: agentA1.id,
+    })
+    .select("id")
+    .single();
+  if (keyMoveErr) throw keyMoveErr;
+  keyMoveA1 = keyMove.id;
 
   // a few org-A events so the hash chain has content (test 12)
   for (const [type, entity] of [
@@ -395,5 +419,48 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     await svc.from("events").update({ event_type: original }).eq("id", victim!.id);
     const after = await svc.rpc("verify_events_chain", { p_org: ORG_A });
     expect(after.data, "chain must verify after restore").toBe(true);
+  });
+
+  it("13. key_movements: append-only — staff INSERT allowed, UPDATE/DELETE denied for every role", async () => {
+    // positive: an agent records a movement (doc 04 insert row)
+    const { error: insErr } = await agentA1.client.from("key_movements").insert({
+      org_id: ORG_A,
+      key_id: keyA1,
+      action: "return",
+      holder_name: "Fixture Holder",
+      created_by: agentA1.id,
+    });
+    expect(insErr, "agent INSERT movement must succeed").toBeNull();
+
+    // append-only: no role may rewrite or erase history
+    for (const user of [adminA, agentA1, lmA]) {
+      const upd = await user.client
+        .from("key_movements")
+        .update({ holder_name: "rewritten" })
+        .eq("id", keyMoveA1)
+        .select("id");
+      expect(
+        upd.error !== null || (upd.data ?? []).length === 0,
+        `${user.email} UPDATE key_movements must not affect rows`,
+      ).toBe(true);
+
+      const del = await user.client
+        .from("key_movements")
+        .delete()
+        .eq("id", keyMoveA1)
+        .select("id");
+      expect(
+        del.error !== null || (del.data ?? []).length === 0,
+        `${user.email} DELETE key_movements must not affect rows`,
+      ).toBe(true);
+    }
+
+    // the fixture row is intact
+    const { data: still } = await svc
+      .from("key_movements")
+      .select("id, holder_name")
+      .eq("id", keyMoveA1)
+      .single();
+    expect(still?.holder_name).toBe("Fixture Holder");
   });
 });
