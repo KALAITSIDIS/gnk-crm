@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Calculator } from "lucide-react";
 import {
   DetailsForm,
   LegalForm,
@@ -235,6 +235,15 @@ export default async function PropertyDetailPage({
           <MandateBadge state={mandateState} />
           <StatusBadge status={p.status} />
           <StatusBadge status={p.visibility} />
+          {p.asking_price !== null ? (
+            <Link
+              href={`/calculators?price=${Number(p.asking_price)}`}
+              className="inline-flex items-center gap-1 text-xs font-medium text-text-2 hover:text-brand-700"
+              title="Transfer fees & stamp duty at asking price"
+            >
+              <Calculator className="size-3.5" /> Costs
+            </Link>
+          ) : null}
           {p.kind === "project" || p.kind === "phase" ? (
             <Button asChild variant="outline" size="sm" className="ml-auto">
               <Link href={`/properties/${p.id}/units`}>Units matrix</Link>

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, BadgeCheck } from "lucide-react";
+import { ArrowLeft, BadgeCheck, Calculator } from "lucide-react";
 import {
   CommissionForm,
   DealDetailsForm,
@@ -157,6 +157,15 @@ export default async function DealDetailPage({
           <span className="text-sm tabular-nums text-text-2">
             {formatMoney(deal.expected_value)}
           </span>
+          {deal.expected_value !== null ? (
+            <Link
+              href={`/calculators?price=${Number(deal.expected_value)}`}
+              className="inline-flex items-center gap-1 text-xs font-medium text-text-2 hover:text-brand-700"
+              title="Transfer fees & stamp duty for this amount"
+            >
+              <Calculator className="size-3.5" /> Costs
+            </Link>
+          ) : null}
         </div>
       </div>
 

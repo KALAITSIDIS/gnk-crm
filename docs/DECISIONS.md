@@ -52,6 +52,16 @@ silent. Format: date · task · decision · rationale.
   guard unambiguous). Terminal statuses (accepted/rejected/withdrawn/expired)
   stamp `decided_at` and allow no further transitions.
 
+- **2026-07-13 · T5.1** — Calculators. Pure band math in
+  `lib/services/calculators.ts` with tolerant config parsers — malformed
+  `cyprus_config` renders an explicit error card, never NaN results. C8's
+  "embedded on property/deal" is delivered as prefilled `/calculators?price=`
+  links from the deal header (expected value) and property header (asking
+  price) rather than duplicating calculator UI on three pages. Copy-summary
+  uses the async Clipboard API with an execCommand fallback for contexts
+  without transient activation. Summary strings are EN-only for Phase 1
+  (i18n-ready: single composition point, moves to messages when EL/RU ship).
+
 - **2026-07-13 · T4.6** — Keys. The movement row is the RLS-checked user
   action (append-only; new RLS test 13 proves UPDATE/DELETE stick for every
   role); the key row's status/current-holder is a derived cache updated with
