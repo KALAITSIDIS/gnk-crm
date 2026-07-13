@@ -504,9 +504,13 @@ create table tasks (
   is_done boolean not null default false,
   done_at timestamptz,
   created_by uuid references profiles(id),
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  -- T4.5 (migration 0006): links a renewal task to its mandate + makes the
+  -- nightly expire_mandates() task insert idempotent
+  mandate_id uuid references mandates(id)
 );
 create index tasks_assignee_idx on tasks(org_id, assignee_id, is_done, due_at);
+create index tasks_mandate_idx on tasks(mandate_id) where mandate_id is not null;
 
 -- ---------- cyprus config ----------
 create table cyprus_config (
@@ -567,11 +571,42 @@ end $$;
 -- Immutability: no update/delete for anyone (RLS adds insert/select rules in doc 04)
 revoke update, delete, truncate on events from anon, authenticated;
 
--- ---------- mandate auto-expiry (pg_cron, daily 03:00) ----------
+-- ---------- mandate auto-expiry + renewal tasks (pg_cron, daily 03:00) ----------
+-- T4.5 (migration 0006): also creates one renewal task per active mandate
+-- entering its reminder window; idempotent via tasks.mandate_id. Both actions
+-- write system events (actor_id null).
 create or replace function expire_mandates() returns void
 language sql security definer set search_path = public as $$
-  update mandates set status = 'expired'
-  where status = 'active' and expiry_date is not null and expiry_date < current_date;
+  with created as (
+    insert into tasks (org_id, title, due_at, assignee_id, property_id, mandate_id)
+    select m.org_id,
+           'Mandate renewal: ' || p.reference || ' expires ' || to_char(m.expiry_date, 'DD Mon YYYY'),
+           m.expiry_date::timestamptz,
+           coalesce(p.assigned_agent_id, m.created_by),
+           m.property_id,
+           m.id
+    from mandates m
+    join properties p on p.id = m.property_id
+    where m.status = 'active'
+      and m.expiry_date is not null
+      and current_date >= m.expiry_date - m.renewal_reminder_days
+      and not exists (select 1 from tasks t where t.mandate_id = m.id)
+    returning org_id, mandate_id, assignee_id
+  )
+  insert into events (org_id, actor_id, entity_type, entity_id, event_type, payload)
+  select org_id, null, 'mandate', mandate_id, 'renewal_task_created',
+         jsonb_build_object('assignee_id', assignee_id)
+  from created;
+
+  with flipped as (
+    update mandates set status = 'expired'
+    where status = 'active' and expiry_date is not null and expiry_date < current_date
+    returning org_id, id, expiry_date
+  )
+  insert into events (org_id, actor_id, entity_type, entity_id, event_type, payload)
+  select org_id, null, 'mandate', id, 'status_changed',
+         jsonb_build_object('from', 'active', 'to', 'expired', 'expiry_date', expiry_date)
+  from flipped;
 $$;
 select cron.schedule('expire-mandates','0 3 * * *', $$select expire_mandates()$$);
 

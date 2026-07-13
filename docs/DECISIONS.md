@@ -52,6 +52,22 @@ silent. Format: date · task · decision · rationale.
   guard unambiguous). Terminal statuses (accepted/rejected/withdrawn/expired)
   stamp `decided_at` and allow no further transitions.
 
+- **2026-07-13 · T4.5** — Mandates. `expire_mandates()` (migration 0006, doc 03
+  synced) now also creates renewal tasks: one per active mandate inside its
+  reminder window, assigned to `properties.assigned_agent_id` (fallback: the
+  mandate's creator), idempotent via new `tasks.mandate_id`. Both the task
+  creation and the expiry flip write system events (actor null). All UI mandate
+  reads go through `mandates_safe` — including the property-header badge and
+  the live quality-score inputs — so LM sees rows with commission masked and
+  the badge still renders correctly for every role. Mandate CRUD is admin-only
+  (mirrors RLS); `expired` is cron-only, admin transitions are draft→active
+  and draft/active→terminated. Signed agreements upload to the private
+  `documents` bucket + a `documents` row (`mandate_agreement`) linked via
+  `signed_document_id`; downloads mint a 120s signed URL after an RLS-checked
+  row read. Score staleness: the cron flip does NOT recompute quality/health
+  (recomputes are TS-side, in-action) — scores refresh on the next mutation,
+  same precedent as T3.3.
+
 - **2026-07-13 · T4.4** — Route builder is a fourth view mode on `/viewings`
   (doc 05 puts the day route builder on that screen). Saving stamps
   `route_date` + 1-based `route_order` on each viewing and writes ONE summary

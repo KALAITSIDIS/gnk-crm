@@ -134,6 +134,11 @@ const EVENT_LINES: Record<string, (p: P) => string> = {
     const name = asText(p.signer_name);
     return name ? `Viewing slip signed by ${name}` : "Viewing slip signed";
   },
+  document_uploaded: (p) => {
+    const title = asText(p.title);
+    return title ? `Signed document uploaded — ${title}` : "Signed document uploaded";
+  },
+  renewal_task_created: () => "Renewal reminder task created",
   route_updated: (p) => {
     const stops = Number(p.stops) || 0;
     const date = asText(p.route_date);

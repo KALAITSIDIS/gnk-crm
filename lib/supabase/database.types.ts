@@ -1571,6 +1571,7 @@ export type Database = {
           due_at: string | null
           id: string
           is_done: boolean
+          mandate_id: string | null
           org_id: string
           property_id: string | null
           title: string
@@ -1585,6 +1586,7 @@ export type Database = {
           due_at?: string | null
           id?: string
           is_done?: boolean
+          mandate_id?: string | null
           org_id: string
           property_id?: string | null
           title: string
@@ -1599,6 +1601,7 @@ export type Database = {
           due_at?: string | null
           id?: string
           is_done?: boolean
+          mandate_id?: string | null
           org_id?: string
           property_id?: string | null
           title?: string
@@ -1630,6 +1633,20 @@ export type Database = {
             columns: ["deal_id"]
             isOneToOne: false
             referencedRelation: "deals"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_mandate_id_fkey"
+            columns: ["mandate_id"]
+            isOneToOne: false
+            referencedRelation: "mandates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_mandate_id_fkey"
+            columns: ["mandate_id"]
+            isOneToOne: false
+            referencedRelation: "mandates_safe"
             referencedColumns: ["id"]
           },
           {

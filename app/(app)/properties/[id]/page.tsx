@@ -12,6 +12,10 @@ import {
   type PriceHistoryRow,
 } from "@/components/features/properties/price-history";
 import { CreateViewingDialog } from "@/components/features/viewings/create-viewing-dialog";
+import {
+  MandatePanel,
+  type MandateRow,
+} from "@/components/features/properties/mandate-panel";
 import { EventTimeline } from "@/components/features/shared/event-timeline";
 import { QualityScoreRing } from "@/components/features/shared/quality-score-ring";
 import { computeQualityScore } from "@/lib/services/quality-score";
@@ -31,19 +35,27 @@ export default async function PropertyDetailPage({
   const { id } = await params;
   const supabase = await createClient();
 
-  const [{ data: p }, { data: areaRows }, { data: mediaRows }] = await Promise.all([
-    supabase
-      .from("properties")
-      .select("*, districts(name), areas(name), mandates(type, status)")
-      .eq("id", id)
-      .maybeSingle(),
-    supabase.from("areas").select("id, district_id, name"),
-    supabase
-      .from("property_media")
-      .select("id, path_thumb, path_card, is_cover, sort_order, watermarked, width, height")
-      .eq("property_id", id)
-      .order("sort_order"),
-  ]);
+  // mandates via mandates_safe, NOT the base table: LM has no base-table
+  // policy and commission columns are masked in the view (doc 04, T4.5)
+  const [{ data: p }, { data: areaRows }, { data: mediaRows }, { data: mandateSafeRows }] =
+    await Promise.all([
+      supabase
+        .from("properties")
+        .select("*, districts(name), areas(name)")
+        .eq("id", id)
+        .maybeSingle(),
+      supabase.from("areas").select("id, district_id, name"),
+      supabase
+        .from("property_media")
+        .select("id, path_thumb, path_card, is_cover, sort_order, watermarked, width, height")
+        .eq("property_id", id)
+        .order("sort_order"),
+      supabase
+        .from("mandates_safe")
+        .select("*")
+        .eq("property_id", id)
+        .order("created_at", { ascending: false }),
+    ]);
 
   const [{ data: priceRows }, { data: eventRows }, { data: viewingRows }] = await Promise.all([
     supabase
@@ -75,7 +87,7 @@ export default async function PropertyDetailPage({
 
   const isLand = p.property_type === "land";
   const media = mediaRows ?? [];
-  const mandateRows = (p.mandates ?? []) as { type: string; status: string }[];
+  const mandateRows = mandateSafeRows ?? [];
   const quality = computeQualityScore({
     isLand,
     hasCoverPhoto: media.some((m) => m.is_cover),
@@ -112,13 +124,40 @@ export default async function PropertyDetailPage({
     name: (a.name as { en?: string })?.en ?? "—",
   }));
 
-  const mandates = (p.mandates ?? []) as { type: MandateBadgeState; status: string }[];
-  const activeMandate = mandates.find((m) => m.status === "active");
+  const activeMandate = mandateRows.find((m) => m.status === "active");
   const mandateState: MandateBadgeState = activeMandate
-    ? activeMandate.type
-    : mandates.some((m) => m.status === "expired")
+    ? (activeMandate.type as MandateBadgeState)
+    : mandateRows.some((m) => m.status === "expired")
       ? "expired"
       : "none";
+
+  // owner labels for the mandate panel
+  const ownerIds = [...new Set(mandateRows.map((m) => m.owner_contact_id).filter(Boolean))];
+  const { data: ownerRows } = ownerIds.length
+    ? await supabase
+        .from("contacts")
+        .select("id, display_name, phone_e164")
+        .in("id", ownerIds as string[])
+    : { data: [] };
+  const ownerById = new Map(
+    (ownerRows ?? []).map((c) => [
+      c.id,
+      { id: c.id, label: c.display_name ?? "Unnamed", sublabel: c.phone_e164 },
+    ]),
+  );
+  const mandatePanelRows: MandateRow[] = mandateRows.map((m) => ({
+    id: m.id!,
+    type: m.type as MandateRow["type"],
+    status: m.status as MandateRow["status"],
+    commission_pct: m.commission_pct,
+    commission_notes: m.commission_notes,
+    start_date: m.start_date!,
+    expiry_date: m.expiry_date,
+    renewal_reminder_days: m.renewal_reminder_days ?? 30,
+    notes: m.notes,
+    signed_document_id: m.signed_document_id,
+    owner: m.owner_contact_id ? (ownerById.get(m.owner_contact_id) ?? null) : null,
+  }));
 
   const title = (p.title as { en?: string })?.en;
   const district = (p.districts as { name?: { en?: string } } | null)?.name?.en;
@@ -185,9 +224,7 @@ export default async function PropertyDetailPage({
           <TabsTrigger value="legal">Legal</TabsTrigger>
           <TabsTrigger value="marketing">Marketing</TabsTrigger>
           <TabsTrigger value="media">Media ({(mediaRows ?? []).length})</TabsTrigger>
-          <TabsTrigger value="mandate" disabled title="Arrives with T4.5/T4.6">
-            Mandate & Keys
-          </TabsTrigger>
+          <TabsTrigger value="mandate">Mandate &amp; Keys</TabsTrigger>
           <TabsTrigger value="documents" disabled title="Arrives later in Phase 1">
             Documents
           </TabsTrigger>
@@ -279,6 +316,16 @@ export default async function PropertyDetailPage({
         <TabsContent value="marketing" className="mt-4">
           <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-6">
             <MarketingForm property={p} />
+          </div>
+        </TabsContent>
+
+        <TabsContent value="mandate" className="mt-4">
+          <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-6">
+            <MandatePanel
+              propertyId={p.id}
+              mandates={mandatePanelRows}
+              isAdmin={profile.role === "admin"}
+            />
           </div>
         </TabsContent>
 
