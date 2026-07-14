@@ -52,6 +52,19 @@ silent. Format: date · task · decision · rationale.
   guard unambiguous). Terminal statuses (accepted/rejected/withdrawn/expired)
   stamp `decided_at` and allow no further transitions.
 
+- **2026-07-14 · T5.3** — Dashboards. Guardrail 6 fixes three dashboards;
+  listing managers get the AGENT view (their "my …" blocks scope to their own
+  id) until the Owner/Developer dashboard ships in a later phase. Aggregations
+  run in TS over minimal selects because PostgREST aggregate functions are
+  disabled; the equivalent SQL sits in a comment above every query
+  (acceptance: numbers reproducible by manual SQL — verified for all seven
+  admin blocks). Stage bars filter by deal COUNT, not value, so €0-value
+  pipelines still render (display "€X · N"). Charts are plain CSS bars — no
+  chart library enters the stack for five bar lists. "Hot buyer idle" = no
+  contact-scoped event within 3 days (contacts with zero events count as
+  idle). The T4.3 feedback nudge moved to the agent dashboard per doc 05;
+  admin KPI "won this month" carries the T3.4 acceptance forward.
+
 - **2026-07-13 · T5.2** — Evidence report. The footer "report hash" is the
   SHA-256 of the canonical JSON of the ROWS (recomputable by regenerating with
   the same filters), not of the PDF file — the file contains the hash, so it
