@@ -143,6 +143,32 @@ const EVENT_LINES: Record<string, (p: P) => string> = {
     const code = asText(p.key_code);
     return `Key${code ? ` ${code}` : ""} returned to office`;
   },
+  invited: (p) => {
+    const email = asText(p.email);
+    const role = asText(p.role);
+    return `User invited${email ? ` — ${email}` : ""}${role ? ` (${role.replace(/_/g, " ")})` : ""}`;
+  },
+  role_changed: (p) => {
+    const line = fromTo("Role", p);
+    return line === "Role" ? "Role changed" : line;
+  },
+  deactivated: () => "User deactivated",
+  reactivated: () => "User reactivated",
+  stages_updated: (p) => {
+    const action = asText(p.action) ?? "updated";
+    if (action === "rename") return `Stage renamed ${asText(p.from) ?? ""} → ${asText(p.to) ?? ""}`;
+    if (action === "add") return `Stage added — ${asText(p.name) ?? ""}`;
+    if (action === "delete") return `Stage deleted — ${asText(p.name) ?? ""}`;
+    if (action === "reorder") return `Stage moved — ${asText(p.stage) ?? ""} ${asText(p.direction) ?? ""}`;
+    return "Stages updated";
+  },
+  locations_updated: (p) => {
+    const action = asText(p.action);
+    if (action === "add_area") return `Area added — ${asText(p.name) ?? ""}`;
+    if (action === "rename_area")
+      return `Area renamed ${asText(p.from) ?? ""} → ${asText(p.to) ?? ""}`;
+    return "Locations updated";
+  },
   evidence_report_generated: (p) => {
     const rows = Number(p.rows) || 0;
     return `Commission evidence report generated (${rows} events, chain ${p.chain_ok === true ? "verified" : "FAILED"})`;

@@ -12,6 +12,9 @@ built without explicit direction.
 - Key register: UI for `transfer` and `mark_lost` movements and the
   `with_owner`/`lost` statuses (enums + append-only log already support them;
   T4.6 shipped checkout/return only).
+- Settings/users: invite emails, self-service password reset and "reset 2FA"
+  (doc 05) — all ride the Phase 2-3 email integration; Phase 1 invites hand
+  over a one-time password (DECISIONS 2026-07-14 · T5.4).
 
 - Audit remaining `z.string().uuid()` usages (leads.ts, units.ts,
   properties.ts required ids) for the Zod 4 strict-RFC-4122 trap: Postgres

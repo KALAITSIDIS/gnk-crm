@@ -52,6 +52,21 @@ silent. Format: date · task · decision · rationale.
   guard unambiguous). Terminal statuses (accepted/rejected/withdrawn/expired)
   stamp `decided_at` and allow no further transitions.
 
+- **2026-07-14 · T5.4** — Settings. Invites create the auth user with a
+  ONE-TIME password shown once to the admin (no SMTP in Phase 1 — invite
+  emails + self-service reset ride the Phase 2-3 email integration; doc 05's
+  "reset 2FA" is skipped for the same reason, BACKLOG). Deactivation sets
+  `is_active=false` AND bans the auth user (876000h) so the login itself is
+  refused, not just the profile flagged; reactivation lifts both. Stage
+  reordering parks the moving stage on sort_order -1 before swapping — the
+  unique (org, deal_type, sort_order) index forbids a direct swap. New stages
+  insert before the terminal won/lost stages, which shift up to stay last.
+  cyprus_config saves shape-check transfer_fees/stamp_duty with the calculator
+  parsers before writing (guardrail 5: a typo cannot produce nonsense fees).
+  Branding uploads overwrite fixed paths in the public media bucket
+  (branding/logo.png, branding/watermark.png — the watermark path the T1.4
+  media pipeline already reads); cache-busted by the file's updated_at.
+
 - **2026-07-14 · T5.3** — Dashboards. Guardrail 6 fixes three dashboards;
   listing managers get the AGENT view (their "my …" blocks scope to their own
   id) until the Owner/Developer dashboard ships in a later phase. Aggregations
