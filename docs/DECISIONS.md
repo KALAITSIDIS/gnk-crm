@@ -52,6 +52,15 @@ silent. Format: date · task · decision · rationale.
   guard unambiguous). Terminal statuses (accepted/rejected/withdrawn/expired)
   stamp `decided_at` and allow no further transitions.
 
+- **2026-07-14 · T5.5** — Tasks. The feedback nudge stays a live QUERY
+  rendered as a virtual section on /tasks (and the agent dashboard), NOT
+  materialized task rows — task rows for it would need syncing when feedback
+  arrives and could drift; the mandate-renewal auto-tasks ARE rows (created
+  by expire_mandates, T4.5) and show an AUTO chip via `mandate_id`. Quick-add
+  due dates store as Cyprus end-of-day (23:59 wall clock → UTC) so a task due
+  "today" only turns overdue after the day actually ends. Done/reopen write
+  `completed`/`reopened` events on entity `task` (acceptance).
+
 - **2026-07-14 · T5.4** — Settings. Invites create the auth user with a
   ONE-TIME password shown once to the admin (no SMTP in Phase 1 — invite
   emails + self-service reset ride the Phase 2-3 email integration; doc 05's

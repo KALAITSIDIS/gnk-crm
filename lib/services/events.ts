@@ -143,6 +143,14 @@ const EVENT_LINES: Record<string, (p: P) => string> = {
     const code = asText(p.key_code);
     return `Key${code ? ` ${code}` : ""} returned to office`;
   },
+  completed: (p) => {
+    const title = asText(p.title);
+    return title ? `Task completed — ${title}` : "Completed";
+  },
+  reopened: (p) => {
+    const title = asText(p.title);
+    return title ? `Task reopened — ${title}` : "Reopened";
+  },
   invited: (p) => {
     const email = asText(p.email);
     const role = asText(p.role);
