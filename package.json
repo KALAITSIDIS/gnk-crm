@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:rls": "vitest run -c vitest.rls.config.ts",
-    "db:types": "npx supabase gen types typescript --local > lib/supabase/database.types.ts"
+    "db:types": "npx supabase gen types typescript --local > lib/supabase/database.types.ts",
+    "import:contacts": "node --env-file=.env.local scripts/import/contacts.mts",
+    "import:properties": "node --env-file=.env.local scripts/import/properties.mts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

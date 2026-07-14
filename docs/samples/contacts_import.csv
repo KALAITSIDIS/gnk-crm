@@ -1,0 +1,6 @@
+first_name,last_name,company_name,phone,email,telegram_username,has_whatsapp,languages,nationality,contact_types,temperature,source,psychology,budget_min,budget_max,pref_areas,pref_bedrooms_min,pref_property_types,consent_marketing,notes
+Andreas,Georgiou,,99 11 22 33,andreas.g@example.com,andreasg,true,en;el,Cyprus,buyer,hot,referral,investor,250000,400000,Kato Paphos;Universal,2,apartment;villa,true,Prefers sea view; cash buyer
+Olga,Ivanova,,+357 99 44 55 66,olga.iv@example.com,,true,en;ru,Russia,buyer,warm,website,relocation,300000,,Peyia / Coral Bay,3,villa,true,Relocating 2027
+,,Sea View Developments Ltd,99 77 88 99,info@seaview.example,,false,en,Cyprus,developer,warm,partner,,,,,,,false,Boutique developer — 2 active projects
+Maria,Constantinou,,99 33 44 55,,,true,el,Cyprus,owner,cold,walk_in,,,,,,,false,Owner of villa in Chloraka
+Andreas,Georgiou,,99112233,dupe@example.com,,false,en,Cyprus,buyer,hot,phone,,,,,,,false,DUPLICATE of row 1 by phone — should be skipped on live run

@@ -52,6 +52,21 @@ silent. Format: date · task · decision · rationale.
   guard unambiguous). Terminal statuses (accepted/rejected/withdrawn/expired)
   stamp `decided_at` and allow no further transitions.
 
+- **2026-07-14 · T5.6** — Import scripts are standalone `.mts` run by Node's
+  native type-stripping (`node --env-file=.env.local scripts/import/*.mts`) —
+  no tsx dependency, no build step. They're self-contained (only node_modules,
+  no `@/` app imports) and EXCLUDED from the app tsconfig/eslint; validated by
+  running them, not by CI typecheck. Node strip-only mode forbids TS parameter
+  properties and enums — the Report class uses explicit fields (note for future
+  scripts). Service role throughout; `imported` events insert via the same
+  path as any write so the hash-chain trigger keeps `verify_events_chain` true
+  (confirmed). Dedup: contacts by normalized phone then email; properties by
+  reference; owner contacts by phone. Auto-referenced properties (blank
+  reference) can't be deduped on re-run — that's inherent; provide references
+  to make a property import idempotent. `resolveOrg` requires `--org` when the
+  DB has >1 org (local has Test Org B from the RLS suite). Photo-folder media
+  ingestion (doc 09 `photo_folder`) is deferred — BACKLOG.
+
 - **2026-07-14 · T5.5** — Tasks. The feedback nudge stays a live QUERY
   rendered as a virtual section on /tasks (and the agent dashboard), NOT
   materialized task rows — task rows for it would need syncing when feedback

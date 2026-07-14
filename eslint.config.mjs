@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // standalone Node import scripts (T5.6): run via `node --env-file`, type-
+    // stripped at runtime, outside the app's module graph and generated types
+    "scripts/**",
   ]),
 ]);
 

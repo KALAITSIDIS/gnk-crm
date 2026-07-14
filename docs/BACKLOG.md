@@ -22,3 +22,6 @@ built without explicit direction.
   `11111111-…` fixture ids. `optionalUuid` in deals/properties validators
   already fixed to `z.guid()` (T3.2); the rest only ever see
   `gen_random_uuid()` values today so they are safe in practice.
+- Property importer `photo_folder` support (doc 09): ingest photos from
+  `import-media/<folder>/` through the T1.4 media pipeline. T5.6 imports all
+  other columns; photo ingestion deferred.
