@@ -25,3 +25,8 @@ built without explicit direction.
 - Property importer `photo_folder` support (doc 09): ingest photos from
   `import-media/<folder>/` through the T1.4 media pipeline. T5.6 imports all
   other columns; photo ingestion deferred.
+- `/leads/[id]` lead detail page (doc 05): lead summary + editable fields +
+  conversation/event history (EventTimeline) + convert panel. The inbox now
+  covers link contact / assign / correct / reopen / convert / close inline
+  (2026-07-15), so the standalone page is deferred as a nice-to-have. A
+  converted lead links out to its deal via "View deal →".

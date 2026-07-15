@@ -19,7 +19,7 @@ export default async function LeadsPage() {
     .from("leads")
     .select(
       `id, source, channel, message, status, received_at, first_response_at,
-       first_call_at, assigned_agent_id, lost_reason,
+       first_call_at, assigned_agent_id, lost_reason, converted_deal_id,
        contacts(id, display_name, phone_e164, telegram_username, has_whatsapp),
        properties(id, reference)`,
     )
@@ -126,16 +126,26 @@ export default async function LeadsPage() {
                     <p className="text-xs text-text-3">Reason: {lead.lost_reason}</p>
                   ) : null}
                 </div>
-                <LeadRowActions
-                  leadId={lead.id}
-                  isMine={lead.assigned_agent_id === profile.id}
-                  isUnassigned={!lead.assigned_agent_id}
-                  isOpen={isOpen}
-                  hasResponse={Boolean(lead.first_response_at)}
-                  hasContact={Boolean(contact)}
-                  isAdmin={profile.role === "admin"}
-                  status={lead.status}
-                />
+                <div className="flex items-center gap-2">
+                  {lead.status === "converted" && lead.converted_deal_id ? (
+                    <Link
+                      href={`/deals/${lead.converted_deal_id}`}
+                      className="whitespace-nowrap text-xs font-medium text-brand-700 hover:underline"
+                    >
+                      View deal →
+                    </Link>
+                  ) : null}
+                  <LeadRowActions
+                    leadId={lead.id}
+                    isMine={lead.assigned_agent_id === profile.id}
+                    isUnassigned={!lead.assigned_agent_id}
+                    isOpen={isOpen}
+                    hasResponse={Boolean(lead.first_response_at)}
+                    hasContact={Boolean(contact)}
+                    isAdmin={profile.role === "admin"}
+                    status={lead.status}
+                  />
+                </div>
               </li>
             );
           })}
