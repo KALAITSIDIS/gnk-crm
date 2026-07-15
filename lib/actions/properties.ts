@@ -118,6 +118,8 @@ export async function updatePropertySection(
 
   const raw = Object.fromEntries(formData.entries());
   let updates: Database["public"]["Tables"]["properties"]["Update"];
+  // readable diff for the location point (raw EWKB hex vs EWKT is meaningless)
+  let locationChange: { from: unknown; to: unknown } | null = null;
 
   const { detailsSectionSchema, legalSectionSchema, marketingSectionSchema } = await import(
     "@/lib/validators/properties"
@@ -172,6 +174,25 @@ export async function updatePropertySection(
       electricity_available: d.electricity_available ?? null,
       constraints_notes: d.constraints_notes ?? null,
     };
+
+    // location is a PostGIS point: DB returns EWKB hex, we write EWKT. Compare
+    // decoded coords (rounded) so an unchanged point is not re-written every save.
+    const { parseLocationPoint, toLocationEWKT } = await import("@/lib/utils/geo");
+    const prevPoint = parseLocationPoint((current as { location?: unknown }).location);
+    const nextPoint =
+      d.latitude !== undefined && d.longitude !== undefined
+        ? { lat: d.latitude, lng: d.longitude }
+        : null;
+    const r6 = (n: number) => Math.round(n * 1e6) / 1e6;
+    const samePoint =
+      prevPoint !== null &&
+      nextPoint !== null &&
+      r6(prevPoint.lat) === r6(nextPoint.lat) &&
+      r6(prevPoint.lng) === r6(nextPoint.lng);
+    if ((prevPoint === null) !== (nextPoint === null) || !samePoint) {
+      updates.location = nextPoint ? toLocationEWKT(nextPoint.lat, nextPoint.lng) : null;
+      locationChange = { from: prevPoint, to: nextPoint };
+    }
   } else if (section === "legal") {
     const parsed = legalSectionSchema.safeParse(raw);
     if (!parsed.success) {
@@ -249,9 +270,11 @@ export async function updatePropertySection(
   // changed-field payload for the event (guardrail: updates must carry their diff)
   const changed: Record<string, { from: unknown; to: unknown }> = {};
   for (const [key, next] of Object.entries(updates)) {
+    if (key === "location") continue; // handled below with decoded coords
     const prev = (current as Record<string, unknown>)[key];
     if (changedValue(prev, next)) changed[key] = { from: prev ?? null, to: next ?? null };
   }
+  if (locationChange) changed.location = locationChange;
   if (Object.keys(changed).length === 0) {
     return { error: null, savedAt: Date.now() }; // nothing to write, still "saved"
   }

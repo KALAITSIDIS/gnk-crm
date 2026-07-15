@@ -7,6 +7,7 @@ import {
   MarketingForm,
 } from "@/components/features/properties/detail-forms";
 import { MediaTab } from "@/components/features/properties/media-tab";
+import { DocumentsTab } from "@/components/features/properties/documents-tab";
 import {
   PriceHistorySection,
   type PriceHistoryRow,
@@ -71,7 +72,8 @@ export default async function PropertyDetailPage({
         .order("created_at", { ascending: true }),
     ]);
 
-  const [{ data: priceRows }, { data: eventRows }, { data: viewingRows }] = await Promise.all([
+  const [{ data: priceRows }, { data: eventRows }, { data: viewingRows }, { data: documentRows }] =
+    await Promise.all([
     supabase
       .from("price_history")
       .select("id, old_price, new_price, changed_at, changed_by")
@@ -93,6 +95,12 @@ export default async function PropertyDetailPage({
       .gte("scheduled_at", new Date().toISOString())
       .order("scheduled_at", { ascending: true })
       .limit(10),
+    supabase
+      .from("documents")
+      .select("id, title, doc_type, created_at, uploader:profiles!uploaded_by(full_name)")
+      .eq("entity_type", "property")
+      .eq("entity_id", id)
+      .order("created_at", { ascending: false }),
   ]);
 
   if (!p) notFound();
@@ -171,6 +179,15 @@ export default async function PropertyDetailPage({
     notes: m.notes,
     signed_document_id: m.signed_document_id,
     owner: m.owner_contact_id ? (ownerById.get(m.owner_contact_id) ?? null) : null,
+  }));
+
+  const documents = (documentRows ?? []).map((d) => ({
+    id: d.id,
+    title: d.title,
+    doc_type: d.doc_type,
+    created_at: d.created_at,
+    uploaded_by_name:
+      (d.uploader as { full_name: string | null } | null)?.full_name ?? null,
   }));
 
   const title = (p.title as { en?: string })?.en;
@@ -261,9 +278,7 @@ export default async function PropertyDetailPage({
           <TabsTrigger value="marketing">Marketing</TabsTrigger>
           <TabsTrigger value="media">Media ({(mediaRows ?? []).length})</TabsTrigger>
           <TabsTrigger value="mandate">Mandate &amp; Keys</TabsTrigger>
-          <TabsTrigger value="documents" disabled title="Arrives later in Phase 1">
-            Documents
-          </TabsTrigger>
+          <TabsTrigger value="documents">Documents ({documents.length})</TabsTrigger>
           <TabsTrigger value="activity">Activity</TabsTrigger>
         </TabsList>
 
@@ -402,6 +417,16 @@ export default async function PropertyDetailPage({
                 </ul>
               )}
             </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="documents" className="mt-4">
+          <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-6">
+            <DocumentsTab
+              propertyId={p.id}
+              items={documents}
+              isAdmin={profile.role === "admin"}
+            />
           </div>
         </TabsContent>
 

@@ -197,7 +197,11 @@ const EVENT_LINES: Record<string, (p: P) => string> = {
   },
   document_uploaded: (p) => {
     const title = asText(p.title);
-    return title ? `Signed document uploaded — ${title}` : "Signed document uploaded";
+    return title ? `Document uploaded — ${title}` : "Document uploaded";
+  },
+  document_deleted: (p) => {
+    const title = asText(p.title);
+    return title ? `Document deleted — ${title}` : "Document deleted";
   },
   renewal_task_created: () => "Renewal reminder task created",
   route_updated: (p) => {

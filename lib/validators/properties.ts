@@ -155,6 +155,14 @@ const optNumber = z.preprocess(
   emptyToUndefined,
   z.coerce.number().min(0, "Must be ≥ 0").optional(),
 );
+const optLat = z.preprocess(
+  emptyToUndefined,
+  z.coerce.number().min(-90, "Latitude out of range").max(90, "Latitude out of range").optional(),
+);
+const optLng = z.preprocess(
+  emptyToUndefined,
+  z.coerce.number().min(-180, "Longitude out of range").max(180, "Longitude out of range").optional(),
+);
 const optInt = z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).optional());
 const optText = (max: number) => z.preprocess(emptyToUndefined, z.string().max(max).optional());
 const optBool = z
@@ -169,6 +177,8 @@ export const detailsSectionSchema = z.object({
   area_id: z.preprocess(emptyToUndefined, z.string().uuid().optional()),
   address: optText(300),
   postal_code: optText(20),
+  latitude: optLat,
+  longitude: optLng,
   sea_distance_m: optInt,
   amenities_notes: optText(2000),
   asking_price: optNumber,
@@ -208,6 +218,9 @@ export const detailsSectionSchema = z.object({
   water_available: optBool,
   electricity_available: optBool,
   constraints_notes: optText(2000),
+}).refine((d) => (d.latitude === undefined) === (d.longitude === undefined), {
+  message: "Enter both latitude and longitude, or clear both",
+  path: ["latitude"],
 });
 
 export const legalSectionSchema = z.object({

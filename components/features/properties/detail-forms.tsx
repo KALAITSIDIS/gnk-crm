@@ -1,5 +1,6 @@
 "use client";
 
+import { MapLocationFields } from "@/components/features/properties/map-location-fields";
 import { SectionForm } from "@/components/features/properties/section-form";
 import { MultilangTabs, type MultilangValue } from "@/components/features/shared/multilang-tabs";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -177,6 +178,7 @@ export function DetailsForm({
           label="Sea distance (m)"
           defaultValue={property.sea_distance_m}
         />
+        <MapLocationFields location={property.location} />
         <div className="flex flex-col gap-2 sm:col-span-2">
           <Label htmlFor="amenities_notes">Amenities notes</Label>
           <Input
