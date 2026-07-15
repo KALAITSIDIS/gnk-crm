@@ -31,8 +31,15 @@ export function ResponseClock({
   const state = clockState(receivedAt, firstResponseAt, now);
   const label = state === "answered" ? "answered" : elapsedLabel(receivedAt, now);
 
+  // The elapsed label (and, at a minute boundary, the colour) are wall-clock
+  // relative: the server renders it at request time and the client re-renders
+  // it moments later at hydration, so the two never match exactly. That is the
+  // one case React's suppressHydrationWarning is for — the SSR value still
+  // paints, hydration accepts the fresher client value, and the 30s interval
+  // keeps it live. (Answered clocks are static and unaffected.)
   return (
     <span
+      suppressHydrationWarning
       className={cn(
         "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium tabular-nums",
         STYLES[state],
