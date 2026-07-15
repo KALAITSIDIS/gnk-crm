@@ -68,6 +68,137 @@ async function getLead(leadId: string) {
   return { supabase, profile, lead };
 }
 
+/**
+ * Link (or replace) the contact on an existing lead — doc 02 §C4
+ * "link/create contact". Allowed for admin or the assigned/claiming agent
+ * (mirrors the leads UPDATE policy, doc 04). Not permitted once converted:
+ * the contact is already carried on the resulting deal.
+ */
+export async function linkLeadContact(leadId: string, contactId: string): Promise<void> {
+  const { supabase, profile, lead } = await getLead(leadId);
+  if (lead.status === "converted") {
+    throw new Error("Lead already converted — the contact lives on its deal.");
+  }
+  if (
+    profile.role !== "admin" &&
+    lead.assigned_agent_id &&
+    lead.assigned_agent_id !== profile.id
+  ) {
+    throw new Error("Lead is assigned to another agent.");
+  }
+
+  // org-scoped by RLS; confirms the contact exists and gives a name for the event
+  const { data: contact } = await supabase
+    .from("contacts")
+    .select("display_name")
+    .eq("id", contactId)
+    .maybeSingle();
+  if (!contact) throw new Error("Contact not found.");
+
+  const { data, error } = await supabase
+    .from("leads")
+    .update({ contact_id: contactId })
+    .eq("id", leadId)
+    .select("id");
+  if (error || !data?.length) throw new Error(error?.message ?? "Link blocked");
+
+  await logEvent(supabase, {
+    orgId: profile.orgId,
+    actorId: profile.id,
+    entityType: "lead",
+    entityId: leadId,
+    eventType: "contact_linked",
+    payload: { contact_id: contactId, contact_name: contact.display_name ?? null },
+  });
+  revalidatePath("/leads");
+}
+
+/**
+ * Reassign a lead to another agent — doc 02 §C4 "assign agent". Admin-only:
+ * doc 04 test 11 denies an agent reassigning a lead away from themselves, so
+ * the UI must not offer it to non-admins. (Agents self-assign via claimLead.)
+ */
+export async function reassignLead(leadId: string, agentId: string): Promise<void> {
+  const { supabase, profile, lead } = await getLead(leadId);
+  if (profile.role !== "admin") throw new Error("Admins only.");
+
+  const { data: agent } = await supabase
+    .from("profiles")
+    .select("full_name, is_active")
+    .eq("id", agentId)
+    .maybeSingle();
+  if (!agent || !agent.is_active) throw new Error("Pick an active agent.");
+  if (lead.assigned_agent_id === agentId) return; // no-op
+
+  const { error } = await supabase
+    .from("leads")
+    .update({ assigned_agent_id: agentId })
+    .eq("id", leadId);
+  if (error) throw new Error(error.message);
+
+  await logEvent(supabase, {
+    orgId: profile.orgId,
+    actorId: profile.id,
+    entityType: "lead",
+    entityId: leadId,
+    eventType: "assigned",
+    payload: { from: lead.assigned_agent_id, to: agentId, to_name: agent.full_name },
+  });
+  revalidatePath("/leads");
+}
+
+/**
+ * Admin correction for mis-clicks — doc 02 §C4 stamps first_response_at
+ * "exactly once", so this is the only sanctioned way to undo it. Admin-only
+ * on purpose: first_response_at feeds the dashboard speed KPI. The events log
+ * is append-only (guardrail 1), so a correction is a new `corrected` event,
+ * never a deletion.
+ *   - resetResponse: clears first_response_at/first_call_at (and drops a lead
+ *     back to "new" so it re-enters the awaiting-first-response queue)
+ *   - reopen: pulls a lost/spam lead back to an open status, clears lost_reason
+ */
+export async function correctLead(
+  leadId: string,
+  opts: { resetResponse?: boolean; reopen?: boolean },
+): Promise<void> {
+  const { supabase, profile, lead } = await getLead(leadId);
+  if (profile.role !== "admin") throw new Error("Admins only.");
+
+  const updates: Database["public"]["Tables"]["leads"]["Update"] = {};
+  let reopened = false;
+
+  if (opts.reopen) {
+    if (lead.status !== "lost" && lead.status !== "spam") {
+      throw new Error("Only a lost or spam lead can be reopened.");
+    }
+    updates.status = lead.first_response_at ? "contacted" : "new";
+    updates.lost_reason = null;
+    reopened = true;
+  }
+
+  if (opts.resetResponse) {
+    updates.first_response_at = null;
+    updates.first_call_at = null;
+    // a lead marked contacted only by that stamp returns to the new queue
+    if (!opts.reopen && lead.status === "contacted") updates.status = "new";
+  }
+
+  if (Object.keys(updates).length === 0) throw new Error("Nothing to correct.");
+
+  const { error } = await supabase.from("leads").update(updates).eq("id", leadId);
+  if (error) throw new Error(error.message);
+
+  await logEvent(supabase, {
+    orgId: profile.orgId,
+    actorId: profile.id,
+    entityType: "lead",
+    entityId: leadId,
+    eventType: "corrected",
+    payload: { reset_response: Boolean(opts.resetResponse), reopened },
+  });
+  revalidatePath("/leads");
+}
+
 export async function claimLead(leadId: string): Promise<void> {
   const { supabase, profile, lead } = await getLead(leadId);
   if (lead.assigned_agent_id && lead.assigned_agent_id !== profile.id) {

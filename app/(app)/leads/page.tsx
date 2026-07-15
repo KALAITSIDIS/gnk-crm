@@ -133,6 +133,8 @@ export default async function LeadsPage() {
                   isOpen={isOpen}
                   hasResponse={Boolean(lead.first_response_at)}
                   hasContact={Boolean(contact)}
+                  isAdmin={profile.role === "admin"}
+                  status={lead.status}
                 />
               </li>
             );

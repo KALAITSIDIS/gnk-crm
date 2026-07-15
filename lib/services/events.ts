@@ -119,6 +119,20 @@ const EVENT_LINES: Record<string, (p: P) => string> = {
   },
   spam: () => "Marked spam",
   claimed: () => "Claimed",
+  assigned: (p) => {
+    const name = asText(p.to_name);
+    return name ? `Reassigned to ${name}` : "Reassigned";
+  },
+  contact_linked: (p) => {
+    const name = asText(p.contact_name);
+    return name ? `Contact linked — ${name}` : "Contact linked";
+  },
+  corrected: (p) => {
+    const parts: string[] = [];
+    if (p.reopened === true) parts.push("reopened");
+    if (p.reset_response === true) parts.push("first-response reset");
+    return parts.length ? `Lead corrected — ${parts.join(", ")}` : "Lead corrected";
+  },
   contacted: () => "Marked contacted",
   called: () => "Marked called",
   conversation_logged: (p) => {
