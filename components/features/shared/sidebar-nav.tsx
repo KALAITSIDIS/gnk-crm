@@ -32,7 +32,7 @@ const items = [
   { href: "/settings", key: "settings", icon: Settings },
 ] as const;
 
-export function SidebarNav() {
+export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const t = useTranslations("nav");
 
@@ -44,6 +44,7 @@ export function SidebarNav() {
           <Link
             key={href}
             href={href}
+            onClick={onNavigate}
             className={cn(
               "flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-white/70 transition-colors hover:bg-brand-900 hover:text-white",
               active && "bg-brand-900 text-white",

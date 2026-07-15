@@ -1,6 +1,7 @@
 import { getTranslations } from "next-intl/server";
 import { LogOut, Search } from "lucide-react";
 import { SidebarNav } from "@/components/features/shared/sidebar-nav";
+import { MobileNav } from "@/components/features/shared/mobile-nav";
 import { createClient } from "@/lib/supabase/server";
 import { logout } from "@/lib/actions/auth";
 import { Button } from "@/components/ui/button";
@@ -27,8 +28,9 @@ export default async function AppLayout({
         <SidebarNav />
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 items-center gap-4 border-b border-border bg-surface px-6">
-          <div className="flex h-9 w-full max-w-md items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 text-sm text-text-3">
+        <header className="flex h-14 items-center gap-4 border-b border-border bg-surface px-4 md:px-6">
+          <MobileNav appName={t("name")} />
+          <div className="hidden h-9 w-full max-w-md items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 text-sm text-text-3 sm:flex">
             <Search className="size-4" />
             <span>Search properties, contacts…</span>
             <kbd className="ml-auto rounded border border-border bg-surface px-1.5 text-xs">⌘K</kbd>
