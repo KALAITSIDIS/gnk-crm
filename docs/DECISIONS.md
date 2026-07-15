@@ -52,6 +52,21 @@ silent. Format: date · task · decision · rationale.
   guard unambiguous). Terminal statuses (accepted/rejected/withdrawn/expired)
   stamp `decided_at` and allow no further transitions.
 
+- **2026-07-14 · T5.7** — Hardening & release. Sentry (`@sentry/nextjs`) is
+  wired via `instrumentation.ts` + `instrumentation-client.ts`, both strictly
+  env-gated: no DSN → `Sentry.init` never runs → a complete no-op (dev/CI are
+  unaffected, and a deploy without the secret can't throw at startup). The
+  build plugin / `withSentryConfig` wrapper is intentionally omitted — source
+  maps aren't uploaded (stacks minified) but errors are still captured; this
+  keeps `next build` stock and avoids destabilizing the release. Resilience:
+  one app-level `error.tsx`, a root `global-error.tsx` (own html/body), and a
+  branded `not-found.tsx` for the many `notFound()` calls — all report to
+  Sentry. NO `loading.tsx` added anywhere: it triggers the Next 16.2.10
+  queued-suspense-reveal hydration freeze (DECISIONS T3.5, BACKLOG). Production
+  smoke test (login + create-property + sign-slip) is left MANUAL in
+  docs/RELEASE_CHECKLIST.md — it writes real data to prod and needs prod
+  creds, so it's the operator's to run, not the build's.
+
 - **2026-07-14 · T5.6** — Import scripts are standalone `.mts` run by Node's
   native type-stripping (`node --env-file=.env.local scripts/import/*.mts`) —
   no tsx dependency, no build step. They're self-contained (only node_modules,
