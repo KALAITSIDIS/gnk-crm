@@ -3,6 +3,28 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-07-15 · T-sec (migration 0007)** — Security-advisor hardening. Supabase
+  default privileges expose EXECUTE on public-schema functions to `anon` +
+  `authenticated`, so the `SECURITY DEFINER` helpers were callable
+  unauthenticated via `/rest/v1/rpc/*` — including the mutating `expire_mandates`
+  and `next_reference`. 0007 revokes EXECUTE from `public`/`anon` on all of
+  them, re-granting `authenticated` only where a real path needs it:
+  `next_reference` (property create, [properties.ts:44]), `current_org_id` /
+  `current_role_gnk` (referenced by RLS policies). `expire_mandates` (cron-only),
+  `verify_events_chain` (service-role only) and the trigger functions are fully
+  locked. Also pinned `search_path` on `set_updated_at` /
+  `protect_property_reference`, and dropped the broad `storage_media_public_read`
+  policy (public object URLs and the service-role branding `.list()` don't need
+  it; it only let clients enumerate the bucket). Applied to hosted
+  `yjgirvzgoiywdojnpkpd` and re-scanned. **Accepted (won't-fix) advisors:**
+  `mandates_safe` SECURITY DEFINER view (deliberate owner-rights view, T0.4);
+  `spatial_ref_sys` RLS + `postgis`/`pg_trgm`/`st_estimatedextent` in `public`
+  (PostGIS-owned, read-only reference data); `reference_counters` RLS-no-policy
+  (intended locked table, only `next_reference` writes it); the residual
+  `authenticated`-only flags on `next_reference`/`current_org_id`/
+  `current_role_gnk` (required by the app/RLS). **Still manual:** enable Auth
+  leaked-password protection (HaveIBeenPwned) — a dashboard toggle, no SQL.
+
 - **2026-07-09 · T0.2** — `[analytics] enabled = false` in `supabase/config.toml`.
   The analytics container (Logflare) requires the Docker daemon exposed on
   `tcp://localhost:2375`, which is off by default on Windows. Analytics is not
