@@ -145,7 +145,10 @@ export function MediaTab({ propertyId, items }: { propertyId: string; items: Med
                     disabled={isPending}
                     onClick={() => {
                       if (confirm("Delete this photo? The original is removed too.")) {
-                        startTransition(() => deleteMedia(propertyId, item.id));
+                        startTransition(async () => {
+                          const { error } = await deleteMedia(propertyId, item.id);
+                          if (error) toast.error(error);
+                        });
                       }
                     }}
                     title="Delete"

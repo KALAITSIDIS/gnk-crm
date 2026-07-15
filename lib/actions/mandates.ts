@@ -198,7 +198,7 @@ export async function uploadMandateDocument(
   const admin = createAdminClient();
   const upload = await admin.storage
     .from("documents")
-    .upload(path, Buffer.from(await file.arrayBuffer()), { contentType: file.type });
+    .upload(path, file, { contentType: file.type });
   if (upload.error) return { error: upload.error.message, savedAt: null };
 
   const { data: doc, error: docErr } = await supabase

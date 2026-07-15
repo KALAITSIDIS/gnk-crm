@@ -98,7 +98,7 @@ export async function uploadBranding(
   const admin = createAdminClient();
   const upload = await admin.storage
     .from("media")
-    .upload(BRANDING_PATHS[kind], Buffer.from(await file.arrayBuffer()), {
+    .upload(BRANDING_PATHS[kind], file, {
       contentType: "image/png",
       upsert: true,
     });

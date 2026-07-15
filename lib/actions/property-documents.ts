@@ -61,9 +61,10 @@ export async function uploadPropertyDocument(
   const safeName = file.name.replace(/[^\w.\-]+/g, "_").slice(-80);
   const path = `${property.org_id}/properties/${propertyId}/${Date.now()}-${safeName}`;
   const admin = createAdminClient();
+  // pass the File straight through (Blob path in storage-js → binary-safe on Vercel)
   const upload = await admin.storage
     .from("documents")
-    .upload(path, Buffer.from(await file.arrayBuffer()), { contentType: file.type });
+    .upload(path, file, { contentType: file.type });
   if (upload.error) return { error: upload.error.message, savedAt: null };
 
   const { data: doc, error: docErr } = await supabase

@@ -11,6 +11,7 @@ import {
   shouldWatermark,
 } from "@/lib/services/media";
 import { recomputeQualityScore } from "@/lib/services/quality-score";
+import { binaryBody } from "@/lib/services/storage-upload";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -76,18 +77,27 @@ export async function uploadPropertyMedia(
     const originalPath = `properties/${propertyId}/original/${id}.${ext}`;
     const renditionPath = (r: string) => `properties/${propertyId}/${id}_${r}.webp`;
 
-    // original (with EXIF) → private documents bucket; renditions → public media bucket
+    // original (with EXIF) → private documents bucket; renditions → public media bucket.
+    // Bodies wrapped via binaryBody() so Vercel doesn't UTF-8-corrupt them (see helper).
     const uploads = [
-      admin.storage.from("documents").upload(originalPath, input, { contentType: file.type }),
+      admin.storage
+        .from("documents")
+        .upload(originalPath, binaryBody(input, file.type), { contentType: file.type }),
       admin.storage
         .from("media")
-        .upload(renditionPath("thumb"), processed.renditions.thumb, { contentType: "image/webp" }),
+        .upload(renditionPath("thumb"), binaryBody(processed.renditions.thumb, "image/webp"), {
+          contentType: "image/webp",
+        }),
       admin.storage
         .from("media")
-        .upload(renditionPath("card"), processed.renditions.card, { contentType: "image/webp" }),
+        .upload(renditionPath("card"), binaryBody(processed.renditions.card, "image/webp"), {
+          contentType: "image/webp",
+        }),
       admin.storage
         .from("media")
-        .upload(renditionPath("full"), processed.renditions.full, { contentType: "image/webp" }),
+        .upload(renditionPath("full"), binaryBody(processed.renditions.full, "image/webp"), {
+          contentType: "image/webp",
+        }),
     ];
     const results = await Promise.all(uploads);
     const failed = results.find((r) => r.error);
@@ -197,7 +207,10 @@ export async function moveMedia(
   revalidatePath(`/properties/${propertyId}`);
 }
 
-export async function deleteMedia(propertyId: string, mediaId: string): Promise<void> {
+export async function deleteMedia(
+  propertyId: string,
+  mediaId: string,
+): Promise<{ error: string | null }> {
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
 
@@ -206,10 +219,10 @@ export async function deleteMedia(propertyId: string, mediaId: string): Promise<
     .select("id, storage_path_original, path_thumb, path_card, path_full, is_cover")
     .eq("id", mediaId)
     .maybeSingle();
-  if (!media) return;
+  if (!media) return { error: "Photo not found" };
 
   const { error } = await supabase.from("property_media").delete().eq("id", mediaId);
-  if (error) throw new Error(error.message);
+  if (error) return { error: error.message };
 
   const admin = createAdminClient();
   const mediaPaths = [media.path_thumb, media.path_card, media.path_full].filter(
@@ -244,4 +257,5 @@ export async function deleteMedia(propertyId: string, mediaId: string): Promise<
   await recomputeQualityScore(supabase, propertyId);
   revalidatePath(`/properties/${propertyId}`);
   revalidatePath("/properties");
+  return { error: null };
 }

@@ -6,6 +6,7 @@ import { logEvent } from "@/lib/services/events";
 import { sha256Hex } from "@/lib/services/hash";
 import { renderSlipPdf } from "@/lib/services/slip-pdf";
 import { SLIP_GDPR_LINE } from "@/lib/services/viewings";
+import { binaryBody } from "@/lib/services/storage-upload";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTime } from "@/lib/utils/format";
@@ -68,7 +69,7 @@ export async function signViewingSlip(
   const sigPath = `${v.org_id}/${d.viewing_id}.png`;
   const pngUpload = await admin.storage
     .from("signatures")
-    .upload(sigPath, png, { contentType: "image/png", upsert: false });
+    .upload(sigPath, binaryBody(png, "image/png"), { contentType: "image/png", upsert: false });
   if (pngUpload.error) return { error: pngUpload.error.message, savedAt: null };
 
   let pdfPath: string | null = null;
@@ -88,7 +89,10 @@ export async function signViewingSlip(
     pdfPath = `${v.org_id}/${d.viewing_id}.pdf`;
     const pdfUpload = await admin.storage
       .from("signatures")
-      .upload(pdfPath, pdf, { contentType: "application/pdf", upsert: false });
+      .upload(pdfPath, binaryBody(pdf, "application/pdf"), {
+        contentType: "application/pdf",
+        upsert: false,
+      });
     if (pdfUpload.error) return { error: pdfUpload.error.message, savedAt: null };
   } catch (e) {
     return { error: `Could not render slip PDF: ${(e as Error).message}`, savedAt: null };

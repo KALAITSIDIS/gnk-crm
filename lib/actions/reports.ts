@@ -7,6 +7,7 @@ import { assembleEvidence } from "@/lib/services/evidence";
 import { renderEvidencePdf } from "@/lib/services/evidence-pdf";
 import { logEvent } from "@/lib/services/events";
 import { sha256Hex } from "@/lib/services/hash";
+import { binaryBody } from "@/lib/services/storage-upload";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTime } from "@/lib/utils/format";
@@ -78,7 +79,7 @@ export async function generateEvidenceReport(
   const path = `${profile.orgId}/reports/evidence-${d.contact_id}-${stamp}.pdf`;
   const upload = await admin.storage
     .from("documents")
-    .upload(path, pdf, { contentType: "application/pdf" });
+    .upload(path, binaryBody(pdf, "application/pdf"), { contentType: "application/pdf" });
   if (upload.error) return fail(upload.error.message);
 
   const { data: doc, error: docErr } = await supabase
