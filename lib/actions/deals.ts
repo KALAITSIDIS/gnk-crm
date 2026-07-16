@@ -17,49 +17,31 @@ import {
   type OfferStatus,
 } from "@/lib/validators/deals";
 
-/** Drag-and-drop stage change (T3.1). Writes deal.stage_changed {from,to}. */
-export async function moveDealToStage(dealId: string, stageId: string): Promise<void> {
-  const supabase = await createClient();
-  const profile = await getCurrentProfile(supabase);
+export type MoveDealResult = { error: string | null };
 
-  const { data: deal } = await supabase
-    .from("deals")
-    .select("id, org_id, deal_type, stage_id, status, title")
-    .eq("id", dealId)
-    .maybeSingle();
-  if (!deal) throw new Error("Deal not found");
-  if (deal.stage_id === stageId) return;
+/**
+ * Drag-and-drop stage change (T3.1). Delegates to the move_deal_to_stage RPC
+ * (migration 0011) so the deal UPDATE and its stage_changed event commit in
+ * one transaction — a move can never land without its event, and an
+ * RLS-filtered 0-row update aborts instead of logging a phantom event.
+ * Returns a result object, never throws: Next.js strips thrown Server Action
+ * messages in production, which would hide the guard texts from the toast.
+ */
+export async function moveDealToStage(dealId: string, stageId: string): Promise<MoveDealResult> {
+  try {
+    const supabase = await createClient();
+    const { error } = await supabase.rpc("move_deal_to_stage", {
+      p_deal_id: dealId,
+      p_stage_id: stageId,
+    });
+    if (error) return { error: error.message };
 
-  const [{ data: fromStage }, { data: toStage }] = await Promise.all([
-    supabase.from("deal_stages").select("id, name, is_won, is_lost").eq("id", deal.stage_id).maybeSingle(),
-    supabase.from("deal_stages").select("id, name, is_won, is_lost, deal_type").eq("id", stageId).maybeSingle(),
-  ]);
-  if (!toStage) throw new Error("Stage not found");
-  if (toStage.deal_type !== deal.deal_type) throw new Error("Stage belongs to another deal type");
-
-  // Won/lost guards are enforced in T3.4; for now dragging into a won/lost
-  // column is refused so the kanban cannot bypass the coming server guards.
-  if (toStage.is_won || toStage.is_lost) {
-    throw new Error(`Use the deal page to mark ${toStage.is_won ? "won" : "lost"} (guarded flow)`);
+    await recomputeDealHealth(supabase, dealId);
+    revalidatePath("/pipeline");
+    return { error: null };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Move failed" };
   }
-
-  const { error } = await supabase
-    .from("deals")
-    .update({ stage_id: stageId, last_activity_at: new Date().toISOString() })
-    .eq("id", dealId);
-  if (error) throw new Error(error.message);
-
-  await logEvent(supabase, {
-    orgId: deal.org_id,
-    actorId: profile.id,
-    entityType: "deal",
-    entityId: dealId,
-    eventType: "stage_changed",
-    payload: { from: fromStage?.name ?? deal.stage_id, to: toStage.name },
-  });
-
-  await recomputeDealHealth(supabase, dealId);
-  revalidatePath("/pipeline");
 }
 
 export type DealSectionState = { error: string | null; savedAt: number | null };
@@ -149,11 +131,16 @@ export async function updateDealSection(
     if (Object.keys(changed).length === 0) return { error: null, savedAt: Date.now() };
   }
 
-  const { error: updateErr } = await supabase
+  // .select() so an RLS-filtered 0-row update surfaces instead of silently
+  // logging an "updated" event for a write that never happened.
+  const { data: updatedRow, error: updateErr } = await supabase
     .from("deals")
     .update({ ...updates, last_activity_at: new Date().toISOString() })
-    .eq("id", dealId);
+    .eq("id", dealId)
+    .select("id")
+    .maybeSingle();
   if (updateErr) return { error: updateErr.message, savedAt: null };
+  if (!updatedRow) return { error: "You do not have permission to edit this deal", savedAt: null };
 
   await logEvent(supabase, {
     orgId: profile.orgId,
@@ -222,8 +209,16 @@ export async function saveOffer(
     }
     if (Object.keys(changed).length === 0) return { error: null, savedAt: Date.now() };
 
-    const { error: updateErr } = await supabase.from("offers").update(updates).eq("id", offer.id);
+    const { data: updatedOffer, error: updateErr } = await supabase
+      .from("offers")
+      .update(updates)
+      .eq("id", offer.id)
+      .select("id")
+      .maybeSingle();
     if (updateErr) return { error: updateErr.message, savedAt: null };
+    if (!updatedOffer) {
+      return { error: "You do not have permission to edit this offer", savedAt: null };
+    }
 
     await logEvent(supabase, {
       orgId: profile.orgId,
@@ -271,70 +266,83 @@ export async function saveOffer(
   return { error: null, savedAt: Date.now() };
 }
 
+export type OfferStatusResult = { wonEligible: boolean; error: string | null };
+
 /**
  * Guarded offer status transition. Accepting flags the deal won-eligible
  * (the caller prompts; the guarded Won flow itself lands in T3.4) and is
  * blocked while another accepted offer exists on the deal.
+ * Returns a result object, never throws — thrown Server Action messages are
+ * stripped in production builds and the guard texts would never reach the UI.
  */
 export async function updateOfferStatus(
   offerId: string,
   next: OfferStatus,
-): Promise<{ wonEligible: boolean }> {
-  const supabase = await createClient();
-  const profile = await getCurrentProfile(supabase);
+): Promise<OfferStatusResult> {
+  const fail = (error: string): OfferStatusResult => ({ wonEligible: false, error });
+  try {
+    const supabase = await createClient();
+    const profile = await getCurrentProfile(supabase);
 
-  const { data: offer } = await supabase
-    .from("offers")
-    .select("id, org_id, deal_id, amount, status")
-    .eq("id", offerId)
-    .maybeSingle();
-  if (!offer) throw new Error("Offer not found");
-
-  const allowed = OFFER_TRANSITIONS[offer.status as OfferStatus] ?? [];
-  if (!allowed.includes(next)) {
-    throw new Error(`Cannot move a ${offer.status} offer to ${next}`);
-  }
-
-  if (next === "accepted") {
-    const { data: alreadyAccepted } = await supabase
+    const { data: offer } = await supabase
       .from("offers")
-      .select("id")
-      .eq("deal_id", offer.deal_id)
-      .eq("status", "accepted")
-      .neq("id", offer.id)
-      .limit(1);
-    if (alreadyAccepted?.[0]) {
-      throw new Error("This deal already has an accepted offer");
+      .select("id, org_id, deal_id, amount, status")
+      .eq("id", offerId)
+      .maybeSingle();
+    if (!offer) return fail("Offer not found");
+
+    const allowed = OFFER_TRANSITIONS[offer.status as OfferStatus] ?? [];
+    if (!allowed.includes(next)) {
+      return fail(`Cannot move a ${offer.status} offer to ${next}`);
     }
+
+    if (next === "accepted") {
+      const { data: alreadyAccepted } = await supabase
+        .from("offers")
+        .select("id")
+        .eq("deal_id", offer.deal_id)
+        .eq("status", "accepted")
+        .neq("id", offer.id)
+        .limit(1);
+      if (alreadyAccepted?.[0]) {
+        return fail("This deal already has an accepted offer");
+      }
+    }
+
+    // .select() so an RLS-filtered 0-row update aborts before the event write.
+    const { data: updatedOffer, error: updateErr } = await supabase
+      .from("offers")
+      .update({
+        status: next,
+        decided_at: DECIDED_STATUSES.includes(next) ? new Date().toISOString() : null,
+      })
+      .eq("id", offer.id)
+      .select("id")
+      .maybeSingle();
+    if (updateErr) return fail(updateErr.message);
+    if (!updatedOffer) return fail("You do not have permission to update this offer");
+
+    await logEvent(supabase, {
+      orgId: offer.org_id,
+      actorId: profile.id,
+      entityType: "offer",
+      entityId: offer.id,
+      eventType: "status_changed",
+      payload: { deal_id: offer.deal_id, from: offer.status, to: next, amount: offer.amount },
+    });
+
+    await supabase
+      .from("deals")
+      .update({ last_activity_at: new Date().toISOString() })
+      .eq("id", offer.deal_id);
+
+    await recomputeDealHealth(supabase, offer.deal_id);
+    revalidatePath(`/deals/${offer.deal_id}`);
+    revalidatePath("/pipeline");
+    return { wonEligible: next === "accepted", error: null };
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : "Update failed");
   }
-
-  const { error: updateErr } = await supabase
-    .from("offers")
-    .update({
-      status: next,
-      decided_at: DECIDED_STATUSES.includes(next) ? new Date().toISOString() : null,
-    })
-    .eq("id", offer.id);
-  if (updateErr) throw new Error(updateErr.message);
-
-  await logEvent(supabase, {
-    orgId: offer.org_id,
-    actorId: profile.id,
-    entityType: "offer",
-    entityId: offer.id,
-    eventType: "status_changed",
-    payload: { deal_id: offer.deal_id, from: offer.status, to: next, amount: offer.amount },
-  });
-
-  await supabase
-    .from("deals")
-    .update({ last_activity_at: new Date().toISOString() })
-    .eq("id", offer.deal_id);
-
-  await recomputeDealHealth(supabase, offer.deal_id);
-  revalidatePath(`/deals/${offer.deal_id}`);
-  revalidatePath("/pipeline");
-  return { wonEligible: next === "accepted" };
 }
 
 /**
@@ -397,16 +405,19 @@ export async function markDealWon(
     .maybeSingle();
 
   const now = new Date().toISOString();
-  const { error: updateErr } = await supabase
+  const { data: updatedRow, error: updateErr } = await supabase
     .from("deals")
     .update({
       status: "won",
       won_at: now,
       last_activity_at: now,
-      ...(wonStage ? { stage_id: wonStage.id } : {}),
+      ...(wonStage ? { stage_id: wonStage.id, stage_entered_at: now } : {}),
     })
-    .eq("id", dealId);
+    .eq("id", dealId)
+    .select("id")
+    .maybeSingle();
   if (updateErr) return { error: updateErr.message, savedAt: null };
+  if (!updatedRow) return { error: "You do not have permission to close this deal", savedAt: null };
 
   if (!hasAccepted) {
     await logEvent(supabase, {
@@ -467,17 +478,20 @@ export async function markDealLost(
     .maybeSingle();
 
   const now = new Date().toISOString();
-  const { error: updateErr } = await supabase
+  const { data: updatedRow, error: updateErr } = await supabase
     .from("deals")
     .update({
       status: "lost",
       lost_at: now,
       lost_reason: lostReason,
       last_activity_at: now,
-      ...(lostStage ? { stage_id: lostStage.id } : {}),
+      ...(lostStage ? { stage_id: lostStage.id, stage_entered_at: now } : {}),
     })
-    .eq("id", dealId);
+    .eq("id", dealId)
+    .select("id")
+    .maybeSingle();
   if (updateErr) return { error: updateErr.message, savedAt: null };
+  if (!updatedRow) return { error: "You do not have permission to close this deal", savedAt: null };
 
   await logEvent(supabase, {
     orgId: deal.org_id,

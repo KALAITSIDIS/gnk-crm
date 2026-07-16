@@ -510,4 +510,105 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(restore.error).toBeNull();
     expect(restore.data).toHaveLength(1);
   });
+
+  it("15. move_deal_to_stage RPC: owner moves atomically; blocked callers write no phantom event", async () => {
+    const { data: stage2, error: stage2Err } = await svc
+      .from("deal_stages")
+      .select("id, name")
+      .eq("org_id", ORG_A)
+      .eq("deal_type", "sale")
+      .eq("sort_order", 2)
+      .single();
+    if (stage2Err) throw stage2Err;
+
+    const stageChangedCount = async () => {
+      const { count, error } = await svc
+        .from("events")
+        .select("id", { count: "exact", head: true })
+        .eq("entity_type", "deal")
+        .eq("entity_id", dealA1)
+        .eq("event_type", "stage_changed");
+      if (error) throw error;
+      return count ?? 0;
+    };
+    const before = await stageChangedCount();
+
+    // listing manager: sees all org deals but may update none — the RPC must
+    // abort (0-row RLS-filtered UPDATE), leave the deal in place, and above
+    // all write NO stage_changed event (0011: evidence-log integrity)
+    const lmMove = await lmA.client.rpc("move_deal_to_stage", {
+      p_deal_id: dealA1,
+      p_stage_id: stage2.id,
+    });
+    expect(lmMove.error, "listing manager move must fail").not.toBeNull();
+
+    // other agent: cannot even see the deal — RPC reports it as not found
+    const otherMove = await agentA2.client.rpc("move_deal_to_stage", {
+      p_deal_id: dealA1,
+      p_stage_id: stage2.id,
+    });
+    expect(otherMove.error, "other agent move must fail").not.toBeNull();
+
+    const { data: unmoved } = await svc
+      .from("deals")
+      .select("stage_id")
+      .eq("id", dealA1)
+      .single();
+    expect(unmoved?.stage_id, "blocked moves must not change the stage").toBe(stageSaleNew);
+    expect(await stageChangedCount(), "blocked moves must write no event").toBe(before);
+
+    // owning agent: move succeeds, stage tenure restarts, and the
+    // stage_changed event lands in the same transaction with the right actor
+    const t0 = new Date().toISOString();
+    const ownerMove = await agentA1.client.rpc("move_deal_to_stage", {
+      p_deal_id: dealA1,
+      p_stage_id: stage2.id,
+    });
+    expect(ownerMove.error).toBeNull();
+
+    const { data: moved } = await svc
+      .from("deals")
+      .select("stage_id, stage_entered_at")
+      .eq("id", dealA1)
+      .single();
+    expect(moved?.stage_id).toBe(stage2.id);
+    expect(moved && moved.stage_entered_at >= t0, "stage_entered_at must restart").toBe(true);
+    expect(await stageChangedCount()).toBe(before + 1);
+
+    const { data: lastEvent } = await svc
+      .from("events")
+      .select("actor_id, payload")
+      .eq("entity_type", "deal")
+      .eq("entity_id", dealA1)
+      .eq("event_type", "stage_changed")
+      .order("id", { ascending: false })
+      .limit(1)
+      .single();
+    expect(lastEvent?.actor_id).toBe(agentA1.id);
+    expect((lastEvent?.payload as { to?: string })?.to).toBe(stage2.name);
+
+    // won/lost columns stay behind the guarded flows
+    const { data: wonStage } = await svc
+      .from("deal_stages")
+      .select("id")
+      .eq("org_id", ORG_A)
+      .eq("deal_type", "sale")
+      .eq("is_won", true)
+      .single();
+    if (wonStage) {
+      const wonMove = await agentA1.client.rpc("move_deal_to_stage", {
+        p_deal_id: dealA1,
+        p_stage_id: wonStage.id,
+      });
+      expect(wonMove.error, "dragging into a won column must fail").not.toBeNull();
+      expect(wonMove.error?.message).toContain("guarded flow");
+    }
+
+    // restore fixture state
+    const restore = await agentA1.client.rpc("move_deal_to_stage", {
+      p_deal_id: dealA1,
+      p_stage_id: stageSaleNew,
+    });
+    expect(restore.error).toBeNull();
+  });
 });

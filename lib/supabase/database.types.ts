@@ -296,6 +296,7 @@ export type Database = {
           org_id: string
           property_id: string | null
           seller_contact_id: string | null
+          stage_entered_at: string
           stage_id: string
           status: Database["public"]["Enums"]["deal_status"]
           title: string
@@ -319,6 +320,7 @@ export type Database = {
           org_id: string
           property_id?: string | null
           seller_contact_id?: string | null
+          stage_entered_at?: string
           stage_id: string
           status?: Database["public"]["Enums"]["deal_status"]
           title: string
@@ -342,6 +344,7 @@ export type Database = {
           org_id?: string
           property_id?: string | null
           seller_contact_id?: string | null
+          stage_entered_at?: string
           stage_id?: string
           status?: Database["public"]["Enums"]["deal_status"]
           title?: string
@@ -2231,6 +2234,10 @@ export type Database = {
       geomfromewkt: { Args: { "": string }; Returns: unknown }
       gettransactionid: { Args: never; Returns: unknown }
       longtransactionsenabled: { Args: never; Returns: boolean }
+      move_deal_to_stage: {
+        Args: { p_deal_id: string; p_stage_id: string }
+        Returns: undefined
+      }
       next_reference: {
         Args: { p_district_code: string; p_org: string }
         Returns: string

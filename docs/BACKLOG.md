@@ -56,3 +56,8 @@ built without explicit direction.
   event insert surfaces as an action error the user retries (risking a
   duplicate mutation). Long-term: write event + mutation in one transaction
   via RPC or trigger.
+- Pipeline board: filter bar (agent, expected-value range) and a board-level
+  open-value total in the header.
+- Pipeline board: stale-deal highlighting — tint cards whose
+  `stage_entered_at` tenure exceeds a per-stage threshold (column is in place
+  since 0011).

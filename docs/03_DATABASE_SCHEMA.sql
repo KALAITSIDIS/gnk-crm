@@ -417,12 +417,21 @@ create table deals (
   status deal_status not null default 'open',
   won_at timestamptz, lost_at timestamptz, lost_reason text,
   last_activity_at timestamptz not null default now(),
+  stage_entered_at timestamptz not null default now(),  -- 0011: stage tenure; updated_at is trigger-touched on every write and cannot measure it
   created_by uuid references profiles(id),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 create index deals_stage_idx on deals(org_id, deal_type, stage_id) where status = 'open';
 create trigger deals_updated before update on deals for each row execute function set_updated_at();
+
+-- 0011: atomic guarded kanban stage move — SECURITY INVOKER (RLS applies),
+-- row-locks the deal, refuses won/lost targets (guarded flows own those),
+-- verifies the RLS-filtered UPDATE hit a row (no phantom events), and writes
+-- the stage_changed event in the same transaction.
+-- EXECUTE: authenticated + service_role only (0007 convention).
+-- create or replace function move_deal_to_stage(p_deal_id uuid, p_stage_id uuid) returns void ...
+-- (full body in supabase/migrations/0011_stage_entered_at_and_move_rpc.sql)
 alter table leads add constraint leads_converted_fk foreign key (converted_deal_id) references deals(id);
 
 create table offers (

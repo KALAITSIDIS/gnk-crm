@@ -12,6 +12,7 @@ import {
   useDroppable,
   useSensor,
   useSensors,
+  type Announcements,
   type DragEndEvent,
   type DragStartEvent,
   type KeyboardCoordinateGetter,
@@ -39,6 +40,8 @@ export interface KanbanDeal {
   health_score: number;
   healthFactors: HealthFactor[] | null;
   agentInitials: string;
+  status: "open" | "won" | "lost";
+  /** Open: days since entering the stage. Won/lost: days since closing. */
   daysInStage: number;
   propertyRef: string | null;
 }
@@ -78,6 +81,12 @@ const columnHopCoordinates: KeyboardCoordinateGetter = (event, { context }) => {
   };
 };
 
+function tenureLabel(deal: KanbanDeal): string {
+  if (deal.status === "won") return `Won ${deal.daysInStage}d ago`;
+  if (deal.status === "lost") return `Lost ${deal.daysInStage}d ago`;
+  return `${deal.daysInStage}d in stage`;
+}
+
 function DealCard({ deal, dragging = false }: { deal: KanbanDeal; dragging?: boolean }) {
   return (
     <div
@@ -110,7 +119,7 @@ function DealCard({ deal, dragging = false }: { deal: KanbanDeal; dragging?: boo
         <span className="flex size-5 items-center justify-center rounded-full bg-brand-100 text-[10px] font-semibold text-brand-700">
           {deal.agentInitials}
         </span>
-        <span>{deal.daysInStage}d in stage</span>
+        <span>{tenureLabel(deal)}</span>
       </div>
     </div>
   );
@@ -137,16 +146,20 @@ function StageColumn({
   stage: KanbanStage;
   deals: KanbanDeal[];
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: stage.id });
+  // Won/lost are read-only endpoints: closing runs through the guarded flows
+  // on the deal page, so their columns never accept a drop.
+  const closedColumn = stage.is_won || stage.is_lost;
+  const { setNodeRef, isOver } = useDroppable({ id: stage.id, disabled: closedColumn });
   const total = deals.reduce((sum, d) => sum + (d.expected_value ?? 0), 0);
 
   return (
     <div
       ref={setNodeRef}
+      title={closedColumn ? "Deals close via the guarded flow on the deal page" : undefined}
       className={cn(
         "flex w-64 shrink-0 flex-col gap-2 rounded-[10px] border border-border bg-surface-2 p-2",
         isOver && "ring-2 ring-brand-500",
-        (stage.is_won || stage.is_lost) && "opacity-80",
+        closedColumn && "opacity-80",
       )}
     >
       <div className="flex items-center justify-between px-1 pt-1">
@@ -158,10 +171,19 @@ function StageColumn({
       </div>
       <span className="px-1 text-xs tabular-nums text-text-2">{formatMoney(total)}</span>
       <div className="flex min-h-16 flex-col gap-2">
-        {deals.map((deal) => (
-          <DraggableCard key={deal.id} deal={deal} />
-        ))}
+        {deals.map((deal) =>
+          deal.status === "open" ? (
+            <DraggableCard key={deal.id} deal={deal} />
+          ) : (
+            <DealCard key={deal.id} deal={deal} />
+          ),
+        )}
       </div>
+      {closedColumn ? (
+        <p className="px-1 pb-1 text-[11px] leading-snug text-text-3">
+          Last 30 days — close deals from the deal page
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -195,6 +217,27 @@ export function KanbanBoard({
     return map;
   }, [stages, optimisticDeals]);
 
+  // Screen readers announce deal titles and stage names, not raw UUIDs
+  // (dnd-kit's default reads the ids).
+  const announcements = useMemo<Announcements>(() => {
+    const dealTitle = (id: unknown) =>
+      deals.find((d) => d.id === String(id))?.title ?? "a deal";
+    const stageName = (id: unknown) =>
+      stages.find((s) => s.id === String(id))?.name ?? "a stage";
+    return {
+      onDragStart: ({ active }) => `Picked up ${dealTitle(active.id)}.`,
+      onDragOver: ({ active, over }) =>
+        over
+          ? `${dealTitle(active.id)} is over the ${stageName(over.id)} stage.`
+          : `${dealTitle(active.id)} is not over a stage.`,
+      onDragEnd: ({ active, over }) =>
+        over
+          ? `${dealTitle(active.id)} was dropped on the ${stageName(over.id)} stage.`
+          : `${dealTitle(active.id)} was dropped.`,
+      onDragCancel: ({ active }) => `Moving ${dealTitle(active.id)} was cancelled.`,
+    };
+  }, [deals, stages]);
+
   const onDragStart = (event: DragStartEvent) => {
     setActive(optimisticDeals.find((d) => d.id === event.active.id) ?? null);
   };
@@ -209,16 +252,28 @@ export function KanbanBoard({
 
     startTransition(async () => {
       applyMove({ dealId, stageId });
-      try {
-        await moveDealToStage(dealId, stageId);
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Move failed");
-      }
+      const { error } = await moveDealToStage(dealId, stageId);
+      if (error) toast.error(error);
     });
   };
 
   return (
-    <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
+    <DndContext
+      // Pinned id: dnd-kit otherwise derives aria-describedby from a module
+      // counter, which desyncs between SSR and the StrictMode double-rendered
+      // client mount (hydration mismatch).
+      id="pipeline-kanban"
+      sensors={sensors}
+      accessibility={{
+        announcements,
+        screenReaderInstructions: {
+          draggable:
+            "Press Space or Enter to pick up a deal, use the left and right arrow keys to choose a stage, and press Space or Enter again to drop it. Press Escape to cancel.",
+        },
+      }}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+    >
       <div
         className={cn("flex gap-3 overflow-x-auto pb-2", isPending && "pointer-events-none opacity-70")}
       >

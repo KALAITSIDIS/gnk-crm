@@ -158,17 +158,15 @@ export function OffersCard({ dealId, offers }: { dealId: string; offers: OfferRo
   const runTransition = (offer: OfferRow, next: OfferStatus) => {
     setConfirm(null);
     startTransition(async () => {
-      try {
-        const { wonEligible } = await updateOfferStatus(offer.id, next);
-        if (wonEligible) {
-          toast.success("Offer accepted — deal is now won-eligible", {
-            description: "Mark it Won from the guarded flow (arrives with T3.4).",
-          });
-        } else {
-          toast.success(`Offer ${next}`);
-        }
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Update failed");
+      const { wonEligible, error } = await updateOfferStatus(offer.id, next);
+      if (error) {
+        toast.error(error);
+      } else if (wonEligible) {
+        toast.success("Offer accepted — deal is now won-eligible", {
+          description: "Mark it Won from the guarded flow (arrives with T3.4).",
+        });
+      } else {
+        toast.success(`Offer ${next}`);
       }
     });
   };

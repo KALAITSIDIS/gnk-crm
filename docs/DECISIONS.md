@@ -323,3 +323,29 @@ silent. Format: date · task · decision · rationale.
   convert can no longer strand an orphan deal. Convert also stamps
   `first_response_at` — converting is a response, the inbox clock must stop
   (ResponseClock also freezes for non-open leads now).
+
+- **2026-07-16 · T-audit-pipeline** — Kanban stage moves are atomic and
+  RLS-honest; stage tenure gets its own column. Four decisions from the
+  pipeline audit:
+  1. `move_deal_to_stage(uuid, uuid)` RPC (0011, SECURITY INVOKER): the deal
+     UPDATE and its `stage_changed` event commit in one transaction, closing
+     the same phantom-event hole T-audit-leads closed app-side (a listing
+     manager's drag used to log an event for a move RLS had filtered to 0
+     rows). The row lock also serializes concurrent moves, so the event's
+     `from` stage is always the stage actually left. Won/lost targets are
+     refused in the function — the guarded T3.4 flows stay the only close path.
+  2. `deals.stage_entered_at` (0011): "days in stage" was derived from
+     `updated_at`, which the `deals_updated` trigger touches on every write —
+     including health recomputes — so the counter reset on any edit. Backfill:
+     latest `stage_changed` event, else `created_at`.
+  3. Client-called actions that throw were converted to result objects
+     (`moveDealToStage`, `updateOfferStatus`): Next.js strips thrown Server
+     Action messages in production, so every guard text (e.g. "use the guarded
+     flow") surfaced as a generic digest error in prod. Result objects are now
+     the convention for anything a client component calls directly.
+  4. The pipeline board shows won/lost deals closed in the last 30 days as
+     read-only cards (their columns were permanently empty because the board
+     only loaded `status = open`); their droppables are disabled client-side.
+     Remaining `.select("id")` row-count guards were added to deal/offer
+     updates (`updateDealSection`, `saveOffer`, `updateOfferStatus`,
+     `markDealWon`, `markDealLost`) per the T-audit-leads pattern.
