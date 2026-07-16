@@ -264,15 +264,39 @@ export async function deleteMediaBulk(
     }
   }
 
+  // Recover each photo's original filename from its media_uploaded event —
+  // property_media never stored it, and "Photo deleted" alone tells the
+  // timeline reader nothing (audit 2026-07-16). Best-effort: a miss just
+  // renders the bare line, as before.
+  const { data: uploadEvents } = await supabase
+    .from("events")
+    .select("payload")
+    .eq("entity_type", "property")
+    .eq("entity_id", propertyId)
+    .eq("event_type", "media_uploaded")
+    .limit(1000);
+  const fileByMedia = new Map<string, string>();
+  for (const e of uploadEvents ?? []) {
+    const p = e.payload as { media_id?: unknown; file?: unknown } | null;
+    if (typeof p?.media_id === "string" && typeof p.file === "string") {
+      fileByMedia.set(p.media_id, p.file);
+    }
+  }
+
   // one event per photo (guardrail 1) — the timeline keeps per-photo granularity
   for (const m of deletedRows) {
+    const file = fileByMedia.get(m.id);
     await logEvent(supabase, {
       orgId: profile.orgId,
       actorId: profile.id,
       entityType: "property",
       entityId: propertyId,
       eventType: "media_deleted",
-      payload: { media_id: m.id, ...(deletedRows.length > 1 ? { bulk: true } : {}) },
+      payload: {
+        media_id: m.id,
+        ...(file ? { file } : {}),
+        ...(deletedRows.length > 1 ? { bulk: true } : {}),
+      },
     });
   }
 

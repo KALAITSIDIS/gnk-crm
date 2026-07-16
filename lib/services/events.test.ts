@@ -50,6 +50,14 @@ describe("describeEvent registry (T3.5)", () => {
     );
   });
 
+  it("renders photo deletes with the recovered filename, bare without", () => {
+    expect(describeEvent(ev("media_deleted", { media_id: "x", file: "images (4).jpg" }, "property"))).toBe(
+      "Photo deleted — images (4).jpg",
+    );
+    // pre-2026-07-16 events never logged a filename — must stay renderable
+    expect(describeEvent(ev("media_deleted", { media_id: "x" }, "property"))).toBe("Photo deleted");
+  });
+
   it("falls back to spaced event type for unregistered events", () => {
     expect(describeEvent(ev("future_event_type"))).toBe("future event type");
   });

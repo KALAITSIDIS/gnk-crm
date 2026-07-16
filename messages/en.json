@@ -23,6 +23,68 @@
     "forgotPassword": "Forgot password?"
   },
   "dashboard": {
-    "title": "Dashboard"
+    "title": "Dashboard",
+    "admin": {
+      "kpi": {
+        "openPipeline": "Open pipeline",
+        "wonThisMonth": "Won this month",
+        "newLeads7d": "New leads (7d)",
+        "avgFirstResponse": "Avg first response (7d)"
+      },
+      "deals": "{count, plural, one {# deal} other {# deals}}",
+      "answered": "{count} answered",
+      "events": "{count, plural, one {# event} other {# events}}",
+      "system": "system",
+      "cards": {
+        "pipelineByStage": "Pipeline by stage (open deals)",
+        "leadsBySource": "Leads by source (30d)",
+        "listingsByStatus": "Listings by status",
+        "topAgents": "Top agents by activity (30d)",
+        "mandatesExpiring": "Mandates expiring ≤30 days",
+        "latestEvents": "Latest events"
+      },
+      "empty": {
+        "noOpenDeals": "Nothing yet (no open deals).",
+        "noLeads": "No leads in the last 30 days.",
+        "noListings": "No listings yet.",
+        "noActivity": "No recent activity.",
+        "noMandates": "None in the next 30 days.",
+        "noEvents": "No activity yet."
+      },
+      "actions": {
+        "openPipeline": "Open pipeline",
+        "leadInbox": "Lead inbox",
+        "properties": "Properties"
+      }
+    },
+    "agent": {
+      "quick": {
+        "addLead": "Add lead",
+        "viewings": "Viewings",
+        "contacts": "Contacts",
+        "calculators": "Calculators"
+      },
+      "cards": {
+        "todaysViewings": "Today's viewings",
+        "overdueTasks": "Overdue tasks",
+        "myNewLeads": "My new leads",
+        "hotIdle": "Hot buyers idle 3+ days",
+        "awaitingFeedback": "Viewings awaiting your feedback"
+      },
+      "empty": {
+        "noViewings": "Nothing scheduled today.",
+        "noOverdue": "Nothing overdue.",
+        "noLeads": "No open leads assigned to you.",
+        "hotAllTouched": "All hot buyers touched recently."
+      },
+      "actions": {
+        "scheduleViewing": "Schedule a viewing",
+        "allTasks": "All tasks",
+        "leadInbox": "Open lead inbox"
+      },
+      "idleDays": "{days}d idle",
+      "noActivity": "no activity",
+      "unnamed": "Unnamed"
+    }
   }
 }

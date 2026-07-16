@@ -3,6 +3,30 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-07-16 · T-audit (dashboards)** — Dashboard audit fixes. (1) Every
+  dashboard query is now unwrapped via `lib/supabase/unwrap.ts` — a failed
+  query THROWS to the T5.7 error boundary instead of silently rendering
+  `data: null` as €0/empty; doc 05 error states require a broken dashboard to
+  look broken. (2) Card badges and KPI counts use PostgREST `count: "exact"`
+  so they show the true total, not the length of the limit-capped list (10
+  overdue rows no longer masquerade as "10 total"). Summed values still
+  aggregate in TS over capped rows — SQL-side RPC aggregates are BACKLOG.
+  (3) Admin calendar windows (today, month start, mandate-expiry ≤30d) are
+  Cyprus wall-clock days via the tz helpers, matching the agent dashboard
+  (doc 02 §A11); rolling 7d/30d windows stay instant-relative. The agent
+  day-end is the next Cyprus midnight by day-key, not +24h (DST days are
+  23/25h). (4) "Hot buyers idle 3+ days" now filters
+  `contact_types @> '{buyer}'` — doc 05 says buyers; previously any hot
+  contact (seller, lawyer…) appeared. Contacts without the buyer type drop
+  out by design. (5) `media_deleted` events now carry the original filename,
+  recovered best-effort from the photo's `media_uploaded` event
+  (property_media never stored a filename; events are append-only so old
+  rows stay bare). (6) Admin "Latest events" lines are annotated
+  (property reference · actor name) via EventTimeline's `note`. (7) Both
+  dashboards read strings from the `dashboard` i18n namespace (en/el/ru) —
+  they were the last hardcoded-English screens touched by T5.3. Shared card
+  chrome deduplicated into `components/features/dashboard/card.tsx`.
+
 - **2026-07-15 · T-sec (migration 0007)** — Security-advisor hardening. Supabase
   default privileges expose EXECUTE on public-schema functions to `anon` +
   `authenticated`, so the `SECURITY DEFINER` helpers were callable

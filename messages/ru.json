@@ -23,6 +23,68 @@
     "forgotPassword": "Забыли пароль?"
   },
   "dashboard": {
-    "title": "Панель управления"
+    "title": "Панель управления",
+    "admin": {
+      "kpi": {
+        "openPipeline": "Открытая воронка",
+        "wonThisMonth": "Выиграно в этом месяце",
+        "newLeads7d": "Новые лиды (7 дн)",
+        "avgFirstResponse": "Среднее время первого ответа (7 дн)"
+      },
+      "deals": "{count, plural, one {# сделка} few {# сделки} many {# сделок} other {# сделки}}",
+      "answered": "{count} с ответом",
+      "events": "{count, plural, one {# событие} few {# события} many {# событий} other {# события}}",
+      "system": "система",
+      "cards": {
+        "pipelineByStage": "Воронка по этапам (открытые сделки)",
+        "leadsBySource": "Лиды по источникам (30 дн)",
+        "listingsByStatus": "Объекты по статусам",
+        "topAgents": "Самые активные агенты (30 дн)",
+        "mandatesExpiring": "Мандаты, истекающие ≤30 дней",
+        "latestEvents": "Последние события"
+      },
+      "empty": {
+        "noOpenDeals": "Пока ничего (нет открытых сделок).",
+        "noLeads": "Нет лидов за последние 30 дней.",
+        "noListings": "Пока нет объектов.",
+        "noActivity": "Нет недавней активности.",
+        "noMandates": "Нет в ближайшие 30 дней.",
+        "noEvents": "Пока нет активности."
+      },
+      "actions": {
+        "openPipeline": "Открыть воронку",
+        "leadInbox": "Входящие лиды",
+        "properties": "Объекты"
+      }
+    },
+    "agent": {
+      "quick": {
+        "addLead": "Добавить лида",
+        "viewings": "Просмотры",
+        "contacts": "Контакты",
+        "calculators": "Калькуляторы"
+      },
+      "cards": {
+        "todaysViewings": "Просмотры на сегодня",
+        "overdueTasks": "Просроченные задачи",
+        "myNewLeads": "Мои новые лиды",
+        "hotIdle": "Горячие покупатели без контакта 3+ дней",
+        "awaitingFeedback": "Просмотры, ожидающие вашего отзыва"
+      },
+      "empty": {
+        "noViewings": "На сегодня ничего не запланировано.",
+        "noOverdue": "Просроченных нет.",
+        "noLeads": "Нет открытых лидов, назначенных вам.",
+        "hotAllTouched": "Со всеми горячими покупателями недавно был контакт."
+      },
+      "actions": {
+        "scheduleViewing": "Запланировать просмотр",
+        "allTasks": "Все задачи",
+        "leadInbox": "Входящие лиды"
+      },
+      "idleDays": "{days} дн без контакта",
+      "noActivity": "нет активности",
+      "unnamed": "Без имени"
+    }
   }
 }

@@ -228,7 +228,10 @@ const EVENT_LINES: Record<string, (p: P) => string> = {
     const file = asText(p.file);
     return file ? `Photo uploaded — ${file}` : "Photo uploaded";
   },
-  media_deleted: () => "Photo deleted",
+  media_deleted: (p) => {
+    const file = asText(p.file);
+    return file ? `Photo deleted — ${file}` : "Photo deleted";
+  },
   // written by the price_history DB trigger (T1.7); from/to are numeric
   price_changed: (p) => {
     const from = asMoney(p.from);
