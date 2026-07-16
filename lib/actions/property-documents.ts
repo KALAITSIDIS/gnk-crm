@@ -6,21 +6,11 @@ import { getCurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import type { Database } from "@/lib/supabase/database.types";
+import { PROPERTY_DOC_TYPES, type DocType } from "@/lib/validators/documents";
 
+// type-only export is fine in a "use server" file (erased at runtime);
+// runtime constants are NOT — PROPERTY_DOC_TYPES lives in lib/validators/documents.ts
 export type PropertyDocActionState = { error: string | null; savedAt: number | null };
-
-type DocType = Database["public"]["Enums"]["document_type"];
-
-/** doc_type options offered on a property (subset of the document_type enum). */
-export const PROPERTY_DOC_TYPES: readonly DocType[] = [
-  "title_deed",
-  "permit",
-  "plan",
-  "contract",
-  "valuation",
-  "other",
-] as const;
 
 const ALLOWED_DOC_TYPES = new Set(["application/pdf", "image/jpeg", "image/png"]);
 const MAX_DOC_BYTES = 15 * 1024 * 1024;

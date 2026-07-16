@@ -5,10 +5,10 @@ import { FileText, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import {
   deletePropertyDocument,
-  PROPERTY_DOC_TYPES,
   uploadPropertyDocument,
   type PropertyDocActionState,
 } from "@/lib/actions/property-documents";
+import { PROPERTY_DOC_TYPES } from "@/lib/validators/documents";
 import { DocumentDownloadButton } from "@/components/features/shared/document-download-button";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
