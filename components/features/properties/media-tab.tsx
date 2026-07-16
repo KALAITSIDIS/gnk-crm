@@ -1,17 +1,19 @@
 "use client";
 
 import Image from "next/image";
-import { useActionState, useEffect, useRef, useTransition } from "react";
+import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 import { ArrowDown, ArrowUp, Star, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import {
   deleteMedia,
+  deleteMediaBulk,
   moveMedia,
   setMediaCover,
   uploadPropertyMedia,
   type MediaActionState,
 } from "@/lib/actions/media";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { publicMediaUrl } from "@/lib/utils/storage";
 import { cn } from "@/lib/utils";
 
@@ -31,6 +33,7 @@ const initialState: MediaActionState = { error: null, savedAt: null };
 export function MediaTab({ propertyId, items }: { propertyId: string; items: MediaItem[] }) {
   const [state, formAction, uploading] = useActionState(uploadPropertyMedia, initialState);
   const [isPending, startTransition] = useTransition();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const fileInput = useRef<HTMLInputElement>(null);
   const lastToasted = useRef<number | null>(null);
 
@@ -43,6 +46,30 @@ export function MediaTab({ propertyId, items }: { propertyId: string; items: Med
   }, [state.savedAt]);
 
   const sorted = [...items].sort((a, b) => a.sort_order - b.sort_order);
+  // drop selections for photos that no longer exist (deleted elsewhere / revalidated)
+  const selectedIds = [...selected].filter((id) => items.some((i) => i.id === id));
+  const allSelected = sorted.length > 0 && selectedIds.length === sorted.length;
+
+  function toggleOne(id: string, checked: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
+  function deleteSelected() {
+    if (selectedIds.length === 0) return;
+    const label = selectedIds.length === 1 ? "this photo" : `these ${selectedIds.length} photos`;
+    if (!confirm(`Delete ${label}? The originals are removed too.`)) return;
+    startTransition(async () => {
+      const { error, deleted } = await deleteMediaBulk(propertyId, selectedIds);
+      if (error) toast.error(error);
+      else toast.success(`Deleted ${deleted} photo${deleted === 1 ? "" : "s"}`);
+      setSelected(new Set());
+    });
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -75,91 +102,135 @@ export function MediaTab({ propertyId, items }: { propertyId: string; items: Med
           No photos yet — upload the first one.
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-          {sorted.map((item, i) => (
-            <div
-              key={item.id}
-              className={cn(
-                "group relative overflow-hidden rounded-[10px] border bg-surface",
-                item.is_cover ? "border-accent-500 ring-1 ring-accent-500" : "border-border",
-              )}
-            >
-              {item.path_card ? (
-                <Image
-                  src={publicMediaUrl(item.path_card)}
-                  alt=""
-                  width={400}
-                  height={280}
-                  className="aspect-[4/3] w-full object-cover"
-                  unoptimized
-                />
-              ) : null}
-              {item.is_cover ? (
-                <span className="absolute left-2 top-2 rounded-full bg-accent-500 px-2 py-0.5 text-xs font-medium text-white">
-                  Cover
-                </span>
-              ) : null}
-              {item.watermarked ? (
-                <span className="absolute right-2 top-2 rounded-full bg-black/50 px-2 py-0.5 text-[10px] text-white">
-                  WM
-                </span>
-              ) : null}
-              <div className="flex items-center justify-between gap-1 p-2">
-                <div className="flex gap-1">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-7"
-                    disabled={isPending || i === 0}
-                    onClick={() => startTransition(() => moveMedia(propertyId, item.id, "up"))}
-                    title="Move earlier"
-                  >
-                    <ArrowUp className="size-3.5" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-7"
-                    disabled={isPending || i === sorted.length - 1}
-                    onClick={() => startTransition(() => moveMedia(propertyId, item.id, "down"))}
-                    title="Move later"
-                  >
-                    <ArrowDown className="size-3.5" />
-                  </Button>
+        <>
+          <div className="flex flex-wrap items-center gap-4">
+            <label className="flex items-center gap-2 text-sm text-text-2">
+              <Checkbox
+                checked={allSelected}
+                onCheckedChange={(v) =>
+                  setSelected(v === true ? new Set(sorted.map((i) => i.id)) : new Set())
+                }
+              />
+              Select all
+            </label>
+            {selectedIds.length > 0 ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="text-danger"
+                disabled={isPending}
+                onClick={deleteSelected}
+              >
+                <Trash2 className="size-4" />
+                {isPending ? "Deleting…" : `Delete selected (${selectedIds.length})`}
+              </Button>
+            ) : (
+              <span className="text-xs text-text-3">
+                Tick photos to delete several at once.
+              </span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+            {sorted.map((item, i) => {
+              const isSelected = selectedIds.includes(item.id);
+              return (
+                <div
+                  key={item.id}
+                  className={cn(
+                    "group relative overflow-hidden rounded-[10px] border bg-surface",
+                    item.is_cover ? "border-accent-500 ring-1 ring-accent-500" : "border-border",
+                    isSelected && "ring-2 ring-danger/60",
+                  )}
+                >
+                  {item.path_card ? (
+                    <Image
+                      src={publicMediaUrl(item.path_card)}
+                      alt=""
+                      width={400}
+                      height={280}
+                      className="aspect-[4/3] w-full object-cover"
+                      unoptimized
+                    />
+                  ) : null}
+                  <span className="absolute left-2 top-2 rounded-[6px] bg-white/85 p-1 shadow-sm">
+                    <Checkbox
+                      checked={isSelected}
+                      onCheckedChange={(v) => toggleOne(item.id, v === true)}
+                      aria-label="Select photo"
+                    />
+                  </span>
+                  {item.is_cover ? (
+                    <span className="absolute left-11 top-2 rounded-full bg-accent-500 px-2 py-0.5 text-xs font-medium text-white">
+                      Cover
+                    </span>
+                  ) : null}
+                  {item.watermarked ? (
+                    <span className="absolute right-2 top-2 rounded-full bg-black/50 px-2 py-0.5 text-[10px] text-white">
+                      WM
+                    </span>
+                  ) : null}
+                  <div className="flex items-center justify-between gap-1 p-2">
+                    <div className="flex gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-7"
+                        disabled={isPending || i === 0}
+                        onClick={() => startTransition(() => moveMedia(propertyId, item.id, "up"))}
+                        title="Move earlier"
+                      >
+                        <ArrowUp className="size-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-7"
+                        disabled={isPending || i === sorted.length - 1}
+                        onClick={() =>
+                          startTransition(() => moveMedia(propertyId, item.id, "down"))
+                        }
+                        title="Move later"
+                      >
+                        <ArrowDown className="size-3.5" />
+                      </Button>
+                    </div>
+                    <div className="flex gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={cn("size-7", item.is_cover && "text-accent-500")}
+                        disabled={isPending || item.is_cover}
+                        onClick={() => startTransition(() => setMediaCover(propertyId, item.id))}
+                        title="Set as cover"
+                      >
+                        <Star className="size-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-7 text-danger"
+                        disabled={isPending}
+                        onClick={() => {
+                          if (confirm("Delete this photo? The original is removed too.")) {
+                            startTransition(async () => {
+                              const { error } = await deleteMedia(propertyId, item.id);
+                              if (error) toast.error(error);
+                            });
+                          }
+                        }}
+                        title="Delete"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                  </div>
                 </div>
-                <div className="flex gap-1">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className={cn("size-7", item.is_cover && "text-accent-500")}
-                    disabled={isPending || item.is_cover}
-                    onClick={() => startTransition(() => setMediaCover(propertyId, item.id))}
-                    title="Set as cover"
-                  >
-                    <Star className="size-3.5" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-7 text-danger"
-                    disabled={isPending}
-                    onClick={() => {
-                      if (confirm("Delete this photo? The original is removed too.")) {
-                        startTransition(async () => {
-                          const { error } = await deleteMedia(propertyId, item.id);
-                          if (error) toast.error(error);
-                        });
-                      }
-                    }}
-                    title="Delete"
-                  >
-                    <Trash2 className="size-3.5" />
-                  </Button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+              );
+            })}
+          </div>
+        </>
       )}
     </div>
   );

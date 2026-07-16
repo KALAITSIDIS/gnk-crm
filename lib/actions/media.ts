@@ -207,34 +207,52 @@ export async function moveMedia(
   revalidatePath(`/properties/${propertyId}`);
 }
 
-export async function deleteMedia(
+export async function deleteMedia(propertyId: string, mediaId: string): Promise<{ error: string | null }> {
+  const { error } = await deleteMediaBulk(propertyId, [mediaId]);
+  return { error };
+}
+
+/**
+ * Delete one or more photos: rows first (RLS-checked, `.select()` returns only
+ * what was actually deleted — so a permission-denied delete can't strand rows
+ * pointing at removed files), then storage objects, cover promotion, events.
+ */
+export async function deleteMediaBulk(
   propertyId: string,
-  mediaId: string,
-): Promise<{ error: string | null }> {
+  mediaIds: string[],
+): Promise<{ error: string | null; deleted: number }> {
+  if (mediaIds.length === 0) return { error: null, deleted: 0 };
+
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
 
-  const { data: media } = await supabase
+  const { data: deletedRows, error } = await supabase
     .from("property_media")
-    .select("id, storage_path_original, path_thumb, path_card, path_full, is_cover")
-    .eq("id", mediaId)
-    .maybeSingle();
-  if (!media) return { error: "Photo not found" };
-
-  const { error } = await supabase.from("property_media").delete().eq("id", mediaId);
-  if (error) return { error: error.message };
-
-  const admin = createAdminClient();
-  const mediaPaths = [media.path_thumb, media.path_card, media.path_full].filter(
-    (p): p is string => Boolean(p),
-  );
-  if (mediaPaths.length) await admin.storage.from("media").remove(mediaPaths);
-  if (media.storage_path_original) {
-    await admin.storage.from("documents").remove([media.storage_path_original]);
+    .delete()
+    .eq("property_id", propertyId)
+    .in("id", mediaIds)
+    .select("id, storage_path_original, path_thumb, path_card, path_full, is_cover");
+  if (error) return { error: error.message, deleted: 0 };
+  if (!deletedRows || deletedRows.length === 0) {
+    return {
+      error:
+        "Nothing was deleted — the photos may already be gone, or your role can't delete photos (admin / listing manager only).",
+      deleted: 0,
+    };
   }
 
+  const admin = createAdminClient();
+  const mediaPaths = deletedRows
+    .flatMap((m) => [m.path_thumb, m.path_card, m.path_full])
+    .filter((p): p is string => Boolean(p));
+  if (mediaPaths.length) await admin.storage.from("media").remove(mediaPaths);
+  const originalPaths = deletedRows
+    .map((m) => m.storage_path_original)
+    .filter((p): p is string => Boolean(p));
+  if (originalPaths.length) await admin.storage.from("documents").remove(originalPaths);
+
   // keep a cover: promote the first remaining photo if the cover was deleted
-  if (media.is_cover) {
+  if (deletedRows.some((m) => m.is_cover)) {
     const { data: rest } = await supabase
       .from("property_media")
       .select("id")
@@ -246,16 +264,20 @@ export async function deleteMedia(
     }
   }
 
-  await logEvent(supabase, {
-    orgId: profile.orgId,
-    actorId: profile.id,
-    entityType: "property",
-    entityId: propertyId,
-    eventType: "media_deleted",
-    payload: { media_id: mediaId },
-  });
+  // one event per photo (guardrail 1) — the timeline keeps per-photo granularity
+  for (const m of deletedRows) {
+    await logEvent(supabase, {
+      orgId: profile.orgId,
+      actorId: profile.id,
+      entityType: "property",
+      entityId: propertyId,
+      eventType: "media_deleted",
+      payload: { media_id: m.id, ...(deletedRows.length > 1 ? { bulk: true } : {}) },
+    });
+  }
+
   await recomputeQualityScore(supabase, propertyId);
   revalidatePath(`/properties/${propertyId}`);
   revalidatePath("/properties");
-  return { error: null };
+  return { error: null, deleted: deletedRows.length };
 }
