@@ -290,3 +290,36 @@ silent. Format: date · task · decision · rationale.
   (caught in T3.2 browser verification via the event log's change diff).
   Fixed in deals + properties validators; audit of the remaining strict
   usages is in BACKLOG.
+
+- **2026-07-16 · T-audit-leads** — UPDATE policies with role checks only in
+  USING leak their WITH CHECK to other roles: Postgres ORs the USING pool and
+  the WITH CHECK pool of permissive policies *independently*, so the org-only
+  `with check` on `leads_update_admin`/`deals_update_admin` was satisfiable by
+  agents, letting them hand their own lead/deal to a third party (app-layer
+  blocked, RLS not). Migration 0009 repeats the role check in the admin WITH
+  CHECKs and pins the agent ones: leads new-row must stay self-assigned or
+  unassigned (inbox actions work without claiming; releasing back to the pool
+  is allowed); deals new-row must keep an ownership anchor (`agent_id` or
+  `created_by` = uid), so a deal's creator may change its working agent but
+  nobody can hand a deal fully away. Same-shaped policies on
+  contacts/properties/viewings/tasks were reviewed and left as-is: their
+  matrix rows don't promise a no-hand-off invariant, and cross-member
+  hand-off there is normal collaboration (BACKLOG holds a follow-up to
+  confirm that reading with the client).
+- **2026-07-16 · T-audit-leads** — Lead actions verify affected rows before
+  logging events. RLS USING filters an UPDATE to 0 rows *without* an error,
+  so mark-called/close/convert on another agent's lead used to no-op silently
+  and still log `called`/`lost`/`converted` events for mutations that never
+  happened — poisoning the append-only evidence log. All lead mutations now guard
+  ownership app-side (admin / assigned agent / unassigned), use conditional
+  updates (`.is("first_response_at", null)`, `.in("status", open)`) for
+  exactly-once stamps and race-safe closes, and `.select("id")`-check row
+  counts before writing their event. Convert is two-phase with a
+  pre-generated deal id: insert deal → conditionally flip the lead
+  (`.in("status", open)`); the FK `leads_converted_fk` forces this order —
+  the deal must exist before the lead can point at it (caught in browser
+  verification). A convert that loses the race deletes its deal again via the
+  admin client (authenticated has no DELETE on deals by design), so a failed
+  convert can no longer strand an orphan deal. Convert also stamps
+  `first_response_at` — converting is a response, the inbox clock must stop
+  (ResponseClock also freezes for non-open leads now).

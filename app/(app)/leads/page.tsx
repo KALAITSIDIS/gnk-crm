@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Inbox } from "lucide-react";
+import { AlertCircle, Inbox } from "lucide-react";
 import { AddLeadDialog } from "@/components/features/leads/add-lead-dialog";
 import { LeadRowActions } from "@/components/features/leads/lead-actions";
 import { ChatLinks } from "@/components/features/shared/chat-links";
@@ -8,6 +8,7 @@ import { StatusBadge } from "@/components/features/shared/status-badge";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTime } from "@/lib/utils/format";
+import { LEAD_OPEN_STATUSES } from "@/lib/validators/contacts";
 
 export const dynamic = "force-dynamic";
 
@@ -15,25 +16,38 @@ export default async function LeadsPage() {
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
 
-  const { data: leads } = await supabase
-    .from("leads")
-    .select(
-      `id, source, channel, message, status, received_at, first_response_at,
-       first_call_at, assigned_agent_id, lost_reason, converted_deal_id,
-       contacts(id, display_name, phone_e164, telegram_username, has_whatsapp),
-       properties(id, reference)`,
-    )
-    .order("received_at", { ascending: false })
-    .limit(100);
+  const openStatuses = [...LEAD_OPEN_STATUSES];
 
-  const { data: agents } = await supabase
-    .from("profiles")
-    .select("id, full_name")
-    .eq("is_active", true);
-  const agentName = new Map((agents ?? []).map((a) => [a.id, a.full_name]));
+  // header counts are exact DB counts, not derived from the 100-row slice
+  const [{ data: leads, error: leadsError }, openCount, awaitingCount, { data: agents }] =
+    await Promise.all([
+      supabase
+        .from("leads")
+        .select(
+          `id, source, channel, message, status, received_at, first_response_at,
+           assigned_agent_id, lost_reason, converted_deal_id,
+           contacts(id, display_name, phone_e164, telegram_username, has_whatsapp),
+           properties(id, reference)`,
+        )
+        .order("received_at", { ascending: false })
+        .limit(100),
+      supabase
+        .from("leads")
+        .select("id", { count: "exact", head: true })
+        .in("status", openStatuses),
+      supabase
+        .from("leads")
+        .select("id", { count: "exact", head: true })
+        .in("status", openStatuses)
+        .is("first_response_at", null),
+      supabase.from("profiles").select("id, full_name, is_active"),
+    ]);
+
+  const agentName = new Map(
+    (agents ?? []).map((a) => [a.id, a.is_active ? a.full_name : `${a.full_name} (inactive)`]),
+  );
 
   const rows = leads ?? [];
-  const openStatuses = ["new", "contacted", "qualified"];
 
   return (
     <div className="flex flex-col gap-4">
@@ -41,15 +55,19 @@ export default async function LeadsPage() {
         <div>
           <h1 className="text-xl font-semibold text-text-1">Leads</h1>
           <p className="text-sm text-text-2">
-            {rows.filter((l) => openStatuses.includes(l.status)).length} open ·{" "}
-            {rows.filter((l) => !l.first_response_at && openStatuses.includes(l.status)).length}{" "}
-            awaiting first response
+            {openCount.count ?? 0} open · {awaitingCount.count ?? 0} awaiting first response
           </p>
         </div>
         <AddLeadDialog />
       </div>
 
-      {rows.length === 0 ? (
+      {leadsError ? (
+        <div className="flex flex-col items-center gap-3 rounded-[10px] border border-danger/40 bg-surface py-16">
+          <AlertCircle className="size-8 text-danger" />
+          <p className="text-sm text-text-2">Leads could not be loaded — try refreshing.</p>
+          <p className="text-xs text-text-3">{leadsError.message}</p>
+        </div>
+      ) : rows.length === 0 ? (
         <div className="flex flex-col items-center gap-3 rounded-[10px] border border-border bg-surface py-16">
           <Inbox className="size-8 text-text-3" />
           <p className="text-sm text-text-2">Inbox zero — no leads yet.</p>
@@ -65,7 +83,7 @@ export default async function LeadsPage() {
               has_whatsapp: boolean;
             } | null;
             const property = lead.properties as { id: string; reference: string } | null;
-            const isOpen = openStatuses.includes(lead.status);
+            const isOpen = (openStatuses as string[]).includes(lead.status);
             return (
               <li
                 key={lead.id}
@@ -76,6 +94,7 @@ export default async function LeadsPage() {
                     <ResponseClock
                       receivedAt={lead.received_at}
                       firstResponseAt={lead.first_response_at}
+                      active={isOpen}
                     />
                     <StatusBadge status={lead.status} />
                     <span className="text-xs text-text-3">

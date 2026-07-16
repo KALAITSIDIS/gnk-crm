@@ -16,17 +16,35 @@ const STYLES: Record<ClockState, string> = {
 export function ResponseClock({
   receivedAt,
   firstResponseAt,
+  active = true,
 }: {
   receivedAt: string;
   firstResponseAt: string | null;
+  /**
+   * False once the lead leaves the inbox (converted/lost/spam): the SLA clock
+   * is meaningless then, so it must not keep ticking red forever (audit fix).
+   */
+  active?: boolean;
 }) {
+  const running = active && !firstResponseAt;
   const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
-    if (firstResponseAt) return;
+    if (!running) return;
     const id = setInterval(() => setNow(new Date()), 30_000);
     return () => clearInterval(id);
-  }, [firstResponseAt]);
+  }, [running]);
+
+  if (!firstResponseAt && !active) {
+    return (
+      <span
+        title="Closed without a logged first response"
+        className="inline-flex items-center rounded-full bg-surface-2 px-2 py-0.5 text-xs font-medium tabular-nums text-text-3"
+      >
+        —
+      </span>
+    );
+  }
 
   const state = clockState(receivedAt, firstResponseAt, now);
   const label = state === "answered" ? "answered" : elapsedLabel(receivedAt, now);

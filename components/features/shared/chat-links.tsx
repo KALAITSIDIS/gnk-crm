@@ -28,7 +28,13 @@ export function ChatLinks({
 
   const open = (channel: "whatsapp" | "telegram", url: string) => {
     window.open(url, "_blank", "noopener");
-    startTransition(() => logChatLinkOpened(leadId, contactId, channel));
+    startTransition(async () => {
+      try {
+        await logChatLinkOpened(leadId, contactId, channel);
+      } catch {
+        // best-effort: the chat opened; a failed log must not crash the page
+      }
+    });
   };
 
   const waNumber = phoneE164?.replace(/^\+/, "");

@@ -3,21 +3,39 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import type { Database } from "@/lib/supabase/database.types";
-import { getCurrentProfile } from "@/lib/services/auth";
+import { getCurrentProfile, type CurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
 import { createClient } from "@/lib/supabase/server";
-import { COMM_CHANNELS, LEAD_SOURCES } from "@/lib/validators/contacts";
+import { COMM_CHANNELS, LEAD_OPEN_STATUSES, LEAD_SOURCES } from "@/lib/validators/contacts";
 
 export type LeadActionState = { error: string | null; savedAt: number | null };
 
-const emptyToUndefined = (v: unknown) => (v === "" || v === null ? undefined : v);
+type LeadRow = Database["public"]["Tables"]["leads"]["Row"];
+type LeadUpdate = Database["public"]["Tables"]["leads"]["Update"];
 
+const emptyToUndefined = (v: unknown) => (v === "" || v === null || v === "none" ? undefined : v);
+
+const isOpen = (lead: LeadRow) =>
+  (LEAD_OPEN_STATUSES as readonly string[]).includes(lead.status);
+
+/**
+ * Doc 04 lockdown mirrored app-side: a lead is workable by admin, its assigned
+ * agent, or anyone while unassigned. Actions check this BEFORE mutating so a
+ * blocked update can never be followed by a bogus event row (audit fix: RLS
+ * USING silently filters to 0 rows without an error).
+ */
+const canWorkError = (profile: CurrentProfile, lead: LeadRow): string | null =>
+  profile.role !== "admin" && lead.assigned_agent_id && lead.assigned_agent_id !== profile.id
+    ? "Lead is assigned to another agent."
+    : null;
+
+// z.guid(), not z.uuid() — Zod 4 uuid() rejects seeded fixture ids (T3.2)
 const createLeadSchema = z.object({
   source: z.enum(LEAD_SOURCES),
   channel: z.preprocess(emptyToUndefined, z.enum(COMM_CHANNELS).optional()),
   message: z.preprocess(emptyToUndefined, z.string().max(5000).optional()),
-  contact_id: z.preprocess(emptyToUndefined, z.string().uuid().optional()),
-  property_id: z.preprocess(emptyToUndefined, z.string().uuid().optional()),
+  contact_id: z.preprocess(emptyToUndefined, z.guid().optional()),
+  property_id: z.preprocess(emptyToUndefined, z.guid().optional()),
 });
 
 export async function createLead(
@@ -79,13 +97,8 @@ export async function linkLeadContact(leadId: string, contactId: string): Promis
   if (lead.status === "converted") {
     throw new Error("Lead already converted — the contact lives on its deal.");
   }
-  if (
-    profile.role !== "admin" &&
-    lead.assigned_agent_id &&
-    lead.assigned_agent_id !== profile.id
-  ) {
-    throw new Error("Lead is assigned to another agent.");
-  }
+  const guardErr = canWorkError(profile, lead);
+  if (guardErr) throw new Error(guardErr);
 
   // org-scoped by RLS; confirms the contact exists and gives a name for the event
   const { data: contact } = await supabase
@@ -130,11 +143,12 @@ export async function reassignLead(leadId: string, agentId: string): Promise<voi
   if (!agent || !agent.is_active) throw new Error("Pick an active agent.");
   if (lead.assigned_agent_id === agentId) return; // no-op
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("leads")
     .update({ assigned_agent_id: agentId })
-    .eq("id", leadId);
-  if (error) throw new Error(error.message);
+    .eq("id", leadId)
+    .select("id");
+  if (error || !data?.length) throw new Error(error?.message ?? "Reassign blocked");
 
   await logEvent(supabase, {
     orgId: profile.orgId,
@@ -164,7 +178,7 @@ export async function correctLead(
   const { supabase, profile, lead } = await getLead(leadId);
   if (profile.role !== "admin") throw new Error("Admins only.");
 
-  const updates: Database["public"]["Tables"]["leads"]["Update"] = {};
+  const updates: LeadUpdate = {};
   let reopened = false;
 
   if (opts.reopen) {
@@ -185,8 +199,12 @@ export async function correctLead(
 
   if (Object.keys(updates).length === 0) throw new Error("Nothing to correct.");
 
-  const { error } = await supabase.from("leads").update(updates).eq("id", leadId);
-  if (error) throw new Error(error.message);
+  const { data, error } = await supabase
+    .from("leads")
+    .update(updates)
+    .eq("id", leadId)
+    .select("id");
+  if (error || !data?.length) throw new Error(error?.message ?? "Correction blocked");
 
   await logEvent(supabase, {
     orgId: profile.orgId,
@@ -201,15 +219,21 @@ export async function correctLead(
 
 export async function claimLead(leadId: string): Promise<void> {
   const { supabase, profile, lead } = await getLead(leadId);
-  if (lead.assigned_agent_id && lead.assigned_agent_id !== profile.id) {
-    throw new Error("Lead already assigned");
-  }
+  if (!isOpen(lead)) throw new Error("Only an open lead can be claimed.");
+  if (lead.assigned_agent_id === profile.id) return; // already mine
+  if (lead.assigned_agent_id) throw new Error("Lead already assigned");
+
+  // RLS re-evaluates against the current row, so a concurrent claim loses
+  // here with 0 rows — never a silent overwrite.
   const { data, error } = await supabase
     .from("leads")
     .update({ assigned_agent_id: profile.id })
     .eq("id", leadId)
+    .is("assigned_agent_id", null)
     .select("id");
-  if (error || !data?.length) throw new Error(error?.message ?? "Claim blocked");
+  if (error || !data?.length) {
+    throw new Error(error?.message ?? "Another agent claimed this lead first.");
+  }
 
   await logEvent(supabase, {
     orgId: profile.orgId,
@@ -225,13 +249,25 @@ export async function claimLead(leadId: string): Promise<void> {
 /** Stamps first_response_at exactly once (doc 02 §C4). */
 export async function markContacted(leadId: string): Promise<void> {
   const { supabase, profile, lead } = await getLead(leadId);
-  const updates: Database["public"]["Tables"]["leads"]["Update"] = {
+  if (!isOpen(lead)) throw new Error("Lead is closed — reopen it first.");
+  const guardErr = canWorkError(profile, lead);
+  if (guardErr) throw new Error(guardErr);
+
+  const updates: LeadUpdate = {
     status: lead.status === "new" ? "contacted" : lead.status,
   };
-  if (!lead.first_response_at) updates.first_response_at = new Date().toISOString();
+  const stamping = !lead.first_response_at;
+  if (stamping) updates.first_response_at = new Date().toISOString();
 
-  const { error } = await supabase.from("leads").update(updates).eq("id", leadId);
+  let query = supabase.from("leads").update(updates).eq("id", leadId);
+  // exactly-once: a concurrent stamp wins at the DB, we back off below
+  if (stamping) query = query.is("first_response_at", null);
+  const { data, error } = await query.select("id");
   if (error) throw new Error(error.message);
+  if (!data?.length) {
+    if (stamping) return; // lost the stamp race — the winner's event covers it
+    throw new Error("Update blocked");
+  }
 
   await logEvent(supabase, {
     orgId: profile.orgId,
@@ -239,21 +275,35 @@ export async function markContacted(leadId: string): Promise<void> {
     entityType: "lead",
     entityId: leadId,
     eventType: "contacted",
-    payload: { first_response: !lead.first_response_at },
+    payload: { first_response: stamping },
   });
   revalidatePath("/leads");
 }
 
 export async function markCalled(leadId: string): Promise<void> {
   const { supabase, profile, lead } = await getLead(leadId);
-  const updates: Database["public"]["Tables"]["leads"]["Update"] = {};
-  if (!lead.first_call_at) updates.first_call_at = new Date().toISOString();
-  if (!lead.first_response_at) updates.first_response_at = new Date().toISOString();
+  if (!isOpen(lead)) throw new Error("Lead is closed — reopen it first.");
+  const guardErr = canWorkError(profile, lead);
+  if (guardErr) throw new Error(guardErr);
+
+  const now = new Date().toISOString();
+  const updates: LeadUpdate = {};
+  const stamping = !lead.first_call_at;
+  if (stamping) updates.first_call_at = now;
+  if (!lead.first_response_at) updates.first_response_at = now;
   if (lead.status === "new") updates.status = "contacted";
 
+  let firstCall = stamping;
   if (Object.keys(updates).length > 0) {
-    const { error } = await supabase.from("leads").update(updates).eq("id", leadId);
+    let query = supabase.from("leads").update(updates).eq("id", leadId);
+    // exactly-once: a concurrent stamp wins at the DB, we back off below
+    if (stamping) query = query.is("first_call_at", null);
+    const { data, error } = await query.select("id");
     if (error) throw new Error(error.message);
+    if (!data?.length) {
+      if (!stamping) throw new Error("Update blocked");
+      firstCall = false; // lost the stamp race — still log the repeat call
+    }
   }
 
   await logEvent(supabase, {
@@ -262,13 +312,13 @@ export async function markCalled(leadId: string): Promise<void> {
     entityType: "lead",
     entityId: leadId,
     eventType: "called",
-    payload: { first_call: !lead.first_call_at },
+    payload: { first_call: firstCall },
   });
   revalidatePath("/leads");
 }
 
 const conversationSchema = z.object({
-  lead_id: z.string().uuid(),
+  lead_id: z.guid(),
   channel: z.enum(COMM_CHANNELS),
   note: z.string().trim().min(1, "Note is required").max(5000),
 });
@@ -282,15 +332,19 @@ export async function logConversation(
     return { error: parsed.error.issues[0]?.message ?? "Invalid input", savedAt: null };
   }
   const { supabase, profile, lead } = await getLead(parsed.data.lead_id);
+  const guardErr = canWorkError(profile, lead);
+  if (guardErr) return { error: guardErr, savedAt: null };
 
   if (!lead.first_response_at) {
-    await supabase
+    const { error } = await supabase
       .from("leads")
       .update({
         first_response_at: new Date().toISOString(),
         status: lead.status === "new" ? "contacted" : lead.status,
       })
-      .eq("id", lead.id);
+      .eq("id", lead.id)
+      .is("first_response_at", null); // exactly-once; a lost race is benign
+    if (error) return { error: error.message, savedAt: null };
   }
 
   await logEvent(supabase, {
@@ -320,7 +374,7 @@ export async function logConversation(
 }
 
 const closeSchema = z.object({
-  lead_id: z.string().uuid(),
+  lead_id: z.guid(),
   outcome: z.enum(["lost", "spam"]),
   reason: z.string().trim().max(500).optional(),
 });
@@ -337,12 +391,18 @@ export async function closeLead(
     return { error: "A reason is required to mark a lead lost", savedAt: null };
   }
   const { supabase, profile, lead } = await getLead(parsed.data.lead_id);
+  const guardErr = canWorkError(profile, lead);
+  if (guardErr) return { error: guardErr, savedAt: null };
+  if (!isOpen(lead)) return { error: "Only an open lead can be closed.", savedAt: null };
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("leads")
     .update({ status: parsed.data.outcome, lost_reason: parsed.data.reason ?? null })
-    .eq("id", lead.id);
+    .eq("id", lead.id)
+    .in("status", [...LEAD_OPEN_STATUSES]) // race-safe: never overwrite converted/closed
+    .select("id");
   if (error) return { error: error.message, savedAt: null };
+  if (!data?.length) return { error: "Lead changed underneath — refresh and retry.", savedAt: null };
 
   await logEvent(supabase, {
     orgId: profile.orgId,
@@ -376,11 +436,20 @@ export async function logChatLinkOpened(
 }
 
 const convertSchema = z.object({
-  lead_id: z.string().uuid(),
+  lead_id: z.guid(),
   deal_type: z.enum(["sale", "rental", "antiparoxi", "advisory"]),
 });
 
-/** Convert a lead into a deal at the first stage of the chosen type (T2.5). */
+/**
+ * Convert a lead into a deal at the first stage of the chosen type (T2.5).
+ * Two-phase so a failure never strands an orphan deal: the deal is inserted
+ * first under a pre-generated id (leads_converted_fk needs it to exist), then
+ * a conditional lead update claims the conversion — a concurrent convert
+ * loses with 0 rows there, and the loser's deal is removed again via the
+ * admin client (authenticated has no DELETE on deals by design). Converting
+ * also stamps first_response_at — a conversion IS a response, and the inbox
+ * clock must stop.
+ */
 export async function convertLead(
   _prev: LeadActionState,
   formData: FormData,
@@ -392,6 +461,11 @@ export async function convertLead(
   const { supabase, profile, lead } = await getLead(parsed.data.lead_id);
 
   if (lead.status === "converted") return { error: "Lead already converted", savedAt: null };
+  if (!isOpen(lead)) {
+    return { error: "Only an open lead can be converted — reopen it first.", savedAt: null };
+  }
+  const guardErr = canWorkError(profile, lead);
+  if (guardErr) return { error: guardErr, savedAt: null };
   if (!lead.contact_id) {
     return { error: "Link a contact to the lead before converting", savedAt: null };
   }
@@ -418,27 +492,36 @@ export async function convertLead(
     .filter(Boolean)
     .join(" — ");
 
-  const { data: deal, error: dealErr } = await supabase
-    .from("deals")
-    .insert({
-      org_id: profile.orgId,
-      deal_type: parsed.data.deal_type,
-      stage_id: stage.id,
-      title,
-      property_id: lead.property_id,
-      buyer_contact_id: lead.contact_id,
-      agent_id: lead.assigned_agent_id ?? profile.id,
-      created_by: profile.id,
-    })
-    .select("id")
-    .single();
+  const dealId = crypto.randomUUID();
+  const { error: dealErr } = await supabase.from("deals").insert({
+    id: dealId,
+    org_id: profile.orgId,
+    deal_type: parsed.data.deal_type,
+    stage_id: stage.id,
+    title,
+    property_id: lead.property_id,
+    buyer_contact_id: lead.contact_id,
+    agent_id: lead.assigned_agent_id ?? profile.id,
+    created_by: profile.id,
+  });
   if (dealErr) return { error: dealErr.message, savedAt: null };
 
-  const { error: leadErr } = await supabase
+  const { data: claimed, error: claimErr } = await supabase
     .from("leads")
-    .update({ status: "converted", converted_deal_id: deal.id })
-    .eq("id", lead.id);
-  if (leadErr) return { error: leadErr.message, savedAt: null };
+    .update({
+      status: "converted",
+      converted_deal_id: dealId,
+      first_response_at: lead.first_response_at ?? new Date().toISOString(),
+    })
+    .eq("id", lead.id)
+    .in("status", [...LEAD_OPEN_STATUSES])
+    .select("id");
+  if (claimErr || !claimed?.length) {
+    // lost the convert race (or the update was blocked) — take the deal back
+    const { createAdminClient } = await import("@/lib/supabase/admin");
+    await createAdminClient().from("deals").delete().eq("id", dealId);
+    return { error: claimErr?.message ?? "Lead already converted", savedAt: null };
+  }
 
   await logEvent(supabase, {
     orgId: profile.orgId,
@@ -446,13 +529,13 @@ export async function convertLead(
     entityType: "lead",
     entityId: lead.id,
     eventType: "converted",
-    payload: { deal_id: deal.id, deal_type: parsed.data.deal_type },
+    payload: { deal_id: dealId, deal_type: parsed.data.deal_type },
   });
   await logEvent(supabase, {
     orgId: profile.orgId,
     actorId: profile.id,
     entityType: "deal",
-    entityId: deal.id,
+    entityId: dealId,
     eventType: "created",
     payload: { from_lead: lead.id, stage: stage.name, title },
   });

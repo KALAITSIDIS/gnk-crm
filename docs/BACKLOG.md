@@ -42,3 +42,17 @@ built without explicit direction.
   covers link contact / assign / correct / reopen / convert / close inline
   (2026-07-15), so the standalone page is deferred as a nice-to-have. A
   converted lead links out to its deal via "View deal →".
+- Leads inbox: status filter tabs (Open / All / Lost / Converted) +
+  pagination past the current 100-row slice (header counts are already exact
+  DB counts, 2026-07-16).
+- Add-lead dialog: optional property link (schema + createLead already accept
+  `property_id`; the form never sends it) and an optional backdated
+  `received_at` for leads entered after the fact, so the response-time KPI
+  reflects reality.
+- RLS follow-up: read the contacts/properties/viewings/tasks UPDATE policies
+  with the client and decide whether cross-member hand-off should be locked
+  down like leads/deals (0009) or stays intentional collaboration.
+- Event log durability: logEvent runs after its mutation commits, so a failed
+  event insert surfaces as an action error the user retries (risking a
+  duplicate mutation). Long-term: write event + mutation in one transaction
+  via RPC or trigger.

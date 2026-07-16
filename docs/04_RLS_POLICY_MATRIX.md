@@ -108,5 +108,7 @@ grant select on mandates_safe to authenticated;
 8. Agent updates own profile role field → denied (column-level: role changes admin-only; enforce via separate admin-only policy or trigger).
 9. Direct INSERT into `price_history` as any role → denied; price change via property update creates row.
 10. Non-admin INSERT/UPDATE on `cyprus_config` → denied.
-11. Unassigned lead claimed by agent (update sets `assigned_agent_id = uid`) → allowed; reassigning someone else's lead as agent → denied.
+11. Unassigned lead claimed by agent (update sets `assigned_agent_id = uid`) → allowed; unassigned lead updated by agent without claiming (status only) → allowed; reassigning someone else's lead as agent → denied; agent handing their **own** lead to another agent → denied (WITH CHECK — migration 0009; permissive policies OR their WITH CHECKs independently of USING, so the admin policy must repeat its role check there).
 12. `verify_events_chain(org)` true after seeded activity; false after service-role manual tamper (test-only).
+13. `key_movements` append-only: staff INSERT allowed; UPDATE/DELETE denied for every role.
+14. Deals: agent setting both `agent_id` and `created_by` away from themselves → denied (WITH CHECK, 0009); creator changing the working agent while staying `created_by` → allowed (own = `agent_id` OR `created_by`).

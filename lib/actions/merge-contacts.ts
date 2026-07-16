@@ -14,22 +14,26 @@ export interface MergeCandidate {
   email: string | null;
 }
 
-/** Search org contacts to absorb into the current one (admin merge dialog). */
+/**
+ * Search org contacts by name/phone/email. Used by the admin merge dialog
+ * (excludeId = the contact being merged into) and the add-lead contact picker
+ * (no exclusion).
+ */
 export async function searchContactsForMerge(
   query: string,
-  excludeId: string,
+  excludeId?: string,
 ): Promise<MergeCandidate[]> {
   const supabase = await createClient();
   const q = query.trim().replace(/[%,()]/g, " ");
   if (q.length < 2) return [];
 
-  const { data } = await supabase
+  let builder = supabase
     .from("contacts")
     .select("id, display_name, phone_e164, email")
     .eq("is_archived", false)
-    .neq("id", excludeId)
-    .or(`display_name.ilike.%${q}%,phone_e164.ilike.%${q}%,email.ilike.%${q}%`)
-    .limit(8);
+    .or(`display_name.ilike.%${q}%,phone_e164.ilike.%${q}%,email.ilike.%${q}%`);
+  if (excludeId) builder = builder.neq("id", excludeId);
+  const { data } = await builder.limit(8);
 
   return (data ?? []).map((c) => ({
     id: c.id,

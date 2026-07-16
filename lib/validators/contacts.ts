@@ -28,6 +28,8 @@ export const LEAD_SOURCES = [
   "email",
   "other",
 ] as const;
+/** lead_status values that count as "open" — in the inbox, workable, closable. */
+export const LEAD_OPEN_STATUSES = ["new", "contacted", "qualified"] as const;
 export const PSYCHOLOGY_PROFILES = [
   "investor",
   "relocation",

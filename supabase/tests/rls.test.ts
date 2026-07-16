@@ -377,7 +377,17 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(adminUpd.data).toHaveLength(1);
   });
 
-  it("11. leads: agent claims unassigned; cannot touch someone else's", async () => {
+  it("11. leads: agent works/claims unassigned; cannot steal or hand off", async () => {
+    // inbox flow: acting on an unassigned lead without claiming it must work
+    const workUnclaimed = await agentA2.client
+      .from("leads")
+      .update({ status: "contacted" })
+      .eq("id", leadUnassigned)
+      .select("id");
+    expect(workUnclaimed.error).toBeNull();
+    expect(workUnclaimed.data, "updating an unassigned lead without claiming must succeed")
+      .toHaveLength(1);
+
     const claim = await agentA2.client
       .from("leads")
       .update({ assigned_agent_id: agentA2.id, status: "contacted" })
@@ -385,6 +395,14 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       .select("id");
     expect(claim.error).toBeNull();
     expect(claim.data, "claiming an unassigned lead must succeed").toHaveLength(1);
+
+    // 0009: WITH CHECK — an agent may never hand their lead to a third party
+    const handoff = await agentA2.client
+      .from("leads")
+      .update({ assigned_agent_id: agentA1.id })
+      .eq("id", leadUnassigned)
+      .select("id");
+    expect(handoff.error, "handing own lead to another agent must fail").not.toBeNull();
 
     const steal = await agentA2.client
       .from("leads")
@@ -462,5 +480,34 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       .eq("id", keyMoveA1)
       .single();
     expect(still?.holder_name).toBe("Fixture Holder");
+  });
+
+  it("14. deals: agent cannot hand a deal fully away; creator may change its agent", async () => {
+    // 0009: WITH CHECK — the new row must keep at least one ownership anchor
+    const handoff = await agentA1.client
+      .from("deals")
+      .update({ agent_id: agentA2.id, created_by: agentA2.id })
+      .eq("id", dealA1)
+      .select("id");
+    expect(handoff.error, "handing a deal fully away must fail").not.toBeNull();
+
+    // doc 04: own = agent_id OR created_by — the creator keeps an anchor,
+    // so changing the working agent on a deal they created is allowed
+    const reassign = await agentA1.client
+      .from("deals")
+      .update({ agent_id: agentA2.id })
+      .eq("id", dealA1)
+      .select("id");
+    expect(reassign.error).toBeNull();
+    expect(reassign.data).toHaveLength(1);
+
+    // restore fixture state
+    const restore = await agentA1.client
+      .from("deals")
+      .update({ agent_id: agentA1.id })
+      .eq("id", dealA1)
+      .select("id");
+    expect(restore.error).toBeNull();
+    expect(restore.data).toHaveLength(1);
   });
 });
