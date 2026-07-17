@@ -82,7 +82,7 @@ export function PropertiesTable({ rows }: { rows: PropertyRow[] }) {
   return (
     <div className="overflow-x-auto rounded-[10px] border border-border bg-surface">
       <Table>
-        <TableHeader className="sticky top-0 bg-surface">
+        <TableHeader className="bg-surface">
           <TableRow>
             <TableHead className="w-12" />
             <TableHead>Reference</TableHead>

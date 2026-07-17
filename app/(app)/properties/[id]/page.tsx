@@ -30,6 +30,7 @@ import { StatusBadge } from "@/components/features/shared/status-badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { createClient } from "@/lib/supabase/server";
+import { unwrapRows } from "@/lib/supabase/unwrap";
 import { formatArea, formatDateTime, formatMoney } from "@/lib/utils/format";
 
 export default async function PropertyDetailPage({
@@ -42,38 +43,42 @@ export default async function PropertyDetailPage({
 
   // mandates via mandates_safe, NOT the base table: LM has no base-table
   // policy and commission columns are masked in the view (doc 04, T4.5)
-  const [
-    { data: p },
-    { data: areaRows },
-    { data: mediaRows },
-    { data: mandateSafeRows },
-    { data: keyRows },
-  ] = await Promise.all([
-      supabase
-        .from("properties")
-        .select("*, districts(name), areas(name)")
-        .eq("id", id)
-        .maybeSingle(),
-      supabase.from("areas").select("id, district_id, name"),
-      supabase
-        .from("property_media")
-        .select("id, path_thumb, path_card, is_cover, sort_order, watermarked, width, height")
-        .eq("property_id", id)
-        .order("sort_order"),
-      supabase
-        .from("mandates_safe")
-        .select("*")
-        .eq("property_id", id)
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("property_keys")
-        .select("id, key_code, description, status, current_holder_name")
-        .eq("property_id", id)
-        .order("created_at", { ascending: true }),
-    ]);
+  const [propertyRes, areasRes, mediaRes, mandatesRes, keysRes] = await Promise.all([
+    supabase
+      .from("properties")
+      .select("*, districts(name), areas(name)")
+      .eq("id", id)
+      .maybeSingle(),
+    supabase.from("areas").select("id, district_id, name"),
+    supabase
+      .from("property_media")
+      .select("id, path_thumb, path_card, is_cover, sort_order, watermarked, width, height")
+      .eq("property_id", id)
+      .order("sort_order"),
+    supabase
+      .from("mandates_safe")
+      .select("*")
+      .eq("property_id", id)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("property_keys")
+      .select("id, key_code, description, status, current_holder_name")
+      .eq("property_id", id)
+      .order("created_at", { ascending: true }),
+  ]);
 
-  const [{ data: priceRows }, { data: eventRows }, { data: viewingRows }, { data: documentRows }] =
-    await Promise.all([
+  // a genuine query failure renders the error boundary, not a misleading 404
+  if (propertyRes.error) {
+    throw new Error(`Property query failed: ${propertyRes.error.message}`);
+  }
+  const p = propertyRes.data;
+  if (!p) notFound();
+  const areaRows = unwrapRows(areasRes, "areas");
+  const mediaRows = unwrapRows(mediaRes, "property media");
+  const mandateSafeRows = unwrapRows(mandatesRes, "mandates");
+  const keyRows = unwrapRows(keysRes, "property keys");
+
+  const [priceRes, eventsRes, viewingsRes, documentsRes] = await Promise.all([
     supabase
       .from("price_history")
       .select("id, old_price, new_price, changed_at, changed_by")
@@ -102,10 +107,16 @@ export default async function PropertyDetailPage({
       .eq("entity_id", id)
       .order("created_at", { ascending: false }),
   ]);
-
-  if (!p) notFound();
+  const priceRows = unwrapRows(priceRes, "price history");
+  const eventRows = unwrapRows(eventsRes, "events");
+  const viewingRows = unwrapRows(viewingsRes, "viewings");
+  const documentRows = unwrapRows(documentsRes, "documents");
 
   const profile = await getCurrentProfile(supabase);
+  const isAdminOrLM = profile.role === "admin" || profile.role === "listing_manager";
+  // mirrors properties_update RLS — forms render read-only when a save would no-op
+  const canEditProperty =
+    isAdminOrLM || (profile.role === "agent" && p.assigned_agent_id === profile.id);
 
   const isLand = p.property_type === "land";
   const media = mediaRows ?? [];
@@ -348,25 +359,35 @@ export default async function PropertyDetailPage({
 
         <TabsContent value="media" className="mt-4">
           <div className="rounded-[10px] border border-border bg-surface p-6">
-            <MediaTab propertyId={p.id} items={mediaRows ?? []} />
+            <MediaTab
+              propertyId={p.id}
+              items={mediaRows}
+              canUpload={canEditProperty}
+              canManage={isAdminOrLM}
+            />
           </div>
         </TabsContent>
 
         <TabsContent value="details" className="mt-4">
           <div className="rounded-[10px] border border-border bg-surface p-6">
-            <DetailsForm property={p} areas={areas} isAdmin={profile.role === "admin"} />
+            <DetailsForm
+              property={p}
+              areas={areas}
+              isAdmin={profile.role === "admin"}
+              readOnly={!canEditProperty}
+            />
           </div>
         </TabsContent>
 
         <TabsContent value="legal" className="mt-4">
           <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-6">
-            <LegalForm property={p} />
+            <LegalForm property={p} readOnly={!canEditProperty} />
           </div>
         </TabsContent>
 
         <TabsContent value="marketing" className="mt-4">
           <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-6">
-            <MarketingForm property={p} />
+            <MarketingForm property={p} readOnly={!canEditProperty} />
           </div>
         </TabsContent>
 
@@ -432,7 +453,12 @@ export default async function PropertyDetailPage({
 
         <TabsContent value="activity" className="mt-4">
           <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-6">
-            <EventTimeline events={eventRows ?? []} />
+            {profile.role !== "admin" ? (
+              <p className="mb-3 text-xs text-text-3">
+                You see actions you performed — admins see the full history.
+              </p>
+            ) : null}
+            <EventTimeline events={eventRows} />
           </div>
         </TabsContent>
       </Tabs>

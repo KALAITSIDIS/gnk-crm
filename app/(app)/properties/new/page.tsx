@@ -1,20 +1,21 @@
 import { CreatePropertyWizard } from "@/components/features/properties/create-wizard";
 import { createClient } from "@/lib/supabase/server";
+import { unwrapRows } from "@/lib/supabase/unwrap";
 
 export default async function NewPropertyPage() {
   const supabase = await createClient();
 
-  const [{ data: districtRows }, { data: areaRows }] = await Promise.all([
+  const [districtsRes, areasRes] = await Promise.all([
     supabase.from("districts").select("id, code, name, sort_order").order("sort_order"),
     supabase.from("areas").select("id, district_id, name"),
   ]);
 
-  const districts = (districtRows ?? []).map((d) => ({
+  const districts = unwrapRows(districtsRes, "districts").map((d) => ({
     id: d.id,
     code: d.code,
     name: (d.name as { en?: string })?.en ?? d.code,
   }));
-  const areas = (areaRows ?? []).map((a) => ({
+  const areas = unwrapRows(areasRes, "areas").map((a) => ({
     id: a.id,
     districtId: a.district_id,
     name: (a.name as { en?: string })?.en ?? "—",

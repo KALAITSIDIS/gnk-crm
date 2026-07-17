@@ -349,3 +349,37 @@ silent. Format: date · task · decision · rationale.
      Remaining `.select("id")` row-count guards were added to deal/offer
      updates (`updateDealSection`, `saveOffer`, `updateOfferStatus`,
      `markDealWon`, `markDealLost`) per the T-audit-leads pattern.
+
+- **2026-07-17 · T-audit-properties** — Properties module audit fix-all.
+  Decisions and fixes:
+  1. `deletePropertyDocument` now proves the row delete happened
+     (`.delete().select("id")`, plus an `entity_type = 'property'` check)
+     BEFORE the admin-client storage removal. Previously any authenticated
+     role could call the action, RLS filtered the delete to 0 rows, and the
+     code still destroyed the stored file and logged a phantom
+     `document_deleted` — a non-admin could permanently break a document.
+  2. The T-audit-leads/pipeline pattern is now applied across properties:
+     `.select("id")` row-count guards + result objects on
+     `updatePropertySection`, `setMediaCover`, `moveMedia`, `updateUnitStatus`
+     (agents saving non-assigned properties used to get a fake "Saved" toast
+     plus a phantom `property.updated` event). UI mirrors RLS: section forms
+     render a disabled fieldset with a read-only note for non-editors, media
+     manage buttons are admin/LM-only, unit forms admin/LM-only.
+  3. The publish gate scores current row + pending updates (merged), not the
+     stale stored row — filling the missing fields and flipping to Public in
+     one save works now. `recomputeQualityScore` reads `mandates_safe` instead
+     of the `mandates` base table: LMs have no base-table SELECT, so their
+     saves wrote scores 10 points low on mandated properties (flip-flopping
+     stored scores depending on who saved last).
+  4. Event diffs compare jsonb with sorted keys (`lib/utils/diff.ts`, unit
+     tested): Postgres re-orders jsonb keys, so multilang fields logged a
+     phantom `updated` diff on every no-change save.
+  5. List filters match the badge semantics: `mandate=none` = no active AND no
+     expired (draft/terminated-only still counts as none), `mandate=expired`
+     excludes properties that also hold an active mandate. Transaction filters
+     include `sale_or_rent` in both Sale and Rent; € bounds check
+     `rent_price_month` in rent context (rent-only listings used to vanish
+     when any price was typed). Checkbox fields (`has_storage`, land
+     utilities) store `false`, not NULL, and land-panel columns are only
+     written for land rows. Area is clearable via a "— (no area)" sentinel
+     option.

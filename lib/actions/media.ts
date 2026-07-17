@@ -123,7 +123,19 @@ export async function uploadPropertyMedia(
       })
       .select("id")
       .single();
-    if (insertErr) return { error: insertErr.message, savedAt: null };
+    if (insertErr) {
+      // the row was rejected (RLS/validation) — don't strand the uploaded files
+      await admin.storage
+        .from("media")
+        .remove([renditionPath("thumb"), renditionPath("card"), renditionPath("full")]);
+      await admin.storage.from("documents").remove([originalPath]);
+      return {
+        error: insertErr.message.includes("row-level security")
+          ? "Upload not allowed — this property isn't assigned to you."
+          : insertErr.message,
+        savedAt: null,
+      };
+    }
     hasCover = true;
 
     await logEvent(supabase, {
@@ -142,22 +154,35 @@ export async function uploadPropertyMedia(
   return { error: null, savedAt: Date.now() };
 }
 
-export async function setMediaCover(propertyId: string, mediaId: string): Promise<void> {
+/** Result object, not throw — thrown server-action messages are stripped in
+ * prod, and RLS filters a denied update to 0 rows with no error at all. */
+export async function setMediaCover(
+  propertyId: string,
+  mediaId: string,
+): Promise<{ error: string | null }> {
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
+
+  // set the new cover first (with row-count proof), clear the old one after —
+  // a denied call must not leave the property coverless
+  const { data: setRows, error } = await supabase
+    .from("property_media")
+    .update({ is_cover: true })
+    .eq("id", mediaId)
+    .eq("property_id", propertyId)
+    .select("id");
+  if (error) return { error: error.message };
+  if (!setRows || setRows.length === 0) {
+    return { error: "Cover not changed — only admins and listing managers manage photos." };
+  }
 
   const { error: clearErr } = await supabase
     .from("property_media")
     .update({ is_cover: false })
     .eq("property_id", propertyId)
-    .eq("is_cover", true);
-  if (clearErr) throw new Error(clearErr.message);
-
-  const { error } = await supabase
-    .from("property_media")
-    .update({ is_cover: true })
-    .eq("id", mediaId);
-  if (error) throw new Error(error.message);
+    .eq("is_cover", true)
+    .neq("id", mediaId);
+  if (clearErr) return { error: clearErr.message };
 
   await logEvent(supabase, {
     orgId: profile.orgId,
@@ -170,31 +195,50 @@ export async function setMediaCover(propertyId: string, mediaId: string): Promis
   await recomputeQualityScore(supabase, propertyId);
   revalidatePath(`/properties/${propertyId}`);
   revalidatePath("/properties");
+  return { error: null };
 }
 
 export async function moveMedia(
   propertyId: string,
   mediaId: string,
   direction: "up" | "down",
-): Promise<void> {
+): Promise<{ error: string | null }> {
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
 
-  const { data: items } = await supabase
+  const { data: items, error: listErr } = await supabase
     .from("property_media")
     .select("id, sort_order")
     .eq("property_id", propertyId)
     .order("sort_order");
-  if (!items) return;
+  if (listErr) return { error: listErr.message };
 
-  const index = items.findIndex((m) => m.id === mediaId);
+  const index = (items ?? []).findIndex((m) => m.id === mediaId);
+  if (index < 0) return { error: "Photo not found" };
   const swapWith = direction === "up" ? index - 1 : index + 1;
-  if (index < 0 || swapWith < 0 || swapWith >= items.length) return;
+  if (swapWith < 0 || swapWith >= items!.length) return { error: null }; // already at the edge
 
-  const a = items[index];
-  const b = items[swapWith];
-  await supabase.from("property_media").update({ sort_order: b.sort_order }).eq("id", a.id);
-  await supabase.from("property_media").update({ sort_order: a.sort_order }).eq("id", b.id);
+  const a = items![index];
+  const b = items![swapWith];
+  const { data: aRows, error: aErr } = await supabase
+    .from("property_media")
+    .update({ sort_order: b.sort_order })
+    .eq("id", a.id)
+    .select("id");
+  if (aErr) return { error: aErr.message };
+  if (!aRows || aRows.length === 0) {
+    return { error: "Order not changed — only admins and listing managers manage photos." };
+  }
+  const { data: bRows, error: bErr } = await supabase
+    .from("property_media")
+    .update({ sort_order: a.sort_order })
+    .eq("id", b.id)
+    .select("id");
+  if (bErr || !bRows || bRows.length === 0) {
+    // half-swapped (the other photo vanished mid-flight) — restore a's slot
+    await supabase.from("property_media").update({ sort_order: a.sort_order }).eq("id", a.id);
+    return { error: bErr?.message ?? "Order not changed — the other photo no longer exists." };
+  }
 
   await logEvent(supabase, {
     orgId: profile.orgId,
@@ -205,6 +249,7 @@ export async function moveMedia(
     payload: { media_id: mediaId, direction },
   });
   revalidatePath(`/properties/${propertyId}`);
+  return { error: null };
 }
 
 export async function deleteMedia(propertyId: string, mediaId: string): Promise<{ error: string | null }> {

@@ -103,9 +103,22 @@ export async function deletePropertyDocument(
     .eq("id", documentId)
     .maybeSingle();
   if (!doc) return { error: "Document not found" };
+  if (doc.entity_type !== "property") {
+    return { error: "Not a property document" };
+  }
 
-  const { error } = await supabase.from("documents").delete().eq("id", documentId);
+  // RLS silently filters a forbidden delete to 0 rows — the returned rows are
+  // the proof. Without this check the admin-client storage removal below would
+  // destroy the file while the row (and everyone's access to it) survives.
+  const { data: deletedRows, error } = await supabase
+    .from("documents")
+    .delete()
+    .eq("id", documentId)
+    .select("id");
   if (error) return { error: error.message };
+  if (!deletedRows || deletedRows.length === 0) {
+    return { error: "Nothing was deleted — only admins can delete documents." };
+  }
 
   const admin = createAdminClient();
   if (doc.storage_path) await admin.storage.from("documents").remove([doc.storage_path]);

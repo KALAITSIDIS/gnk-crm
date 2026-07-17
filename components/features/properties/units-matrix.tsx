@@ -62,7 +62,14 @@ function useSavedToast(state: UnitActionState) {
   }, [state]);
 }
 
-export function UnitsMatrix({ units }: { units: UnitRow[] }) {
+export function UnitsMatrix({
+  units,
+  canManage = true,
+}: {
+  units: UnitRow[];
+  /** unit status/insert rights: admin & listing manager (properties RLS) */
+  canManage?: boolean;
+}) {
   const [isPending, startTransition] = useTransition();
 
   return (
@@ -101,29 +108,34 @@ export function UnitsMatrix({ units }: { units: UnitRow[] }) {
                 {formatMoney(u.asking_price)}
               </TableCell>
               <TableCell>
-                <Select
-                  defaultValue={u.status}
-                  disabled={isPending}
-                  onValueChange={(v) =>
-                    startTransition(async () => {
-                      await updateUnitStatus(u.id, v);
-                      toast.success("Saved");
-                    })
-                  }
-                >
-                  <SelectTrigger className="h-8 w-40 text-[13px]">
-                    <SelectValue>
-                      <StatusBadge status={u.status} />
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PROPERTY_STATUSES.map((s) => (
-                      <SelectItem key={s} value={s}>
-                        {labelize(s)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {canManage ? (
+                  <Select
+                    defaultValue={u.status}
+                    disabled={isPending}
+                    onValueChange={(v) =>
+                      startTransition(async () => {
+                        const { error } = await updateUnitStatus(u.id, v);
+                        if (error) toast.error(error);
+                        else toast.success("Saved");
+                      })
+                    }
+                  >
+                    <SelectTrigger className="h-8 w-40 text-[13px]">
+                      <SelectValue>
+                        <StatusBadge status={u.status} />
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PROPERTY_STATUSES.map((s) => (
+                        <SelectItem key={s} value={s}>
+                          {labelize(s)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <StatusBadge status={u.status} />
+                )}
               </TableCell>
             </TableRow>
           ))}
@@ -217,9 +229,11 @@ export interface PriceListRow {
 export function PriceListsSection({
   projectId,
   priceLists,
+  canManage = true,
 }: {
   projectId: string;
   priceLists: PriceListRow[];
+  canManage?: boolean;
 }) {
   const [state, formAction, pending] = useActionState(createPriceListVersion, initialState);
   useSavedToast(state);
@@ -243,20 +257,24 @@ export function PriceListsSection({
           ))}
         </ul>
       )}
-      <form action={formAction} className="flex items-end gap-2">
-        <input type="hidden" name="project_id" value={projectId} />
-        <div className="flex flex-1 flex-col gap-1.5">
-          <Label htmlFor="notes">Notes for new version</Label>
-          <Input id="notes" name="notes" placeholder="e.g. +3% from 1 Aug" />
-        </div>
-        <Button type="submit" size="sm" disabled={pending}>
-          {pending ? "Snapshotting…" : "New version"}
-        </Button>
-      </form>
-      {state.error ? (
-        <p role="alert" className="text-sm text-danger">
-          {state.error}
-        </p>
+      {canManage ? (
+        <>
+          <form action={formAction} className="flex items-end gap-2">
+            <input type="hidden" name="project_id" value={projectId} />
+            <div className="flex flex-1 flex-col gap-1.5">
+              <Label htmlFor="notes">Notes for new version</Label>
+              <Input id="notes" name="notes" placeholder="e.g. +3% from 1 Aug" />
+            </div>
+            <Button type="submit" size="sm" disabled={pending}>
+              {pending ? "Snapshotting…" : "New version"}
+            </Button>
+          </form>
+          {state.error ? (
+            <p role="alert" className="text-sm text-danger">
+              {state.error}
+            </p>
+          ) : null}
+        </>
       ) : null}
     </div>
   );
@@ -277,9 +295,11 @@ export interface PaymentPlanRow {
 export function PaymentPlansSection({
   projectId,
   plans,
+  canManage = true,
 }: {
   projectId: string;
   plans: PaymentPlanRow[];
+  canManage?: boolean;
 }) {
   const [state, formAction, pending] = useActionState(createPaymentPlan, initialState);
   useSavedToast(state);
@@ -312,6 +332,7 @@ export function PaymentPlansSection({
           ))}
         </ul>
       )}
+      {canManage ? (
       <form action={formAction} className="flex flex-col gap-3">
         <input type="hidden" name="project_id" value={projectId} />
         <input type="hidden" name="installments" value={installmentsJson} />
@@ -380,6 +401,7 @@ export function PaymentPlansSection({
           </Button>
         </div>
       </form>
+      ) : null}
     </div>
   );
 }

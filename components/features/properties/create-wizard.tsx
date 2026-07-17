@@ -41,7 +41,9 @@ export function CreatePropertyWizard({
   const district = districts.find((d) => d.id === districtId);
   const districtAreas = areas.filter((a) => a.districtId === districtId);
   const isLand = propertyType === "land";
-  const isRent = transaction === "rent";
+  // sale_or_rent listings carry both prices
+  const showRent = transaction === "rent" || transaction === "sale_or_rent";
+  const showAsking = transaction !== "rent";
   const step1Valid = kind && propertyType && districtId;
 
   return (
@@ -172,17 +174,18 @@ export function CreatePropertyWizard({
               <Input id="address" name="address" placeholder="Street, number, locality" />
             </div>
 
-            {isRent ? (
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="rent_price_month">Rent (€ / month)</Label>
-                <Input id="rent_price_month" name="rent_price_month" type="number" min="0" />
-              </div>
-            ) : (
+            {showAsking ? (
               <div className="flex flex-col gap-2">
                 <Label htmlFor="asking_price">Asking price (€)</Label>
                 <Input id="asking_price" name="asking_price" type="number" min="0" />
               </div>
-            )}
+            ) : null}
+            {showRent ? (
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="rent_price_month">Rent (€ / month)</Label>
+                <Input id="rent_price_month" name="rent_price_month" type="number" min="0" />
+              </div>
+            ) : null}
 
             {isLand ? (
               <div className="flex flex-col gap-2">

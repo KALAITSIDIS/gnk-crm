@@ -111,7 +111,13 @@ export async function recomputeQualityScore(
       .eq("id", propertyId)
       .maybeSingle(),
     supabase.from("property_media").select("id, is_cover").eq("property_id", propertyId),
-    supabase.from("mandates").select("id").eq("property_id", propertyId).eq("status", "active"),
+    // mandates_safe, not the base table: listing managers have no base-table
+    // SELECT, so reading `mandates` here scored their saves 10 points low
+    supabase
+      .from("mandates_safe")
+      .select("id")
+      .eq("property_id", propertyId)
+      .eq("status", "active"),
   ]);
   if (!p) return null;
 

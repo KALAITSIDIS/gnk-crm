@@ -15,10 +15,13 @@ const initialState: UpdateSectionState = { error: null, savedAt: null };
 export function SectionForm({
   propertyId,
   section,
+  readOnly = false,
   children,
 }: {
   propertyId: string;
   section: "details" | "legal" | "marketing";
+  /** true when the viewer's role can't update this property (RLS would no-op) */
+  readOnly?: boolean;
   children: React.ReactNode;
 }) {
   const [state, formAction, pending] = useActionState(updatePropertySection, initialState);
@@ -35,17 +38,26 @@ export function SectionForm({
     <form action={formAction} className="flex flex-col gap-4">
       <input type="hidden" name="property_id" value={propertyId} />
       <input type="hidden" name="section" value={section} />
-      {children}
+      <fieldset disabled={readOnly} className="flex flex-col gap-4">
+        {children}
+      </fieldset>
       {state.error ? (
         <p role="alert" className="text-sm text-danger">
           {state.error}
         </p>
       ) : null}
-      <div>
-        <Button type="submit" disabled={pending}>
-          {pending ? "Saving…" : "Save"}
-        </Button>
-      </div>
+      {readOnly ? (
+        <p className="text-xs text-text-3">
+          Read-only — this property isn&apos;t assigned to you. Admins and listing managers can
+          edit any property.
+        </p>
+      ) : (
+        <div>
+          <Button type="submit" disabled={pending}>
+            {pending ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      )}
     </form>
   );
 }

@@ -98,9 +98,14 @@ export async function createUnit(
   return { error: null, savedAt: Date.now() };
 }
 
-export async function updateUnitStatus(unitId: string, status: string): Promise<void> {
+/** Result object, not throw — thrown server-action messages are stripped in
+ * prod, and RLS filters a denied update to 0 rows with no error at all. */
+export async function updateUnitStatus(
+  unitId: string,
+  status: string,
+): Promise<{ error: string | null }> {
   if (!(PROPERTY_STATUSES as readonly string[]).includes(status)) {
-    throw new Error(`Invalid status: ${status}`);
+    return { error: `Invalid status: ${status}` };
   }
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
@@ -110,14 +115,20 @@ export async function updateUnitStatus(unitId: string, status: string): Promise<
     .select("id, org_id, parent_id, reference, status")
     .eq("id", unitId)
     .maybeSingle();
-  if (!unit) throw new Error("Unit not found");
-  if (unit.status === status) return;
+  if (!unit) return { error: "Unit not found" };
+  if (unit.status === status) return { error: null };
 
-  const { error } = await supabase
+  const { data: updatedRows, error } = await supabase
     .from("properties")
     .update({ status: status as (typeof PROPERTY_STATUSES)[number] })
-    .eq("id", unitId);
-  if (error) throw new Error(error.message);
+    .eq("id", unitId)
+    .select("id");
+  if (error) return { error: error.message };
+  if (!updatedRows || updatedRows.length === 0) {
+    return {
+      error: "Status not changed — only admins and listing managers manage units.",
+    };
+  }
 
   await logEvent(supabase, {
     orgId: unit.org_id,
@@ -130,6 +141,7 @@ export async function updateUnitStatus(unitId: string, status: string): Promise<
 
   if (unit.parent_id) revalidatePath(`/properties/${unit.parent_id}/units`);
   revalidatePath("/properties");
+  return { error: null };
 }
 
 export async function createPriceListVersion(

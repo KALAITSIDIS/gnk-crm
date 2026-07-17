@@ -61,3 +61,19 @@ built without explicit direction.
 - Pipeline board: stale-deal highlighting — tint cards whose
   `stage_entered_at` tenure exceeds a per-stage threshold (column is in place
   since 0011).
+- Properties list: column sorting (price, score, updated) — currently fixed
+  `created_at desc` only — plus a `?tab=` param on the detail page so
+  Media/Documents tabs are deep-linkable.
+- Property media: drag-and-drop photo reorder with dnd-kit (pin `DndContext
+  id`, see pipeline board) replacing the up/down arrows; re-watermark
+  renditions when visibility changes (watermark currently applies only at
+  upload time, so a private→public flip publishes unwatermarked images).
+- Rent price history: the 0005 trigger only tracks `asking_price`; tracking
+  `rent_price_month` needs a `price_type` discriminator column on
+  `price_history` (schema change, not just a trigger edit).
+- Properties module i18n (en/el/ru) for consistency with the dashboard pass —
+  the module ships hardcoded English per the Phase 1 spec.
+- Search index follow-up: `properties_ref_trgm` covers `reference` only;
+  `address` / `title->>en` ilike scans are unindexed (fine at internal scale).
+- Bulk list actions (multi-select → status/visibility change) and CSV export,
+  if the team asks for them.

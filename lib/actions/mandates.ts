@@ -63,6 +63,13 @@ export async function saveMandate(
       .maybeSingle();
     if (!current) return { error: "Mandate not found", savedAt: null };
 
+    // the schema's refine only sees form-supplied pairs — cross-check against
+    // the kept start date when the form leaves it unchanged
+    const effectiveStart = d.start_date ?? current.start_date;
+    if (d.expiry_date && effectiveStart && d.expiry_date <= effectiveStart) {
+      return { error: "Expiry must be after the start date", savedAt: null };
+    }
+
     const updates = {
       type: d.type,
       owner_contact_id: d.owner_contact_id ?? null,
@@ -214,7 +221,11 @@ export async function uploadMandateDocument(
     })
     .select("id")
     .single();
-  if (docErr) return { error: docErr.message, savedAt: null };
+  if (docErr) {
+    // the row was rejected — don't orphan the uploaded object
+    await admin.storage.from("documents").remove([path]);
+    return { error: docErr.message, savedAt: null };
+  }
 
   const { error: linkErr } = await supabase
     .from("mandates")

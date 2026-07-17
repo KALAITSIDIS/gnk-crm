@@ -16,6 +16,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { PROPERTY_FEATURES } from "@/lib/constants/features";
 import {
+  AREA_NONE,
   ENERGY_CLASSES,
   PERMIT_STATUSES,
   PROPERTY_STATUSES,
@@ -122,16 +123,18 @@ export function DetailsForm({
   property,
   areas,
   isAdmin = false,
+  readOnly = false,
 }: {
   property: PropertyDetailData;
   areas: AreaOption[];
   isAdmin?: boolean;
+  readOnly?: boolean;
 }) {
   const districtAreas = areas.filter((a) => a.districtId === property.district_id);
   const isLand = property.property_type === "land";
 
   return (
-    <SectionForm propertyId={property.id} section="details">
+    <SectionForm propertyId={property.id} section="details" readOnly={readOnly}>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <SelectField
           name="status"
@@ -167,8 +170,11 @@ export function DetailsForm({
         <SelectField
           name="area_id"
           label="Area"
-          options={districtAreas.map((a) => ({ value: a.id, label: a.name }))}
-          defaultValue={property.area_id ?? ""}
+          options={[
+            { value: AREA_NONE, label: "— (no area)" },
+            ...districtAreas.map((a) => ({ value: a.id, label: a.name })),
+          ]}
+          defaultValue={property.area_id ?? AREA_NONE}
           placeholder={districtAreas.length ? "Select area…" : "No areas for district"}
         />
         <TextField name="address" label="Address" defaultValue={property.address} />
@@ -336,9 +342,15 @@ export function DetailsForm({
   );
 }
 
-export function LegalForm({ property }: { property: PropertyDetailData }) {
+export function LegalForm({
+  property,
+  readOnly = false,
+}: {
+  property: PropertyDetailData;
+  readOnly?: boolean;
+}) {
   return (
-    <SectionForm propertyId={property.id} section="legal">
+    <SectionForm propertyId={property.id} section="legal" readOnly={readOnly}>
       <div className="grid gap-4 sm:grid-cols-2">
         <SelectField
           name="title_deed_status"
@@ -371,9 +383,15 @@ export function LegalForm({ property }: { property: PropertyDetailData }) {
   );
 }
 
-export function MarketingForm({ property }: { property: PropertyDetailData }) {
+export function MarketingForm({
+  property,
+  readOnly = false,
+}: {
+  property: PropertyDetailData;
+  readOnly?: boolean;
+}) {
   return (
-    <SectionForm propertyId={property.id} section="marketing">
+    <SectionForm propertyId={property.id} section="marketing" readOnly={readOnly}>
       <MultilangTabs
         name="title"
         label="Title"

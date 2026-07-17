@@ -165,16 +165,24 @@ const optLng = z.preprocess(
 );
 const optInt = z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).optional());
 const optText = (max: number) => z.preprocess(emptyToUndefined, z.string().max(max).optional());
-const optBool = z
+// checkboxes are binary in the form, so an absent value means "no", not
+// "unknown" — the action only applies land-panel checkboxes to land rows
+const checkbox = z
   .string()
   .optional()
-  .transform((v) => (v === "on" || v === "true" ? true : v === "false" ? false : undefined));
+  .transform((v) => v === "on" || v === "true");
+
+/** Sentinel for the clearable Area select — Radix SelectItem forbids "". */
+export const AREA_NONE = "__none__";
 
 export const detailsSectionSchema = z.object({
   status: z.enum(PROPERTY_STATUSES),
   visibility: z.enum(VISIBILITY_LEVELS),
   transaction_type: z.enum(TRANSACTION_TYPES),
-  area_id: z.preprocess(emptyToUndefined, z.string().uuid().optional()),
+  area_id: z.preprocess(
+    (v) => (v === "" || v === null || v === AREA_NONE ? undefined : v),
+    z.string().uuid().optional(),
+  ),
   address: optText(300),
   postal_code: optText(20),
   latitude: optLat,
@@ -195,7 +203,7 @@ export const detailsSectionSchema = z.object({
   bathrooms: optInt,
   wc: optInt,
   parking_spaces: optInt,
-  has_storage: optBool,
+  has_storage: checkbox,
   floor_number: z.preprocess(emptyToUndefined, z.coerce.number().int().optional()),
   total_floors: optInt,
   year_built: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1800).max(2100).optional()),
@@ -215,8 +223,8 @@ export const detailsSectionSchema = z.object({
   max_floors: optInt,
   max_height_m: optNumber,
   road_frontage_m: optNumber,
-  water_available: optBool,
-  electricity_available: optBool,
+  water_available: checkbox,
+  electricity_available: checkbox,
   constraints_notes: optText(2000),
 }).refine((d) => (d.latitude === undefined) === (d.longitude === undefined), {
   message: "Enter both latitude and longitude, or clear both",

@@ -11,7 +11,9 @@ import {
   type UnitRow,
 } from "@/components/features/properties/units-matrix";
 import { Button } from "@/components/ui/button";
+import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
+import { unwrapRows } from "@/lib/supabase/unwrap";
 
 export default async function ProjectUnitsPage({
   params,
@@ -21,17 +23,21 @@ export default async function ProjectUnitsPage({
   const { id } = await params;
   const supabase = await createClient();
 
-  const { data: project } = await supabase
+  const { data: project, error: projectErr } = await supabase
     .from("properties")
     .select("id, reference, kind, title")
     .eq("id", id)
     .maybeSingle();
+  if (projectErr) throw new Error(`Project query failed: ${projectErr.message}`);
   if (!project) notFound();
   if (project.kind !== "project" && project.kind !== "phase") {
     redirect(`/properties/${id}`);
   }
 
-  const [{ data: unitRows }, { data: priceListRows }, { data: planRows }] = await Promise.all([
+  const profile = await getCurrentProfile(supabase);
+  const canManage = profile.role === "admin" || profile.role === "listing_manager";
+
+  const [unitsRes, priceListsRes, plansRes] = await Promise.all([
     supabase
       .from("properties")
       .select(
@@ -52,6 +58,9 @@ export default async function ProjectUnitsPage({
       .eq("project_id", id)
       .order("created_at"),
   ]);
+  const unitRows = unwrapRows(unitsRes, "units");
+  const priceListRows = unwrapRows(priceListsRes, "price lists");
+  const planRows = unwrapRows(plansRes, "payment plans");
 
   const units: UnitRow[] = (unitRows ?? []).map((u) => ({
     ...u,
@@ -97,11 +106,11 @@ export default async function ProjectUnitsPage({
         </p>
       </div>
 
-      <UnitsMatrix units={units} />
-      <AddUnitForm projectId={id} />
+      <UnitsMatrix units={units} canManage={canManage} />
+      {canManage ? <AddUnitForm projectId={id} /> : null}
       <div className="grid gap-4 lg:grid-cols-2">
-        <PriceListsSection projectId={id} priceLists={priceLists} />
-        <PaymentPlansSection projectId={id} plans={plans} />
+        <PriceListsSection projectId={id} priceLists={priceLists} canManage={canManage} />
+        <PaymentPlansSection projectId={id} plans={plans} canManage={canManage} />
       </div>
     </div>
   );

@@ -13,6 +13,7 @@ import {
 import type { MandateBadgeState } from "@/components/features/shared/mandate-badge";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/server";
+import { unwrapRows } from "@/lib/supabase/unwrap";
 import {
   PROPERTIES_PAGE_SIZE,
   propertyFiltersSchema,
@@ -60,26 +61,32 @@ export default async function PropertiesPage({
 
   const supabase = await createClient();
 
-  const [{ data: districtRows }, { data: areaRows }] = await Promise.all([
+  const [districtsRes, areasRes] = await Promise.all([
     supabase.from("districts").select("id, name, sort_order").order("sort_order"),
     supabase.from("areas").select("id, district_id, name"),
   ]);
 
-  const districts: DistrictOption[] = (districtRows ?? []).map((d) => ({
+  const districts: DistrictOption[] = unwrapRows(districtsRes, "districts").map((d) => ({
     id: d.id,
     name: (d.name as { en?: string })?.en ?? "—",
   }));
-  const areas: AreaOption[] = (areaRows ?? []).map((a) => ({
+  const areas: AreaOption[] = unwrapRows(areasRes, "areas").map((a) => ({
     id: a.id,
     districtId: a.district_id,
     name: (a.name as { en?: string })?.en ?? "—",
   }));
 
-  // Mandate "none" filter needs the ids that DO have mandates (internal scale: fine).
+  // Exclusion ids keep the filter consistent with deriveMandateState below
+  // (internal scale: fine). "none" = no active AND no expired mandate (draft/
+  // terminated-only still badges "none"); "expired" = expired but NOT active,
+  // because an active mandate wins the badge.
   let excludeIds: string[] = [];
-  if (filters.mandate === "none") {
-    const { data: withMandates } = await supabase.from("mandates").select("property_id");
-    excludeIds = [...new Set((withMandates ?? []).map((m) => m.property_id))];
+  if (filters.mandate === "none" || filters.mandate === "expired") {
+    const res = await supabase
+      .from("mandates")
+      .select("property_id")
+      .in("status", filters.mandate === "none" ? ["active", "expired"] : ["active"]);
+    excludeIds = [...new Set(unwrapRows(res, "mandates").map((m) => m.property_id))];
   }
 
   const mandateEmbed =
@@ -108,15 +115,46 @@ export default async function PropertiesPage({
   if (filters.district) query = query.eq("district_id", filters.district);
   if (filters.area) query = query.eq("area_id", filters.area);
   if (filters.type) query = query.eq("property_type", filters.type);
-  if (filters.transaction) query = query.eq("transaction_type", filters.transaction);
+  // sale_or_rent listings ARE for sale and ARE for rent — both filters match them
+  if (filters.transaction === "sale") {
+    query = query.in("transaction_type", ["sale", "sale_or_rent"]);
+  } else if (filters.transaction === "rent") {
+    query = query.in("transaction_type", ["rent", "sale_or_rent"]);
+  } else if (filters.transaction === "sale_or_rent") {
+    query = query.eq("transaction_type", "sale_or_rent");
+  }
   if (filters.status) query = query.eq("status", filters.status);
   if (filters.visibility) query = query.eq("visibility", filters.visibility);
   if (filters.beds !== undefined) query = query.gte("bedrooms", filters.beds);
-  if (filters.price_min !== undefined) query = query.gte("asking_price", filters.price_min);
-  if (filters.price_max !== undefined) query = query.lte("asking_price", filters.price_max);
+  // € bounds check the price that matters for the transaction context; with no
+  // transaction filter, either price may satisfy each bound (a sale_or_rent
+  // listing can pass min on asking and max on rent — accepted at this scale)
+  const priceCol =
+    filters.transaction === "rent"
+      ? "rent_price_month"
+      : filters.transaction === "sale"
+        ? "asking_price"
+        : null;
+  if (filters.price_min !== undefined) {
+    query = priceCol
+      ? query.gte(priceCol, filters.price_min)
+      : query.or(
+          `asking_price.gte.${filters.price_min},rent_price_month.gte.${filters.price_min}`,
+        );
+  }
+  if (filters.price_max !== undefined) {
+    query = priceCol
+      ? query.lte(priceCol, filters.price_max)
+      : query.or(
+          `asking_price.lte.${filters.price_max},rent_price_month.lte.${filters.price_max}`,
+        );
+  }
   if (filters.mandate === "active") query = query.eq("mandates.status", "active");
   if (filters.mandate === "expired") query = query.eq("mandates.status", "expired");
-  if (filters.mandate === "none" && excludeIds.length > 0) {
+  if (
+    (filters.mandate === "none" || filters.mandate === "expired") &&
+    excludeIds.length > 0
+  ) {
     query = query.not("id", "in", `(${excludeIds.join(",")})`);
   }
 

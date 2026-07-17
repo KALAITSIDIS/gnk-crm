@@ -7,6 +7,7 @@ import { getCurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
 import { generateReference } from "@/lib/services/reference";
 import { createClient } from "@/lib/supabase/server";
+import { changedValue } from "@/lib/utils/diff";
 import { createPropertySchema } from "@/lib/validators/properties";
 
 export type PropertyActionState = { error: string | null };
@@ -89,13 +90,6 @@ export async function createProperty(
   redirect(`/properties/${created.id}`);
 }
 
-/** Compare loosely across DB string/number representations. */
-function changedValue(oldVal: unknown, newVal: unknown): boolean {
-  const norm = (v: unknown) =>
-    v === undefined || v === null || v === "" ? null : typeof v === "object" ? JSON.stringify(v) : String(v);
-  return norm(oldVal) !== norm(newVal);
-}
-
 export async function updatePropertySection(
   _prev: UpdateSectionState,
   formData: FormData,
@@ -157,23 +151,29 @@ export async function updatePropertySection(
       bathrooms: d.bathrooms ?? null,
       wc: d.wc ?? null,
       parking_spaces: d.parking_spaces ?? null,
-      has_storage: d.has_storage ?? null,
+      has_storage: d.has_storage,
       floor_number: d.floor_number ?? null,
       total_floors: d.total_floors ?? null,
       year_built: d.year_built ?? null,
       energy_class: d.energy_class ?? null,
       features: d.features,
       internal_notes: d.internal_notes ?? null,
-      planning_zone_code: d.planning_zone_code ?? null,
-      building_density_pct: d.building_density_pct ?? null,
-      coverage_ratio_pct: d.coverage_ratio_pct ?? null,
-      max_floors: d.max_floors ?? null,
-      max_height_m: d.max_height_m ?? null,
-      road_frontage_m: d.road_frontage_m ?? null,
-      water_available: d.water_available ?? null,
-      electricity_available: d.electricity_available ?? null,
-      constraints_notes: d.constraints_notes ?? null,
     };
+    // the land panel isn't rendered for non-land properties, so its absent
+    // checkboxes would read as `false` — only land rows take these columns
+    if (current.property_type === "land") {
+      Object.assign(updates, {
+        planning_zone_code: d.planning_zone_code ?? null,
+        building_density_pct: d.building_density_pct ?? null,
+        coverage_ratio_pct: d.coverage_ratio_pct ?? null,
+        max_floors: d.max_floors ?? null,
+        max_height_m: d.max_height_m ?? null,
+        road_frontage_m: d.road_frontage_m ?? null,
+        water_available: d.water_available,
+        electricity_available: d.electricity_available,
+        constraints_notes: d.constraints_notes ?? null,
+      });
+    }
 
     // location is a PostGIS point: DB returns EWKB hex, we write EWKT. Compare
     // decoded coords (rounded) so an unchanged point is not re-written every save.
@@ -235,13 +235,45 @@ export async function updatePropertySection(
 
   // Publish gate (doc 02 §A8): switching visibility to `public` requires
   // score ≥ PUBLISH_THRESHOLD, unless an admin overrides (logged event).
+  // Scored over current + pending updates: the fields fixed in THIS save must
+  // count, otherwise filling the gaps and publishing in one go is rejected.
   const goingPublic = updates.visibility === "public" && current.visibility !== "public";
   if (goingPublic) {
-    const { recomputeQualityScore, PUBLISH_THRESHOLD } = await import(
+    const { computeQualityScore, PUBLISH_THRESHOLD } = await import(
       "@/lib/services/quality-score"
     );
-    const result = await recomputeQualityScore(supabase, propertyId);
-    const score = result?.score ?? 0;
+    const [{ data: media }, { data: activeMandates }] = await Promise.all([
+      supabase.from("property_media").select("id, is_cover").eq("property_id", propertyId),
+      // mandates_safe, not the base table — listing managers can't read the
+      // base table and would lose the active-mandate points
+      supabase
+        .from("mandates_safe")
+        .select("id")
+        .eq("property_id", propertyId)
+        .eq("status", "active"),
+    ]);
+    const merged = { ...(current as Record<string, unknown>), ...updates } as Record<
+      string,
+      unknown
+    >;
+    const isLand = merged.property_type === "land";
+    const result = computeQualityScore({
+      isLand,
+      hasCoverPhoto: (media ?? []).some((m) => m.is_cover),
+      photoCount: (media ?? []).length,
+      titleEn: (merged.title as { en?: string } | null)?.en,
+      publicDescriptionEn: (merged.public_description as { en?: string } | null)?.en,
+      hasPrice: merged.asking_price != null || merged.rent_price_month != null,
+      hasArea: isLand ? merged.plot_area_sqm != null : merged.covered_area_sqm != null,
+      hasBedroomsAndBathrooms: merged.bedrooms != null && merged.bathrooms != null,
+      hasPlanningZoneAndDensity:
+        merged.planning_zone_code != null && merged.building_density_pct != null,
+      hasCoords: merged.location != null,
+      titleDeedSet: merged.title_deed_status !== "unknown",
+      permitSet: merged.permit_status !== "unknown",
+      mandateActive: (activeMandates ?? []).length > 0,
+    });
+    const score = result.score;
     if (score < PUBLISH_THRESHOLD) {
       const wantsOverride = formData.get("publish_override") === "on";
       if (profile.role !== "admin") {
@@ -279,11 +311,22 @@ export async function updatePropertySection(
     return { error: null, savedAt: Date.now() }; // nothing to write, still "saved"
   }
 
-  const { error: updateErr } = await supabase
+  // RLS filters a forbidden update to 0 rows without an error — the returned
+  // ids are the proof a row actually changed. Without this, agents saving a
+  // property that isn't theirs got a "Saved" toast plus a phantom event.
+  const { data: updatedRows, error: updateErr } = await supabase
     .from("properties")
     .update(updates)
-    .eq("id", propertyId);
+    .eq("id", propertyId)
+    .select("id");
   if (updateErr) return { error: updateErr.message, savedAt: null };
+  if (!updatedRows || updatedRows.length === 0) {
+    return {
+      error:
+        "Nothing was saved — this property isn't assigned to you. Admins and listing managers can edit any property.",
+      savedAt: null,
+    };
+  }
 
   await logEvent(supabase, {
     orgId: profile.orgId,

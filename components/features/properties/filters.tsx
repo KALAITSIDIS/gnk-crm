@@ -220,15 +220,19 @@ export function PropertiesFilters({
           </SelectContent>
         </Select>
 
+        {/* key= remounts the uncontrolled inputs when the URL param changes
+            (e.g. Clear), so they can't display a filter that's no longer set */}
         <Input
+          key={`beds-${searchParams.get("beds") ?? ""}`}
           type="number"
           min={0}
           placeholder="Beds ≥"
           defaultValue={searchParams.get("beds") ?? ""}
-          onChange={(e) => setParams({ beds: e.target.value || undefined })}
+          onBlur={(e) => setParams({ beds: e.target.value || undefined })}
           className="h-9 w-20 text-[13px]"
         />
         <Input
+          key={`min-${searchParams.get("price_min") ?? ""}`}
           type="number"
           min={0}
           placeholder="€ min"
@@ -237,6 +241,7 @@ export function PropertiesFilters({
           className="h-9 w-24 text-[13px]"
         />
         <Input
+          key={`max-${searchParams.get("price_max") ?? ""}`}
           type="number"
           min={0}
           placeholder="€ max"
@@ -251,7 +256,8 @@ export function PropertiesFilters({
             size="sm"
             onClick={() => {
               setSearch("");
-              router.replace(pathname);
+              // the view toggle is a preference, not a filter — keep it
+              router.replace(view === "cards" ? `${pathname}?view=cards` : pathname);
             }}
             className="h-9 text-text-2"
           >
