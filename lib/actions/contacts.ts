@@ -2,13 +2,21 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { z } from "zod";
 import type { Database } from "@/lib/supabase/database.types";
+import { KYC_ITEMS } from "@/lib/constants/checklists";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
 import { recomputeDealsFor } from "@/lib/services/health-score";
 import { normalizePhone } from "@/lib/services/phone";
 import { createClient } from "@/lib/supabase/server";
-import { createContactSchema } from "@/lib/validators/contacts";
+import { changedValue } from "@/lib/utils/diff";
+import {
+  bankingReadinessSchema,
+  contactPreferencesSchema,
+  createContactSchema,
+  kycStateSchema,
+} from "@/lib/validators/contacts";
 
 export interface DuplicateMatch {
   id: string;
@@ -21,7 +29,10 @@ export type ContactActionState = {
   duplicate: DuplicateMatch | null;
 };
 
-/** Live dedup check used by the create form (doc 02 §C3). */
+const sorted = (values: string[]) => [...values].sort();
+
+/** Live dedup check used by the create form (doc 02 §C3). Also matches numbers
+ *  parked in `additional_phones` (e.g. inherited through a merge). */
 export async function checkContactDuplicate(
   phone: string | null,
   email: string | null,
@@ -33,7 +44,7 @@ export async function checkContactDuplicate(
     const { data } = await supabase
       .from("contacts")
       .select("id, display_name")
-      .eq("phone_e164", e164)
+      .or(`phone_e164.eq.${e164},additional_phones.cs.{"${e164}"}`)
       .eq("is_archived", false)
       .limit(1);
     if (data?.[0]) {
@@ -102,15 +113,17 @@ export async function createContact(
       email: input.email ?? null,
       telegram_username: input.telegram_username ?? null,
       has_whatsapp: input.has_whatsapp,
-      languages: input.languages.length ? input.languages : ["en"],
+      languages: sorted(input.languages.length ? input.languages : ["en"]),
       nationality: input.nationality ?? null,
-      contact_types: input.contact_types,
+      contact_types: sorted(input.contact_types),
       temperature: input.temperature,
       source: input.source ?? null,
       source_detail: input.source_detail ?? null,
+      preferred_channel: input.preferred_channel ?? null,
       psychology: input.psychology ?? null,
       consent_marketing: input.consent_marketing,
       consent_at: input.consent_marketing ? new Date().toISOString() : null,
+      gdpr_notes: input.gdpr_notes ?? null,
       notes: input.notes ?? null,
       assigned_agent_id: profile.role === "agent" ? profile.id : null,
       created_by: profile.id,
@@ -141,23 +154,17 @@ export async function createContact(
 
 export type ContactSectionState = { error: string | null; savedAt: number | null };
 
-function normEq(a: unknown, b: unknown): boolean {
-  const norm = (v: unknown) =>
-    v === undefined || v === null || v === ""
-      ? null
-      : typeof v === "object"
-        ? JSON.stringify(v)
-        : String(v);
-  return norm(a) === norm(b);
-}
-
 export async function updateContactSection(
   _prev: ContactSectionState,
   formData: FormData,
 ): Promise<ContactSectionState> {
   const contactId = formData.get("contact_id");
   const section = formData.get("section");
-  if (typeof contactId !== "string" || typeof section !== "string") {
+  if (
+    typeof contactId !== "string" ||
+    !z.guid().safeParse(contactId).success ||
+    typeof section !== "string"
+  ) {
     return { error: "Missing contact or section", savedAt: null };
   }
 
@@ -170,6 +177,9 @@ export async function updateContactSection(
     .eq("id", contactId)
     .maybeSingle();
   if (!current) return { error: "Contact not found", savedAt: null };
+  if (current.is_archived) {
+    return { error: "This contact is archived — unarchive it before editing.", savedAt: null };
+  }
 
   const raw = Object.fromEntries(formData.entries());
   let updates: Database["public"]["Tables"]["contacts"]["Update"];
@@ -194,13 +204,26 @@ export async function updateContactSection(
         const { data: dup } = await supabase
           .from("contacts")
           .select("id, display_name")
-          .eq("phone_e164", phoneE164)
+          .or(`phone_e164.eq.${phoneE164},additional_phones.cs.{"${phoneE164}"}`)
           .eq("is_archived", false)
           .neq("id", contactId)
           .limit(1);
         if (dup?.[0]) {
           return { error: `Duplicate phone — belongs to ${dup[0].display_name}`, savedAt: null };
         }
+      }
+    }
+    const email = d.email ?? null;
+    if (email && email !== current.email) {
+      const { data: dup } = await supabase
+        .from("contacts")
+        .select("id, display_name")
+        .eq("email", email)
+        .eq("is_archived", false)
+        .neq("id", contactId)
+        .limit(1);
+      if (dup?.[0]) {
+        return { error: `Duplicate email — belongs to ${dup[0].display_name}`, savedAt: null };
       }
     }
 
@@ -212,15 +235,16 @@ export async function updateContactSection(
       company_name: d.company_name ?? null,
       phone_e164: phoneE164,
       phone_raw: d.phone ?? null,
-      email: d.email ?? null,
+      email,
       telegram_username: d.telegram_username ?? null,
       has_whatsapp: d.has_whatsapp,
-      languages: d.languages.length ? d.languages : ["en"],
+      languages: sorted(d.languages.length ? d.languages : ["en"]),
       nationality: d.nationality ?? null,
-      contact_types: d.contact_types,
+      contact_types: sorted(d.contact_types),
       temperature: d.temperature,
       source: d.source ?? null,
       source_detail: d.source_detail ?? null,
+      preferred_channel: d.preferred_channel ?? null,
       psychology: d.psychology ?? null,
       consent_marketing: d.consent_marketing,
       // consent timestamp only moves when the flag flips (doc 02 §C3)
@@ -229,28 +253,31 @@ export async function updateContactSection(
           ? new Date().toISOString()
           : null
         : current.consent_at,
+      gdpr_notes: d.gdpr_notes ?? null,
       notes: d.notes ?? null,
+      // reassignment is an admin call (doc 04: agents only ever hold their own)
+      assigned_agent_id:
+        profile.role === "admin" ? (d.assigned_agent_id ?? null) : current.assigned_agent_id,
     };
   } else if (section === "preferences") {
-    const num = (v: unknown) => {
-      const n = Number(v);
-      return v !== "" && v !== null && Number.isFinite(n) ? n : undefined;
-    };
-    const preferences = {
+    const parsed = contactPreferencesSchema.safeParse({
       areas: formData.getAll("pref_areas").map(String).filter(Boolean),
-      budget_min: num(raw.budget_min),
-      budget_max: num(raw.budget_max),
-      bedrooms_min: num(raw.bedrooms_min),
+      budget_min: raw.budget_min,
+      budget_max: raw.budget_max,
+      bedrooms_min: raw.bedrooms_min,
       property_types: formData.getAll("pref_property_types").map(String).filter(Boolean),
-      purpose: typeof raw.purpose === "string" && raw.purpose ? raw.purpose : undefined,
-    };
-    updates = { preferences: JSON.parse(JSON.stringify(preferences)) };
+      purpose: typeof raw.purpose === "string" ? raw.purpose : undefined,
+    });
+    if (!parsed.success) {
+      return { error: parsed.error.issues[0]?.message ?? "Invalid preferences", savedAt: null };
+    }
+    updates = { preferences: JSON.parse(JSON.stringify(parsed.data)) };
   } else if (section === "kyc_banking") {
-    const { KYC_ITEMS } = await import("@/lib/constants/checklists");
     const kyc: Record<string, { done: boolean; note?: string; doc_link?: string }> = {};
     for (const [key] of KYC_ITEMS) {
       const done = raw[`kyc_${key}_done`] === "on";
-      const note = typeof raw[`kyc_${key}_note`] === "string" ? String(raw[`kyc_${key}_note`]).trim() : "";
+      const note =
+        typeof raw[`kyc_${key}_note`] === "string" ? String(raw[`kyc_${key}_note`]).trim() : "";
       const docLink =
         typeof raw[`kyc_${key}_doc`] === "string" ? String(raw[`kyc_${key}_doc`]).trim() : "";
       if (done || note || docLink) {
@@ -271,12 +298,19 @@ export async function updateContactSection(
         typeof raw.funds_origin_country === "string" && raw.funds_origin_country.trim()
           ? raw.funds_origin_country.trim()
           : undefined,
-      bank_pre_check_done: raw.bank_pre_check_done === "on" ? true : undefined,
-      account_feasibility: ["yes", "maybe", "no"].includes(feasibility) ? feasibility : undefined,
+      bank_pre_check_done: raw.bank_pre_check_done === "on" ? (true as const) : undefined,
+      account_feasibility: ["yes", "maybe", "no"].includes(feasibility)
+        ? (feasibility as "yes" | "maybe" | "no")
+        : undefined,
     };
+    const kycParsed = kycStateSchema.safeParse(kyc);
+    const bankingParsed = bankingReadinessSchema.safeParse(banking);
+    if (!kycParsed.success || !bankingParsed.success) {
+      return { error: "Invalid checklist input", savedAt: null };
+    }
     updates = {
-      kyc,
-      banking_readiness: JSON.parse(JSON.stringify(banking)),
+      kyc: JSON.parse(JSON.stringify(kycParsed.data)),
+      banking_readiness: JSON.parse(JSON.stringify(bankingParsed.data)),
     };
   } else {
     return { error: `Unknown section: ${section}`, savedAt: null };
@@ -285,15 +319,21 @@ export async function updateContactSection(
   const changed: Record<string, { from: unknown; to: unknown }> = {};
   for (const [key, next] of Object.entries(updates)) {
     const prev = (current as Record<string, unknown>)[key];
-    if (!normEq(prev, next)) changed[key] = { from: prev ?? null, to: next ?? null };
+    if (changedValue(prev, next)) changed[key] = { from: prev ?? null, to: next ?? null };
   }
   if (Object.keys(changed).length === 0) return { error: null, savedAt: Date.now() };
 
-  const { error: updateErr } = await supabase
+  // RLS filters forbidden updates to 0 rows — the returned rows are the proof
+  // (doc 04: agents update own/created contacts only, listing managers none)
+  const { data: updatedRows, error: updateErr } = await supabase
     .from("contacts")
     .update(updates)
-    .eq("id", contactId);
+    .eq("id", contactId)
+    .select("id");
   if (updateErr) return { error: updateErr.message, savedAt: null };
+  if (!updatedRows || updatedRows.length === 0) {
+    return { error: "You don't have permission to edit this contact.", savedAt: null };
+  }
 
   await logEvent(supabase, {
     orgId: profile.orgId,
@@ -312,4 +352,93 @@ export async function updateContactSection(
   revalidatePath(`/contacts/${contactId}`);
   revalidatePath("/contacts");
   return { error: null, savedAt: Date.now() };
+}
+
+/** Archive = the contacts "delete" (doc 04: DELETE ❌, archive flag instead).
+ *  RLS decides who may: admins any org contact, agents their own/created. */
+export async function archiveContact(contactId: string): Promise<{ error: string | null }> {
+  if (!z.guid().safeParse(contactId).success) return { error: "Missing contact" };
+
+  const supabase = await createClient();
+  const profile = await getCurrentProfile(supabase);
+
+  const { data: current } = await supabase
+    .from("contacts")
+    .select("id, is_archived")
+    .eq("id", contactId)
+    .maybeSingle();
+  if (!current) return { error: "Contact not found" };
+  if (current.is_archived) return { error: "Already archived" };
+
+  const { data: rows, error } = await supabase
+    .from("contacts")
+    .update({ is_archived: true })
+    .eq("id", contactId)
+    .eq("is_archived", false)
+    .select("id");
+  if (error) return { error: error.message };
+  if (!rows || rows.length === 0) {
+    return { error: "You don't have permission to archive this contact." };
+  }
+
+  await logEvent(supabase, {
+    orgId: profile.orgId,
+    actorId: profile.id,
+    entityType: "contact",
+    entityId: contactId,
+    eventType: "archived",
+    payload: { manual: true },
+  });
+
+  revalidatePath(`/contacts/${contactId}`);
+  revalidatePath("/contacts");
+  return { error: null };
+}
+
+export async function unarchiveContact(contactId: string): Promise<{ error: string | null }> {
+  if (!z.guid().safeParse(contactId).success) return { error: "Missing contact" };
+
+  const supabase = await createClient();
+  const profile = await getCurrentProfile(supabase);
+
+  const { data: current } = await supabase
+    .from("contacts")
+    .select("id, is_archived, merged_into_id")
+    .eq("id", contactId)
+    .maybeSingle();
+  if (!current) return { error: "Contact not found" };
+  if (!current.is_archived) return { error: "Not archived" };
+  if (current.merged_into_id) {
+    return { error: "This contact was merged into another — it stays archived." };
+  }
+
+  const { data: rows, error } = await supabase
+    .from("contacts")
+    .update({ is_archived: false })
+    .eq("id", contactId)
+    .eq("is_archived", true)
+    .select("id");
+  if (error) {
+    // partial unique index: another active contact may hold the phone by now
+    if (error.code === "23505") {
+      return { error: "Cannot unarchive — another active contact now uses this phone number." };
+    }
+    return { error: error.message };
+  }
+  if (!rows || rows.length === 0) {
+    return { error: "You don't have permission to unarchive this contact." };
+  }
+
+  await logEvent(supabase, {
+    orgId: profile.orgId,
+    actorId: profile.id,
+    entityType: "contact",
+    entityId: contactId,
+    eventType: "unarchived",
+    payload: {},
+  });
+
+  revalidatePath(`/contacts/${contactId}`);
+  revalidatePath("/contacts");
+  return { error: null };
 }

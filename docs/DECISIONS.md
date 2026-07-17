@@ -383,3 +383,54 @@ silent. Format: date · task · decision · rationale.
      utilities) store `false`, not NULL, and land-panel columns are only
      written for land rows. Area is clearable via a "— (no area)" sentinel
      option.
+
+- **2026-07-17 · T-audit-contacts** — Contacts module audit fix-all.
+  Decisions and fixes:
+  1. The row-count-guard pattern reaches contacts: `updateContactSection`
+     proves its update via `.select("id")` before logging the event (agents on
+     non-own contacts and listing managers used to get a fake "Saved" toast
+     plus a phantom `contact.updated` event — RLS filtered the write to 0 rows
+     while `events` INSERT is org-wide, so the bogus row landed). New RLS test
+     16 pins the matrix row. UI mirrors RLS: `ActionSectionForm` gained
+     `readOnly` (disabled fieldset + note), wired from the page for LMs,
+     non-owner agents and archived contacts. jsonb diffs now use
+     `lib/utils/diff.ts` (`changedValue`), killing the phantom
+     preferences/KYC diffs; `languages`/`contact_types` are stored sorted.
+  2. Archive is the contacts "delete" (doc 04) and now exists in the UI:
+     `archiveContact`/`unarchiveContact` actions (RLS decides who; row-count
+     guarded; events `archived`/`unarchived`), an Archive/Unarchive header
+     button, and an Active/Archived list filter. Merged-away losers can't be
+     unarchived (their references were repointed); archived contacts are
+     read-only everywhere including document upload.
+  3. Merge hardening: refuses an archived PRIMARY; a half-applied merge
+     (archive step done, repoints failed) is now resumable — re-running with
+     the same pair finishes the idempotent repoints/backfill instead of dying
+     on "already archived". Backfill logic moved to pure
+     `lib/services/merge-backfill.ts` (unit-tested): a conflicting duplicate
+     phone is parked in `additional_phones` (schema column previously never
+     written) and dedup checks (`checkContactDuplicate`, profile-save dup
+     check) now match additional phones too; assignment/psychology/source/
+     preferred_channel backfill when the primary lacks them; KYC/banking/
+     preferences move wholesale ONLY into an empty primary (never mixed); a
+     conflicting duplicate email is recorded as `dropped` on the merged event.
+     Notes append is marker-idempotent. Full RPC atomicity stays in BACKLOG.
+  4. `preferences.areas` stores area IDs (the importer already wrote IDs; the
+     UI wrote EN names — imported preferences never displayed). The form now
+     posts IDs and transitionally matches either ID or legacy name, so
+     existing name-based rows still light up and self-heal to IDs on the next
+     save. No data migration needed.
+  5. Contact detail gained the spec'd Deals tab (deals where the contact is
+     buyer or seller, RLS-scoped) and Documents tab (mirrors the property
+     documents pattern: private bucket, `entity_type='contact'`, KYC doc-type
+     subset, admin-only delete with row-count guard). Profile tab gained the
+     schema-only fields `source_detail` (was silently nulled on every save —
+     written by the action but collected by no form), `preferred_channel`,
+     `gdpr_notes`, an admin-only "Assigned agent" select (the list filter
+     existed but nothing could set assignment; RLS hand-off is the documented
+     0009 decision), and read-only "also reachable at" additional phones.
+  6. The topbar ⌘K search is real now (`GlobalSearch` on the existing
+     `searchEntities` action: properties + contacts + quick-add links) — it
+     was a decorative static div. Clearable selects use a shared
+     `SELECT_NONE` sentinel ("—" item) so source/psychology/channel/purpose/
+     feasibility can be un-set; deactivated agents render "(inactive)" in the
+     list instead of "—" (looked unassigned).

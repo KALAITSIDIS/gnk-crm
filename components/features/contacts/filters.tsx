@@ -44,6 +44,7 @@ export function ContactsFilters({ agents }: { agents: { id: string; full_name: s
   );
 
   const [search, setSearch] = useState(searchParams.get("q") ?? "");
+  const [nationality, setNationality] = useState(searchParams.get("nationality") ?? "");
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     return () => {
@@ -56,9 +57,16 @@ export function ContactsFilters({ agents }: { agents: { id: string; full_name: s
     debounce.current = setTimeout(() => setParams({ q: value || undefined }), 300);
   };
 
-  const hasFilters = ["q", "type", "temperature", "source", "agent", "nationality", "language"].some(
-    (k) => searchParams.has(k),
-  );
+  const hasFilters = [
+    "q",
+    "type",
+    "temperature",
+    "source",
+    "agent",
+    "nationality",
+    "language",
+    "archived",
+  ].some((k) => searchParams.has(k));
   const selectClass = "h-9 w-auto min-w-28 text-[13px]";
 
   return (
@@ -157,10 +165,27 @@ export function ContactsFilters({ agents }: { agents: { id: string; full_name: s
 
       <Input
         placeholder="Nationality"
-        defaultValue={searchParams.get("nationality") ?? ""}
-        onBlur={(e) => setParams({ nationality: e.target.value || undefined })}
+        value={nationality}
+        onChange={(e) => setNationality(e.target.value)}
+        onBlur={() => setParams({ nationality: nationality || undefined })}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") setParams({ nationality: nationality || undefined });
+        }}
         className="h-9 w-28 text-[13px]"
       />
+
+      <Select
+        value={searchParams.get("archived") === "1" ? "archived" : "active"}
+        onValueChange={(v) => setParams({ archived: v === "archived" ? "1" : undefined })}
+      >
+        <SelectTrigger className={selectClass}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="active">Active</SelectItem>
+          <SelectItem value="archived">Archived</SelectItem>
+        </SelectContent>
+      </Select>
 
       {hasFilters ? (
         <Button
@@ -168,6 +193,7 @@ export function ContactsFilters({ agents }: { agents: { id: string; full_name: s
           size="sm"
           onClick={() => {
             setSearch("");
+            setNationality("");
             router.replace(pathname);
           }}
           className="h-9 text-text-2"

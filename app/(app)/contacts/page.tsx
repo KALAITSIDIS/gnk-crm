@@ -43,23 +43,24 @@ export default async function ContactsPage({
   const agent = first(sp.agent);
   const nationality = first(sp.nationality)?.trim();
   const language = first(sp.language);
+  const showArchived = first(sp.archived) === "1";
   const page = Math.max(1, Number(first(sp.page)) || 1);
 
   const supabase = await createClient();
 
-  const { data: agents } = await supabase
+  const { data: profileRows } = await supabase
     .from("profiles")
-    .select("id, full_name")
-    .eq("is_active", true)
+    .select("id, full_name, is_active")
     .order("full_name");
+  const agentOptions = (profileRows ?? []).filter((p) => p.is_active);
 
   let query = supabase
     .from("contacts")
     .select(
-      "id, display_name, contact_kind, phone_e164, email, contact_types, temperature, source, nationality, languages, assigned_agent_id, created_at",
+      "id, display_name, contact_kind, phone_e164, email, contact_types, temperature, source, nationality, languages, assigned_agent_id, created_at, merged_into_id",
       { count: "exact" },
     )
-    .eq("is_archived", false);
+    .eq("is_archived", showArchived);
 
   if (q) {
     const safe = q.replace(/[%,()]/g, " ").trim();
@@ -87,7 +88,10 @@ export default async function ContactsPage({
   const total = result.count ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / CONTACTS_PAGE_SIZE));
 
-  const agentName = new Map((agents ?? []).map((a) => [a.id, a.full_name]));
+  // name map includes deactivated agents so their contacts don't read as unassigned
+  const agentName = new Map(
+    (profileRows ?? []).map((p) => [p.id, p.is_active ? p.full_name : `${p.full_name} (inactive)`]),
+  );
   const pageParams = (p: number) => {
     const params = new URLSearchParams();
     for (const [k, v] of Object.entries(sp)) {
@@ -103,7 +107,9 @@ export default async function ContactsPage({
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-text-1">Contacts</h1>
-          <p className="text-sm text-text-2">{total} contact{total === 1 ? "" : "s"}</p>
+          <p className="text-sm text-text-2">
+            {total} {showArchived ? "archived " : ""}contact{total === 1 ? "" : "s"}
+          </p>
         </div>
         <Button asChild>
           <Link href="/contacts/new">
@@ -112,17 +118,23 @@ export default async function ContactsPage({
         </Button>
       </div>
 
-      <ContactsFilters agents={agents ?? []} />
+      <ContactsFilters agents={agentOptions} />
 
       {rows.length === 0 ? (
         <div className="flex flex-col items-center gap-3 rounded-[10px] border border-border bg-surface py-16">
           <Users className="size-8 text-text-3" />
-          <p className="text-sm text-text-2">No contacts match — add the first one.</p>
-          <Button asChild variant="outline" size="sm">
-            <Link href="/contacts/new">
-              <Plus className="size-4" /> Add contact
-            </Link>
-          </Button>
+          <p className="text-sm text-text-2">
+            {showArchived
+              ? "No archived contacts match."
+              : "No contacts match — add the first one."}
+          </p>
+          {showArchived ? null : (
+            <Button asChild variant="outline" size="sm">
+              <Link href="/contacts/new">
+                <Plus className="size-4" /> Add contact
+              </Link>
+            </Button>
+          )}
         </div>
       ) : (
         <div className="overflow-x-auto rounded-[10px] border border-border bg-surface">
@@ -146,6 +158,11 @@ export default async function ContactsPage({
                     <Link href={`/contacts/${c.id}`} className="text-brand-700 hover:underline">
                       {c.display_name}
                     </Link>
+                    {showArchived && c.merged_into_id ? (
+                      <span className="ml-2 rounded-full bg-surface-2 px-1.5 py-0.5 text-[11px] text-text-3">
+                        merged
+                      </span>
+                    ) : null}
                   </TableCell>
                   <TableCell className="tabular-nums text-[13px]">
                     {c.phone_e164 ? formatPhone(c.phone_e164) : "—"}

@@ -611,4 +611,44 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     });
     expect(restore.error).toBeNull();
   });
+
+  it("16. contacts updates: owner agent allowed; other agent, LM denied; admin allowed", async () => {
+    // agentA1 owns contactA (assigned + created) — update passes
+    const owner = await agentA1.client
+      .from("contacts")
+      .update({ notes: `owner note ${run}` })
+      .eq("id", contactA)
+      .select("id");
+    expect(owner.error).toBeNull();
+    expect(owner.data).toHaveLength(1);
+
+    // another agent is silently filtered to 0 rows (doc 04: own/created only)
+    const otherAgent = await agentA2.client
+      .from("contacts")
+      .update({ notes: "stolen note" })
+      .eq("id", contactA)
+      .select("id");
+    expect(otherAgent.data ?? []).toHaveLength(0);
+
+    // listing managers have no contacts UPDATE policy at all
+    const lm = await lmA.client
+      .from("contacts")
+      .update({ notes: "lm note" })
+      .eq("id", contactA)
+      .select("id");
+    expect(lm.data ?? []).toHaveLength(0);
+
+    // admin updates any org contact
+    const admin = await adminA.client
+      .from("contacts")
+      .update({ notes: `admin note ${run}` })
+      .eq("id", contactA)
+      .select("id");
+    expect(admin.error).toBeNull();
+    expect(admin.data).toHaveLength(1);
+
+    // the silent no-op is why the app checks row counts before logging events
+    const { data: after } = await svc.from("contacts").select("notes").eq("id", contactA).single();
+    expect(after?.notes).toBe(`admin note ${run}`);
+  });
 });

@@ -17,3 +17,12 @@ export const PROPERTY_DOC_TYPES: readonly DocType[] = [
   "valuation",
   "other",
 ] as const;
+
+/** doc_type options offered on a contact (KYC paperwork subset, doc 02 §C3). */
+export const CONTACT_DOC_TYPES: readonly DocType[] = [
+  "id_document",
+  "proof_of_address",
+  "source_of_funds",
+  "contract",
+  "other",
+] as const;

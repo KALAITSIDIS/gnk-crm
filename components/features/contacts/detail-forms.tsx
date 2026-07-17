@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ActionSectionForm } from "@/components/features/shared/action-section-form";
 import { PhoneInput } from "@/components/features/shared/phone-input";
+import { formatPhone } from "@/lib/services/phone";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,10 +26,13 @@ import {
 } from "@/lib/constants/checklists";
 import { PROPERTY_TYPES } from "@/lib/validators/properties";
 import {
+  COMM_CHANNELS,
   CONTACT_LANGUAGES,
+  CONTACT_PURPOSES,
   CONTACT_TYPES,
   LEAD_SOURCES,
   PSYCHOLOGY_PROFILES,
+  SELECT_NONE,
   TEMPERATURES,
 } from "@/lib/validators/contacts";
 import { cn } from "@/lib/utils";
@@ -43,13 +47,27 @@ function labelize(value: string) {
   return value.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
 }
 
-export function ProfileForm({ contact }: { contact: ContactData }) {
+export function ProfileForm({
+  contact,
+  readOnly = false,
+  readOnlyHint,
+  agents,
+}: {
+  contact: ContactData;
+  readOnly?: boolean;
+  readOnlyHint?: string;
+  /** Active agents for the reassignment select — only passed for admins. */
+  agents?: { id: string; full_name: string }[];
+}) {
   const [kind, setKind] = useState<string>(contact.contact_kind ?? "person");
+  const additionalPhones: string[] = contact.additional_phones ?? [];
 
   return (
     <ActionSectionForm
       action={updateContactSection}
       hidden={{ contact_id: contact.id, section: "profile" }}
+      readOnly={readOnly}
+      readOnlyHint={readOnlyHint}
     >
       <input type="hidden" name="contact_kind" value={kind} />
       <div className="grid gap-4 sm:grid-cols-2">
@@ -86,6 +104,13 @@ export function ProfileForm({ contact }: { contact: ContactData }) {
         <div className="flex flex-col gap-2">
           <Label>Phone</Label>
           <PhoneInput name="phone" defaultValue={contact.phone_raw ?? contact.phone_e164 ?? ""} />
+          {additionalPhones.length > 0 ? (
+            <p className="text-xs text-text-3">
+              Also reachable at:{" "}
+              {additionalPhones.map((p) => formatPhone(p)).join(", ")} (kept from merges — counted
+              in duplicate checks)
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-col gap-2">
           <Label htmlFor="email">Email</Label>
@@ -153,12 +178,29 @@ export function ProfileForm({ contact }: { contact: ContactData }) {
           </Select>
         </div>
         <div className="flex flex-col gap-2">
+          <Label>Preferred channel</Label>
+          <Select name="preferred_channel" defaultValue={contact.preferred_channel ?? SELECT_NONE}>
+            <SelectTrigger>
+              <SelectValue placeholder="Select…" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={SELECT_NONE}>—</SelectItem>
+              {COMM_CHANNELS.map((c) => (
+                <SelectItem key={c} value={c}>
+                  {labelize(c)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-col gap-2">
           <Label>Source</Label>
-          <Select name="source" defaultValue={contact.source ?? ""}>
+          <Select name="source" defaultValue={contact.source ?? SELECT_NONE}>
             <SelectTrigger>
               <SelectValue placeholder="Select source…" />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value={SELECT_NONE}>—</SelectItem>
               {LEAD_SOURCES.map((s) => (
                 <SelectItem key={s} value={s}>
                   {labelize(s)}
@@ -168,12 +210,22 @@ export function ProfileForm({ contact }: { contact: ContactData }) {
           </Select>
         </div>
         <div className="flex flex-col gap-2">
+          <Label htmlFor="source_detail">Source detail</Label>
+          <Input
+            id="source_detail"
+            name="source_detail"
+            placeholder="e.g. referred by Maria K."
+            defaultValue={contact.source_detail ?? ""}
+          />
+        </div>
+        <div className="flex flex-col gap-2">
           <Label>Psychology profile</Label>
-          <Select name="psychology" defaultValue={contact.psychology ?? ""}>
+          <Select name="psychology" defaultValue={contact.psychology ?? SELECT_NONE}>
             <SelectTrigger>
               <SelectValue placeholder="Select…" />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value={SELECT_NONE}>—</SelectItem>
               {PSYCHOLOGY_PROFILES.map((p) => (
                 <SelectItem key={p} value={p}>
                   {labelize(p)}
@@ -182,6 +234,24 @@ export function ProfileForm({ contact }: { contact: ContactData }) {
             </SelectContent>
           </Select>
         </div>
+        {agents ? (
+          <div className="flex flex-col gap-2">
+            <Label>Assigned agent</Label>
+            <Select name="assigned_agent_id" defaultValue={contact.assigned_agent_id ?? SELECT_NONE}>
+              <SelectTrigger>
+                <SelectValue placeholder="Unassigned" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={SELECT_NONE}>Unassigned</SelectItem>
+                {agents.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>
+                    {a.full_name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        ) : null}
         <div className="flex items-end gap-2 pb-2">
           <Checkbox
             id="consent_marketing"
@@ -189,6 +259,16 @@ export function ProfileForm({ contact }: { contact: ContactData }) {
             defaultChecked={contact.consent_marketing}
           />
           <Label htmlFor="consent_marketing">Marketing consent</Label>
+        </div>
+        <div className="flex flex-col gap-2 sm:col-span-2">
+          <Label htmlFor="gdpr_notes">GDPR notes</Label>
+          <Textarea
+            id="gdpr_notes"
+            name="gdpr_notes"
+            rows={2}
+            placeholder="Data requests, erasure notes, consent context…"
+            defaultValue={contact.gdpr_notes ?? ""}
+          />
         </div>
         <div className="flex flex-col gap-2 sm:col-span-2">
           <Label htmlFor="notes">Notes</Label>
@@ -202,9 +282,13 @@ export function ProfileForm({ contact }: { contact: ContactData }) {
 export function PreferencesForm({
   contact,
   areaOptions,
+  readOnly = false,
+  readOnlyHint,
 }: {
   contact: ContactData;
   areaOptions: { id: string; name: string }[];
+  readOnly?: boolean;
+  readOnlyHint?: string;
 }) {
   const prefs = (contact.preferences ?? {}) as {
     areas?: string[];
@@ -214,11 +298,17 @@ export function PreferencesForm({
     property_types?: string[];
     purpose?: string;
   };
+  // areas store IDs (DECISIONS T-audit-contacts); legacy rows hold EN names —
+  // match either so old data still lights up, and the next save writes IDs
+  const areaChecked = (a: { id: string; name: string }) =>
+    (prefs.areas ?? []).some((v) => v === a.id || v === a.name);
 
   return (
     <ActionSectionForm
       action={updateContactSection}
       hidden={{ contact_id: contact.id, section: "preferences" }}
+      readOnly={readOnly}
+      readOnlyHint={readOnlyHint}
     >
       <div className="grid gap-4 sm:grid-cols-3">
         <div className="flex flex-col gap-2">
@@ -256,11 +346,7 @@ export function PreferencesForm({
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {areaOptions.map((a) => (
               <label key={a.id} className="flex items-center gap-1.5 text-sm">
-                <Checkbox
-                  name="pref_areas"
-                  value={a.name}
-                  defaultChecked={(prefs.areas ?? []).includes(a.name)}
-                />
+                <Checkbox name="pref_areas" value={a.id} defaultChecked={areaChecked(a)} />
                 {a.name}
               </label>
             ))}
@@ -283,12 +369,13 @@ export function PreferencesForm({
         </div>
         <div className="flex flex-col gap-2">
           <Label>Purpose</Label>
-          <Select name="purpose" defaultValue={prefs.purpose ?? ""}>
+          <Select name="purpose" defaultValue={prefs.purpose ?? SELECT_NONE}>
             <SelectTrigger>
               <SelectValue placeholder="Select…" />
             </SelectTrigger>
             <SelectContent>
-              {["own_use", "investment", "relocation", "holiday_home", "rental_income"].map((p) => (
+              <SelectItem value={SELECT_NONE}>—</SelectItem>
+              {CONTACT_PURPOSES.map((p) => (
                 <SelectItem key={p} value={p}>
                   {labelize(p)}
                 </SelectItem>
@@ -319,19 +406,30 @@ function CompletionBar({ pct, label }: { pct: number; label: string }) {
   );
 }
 
-export function ChecklistsForm({ contact }: { contact: ContactData }) {
+export function ChecklistsForm({
+  contact,
+  readOnly = false,
+  readOnlyHint,
+}: {
+  contact: ContactData;
+  readOnly?: boolean;
+  readOnlyHint?: string;
+}) {
   const kyc = (contact.kyc ?? {}) as KycState;
   const banking = (contact.banking_readiness ?? {}) as BankingReadinessState;
   const [kycState, setKycState] = useState<KycState>(kyc);
+  const [bankingState, setBankingState] = useState<BankingReadinessState>(banking);
 
   return (
     <ActionSectionForm
       action={updateContactSection}
       hidden={{ contact_id: contact.id, section: "kyc_banking" }}
+      readOnly={readOnly}
+      readOnlyHint={readOnlyHint}
     >
       <div className="flex flex-col gap-2">
         <CompletionBar pct={kycCompletion(kycState)} label="KYC checklist" />
-        <CompletionBar pct={bankingCompletion(banking)} label="Banking readiness" />
+        <CompletionBar pct={bankingCompletion(bankingState)} label="Banking readiness" />
       </div>
 
       <h3 className="mt-2 text-base font-semibold text-text-1">KYC / AML (manual — doc 01 §10)</h3>
@@ -372,6 +470,9 @@ export function ChecklistsForm({ contact }: { contact: ContactData }) {
             id="nationality_risk_note"
             name="nationality_risk_note"
             defaultValue={banking.nationality_risk_note ?? ""}
+            onChange={(e) =>
+              setBankingState((s) => ({ ...s, nationality_risk_note: e.target.value }))
+            }
           />
         </div>
         <div className="flex flex-col gap-2">
@@ -380,6 +481,9 @@ export function ChecklistsForm({ contact }: { contact: ContactData }) {
             id="funds_origin_country"
             name="funds_origin_country"
             defaultValue={banking.funds_origin_country ?? ""}
+            onChange={(e) =>
+              setBankingState((s) => ({ ...s, funds_origin_country: e.target.value }))
+            }
           />
         </div>
         <div className="flex items-end gap-2 pb-2">
@@ -387,16 +491,29 @@ export function ChecklistsForm({ contact }: { contact: ContactData }) {
             id="bank_pre_check_done"
             name="bank_pre_check_done"
             defaultChecked={banking.bank_pre_check_done === true}
+            onCheckedChange={(checked) =>
+              setBankingState((s) => ({ ...s, bank_pre_check_done: checked === true }))
+            }
           />
           <Label htmlFor="bank_pre_check_done">Bank pre-check done</Label>
         </div>
         <div className="flex flex-col gap-2">
           <Label>Account feasibility</Label>
-          <Select name="account_feasibility" defaultValue={banking.account_feasibility ?? ""}>
+          <Select
+            name="account_feasibility"
+            defaultValue={banking.account_feasibility ?? SELECT_NONE}
+            onValueChange={(v) =>
+              setBankingState((s) => ({
+                ...s,
+                account_feasibility: (["yes", "maybe", "no"] as const).find((f) => f === v),
+              }))
+            }
+          >
             <SelectTrigger>
               <SelectValue placeholder="Select…" />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value={SELECT_NONE}>—</SelectItem>
               {ACCOUNT_FEASIBILITY.map((f) => (
                 <SelectItem key={f} value={f}>
                   {labelize(f)}

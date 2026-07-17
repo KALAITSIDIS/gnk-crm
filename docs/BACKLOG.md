@@ -77,3 +77,10 @@ built without explicit direction.
   `address` / `title->>en` ilike scans are unindexed (fine at internal scale).
 - Bulk list actions (multi-select → status/visibility change) and CSV export,
   if the team asks for them.
+- Contacts follow-ups (T-audit-contacts): merge as a SECURITY DEFINER RPC for
+  true atomicity (current app-side merge is archive-first + idempotent-resume);
+  additional_phones add/remove UI (today they only originate from merges);
+  contacts module i18n (en/el/ru); CSV export of the filtered list; filter
+  inputs don't re-sync on browser back/forward (applied filters do); email
+  uniqueness is advisory-only (no partial unique index like phone — add one if
+  duplicate emails start appearing); `/contacts?tab=` deep-links.

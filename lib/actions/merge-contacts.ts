@@ -1,9 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import type { Database } from "@/lib/supabase/database.types";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
+import { buildMergeBackfill } from "@/lib/services/merge-backfill";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -47,9 +47,14 @@ export type MergeState = { error: string | null; mergedAt: number | null };
 
 /**
  * Merge `duplicateId` INTO `primaryId` (doc 02 §C3, doc 04: service role).
- * Repoints operational references, backfills empty primary fields, archives
+ * Repoints operational references, backfills empty primary fields (conflicting
+ * duplicate phones land in `additional_phones` — see merge-backfill), archives
  * the duplicate with merged_into_id. Historical events are NOT rewritten —
  * see DECISIONS.md (T2.3); timelines traverse merged_into_id instead.
+ *
+ * Not transactional (multi-table via admin client): the duplicate is archived
+ * FIRST, so a mid-flight failure leaves it flagged with merged_into_id and the
+ * merge can simply be re-run — every later step is idempotent (T-audit-contacts).
  */
 export async function mergeContacts(
   _prev: MergeState,
@@ -79,17 +84,27 @@ export async function mergeContacts(
   if (primary.org_id !== profile.orgId || duplicate.org_id !== profile.orgId) {
     return { error: "Cross-org merge refused", mergedAt: null };
   }
-  if (duplicate.is_archived) return { error: "Duplicate is already archived", mergedAt: null };
+  if (primary.is_archived) {
+    return { error: "The primary contact is archived — unarchive it first", mergedAt: null };
+  }
+  // a duplicate already archived by THIS merge means an earlier run failed
+  // mid-way — allow the retry to finish the repoints/backfill
+  const resuming = duplicate.is_archived && duplicate.merged_into_id === primaryId;
+  if (duplicate.is_archived && !resuming) {
+    return { error: "Duplicate is already archived", mergedAt: null };
+  }
 
   // 1. archive duplicate first — frees the partial unique phone index so the
   //    primary can inherit the number when backfilling
-  const { error: archiveErr } = await admin
-    .from("contacts")
-    .update({ is_archived: true, merged_into_id: primaryId })
-    .eq("id", duplicateId);
-  if (archiveErr) return { error: archiveErr.message, mergedAt: null };
+  if (!resuming) {
+    const { error: archiveErr } = await admin
+      .from("contacts")
+      .update({ is_archived: true, merged_into_id: primaryId })
+      .eq("id", duplicateId);
+    if (archiveErr) return { error: archiveErr.message, mergedAt: null };
+  }
 
-  // 2. repoint operational references
+  // 2. repoint operational references (all idempotent — filter by duplicateId)
   const repoints: Promise<{ error: { message: string } | null }>[] = [
     admin.from("leads").update({ contact_id: primaryId }).eq("contact_id", duplicateId),
     admin.from("deals").update({ buyer_contact_id: primaryId }).eq("buyer_contact_id", duplicateId),
@@ -126,34 +141,26 @@ export async function mergeContacts(
   ] as unknown as Promise<{ error: { message: string } | null }>[];
   const results = await Promise.all(repoints);
   const repointErr = results.find((r) => r.error);
-  if (repointErr?.error) return { error: repointErr.error.message, mergedAt: null };
+  if (repointErr?.error) {
+    return {
+      error: `${repointErr.error.message} — the duplicate is already archived; run the merge again to finish moving its records.`,
+      mergedAt: null,
+    };
+  }
 
-  // 3. backfill empty primary fields from the duplicate
-  const backfill: Database["public"]["Tables"]["contacts"]["Update"] = {};
-  if (!primary.phone_e164 && duplicate.phone_e164) {
-    backfill.phone_e164 = duplicate.phone_e164;
-    backfill.phone_raw = duplicate.phone_raw;
-  }
-  if (!primary.email && duplicate.email) backfill.email = duplicate.email;
-  if (!primary.telegram_username && duplicate.telegram_username) {
-    backfill.telegram_username = duplicate.telegram_username;
-  }
-  if (!primary.nationality && duplicate.nationality) backfill.nationality = duplicate.nationality;
-  const mergedTypes = [...new Set([...primary.contact_types, ...duplicate.contact_types])];
-  if (mergedTypes.length !== primary.contact_types.length) backfill.contact_types = mergedTypes;
-  const mergedLangs = [...new Set([...primary.languages, ...duplicate.languages])];
-  if (mergedLangs.length !== primary.languages.length) backfill.languages = mergedLangs;
-  if (duplicate.notes) {
-    backfill.notes = primary.notes
-      ? `${primary.notes}\n— merged from ${duplicate.display_name}: ${duplicate.notes}`
-      : duplicate.notes;
-  }
+  // 3. backfill empty primary fields from the duplicate (pure + idempotent)
+  const { updates: backfill, dropped } = buildMergeBackfill(primary, duplicate);
   if (Object.keys(backfill).length > 0) {
     const { error: backfillErr } = await admin
       .from("contacts")
       .update(backfill)
       .eq("id", primaryId);
-    if (backfillErr) return { error: backfillErr.message, mergedAt: null };
+    if (backfillErr) {
+      return {
+        error: `${backfillErr.message} — the duplicate is already archived; run the merge again to finish.`,
+        mergedAt: null,
+      };
+    }
   }
 
   // 4. events on both sides (insert-only — history is never rewritten)
@@ -166,6 +173,7 @@ export async function mergeContacts(
     payload: {
       merged_contact_id: duplicateId,
       merged_contact_name: duplicate.display_name,
+      ...(Object.keys(dropped).length > 0 ? { dropped } : {}),
     },
   });
   await logEvent(supabase, {

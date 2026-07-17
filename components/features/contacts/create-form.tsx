@@ -27,6 +27,7 @@ import {
   CONTACT_TYPES,
   LEAD_SOURCES,
   PSYCHOLOGY_PROFILES,
+  SELECT_NONE,
   TEMPERATURES,
 } from "@/lib/validators/contacts";
 
@@ -48,7 +49,7 @@ function DuplicateBanner({ match }: { match: DuplicateMatch }) {
         <Link href={`/contacts/${match.id}`} className="font-medium underline">
           {match.display_name}
         </Link>
-        {" — "}open it instead of creating a duplicate. Merge arrives in T2.3.
+        {" — "}open it instead of creating a duplicate (admins can merge from there).
       </span>
     </div>
   );
@@ -116,7 +117,9 @@ export function CreateContactForm() {
             name="phone"
             onValidChange={(e164) => {
               phoneRef.current = e164;
-              if (e164) void runLiveCheck();
+              // re-check on every change — an edited/cleared phone must also
+              // clear a stale duplicate banner (it locks the submit button)
+              void runLiveCheck();
             }}
           />
         </div>
@@ -185,11 +188,12 @@ export function CreateContactForm() {
         </div>
         <div className="flex flex-col gap-2">
           <Label>Source</Label>
-          <Select name="source" defaultValue="">
+          <Select name="source" defaultValue={SELECT_NONE}>
             <SelectTrigger>
               <SelectValue placeholder="Select source…" />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value={SELECT_NONE}>—</SelectItem>
               {LEAD_SOURCES.map((s) => (
                 <SelectItem key={s} value={s}>
                   {labelize(s)}
@@ -200,12 +204,17 @@ export function CreateContactForm() {
         </div>
 
         <div className="flex flex-col gap-2">
+          <Label htmlFor="source_detail">Source detail</Label>
+          <Input id="source_detail" name="source_detail" placeholder="e.g. referred by Maria K." />
+        </div>
+        <div className="flex flex-col gap-2">
           <Label>Psychology profile</Label>
-          <Select name="psychology" defaultValue="">
+          <Select name="psychology" defaultValue={SELECT_NONE}>
             <SelectTrigger>
               <SelectValue placeholder="Select…" />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value={SELECT_NONE}>—</SelectItem>
               {PSYCHOLOGY_PROFILES.map((p) => (
                 <SelectItem key={p} value={p}>
                   {labelize(p)}
@@ -214,10 +223,12 @@ export function CreateContactForm() {
             </SelectContent>
           </Select>
         </div>
+
         <div className="flex items-end gap-2 pb-2">
           <Checkbox id="consent_marketing" name="consent_marketing" />
           <Label htmlFor="consent_marketing">Marketing consent (GDPR — stamps timestamp)</Label>
         </div>
+        <div />
 
         <div className="flex flex-col gap-2 sm:col-span-2">
           <Label htmlFor="notes">Notes</Label>

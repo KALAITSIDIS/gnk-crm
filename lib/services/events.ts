@@ -220,6 +220,7 @@ const EVENT_LINES: Record<string, (p: P) => string> = {
     return name ? `Merged in ${name}` : "Merged in a duplicate";
   },
   archived: () => "Archived",
+  unarchived: () => "Unarchived",
   imported: (p) => {
     const ref = asText(p.reference) ?? asText(p.name);
     return ref ? `Imported — ${ref}` : "Imported from CSV";
