@@ -38,7 +38,10 @@ export function SectionForm({
     <form action={formAction} className="flex flex-col gap-4">
       <input type="hidden" name="property_id" value={propertyId} />
       <input type="hidden" name="section" value={section} />
-      <fieldset disabled={readOnly} className="flex flex-col gap-4">
+      {/* min-w-0 overrides the fieldset UA default min-inline-size:min-content,
+          which otherwise stops it shrinking and lets a long unbroken value in a
+          field-sizing-content textarea drag the whole form past the viewport */}
+      <fieldset disabled={readOnly} className="flex min-w-0 flex-col gap-4">
         {children}
       </fieldset>
       {state.error ? (
