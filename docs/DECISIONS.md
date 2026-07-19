@@ -3,6 +3,25 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-07-19 · T-fix (maps short link)** — The Details "Paste Google Maps
+  link" field rejected `maps.app.goo.gl` share links (the default form mobile
+  Google Maps "Share" produces). Root cause: a short link carries no
+  coordinates in the URL — they only exist after its redirect
+  (`…/maps/search/34.77,+32.41?entry=tts`), and the browser can't follow it
+  (the short-link host sends no CORS headers). Two-part fix. (1) `parseMapsCoords`
+  now also reads the `/maps/search|place|dir/lat,+lng` path form and decodes
+  percent-escapes first (so `%2C` commas and consent-page `continue=<url>`
+  wrappers resolve). (2) A new server action `resolveMapsShortLink` follows the
+  redirect server-side via `lib/utils/maps-resolver.ts`. SSRF-guarded: entry
+  must be a known Google short-link host (`maps.app.goo.gl`/`goo.gl`/`g.co`/
+  `share.google`), each hop is only followed while it stays on a Google host,
+  coordinates are read from the `Location` header so the final page is never
+  fetched, 5-hop cap, 4s timeout, auth-gated. Read-only — no DB write, no event
+  (the point is still persisted, with its event, only when the Details form is
+  submitted). Decided this is in-scope bug-fixing (the field already advertises
+  the feature), not a new external integration under the doc 01 §10 Do-Not-Build
+  list.
+
 - **2026-07-16 · T-audit (dashboards)** — Dashboard audit fixes. (1) Every
   dashboard query is now unwrapped via `lib/supabase/unwrap.ts` — a failed
   query THROWS to the T5.7 error boundary instead of silently rendering
