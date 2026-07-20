@@ -45,15 +45,104 @@ export interface UserRow {
   isSelf: boolean;
 }
 
-const initialState: SettingsActionState = { error: null, savedAt: null, tempPassword: null };
+const initialState: SettingsActionState = {
+  error: null,
+  savedAt: null,
+  tempPassword: null,
+  invitedEmail: null,
+};
 
 function labelize(v: string) {
   return v.replace(/_/g, " ");
 }
 
+/**
+ * Inner flow keyed by the parent: "Done" remounts it so the NEXT invite gets a
+ * fresh form (useActionState keeps the credentials forever otherwise — the
+ * dialog used to be stuck on the first invite's password until a full page
+ * reload). An accidental Escape/overlay close does NOT reset, so the one-time
+ * password survives until "Done" is pressed deliberately.
+ */
+function InviteFlow({ onDone }: { onDone: () => void }) {
+  const [state, formAction, pending] = useActionState(inviteUser, initialState);
+
+  if (state.tempPassword) {
+    const credentials = `${state.invitedEmail ?? ""}\n${state.tempPassword}`;
+    return (
+      <div className="flex flex-col gap-3">
+        <p className="text-sm text-text-2">
+          Account created. Hand these credentials over — the password is shown{" "}
+          <span className="font-semibold text-text-1">only once</span>:
+        </p>
+        <div className="rounded-lg bg-surface-2 p-3 font-mono text-sm text-text-1">
+          <div className="text-xs text-text-3">{state.invitedEmail}</div>
+          {state.tempPassword}
+        </div>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              navigator.clipboard?.writeText(credentials).then(
+                () => toast.success("Credentials copied"),
+                () => toast.error("Copy manually"),
+              );
+            }}
+          >
+            <Copy className="size-4" /> Copy credentials
+          </Button>
+          <Button size="sm" onClick={onDone}>
+            Done
+          </Button>
+        </div>
+        <p className="text-xs text-text-3">
+          The user should change it after first login (self-service reset ships with the
+          Phase 2 email integration).
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <form action={formAction} className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="inv-name">Full name</Label>
+        <Input id="inv-name" name="full_name" required />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="inv-email">Email</Label>
+        <Input id="inv-email" name="email" type="email" required />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <Label>Role</Label>
+        <Select name="role" defaultValue="agent">
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {INVITABLE_ROLES.map((r) => (
+              <SelectItem key={r} value={r} className="capitalize">
+                {labelize(r)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      {state.error ? (
+        <p role="alert" className="text-sm text-danger">
+          {state.error}
+        </p>
+      ) : null}
+      <Button type="submit" disabled={pending}>
+        {pending ? "Creating…" : "Create account"}
+      </Button>
+    </form>
+  );
+}
+
 function InviteDialog() {
   const [open, setOpen] = useState(false);
-  const [state, formAction, pending] = useActionState(inviteUser, initialState);
+  const [flowKey, setFlowKey] = useState(0);
 
   return (
     <>
@@ -65,67 +154,13 @@ function InviteDialog() {
           <DialogHeader>
             <DialogTitle>Invite user</DialogTitle>
           </DialogHeader>
-          {state.tempPassword ? (
-            <div className="flex flex-col gap-3">
-              <p className="text-sm text-text-2">
-                Account created. Hand these credentials over — the password is shown{" "}
-                <span className="font-semibold text-text-1">only once</span>:
-              </p>
-              <div className="rounded-lg bg-surface-2 p-3 font-mono text-sm text-text-1">
-                {state.tempPassword}
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  navigator.clipboard?.writeText(state.tempPassword ?? "").then(
-                    () => toast.success("Password copied"),
-                    () => toast.error("Copy manually"),
-                  );
-                }}
-              >
-                <Copy className="size-4" /> Copy password
-              </Button>
-              <p className="text-xs text-text-3">
-                The user should change it after first login (self-service reset ships with the
-                Phase 2 email integration).
-              </p>
-            </div>
-          ) : (
-            <form action={formAction} className="flex flex-col gap-3">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="inv-name">Full name</Label>
-                <Input id="inv-name" name="full_name" required />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="inv-email">Email</Label>
-                <Input id="inv-email" name="email" type="email" required />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label>Role</Label>
-                <Select name="role" defaultValue="agent">
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {INVITABLE_ROLES.map((r) => (
-                      <SelectItem key={r} value={r} className="capitalize">
-                        {labelize(r)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {state.error ? (
-                <p role="alert" className="text-sm text-danger">
-                  {state.error}
-                </p>
-              ) : null}
-              <Button type="submit" disabled={pending}>
-                {pending ? "Creating…" : "Create account"}
-              </Button>
-            </form>
-          )}
+          <InviteFlow
+            key={flowKey}
+            onDone={() => {
+              setOpen(false);
+              setFlowKey((k) => k + 1);
+            }}
+          />
         </DialogContent>
       </Dialog>
     </>

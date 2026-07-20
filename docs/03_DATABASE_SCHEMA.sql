@@ -60,13 +60,16 @@ create table profiles (
 );
 
 -- helper: current user's org (security definer so RLS on profiles doesn't recurse)
+-- 0014: `and is_active` — a deactivated profile makes both helpers return NULL,
+-- so every org/role policy predicate fails instantly even for a live JWT
+-- (the auth ban only blocks new token issuance, not tokens already in flight).
 create or replace function current_org_id() returns uuid
 language sql stable security definer set search_path = public as
-$$ select org_id from profiles where id = auth.uid() $$;
+$$ select org_id from profiles where id = auth.uid() and is_active $$;
 
 create or replace function current_role_gnk() returns user_role
 language sql stable security definer set search_path = public as
-$$ select role from profiles where id = auth.uid() $$;
+$$ select role from profiles where id = auth.uid() and is_active $$;
 
 -- helper: updated_at
 create or replace function set_updated_at() returns trigger
@@ -408,6 +411,13 @@ create table deal_stages (
   is_lost boolean not null default false,
   unique (org_id, deal_type, sort_order)
 );
+
+-- 0014: settings stage edits go through atomic SECURITY INVOKER RPCs — the
+-- park-at(-1) reorder swap and the terminal-shift on append each ran as
+-- multiple app-side statements with the event outside any transaction.
+-- create or replace function reorder_stage(p_stage_id uuid, p_direction text) returns void ...
+-- create or replace function add_deal_stage(p_deal_type deal_type, p_name text) returns uuid ...
+-- (full bodies in supabase/migrations/0014_active_user_rls_and_stage_rpcs.sql)
 
 create table deals (
   id uuid primary key default gen_random_uuid(),

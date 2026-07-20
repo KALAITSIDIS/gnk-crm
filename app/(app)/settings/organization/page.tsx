@@ -8,6 +8,9 @@ export const dynamic = "force-dynamic";
 export default async function OrganizationSettingsPage() {
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
+  // the layout renders the "Admins only" screen; pages render in PARALLEL with
+  // it (Next.js), so each one must stop its own data work for non-admins too
+  if (profile.role !== "admin") return null;
 
   const { data: org } = await supabase
     .from("organizations")

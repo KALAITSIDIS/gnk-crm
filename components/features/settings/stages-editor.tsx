@@ -36,22 +36,25 @@ function StageLine({ stage, isFirst, isLast }: { stage: StageRow; isFirst: boole
         pending && "pointer-events-none opacity-60",
       )}
     >
-      <Input
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        disabled={terminal}
-        className="h-8 max-w-56"
-      />
-      {dirty && !terminal ? (
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-8"
-          onClick={() => run(() => renameStage(stage.id, name), "Stage renamed")}
-        >
-          <Check className="size-4" />
-        </Button>
-      ) : null}
+      <form
+        className="flex items-center gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (dirty && !terminal) run(() => renameStage(stage.id, name), "Stage renamed");
+        }}
+      >
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          disabled={terminal}
+          className="h-8 max-w-56"
+        />
+        {dirty && !terminal ? (
+          <Button type="submit" size="sm" variant="outline" className="h-8" aria-label="Save name">
+            <Check className="size-4" />
+          </Button>
+        ) : null}
+      </form>
       {terminal ? (
         <span className="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-xs text-text-3">
           <Lock className="size-3" /> {stage.is_won ? "won" : "lost"}
@@ -96,8 +99,23 @@ function StageLine({ stage, isFirst, isLast }: { stage: StageRow; isFirst: boole
 function AddStage({ dealType }: { dealType: string }) {
   const [name, setName] = useState("");
   const [pending, start] = useTransition();
+  const submit = () =>
+    start(async () => {
+      const { error } = await addStage(dealType, name);
+      if (error) toast.error(error);
+      else {
+        toast.success("Stage added");
+        setName("");
+      }
+    });
   return (
-    <div className="mt-1 flex items-center gap-2">
+    <form
+      className="mt-1 flex items-center gap-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!pending && name.trim().length > 0) submit();
+      }}
+    >
       <Input
         value={name}
         onChange={(e) => setName(e.target.value)}
@@ -105,24 +123,15 @@ function AddStage({ dealType }: { dealType: string }) {
         className="h-8 max-w-56"
       />
       <Button
+        type="submit"
         size="sm"
         variant="outline"
         className="h-8"
         disabled={pending || name.trim().length === 0}
-        onClick={() =>
-          start(async () => {
-            const { error } = await addStage(dealType, name);
-            if (error) toast.error(error);
-            else {
-              toast.success("Stage added");
-              setName("");
-            }
-          })
-        }
       >
         <Plus className="size-4" /> Add
       </Button>
-    </div>
+    </form>
   );
 }
 

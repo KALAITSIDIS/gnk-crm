@@ -16,7 +16,12 @@ export interface ConfigRow {
   sourceNote: string | null;
 }
 
-const initialState: SettingsActionState = { error: null, savedAt: null, tempPassword: null };
+const initialState: SettingsActionState = {
+  error: null,
+  savedAt: null,
+  tempPassword: null,
+  invitedEmail: null,
+};
 
 export function ConfigCard({ row }: { row: ConfigRow }) {
   const [state, formAction, pending] = useActionState(saveCyprusConfig, initialState);

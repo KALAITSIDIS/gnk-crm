@@ -102,6 +102,15 @@ built without explicit direction.
   claim/assign control (0012's admin fallback prevents new orphans, but an
   explicit surface beats a fallback); tasks module i18n (en/el/ru); feedback
   nudge rows could show the contact name next to the property ref.
+- Settings follow-ups (T-audit-settings): admin "Reset password" button on the
+  users table (regenerate a temp password via the existing admin API + the
+  credentials-shown-once dialog — closes the no-SMTP lockout gap until Phase 2
+  email); force password change on first login (user_metadata flag + redirect);
+  delete-unused-area button (the areas_delete RLS policy exists but no UI calls
+  it); per-stage deal counts in the stages editor so delete refusals are
+  predictable; "verified N months ago / never verified" staleness badge on
+  cyprus-config cards; settings module i18n (en/el/ru); org-scoped branding
+  paths if multi-org ever ships (branding/logo.png is global today).
 - Reports follow-ups (T-audit-reports): optional DEAL filter from doc 05
   ("contact + optional property/deal") — viewings carry no deal_id, so define
   the narrowing semantics before building the picker; "Generated reports"

@@ -2057,6 +2057,13 @@ export type Database = {
         Returns: unknown
       }
       _st_within: { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      add_deal_stage: {
+        Args: {
+          p_deal_type: Database["public"]["Enums"]["deal_type"]
+          p_name: string
+        }
+        Returns: string
+      }
       addauth: { Args: { "": string }; Returns: boolean }
       addgeometrycolumn:
         | {
@@ -2290,6 +2297,10 @@ export type Database = {
           p_key_id: string
           p_note?: string
         }
+        Returns: undefined
+      }
+      reorder_stage: {
+        Args: { p_direction: string; p_stage_id: string }
         Returns: undefined
       }
       show_limit: { Args: never; Returns: number }

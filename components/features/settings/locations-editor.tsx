@@ -21,24 +21,32 @@ function AreaLine({ area }: { area: { id: string; name: string } }) {
 
   return (
     <li className={cn("flex items-center gap-2 py-1", pending && "opacity-60")}>
-      <Input value={name} onChange={(e) => setName(e.target.value)} className="h-8 max-w-56" />
-      {dirty ? (
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-8"
-          disabled={pending}
-          onClick={() =>
-            start(async () => {
-              const { error } = await renameArea(area.id, name);
-              if (error) toast.error(error);
-              else toast.success("Area renamed");
-            })
-          }
-        >
-          <Check className="size-4" />
-        </Button>
-      ) : null}
+      <form
+        className="flex items-center gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!dirty || pending) return;
+          start(async () => {
+            const { error } = await renameArea(area.id, name);
+            if (error) toast.error(error);
+            else toast.success("Area renamed");
+          });
+        }}
+      >
+        <Input value={name} onChange={(e) => setName(e.target.value)} className="h-8 max-w-56" />
+        {dirty ? (
+          <Button
+            type="submit"
+            size="sm"
+            variant="outline"
+            className="h-8"
+            disabled={pending}
+            aria-label="Save name"
+          >
+            <Check className="size-4" />
+          </Button>
+        ) : null}
+      </form>
     </li>
   );
 }
@@ -46,8 +54,23 @@ function AreaLine({ area }: { area: { id: string; name: string } }) {
 function AddArea({ districtId }: { districtId: string }) {
   const [name, setName] = useState("");
   const [pending, start] = useTransition();
+  const submit = () =>
+    start(async () => {
+      const { error } = await addArea(districtId, name);
+      if (error) toast.error(error);
+      else {
+        toast.success("Area added");
+        setName("");
+      }
+    });
   return (
-    <div className="mt-1 flex items-center gap-2">
+    <form
+      className="mt-1 flex items-center gap-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!pending && name.trim().length > 0) submit();
+      }}
+    >
       <Input
         value={name}
         onChange={(e) => setName(e.target.value)}
@@ -55,24 +78,15 @@ function AddArea({ districtId }: { districtId: string }) {
         className="h-8 max-w-56"
       />
       <Button
+        type="submit"
         size="sm"
         variant="outline"
         className="h-8"
         disabled={pending || name.trim().length === 0}
-        onClick={() =>
-          start(async () => {
-            const { error } = await addArea(districtId, name);
-            if (error) toast.error(error);
-            else {
-              toast.success("Area added");
-              setName("");
-            }
-          })
-        }
       >
         <Plus className="size-4" /> Add
       </Button>
-    </div>
+    </form>
   );
 }
 

@@ -2,15 +2,21 @@ import {
   LocationsEditor,
   type DistrictGroup,
 } from "@/components/features/settings/locations-editor";
+import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
 export default async function LocationsSettingsPage() {
   const supabase = await createClient();
+  const profile = await getCurrentProfile(supabase);
+  // pages render in parallel with the layout's admin gate — stop here too
+  if (profile.role !== "admin") return null;
+
   const [{ data: districts }, { data: areas }] = await Promise.all([
-    supabase.from("districts").select("id, name").order("id"),
-    supabase.from("areas").select("id, district_id, name").order("id"),
+    // seeded display order, not uuid order
+    supabase.from("districts").select("id, name").order("sort_order").order("id"),
+    supabase.from("areas").select("id, district_id, name"),
   ]);
 
   const groups: DistrictGroup[] = (districts ?? []).map((d) => ({
@@ -18,7 +24,8 @@ export default async function LocationsSettingsPage() {
     name: (d.name as { en?: string })?.en ?? "—",
     areas: (areas ?? [])
       .filter((a) => a.district_id === d.id)
-      .map((a) => ({ id: a.id, name: (a.name as { en?: string })?.en ?? "—" })),
+      .map((a) => ({ id: a.id, name: (a.name as { en?: string })?.en ?? "—" }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
   }));
 
   return (

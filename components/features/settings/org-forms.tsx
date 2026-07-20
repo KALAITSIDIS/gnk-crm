@@ -11,7 +11,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-const initialState: SettingsActionState = { error: null, savedAt: null, tempPassword: null };
+const initialState: SettingsActionState = {
+  error: null,
+  savedAt: null,
+  tempPassword: null,
+  invitedEmail: null,
+};
 
 function useSavedToast(state: SettingsActionState, message: string) {
   const last = useRef<number | null>(null);

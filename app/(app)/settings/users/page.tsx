@@ -7,6 +7,8 @@ export const dynamic = "force-dynamic";
 export default async function UsersSettingsPage() {
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
+  // pages render in parallel with the layout's admin gate — stop here too
+  if (profile.role !== "admin") return null;
 
   const { data: rows } = await supabase
     .from("profiles")

@@ -2,6 +2,7 @@
 
 import { randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
+import sharp from "sharp";
 import { z } from "zod";
 import {
   parseStampDutyConfig,
@@ -12,6 +13,7 @@ import { logEvent } from "@/lib/services/events";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import {
+  DEAL_TYPES,
   areaNameSchema,
   cyprusConfigSchema,
   inviteUserSchema,
@@ -22,7 +24,10 @@ import {
 /**
  * Settings suite actions (T5.4, doc 02 §C9). Every action is admin-gated
  * server-side AND covered by admin-only RLS policies; every edit writes an
- * event (C9 acceptance: "settings edits write events").
+ * event (C9 acceptance: "settings edits write events"). Stage add/reorder go
+ * through the 0014 RPCs so the mutation and its event land in one transaction;
+ * everything else follows the repo convention of row-count-guarded writes
+ * (an RLS-filtered 0-row update must never report success or log an event).
  */
 
 export type SettingsActionState = {
@@ -30,10 +35,22 @@ export type SettingsActionState = {
   savedAt: number | null;
   /** invite only: one-time credentials to hand over */
   tempPassword: string | null;
+  /** invite only: shown next to the password so the admin hands over both */
+  invitedEmail: string | null;
 };
 
-const ok = (): SettingsActionState => ({ error: null, savedAt: Date.now(), tempPassword: null });
-const fail = (error: string): SettingsActionState => ({ error, savedAt: null, tempPassword: null });
+const ok = (): SettingsActionState => ({
+  error: null,
+  savedAt: Date.now(),
+  tempPassword: null,
+  invitedEmail: null,
+});
+const fail = (error: string): SettingsActionState => ({
+  error,
+  savedAt: null,
+  tempPassword: null,
+  invitedEmail: null,
+});
 
 async function requireAdmin(): Promise<
   | { supabase: Awaited<ReturnType<typeof createClient>>; profile: CurrentProfile }
@@ -58,11 +75,13 @@ export async function updateOrgName(
   if ("denied" in gate) return fail(gate.denied);
   const { supabase, profile } = gate;
 
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from("organizations")
     .update({ name: parsed.data.name })
-    .eq("id", profile.orgId);
+    .eq("id", profile.orgId)
+    .select("id");
   if (error) return fail(error.message);
+  if (!updated?.length) return fail("Organization not found.");
 
   await logEvent(supabase, {
     orgId: profile.orgId,
@@ -88,6 +107,20 @@ export async function uploadBranding(
   if (!(file instanceof File) || file.size === 0) return fail("Choose a PNG file");
   if (file.type !== "image/png") return fail("PNG only — transparency is required");
   if (file.size > 2 * 1024 * 1024) return fail("File is over 2 MB");
+
+  // decode-verify the bytes: the MIME type above is client-supplied, and a
+  // corrupt watermark would break EVERY later public-photo upload inside the
+  // T1.4 pipeline with a per-file "unreadable image" — fail loudly here instead
+  const bytes = Buffer.from(await file.arrayBuffer());
+  try {
+    const meta = await sharp(bytes).metadata();
+    if (meta.format !== "png") return fail("File is not a real PNG");
+    if (kind === "watermark" && !meta.hasAlpha) {
+      return fail("Watermark PNG needs an alpha (transparency) channel");
+    }
+  } catch {
+    return fail("File could not be decoded as an image");
+  }
 
   const gate = await requireAdmin();
   if ("denied" in gate) return fail(gate.denied);
@@ -163,7 +196,7 @@ export async function inviteUser(
     payload: { email: d.email, role: d.role },
   });
   revalidatePath("/settings/users");
-  return { error: null, savedAt: Date.now(), tempPassword };
+  return { error: null, savedAt: Date.now(), tempPassword, invitedEmail: d.email };
 }
 
 export async function setUserRole(
@@ -186,11 +219,13 @@ export async function setUserRole(
   if (!target) return { error: "User not found" };
   if (target.role === role) return { error: null };
 
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from("profiles")
     .update({ role: role as "admin" | "agent" | "listing_manager" })
-    .eq("id", userId);
+    .eq("id", userId)
+    .select("id");
   if (error) return { error: error.message };
+  if (!updated?.length) return { error: "You do not have permission to change this user." };
 
   await logEvent(supabase, {
     orgId: profile.orgId,
@@ -215,18 +250,37 @@ export async function setUserActive(
   const { supabase, profile } = gate;
   if (userId === profile.id) return { error: "You cannot deactivate yourself." };
 
-  const { error } = await supabase
+  // RLS-scoped existence check: a cross-org or unknown id must stop HERE —
+  // the ban below runs with the service role and would otherwise hit any
+  // auth user in the instance (audit finding #1)
+  const { data: target } = await supabase
+    .from("profiles")
+    .select("id, is_active")
+    .eq("id", userId)
+    .maybeSingle();
+  if (!target) return { error: "User not found" };
+  if (target.is_active === active) return { error: null };
+
+  const { data: updated, error } = await supabase
     .from("profiles")
     .update({ is_active: active })
-    .eq("id", userId);
+    .eq("id", userId)
+    .select("id");
   if (error) return { error: error.message };
+  if (!updated?.length) return { error: "You do not have permission to change this user." };
 
   // also block/unblock the login itself, not just the profile flag
+  // (0014 makes the flag itself kill live-JWT access; the ban stops refresh)
   const admin = createAdminClient();
   const ban = await admin.auth.admin.updateUserById(userId, {
     ban_duration: active ? "none" : "876000h",
   });
-  if (ban.error) return { error: ban.error.message };
+  if (ban.error) {
+    // keep flag and ban consistent: revert the flag so the UI never claims
+    // a state the login doesn't have
+    await supabase.from("profiles").update({ is_active: !active }).eq("id", userId);
+    return { error: ban.error.message };
+  }
 
   await logEvent(supabase, {
     orgId: profile.orgId,
@@ -271,16 +325,28 @@ export async function renameStage(
 
   const { data: stage } = await supabase
     .from("deal_stages")
-    .select("name")
+    .select("name, deal_type")
     .eq("id", stageId)
     .maybeSingle();
   if (!stage) return { error: "Stage not found" };
+  if (stage.name === parsed.data.name) return { error: null };
 
-  const { error } = await supabase
+  const { data: siblings } = await supabase
+    .from("deal_stages")
+    .select("id, name")
+    .eq("deal_type", stage.deal_type);
+  const lowered = parsed.data.name.toLowerCase();
+  if ((siblings ?? []).some((s) => s.id !== stageId && s.name.toLowerCase() === lowered)) {
+    return { error: "A stage with this name already exists for this deal type." };
+  }
+
+  const { data: updated, error } = await supabase
     .from("deal_stages")
     .update({ name: parsed.data.name })
-    .eq("id", stageId);
+    .eq("id", stageId)
+    .select("id");
   if (error) return { error: error.message };
+  if (!updated?.length) return { error: "You do not have permission to rename stages." };
 
   await logStageEvent(supabase, profile, {
     action: "rename",
@@ -298,45 +364,21 @@ export async function addStage(
 ): Promise<{ error: string | null }> {
   const parsed = stageNameSchema.safeParse({ name });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid name" };
+  const parsedType = z.enum(DEAL_TYPES).safeParse(dealType);
+  if (!parsedType.success) return { error: "Unknown deal type" };
 
   const gate = await requireAdmin();
   if ("denied" in gate) return { error: gate.denied };
-  const { supabase, profile } = gate;
+  const { supabase } = gate;
 
-  // append before the terminal won/lost stages: new sort_order = max(non-terminal)+1,
-  // and shift terminal stages up by one to keep them last
-  const { data: stages } = await supabase
-    .from("deal_stages")
-    .select("id, sort_order, is_won, is_lost")
-    .eq("deal_type", dealType as "sale" | "rental" | "antiparoxi" | "advisory")
-    .order("sort_order", { ascending: true });
-  if (!stages || stages.length === 0) return { error: "Unknown deal type" };
-
-  const terminals = stages.filter((s) => s.is_won || s.is_lost);
-  const newOrder = (stages.filter((s) => !s.is_won && !s.is_lost).at(-1)?.sort_order ?? 0) + 1;
-
-  // move terminals out of the way (descending so the unique index never collides)
-  for (const t of [...terminals].sort((a, b) => b.sort_order - a.sort_order)) {
-    const { error } = await supabase
-      .from("deal_stages")
-      .update({ sort_order: t.sort_order + 1 })
-      .eq("id", t.id);
-    if (error) return { error: error.message };
-  }
-
-  const { error } = await supabase.from("deal_stages").insert({
-    org_id: profile.orgId,
-    deal_type: dealType as "sale" | "rental" | "antiparoxi" | "advisory",
-    name: parsed.data.name,
-    sort_order: newOrder,
+  // 0014 RPC: terminal-shift + insert + stages_updated event in ONE
+  // transaction (the app-side shift loop could strand a half-moved order)
+  const { error } = await supabase.rpc("add_deal_stage", {
+    p_deal_type: parsedType.data,
+    p_name: parsed.data.name,
   });
   if (error) return { error: error.message };
 
-  await logStageEvent(supabase, profile, {
-    action: "add",
-    deal_type: dealType,
-    name: parsed.data.name,
-  });
   revalidatePath("/settings/stages");
   revalidatePath("/pipeline");
   return { error: null };
@@ -347,40 +389,20 @@ export async function moveStage(
   direction: "up" | "down",
 ): Promise<{ error: string | null }> {
   if (!z.guid().safeParse(stageId).success) return { error: "Invalid stage" };
+  if (direction !== "up" && direction !== "down") return { error: "Unknown direction" };
 
   const gate = await requireAdmin();
   if ("denied" in gate) return { error: gate.denied };
-  const { supabase, profile } = gate;
+  const { supabase } = gate;
 
-  const { data: stage } = await supabase
-    .from("deal_stages")
-    .select("id, name, deal_type, sort_order, is_won, is_lost")
-    .eq("id", stageId)
-    .maybeSingle();
-  if (!stage) return { error: "Stage not found" };
-  if (stage.is_won || stage.is_lost) return { error: "Won/lost stages stay last." };
+  // 0014 RPC: row-locked park-and-swap + event in ONE transaction — the old
+  // three-statement app-side swap could strand a stage at sort_order -1
+  const { error } = await supabase.rpc("reorder_stage", {
+    p_stage_id: stageId,
+    p_direction: direction,
+  });
+  if (error) return { error: error.message };
 
-  const { data: siblings } = await supabase
-    .from("deal_stages")
-    .select("id, sort_order, is_won, is_lost")
-    .eq("deal_type", stage.deal_type)
-    .order("sort_order", { ascending: true });
-  const movable = (siblings ?? []).filter((s) => !s.is_won && !s.is_lost);
-  const idx = movable.findIndex((s) => s.id === stageId);
-  const swapWith = direction === "up" ? movable[idx - 1] : movable[idx + 1];
-  if (!swapWith) return { error: null }; // already at the edge
-
-  // unique (org, type, sort_order): park the mover on a temp slot first
-  const a = stage.sort_order;
-  const b = swapWith.sort_order;
-  const park = await supabase.from("deal_stages").update({ sort_order: -1 }).eq("id", stage.id);
-  if (park.error) return { error: park.error.message };
-  const s1 = await supabase.from("deal_stages").update({ sort_order: a }).eq("id", swapWith.id);
-  if (s1.error) return { error: s1.error.message };
-  const s2 = await supabase.from("deal_stages").update({ sort_order: b }).eq("id", stage.id);
-  if (s2.error) return { error: s2.error.message };
-
-  await logStageEvent(supabase, profile, { action: "reorder", stage: stage.name, direction });
   revalidatePath("/settings/stages");
   revalidatePath("/pipeline");
   return { error: null };
@@ -468,8 +490,13 @@ export async function renameArea(
   if (!area) return { error: "Area not found" };
 
   const nextName = { ...(area.name as Record<string, string>), en: parsed.data.name };
-  const { error } = await supabase.from("areas").update({ name: nextName }).eq("id", areaId);
+  const { data: updated, error } = await supabase
+    .from("areas")
+    .update({ name: nextName })
+    .eq("id", areaId)
+    .select("id");
   if (error) return { error: error.message };
+  if (!updated?.length) return { error: "You do not have permission to rename areas." };
 
   await logEvent(supabase, {
     orgId: profile.orgId,
@@ -517,15 +544,18 @@ export async function saveCyprusConfig(
   if ("denied" in gate) return fail(gate.denied);
   const { supabase, profile } = gate;
 
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from("cyprus_config")
     .update({
       value: value as never,
       verified_at: d.verified_at ?? null,
-      ...(d.source_note !== undefined ? { source_note: d.source_note } : {}),
+      source_note: d.source_note || null,
     })
-    .eq("key", d.key);
+    .eq("key", d.key)
+    .select("key");
   if (error) return fail(error.message);
+  // update matched no row (tampered/removed key) — must not report success
+  if (!updated?.length) return fail("Unknown config key — refresh and try again.");
 
   await logEvent(supabase, {
     orgId: profile.orgId,

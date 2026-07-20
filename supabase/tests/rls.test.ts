@@ -866,4 +866,154 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     // tidy the register fixture (movements cascade; events are append-only)
     await svc.from("property_keys").delete().eq("id", keyLM);
   });
+
+  it("19. is_active: deactivating a profile kills a LIVE session's RLS access instantly", async () => {
+    // fresh fixture user so the flag flip cannot disturb other tests
+    const ghost = await createTestUser(svc, `ghost-a-${run}@test.local`, "agent", ORG_A);
+
+    // sanity: the live session sees org data and its own profile
+    const before = await ghost.client.from("properties").select("id").limit(1);
+    expect(before.error).toBeNull();
+    expect((before.data ?? []).length).toBeGreaterThan(0);
+
+    // deactivate — NO ban, NO sign-out: the JWT stays perfectly valid. 0014's
+    // helper gate is the only thing standing between this token and the org.
+    const off = await svc.from("profiles").update({ is_active: false }).eq("id", ghost.id);
+    expect(off.error).toBeNull();
+
+    // every read dies (helpers return NULL → org predicate false everywhere)
+    const props = await ghost.client.from("properties").select("id").limit(1);
+    expect(props.data ?? []).toHaveLength(0);
+    const ownProfile = await ghost.client.from("profiles").select("id").eq("id", ghost.id);
+    expect(ownProfile.data ?? [], "even the own profile row goes dark").toHaveLength(0);
+
+    // writes die silently (0 rows) or loudly (WITH CHECK) — never land
+    const upd = await ghost.client
+      .from("profiles")
+      .update({ full_name: "Still Here" })
+      .eq("id", ghost.id)
+      .select("id");
+    expect(upd.data ?? []).toHaveLength(0);
+    const evt = await ghost.client
+      .from("events")
+      .insert({ org_id: ORG_A, entity_type: "config", event_type: "smuggled", payload: {} });
+    expect(evt.error, "deactivated user must not write events").not.toBeNull();
+
+    // reactivation restores access just as instantly (STABLE fns, no caching)
+    const on = await svc.from("profiles").update({ is_active: true }).eq("id", ghost.id);
+    expect(on.error).toBeNull();
+    const after = await ghost.client.from("properties").select("id").limit(1);
+    expect(after.error).toBeNull();
+    expect((after.data ?? []).length).toBeGreaterThan(0);
+  });
+
+  it("20. stage RPCs: admin adds/reorders atomically; non-admin blocked with no phantom event", async () => {
+    // operate on 'advisory' so the seeded sale stages other tests rely on stay put
+    const stagesEventCount = async () => {
+      const { count, error } = await svc
+        .from("events")
+        .select("id", { count: "exact", head: true })
+        .eq("entity_type", "config")
+        .eq("event_type", "stages_updated");
+      if (error) throw error;
+      return count ?? 0;
+    };
+    const advisoryStages = async () => {
+      const { data, error } = await svc
+        .from("deal_stages")
+        .select("id, name, sort_order, is_won, is_lost")
+        .eq("org_id", ORG_A)
+        .eq("deal_type", "advisory")
+        .order("sort_order", { ascending: true });
+      if (error) throw error;
+      return data ?? [];
+    };
+
+    const before = await stagesEventCount();
+
+    // agent add: clean refusal, nothing inserted, no event
+    const agentAdd = await agentA1.client.rpc("add_deal_stage", {
+      p_deal_type: "advisory",
+      p_name: `Agent Smuggle ${run}`,
+    });
+    expect(agentAdd.error?.message).toContain("Admins only");
+    expect(await stagesEventCount(), "blocked add must write no event").toBe(before);
+
+    // admin add: lands BEFORE the terminal won/lost stages, event in-transaction
+    const stageName = `RLS Stage ${run}`;
+    const adminAdd = await adminA.client.rpc("add_deal_stage", {
+      p_deal_type: "advisory",
+      p_name: stageName,
+    });
+    expect(adminAdd.error).toBeNull();
+    const newId = adminAdd.data as string;
+    let stages = await advisoryStages();
+    const added = stages.find((s) => s.id === newId);
+    expect(added, "new stage must exist").toBeTruthy();
+    for (const t of stages.filter((s) => s.is_won || s.is_lost)) {
+      expect(t.sort_order, "terminal stages must stay last").toBeGreaterThan(added!.sort_order);
+    }
+    expect(await stagesEventCount()).toBe(before + 1);
+
+    // duplicate name (case-insensitive): refused
+    const dup = await adminA.client.rpc("add_deal_stage", {
+      p_deal_type: "advisory",
+      p_name: stageName.toUpperCase(),
+    });
+    expect(dup.error?.message).toContain("already exists");
+
+    // agent reorder: clean refusal, order unchanged, no event
+    const orderBefore = (await advisoryStages()).map((s) => s.id);
+    const agentMove = await agentA1.client.rpc("reorder_stage", {
+      p_stage_id: newId,
+      p_direction: "up",
+    });
+    expect(agentMove.error?.message).toContain("Admins only");
+    expect((await advisoryStages()).map((s) => s.id)).toEqual(orderBefore);
+    expect(await stagesEventCount()).toBe(before + 1);
+
+    // admin reorder: swaps with the previous non-terminal neighbour + event;
+    // no stage is ever left parked at the -1 slot
+    const adminMove = await adminA.client.rpc("reorder_stage", {
+      p_stage_id: newId,
+      p_direction: "up",
+    });
+    expect(adminMove.error).toBeNull();
+    stages = await advisoryStages();
+    const movable = stages.filter((s) => !s.is_won && !s.is_lost);
+    expect(movable.at(-2)?.id, "stage must have moved up one slot").toBe(newId);
+    expect(stages.every((s) => s.sort_order >= 0), "no stage parked at -1").toBe(true);
+    expect(await stagesEventCount()).toBe(before + 2);
+
+    // moving the top stage further up is a no-op edge, not an error
+    let guard = 0;
+    while (movable[0]!.id !== newId && guard++ < 10) {
+      const step = await adminA.client.rpc("reorder_stage", {
+        p_stage_id: newId,
+        p_direction: "up",
+      });
+      expect(step.error).toBeNull();
+      const again = await advisoryStages();
+      movable.splice(0, movable.length, ...again.filter((s) => !s.is_won && !s.is_lost));
+    }
+    const edge = await adminA.client.rpc("reorder_stage", { p_stage_id: newId, p_direction: "up" });
+    expect(edge.error, "edge move must be a silent no-op").toBeNull();
+
+    // tidy: push the fixture stage back down to the bottom, then delete it
+    // (unreferenced, so the delete-if-unreferenced policy allows it)
+    guard = 0;
+    while (guard++ < 10) {
+      const again = await advisoryStages();
+      const mv = again.filter((s) => !s.is_won && !s.is_lost);
+      if (mv.at(-1)?.id === newId) break;
+      const step = await adminA.client.rpc("reorder_stage", {
+        p_stage_id: newId,
+        p_direction: "down",
+      });
+      expect(step.error).toBeNull();
+    }
+    const del = await adminA.client.from("deal_stages").delete({ count: "exact" }).eq("id", newId);
+    expect(del.error).toBeNull();
+    expect(del.count).toBe(1);
+  });
 });

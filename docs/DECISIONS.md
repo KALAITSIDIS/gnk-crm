@@ -515,6 +515,54 @@ silent. Format: date · task · decision · rationale.
   5. Quick-add `due_date` now rejects malformed values instead of silently
      dropping them (was: task saved with no due date).
 
+- **2026-07-20 · T-audit-settings** — Settings module audit pass (fix-all).
+  1. **Deactivation is instant now** (migration 0014). `current_org_id()` /
+     `current_role_gnk()` gained `and is_active`: a deactivated profile makes
+     both return NULL, failing every policy predicate for that user on the
+     next statement — a live JWT no longer rides out its ~1h TTL with full
+     access (the auth ban only blocks NEW token issuance). App-side,
+     `getCurrentProfile` selects and enforces `is_active` as belt and braces
+     for pre-0014 environments. RLS test 19 pins it: live session, flag
+     flipped service-side, all reads/writes die, reactivation restores.
+  2. **`setUserActive` was the last phantom-0-row bug** — and the worst one:
+     the RLS-scoped profile update silently no-ops for a cross-org/unknown
+     UUID, but the SERVICE-ROLE ban that followed would hit ANY auth user in
+     the instance, then log a bogus event. Now: RLS-scoped existence check
+     first, row-count-guarded flag update, ban after — and if the ban errors
+     the flag is reverted so UI state never claims what the login doesn't
+     have. `setUserRole`, `renameStage`, `renameArea`, `updateOrgName` and
+     `saveCyprusConfig` got the same `.select()` guards (an unknown config
+     key previously toasted "saved" off a 0-row update).
+  3. **Stage add/reorder are atomic RPCs** (0014: `add_deal_stage`,
+     `reorder_stage`, SECURITY INVOKER, 0011/0013 pattern). The app-side
+     park-at(-1) swap ran as three round-trips — a failure stranded the
+     stage at sort_order -1 — and the append's terminal-shift loop was
+     equally non-atomic, with events outside any transaction. Both RPCs
+     row-lock, row-count-guard every write, refuse duplicate names
+     (case-insensitive), and write `stages_updated` in-transaction. RLS
+     test 20 covers admin/non-admin, terminal-stays-last, dup names, edge
+     no-ops, and no-parked-stage invariants.
+  4. **Branding uploads decode-verify with sharp** (client MIME is not
+     evidence): format must be png, watermark must carry an alpha channel —
+     a corrupt watermark used to break EVERY later public-photo upload
+     inside the T1.4 pipeline as per-file "unreadable image" errors.
+  5. **Invite dialog is reusable**: `useActionState` kept the first invite's
+     credentials forever, so a second invite needed a page reload. The flow
+     is now a keyed child remounted by an explicit "Done" (accidental
+     Escape keeps the one-shown-once password recoverable); the credentials
+     screen shows email + password and copies both.
+  6. Layout-gate note: Next.js renders pages in PARALLEL with the layout, so
+     the settings layout's "Admins only" screen never stopped page RSCs from
+     executing their reads. Harmless here (all reads are org-visible or
+     public-bucket by design) but each settings page now short-circuits for
+     non-admins — do not rely on layout gates for anything sensitive.
+  7. Polish: cyprus_config `source_note` is clearable (the `|| undefined`
+     transform made saved notes permanent); stages order by `deal_type` then
+     `sort_order` (group order was tie-luck); districts by seeded
+     `sort_order`, areas alphabetically (was uuid order); add/rename inputs
+     submit on Enter; `dealType` zod-enum'd (`DEAL_TYPES` in validators);
+     new validators/settings unit tests.
+
 - **2026-07-20 · T-audit-reports** — Reports (commission evidence) audit
   fix-all. (1) Both PDFs (evidence + slip) now embed Noto Sans LGC
   (`lib/assets/fonts/`, OFL; registered in `pdf-fonts.ts`, force-traced into

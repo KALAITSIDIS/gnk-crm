@@ -4,6 +4,10 @@ import { z } from "zod";
 export const INVITABLE_ROLES = ["admin", "agent", "listing_manager"] as const;
 export type InvitableRole = (typeof INVITABLE_ROLES)[number];
 
+/** Deal pipeline types (doc 03 `deal_type` enum) — settings stage editors. */
+export const DEAL_TYPES = ["sale", "rental", "antiparoxi", "advisory"] as const;
+export type DealType = (typeof DEAL_TYPES)[number];
+
 export const orgNameSchema = z.object({
   name: z.string().trim().min(2, "Name is required").max(200),
 });
@@ -29,10 +33,7 @@ export const cyprusConfigSchema = z.object({
     .string()
     .optional()
     .transform((v) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined)),
-  source_note: z
-    .string()
-    .trim()
-    .max(500)
-    .optional()
-    .transform((v) => v || undefined),
+  // always present (defaulted), so an emptied field CLEARS the stored note —
+  // the old `|| undefined` transform made a saved note impossible to remove
+  source_note: z.string().trim().max(500).default(""),
 });
