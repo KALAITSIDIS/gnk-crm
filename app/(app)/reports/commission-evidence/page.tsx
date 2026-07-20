@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowLeft, ShieldCheck, ShieldX } from "lucide-react";
+import { ArrowLeft, Info, TriangleAlert } from "lucide-react";
 import { EvidenceBuilder } from "@/components/features/reports/evidence-builder";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { assembleEvidence } from "@/lib/services/evidence";
@@ -7,7 +7,6 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTime, formatMoney } from "@/lib/utils/format";
 import type { EntityOption } from "@/lib/actions/entity-search";
-import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -41,6 +40,8 @@ export default async function CommissionEvidencePage({
       from,
       to,
       withSlipImages: false, // preview stays light; the PDF embeds the PNGs
+      verifyChain: false, // the org-wide chain walk runs on generation only
+      generatedBy: { name: profile.fullName, role: profile.role },
     });
     if (!("error" in preview)) {
       initialContact = {
@@ -86,23 +87,25 @@ export default async function CommissionEvidencePage({
 
       {preview && !("error" in preview) ? (
         <div className="flex flex-col gap-4">
-          <div
-            className={cn(
-              "flex items-center gap-2 rounded-[10px] border px-4 py-3 text-sm font-medium",
-              preview.chainOk
-                ? "border-success/30 bg-success/10 text-success"
-                : "border-danger/30 bg-danger/10 text-danger",
-            )}
-          >
-            {preview.chainOk ? (
-              <ShieldCheck className="size-4" />
-            ) : (
-              <ShieldX className="size-4" />
-            )}
-            Event hash chain verified: {preview.chainOk ? "TRUE" : "FALSE"} ·{" "}
-            {preview.rows.length} events · report hash{" "}
-            <span className="font-mono text-xs">{preview.reportHash.slice(0, 16)}…</span>
+          <div className="flex items-start gap-2 rounded-[10px] border border-border bg-surface px-4 py-3 text-sm text-text-2">
+            <Info className="mt-0.5 size-4 shrink-0" />
+            <span>
+              Preview — the hash chain is verified when the PDF is generated. {preview.rows.length}{" "}
+              events · report hash{" "}
+              <span className="font-mono text-xs">{preview.reportHash.slice(0, 16)}…</span>
+              {profile.role !== "admin"
+                ? " · Scope: events visible to you — other staff or system activity may be absent."
+                : ""}
+            </span>
           </div>
+
+          {preview.truncated ? (
+            <div className="flex items-start gap-2 rounded-[10px] border border-danger/30 bg-danger/10 px-4 py-3 text-sm font-medium text-danger">
+              <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+              This preview is incomplete — one event category hit its cap. Narrow the date range;
+              generation is refused until the record fits.
+            </div>
+          ) : null}
 
           <section className="overflow-x-auto rounded-[10px] border border-border bg-surface">
             <table className="w-full text-sm">

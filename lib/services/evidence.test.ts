@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { reportContentHash, sortChronological, type EvidenceRow } from "./evidence";
 
+let seq = 0;
 const row = (occurredAt: string, line: string, extra?: Partial<EvidenceRow>): EvidenceRow => ({
+  id: ++seq,
   occurredAt,
   entityType: "deal",
   line,
@@ -18,6 +20,18 @@ describe("sortChronological", () => {
       row("2026-07-13T08:00:00Z", "third"),
     ]);
     expect(out.map((r) => r.line)).toEqual(["first", "second", "third"]);
+  });
+
+  it("breaks timestamp ties by event id (chain order), whatever the input order", () => {
+    const a = row("2026-07-12T10:00:00Z", "first-inserted", { id: 7 });
+    const b = row("2026-07-12T10:00:00Z", "second-inserted", { id: 9 });
+    const c = row("2026-07-12T10:00:00Z", "third-inserted", { id: 12 });
+    expect(sortChronological([b, c, a]).map((r) => r.line)).toEqual([
+      "first-inserted",
+      "second-inserted",
+      "third-inserted",
+    ]);
+    expect(sortChronological([c, a, b])).toEqual(sortChronological([a, b, c]));
   });
 
   it("does not mutate the input", () => {
@@ -52,6 +66,12 @@ describe("reportContentHash", () => {
   it("treats null and empty-string fields identically (canonical form)", () => {
     const a = [row("2026-07-10T09:00:00Z", "x", { propertyRef: null })];
     const b = [row("2026-07-10T09:00:00Z", "x", { propertyRef: "" as unknown as null })];
+    expect(reportContentHash(a)).toBe(reportContentHash(b));
+  });
+
+  it("ignores the internal event id — old report hashes stay recomputable", () => {
+    const a = [row("2026-07-10T09:00:00Z", "x", { id: 1 })];
+    const b = [row("2026-07-10T09:00:00Z", "x", { id: 999 })];
     expect(reportContentHash(a)).toBe(reportContentHash(b));
   });
 });

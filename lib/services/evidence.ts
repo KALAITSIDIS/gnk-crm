@@ -2,16 +2,26 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Json } from "@/lib/supabase/database.types";
 import { describeEvent } from "@/lib/services/events";
 import { sha256Hex } from "@/lib/services/hash";
+import { zonedDateRangeToUtc } from "@/lib/utils/tz";
 
 /**
  * Commission evidence assembly (T5.2, doc 02 §C6): the chronological,
  * hash-chain-verified activity record for one contact, optionally narrowed to
- * a property and/or date range. Shared by the on-screen preview and the PDF.
+ * a property and/or Cyprus-local date range. Shared by the on-screen preview
+ * and the PDF.
  */
 
 type Client = SupabaseClient<Database>;
 
+/** Hard cap per entity family; hitting it flags the report as truncated. */
+export const EVENTS_PER_FAMILY = 500;
+
+/** Property-media churn excluded from the report when a property is in scope. */
+const MEDIA_NOISE = "(media_uploaded,media_deleted,media_reordered,media_cover_set)";
+
 export interface EvidenceRow {
+  /** events.id — global insertion (chain) order. Tiebreak only; NOT hashed. */
+  id: number;
   occurredAt: string;
   entityType: string;
   line: string;
@@ -36,26 +46,46 @@ export interface EvidenceDeal {
   commissionNotes: string | null;
 }
 
+/**
+ * "skipped" = verification not run (preview). The generate action always runs
+ * it, so a stored PDF only ever carries "verified" or "failed" — and an RPC
+ * error refuses generation instead of masquerading as "failed".
+ */
+export type ChainStatus = "verified" | "failed" | "skipped";
+
 export interface EvidenceData {
   orgName: string;
+  /** who assembled it — printed on the PDF so partial (agent) scope is explicit */
+  generatedBy: { name: string; role: string };
   contact: { id: string; name: string; phone: string | null; email: string | null };
   filter: { propertyRef: string | null; from: string | null; to: string | null };
   rows: EvidenceRow[];
   slips: EvidenceSlip[];
   deals: EvidenceDeal[];
-  chainOk: boolean;
+  chain: ChainStatus;
+  /** true when any entity family hit EVENTS_PER_FAMILY — the record is incomplete */
+  truncated: boolean;
   reportHash: string;
 }
 
-/** Oldest-first ordering — the evidence narrative reads forward in time. */
-export function sortChronological<T extends { occurredAt: string }>(rows: T[]): T[] {
-  return [...rows].sort((a, b) => (a.occurredAt < b.occurredAt ? -1 : 1));
+/**
+ * Oldest-first ordering — the evidence narrative reads forward in time.
+ * Timestamp ties break on events.id (insertion order = hash-chain order), so
+ * the row order — and with it the report hash — is reproducible.
+ */
+export function sortChronological<T extends { occurredAt: string; id: number }>(rows: T[]): T[] {
+  return [...rows].sort(
+    (a, b) =>
+      (a.occurredAt < b.occurredAt ? -1 : a.occurredAt > b.occurredAt ? 1 : 0) || a.id - b.id,
+  );
 }
 
 /**
  * Deterministic content hash printed in the report footer: SHA-256 over the
  * canonical JSON of the rows. Recomputable by regenerating with the same
- * filters — NOT the hash of the PDF file (which contains this hash).
+ * filters — NOT the hash of the PDF file (which contains this hash). The
+ * event id is deliberately excluded so hashes of previously stored reports
+ * stay recomputable.
  */
 export function reportContentHash(rows: EvidenceRow[]): string {
   const canonical = rows.map((r) => [
@@ -71,17 +101,22 @@ export function reportContentHash(rows: EvidenceRow[]): string {
 export interface AssembleOptions {
   contactId: string;
   propertyId?: string;
-  /** ISO dates (YYYY-MM-DD), inclusive */
+  /** Cyprus-local dates (YYYY-MM-DD), inclusive */
   from?: string;
   to?: string;
   /** fetch slip PNGs as data URIs (PDF only — preview skips the downloads) */
   withSlipImages?: boolean;
+  /** run the org-wide chain RPC (generation only — it walks every org event) */
+  verifyChain?: boolean;
+  /** the acting user — printed on the report */
+  generatedBy: { name: string; role: string };
 }
 
 /**
  * Assemble the evidence set. `supabase` is the caller's RLS-scoped client —
- * whatever it cannot see stays out of the report. `admin` is used only for
- * slip PNG downloads (private bucket) and the chain check RPC.
+ * whatever it cannot see stays out of the report (and the PDF says whose view
+ * it is). `admin` is used only for slip PNG downloads (private bucket) and
+ * the chain check RPC.
  */
 export async function assembleEvidence(
   supabase: Client,
@@ -124,42 +159,57 @@ export async function assembleEvidence(
   const dealIds = new Set((deals ?? []).map((d) => d.id));
   const offerRows = (offers ?? []).filter((o) => !opts.propertyId || dealIds.has(o.deal_id));
 
-  let leadsQ = supabase.from("leads").select("id").eq("contact_id", opts.contactId);
+  let leadsQ = supabase.from("leads").select("id, property_id").eq("contact_id", opts.contactId);
   if (opts.propertyId) leadsQ = leadsQ.eq("property_id", opts.propertyId);
   const { data: leads } = await leadsQ;
 
-  // events per entity family (merged + sorted after)
+  // events per entity family (merged + sorted after). A property filter swaps
+  // the contact-level rows for the property's own history (price changes and
+  // legal/status events strengthen the narrative; media churn stays out).
   const families: { type: string; ids: string[] }[] = [
     { type: "contact", ids: opts.propertyId ? [] : [opts.contactId] },
+    { type: "property", ids: opts.propertyId ? [opts.propertyId] : [] },
     { type: "deal", ids: (deals ?? []).map((d) => d.id) },
     { type: "viewing", ids: (viewings ?? []).map((v) => v.id) },
     { type: "offer", ids: offerRows.map((o) => o.id) },
     { type: "lead", ids: (leads ?? []).map((l) => l.id) },
   ];
 
+  const bounds = zonedDateRangeToUtc(opts.from, opts.to);
   const eventBatches = await Promise.all(
     families
       .filter((f) => f.ids.length > 0)
       .map(async (f) => {
         let q = supabase
           .from("events")
-          .select("occurred_at, entity_type, entity_id, event_type, actor_id, payload")
+          .select("id, occurred_at, entity_type, entity_id, event_type, actor_id, payload")
           .eq("entity_type", f.type)
           .in("entity_id", f.ids)
           .order("occurred_at", { ascending: true })
-          .limit(500);
-        if (opts.from) q = q.gte("occurred_at", `${opts.from}T00:00:00Z`);
-        if (opts.to) q = q.lte("occurred_at", `${opts.to}T23:59:59Z`);
+          .order("id", { ascending: true })
+          .limit(EVENTS_PER_FAMILY);
+        if (f.type === "property") q = q.not("event_type", "in", MEDIA_NOISE);
+        if (bounds.gte) q = q.gte("occurred_at", bounds.gte);
+        if (bounds.lt) q = q.lt("occurred_at", bounds.lt);
         const { data } = await q;
         return data ?? [];
       }),
   );
   const events = eventBatches.flat();
+  const truncated = eventBatches.some((b) => b.length === EVENTS_PER_FAMILY);
 
-  // property refs for rows (deal/viewing → property)
+  // property refs for rows (deal/viewing/lead/offer/property → property)
   const propertyByEntity = new Map<string, string>();
   for (const d of deals ?? []) if (d.property_id) propertyByEntity.set(d.id, d.property_id);
   for (const v of viewings ?? []) if (v.property_id) propertyByEntity.set(v.id, v.property_id);
+  for (const l of leads ?? []) if (l.property_id) propertyByEntity.set(l.id, l.property_id);
+  const dealPropById = new Map((deals ?? []).map((d) => [d.id, d.property_id]));
+  for (const o of offerRows) {
+    const p = dealPropById.get(o.deal_id);
+    if (p) propertyByEntity.set(o.id, p);
+  }
+  if (opts.propertyId) propertyByEntity.set(opts.propertyId, opts.propertyId);
+
   const propertyIds = [...new Set(propertyByEntity.values())];
   const { data: props } = propertyIds.length
     ? await supabase.from("properties").select("id, reference").in("id", propertyIds)
@@ -174,6 +224,7 @@ export async function assembleEvidence(
 
   const rows: EvidenceRow[] = sortChronological(
     events.map((e) => ({
+      id: e.id,
       occurredAt: e.occurred_at,
       entityType: e.entity_type,
       line: describeEvent({
@@ -184,11 +235,11 @@ export async function assembleEvidence(
       propertyRef: e.entity_id
         ? (refById.get(propertyByEntity.get(e.entity_id) ?? "") ?? null)
         : null,
-      actorName: e.actor_id ? (actorById.get(e.actor_id) ?? null) : (e.actor_id === null ? "system" : null),
+      actorName: e.actor_id ? (actorById.get(e.actor_id) ?? null) : "system",
     })),
   );
 
-  // signed slips for in-scope viewings
+  // signed slips for in-scope viewings, kept consistent with the date filter
   const viewingIds = (viewings ?? []).map((v) => v.id);
   const { data: slipRows } = viewingIds.length
     ? await supabase
@@ -196,9 +247,15 @@ export async function assembleEvidence(
         .select("viewing_id, signer_name, signed_at, signature_sha256, signature_path")
         .in("viewing_id", viewingIds)
     : { data: [] };
+  const fromMs = bounds.gte ? Date.parse(bounds.gte) : -Infinity;
+  const toMs = bounds.lt ? Date.parse(bounds.lt) : Infinity;
+  const slipRowsInScope = (slipRows ?? []).filter((s) => {
+    const t = Date.parse(s.signed_at);
+    return t >= fromMs && t < toMs;
+  });
 
   const slips: EvidenceSlip[] = [];
-  for (const s of slipRows ?? []) {
+  for (const s of slipRowsInScope) {
     let pngDataUri: string | null = null;
     if (opts.withSlipImages) {
       const { data: file } = await admin.storage.from("signatures").download(s.signature_path);
@@ -218,10 +275,20 @@ export async function assembleEvidence(
     });
   }
 
-  const chain = await admin.rpc("verify_events_chain", { p_org: orgId });
+  // Org-wide chain walk — generation only. An RPC failure must not be
+  // printable as "chain FAILED", so it refuses assembly instead.
+  let chain: ChainStatus = "skipped";
+  if (opts.verifyChain) {
+    const res = await admin.rpc("verify_events_chain", { p_org: orgId });
+    if (res.error) {
+      return { error: `Hash-chain verification unavailable: ${res.error.message}` };
+    }
+    chain = res.data === true ? "verified" : "failed";
+  }
 
   return {
     orgName: org?.name ?? "Agency",
+    generatedBy: opts.generatedBy,
     contact: {
       id: contact.id,
       name: contact.display_name ?? "Unnamed",
@@ -241,7 +308,8 @@ export async function assembleEvidence(
       expectedValue: d.expected_value === null ? null : Number(d.expected_value),
       commissionNotes: d.commission_split_notes,
     })),
-    chainOk: chain.data === true,
+    chain,
+    truncated,
     reportHash: reportContentHash(rows),
   };
 }

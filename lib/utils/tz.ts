@@ -71,6 +71,29 @@ export function utcToDatetimeLocal(iso: string | Date, tz: string = CYPRUS_TZ): 
 }
 
 /**
+ * Inclusive Cyprus-local date range ("YYYY-MM-DD", either bound optional) →
+ * half-open UTC interval [gte, lt) for timestamptz filtering. The exclusive
+ * end is the start of the day AFTER `to`, so the final local day is fully
+ * covered including sub-second events (evidence report, T-audit-reports).
+ */
+export function zonedDateRangeToUtc(
+  from: string | undefined,
+  to: string | undefined,
+  tz: string = CYPRUS_TZ,
+): { gte: string | undefined; lt: string | undefined } {
+  const gte = from ? zonedWallClockToUtc(`${from}T00:00`, tz).toISOString() : undefined;
+  let lt: string | undefined;
+  if (to) {
+    // day + 1 via Date.UTC so month/year rollover is calendar-correct
+    const next = new Date(
+      Date.UTC(+to.slice(0, 4), +to.slice(5, 7) - 1, +to.slice(8, 10) + 1),
+    );
+    lt = zonedWallClockToUtc(`${next.toISOString().slice(0, 10)}T00:00`, tz).toISOString();
+  }
+  return { gte, lt };
+}
+
+/**
  * Cyprus-local calendar coordinates for a UTC instant: the day bucket
  * ("YYYY-MM-DD"), minutes since local midnight, and a "HH:mm" label. Used to
  * place viewings on the calendar grid without redoing tz math on the client.

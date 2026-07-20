@@ -102,3 +102,13 @@ built without explicit direction.
   claim/assign control (0012's admin fallback prevents new orphans, but an
   explicit surface beats a fallback); tasks module i18n (en/el/ru); feedback
   nudge rows could show the contact name next to the property ref.
+- Reports follow-ups (T-audit-reports): optional DEAL filter from doc 05
+  ("contact + optional property/deal") — viewings carry no deal_id, so define
+  the narrowing semantics before building the picker; "Generated reports"
+  list on /reports (needs a `doc_type` enum value, e.g. `evidence_report` —
+  DECISIONS T5.2 anticipated extending it) with download buttons; "Verify a
+  report" utility — upload a PDF, recompute SHA-256, match against the
+  `evidence_report_generated` payload (`pdf_sha256`/`report_hash`) to prove a
+  printed report untampered; nightly `verify_events_chain` via pg_cron with a
+  cached result + timestamp shown on the preview (generation still verifies
+  live); reports i18n (en/el/ru).

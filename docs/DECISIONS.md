@@ -514,3 +514,37 @@ silent. Format: date · task · decision · rationale.
      update, creator/admin delete, LM insert. Suite: 21 green.
   5. Quick-add `due_date` now rejects malformed values instead of silently
      dropping them (was: task saved with no due date).
+
+- **2026-07-20 · T-audit-reports** — Reports (commission evidence) audit
+  fix-all. (1) Both PDFs (evidence + slip) now embed Noto Sans LGC
+  (`lib/assets/fonts/`, OFL; registered in `pdf-fonts.ts`, force-traced into
+  serverless bundles via `outputFileTracingIncludes` — react-pdf reads fonts
+  from disk, so Vercel import tracing never sees them). Built-in Helvetica is
+  Latin-1 only: Greek/Cyrillic names rendered as tofu in every stored PDF.
+  Courier stays for hex digests (ASCII); U+2192 has no glyph in Noto LGC, so
+  event lines render "->" at PDF time only (report hash reads the raw rows).
+  (2) Chain check is tri-state: preview skips the org-wide walk entirely
+  (`verifyChain: false` — it is O(all org events) in plpgsql and ran on every
+  GET), generation requires it, and an RPC *failure* now refuses generation
+  instead of printing "chain FAILED" — a transient error was
+  indistinguishable from tamper on an evidential document (this exact RPC
+  already broke once in prod, see 0010). (3) Row order — and with it the T5.2
+  "recomputable" report hash — is now deterministic: events select `id`,
+  order by `occurred_at, id`, and `sortChronological` tiebreaks on id
+  (insertion = hash-chain order). The canonical hash form is UNCHANGED (id
+  excluded), so hashes of previously stored reports stay recomputable.
+  (4) Date filters are Cyprus-local days via `zonedDateRangeToUtc` (half-open
+  upper bound; the old `T00:00:00Z`–`T23:59:59Z` filter shifted boundary
+  events by 2–3h and dropped sub-second ones); slips honour the same window.
+  (5) Truncation is honest: hitting the 500/family cap flags the preview and
+  REFUSES generation (was: silent omission). (6) The PDF names its generator
+  and scope ("events visible to this user" for non-admins — RLS keeps other
+  actors' and system events out of agent reports by design, T5.2). (7) A
+  property filter now pulls the property's own event family (price/status/
+  legal changes; media churn excluded) and lead/offer rows resolve their
+  property refs. (8) Admin-generated reports store `visibility='admin_only'`
+  (they carry the full org record; `internal` let any agent download them).
+  (9) Generation is transactional-ish: documents-insert failure removes the
+  uploaded file; logEvent failure rolls back row + file (guardrail 1: no
+  stored report without its event). Unit tests cover the new pure pieces;
+  `server-only` is stubbed for vitest via alias (`lib/testing/`).

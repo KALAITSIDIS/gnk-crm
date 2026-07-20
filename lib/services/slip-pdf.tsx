@@ -9,6 +9,7 @@ import {
   View,
   renderToBuffer,
 } from "@react-pdf/renderer";
+import { PDF_FONT, registerPdfFonts } from "@/lib/services/pdf-fonts";
 
 export interface SlipPdfData {
   orgName: string;
@@ -24,12 +25,14 @@ export interface SlipPdfData {
   sha256: string;
 }
 
+// Noto Sans, not Helvetica: attendee/agent names and addresses are routinely
+// Greek or Cyrillic (see pdf-fonts.ts). Courier stays for the hex digest only.
 const styles = StyleSheet.create({
-  page: { padding: 48, fontSize: 11, color: "#1a1a1a", fontFamily: "Helvetica" },
-  org: { fontSize: 16, fontFamily: "Helvetica-Bold" },
+  page: { padding: 48, fontSize: 11, color: "#1a1a1a", fontFamily: PDF_FONT },
+  org: { fontSize: 16, fontFamily: PDF_FONT, fontWeight: 700 },
   title: { fontSize: 13, marginTop: 4, marginBottom: 20, color: "#555" },
   row: { flexDirection: "row", marginBottom: 8 },
-  label: { width: 130, color: "#777", fontFamily: "Helvetica-Bold" },
+  label: { width: 130, color: "#777", fontFamily: PDF_FONT, fontWeight: 700 },
   value: { flex: 1 },
   gdpr: {
     marginTop: 18,
@@ -40,7 +43,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#f4f4f5",
     lineHeight: 1.4,
   },
-  sigLabel: { fontSize: 9, color: "#777", marginBottom: 4, fontFamily: "Helvetica-Bold" },
+  sigLabel: { fontSize: 9, color: "#777", marginBottom: 4, fontFamily: PDF_FONT, fontWeight: 700 },
   sig: {
     width: 260,
     height: 120,
@@ -48,7 +51,7 @@ const styles = StyleSheet.create({
     objectFit: "contain",
     backgroundColor: "#fff",
   },
-  signer: { marginTop: 6, fontSize: 11, fontFamily: "Helvetica-Bold" },
+  signer: { marginTop: 6, fontSize: 11, fontFamily: PDF_FONT, fontWeight: 700 },
   footer: { position: "absolute", bottom: 40, left: 48, right: 48, fontSize: 8, color: "#999" },
   hash: { fontFamily: "Courier", marginTop: 2 },
 });
@@ -92,5 +95,6 @@ function SlipDoc({ d }: { d: SlipPdfData }) {
 }
 
 export async function renderSlipPdf(d: SlipPdfData): Promise<Buffer> {
+  registerPdfFonts();
   return renderToBuffer(<SlipDoc d={d} />);
 }

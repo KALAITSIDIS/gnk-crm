@@ -10,6 +10,11 @@ const nextConfig: NextConfig = {
       bodySizeLimit: "25mb",
     },
   },
+  // PDF fonts are read from disk at render time (react-pdf Font.register), so
+  // Vercel's import tracing never sees them — force them into the bundles.
+  outputFileTracingIncludes: {
+    "/**": ["./lib/assets/fonts/**"],
+  },
 };
 
 export default withNextIntl(nextConfig);

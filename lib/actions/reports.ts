@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getCurrentProfile } from "@/lib/services/auth";
-import { assembleEvidence } from "@/lib/services/evidence";
+import { assembleEvidence, EVENTS_PER_FAMILY } from "@/lib/services/evidence";
 import { renderEvidencePdf } from "@/lib/services/evidence-pdf";
 import { logEvent } from "@/lib/services/events";
 import { sha256Hex } from "@/lib/services/hash";
@@ -63,9 +63,17 @@ export async function generateEvidenceReport(
     from: d.from,
     to: d.to,
     withSlipImages: true,
+    verifyChain: true, // an evidential PDF must carry a real chain result
+    generatedBy: { name: profile.fullName, role: profile.role },
   });
   if ("error" in data) return fail(data.error);
   if (data.rows.length === 0) return fail("No events found for this contact and filter.");
+  if (data.truncated) {
+    return fail(
+      `The record exceeds ${EVENTS_PER_FAMILY} events in one category — an incomplete report ` +
+        "will not be generated. Narrow the date range and try again.",
+    );
+  }
 
   const generatedAt = formatDateTime(new Date());
   let pdf: Buffer;
@@ -92,33 +100,45 @@ export async function generateEvidenceReport(
       title: `Commission evidence — ${data.contact.name} — ${new Date(stamp).toISOString().slice(0, 10)}`,
       storage_path: path,
       uploaded_by: profile.id,
+      // an admin's report carries the full org record — keep it admin-only
+      visibility: profile.role === "admin" ? "admin_only" : "internal",
     })
     .select("id")
     .single();
-  if (docErr) return fail(docErr.message);
+  if (docErr) {
+    await admin.storage.from("documents").remove([path]); // no orphaned file
+    return fail(docErr.message);
+  }
 
-  await logEvent(supabase, {
-    orgId: profile.orgId,
-    actorId: profile.id,
-    entityType: "contact",
-    entityId: d.contact_id,
-    eventType: "evidence_report_generated",
-    payload: {
-      document_id: doc.id,
-      report_hash: data.reportHash,
-      pdf_sha256: sha256Hex(pdf),
-      rows: data.rows.length,
-      chain_ok: data.chainOk,
-      ...(d.property_id ? { property_id: d.property_id } : {}),
-    },
-  });
+  try {
+    await logEvent(supabase, {
+      orgId: profile.orgId,
+      actorId: profile.id,
+      entityType: "contact",
+      entityId: d.contact_id,
+      eventType: "evidence_report_generated",
+      payload: {
+        document_id: doc.id,
+        report_hash: data.reportHash,
+        pdf_sha256: sha256Hex(pdf),
+        rows: data.rows.length,
+        chain_ok: data.chain === "verified",
+        ...(d.property_id ? { property_id: d.property_id } : {}),
+      },
+    });
+  } catch (e) {
+    // guardrail 1: no stored report without its event — roll the report back
+    await admin.from("documents").delete().eq("id", doc.id);
+    await admin.storage.from("documents").remove([path]);
+    return fail(`Report rolled back — its event could not be written: ${(e as Error).message}`);
+  }
 
   revalidatePath("/reports/commission-evidence");
   return {
     error: null,
     savedAt: Date.now(),
     documentId: doc.id,
-    chainOk: data.chainOk,
+    chainOk: data.chain === "verified",
     rowCount: data.rows.length,
   };
 }
