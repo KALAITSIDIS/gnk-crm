@@ -29,6 +29,41 @@ async function recomputeScores(
   await recomputeDealsFor(supabase, { propertyId });
 }
 
+/**
+ * Migration 0012 invariant: an OPEN renewal task exists iff its mandate is
+ * ACTIVE with a MATCHING expiry. Admin edits that break that (expiry moved,
+ * status left active) complete the open task here with actor attribution;
+ * the nightly expire_mandates() run is the safety net and re-creates the
+ * reminder for the new expiry when its window opens.
+ */
+async function supersedeRenewalTasks(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  mandate: { id: string; org_id: string },
+  actorId: string,
+  reason: string,
+) {
+  const { data: superseded } = await supabase
+    .from("tasks")
+    .update({ is_done: true, done_at: new Date().toISOString() })
+    .eq("mandate_id", mandate.id)
+    .eq("is_done", false)
+    .select("id");
+  for (const t of superseded ?? []) {
+    await logEvent(supabase, {
+      orgId: mandate.org_id,
+      actorId,
+      entityType: "task",
+      entityId: t.id,
+      eventType: "superseded",
+      payload: { mandate_id: mandate.id, reason },
+    });
+  }
+  if ((superseded ?? []).length > 0) {
+    revalidatePath("/tasks");
+    revalidatePath("/dashboard");
+  }
+}
+
 function changedValue(prev: unknown, next: unknown): boolean {
   const norm = (v: unknown) => {
     if (v === undefined || v === null || v === "") return null;
@@ -99,6 +134,14 @@ export async function saveMandate(
       eventType: "updated",
       payload: JSON.parse(JSON.stringify({ changed })),
     });
+    if ("expiry_date" in changed) {
+      await supersedeRenewalTasks(
+        supabase,
+        { id: d.mandate_id, org_id: profile.orgId },
+        profile.id,
+        "expiry_changed",
+      );
+    }
     await recomputeScores(supabase, current.property_id);
     revalidatePath(`/properties/${current.property_id}`);
     return { error: null, savedAt: Date.now() };
@@ -168,6 +211,14 @@ export async function setMandateStatus(
     eventType: "status_changed",
     payload: { from: m.status, to: next },
   });
+  if (m.status === "active") {
+    await supersedeRenewalTasks(
+      supabase,
+      { id: m.id, org_id: m.org_id },
+      profile.id,
+      "mandate_no_longer_active",
+    );
+  }
   await recomputeScores(supabase, m.property_id);
   revalidatePath(`/properties/${m.property_id}`);
   return { error: null };

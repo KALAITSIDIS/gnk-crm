@@ -651,4 +651,81 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     const { data: after } = await svc.from("contacts").select("notes").eq("id", contactA).single();
     expect(after?.notes).toBe(`admin note ${run}`);
   });
+
+  it("17. tasks: assignee/creator see; only assignee or admin toggle; creator or admin delete", async () => {
+    // t1: admin-created, assigned to agentA1
+    const { data: t1, error: t1Err } = await svc
+      .from("tasks")
+      .insert({
+        org_id: ORG_A,
+        title: `Task admin→A1 ${run}`,
+        assignee_id: agentA1.id,
+        created_by: adminA.id,
+      })
+      .select("id")
+      .single();
+    expect(t1Err).toBeNull();
+
+    // t2: agentA2-created, assigned to agentA1 (creator ≠ assignee)
+    const { data: t2, error: t2Err } = await svc
+      .from("tasks")
+      .insert({
+        org_id: ORG_A,
+        title: `Task A2→A1 ${run}`,
+        assignee_id: agentA1.id,
+        created_by: agentA2.id,
+      })
+      .select("id")
+      .single();
+    expect(t2Err).toBeNull();
+
+    // SELECT: assignee and creator see a task; unrelated org member and org B don't
+    expect((await selectCount(agentA1.client, "tasks", "id", t1!.id)).count).toBe(1);
+    expect((await selectCount(agentA2.client, "tasks", "id", t1!.id)).count).toBe(0);
+    expect((await selectCount(agentA2.client, "tasks", "id", t2!.id)).count).toBe(1);
+    expect((await selectCount(agentB.client, "tasks", "id", t1!.id)).count).toBe(0);
+
+    // UPDATE: the creator can SEE t2 but is silently filtered to 0 rows —
+    // exactly the hole toggleTaskDone row-guards against logging events for
+    const creator = await agentA2.client
+      .from("tasks")
+      .update({ is_done: true })
+      .eq("id", t2!.id)
+      .select("id");
+    expect(creator.data ?? []).toHaveLength(0);
+
+    // …the assignee toggles fine, and admin toggles anyone's
+    const assignee = await agentA1.client
+      .from("tasks")
+      .update({ is_done: true, done_at: new Date().toISOString() })
+      .eq("id", t2!.id)
+      .select("id");
+    expect(assignee.error).toBeNull();
+    expect(assignee.data).toHaveLength(1);
+    const admin = await adminA.client
+      .from("tasks")
+      .update({ is_done: true, done_at: new Date().toISOString() })
+      .eq("id", t1!.id)
+      .select("id");
+    expect(admin.error).toBeNull();
+    expect(admin.data).toHaveLength(1);
+
+    // DELETE: assignee-but-not-creator filtered; creator allowed; admin allowed
+    const delAssignee = await agentA1.client.from("tasks").delete().eq("id", t2!.id).select("id");
+    expect(delAssignee.data ?? []).toHaveLength(0);
+    const delCreator = await agentA2.client.from("tasks").delete().eq("id", t2!.id).select("id");
+    expect(delCreator.error).toBeNull();
+    expect(delCreator.data).toHaveLength(1);
+    const delAdmin = await adminA.client.from("tasks").delete().eq("id", t1!.id).select("id");
+    expect(delAdmin.error).toBeNull();
+    expect(delAdmin.data).toHaveLength(1);
+
+    // INSERT: listing managers may create tasks (doc 04: A AG LM)
+    const lmIns = await lmA.client
+      .from("tasks")
+      .insert({ org_id: ORG_A, title: `LM task ${run}`, assignee_id: lmA.id, created_by: lmA.id })
+      .select("id")
+      .single();
+    expect(lmIns.error).toBeNull();
+  });
 });

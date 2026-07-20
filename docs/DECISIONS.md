@@ -453,3 +453,40 @@ silent. Format: date · task · decision · rationale.
      `SELECT_NONE` sentinel ("—" item) so source/psychology/channel/purpose/
      feasibility can be un-set; deactivated agents render "(inactive)" in the
      list instead of "—" (looked unassigned).
+
+- **2026-07-20 · T-audit-tasks** — Tasks audit pass (fix-all).
+  1. Renewal-task lifecycle reworked (migration 0012). The 0006 idempotence
+     guard (`not exists (ANY task for the mandate)`) made reminders ONE-SHOT:
+     renewing a mandate is an in-place `expiry_date` update, so after the
+     first reminder no later cycle could ever fire, and the open task went
+     stale (old due/title). New invariant: **an OPEN renewal task exists iff
+     its mandate is ACTIVE with a MATCHING expiry** — the guard is keyed per
+     expiry cycle (task's Cyprus due DATE = mandate `expiry_date`; date not
+     timestamp, so pre-0012 midnight-UTC rows still match), `saveMandate` /
+     `setMandateStatus` complete open tasks the moment an admin breaks the
+     invariant (`superseded` event WITH actor), and the nightly cron
+     supersedes as actor-null safety net. Superseded tasks are COMPLETED,
+     never deleted — history keeps its shape and "Recently done" stays
+     honest. Renewal due_at is now Cyprus 23:59 end-of-day like quick-add
+     (was midnight UTC = "overdue" all of the final day). Assignee fallback
+     chain grew a third arm: property agent → mandate creator → oldest
+     active org admin — imported mandates (no `created_by`) on unassigned
+     properties were producing NULL-assignee tasks that NO surface showed
+     (/tasks and the agent dashboard both filter `assignee_id = me`).
+     Backfills: stale open tasks superseded, surviving midnight-UTC stamps
+     moved to EOD (same calendar day), orphans reassigned to the org admin —
+     each with system events.
+  2. `toggleTaskDone` got the repo-standard row-count guard, folded into the
+     write: `.eq(id).neq("is_done", done).select("id")`. Creators can SELECT
+     tasks only the assignee/admin may UPDATE, so the old unguarded update
+     could toast "Done" and log a phantom `completed` event off an RLS 0-row
+     no-op; the `.neq` also makes rapid double-toggles single-fire. 0 rows =
+     explicit error, no event.
+  3. /tasks page queries unwrap via `lib/supabase/unwrap.ts` (failures throw
+     to the boundary instead of rendering "0 open"), and the header/nudge
+     counts use `count: "exact"` (dashboard-audit conventions).
+  4. New RLS test 17 pins the doc 04 tasks row: assignee/creator visibility,
+     creator-can't-toggle (the silent no-op behind #2), assignee/admin
+     update, creator/admin delete, LM insert. Suite: 21 green.
+  5. Quick-add `due_date` now rejects malformed values instead of silently
+     dropping them (was: task saved with no due date).

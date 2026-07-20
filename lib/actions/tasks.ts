@@ -16,7 +16,8 @@ const quickAddSchema = z.object({
   due_date: z
     .string()
     .optional()
-    .transform((v) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined)),
+    .transform((v) => (v ? v : undefined))
+    .refine((v) => v === undefined || /^\d{4}-\d{2}-\d{2}$/.test(v), "Invalid due date"),
 });
 
 /** Quick-add (T5.5): a personal task, assigned to whoever created it. */
@@ -80,11 +81,20 @@ export async function toggleTaskDone(
   if (!task) return { error: "Task not found" };
   if (task.is_done === done) return { error: null };
 
-  const { error } = await supabase
+  // `.neq("is_done", done)` folds the no-op precondition into the write, so a
+  // double-click can't log the event twice; 0 rows after it = a concurrent
+  // toggle won, or update RLS filtered us out (select is wider: creators see
+  // tasks only their assignee may complete) — either way, no phantom event.
+  const { data: updated, error } = await supabase
     .from("tasks")
     .update({ is_done: done, done_at: done ? new Date().toISOString() : null })
-    .eq("id", taskId);
+    .eq("id", taskId)
+    .neq("is_done", done)
+    .select("id");
   if (error) return { error: error.message };
+  if (!updated || updated.length === 0) {
+    return { error: "Task was not updated — only its assignee or an admin can." };
+  }
 
   await logEvent(supabase, {
     orgId: task.org_id,

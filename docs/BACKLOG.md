@@ -93,3 +93,12 @@ built without explicit direction.
   notifications?); calendar hint when paging past the 90-day/500-row fetch
   window; route save as a single RPC for atomicity (currently N sequential
   updates); "Mark completed" one-tap on the slip-signed success panel.
+- Tasks follow-ups (T-audit-tasks): edit / delete / reschedule-due-date UI
+  (delete RLS exists but nothing uses it; auto renewal tasks can only be
+  completed, never dismissed or snoozed); entity-linked tasks — `contact_id` /
+  `deal_id` columns exist (contact-merge even repoints them) but no UI sets or
+  displays them; "Add task" buttons on property/contact/deal detail pages;
+  admin section on /tasks for org-wide overdue + unassigned tasks with a
+  claim/assign control (0012's admin fallback prevents new orphans, but an
+  explicit surface beats a fallback); tasks module i18n (en/el/ru); feedback
+  nudge rows could show the contact name next to the property ref.

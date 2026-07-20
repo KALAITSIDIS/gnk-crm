@@ -514,8 +514,9 @@ create table tasks (
   done_at timestamptz,
   created_by uuid references profiles(id),
   created_at timestamptz not null default now(),
-  -- T4.5 (migration 0006): links a renewal task to its mandate + makes the
-  -- nightly expire_mandates() task insert idempotent
+  -- T4.5 (migration 0006): links a renewal task to its mandate; the nightly
+  -- expire_mandates() insert is idempotent per expiry CYCLE (migration 0012):
+  -- one task per (mandate, Cyprus due date)
   mandate_id uuid references mandates(id)
 );
 create index tasks_assignee_idx on tasks(org_id, assignee_id, is_done, due_at);
@@ -581,32 +582,15 @@ end $$;
 revoke update, delete, truncate on events from anon, authenticated;
 
 -- ---------- mandate auto-expiry + renewal tasks (pg_cron, daily 03:00) ----------
--- T4.5 (migration 0006): also creates one renewal task per active mandate
--- entering its reminder window; idempotent via tasks.mandate_id. Both actions
--- write system events (actor_id null).
+-- T4.5 (migration 0006), reworked by migration 0012: flips expired mandates,
+-- creates ONE renewal task per active mandate per expiry cycle (due Cyprus
+-- end-of-day of the expiry; assignee = property agent → mandate creator →
+-- oldest active org admin), and supersedes open renewal tasks whose mandate is
+-- no longer active or whose expiry moved. Invariant: an OPEN renewal task
+-- exists iff its mandate is ACTIVE with a MATCHING expiry. All actions write
+-- system events (actor_id null).
 create or replace function expire_mandates() returns void
 language sql security definer set search_path = public as $$
-  with created as (
-    insert into tasks (org_id, title, due_at, assignee_id, property_id, mandate_id)
-    select m.org_id,
-           'Mandate renewal: ' || p.reference || ' expires ' || to_char(m.expiry_date, 'DD Mon YYYY'),
-           m.expiry_date::timestamptz,
-           coalesce(p.assigned_agent_id, m.created_by),
-           m.property_id,
-           m.id
-    from mandates m
-    join properties p on p.id = m.property_id
-    where m.status = 'active'
-      and m.expiry_date is not null
-      and current_date >= m.expiry_date - m.renewal_reminder_days
-      and not exists (select 1 from tasks t where t.mandate_id = m.id)
-    returning org_id, mandate_id, assignee_id
-  )
-  insert into events (org_id, actor_id, entity_type, entity_id, event_type, payload)
-  select org_id, null, 'mandate', mandate_id, 'renewal_task_created',
-         jsonb_build_object('assignee_id', assignee_id)
-  from created;
-
   with flipped as (
     update mandates set status = 'expired'
     where status = 'active' and expiry_date is not null and expiry_date < current_date
@@ -616,6 +600,51 @@ language sql security definer set search_path = public as $$
   select org_id, null, 'mandate', id, 'status_changed',
          jsonb_build_object('from', 'active', 'to', 'expired', 'expiry_date', expiry_date)
   from flipped;
+
+  with created as (
+    insert into tasks (org_id, title, due_at, assignee_id, property_id, mandate_id)
+    select m.org_id,
+           'Mandate renewal: ' || p.reference || ' expires ' || to_char(m.expiry_date, 'DD Mon YYYY'),
+           (m.expiry_date::timestamp + interval '23 hours 59 minutes') at time zone 'Asia/Nicosia',
+           coalesce(
+             p.assigned_agent_id,
+             m.created_by,
+             (select pr.id from profiles pr
+               where pr.org_id = m.org_id and pr.role = 'admin' and pr.is_active
+               order by pr.created_at limit 1)),
+           m.property_id,
+           m.id
+    from mandates m
+    join properties p on p.id = m.property_id
+    where m.status = 'active'
+      and m.expiry_date is not null
+      and current_date >= m.expiry_date - m.renewal_reminder_days
+      and not exists (
+        select 1 from tasks t
+        where t.mandate_id = m.id
+          and (t.due_at at time zone 'Asia/Nicosia')::date = m.expiry_date)
+    returning org_id, mandate_id, assignee_id
+  )
+  insert into events (org_id, actor_id, entity_type, entity_id, event_type, payload)
+  select org_id, null, 'mandate', mandate_id, 'renewal_task_created',
+         jsonb_build_object('assignee_id', assignee_id)
+  from created;
+
+  with superseded as (
+    update tasks t
+       set is_done = true, done_at = now()
+      from mandates m
+     where t.mandate_id = m.id
+       and not t.is_done
+       and (m.status <> 'active'
+            or m.expiry_date is null
+            or (t.due_at at time zone 'Asia/Nicosia')::date <> m.expiry_date)
+    returning t.org_id, t.id, t.mandate_id
+  )
+  insert into events (org_id, actor_id, entity_type, entity_id, event_type, payload)
+  select org_id, null, 'task', id, 'superseded',
+         jsonb_build_object('mandate_id', mandate_id, 'reason', 'mandate_renewed_or_inactive')
+  from superseded;
 $$;
 select cron.schedule('expire-mandates','0 3 * * *', $$select expire_mandates()$$);
 

@@ -7,6 +7,7 @@ import {
 } from "@/components/features/tasks/task-list";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
+import { unwrapRows } from "@/lib/supabase/unwrap";
 import { formatDateTime } from "@/lib/utils/format";
 
 export const dynamic = "force-dynamic";
@@ -25,16 +26,16 @@ export default async function TasksPage() {
 
   const [
     // SQL: select * from tasks where assignee_id = :me and is_done = false order by due_at nulls last;
-    { data: openRows },
+    openRes,
     // SQL: select * from tasks where assignee_id = :me and is_done = true order by done_at desc limit 10;
-    { data: doneRows },
+    doneRes,
     // SQL: select id, scheduled_at from viewings where agent_id = :me and status='completed'
     //      and feedback is null order by scheduled_at desc limit 10;
-    { data: needFeedback },
+    needFeedbackRes,
   ] = await Promise.all([
     supabase
       .from("tasks")
-      .select("id, title, due_at, is_done, property_id, mandate_id")
+      .select("id, title, due_at, is_done, property_id, mandate_id", { count: "exact" })
       .eq("assignee_id", profile.id)
       .eq("is_done", false)
       .order("due_at", { ascending: true, nullsFirst: false })
@@ -48,19 +49,24 @@ export default async function TasksPage() {
       .limit(10),
     supabase
       .from("viewings")
-      .select("id, scheduled_at, properties(reference)")
+      .select("id, scheduled_at, properties(reference)", { count: "exact" })
       .eq("agent_id", profile.id)
       .eq("status", "completed")
       .is("feedback", null)
       .order("scheduled_at", { ascending: false })
       .limit(10),
   ]);
+  // failed queries throw to the error boundary — "0 open" must mean empty,
+  // not broken (dashboard audit convention, lib/supabase/unwrap.ts)
+  const openRows = unwrapRows(openRes, "open tasks");
+  const doneRows = unwrapRows(doneRes, "done tasks");
+  const needFeedback = unwrapRows(needFeedbackRes, "viewings awaiting feedback");
+  const openCount = openRes.count ?? openRows.length;
+  const needFeedbackCount = needFeedbackRes.count ?? needFeedback.length;
 
   const propertyIds = [
     ...new Set(
-      [...(openRows ?? []), ...(doneRows ?? [])]
-        .map((t) => t.property_id)
-        .filter((v): v is string => Boolean(v)),
+      [...openRows, ...doneRows].map((t) => t.property_id).filter((v): v is string => Boolean(v)),
     ),
   ];
   const { data: props } = propertyIds.length
@@ -68,7 +74,7 @@ export default async function TasksPage() {
     : { data: [] };
   const refById = new Map((props ?? []).map((p) => [p.id, p.reference]));
 
-  const toItem = (t: NonNullable<typeof openRows>[number]): TaskItem => ({
+  const toItem = (t: (typeof openRows)[number]): TaskItem => ({
     id: t.id,
     title: t.title,
     dueAt: t.due_at,
@@ -79,17 +85,17 @@ export default async function TasksPage() {
     isAuto: t.mandate_id !== null,
   });
 
-  const open = (openRows ?? []).map(toItem);
+  const open = openRows.map(toItem);
   const overdue = open.filter((t) => t.overdue);
   const upcoming = open.filter((t) => !t.overdue);
-  const done = (doneRows ?? []).map(toItem);
+  const done = doneRows.map(toItem);
 
   return (
     <div className="mx-auto flex w-full max-w-xl flex-col gap-4">
       <div>
         <h1 className="text-xl font-semibold text-text-1">Tasks</h1>
         <p className="text-sm text-text-2">
-          {open.length} open{overdue.length > 0 ? ` · ${overdue.length} overdue` : ""}
+          {openCount} open{overdue.length > 0 ? ` · ${overdue.length} overdue` : ""}
         </p>
       </div>
 
@@ -98,17 +104,17 @@ export default async function TasksPage() {
       <TaskSection title="Overdue" items={overdue} emptyText="Nothing overdue." />
       <TaskSection title="Upcoming" items={upcoming} emptyText="No open tasks." />
 
-      {(needFeedback ?? []).length > 0 ? (
+      {needFeedback.length > 0 ? (
         <section className="rounded-[10px] border border-warning/40 bg-warning/5 p-4">
           <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-text-1">
             <MessageSquareWarning className="size-4 text-warning" />
             Viewings awaiting feedback
             <span className="ml-auto rounded-full bg-surface-2 px-2 py-0.5 text-xs tabular-nums text-text-2">
-              {(needFeedback ?? []).length}
+              {needFeedbackCount}
             </span>
           </h2>
           <ul className="flex flex-col divide-y divide-border/60">
-            {(needFeedback ?? []).map((v) => (
+            {needFeedback.map((v) => (
               <li key={v.id}>
                 <Link
                   href={`/viewings/${v.id}`}
