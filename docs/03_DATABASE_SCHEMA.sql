@@ -353,6 +353,8 @@ create table property_keys (
   current_holder_name text,
   created_at timestamptz not null default now()
 );
+-- key codes are unique physical tags per office (added keys audit, migration 0013)
+create unique index property_keys_org_code_uniq on property_keys (org_id, key_code);
 create table key_movements (
   id uuid primary key default gen_random_uuid(),
   org_id uuid not null,
@@ -364,6 +366,13 @@ create table key_movements (
   note text,
   created_by uuid references profiles(id)
 );
+-- All key movements go through record_key_movement(key, action, holder_id, holder_name, note)
+-- (migration 0013): SECURITY DEFINER — agents may MOVE keys while only admin/LM
+-- may UPDATE property_keys, so the derived status/holder cache is written by the
+-- function after it enforces org scope, mover roles, and status transitions
+-- (checkout: in_office only; return: any non-office state incl. lost recovery;
+-- transfer→with_owner: in_office/checked_out; mark_lost: any non-lost state).
+-- Movement + cache + event commit in one transaction.
 
 -- ---------- leads ----------
 create table leads (

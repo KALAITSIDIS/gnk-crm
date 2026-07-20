@@ -728,4 +728,142 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       .single();
     expect(lmIns.error).toBeNull();
   });
+
+  it("18. property_keys: register/edit is admin+LM only; record_key_movement guards transitions", async () => {
+    // INSERT (register): agents are denied by policy, LM allowed (doc 04)
+    const agentIns = await agentA1.client
+      .from("property_keys")
+      .insert({ org_id: ORG_A, property_id: propA1, key_code: `K18-${run}` })
+      .select("id")
+      .single();
+    expect(agentIns.error, "agent register must be denied").not.toBeNull();
+
+    const lmIns = await lmA.client
+      .from("property_keys")
+      .insert({ org_id: ORG_A, property_id: propA1, key_code: `K18-${run}` })
+      .select("id")
+      .single();
+    expect(lmIns.error, "LM register must succeed").toBeNull();
+    const keyLM = lmIns.data!.id;
+
+    // duplicate code: unique (org_id, key_code) — 0013
+    const dup = await lmA.client
+      .from("property_keys")
+      .insert({ org_id: ORG_A, property_id: propA1, key_code: `K18-${run}` })
+      .select("id")
+      .single();
+    expect(dup.error?.code, "duplicate key code must hit the unique index").toBe("23505");
+
+    // UPDATE (keys meta): agent silently filtered to 0 rows, LM edits fine
+    const agentUpd = await agentA1.client
+      .from("property_keys")
+      .update({ description: "agent rewrite" })
+      .eq("id", keyLM)
+      .select("id");
+    expect(agentUpd.data ?? []).toHaveLength(0);
+    const lmUpd = await lmA.client
+      .from("property_keys")
+      .update({ description: "front door" })
+      .eq("id", keyLM)
+      .select("id");
+    expect(lmUpd.error).toBeNull();
+    expect(lmUpd.data).toHaveLength(1);
+
+    // cross-org blindness
+    expect((await selectCount(agentB.client, "property_keys", "id", keyLM)).count).toBe(0);
+
+    const keyEventCount = async () => {
+      const { count, error } = await svc
+        .from("events")
+        .select("id", { count: "exact", head: true })
+        .eq("entity_type", "key")
+        .eq("entity_id", keyLM);
+      if (error) throw error;
+      return count ?? 0;
+    };
+    const movementCount = async () => {
+      const { count, error } = await svc
+        .from("key_movements")
+        .select("id", { count: "exact", head: true })
+        .eq("key_id", keyLM);
+      if (error) throw error;
+      return count ?? 0;
+    };
+
+    // RPC: org-B caller cannot even find the key
+    const crossMove = await agentB.client.rpc("record_key_movement", {
+      p_key_id: keyLM,
+      p_action: "checkout",
+      p_holder_name: "Org B Thief",
+    });
+    expect(crossMove.error, "cross-org movement must fail").not.toBeNull();
+    expect(await movementCount(), "failed movement must write no rows").toBe(0);
+
+    // agent checkout: movement + cache + event land together
+    const checkout = await agentA1.client.rpc("record_key_movement", {
+      p_key_id: keyLM,
+      p_action: "checkout",
+      p_holder_name: "RLS Holder",
+    });
+    expect(checkout.error).toBeNull();
+    const { data: afterCheckout } = await svc
+      .from("property_keys")
+      .select("status, current_holder_name")
+      .eq("id", keyLM)
+      .single();
+    expect(afterCheckout?.status).toBe("checked_out");
+    expect(afterCheckout?.current_holder_name).toBe("RLS Holder");
+    expect(await movementCount()).toBe(1);
+    expect(await keyEventCount()).toBe(1);
+
+    // double checkout: status guard aborts, nothing extra is logged
+    const doubleOut = await agentA1.client.rpc("record_key_movement", {
+      p_key_id: keyLM,
+      p_action: "checkout",
+      p_holder_name: "Second Holder",
+    });
+    expect(doubleOut.error?.message).toContain("return it first");
+    expect(await movementCount(), "aborted checkout must write no movement").toBe(1);
+    expect(await keyEventCount(), "aborted checkout must write no event").toBe(1);
+
+    // any staff role may move keys: LM returns it, holder cache clears
+    const ret = await lmA.client.rpc("record_key_movement", { p_key_id: keyLM, p_action: "return" });
+    expect(ret.error).toBeNull();
+    const { data: afterReturn } = await svc
+      .from("property_keys")
+      .select("status, current_holder_name")
+      .eq("id", keyLM)
+      .single();
+    expect(afterReturn?.status).toBe("in_office");
+    expect(afterReturn?.current_holder_name).toBeNull();
+
+    // lost lifecycle: mark_lost blocks checkout until return recovers it
+    const lost = await adminA.client.rpc("record_key_movement", {
+      p_key_id: keyLM,
+      p_action: "mark_lost",
+    });
+    expect(lost.error).toBeNull();
+    const lostOut = await agentA1.client.rpc("record_key_movement", {
+      p_key_id: keyLM,
+      p_action: "checkout",
+      p_holder_name: "Hopeful Holder",
+    });
+    expect(lostOut.error?.message).toContain("return it first");
+    const recover = await adminA.client.rpc("record_key_movement", {
+      p_key_id: keyLM,
+      p_action: "return",
+    });
+    expect(recover.error).toBeNull();
+    const { data: recovered } = await svc
+      .from("property_keys")
+      .select("status")
+      .eq("id", keyLM)
+      .single();
+    expect(recovered?.status).toBe("in_office");
+    expect(await movementCount()).toBe(4);
+    expect(await keyEventCount()).toBe(4);
+
+    // tidy the register fixture (movements cascade; events are append-only)
+    await svc.from("property_keys").delete().eq("id", keyLM);
+  });
 });

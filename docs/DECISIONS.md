@@ -3,6 +3,30 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-07-20 · T-audit (keys, migration 0013)** — Keys audit fixes; supersedes
+  the T4.6 three-statement movement design below. (1) All four movements now go
+  through `record_key_movement` (0013), SECURITY DEFINER: the old flow was
+  check-then-act (two concurrent checkouts both passed the app-side status
+  read), split across the user client (movement insert) and the service role
+  (cache update) with the event outside any transaction. Definer is deliberate —
+  doc 04 lets agents MOVE keys while only admin/LM may UPDATE `property_keys`,
+  so the derived status/holder cache can't ride the user's client; the function
+  re-implements the matrix (org scope, mover roles, per-action transitions),
+  row-locks the key, refuses unverifiable holder ids (cross-org/inactive
+  profiles fall back to the typed name instead of being cached verbatim), and
+  commits movement + cache + event atomically. (2) The dormant enum states are
+  now reachable: `transfer` → `with_owner` (from in_office/checked_out),
+  `mark_lost` → `lost` (last holder stays on the row for accountability), and
+  `return` doubles as recovery from with_owner/lost. (3) Key meta (code/
+  description) is editable by admin/LM per the matrix — row-count-guarded, no-op
+  saves write nothing, code changes log `updated {from,to}`. (4) Key codes are
+  unique per org (physical tags; 23505 → friendly error in register/edit).
+  (5) `/keys` queries unwrap; per-key history dialog reads the full movement
+  trail; the property Activity tab merges `entity_type='key'` events for its
+  keys (they carry the key's id, so the property-only filter never showed
+  them). (6) New RLS test 18 pins the doc 04 property_keys row + RPC guards
+  (suite: 22 green).
+
 - **2026-07-19 · T-fix (maps short link)** — The Details "Paste Google Maps
   link" field rejected `maps.app.goo.gl` share links (the default form mobile
   Google Maps "Share" produces). Root cause: a short link carries no

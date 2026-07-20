@@ -2282,6 +2282,16 @@ export type Database = {
       }
       postgis_version: { Args: never; Returns: string }
       postgis_wagyu_version: { Args: never; Returns: string }
+      record_key_movement: {
+        Args: {
+          p_action: Database["public"]["Enums"]["key_action"]
+          p_holder_name?: string
+          p_holder_profile_id?: string
+          p_key_id: string
+          p_note?: string
+        }
+        Returns: undefined
+      }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
       st_3dclosestpoint: {

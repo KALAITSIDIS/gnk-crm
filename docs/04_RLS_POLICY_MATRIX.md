@@ -112,3 +112,4 @@ grant select on mandates_safe to authenticated;
 12. `verify_events_chain(org)` true after seeded activity; false after service-role manual tamper (test-only).
 13. `key_movements` append-only: staff INSERT allowed; UPDATE/DELETE denied for every role.
 14. Deals: agent setting both `agent_id` and `created_by` away from themselves → denied (WITH CHECK, 0009); creator changing the working agent while staying `created_by` → allowed (own = `agent_id` OR `created_by`).
+15. `property_keys`: agent INSERT (register) → denied, LM → allowed; agent UPDATE (keys meta) → 0 rows, LM → allowed; org B blind. Movements only via `record_key_movement` RPC (0013): cross-org → not found; status transitions guarded (no double checkout, lost blocks checkout until return); movement + cache + event land atomically or not at all.

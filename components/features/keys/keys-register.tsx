@@ -44,19 +44,27 @@ function labelize(v: string) {
   return v.replace(/_/g, " ");
 }
 
-/** Org-wide key register with status/holder filters (doc 05 /keys). */
-export function KeysRegister({ keys }: { keys: KeyRegisterRow[] }) {
+/** Org-wide key register with status/text filters (doc 05 /keys). */
+export function KeysRegister({ keys, canEdit }: { keys: KeyRegisterRow[]; canEdit: boolean }) {
   const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [holderFilter, setHolderFilter] = useState("");
+  const [textFilter, setTextFilter] = useState("");
 
   const rows = useMemo(() => {
-    const holder = holderFilter.trim().toLowerCase();
+    const q = textFilter.trim().toLowerCase();
     return keys.filter((k) => {
       if (statusFilter !== "all" && k.status !== statusFilter) return false;
-      if (holder && !(k.holderName ?? "").toLowerCase().includes(holder)) return false;
+      if (
+        q &&
+        !k.keyCode.toLowerCase().includes(q) &&
+        !k.propertyRef.toLowerCase().includes(q) &&
+        !(k.holderName ?? "").toLowerCase().includes(q) &&
+        !(k.description ?? "").toLowerCase().includes(q)
+      ) {
+        return false;
+      }
       return true;
     });
-  }, [keys, statusFilter, holderFilter]);
+  }, [keys, statusFilter, textFilter]);
 
   return (
     <div className="flex flex-col gap-3">
@@ -75,10 +83,10 @@ export function KeysRegister({ keys }: { keys: KeyRegisterRow[] }) {
           </SelectContent>
         </Select>
         <Input
-          value={holderFilter}
-          onChange={(e) => setHolderFilter(e.target.value)}
-          placeholder="Filter by holder…"
-          className="w-48"
+          value={textFilter}
+          onChange={(e) => setTextFilter(e.target.value)}
+          placeholder="Filter by code, property, holder…"
+          className="w-64"
         />
         <span className="ml-auto text-sm text-text-3">
           {rows.length} of {keys.length} keys
@@ -131,7 +139,13 @@ export function KeysRegister({ keys }: { keys: KeyRegisterRow[] }) {
                   <TableCell className="text-text-2">{k.holderName ?? "—"}</TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end">
-                      <KeyMovementActions keyId={k.id} status={k.status} />
+                      <KeyMovementActions
+                        keyId={k.id}
+                        keyCode={k.keyCode}
+                        description={k.description}
+                        status={k.status}
+                        canEdit={canEdit}
+                      />
                     </div>
                   </TableCell>
                 </TableRow>

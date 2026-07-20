@@ -5,16 +5,24 @@ import {
 } from "@/components/features/keys/keys-register";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
+import { unwrapRows } from "@/lib/supabase/unwrap";
 import { formatDateTime } from "@/lib/utils/format";
 import type { KeyStatus } from "@/lib/validators/keys";
 
 export const dynamic = "force-dynamic";
 
+const MOVEMENT_LINES: Record<string, (holder: string | null) => string> = {
+  checkout: (holder) => `checked out to ${holder ?? "—"}`,
+  return: () => "returned to office",
+  transfer: (holder) => `handed to owner${holder ? ` (${holder})` : ""}`,
+  mark_lost: (holder) => `marked lost${holder ? ` — last with ${holder}` : ""}`,
+};
+
 export default async function KeysPage() {
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
 
-  const [{ data: keyRows }, { data: movementRows }] = await Promise.all([
+  const [keysRes, movementsRes] = await Promise.all([
     supabase
       .from("property_keys")
       .select("id, key_code, description, status, current_holder_name, property_id, properties(reference)")
@@ -30,8 +38,10 @@ export default async function KeysPage() {
       .order("occurred_at", { ascending: false })
       .limit(30),
   ]);
+  const keyRows = unwrapRows(keysRes, "keys");
+  const movementRows = unwrapRows(movementsRes, "key movements");
 
-  const keys: KeyRegisterRow[] = (keyRows ?? []).map((k) => ({
+  const keys: KeyRegisterRow[] = keyRows.map((k) => ({
     id: k.id,
     keyCode: k.key_code,
     description: k.description,
@@ -41,7 +51,7 @@ export default async function KeysPage() {
     propertyRef: (k.properties as { reference: string } | null)?.reference ?? "—",
   }));
 
-  const movements = (movementRows ?? []).map((m) => {
+  const movements = movementRows.map((m) => {
     const key = m.property_keys as {
       key_code: string;
       properties: { reference: string } | null;
@@ -59,6 +69,7 @@ export default async function KeysPage() {
   });
 
   const checkedOut = keys.filter((k) => k.status === "checked_out").length;
+  const canEdit = profile.role === "admin" || profile.role === "listing_manager";
 
   return (
     <div className="flex flex-col gap-4">
@@ -69,12 +80,10 @@ export default async function KeysPage() {
             {keys.length} registered · {checkedOut} out
           </p>
         </div>
-        {profile.role === "admin" || profile.role === "listing_manager" ? (
-          <RegisterKeyDialog />
-        ) : null}
+        {canEdit ? <RegisterKeyDialog /> : null}
       </div>
 
-      <KeysRegister keys={keys} />
+      <KeysRegister keys={keys} canEdit={canEdit} />
 
       <section className="rounded-[10px] border border-border bg-surface p-5">
         <h2 className="mb-3 text-sm font-semibold text-text-1">Recent movements</h2>
@@ -87,11 +96,7 @@ export default async function KeysPage() {
                 <span className="min-w-0 text-text-1">
                   <span className="font-mono text-xs font-semibold">{m.keyCode}</span>
                   <span className="mx-1.5 text-text-3">·</span>
-                  {m.action === "checkout" ? `checked out to ${m.holder ?? "—"}` : null}
-                  {m.action === "return" ? "returned to office" : null}
-                  {m.action !== "checkout" && m.action !== "return"
-                    ? m.action.replace("_", " ")
-                    : null}
+                  {(MOVEMENT_LINES[m.action] ?? (() => m.action.replace(/_/g, " ")))(m.holder)}
                   <span className="ml-1.5 text-xs text-text-3">
                     {m.propertyRef} · by {m.actor}
                   </span>

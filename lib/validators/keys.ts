@@ -16,8 +16,21 @@ const optionalNote = z
   .optional()
   .transform((v) => v || undefined);
 
+const optionalHolderName = z
+  .string()
+  .trim()
+  .max(200)
+  .optional()
+  .transform((v) => v || undefined);
+
 export const registerKeySchema = z.object({
   property_id: z.guid("Select a property"),
+  key_code: z.string().trim().min(1, "Key code is required").max(50),
+  description: optionalNote,
+});
+
+export const updateKeySchema = z.object({
+  key_id: z.guid("Missing key"),
   key_code: z.string().trim().min(1, "Key code is required").max(50),
   description: optionalNote,
 });
@@ -26,12 +39,7 @@ export const checkoutKeySchema = z
   .object({
     key_id: z.guid("Missing key"),
     holder_profile_id: optionalUuid,
-    holder_name: z
-      .string()
-      .trim()
-      .max(200)
-      .optional()
-      .transform((v) => v || undefined),
+    holder_name: optionalHolderName,
     note: optionalNote,
   })
   .refine((d) => d.holder_profile_id || d.holder_name, {
@@ -40,6 +48,17 @@ export const checkoutKeySchema = z
   });
 
 export const returnKeySchema = z.object({
+  key_id: z.guid("Missing key"),
+  note: optionalNote,
+});
+
+export const transferKeySchema = z.object({
+  key_id: z.guid("Missing key"),
+  holder_name: optionalHolderName,
+  note: optionalNote,
+});
+
+export const markLostKeySchema = z.object({
   key_id: z.guid("Missing key"),
   note: optionalNote,
 });

@@ -9,9 +9,9 @@ built without explicit direction.
 - Restore `app/(app)/properties/loading.tsx` skeleton once Next.js fixes the
   queued-suspense-reveal hydration bug (see DECISIONS 2026-07-12 · T3.5).
   Re-test: property detail tabs must stay clickable with the file present.
-- Key register: UI for `transfer` and `mark_lost` movements and the
-  `with_owner`/`lost` statuses (enums + append-only log already support them;
-  T4.6 shipped checkout/return only).
+- Keys i18n: register/movement dialog strings are hardcoded English (Phase 1
+  ships English; the transfer/mark_lost/edit/history UI landed in the
+  2026-07-20 keys audit, T-audit).
 - Settings/users: invite emails, self-service password reset and "reset 2FA"
   (doc 05) — all ride the Phase 2-3 email integration; Phase 1 invites hand
   over a one-time password (DECISIONS 2026-07-14 · T5.4).

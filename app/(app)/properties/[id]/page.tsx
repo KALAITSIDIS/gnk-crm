@@ -78,7 +78,8 @@ export default async function PropertyDetailPage({
   const mandateSafeRows = unwrapRows(mandatesRes, "mandates");
   const keyRows = unwrapRows(keysRes, "property keys");
 
-  const [priceRes, eventsRes, viewingsRes, documentsRes] = await Promise.all([
+  const keyIds = keyRows.map((k) => k.id);
+  const [priceRes, eventsRes, keyEventsRes, viewingsRes, documentsRes] = await Promise.all([
     supabase
       .from("price_history")
       .select("id, old_price, new_price, changed_at, changed_by")
@@ -92,6 +93,17 @@ export default async function PropertyDetailPage({
       .eq("entity_id", id)
       .order("occurred_at", { ascending: false })
       .limit(50),
+    // this property's key movements belong on its activity trail (keys audit) —
+    // key events carry the key's id, so they need their own fetch
+    keyIds.length === 0
+      ? Promise.resolve({ data: [], error: null })
+      : supabase
+          .from("events")
+          .select("id, occurred_at, event_type, entity_type, payload")
+          .eq("entity_type", "key")
+          .in("entity_id", keyIds)
+          .order("occurred_at", { ascending: false })
+          .limit(20),
     supabase
       .from("viewings")
       .select("id, scheduled_at, duration_min, status, contacts(display_name), agent:profiles!agent_id(full_name)")
@@ -108,7 +120,11 @@ export default async function PropertyDetailPage({
       .order("created_at", { ascending: false }),
   ]);
   const priceRows = unwrapRows(priceRes, "price history");
-  const eventRows = unwrapRows(eventsRes, "events");
+  const propertyEventRows = unwrapRows(eventsRes, "events");
+  const keyEventRows = unwrapRows(keyEventsRes, "key events");
+  const eventRows = [...propertyEventRows, ...keyEventRows]
+    .sort((a, b) => (a.occurred_at < b.occurred_at ? 1 : -1))
+    .slice(0, 50);
   const viewingRows = unwrapRows(viewingsRes, "viewings");
   const documentRows = unwrapRows(documentsRes, "documents");
 
@@ -432,7 +448,13 @@ export default async function PropertyDetailPage({
                           {k.current_holder_name ? ` · ${k.current_holder_name}` : ""}
                         </span>
                       </span>
-                      <KeyMovementActions keyId={k.id} status={k.status} />
+                      <KeyMovementActions
+                        keyId={k.id}
+                        keyCode={k.key_code}
+                        description={k.description}
+                        status={k.status}
+                        canEdit={isAdminOrLM}
+                      />
                     </li>
                   ))}
                 </ul>

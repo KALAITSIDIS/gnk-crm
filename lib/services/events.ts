@@ -157,6 +157,16 @@ const EVENT_LINES: Record<string, (p: P) => string> = {
     const code = asText(p.key_code);
     return `Key${code ? ` ${code}` : ""} returned to office`;
   },
+  key_transfer: (p) => {
+    const code = asText(p.key_code);
+    const holder = asText(p.holder);
+    return `Key${code ? ` ${code}` : ""} handed to owner${holder ? ` (${holder})` : ""}`;
+  },
+  key_lost: (p) => {
+    const code = asText(p.key_code);
+    const holder = asText(p.holder);
+    return `Key${code ? ` ${code}` : ""} marked lost${holder ? ` — last with ${holder}` : ""}`;
+  },
   completed: (p) => {
     const title = asText(p.title);
     return title ? `Task completed — ${title}` : "Completed";
