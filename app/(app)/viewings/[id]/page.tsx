@@ -135,7 +135,7 @@ export default async function ViewingDetailPage({ params }: { params: Promise<{ 
           </div>
         ) : status === "cancelled" || status === "no_show" ? (
           <p className="text-sm text-text-3">No slip — viewing did not take place.</p>
-        ) : (
+        ) : canManage ? (
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-text-3">Not signed yet.</p>
             <Button asChild size="sm" variant="outline">
@@ -144,6 +144,12 @@ export default async function ViewingDetailPage({ params }: { params: Promise<{ 
               </Link>
             </Button>
           </div>
+        ) : (
+          // RLS hides slips from everyone but the assigned agent and admins, so
+          // "not signed" would be a lie here — say what we actually know.
+          <p className="text-sm text-text-3">
+            Slip status is visible to the assigned agent and admins only.
+          </p>
         )}
       </Card>
 

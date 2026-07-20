@@ -86,6 +86,11 @@ export default async function SignSlipPage({ params }: { params: Promise<{ id: s
           </div>
           <SlipDownloadButton viewingId={id} />
         </div>
+      ) : v.status === "cancelled" || v.status === "no_show" ? (
+        <div className="flex items-center gap-2 rounded-[10px] border border-border bg-surface px-4 py-3 text-sm text-text-2">
+          <ShieldAlert className="size-4 shrink-0 text-warning" />
+          This viewing was marked {v.status.replace("_", "-")} — there is no slip to sign.
+        </div>
       ) : canSign ? (
         <SignSlip viewingId={id} defaultSignerName={buyerName} gdprLine={SLIP_GDPR_LINE} />
       ) : (

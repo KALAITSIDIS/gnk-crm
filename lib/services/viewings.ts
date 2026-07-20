@@ -47,6 +47,37 @@ export function initialRouteOrder<T extends RouteSortable>(items: T[], dayKey: s
   return [...items].sort((a, b) => saved(a) - saved(b) || a.startMinutes - b.startMinutes);
 }
 
+export interface RouteGroupable {
+  agentName: string;
+  routeOrder: number | null;
+}
+
+/**
+ * Group a day's route stops per agent for the printable sheet. Each agent
+ * saves their own 1..N sequence, so a flat route_order sort would interleave
+ * duplicate numbers across agents; instead: groups in agent-name order, stops
+ * within a group by route_order (unrouted last, ties keep input order).
+ */
+export function groupRouteStops<T extends RouteGroupable>(
+  stops: T[],
+): { agent: string; stops: T[] }[] {
+  const byAgent = new Map<string, T[]>();
+  for (const s of stops) {
+    const arr = byAgent.get(s.agentName) ?? [];
+    arr.push(s);
+    byAgent.set(s.agentName, arr);
+  }
+  return [...byAgent.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([agent, items]) => ({
+      agent,
+      stops: [...items].sort(
+        (a, b) =>
+          (a.routeOrder ?? Number.POSITIVE_INFINITY) - (b.routeOrder ?? Number.POSITIVE_INFINITY),
+      ),
+    }));
+}
+
 /**
  * Ids of viewings that overlap at least one other viewing held by the SAME
  * agent. A zero-duration viewing still can't sit inside another's window.

@@ -51,14 +51,24 @@ export function CreateViewingDialog({
   const [conflicts, setConflicts] = useState<ConflictHit[]>([]);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // The dialog CONTENT remounts on close, but this component doesn't — reset
+  // the draft state too, or the conflict check would reuse the previous
+  // agent/duration while the remounted fields show the defaults.
+  const resetDraft = () => {
+    setAgentId(defaultAgent?.id ?? null);
+    setScheduledAt("");
+    setDurationMin(30);
+    setConflicts([]);
+  };
+
   useEffect(() => {
     if (state.savedAt && state.savedAt !== lastToasted.current) {
       lastToasted.current = state.savedAt;
       toast.success("Viewing scheduled");
       setOpen(false);
-      setScheduledAt("");
-      setConflicts([]);
+      resetDraft();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- resetDraft is stable in behavior
   }, [state.savedAt]);
 
   // Live double-booking check whenever agent / time / duration change. All
@@ -79,7 +89,13 @@ export function CreateViewingDialog({
   }, [agentId, scheduledAt, durationMin]);
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (!o) resetDraft();
+      }}
+    >
       <DialogTrigger asChild>
         <Button>
           <CalendarPlus className="size-4" /> {triggerLabel}
@@ -124,13 +140,13 @@ export function CreateViewingDialog({
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label>Duration</Label>
+              <Label htmlFor="viewing-duration">Duration</Label>
               <Select
                 name="duration_min"
                 defaultValue="30"
                 onValueChange={(v) => setDurationMin(Number(v))}
               >
-                <SelectTrigger>
+                <SelectTrigger id="viewing-duration">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

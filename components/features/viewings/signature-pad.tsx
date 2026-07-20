@@ -79,6 +79,7 @@ export function SignaturePad({ onChange }: { onChange: (dataUrl: string) => void
     <div className="flex flex-col gap-2">
       <canvas
         ref={canvasRef}
+        aria-label="Signature area — draw your signature here"
         className="h-44 w-full touch-none rounded-lg border border-border bg-white"
         onPointerDown={start}
         onPointerMove={move}

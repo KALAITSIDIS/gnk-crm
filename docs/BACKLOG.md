@@ -84,3 +84,12 @@ built without explicit direction.
   inputs don't re-sync on browser back/forward (applied filters do); email
   uniqueness is advisory-only (no partial unique index like phone — add one if
   duplicate emails start appearing); `/contacts?tab=` deep-links.
+- Viewings follow-ups (T-audit-viewings): reschedule/edit action
+  (`checkViewingConflicts` already takes `excludeId` for it; must clear the
+  route stamp when the day changes); optional deal picker in the create dialog
+  (`deal_id` is accepted by the schema/validator but no UI sends it); admin-only
+  "reopen to scheduled" recovery for mis-clicked terminal statuses; decide the
+  fate of the unused `viewings.owner_notified` column (Phase 2 owner
+  notifications?); calendar hint when paging past the 90-day/500-row fetch
+  window; route save as a single RPC for atomicity (currently N sequential
+  updates); "Mark completed" one-tap on the slip-signed success panel.

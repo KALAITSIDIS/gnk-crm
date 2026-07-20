@@ -149,6 +149,7 @@ export function ViewingsCalendar({
             <button
               key={m}
               type="button"
+              aria-pressed={view === m}
               onClick={() => setView(m)}
               className={cn(
                 "rounded-md px-3 py-1 text-sm font-medium capitalize transition-colors",

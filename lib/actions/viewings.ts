@@ -7,7 +7,7 @@ import { logEvent } from "@/lib/services/events";
 import { intervalsOverlap } from "@/lib/services/viewings";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTime } from "@/lib/utils/format";
-import { zonedWallClockToUtc } from "@/lib/utils/tz";
+import { zonedParts, zonedWallClockToUtc } from "@/lib/utils/tz";
 import {
   VIEWING_STATUS_ACTIONS,
   createViewingSchema,
@@ -173,7 +173,11 @@ export async function updateViewingStatus(
 /**
  * Persist a day's viewing route (T4.4): stamp route_date + 1-based route_order
  * across the ordered viewings. RLS limits writes to the caller's own viewings
- * (admin: any). One summary event per save keeps the log un-spammed.
+ * (admin: any) — a save that touches no row is reported as an error, not
+ * silently swallowed. Stops must actually fall on the given day, and stamps
+ * left behind by earlier saves for this day are cleared (RLS confines the
+ * cleanup to rows the caller may update, so other agents' routes survive).
+ * One summary event per save keeps the log un-spammed.
  */
 export async function saveViewingRoute(
   routeDate: string,
@@ -188,13 +192,39 @@ export async function saveViewingRoute(
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
 
+  const { data: rows, error: fetchErr } = await supabase
+    .from("viewings")
+    .select("id, scheduled_at")
+    .in("id", orderedIds);
+  if (fetchErr) return { error: fetchErr.message };
+  const scheduledById = new Map((rows ?? []).map((r) => [r.id, r.scheduled_at]));
+  if (scheduledById.size !== orderedIds.length) {
+    return { error: "Some viewings no longer exist — refresh and try again." };
+  }
+  if (orderedIds.some((id) => zonedParts(scheduledById.get(id)!).dayKey !== routeDate)) {
+    return { error: "Some stops are no longer on this day — refresh and try again." };
+  }
+
   for (let i = 0; i < orderedIds.length; i++) {
-    const { error } = await supabase
+    const { data: updated, error } = await supabase
       .from("viewings")
       .update({ route_date: routeDate, route_order: i + 1 })
-      .eq("id", orderedIds[i]);
+      .eq("id", orderedIds[i])
+      .select("id");
     if (error) return { error: error.message };
+    if (!updated || updated.length === 0) {
+      return { error: "You can only route your own viewings." };
+    }
   }
+
+  // Clear stamps from viewings previously routed for this day but no longer in
+  // the route (e.g. cancelled after routing), so the day sheet stays honest.
+  const { data: cleared } = await supabase
+    .from("viewings")
+    .update({ route_date: null, route_order: null })
+    .eq("route_date", routeDate)
+    .not("id", "in", `(${orderedIds.join(",")})`)
+    .select("id");
 
   await logEvent(supabase, {
     orgId: profile.orgId,
@@ -202,7 +232,7 @@ export async function saveViewingRoute(
     entityType: "viewing",
     entityId: null,
     eventType: "route_updated",
-    payload: { route_date: routeDate, stops: orderedIds.length },
+    payload: { route_date: routeDate, stops: orderedIds.length, cleared: cleared?.length ?? 0 },
   });
 
   revalidatePath("/viewings");

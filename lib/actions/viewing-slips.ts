@@ -30,7 +30,7 @@ export async function signViewingSlip(
   const { data: v } = await supabase
     .from("viewings")
     .select(
-      `id, org_id, agent_id, scheduled_at,
+      `id, org_id, agent_id, scheduled_at, status,
        properties(reference, address),
        agent:profiles!agent_id(full_name)`,
     )
@@ -42,6 +42,15 @@ export async function signViewingSlip(
   // policy). Guarding here avoids orphaned uploads for unauthorized users.
   if (profile.role !== "admin" && v.agent_id !== profile.id) {
     return { error: "You can only sign slips for your own viewings.", savedAt: null };
+  }
+
+  // A slip is commission evidence that the viewing happened — a viewing that
+  // was cancelled or a no-show must never acquire one.
+  if (v.status === "cancelled" || v.status === "no_show") {
+    return {
+      error: `This viewing was marked ${v.status.replace("_", "-")} — a slip can only be signed for a viewing that took place.`,
+      savedAt: null,
+    };
   }
 
   // One slip per viewing (unique constraint is the backstop).

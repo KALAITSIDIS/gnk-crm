@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { computeConflictIds, initialRouteOrder, intervalsOverlap } from "./viewings";
+import {
+  computeConflictIds,
+  groupRouteStops,
+  initialRouteOrder,
+  intervalsOverlap,
+} from "./viewings";
 
 const T = (h: number, m = 0) => Date.UTC(2026, 6, 15, h, m); // fixed July day
 
@@ -55,6 +60,46 @@ describe("initialRouteOrder", () => {
     const items = [item("b", 720, null, null), item("a", 540, null, null)];
     initialRouteOrder(items, "2026-07-20");
     expect(items[0].id).toBe("b");
+  });
+});
+
+describe("groupRouteStops", () => {
+  const stop = (id: string, agentName: string, routeOrder: number | null) => ({
+    id,
+    agentName,
+    routeOrder,
+  });
+
+  it("groups stops by agent with groups in name order", () => {
+    const out = groupRouteStops([
+      stop("z1", "Zoe", 1),
+      stop("a1", "Alex", 1),
+    ]);
+    expect(out.map((g) => g.agent)).toEqual(["Alex", "Zoe"]);
+    expect(out[0].stops.map((s) => s.id)).toEqual(["a1"]);
+    expect(out[1].stops.map((s) => s.id)).toEqual(["z1"]);
+  });
+
+  it("keeps each agent's own sequence when order numbers overlap", () => {
+    // two agents both saved routes numbered 1..2 — must not interleave
+    const out = groupRouteStops([
+      stop("a1", "Alex", 1),
+      stop("b1", "Beth", 1),
+      stop("a2", "Alex", 2),
+      stop("b2", "Beth", 2),
+    ]);
+    expect(out.map((g) => g.agent)).toEqual(["Alex", "Beth"]);
+    expect(out[0].stops.map((s) => s.id)).toEqual(["a1", "a2"]);
+    expect(out[1].stops.map((s) => s.id)).toEqual(["b1", "b2"]);
+  });
+
+  it("sorts within a group by route order with unrouted stops last", () => {
+    const out = groupRouteStops([
+      stop("unrouted", "Alex", null),
+      stop("second", "Alex", 2),
+      stop("first", "Alex", 1),
+    ]);
+    expect(out[0].stops.map((s) => s.id)).toEqual(["first", "second", "unrouted"]);
   });
 });
 
