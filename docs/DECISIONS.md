@@ -710,3 +710,36 @@ silent. Format: date · task · decision · rationale.
   `resolveRestoreUpdates` lives in lib/validators/properties.ts, not the
   actions file — "use server" modules may only export async functions (see the
   2026-07-16 prod crash note).
+
+- **2026-07-21 · T-audit-reports-3** — Reports i18n (the last open line from the
+  T-audit-reports block) + the first REAL evidence report generated on prod.
+  1. **`reports` namespace in en/el/ru** (127 keys per locale), wired with
+     `getTranslations` (pages, generate/verify actions) and `useTranslations`
+     (builder, verify component). Phase 1 still renders English —
+     `i18n/request.ts` pins `defaultLocale` and locale routing is deliberately
+     absent (doc 02 §A5) — so this makes the module translatable, exactly as
+     the dashboard pass did.
+  2. **Action errors translate too.** `assembleEvidence` now returns an
+     `EvidenceFailure` carrying an `errorKey` (+ an optional untranslatable
+     `message` detail) instead of English prose, so the preview page and the
+     generate action each render it in the caller's language; the Zod schema
+     carries key names, not sentences. Passthrough Postgres/storage messages
+     stay verbatim.
+  3. **The PDF stays English, deliberately.** It is the evidential artifact
+     quoted in commission disputes, and its event lines come from
+     `describeEvent`, whose vocabulary is shared with every timeline in the app.
+     Translating the report chrome while the event rows stayed English would
+     read worse than a consistently English document. Translating
+     `describeEvent` is a separate app-wide job — BACKLOG.
+  4. **New `messages.test.ts` compiles every message in every locale.** The
+     first version PASSED against a deliberately malformed message: next-intl
+     swallows format errors and falls back to the key path. It now installs an
+     `onError` that rethrows, re-verified by sabotaging a message and watching
+     it fail (INVALID_MESSAGE: MALFORMED_ARGUMENT). Key parity with English is
+     asserted per locale, so a half-translated file fails CI.
+  5. **First real prod report** (user-authorized): contact MARIOS ANDREOU, 19
+     events, `chain_ok = true`, stored `admin_only` with
+     `doc_type = 'evidence_report'` (the 0015 enum path, no fallback). The
+     stored report hash matched the preview hash exactly — the T-audit-reports
+     determinism fix confirmed on real data — and the PDF verified "Authentic"
+     through the new tool on the live site.

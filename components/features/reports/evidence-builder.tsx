@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { FileCheck2, Search } from "lucide-react";
 import { EntityPicker } from "@/components/features/shared/entity-picker";
 import { DocumentDownloadButton } from "@/components/features/shared/document-download-button";
@@ -35,6 +36,7 @@ export function EvidenceBuilder({
   from: string;
   to: string;
 }) {
+  const t = useTranslations("reports.evidence");
   const router = useRouter();
   const [contact, setContact] = useState<EntityOption | null>(initialContact);
   const [property, setProperty] = useState<EntityOption | null>(initialProperty);
@@ -59,29 +61,29 @@ export function EvidenceBuilder({
         <EntityPicker
           name="contact_picker"
           kind="contact"
-          label="Contact"
+          label={t("contact")}
           initial={initialContact}
-          placeholder="Search name, phone…"
+          placeholder={t("contactPlaceholder")}
           onChange={setContact}
         />
         <EntityPicker
           name="property_picker"
           kind="property"
-          label="Property (optional)"
+          label={t("property")}
           initial={initialProperty}
-          placeholder="Search reference…"
+          placeholder={t("propertyPlaceholder")}
           onChange={setProperty}
         />
         <EntityPicker
           name="deal_picker"
           kind="deal"
-          label="Deal (optional)"
+          label={t("deal")}
           initial={initialDeal}
-          placeholder="Search deal title…"
+          placeholder={t("dealPlaceholder")}
           onChange={setDeal}
         />
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="ev-from">From (optional)</Label>
+          <Label htmlFor="ev-from">{t("from")}</Label>
           <Input
             id="ev-from"
             type="date"
@@ -90,12 +92,12 @@ export function EvidenceBuilder({
           />
         </div>
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="ev-to">To (optional)</Label>
+          <Label htmlFor="ev-to">{t("to")}</Label>
           <Input id="ev-to" type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
         </div>
         <div className="sm:col-span-2">
           <Button type="button" disabled={!contact} onClick={preview}>
-            <Search className="size-4" /> Preview events
+            <Search className="size-4" /> {t("preview")}
           </Button>
         </div>
       </div>
@@ -111,7 +113,7 @@ export function EvidenceBuilder({
           {to ? <input type="hidden" name="to" value={to} /> : null}
           <Button type="submit" disabled={pending}>
             <FileCheck2 className="size-4" />
-            {pending ? "Generating…" : "Generate PDF"}
+            {pending ? t("generating") : t("generate")}
           </Button>
           {state.error ? (
             <p role="alert" className="text-sm text-danger">
@@ -120,9 +122,14 @@ export function EvidenceBuilder({
           ) : null}
           {state.documentId ? (
             <span className="flex items-center gap-3 text-sm text-text-2">
-              Stored ({state.rowCount} events · chain{" "}
-              {state.chainOk ? "verified" : "FAILED"}).
-              <DocumentDownloadButton documentId={state.documentId} label="Download report" />
+              {t("stored", {
+                count: state.rowCount ?? 0,
+                status: state.chainOk ? t("chainVerified") : t("chainFailed"),
+              })}
+              <DocumentDownloadButton
+                documentId={state.documentId}
+                label={t("downloadReport")}
+              />
             </span>
           ) : null}
         </form>

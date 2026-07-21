@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { getTranslations } from "next-intl/server";
 import { ArrowLeft, Info, TriangleAlert } from "lucide-react";
 import { EvidenceBuilder } from "@/components/features/reports/evidence-builder";
 import { getCurrentProfile } from "@/lib/services/auth";
@@ -32,6 +33,8 @@ export default async function CommissionEvidencePage({
   const from = isDate(params.from) ? params.from : undefined;
   const to = isDate(params.to) ? params.to : undefined;
 
+  const t = await getTranslations("reports.evidence");
+  const tReports = await getTranslations("reports");
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
 
@@ -58,7 +61,7 @@ export default async function CommissionEvidencePage({
       verifyChain: false, // the org-wide chain walk runs on generation only
       generatedBy: { name: profile.fullName, role: profile.role },
     });
-    if (!("error" in preview)) {
+    if (!("errorKey" in preview)) {
       initialContact = {
         id: contactId,
         label: preview.contact.name,
@@ -88,12 +91,10 @@ export default async function CommissionEvidencePage({
           href="/reports"
           className="mb-2 inline-flex items-center gap-1 text-sm text-text-2 hover:text-text-1"
         >
-          <ArrowLeft className="size-4" /> Reports
+          <ArrowLeft className="size-4" /> {t("back")}
         </Link>
-        <h1 className="text-xl font-semibold text-text-1">Commission evidence</h1>
-        <p className="text-sm text-text-2">
-          Pick a contact, preview the chronological record, then generate the stored PDF.
-        </p>
+        <h1 className="text-xl font-semibold text-text-1">{t("title")}</h1>
+        <p className="text-sm text-text-2">{t("subtitle")}</p>
       </div>
 
       <EvidenceBuilder
@@ -104,32 +105,36 @@ export default async function CommissionEvidencePage({
         to={to ?? ""}
       />
 
-      {preview && "error" in preview ? (
-        <p className="text-sm text-danger">{preview.error}</p>
+      {preview && "errorKey" in preview ? (
+        <p className="text-sm text-danger">
+          {t(`errors.${preview.errorKey}`, { message: preview.message ?? "" })}
+        </p>
       ) : null}
 
-      {preview && !("error" in preview) ? (
+      {preview && !("errorKey" in preview) ? (
         <div className="flex flex-col gap-4">
           <div className="flex items-start gap-2 rounded-[10px] border border-border bg-surface px-4 py-3 text-sm text-text-2">
             <Info className="mt-0.5 size-4 shrink-0" />
             <span>
-              Preview — the hash chain is verified when the PDF is generated
               {chainCheck
-                ? ` (nightly check: ${chainCheck.ok ? "OK" : "FAILING"}, ${formatDateTime(chainCheck.checked_at)})`
-                : ""}
-              . {preview.rows.length} events · report hash{" "}
-              <span className="font-mono text-xs">{preview.reportHash.slice(0, 16)}…</span>
-              {profile.role !== "admin"
-                ? " · Scope: events visible to you — other staff or system activity may be absent."
-                : ""}
+                ? t("previewBannerWithCheck", {
+                    status: chainCheck.ok ? tReports("chainOk") : tReports("chainFailing"),
+                    when: formatDateTime(chainCheck.checked_at),
+                    count: preview.rows.length,
+                    hash: `${preview.reportHash.slice(0, 16)}…`,
+                  })
+                : t("previewBanner", {
+                    count: preview.rows.length,
+                    hash: `${preview.reportHash.slice(0, 16)}…`,
+                  })}
+              {profile.role !== "admin" ? ` · ${t("scopeNote")}` : ""}
             </span>
           </div>
 
           {preview.truncated ? (
             <div className="flex items-start gap-2 rounded-[10px] border border-danger/30 bg-danger/10 px-4 py-3 text-sm font-medium text-danger">
               <TriangleAlert className="mt-0.5 size-4 shrink-0" />
-              This preview is incomplete — one event category hit its cap. Narrow the date range;
-              generation is refused until the record fits.
+              {t("truncated")}
             </div>
           ) : null}
 
@@ -137,10 +142,10 @@ export default async function CommissionEvidencePage({
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-text-3">
-                  <th className="px-4 py-2">Timestamp</th>
-                  <th className="px-4 py-2">Event</th>
-                  <th className="px-4 py-2">Property</th>
-                  <th className="px-4 py-2">Actor</th>
+                  <th className="px-4 py-2">{t("table.timestamp")}</th>
+                  <th className="px-4 py-2">{t("table.event")}</th>
+                  <th className="px-4 py-2">{t("table.property")}</th>
+                  <th className="px-4 py-2">{t("table.actor")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -163,7 +168,7 @@ export default async function CommissionEvidencePage({
           {preview.slips.length > 0 ? (
             <section className="rounded-[10px] border border-border bg-surface p-5">
               <h2 className="mb-2 text-sm font-semibold text-text-1">
-                Signed slips in scope ({preview.slips.length})
+                {t("slips", { count: preview.slips.length })}
               </h2>
               <ul className="flex flex-col gap-1 text-sm text-text-2">
                 {preview.slips.map((s) => (
@@ -181,9 +186,7 @@ export default async function CommissionEvidencePage({
 
           {preview.deals.length > 0 ? (
             <section className="rounded-[10px] border border-border bg-surface p-5">
-              <h2 className="mb-2 text-sm font-semibold text-text-1">
-                Deals &amp; commission notes
-              </h2>
+              <h2 className="mb-2 text-sm font-semibold text-text-1">{t("deals")}</h2>
               <ul className="flex flex-col gap-2 text-sm">
                 {preview.deals.map((d, i) => (
                   <li key={i}>
@@ -192,7 +195,7 @@ export default async function CommissionEvidencePage({
                       {d.expectedValue !== null ? ` — ${formatMoney(d.expectedValue)}` : ""}
                     </span>
                     <span className="block text-text-2">
-                      {d.commissionNotes ?? "No commission notes recorded."}
+                      {d.commissionNotes ?? t("noCommissionNotes")}
                     </span>
                   </li>
                 ))}

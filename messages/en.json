@@ -86,5 +86,88 @@
       "noActivity": "no activity",
       "unnamed": "Unnamed"
     }
+  },
+  "reports": {
+    "title": "Reports",
+    "subtitle": "Generated documents are stored and evented.",
+    "chainBadge": "Nightly event hash-chain check: {status} · last verified {when}",
+    "chainOk": "OK",
+    "chainFailing": "FAILING",
+    "evidenceCard": {
+      "title": "Commission evidence report",
+      "description": "Chronological, hash-verified activity record for a contact — viewings with signed slips, offers, stage changes — as a stored PDF."
+    },
+    "list": {
+      "heading": "Generated reports",
+      "headingWithCount": "Generated reports ({count})",
+      "report": "Report",
+      "generated": "Generated",
+      "by": "By",
+      "download": "Download",
+      "empty": "No generated reports visible to you yet — build one from the commission evidence report above."
+    },
+    "verify": {
+      "heading": "Verify a report",
+      "description": "Upload a generated PDF (or paste its SHA-256) to check it against the append-only event log. A match proves the file is byte-identical to what was generated. You can verify reports whose generation event is visible to you.",
+      "fileLabel": "Report PDF",
+      "hashLabel": "…or paste its SHA-256",
+      "hashPlaceholder": "64 hex characters",
+      "submit": "Verify",
+      "pending": "Checking…",
+      "matched": "Authentic — this exact file was generated on {when} ({count, plural, one {# event} other {# events}}).",
+      "matchedNoCount": "Authentic — this exact file was generated on {when}.",
+      "reportHash": "report hash {hash}",
+      "noMatch": "No match — no report with this SHA-256 is recorded in the event log visible to you. The file may have been altered, or its generation event may not be yours to see.",
+      "errors": {
+        "noInput": "Choose a PDF file or paste its SHA-256.",
+        "notAHash": "That doesn't contain a SHA-256 digest (64 hex characters).",
+        "tooLarge": "File too large (20 MB max)."
+      }
+    },
+    "evidence": {
+      "back": "Reports",
+      "title": "Commission evidence",
+      "subtitle": "Pick a contact, preview the chronological record, then generate the stored PDF.",
+      "contact": "Contact",
+      "contactPlaceholder": "Search name, phone…",
+      "property": "Property (optional)",
+      "propertyPlaceholder": "Search reference…",
+      "deal": "Deal (optional)",
+      "dealPlaceholder": "Search deal title…",
+      "from": "From (optional)",
+      "to": "To (optional)",
+      "preview": "Preview events",
+      "generate": "Generate PDF",
+      "generating": "Generating…",
+      "stored": "Stored ({count, plural, one {# event} other {# events}} · chain {status}).",
+      "chainVerified": "verified",
+      "chainFailed": "FAILED",
+      "downloadReport": "Download report",
+      "previewBanner": "Preview — the hash chain is verified when the PDF is generated. {count, plural, one {# event} other {# events}} · report hash {hash}",
+      "previewBannerWithCheck": "Preview — the hash chain is verified when the PDF is generated (nightly check: {status}, {when}). {count, plural, one {# event} other {# events}} · report hash {hash}",
+      "scopeNote": "Scope: events visible to you — other staff or system activity may be absent.",
+      "truncated": "This preview is incomplete — one event category hit its cap. Narrow the date range; generation is refused until the record fits.",
+      "table": {
+        "timestamp": "Timestamp",
+        "event": "Event",
+        "property": "Property",
+        "actor": "Actor"
+      },
+      "slips": "Signed slips in scope ({count})",
+      "deals": "Deals & commission notes",
+      "noCommissionNotes": "No commission notes recorded.",
+      "errors": {
+        "pickContact": "Pick a contact",
+        "invalidInput": "Invalid input",
+        "noEvents": "No events found for this contact and filter.",
+        "truncated": "The record exceeds {max} events in one category — an incomplete report will not be generated. Narrow the date range and try again.",
+        "renderFailed": "Could not render the PDF: {message}",
+        "storeFailed": "Could not store the report",
+        "rolledBack": "Report rolled back — its event could not be written: {message}",
+        "contactNotFound": "Contact not found",
+        "dealNotFound": "Deal not found for this contact (or not visible to you)",
+        "chainUnavailable": "Hash-chain verification unavailable: {message}"
+      }
+    }
   }
 }

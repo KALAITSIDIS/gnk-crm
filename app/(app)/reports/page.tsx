@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { getTranslations } from "next-intl/server";
 import { FileCheck2, ShieldCheck, ShieldX } from "lucide-react";
 import { DocumentDownloadButton } from "@/components/features/shared/document-download-button";
 import { VerifyReport } from "@/components/features/reports/verify-report";
@@ -9,6 +10,7 @@ import { cn } from "@/lib/utils";
 export const dynamic = "force-dynamic";
 
 export default async function ReportsPage() {
+  const t = await getTranslations("reports");
   const supabase = await createClient();
 
   // nightly hash-chain verification cache (0016), RLS-scoped to the org
@@ -38,8 +40,8 @@ export default async function ReportsPage() {
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <h1 className="text-xl font-semibold text-text-1">Reports</h1>
-        <p className="text-sm text-text-2">Generated documents are stored and evented.</p>
+        <h1 className="text-xl font-semibold text-text-1">{t("title")}</h1>
+        <p className="text-sm text-text-2">{t("subtitle")}</p>
       </div>
 
       {chainCheck ? (
@@ -52,8 +54,10 @@ export default async function ReportsPage() {
           )}
         >
           {chainCheck.ok ? <ShieldCheck className="size-4" /> : <ShieldX className="size-4" />}
-          Nightly event hash-chain check: {chainCheck.ok ? "OK" : "FAILING"} · last verified{" "}
-          {formatDateTime(chainCheck.checked_at)}
+          {t("chainBadge", {
+            status: chainCheck.ok ? t("chainOk") : t("chainFailing"),
+            when: formatDateTime(chainCheck.checked_at),
+          })}
         </div>
       ) : null}
 
@@ -64,33 +68,29 @@ export default async function ReportsPage() {
         <FileCheck2 className="mt-0.5 size-5 shrink-0 text-brand-700" />
         <span>
           <span className="block text-sm font-semibold text-text-1">
-            Commission evidence report
+            {t("evidenceCard.title")}
           </span>
-          <span className="block text-sm text-text-2">
-            Chronological, hash-verified activity record for a contact — viewings with signed
-            slips, offers, stage changes — as a stored PDF.
-          </span>
+          <span className="block text-sm text-text-2">{t("evidenceCard.description")}</span>
         </span>
       </Link>
 
       <section className="max-w-2xl overflow-x-auto rounded-[10px] border border-border bg-surface">
         <div className="border-b border-border px-4 py-3">
           <h2 className="text-sm font-semibold text-text-1">
-            Generated reports {reports?.length ? `(${reports.length})` : ""}
+            {reports?.length
+              ? t("list.headingWithCount", { count: reports.length })
+              : t("list.heading")}
           </h2>
         </div>
         {(reports ?? []).length === 0 ? (
-          <p className="px-4 py-6 text-sm text-text-2">
-            No generated reports visible to you yet — build one from the commission evidence
-            report above.
-          </p>
+          <p className="px-4 py-6 text-sm text-text-2">{t("list.empty")}</p>
         ) : (
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-text-3">
-                <th className="px-4 py-2">Report</th>
-                <th className="px-4 py-2">Generated</th>
-                <th className="px-4 py-2">By</th>
+                <th className="px-4 py-2">{t("list.report")}</th>
+                <th className="px-4 py-2">{t("list.generated")}</th>
+                <th className="px-4 py-2">{t("list.by")}</th>
                 <th className="px-4 py-2" />
               </tr>
             </thead>
@@ -105,7 +105,7 @@ export default async function ReportsPage() {
                     {(r.uploaded_by && uploaderById.get(r.uploaded_by)) || ""}
                   </td>
                   <td className="px-4 py-2 text-right">
-                    <DocumentDownloadButton documentId={r.id} label="Download" />
+                    <DocumentDownloadButton documentId={r.id} label={t("list.download")} />
                   </td>
                 </tr>
               ))}

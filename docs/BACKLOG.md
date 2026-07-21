@@ -132,16 +132,13 @@ built without explicit direction.
   predictable; "verified N months ago / never verified" staleness badge on
   cyprus-config cards; settings module i18n (en/el/ru); org-scoped branding
   paths if multi-org ever ships (branding/logo.png is global today).
-- Reports follow-ups (T-audit-reports): optional DEAL filter from doc 05
-  ("contact + optional property/deal") — viewings carry no deal_id, so define
-  the narrowing semantics before building the picker; "Generated reports"
-  list on /reports (needs a `doc_type` enum value, e.g. `evidence_report` —
-  DECISIONS T5.2 anticipated extending it) with download buttons; "Verify a
-  report" utility — upload a PDF, recompute SHA-256, match against the
-  `evidence_report_generated` payload (`pdf_sha256`/`report_hash`) to prove a
-  printed report untampered; nightly `verify_events_chain` via pg_cron with a
-  cached result + timestamp shown on the preview (generation still verifies
-  live); reports i18n (en/el/ru).
-- Reports i18n (en/el/ru) — the last open item from the T-audit-reports block;
-  everything else in it shipped as T-audit-reports-2 (deal filter, generated-
-  reports list, verify-a-report, nightly chain cache).
+- ~~Reports follow-ups (T-audit-reports)~~ — ALL SHIPPED: deal filter,
+  generated-reports list, verify-a-report and the nightly chain cache as
+  T-audit-reports-2 (migrations 0015/0016); module i18n as T-audit-reports-3.
+- Event-line vocabulary i18n (`describeEvent` in lib/services/events.ts): every
+  timeline in the app (properties, contacts, deals, keys, leads, and the
+  evidence preview) renders these strings in English, so they are the last
+  English text left on otherwise-translated screens. App-wide job, not a
+  per-module one — and note the evidence PDF stays English deliberately either
+  way (DECISIONS T-audit-reports-3), so translating them must not be wired into
+  the PDF renderer.

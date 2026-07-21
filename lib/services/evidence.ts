@@ -58,6 +58,17 @@ export interface EvidenceDeal {
  */
 export type ChainStatus = "verified" | "failed" | "skipped";
 
+/**
+ * Assembly failures are returned as i18n keys (under reports.evidence.errors)
+ * rather than prose, so the preview page and the generate action can render
+ * them in the caller's language. `message` carries an untranslatable detail
+ * (e.g. a Postgres error) for the keys that interpolate one.
+ */
+export interface EvidenceFailure {
+  errorKey: "contactNotFound" | "dealNotFound" | "chainUnavailable";
+  message?: string;
+}
+
 export interface EvidenceData {
   orgName: string;
   /** who assembled it — printed on the PDF so partial (agent) scope is explicit */
@@ -134,13 +145,13 @@ export async function assembleEvidence(
   admin: Client,
   orgId: string,
   opts: AssembleOptions,
-): Promise<EvidenceData | { error: string }> {
+): Promise<EvidenceData | EvidenceFailure> {
   const { data: contact } = await supabase
     .from("contacts")
     .select("id, display_name, phone_e164, email")
     .eq("id", opts.contactId)
     .maybeSingle();
-  if (!contact) return { error: "Contact not found" };
+  if (!contact) return { errorKey: "contactNotFound" };
 
   const { data: org } = await supabase
     .from("organizations")
@@ -157,7 +168,7 @@ export async function assembleEvidence(
   if (opts.dealId) dealsQ = dealsQ.eq("id", opts.dealId);
   const { data: deals } = await dealsQ;
   if (opts.dealId && (deals ?? []).length === 0) {
-    return { error: "Deal not found for this contact (or not visible to you)" };
+    return { errorKey: "dealNotFound" };
   }
 
   // property scope: an explicit property filter, else the filtered deal's
@@ -305,7 +316,7 @@ export async function assembleEvidence(
   if (opts.verifyChain) {
     const res = await admin.rpc("verify_events_chain", { p_org: orgId });
     if (res.error) {
-      return { error: `Hash-chain verification unavailable: ${res.error.message}` };
+      return { errorKey: "chainUnavailable", message: res.error.message };
     }
     chain = res.data === true ? "verified" : "failed";
   }

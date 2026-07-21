@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { getTranslations } from "next-intl/server";
 import { z } from "zod";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { assembleEvidence, EVENTS_PER_FAMILY } from "@/lib/services/evidence";
@@ -30,8 +31,10 @@ const optionalDate = z
   .optional()
   .transform((v) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined));
 
+// The message is a key into reports.evidence.errors, resolved at catch time so
+// the action's strings translate with the rest of the module.
 const generateSchema = z.object({
-  contact_id: z.guid("Pick a contact"),
+  contact_id: z.guid("pickContact"),
   property_id: optionalGuid,
   deal_id: optionalGuid,
   from: optionalDate,
@@ -50,8 +53,13 @@ export async function generateEvidenceReport(
     rowCount: null,
   });
 
+  const t = await getTranslations("reports.evidence.errors");
+
   const parsed = generateSchema.safeParse(Object.fromEntries(formData));
-  if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Invalid input");
+  if (!parsed.success) {
+    const key = parsed.error.issues[0]?.message;
+    return fail(key === "pickContact" ? t("pickContact") : t("invalidInput"));
+  }
   const d = parsed.data;
 
   const supabase = await createClient();
@@ -68,21 +76,16 @@ export async function generateEvidenceReport(
     verifyChain: true, // an evidential PDF must carry a real chain result
     generatedBy: { name: profile.fullName, role: profile.role },
   });
-  if ("error" in data) return fail(data.error);
-  if (data.rows.length === 0) return fail("No events found for this contact and filter.");
-  if (data.truncated) {
-    return fail(
-      `The record exceeds ${EVENTS_PER_FAMILY} events in one category — an incomplete report ` +
-        "will not be generated. Narrow the date range and try again.",
-    );
-  }
+  if ("errorKey" in data) return fail(t(data.errorKey, { message: data.message ?? "" }));
+  if (data.rows.length === 0) return fail(t("noEvents"));
+  if (data.truncated) return fail(t("truncated", { max: EVENTS_PER_FAMILY }));
 
   const generatedAt = formatDateTime(new Date());
   let pdf: Buffer;
   try {
     pdf = await renderEvidencePdf(data, generatedAt);
   } catch (e) {
-    return fail(`Could not render the PDF: ${(e as Error).message}`);
+    return fail(t("renderFailed", { message: (e as Error).message }));
   }
 
   const stamp = Date.now();
@@ -120,7 +123,7 @@ export async function generateEvidenceReport(
   }
   if (docErr || !doc) {
     await admin.storage.from("documents").remove([path]); // no orphaned file
-    return fail(docErr?.message ?? "Could not store the report");
+    return fail(docErr?.message ?? t("storeFailed"));
   }
 
   try {
@@ -144,7 +147,7 @@ export async function generateEvidenceReport(
     // guardrail 1: no stored report without its event — roll the report back
     await admin.from("documents").delete().eq("id", doc.id);
     await admin.storage.from("documents").remove([path]);
-    return fail(`Report rolled back — its event could not be written: ${(e as Error).message}`);
+    return fail(t("rolledBack", { message: (e as Error).message }));
   }
 
   revalidatePath("/reports/commission-evidence");
@@ -183,17 +186,18 @@ export async function verifyEvidenceReport(
 ): Promise<VerifyReportState> {
   const fail = (error: string): VerifyReportState => ({ error, result: null });
 
+  const t = await getTranslations("reports.verify.errors");
   const file = formData.get("file");
   const pasted = formData.get("sha256");
   let sha: string | null = null;
   if (file instanceof File && file.size > 0) {
-    if (file.size > 20 * 1024 * 1024) return fail("File too large (20 MB max).");
+    if (file.size > 20 * 1024 * 1024) return fail(t("tooLarge"));
     sha = sha256Hex(Buffer.from(await file.arrayBuffer()));
   } else if (typeof pasted === "string" && pasted.trim()) {
     sha = extractSha256Hex(pasted);
-    if (!sha) return fail("That doesn't contain a SHA-256 digest (64 hex characters).");
+    if (!sha) return fail(t("notAHash"));
   } else {
-    return fail("Choose a PDF file or paste its SHA-256.");
+    return fail(t("noInput"));
   }
 
   const supabase = await createClient();
