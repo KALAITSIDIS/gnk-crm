@@ -363,12 +363,14 @@ export async function updatePropertySection(
  * from reporting and from the timeline. Archiving answers "should this show
  * up", which is a visibility question.
  *
- * RLS decides who may (admin/LM any property, agent their assigned ones);
- * the row-count guard surfaces a denial instead of a phantom success.
+ * Admin-only, enforced HERE and not left to RLS: the properties UPDATE policy
+ * also admits listing managers and the assigned agent, so hiding the button
+ * alone would not be a control. Retiring a listing is an owner decision.
  */
 export async function archiveProperty(propertyId: string): Promise<PropertyActionState> {
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
+  if (profile.role !== "admin") return { error: "Admins only." };
 
   const { data: current } = await supabase
     .from("properties")
@@ -412,10 +414,13 @@ export async function archiveProperty(propertyId: string): Promise<PropertyActio
  * is the OTHER retire marker: leaving it set would drop the property straight
  * back into the Archived list and make Restore look broken. Every other status
  * (sold, rented, reserved, under_offer, draft) is market truth and survives.
+ *
+ * Admin-only, same as archiveProperty — see the note there.
  */
 export async function restoreProperty(propertyId: string): Promise<PropertyActionState> {
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
+  if (profile.role !== "admin") return { error: "Admins only." };
 
   const { data: current } = await supabase
     .from("properties")

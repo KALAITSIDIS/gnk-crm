@@ -679,11 +679,22 @@ silent. Format: date · task · decision · rationale.
   same across modules. Retiring a property previously meant knowing to open the
   Details tab and set status and/or visibility by hand. No migration, no policy
   change: `archiveProperty` / `restoreProperty` are ordinary RLS-scoped updates
-  with the repo-standard `.select("id")` row-count guard, gated in the UI by
-  the same `canEditProperty` the Details form already uses (admin/LM any
-  property, agent their assigned ones) — the same capability, one click instead
-  of six. Three rules, pinned by `resolveRestoreUpdates` unit tests because
-  they are the easy things to get wrong later:
+  with the repo-standard `.select("id")` row-count guard.
+
+  **Admin-only, enforced in the actions and not left to RLS.** Both actions
+  open with `if (profile.role !== "admin") return { error: "Admins only." }`,
+  matching the settings/mandates convention. This is not belt-and-braces: the
+  properties UPDATE policy admits listing managers on ANY org property and
+  agents on their assigned ones, so hiding the button would not have been a
+  control at all. Proven by psql JWT-impersonation — an LM's `update
+  properties set visibility='archived'` returns `UPDATE 1`, i.e. the database
+  would happily let them retire a listing. Retiring is an owner decision, so
+  the app is the gate. (Non-admins can still reach the same end state field by
+  field on the Details tab, which is deliberate — that is the existing edit
+  right, just not a one-click retire.)
+
+  Three rules, pinned by `resolveRestoreUpdates` unit tests because they are
+  the easy things to get wrong later:
   1. **Archive writes `visibility` only, never `status`.** Status is market
      truth. A villa that SOLD must still read `sold` after archiving, or the
      outcome disappears from reporting and from the timeline. Archiving answers

@@ -295,7 +295,7 @@ export default async function PropertyDetailPage({
                 <Link href={`/properties/${p.id}/units`}>Units matrix</Link>
               </Button>
             ) : null}
-            {canEditProperty ? (
+            {profile.role === "admin" ? (
               <ArchivePropertyButton
                 propertyId={p.id}
                 reference={p.reference}
