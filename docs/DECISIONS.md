@@ -630,3 +630,18 @@ silent. Format: date · task · decision · rationale.
      guessing. Unknown/invisible deal id = explicit error, not a silent
      unfiltered report. `deal_id` also lands in the generation event payload.
   Reports i18n stays in BACKLOG with every other module's i18n line.
+
+- **2026-07-21 · T-audit-reports-2 (follow-up, same day)** — Made the reports
+  code migration-order-independent after noticing the Vercel deploy of
+  `8924be0` went live while hosted was still pre-0015: inserting
+  `doc_type = 'evidence_report'` against a DB without the enum value would
+  have broken Generate PDF in production. Two changes: the generate action
+  retries the insert with `'other'` when Postgres reports an invalid enum
+  value (0016's storage_path-keyed backfill relabels those rows once the
+  migration lands — remove the shim when every environment is on 0015+), and
+  the /reports list matches `storage_path like '%/reports/evidence-%'` rather
+  than `doc_type`, which needs no enum value at all and survives title edits.
+  General rule this reinforces: a migration that adds an enum value must not
+  be a hard dependency of the deploy that ships with it — Vercel deploys on
+  push, hosted migrations are applied by hand (classifier-blocked for the
+  agent), so code and schema always land out of order here.

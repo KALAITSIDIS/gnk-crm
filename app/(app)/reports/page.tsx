@@ -17,12 +17,16 @@ export default async function ReportsPage() {
     .select("checked_at, ok")
     .maybeSingle();
 
-  // generated evidence reports the caller may see (RLS hides admin_only from
-  // non-admins); uploader names resolved separately — no FK embed needed
+  // Generated evidence reports the caller may see (RLS hides admin_only from
+  // non-admins). Matched on storage_path, not doc_type: the path is written by
+  // generation and frozen by the protect_document_columns trigger, so this
+  // query is correct even in an environment that has not run migration 0015
+  // yet (and regardless of a later title edit). Uploader names resolved
+  // separately — no FK embed needed.
   const { data: reports } = await supabase
     .from("documents")
     .select("id, title, created_at, uploaded_by")
-    .eq("doc_type", "evidence_report")
+    .like("storage_path", "%/reports/evidence-%")
     .order("created_at", { ascending: false })
     .limit(50);
   const uploaderIds = [...new Set((reports ?? []).map((r) => r.uploaded_by).filter(Boolean))] as string[];

@@ -92,24 +92,35 @@ export async function generateEvidenceReport(
     .upload(path, binaryBody(pdf, "application/pdf"), { contentType: "application/pdf" });
   if (upload.error) return fail(upload.error.message);
 
-  const { data: doc, error: docErr } = await supabase
+  const row = {
+    org_id: profile.orgId,
+    entity_type: "contact" as const,
+    entity_id: d.contact_id,
+    title: `Commission evidence — ${data.contact.name} — ${new Date(stamp).toISOString().slice(0, 10)}`,
+    storage_path: path,
+    uploaded_by: profile.id,
+    // an admin's report carries the full org record — keep it admin-only
+    visibility: profile.role === "admin" ? "admin_only" : "internal",
+  };
+  let { data: doc, error: docErr } = await supabase
     .from("documents")
-    .insert({
-      org_id: profile.orgId,
-      entity_type: "contact",
-      entity_id: d.contact_id,
-      doc_type: "evidence_report",
-      title: `Commission evidence — ${data.contact.name} — ${new Date(stamp).toISOString().slice(0, 10)}`,
-      storage_path: path,
-      uploaded_by: profile.id,
-      // an admin's report carries the full org record — keep it admin-only
-      visibility: profile.role === "admin" ? "admin_only" : "internal",
-    })
+    .insert({ ...row, doc_type: "evidence_report" })
     .select("id")
     .single();
-  if (docErr) {
+  if (docErr?.message.includes("invalid input value for enum")) {
+    // Transitional: a deployment can reach an environment that has not run
+    // migration 0015 yet. Generating the report matters more than its label —
+    // 0016's backfill (keyed on this storage_path) relabels these rows when
+    // the migration lands. Remove once every environment is on 0015+.
+    ({ data: doc, error: docErr } = await supabase
+      .from("documents")
+      .insert({ ...row, doc_type: "other" })
+      .select("id")
+      .single());
+  }
+  if (docErr || !doc) {
     await admin.storage.from("documents").remove([path]); // no orphaned file
-    return fail(docErr.message);
+    return fail(docErr?.message ?? "Could not store the report");
   }
 
   try {
