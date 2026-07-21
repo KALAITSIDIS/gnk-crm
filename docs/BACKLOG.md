@@ -49,6 +49,16 @@ built without explicit direction.
   the same scope treatment their terminal statuses already imply. (The
   property Archive/Restore button half of this line shipped 2026-07-21 — see
   DECISIONS T-property-archive.)
+- `JWT issued at future` resilience (seen on prod 2026-07-19 and again
+  2026-07-21, count 1 each, route `/properties/[id]`; also hit locally on
+  2026-07-21 where the Docker VM clock had drifted while the host clock was
+  fine). A slightly future-dated access token makes PostgREST reject the query
+  and the user gets the "Couldn't load properties" boundary until they reload
+  or re-login. Not a code defect and rare, but it is user-visible and
+  self-inflicted-looking. Options: a one-shot retry on that specific PostgREST
+  message, or nudging GoTrue/Supabase clock-skew tolerance. Diagnosis note: the
+  local fix is clearing cookies + re-login to mint a fresh token, NOT
+  restarting the Supabase stack.
 - GDPR erasure path (no owner yet, legal exposure): contacts are archived, never
   erased, so a data-subject erasure request cannot be honoured today. Needs an
   admin-only action that redacts the PII columns on `contacts` and deletes the
