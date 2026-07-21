@@ -16,7 +16,10 @@ import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
 import {
   PROPERTIES_PAGE_SIZE,
+  RETIRED_PROPERTY_STATUS,
+  RETIRED_PROPERTY_VISIBILITY,
   propertyFiltersSchema,
+  resolvePropertyScope,
 } from "@/lib/validators/properties";
 
 type SearchParams = { [key: string]: string | string[] | undefined };
@@ -55,6 +58,7 @@ export default async function PropertiesPage({
     price_min: first(sp.price_min),
     price_max: first(sp.price_max),
     mandate: first(sp.mandate),
+    scope: first(sp.scope),
     view: first(sp.view),
     page: first(sp.page),
   });
@@ -125,6 +129,18 @@ export default async function PropertiesPage({
   }
   if (filters.status) query = query.eq("status", filters.status);
   if (filters.visibility) query = query.eq("visibility", filters.visibility);
+  // Retired listings (withdrawn / archived) stay in the DB forever — doc 04 has
+  // no DELETE on properties — so the default scope keeps them off the list.
+  const scopeMode = resolvePropertyScope(filters);
+  if (scopeMode === "exclude-retired") {
+    query = query
+      .neq("status", RETIRED_PROPERTY_STATUS)
+      .neq("visibility", RETIRED_PROPERTY_VISIBILITY);
+  } else if (scopeMode === "only-retired") {
+    query = query.or(
+      `status.eq.${RETIRED_PROPERTY_STATUS},visibility.eq.${RETIRED_PROPERTY_VISIBILITY}`,
+    );
+  }
   if (filters.beds !== undefined) query = query.gte("bedrooms", filters.beds);
   // € bounds check the price that matters for the transaction context; with no
   // transaction filter, either price may satisfy each bound (a sale_or_rent
@@ -219,7 +235,8 @@ export default async function PropertiesPage({
         <div>
           <h1 className="text-xl font-semibold text-text-1">Properties</h1>
           <p className="text-sm text-text-2">
-            {total} propert{total === 1 ? "y" : "ies"}
+            {total} {filters.scope === "archived" ? "archived " : ""}propert
+            {total === 1 ? "y" : "ies"}
           </p>
         </div>
         <Button asChild>
@@ -235,15 +252,19 @@ export default async function PropertiesPage({
         <div className="flex flex-col items-center gap-3 rounded-[10px] border border-border bg-surface py-16">
           <Building2 className="size-8 text-text-3" />
           <p className="text-sm text-text-2">
-            {total === 0 && filters.page === 1
-              ? "No properties match — add the first one or clear filters."
-              : "Nothing on this page."}
+            {total > 0 || filters.page > 1
+              ? "Nothing on this page."
+              : filters.scope === "archived"
+                ? "No archived properties — withdrawn listings and archived visibility show up here."
+                : "No properties match — add the first one or clear filters."}
           </p>
-          <Button asChild variant="outline" size="sm">
-            <Link href="/properties/new">
-              <Plus className="size-4" /> Add property
-            </Link>
-          </Button>
+          {filters.scope === "archived" ? null : (
+            <Button asChild variant="outline" size="sm">
+              <Link href="/properties/new">
+                <Plus className="size-4" /> Add property
+              </Link>
+            </Button>
+          )}
         </div>
       ) : filters.view === "cards" ? (
         <PropertiesCards rows={rows} />

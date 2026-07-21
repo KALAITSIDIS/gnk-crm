@@ -32,6 +32,40 @@ export const LEAD_SOURCES = [
 ] as const;
 /** lead_status values that count as "open" — in the inbox, workable, closable. */
 export const LEAD_OPEN_STATUSES = ["new", "contacted", "qualified"] as const;
+/** Terminal statuses. Leads are never deleted (doc 04: leads DELETE ❌ — the
+ *  retire path is status spam/lost, and converted is terminal by design), so
+ *  the inbox needs a scope filter or closed rows pile up in it forever. */
+export const LEAD_CLOSED_STATUSES = ["converted", "lost", "spam"] as const;
+export const LEAD_STATUSES = [...LEAD_OPEN_STATUSES, ...LEAD_CLOSED_STATUSES] as const;
+/** Scope values for the inbox filter that are not a single status. */
+export const LEAD_SCOPES = ["open", "closed", "all"] as const;
+export const LEAD_STATUS_FILTERS = [...LEAD_SCOPES, ...LEAD_STATUSES] as const;
+
+export type LeadStatus = (typeof LEAD_STATUSES)[number];
+export type LeadStatusFilter = (typeof LEAD_STATUS_FILTERS)[number];
+
+/** Parsed from URL searchParams — an unknown value falls back to the default
+ *  scope rather than erroring, matching propertyFiltersSchema's behaviour. */
+export const leadFiltersSchema = z.object({
+  status: z
+    .string()
+    .optional()
+    .transform((v) =>
+      v && (LEAD_STATUS_FILTERS as readonly string[]).includes(v)
+        ? (v as LeadStatusFilter)
+        : "open",
+    ),
+});
+
+export type LeadFilters = z.infer<typeof leadFiltersSchema>;
+
+/** Statuses the inbox query should match, or `null` for "no status filter". */
+export function leadStatusesForFilter(filter: LeadStatusFilter): readonly LeadStatus[] | null {
+  if (filter === "all") return null;
+  if (filter === "open") return LEAD_OPEN_STATUSES;
+  if (filter === "closed") return LEAD_CLOSED_STATUSES;
+  return [filter];
+}
 export const PSYCHOLOGY_PROFILES = [
   "investor",
   "relocation",

@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/select";
 import {
   MANDATE_FILTERS,
+  PROPERTY_SCOPES,
   PROPERTY_STATUSES,
   PROPERTY_TYPES,
   TRANSACTION_TYPES,
@@ -89,6 +90,7 @@ export function PropertiesFilters({
     "price_min",
     "price_max",
     "mandate",
+    "scope",
   ].some((k) => searchParams.has(k));
 
   const selectClass = "h-9 w-auto min-w-28 text-[13px]";
@@ -249,6 +251,22 @@ export function PropertiesFilters({
           onBlur={(e) => setParams({ price_max: e.target.value || undefined })}
           className="h-9 w-24 text-[13px]"
         />
+
+        <Select
+          value={searchParams.get("scope") ?? "active"}
+          onValueChange={(v) => setParams({ scope: v === "active" ? undefined : v })}
+        >
+          <SelectTrigger className={selectClass}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {PROPERTY_SCOPES.map((s) => (
+              <SelectItem key={s} value={s}>
+                {s === "active" ? "Active" : s === "archived" ? "Archived" : "All"}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
 
         {hasFilters ? (
           <Button

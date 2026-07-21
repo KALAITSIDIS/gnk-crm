@@ -645,3 +645,31 @@ silent. Format: date · task · decision · rationale.
   be a hard dependency of the deploy that ships with it — Vercel deploys on
   push, hosted migrations are applied by hand (classifier-blocked for the
   agent), so code and schema always land out of order here.
+
+- **2026-07-21 · T-list-scope** — Retired records now leave the working lists.
+  The user asked whether it is acceptable that admins cannot delete leads or
+  properties. It is: doc 04 denies DELETE on every business table on purpose
+  (the `events` spine is append-only and hash-chained; `verify_events_chain`
+  gates evidence-report generation, so orphaning events would cost the product
+  its commission evidence). The real defect was that the *retire* states doc 04
+  names as the delete replacement were never wired into the list queries, so
+  nothing ever left the screen:
+  1. **Leads** — `/leads` fetched every lead regardless of status while the
+     header counted only open ones (the reported symptom: "0 open" above two
+     visible closed leads). New `leadFiltersSchema` + `leadStatusesForFilter`
+     (lib/validators/contacts.ts) and a `LeadsFilters` select. Default scope is
+     `open`; `closed` and `all` are scopes, and each of the six concrete
+     statuses can be picked directly. The default writes NO query param, so a
+     bare `/leads` is the open inbox.
+  2. **Properties** — a property retires via status `withdrawn` and/or
+     visibility `archived` (doc 04), but the list applied neither. New `scope`
+     filter (`active` default / `archived` / `all`) with the retirement rule
+     "either one alone means retired" — a withdrawn listing is off the working
+     list whatever its visibility, and vice versa.
+  The one subtlety worth keeping: `resolvePropertyScope` makes an explicit
+  status/visibility filter WIN over the default active scope. Picking
+  "Withdrawn" from the status filter while scope is `active` would otherwise
+  AND two contradictory conditions and return an empty list, making the status
+  filter look broken. Unit-tested in lib/validators/properties.test.ts.
+  Header counts on /leads stay open-scoped on purpose — they are inbox-health
+  metrics ("N awaiting first response"), not a count of the rows below.

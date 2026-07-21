@@ -1,11 +1,50 @@
 import { describe, expect, it } from "vitest";
 import {
+  LEAD_CLOSED_STATUSES,
+  LEAD_OPEN_STATUSES,
   SELECT_NONE,
   bankingReadinessSchema,
   contactPreferencesSchema,
   createContactSchema,
   kycStateSchema,
+  leadFiltersSchema,
+  leadStatusesForFilter,
 } from "./contacts";
+
+describe("leadFiltersSchema", () => {
+  it("defaults to the open inbox", () => {
+    expect(leadFiltersSchema.parse({}).status).toBe("open");
+  });
+
+  it("accepts scopes and concrete statuses, dropping anything else to open", () => {
+    expect(leadFiltersSchema.parse({ status: "closed" }).status).toBe("closed");
+    expect(leadFiltersSchema.parse({ status: "all" }).status).toBe("all");
+    expect(leadFiltersSchema.parse({ status: "spam" }).status).toBe("spam");
+    expect(leadFiltersSchema.parse({ status: "deleted" }).status).toBe("open");
+  });
+});
+
+describe("leadStatusesForFilter", () => {
+  it("maps open and closed to their status groups", () => {
+    expect(leadStatusesForFilter("open")).toEqual(LEAD_OPEN_STATUSES);
+    expect(leadStatusesForFilter("closed")).toEqual(LEAD_CLOSED_STATUSES);
+  });
+
+  it("returns null for all, meaning no status condition", () => {
+    expect(leadStatusesForFilter("all")).toBeNull();
+  });
+
+  it("narrows to a single status when one is picked", () => {
+    expect(leadStatusesForFilter("spam")).toEqual(["spam"]);
+    expect(leadStatusesForFilter("converted")).toEqual(["converted"]);
+  });
+
+  it("covers every status — open and closed together are the full set", () => {
+    expect([...LEAD_OPEN_STATUSES, ...LEAD_CLOSED_STATUSES].sort()).toEqual(
+      ["contacted", "converted", "lost", "new", "qualified", "spam"].sort(),
+    );
+  });
+});
 
 describe("createContactSchema", () => {
   it("requires at least one of first/last/company name", () => {

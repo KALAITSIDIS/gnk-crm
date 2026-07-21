@@ -39,6 +39,38 @@ export const VISIBILITY_LEVELS = [
 
 export const MANDATE_FILTERS = ["active", "expired", "none"] as const;
 
+/** Properties are never deleted (doc 04: properties DELETE ❌). The retire path
+ *  is status `withdrawn` and/or visibility `archived` — either one alone means
+ *  the listing is off the working list. */
+export const RETIRED_PROPERTY_STATUS = "withdrawn" satisfies (typeof PROPERTY_STATUSES)[number];
+export const RETIRED_PROPERTY_VISIBILITY = "archived" satisfies (typeof VISIBILITY_LEVELS)[number];
+
+export const PROPERTY_SCOPES = ["active", "archived", "all"] as const;
+export type PropertyScope = (typeof PROPERTY_SCOPES)[number];
+
+export type PropertyScopeMode = "exclude-retired" | "only-retired" | "none";
+
+/**
+ * How the list query should treat retired rows. An explicit status/visibility
+ * filter that targets a retired value wins over the default `active` scope —
+ * otherwise picking "Withdrawn" from the status filter would return nothing.
+ */
+export function resolvePropertyScope(filters: {
+  scope: PropertyScope;
+  status?: (typeof PROPERTY_STATUSES)[number];
+  visibility?: (typeof VISIBILITY_LEVELS)[number];
+}): PropertyScopeMode {
+  if (
+    filters.status === RETIRED_PROPERTY_STATUS ||
+    filters.visibility === RETIRED_PROPERTY_VISIBILITY
+  ) {
+    return "none";
+  }
+  if (filters.scope === "archived") return "only-retired";
+  if (filters.scope === "all") return "none";
+  return "exclude-retired";
+}
+
 const optionalEnum = <T extends readonly string[]>(values: T) =>
   z
     .string()
@@ -89,6 +121,12 @@ export const propertyFiltersSchema = z.object({
   price_min: optionalNumber,
   price_max: optionalNumber,
   mandate: optionalEnum(MANDATE_FILTERS),
+  scope: z
+    .string()
+    .optional()
+    .transform((v) =>
+      v && (PROPERTY_SCOPES as readonly string[]).includes(v) ? (v as PropertyScope) : "active",
+    ),
   view: z
     .string()
     .optional()

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { AlertCircle, Inbox } from "lucide-react";
 import { AddLeadDialog } from "@/components/features/leads/add-lead-dialog";
+import { LeadsFilters } from "@/components/features/leads/filters";
 import { LeadRowActions } from "@/components/features/leads/lead-actions";
 import { ChatLinks } from "@/components/features/shared/chat-links";
 import { ResponseClock } from "@/components/features/shared/response-clock";
@@ -8,29 +9,49 @@ import { StatusBadge } from "@/components/features/shared/status-badge";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTime } from "@/lib/utils/format";
-import { LEAD_OPEN_STATUSES } from "@/lib/validators/contacts";
+import {
+  LEAD_OPEN_STATUSES,
+  leadFiltersSchema,
+  leadStatusesForFilter,
+} from "@/lib/validators/contacts";
 
 export const dynamic = "force-dynamic";
 
-export default async function LeadsPage() {
+type SearchParams = { [key: string]: string | string[] | undefined };
+
+function first(v: string | string[] | undefined): string | undefined {
+  return Array.isArray(v) ? v[0] : v;
+}
+
+export default async function LeadsPage({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParams>;
+}) {
+  const sp = await searchParams;
+  const filters = leadFiltersSchema.parse({ status: first(sp.status) });
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
 
   const openStatuses = [...LEAD_OPEN_STATUSES];
+  // Leads are never deleted (doc 04: DELETE ❌ — closing sets spam/lost, and
+  // converted is terminal), so the inbox defaults to the open scope.
+  const scopedStatuses = leadStatusesForFilter(filters.status);
+
+  let leadsQuery = supabase
+    .from("leads")
+    .select(
+      `id, source, channel, message, status, received_at, first_response_at,
+       assigned_agent_id, lost_reason, converted_deal_id,
+       contacts(id, display_name, phone_e164, telegram_username, has_whatsapp),
+       properties(id, reference)`,
+    );
+  if (scopedStatuses) leadsQuery = leadsQuery.in("status", [...scopedStatuses]);
 
   // header counts are exact DB counts, not derived from the 100-row slice
   const [{ data: leads, error: leadsError }, openCount, awaitingCount, { data: agents }] =
     await Promise.all([
-      supabase
-        .from("leads")
-        .select(
-          `id, source, channel, message, status, received_at, first_response_at,
-           assigned_agent_id, lost_reason, converted_deal_id,
-           contacts(id, display_name, phone_e164, telegram_username, has_whatsapp),
-           properties(id, reference)`,
-        )
-        .order("received_at", { ascending: false })
-        .limit(100),
+      leadsQuery.order("received_at", { ascending: false }).limit(100),
       supabase
         .from("leads")
         .select("id", { count: "exact", head: true })
@@ -58,7 +79,10 @@ export default async function LeadsPage() {
             {openCount.count ?? 0} open · {awaitingCount.count ?? 0} awaiting first response
           </p>
         </div>
-        <AddLeadDialog />
+        <div className="flex items-center gap-2">
+          <LeadsFilters />
+          <AddLeadDialog />
+        </div>
       </div>
 
       {leadsError ? (
@@ -70,7 +94,13 @@ export default async function LeadsPage() {
       ) : rows.length === 0 ? (
         <div className="flex flex-col items-center gap-3 rounded-[10px] border border-border bg-surface py-16">
           <Inbox className="size-8 text-text-3" />
-          <p className="text-sm text-text-2">Inbox zero — no leads yet.</p>
+          <p className="text-sm text-text-2">
+            {filters.status === "open"
+              ? "Inbox zero — no open leads."
+              : filters.status === "all"
+                ? "No leads yet."
+                : `No ${filters.status} leads.`}
+          </p>
         </div>
       ) : (
         <ul className="flex flex-col gap-2">

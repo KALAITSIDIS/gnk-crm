@@ -42,9 +42,22 @@ built without explicit direction.
   covers link contact / assign / correct / reopen / convert / close inline
   (2026-07-15), so the standalone page is deferred as a nice-to-have. A
   converted lead links out to its deal via "View deal →".
-- Leads inbox: status filter tabs (Open / All / Lost / Converted) +
-  pagination past the current 100-row slice (header counts are already exact
-  DB counts, 2026-07-16).
+- Leads inbox: pagination past the current 100-row slice (header counts are
+  already exact DB counts, 2026-07-16). The status filter half of this line
+  shipped 2026-07-21 — see DECISIONS T-list-scope.
+- List scope follow-ups (T-list-scope): a one-click "Withdraw / Archive"
+  button on property detail — retiring a property currently means editing
+  status and/or visibility in the Details form, which is discoverable only if
+  you already know the convention (contacts have a real Archive button). Same
+  for a "Restore" on an archived property. Also: deals/viewings/offers lists
+  should get the same scope treatment their terminal statuses already imply.
+- GDPR erasure path (no owner yet, legal exposure): contacts are archived, never
+  erased, so a data-subject erasure request cannot be honoured today. Needs an
+  admin-only action that redacts the PII columns on `contacts` and deletes the
+  KYC files from storage. It must NOT touch `events` payloads — the chain hash
+  covers `payload::text`, so editing one breaks `verify_events_chain` from that
+  row on and blocks evidence-report generation. The erasure itself is recorded
+  as a new appended event.
 - Add-lead dialog: optional property link (schema + createLead already accept
   `property_id`; the form never sends it) and an optional backdated
   `received_at` for leads entered after the fact, so the response-time KPI
