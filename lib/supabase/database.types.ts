@@ -70,6 +70,32 @@ export type Database = {
           },
         ]
       }
+      chain_checks: {
+        Row: {
+          checked_at: string
+          ok: boolean
+          org_id: string
+        }
+        Insert: {
+          checked_at: string
+          ok: boolean
+          org_id: string
+        }
+        Update: {
+          checked_at?: string
+          ok?: boolean
+          org_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chain_checks_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contacts: {
         Row: {
           additional_phones: string[]
@@ -2303,6 +2329,7 @@ export type Database = {
         Args: { p_direction: string; p_stage_id: string }
         Returns: undefined
       }
+      run_chain_checks: { Args: never; Returns: undefined }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
       st_3dclosestpoint: {
@@ -2925,6 +2952,7 @@ export type Database = {
         | "proposal"
         | "photo_original"
         | "other"
+        | "evidence_report"
       key_action: "checkout" | "return" | "transfer" | "mark_lost"
       key_status: "in_office" | "checked_out" | "with_owner" | "lost"
       lead_source:
@@ -3176,6 +3204,7 @@ export const Constants = {
         "proposal",
         "photo_original",
         "other",
+        "evidence_report",
       ],
       key_action: ["checkout", "return", "transfer", "mark_lost"],
       key_status: ["in_office", "checked_out", "with_owner", "lost"],

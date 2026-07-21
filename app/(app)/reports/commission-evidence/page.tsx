@@ -17,19 +17,33 @@ const isDate = (v: string | undefined): v is string => Boolean(v && /^\d{4}-\d{2
 export default async function CommissionEvidencePage({
   searchParams,
 }: {
-  searchParams: Promise<{ contact?: string; property?: string; from?: string; to?: string }>;
+  searchParams: Promise<{
+    contact?: string;
+    property?: string;
+    deal?: string;
+    from?: string;
+    to?: string;
+  }>;
 }) {
   const params = await searchParams;
   const contactId = isGuid(params.contact) ? params.contact : undefined;
   const propertyId = isGuid(params.property) ? params.property : undefined;
+  const dealId = isGuid(params.deal) ? params.deal : undefined;
   const from = isDate(params.from) ? params.from : undefined;
   const to = isDate(params.to) ? params.to : undefined;
 
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
 
+  // nightly cache (0016) — the org-wide chain walk itself runs on generation only
+  const { data: chainCheck } = await supabase
+    .from("chain_checks")
+    .select("checked_at, ok")
+    .maybeSingle();
+
   let initialContact: EntityOption | null = null;
   let initialProperty: EntityOption | null = null;
+  let initialDeal: EntityOption | null = null;
   let preview: Awaited<ReturnType<typeof assembleEvidence>> | null = null;
 
   if (contactId) {
@@ -37,6 +51,7 @@ export default async function CommissionEvidencePage({
     preview = await assembleEvidence(supabase, admin, profile.orgId, {
       contactId,
       propertyId,
+      dealId,
       from,
       to,
       withSlipImages: false, // preview stays light; the PDF embeds the PNGs
@@ -53,6 +68,13 @@ export default async function CommissionEvidencePage({
         initialProperty = {
           id: propertyId,
           label: preview.filter.propertyRef ?? propertyId,
+          sublabel: null,
+        };
+      }
+      if (dealId) {
+        initialDeal = {
+          id: dealId,
+          label: preview.filter.dealTitle ?? dealId,
           sublabel: null,
         };
       }
@@ -77,6 +99,7 @@ export default async function CommissionEvidencePage({
       <EvidenceBuilder
         initialContact={initialContact}
         initialProperty={initialProperty}
+        initialDeal={initialDeal}
         from={from ?? ""}
         to={to ?? ""}
       />
@@ -90,8 +113,11 @@ export default async function CommissionEvidencePage({
           <div className="flex items-start gap-2 rounded-[10px] border border-border bg-surface px-4 py-3 text-sm text-text-2">
             <Info className="mt-0.5 size-4 shrink-0" />
             <span>
-              Preview — the hash chain is verified when the PDF is generated. {preview.rows.length}{" "}
-              events · report hash{" "}
+              Preview — the hash chain is verified when the PDF is generated
+              {chainCheck
+                ? ` (nightly check: ${chainCheck.ok ? "OK" : "FAILING"}, ${formatDateTime(chainCheck.checked_at)})`
+                : ""}
+              . {preview.rows.length} events · report hash{" "}
               <span className="font-mono text-xs">{preview.reportHash.slice(0, 16)}…</span>
               {profile.role !== "admin"
                 ? " · Scope: events visible to you — other staff or system activity may be absent."

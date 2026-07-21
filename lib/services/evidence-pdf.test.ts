@@ -20,7 +20,12 @@ const evidenceFixture: EvidenceData = {
     phone: "+35799123456",
     email: null,
   },
-  filter: { propertyRef: "GNK-PAF-0001", from: "2026-07-01", to: "2026-07-15" },
+  filter: {
+    propertyRef: "GNK-PAF-0001",
+    dealTitle: "Πώληση — Κάτω Πάφος",
+    from: "2026-07-01",
+    to: "2026-07-15",
+  },
   rows: [
     {
       id: 1,

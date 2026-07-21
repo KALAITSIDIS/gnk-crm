@@ -121,3 +121,6 @@ built without explicit direction.
   printed report untampered; nightly `verify_events_chain` via pg_cron with a
   cached result + timestamp shown on the preview (generation still verifies
   live); reports i18n (en/el/ru).
+- Reports i18n (en/el/ru) — the last open item from the T-audit-reports block;
+  everything else in it shipped as T-audit-reports-2 (deal filter, generated-
+  reports list, verify-a-report, nightly chain cache).

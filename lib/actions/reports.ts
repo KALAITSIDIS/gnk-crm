@@ -6,7 +6,7 @@ import { getCurrentProfile } from "@/lib/services/auth";
 import { assembleEvidence, EVENTS_PER_FAMILY } from "@/lib/services/evidence";
 import { renderEvidencePdf } from "@/lib/services/evidence-pdf";
 import { logEvent } from "@/lib/services/events";
-import { sha256Hex } from "@/lib/services/hash";
+import { extractSha256Hex, sha256Hex } from "@/lib/services/hash";
 import { binaryBody } from "@/lib/services/storage-upload";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -33,6 +33,7 @@ const optionalDate = z
 const generateSchema = z.object({
   contact_id: z.guid("Pick a contact"),
   property_id: optionalGuid,
+  deal_id: optionalGuid,
   from: optionalDate,
   to: optionalDate,
 });
@@ -60,6 +61,7 @@ export async function generateEvidenceReport(
   const data = await assembleEvidence(supabase, admin, profile.orgId, {
     contactId: d.contact_id,
     propertyId: d.property_id,
+    dealId: d.deal_id,
     from: d.from,
     to: d.to,
     withSlipImages: true,
@@ -96,7 +98,7 @@ export async function generateEvidenceReport(
       org_id: profile.orgId,
       entity_type: "contact",
       entity_id: d.contact_id,
-      doc_type: "other",
+      doc_type: "evidence_report",
       title: `Commission evidence — ${data.contact.name} — ${new Date(stamp).toISOString().slice(0, 10)}`,
       storage_path: path,
       uploaded_by: profile.id,
@@ -124,6 +126,7 @@ export async function generateEvidenceReport(
         rows: data.rows.length,
         chain_ok: data.chain === "verified",
         ...(d.property_id ? { property_id: d.property_id } : {}),
+        ...(d.deal_id ? { deal_id: d.deal_id } : {}),
       },
     });
   } catch (e) {
@@ -134,11 +137,78 @@ export async function generateEvidenceReport(
   }
 
   revalidatePath("/reports/commission-evidence");
+  revalidatePath("/reports");
   return {
     error: null,
     savedAt: Date.now(),
     documentId: doc.id,
     chainOk: data.chain === "verified",
     rowCount: data.rows.length,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Verify a report: recompute a PDF's SHA-256 (or accept a pasted     */
+/* digest) and match it against the evidence_report_generated event   */
+/* log. RLS-scoped like generation: admins verify any org report,     */
+/* agents verify reports they generated.                              */
+/* ------------------------------------------------------------------ */
+
+export type VerifyReportState = {
+  error: string | null;
+  /** null until a verification ran */
+  result: {
+    matched: boolean;
+    sha256: string;
+    generatedAt: string | null;
+    reportHash: string | null;
+    rows: number | null;
+  } | null;
+};
+
+export async function verifyEvidenceReport(
+  _prev: VerifyReportState,
+  formData: FormData,
+): Promise<VerifyReportState> {
+  const fail = (error: string): VerifyReportState => ({ error, result: null });
+
+  const file = formData.get("file");
+  const pasted = formData.get("sha256");
+  let sha: string | null = null;
+  if (file instanceof File && file.size > 0) {
+    if (file.size > 20 * 1024 * 1024) return fail("File too large (20 MB max).");
+    sha = sha256Hex(Buffer.from(await file.arrayBuffer()));
+  } else if (typeof pasted === "string" && pasted.trim()) {
+    sha = extractSha256Hex(pasted);
+    if (!sha) return fail("That doesn't contain a SHA-256 digest (64 hex characters).");
+  } else {
+    return fail("Choose a PDF file or paste its SHA-256.");
+  }
+
+  const supabase = await createClient();
+  await getCurrentProfile(supabase); // auth gate; RLS scopes the query below
+
+  const { data: hit, error } = await supabase
+    .from("events")
+    .select("occurred_at, payload")
+    .eq("event_type", "evidence_report_generated")
+    .eq("payload->>pdf_sha256", sha)
+    .order("id", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (error) return fail(error.message);
+
+  if (!hit) return { error: null, result: { matched: false, sha256: sha, generatedAt: null, reportHash: null, rows: null } };
+
+  const p = (hit.payload ?? {}) as Record<string, unknown>;
+  return {
+    error: null,
+    result: {
+      matched: true,
+      sha256: sha,
+      generatedAt: hit.occurred_at,
+      reportHash: typeof p.report_hash === "string" ? p.report_hash : null,
+      rows: Number(p.rows) || null,
+    },
   };
 }

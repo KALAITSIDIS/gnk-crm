@@ -113,6 +113,12 @@ function EvidenceDoc({ d, generatedAt }: { d: EvidenceData; generatedAt: string 
             <Text>{d.filter.propertyRef}</Text>
           </View>
         ) : null}
+        {d.filter.dealTitle ? (
+          <View style={styles.identity}>
+            <Text style={styles.idLabel}>Deal</Text>
+            <Text>{glyphSafe(d.filter.dealTitle)}</Text>
+          </View>
+        ) : null}
         {d.filter.from || d.filter.to ? (
           <View style={styles.identity}>
             <Text style={styles.idLabel}>Period</Text>

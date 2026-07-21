@@ -7,8 +7,13 @@ import { zonedDateRangeToUtc } from "@/lib/utils/tz";
 /**
  * Commission evidence assembly (T5.2, doc 02 §C6): the chronological,
  * hash-chain-verified activity record for one contact, optionally narrowed to
- * a property and/or Cyprus-local date range. Shared by the on-screen preview
- * and the PDF.
+ * a property, a deal, and/or a Cyprus-local date range. Shared by the
+ * on-screen preview and the PDF.
+ *
+ * Deal narrowing (doc 05 "contact + optional property/deal"): the deal filter
+ * pins deals/offers to that one deal; viewings, leads and property events
+ * narrow through the deal's property (viewings carry no deal_id — when the
+ * deal has no property, they drop out entirely rather than guessing).
  */
 
 type Client = SupabaseClient<Database>;
@@ -58,7 +63,12 @@ export interface EvidenceData {
   /** who assembled it — printed on the PDF so partial (agent) scope is explicit */
   generatedBy: { name: string; role: string };
   contact: { id: string; name: string; phone: string | null; email: string | null };
-  filter: { propertyRef: string | null; from: string | null; to: string | null };
+  filter: {
+    propertyRef: string | null;
+    dealTitle: string | null;
+    from: string | null;
+    to: string | null;
+  };
   rows: EvidenceRow[];
   slips: EvidenceSlip[];
   deals: EvidenceDeal[];
@@ -101,6 +111,7 @@ export function reportContentHash(rows: EvidenceRow[]): string {
 export interface AssembleOptions {
   contactId: string;
   propertyId?: string;
+  dealId?: string;
   /** Cyprus-local dates (YYYY-MM-DD), inclusive */
   from?: string;
   to?: string;
@@ -137,38 +148,51 @@ export async function assembleEvidence(
     .eq("id", orgId)
     .maybeSingle();
 
-  // related entities (optionally narrowed to one property)
+  // related entities (optionally narrowed to one property and/or one deal)
   let dealsQ = supabase
     .from("deals")
     .select("id, title, status, expected_value, commission_split_notes, property_id")
     .or(`buyer_contact_id.eq.${opts.contactId},seller_contact_id.eq.${opts.contactId}`);
   if (opts.propertyId) dealsQ = dealsQ.eq("property_id", opts.propertyId);
+  if (opts.dealId) dealsQ = dealsQ.eq("id", opts.dealId);
   const { data: deals } = await dealsQ;
+  if (opts.dealId && (deals ?? []).length === 0) {
+    return { error: "Deal not found for this contact (or not visible to you)" };
+  }
+
+  // property scope: an explicit property filter, else the filtered deal's
+  // property. A deal with no property gives viewings/leads nothing to narrow
+  // through, so they drop out (narrowed to none) rather than guessing.
+  const dealProperty = opts.dealId ? (deals?.[0]?.property_id ?? null) : null;
+  const scopePropertyId = opts.propertyId ?? dealProperty ?? undefined;
+  const narrowed = Boolean(opts.propertyId || opts.dealId);
 
   let viewingsQ = supabase
     .from("viewings")
     .select("id, property_id")
     .eq("contact_id", opts.contactId);
-  if (opts.propertyId) viewingsQ = viewingsQ.eq("property_id", opts.propertyId);
-  const { data: viewings } = await viewingsQ;
+  if (scopePropertyId) viewingsQ = viewingsQ.eq("property_id", scopePropertyId);
+  const { data: viewings } =
+    narrowed && !scopePropertyId ? { data: [] } : await viewingsQ;
 
   const { data: offers } = await supabase
     .from("offers")
     .select("id, deal_id")
     .eq("contact_id", opts.contactId);
   const dealIds = new Set((deals ?? []).map((d) => d.id));
-  const offerRows = (offers ?? []).filter((o) => !opts.propertyId || dealIds.has(o.deal_id));
+  const offerRows = (offers ?? []).filter((o) => !narrowed || dealIds.has(o.deal_id));
 
   let leadsQ = supabase.from("leads").select("id, property_id").eq("contact_id", opts.contactId);
-  if (opts.propertyId) leadsQ = leadsQ.eq("property_id", opts.propertyId);
-  const { data: leads } = await leadsQ;
+  if (scopePropertyId) leadsQ = leadsQ.eq("property_id", scopePropertyId);
+  const { data: leads } = narrowed && !scopePropertyId ? { data: [] } : await leadsQ;
 
-  // events per entity family (merged + sorted after). A property filter swaps
-  // the contact-level rows for the property's own history (price changes and
-  // legal/status events strengthen the narrative; media churn stays out).
+  // events per entity family (merged + sorted after). A property/deal filter
+  // swaps the contact-level rows for the scope property's own history (price
+  // changes and legal/status events strengthen the narrative; media churn
+  // stays out).
   const families: { type: string; ids: string[] }[] = [
-    { type: "contact", ids: opts.propertyId ? [] : [opts.contactId] },
-    { type: "property", ids: opts.propertyId ? [opts.propertyId] : [] },
+    { type: "contact", ids: narrowed ? [] : [opts.contactId] },
+    { type: "property", ids: scopePropertyId ? [scopePropertyId] : [] },
     { type: "deal", ids: (deals ?? []).map((d) => d.id) },
     { type: "viewing", ids: (viewings ?? []).map((v) => v.id) },
     { type: "offer", ids: offerRows.map((o) => o.id) },
@@ -208,7 +232,7 @@ export async function assembleEvidence(
     const p = dealPropById.get(o.deal_id);
     if (p) propertyByEntity.set(o.id, p);
   }
-  if (opts.propertyId) propertyByEntity.set(opts.propertyId, opts.propertyId);
+  if (scopePropertyId) propertyByEntity.set(scopePropertyId, scopePropertyId);
 
   const propertyIds = [...new Set(propertyByEntity.values())];
   const { data: props } = propertyIds.length
@@ -297,6 +321,7 @@ export async function assembleEvidence(
     },
     filter: {
       propertyRef: opts.propertyId ? (refById.get(opts.propertyId) ?? opts.propertyId) : null,
+      dealTitle: opts.dealId ? (deals?.[0]?.title ?? opts.dealId) : null,
       from: opts.from ?? null,
       to: opts.to ?? null,
     },

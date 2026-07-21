@@ -2,7 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 
-export type EntityKind = "contact" | "property" | "agent";
+export type EntityKind = "contact" | "property" | "agent" | "deal";
 
 export interface EntityOption {
   id: string;
@@ -12,7 +12,8 @@ export interface EntityOption {
 
 /**
  * Async search backing EntityPicker (doc 06): contacts by name/phone/email,
- * properties by reference/title, agents by name. Org scoping via RLS.
+ * properties by reference/title, agents by name, deals by title (RLS keeps
+ * agents to their own deals). Org scoping via RLS.
  */
 export async function searchEntities(kind: EntityKind, query: string): Promise<EntityOption[]> {
   const supabase = await createClient();
@@ -31,6 +32,15 @@ export async function searchEntities(kind: EntityKind, query: string): Promise<E
       label: c.display_name ?? "Unnamed",
       sublabel: c.phone_e164 ?? c.email,
     }));
+  }
+
+  if (kind === "deal") {
+    const { data } = await supabase
+      .from("deals")
+      .select("id, title, status")
+      .ilike("title", `%${q}%`)
+      .limit(8);
+    return (data ?? []).map((d) => ({ id: d.id, label: d.title, sublabel: d.status }));
   }
 
   if (kind === "property") {

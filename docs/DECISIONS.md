@@ -596,3 +596,37 @@ silent. Format: date · task · decision · rationale.
   uploaded file; logEvent failure rolls back row + file (guardrail 1: no
   stored report without its event). Unit tests cover the new pure pieces;
   `server-only` is stubbed for vitest via alias (`lib/testing/`).
+
+- **2026-07-21 · T-audit-reports-2** — Reports follow-ups from the T-audit-reports
+  BACKLOG block, all shipped. Migrations **0015** (enum value) + **0016**
+  (backfill, `chain_checks`, cron) — split because Postgres cannot USE a new
+  enum value in the transaction that adds it, and the CLI wraps each migration
+  file in one transaction.
+  1. **`document_type` gained `evidence_report`** (T5.2 said to extend it "if
+     reports multiply"). Existing rows backfilled by `storage_path like
+     '%/reports/evidence-%'` — the path column is trigger-frozen, the title is
+     admin-editable, so the path is the reliable key.
+  2. **/reports lists generated reports** (RLS does the access control: the
+     admin_only visibility set in T-audit-reports already hides admin-generated
+     reports from agents) with uploader + download, plus a nightly chain badge.
+  3. **`chain_checks`** caches one `verify_events_chain()` result per org,
+     refreshed by pg_cron at 03:30 (after expire-mandates at 03:00, so its
+     events are covered) and seeded at migration time so the badge is live
+     immediately. Staff SELECT their org row; NO insert/update/delete policies
+     and `run_chain_checks()` is revoked from authenticated — only cron writes.
+     RLS test 21 pins all of that. This replaces the O(all org events) walk the
+     preview used to run on every GET; generation still verifies live.
+  4. **Verify a report** (`verifyEvidenceReport`): upload the PDF (SHA-256
+     recomputed server-side) or paste a digest — `extractSha256Hex` pulls a
+     64-hex run out of pasted text so a copied PDF footer line works — and
+     match it against `events.payload->>pdf_sha256`. Deliberately RLS-scoped,
+     not service-role: "no match" therefore honestly means "no such report in
+     the log VISIBLE TO YOU", and the UI says so. Proves a printed report
+     byte-identical to what was generated.
+  5. **Deal filter** (doc 05 "contact + optional property/deal"). Semantics,
+     since viewings/leads carry no deal_id: the deal pins deals+offers to that
+     one deal, and viewings/leads/property-events narrow through the deal's
+     property. A deal with NO property narrows them to none rather than
+     guessing. Unknown/invisible deal id = explicit error, not a silent
+     unfiltered report. `deal_id` also lands in the generation event payload.
+  Reports i18n stays in BACKLOG with every other module's i18n line.

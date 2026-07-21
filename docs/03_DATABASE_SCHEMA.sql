@@ -34,7 +34,9 @@ create type deal_type        as enum ('sale','rental','antiparoxi','advisory');
 create type deal_status      as enum ('open','won','lost');
 create type viewing_status   as enum ('scheduled','completed','cancelled','no_show');
 create type offer_status     as enum ('submitted','countered','accepted','rejected','withdrawn','expired');
-create type document_type    as enum ('title_deed','permit','contract','id_document','proof_of_address','source_of_funds','valuation','plan','mandate_agreement','reservation','proposal','photo_original','other');
+-- 'evidence_report' added in migration 0015 (generated commission evidence PDFs
+-- need a queryable type for the /reports list; T5.2 stored them as 'other')
+create type document_type    as enum ('title_deed','permit','contract','id_document','proof_of_address','source_of_funds','valuation','plan','mandate_agreement','reservation','proposal','photo_original','evidence_report','other');
 create type media_kind       as enum ('photo','video','floor_plan','virtual_tour');
 create type comm_channel     as enum ('whatsapp','telegram','phone','email','sms','in_person','other');
 
@@ -518,6 +520,16 @@ create table documents (
 );
 create index documents_entity_idx on documents(org_id, entity_type, entity_id);
 alter table mandates add constraint mandates_signed_doc_fk foreign key (signed_document_id) references documents(id);
+
+-- ---------- chain_checks (migration 0016) ----------
+-- Nightly verify_events_chain() result per org, written only by the pg_cron
+-- function run_chain_checks(). The evidence preview reads this instead of
+-- walking every org event on each page load; generation still verifies live.
+create table chain_checks (
+  org_id uuid primary key references organizations(id),
+  checked_at timestamptz not null,
+  ok boolean not null
+);
 
 -- ---------- tasks ----------
 create table tasks (

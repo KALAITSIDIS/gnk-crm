@@ -1016,4 +1016,42 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(del.error).toBeNull();
     expect(del.count).toBe(1);
   });
+
+  it("21. chain_checks: org-scoped read for staff; writes denied for every app role", async () => {
+    // the 0016 seed call (and nightly cron) guarantees a row per org
+    await svc.rpc("run_chain_checks");
+
+    for (const u of [adminA, agentA1, lmA]) {
+      const { data, error } = await u.client.from("chain_checks").select("org_id, checked_at, ok");
+      expect(error).toBeNull();
+      expect(data, "staff must see exactly their org's row").toHaveLength(1);
+      expect(data![0].org_id).toBe(ORG_A);
+      expect(data![0].ok, "seeded chain must verify").toBe(true);
+    }
+
+    // cross-org blind
+    const { data: bRows } = await agentB.client.from("chain_checks").select("org_id");
+    expect((bRows ?? []).map((r) => r.org_id)).not.toContain(ORG_A);
+
+    // writes: no policies + revoked grants — every mutation must fail or hit 0 rows
+    const ins = await adminA.client
+      .from("chain_checks")
+      .insert({ org_id: ORG_A, checked_at: new Date().toISOString(), ok: false });
+    expect(ins.error, "admin INSERT must fail").not.toBeNull();
+    const upd = await adminA.client
+      .from("chain_checks")
+      .update({ ok: false })
+      .eq("org_id", ORG_A)
+      .select("org_id");
+    expect(upd.data ?? [], "admin UPDATE must not change the cache").toHaveLength(0);
+    const delChk = await adminA.client
+      .from("chain_checks")
+      .delete({ count: "exact" })
+      .eq("org_id", ORG_A);
+    expect(delChk.count ?? 0, "admin DELETE must remove nothing").toBe(0);
+
+    // the RPC itself is service/cron-only
+    const rpc = await adminA.client.rpc("run_chain_checks");
+    expect(rpc.error, "run_chain_checks must be revoked from authenticated").not.toBeNull();
+  });
 });
