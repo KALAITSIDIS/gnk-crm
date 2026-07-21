@@ -1,5 +1,43 @@
 import { describe, expect, it } from "vitest";
-import { propertyFiltersSchema, resolvePropertyScope } from "./properties";
+import {
+  propertyFiltersSchema,
+  resolvePropertyScope,
+  resolveRestoreUpdates,
+} from "./properties";
+
+describe("resolveRestoreUpdates", () => {
+  it("returns visibility to private, never public", () => {
+    expect(resolveRestoreUpdates({ status: "draft", visibility: "archived" })).toEqual({
+      visibility: "private",
+    });
+  });
+
+  it("flips withdrawn back to available — the other retire marker", () => {
+    expect(resolveRestoreUpdates({ status: "withdrawn", visibility: "private" })).toEqual({
+      status: "available",
+    });
+  });
+
+  it("clears both markers when both are set", () => {
+    expect(resolveRestoreUpdates({ status: "withdrawn", visibility: "archived" })).toEqual({
+      status: "available",
+      visibility: "private",
+    });
+  });
+
+  it("keeps a sold property sold — archiving must not destroy the outcome", () => {
+    expect(resolveRestoreUpdates({ status: "sold", visibility: "archived" })).toEqual({
+      visibility: "private",
+    });
+    expect(resolveRestoreUpdates({ status: "rented", visibility: "archived" })).toEqual({
+      visibility: "private",
+    });
+  });
+
+  it("writes nothing for a property that is not retired", () => {
+    expect(resolveRestoreUpdates({ status: "available", visibility: "public" })).toEqual({});
+  });
+});
 
 describe("propertyFiltersSchema scope", () => {
   it("defaults to the active scope", () => {

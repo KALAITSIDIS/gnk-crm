@@ -45,6 +45,29 @@ export const MANDATE_FILTERS = ["active", "expired", "none"] as const;
 export const RETIRED_PROPERTY_STATUS = "withdrawn" satisfies (typeof PROPERTY_STATUSES)[number];
 export const RETIRED_PROPERTY_VISIBILITY = "archived" satisfies (typeof VISIBILITY_LEVELS)[number];
 
+/**
+ * Which columns a Restore should write. Kept pure and here (not in the
+ * "use server" actions file, which may only export async functions) so the
+ * two rules that are easy to get wrong stay pinned by tests:
+ *
+ * - visibility returns to `private`, never `public` — un-archiving must not
+ *   republish a listing; that is an explicit Details-tab decision behind the
+ *   quality-score gate.
+ * - `withdrawn` is the OTHER retire marker, so it flips back to `available`;
+ *   leaving it set would drop the row straight back into the Archived list.
+ *   Every other status is market truth (a sold property stays sold) and is
+ *   left alone.
+ */
+export function resolveRestoreUpdates(current: {
+  status: (typeof PROPERTY_STATUSES)[number];
+  visibility: (typeof VISIBILITY_LEVELS)[number];
+}): { status?: (typeof PROPERTY_STATUSES)[number]; visibility?: "private" } {
+  const updates: { status?: (typeof PROPERTY_STATUSES)[number]; visibility?: "private" } = {};
+  if (current.visibility === RETIRED_PROPERTY_VISIBILITY) updates.visibility = "private";
+  if (current.status === RETIRED_PROPERTY_STATUS) updates.status = "available";
+  return updates;
+}
+
 export const PROPERTY_SCOPES = ["active", "archived", "all"] as const;
 export type PropertyScope = (typeof PROPERTY_SCOPES)[number];
 

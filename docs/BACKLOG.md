@@ -45,12 +45,10 @@ built without explicit direction.
 - Leads inbox: pagination past the current 100-row slice (header counts are
   already exact DB counts, 2026-07-16). The status filter half of this line
   shipped 2026-07-21 — see DECISIONS T-list-scope.
-- List scope follow-ups (T-list-scope): a one-click "Withdraw / Archive"
-  button on property detail — retiring a property currently means editing
-  status and/or visibility in the Details form, which is discoverable only if
-  you already know the convention (contacts have a real Archive button). Same
-  for a "Restore" on an archived property. Also: deals/viewings/offers lists
-  should get the same scope treatment their terminal statuses already imply.
+- List scope follow-ups (T-list-scope): deals/viewings/offers lists should get
+  the same scope treatment their terminal statuses already imply. (The
+  property Archive/Restore button half of this line shipped 2026-07-21 — see
+  DECISIONS T-property-archive.)
 - GDPR erasure path (no owner yet, legal exposure): contacts are archived, never
   erased, so a data-subject erasure request cannot be honoured today. Needs an
   admin-only action that redacts the PII columns on `contacts` and deletes the

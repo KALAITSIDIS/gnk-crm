@@ -673,3 +673,29 @@ silent. Format: date · task · decision · rationale.
   filter look broken. Unit-tested in lib/validators/properties.test.ts.
   Header counts on /leads stay open-scoped on purpose — they are inbox-health
   metrics ("N awaiting first response"), not a count of the rows below.
+
+- **2026-07-21 · T-property-archive** — One-click Archive / Restore on property
+  detail, mirroring the contacts archive button so the retire gesture is the
+  same across modules. Retiring a property previously meant knowing to open the
+  Details tab and set status and/or visibility by hand. No migration, no policy
+  change: `archiveProperty` / `restoreProperty` are ordinary RLS-scoped updates
+  with the repo-standard `.select("id")` row-count guard, gated in the UI by
+  the same `canEditProperty` the Details form already uses (admin/LM any
+  property, agent their assigned ones) — the same capability, one click instead
+  of six. Three rules, pinned by `resolveRestoreUpdates` unit tests because
+  they are the easy things to get wrong later:
+  1. **Archive writes `visibility` only, never `status`.** Status is market
+     truth. A villa that SOLD must still read `sold` after archiving, or the
+     outcome disappears from reporting and from the timeline. Archiving answers
+     "should this show up", which is a visibility question. Verified live: a
+     sold property archived and restored came back `sold`.
+  2. **Restore returns visibility to `private`, never `public`.** Un-archiving
+     must not silently republish a listing — that is an explicit Details-tab
+     decision behind the quality-score publish gate.
+  3. **Restore also clears a `withdrawn` status back to `available`**, because
+     withdrawn is the OTHER retire marker the T-list-scope filter honours.
+     Leaving it set would drop the row straight back into the Archived list and
+     make Restore look broken. Every other status survives untouched.
+  `resolveRestoreUpdates` lives in lib/validators/properties.ts, not the
+  actions file — "use server" modules may only export async functions (see the
+  2026-07-16 prod crash note).

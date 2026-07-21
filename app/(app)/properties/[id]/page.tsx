@@ -6,6 +6,7 @@ import {
   LegalForm,
   MarketingForm,
 } from "@/components/features/properties/detail-forms";
+import { ArchivePropertyButton } from "@/components/features/properties/archive-button";
 import { MediaTab } from "@/components/features/properties/media-tab";
 import { DocumentsTab } from "@/components/features/properties/documents-tab";
 import {
@@ -288,11 +289,21 @@ export default async function PropertyDetailPage({
               <Calculator className="size-3.5" /> Costs
             </Link>
           ) : null}
-          {p.kind === "project" || p.kind === "phase" ? (
-            <Button asChild variant="outline" size="sm" className="ml-auto">
-              <Link href={`/properties/${p.id}/units`}>Units matrix</Link>
-            </Button>
-          ) : null}
+          <div className="ml-auto flex items-center gap-2">
+            {p.kind === "project" || p.kind === "phase" ? (
+              <Button asChild variant="outline" size="sm">
+                <Link href={`/properties/${p.id}/units`}>Units matrix</Link>
+              </Button>
+            ) : null}
+            {canEditProperty ? (
+              <ArchivePropertyButton
+                propertyId={p.id}
+                reference={p.reference}
+                isRetired={p.visibility === "archived" || p.status === "withdrawn"}
+                isWithdrawn={p.status === "withdrawn"}
+              />
+            ) : null}
+          </div>
         </div>
         {title ? <p className="mt-1 text-sm text-text-2">{title}</p> : null}
       </div>

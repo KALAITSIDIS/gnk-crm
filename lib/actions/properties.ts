@@ -352,3 +352,114 @@ export async function updatePropertySection(
   revalidatePath("/properties");
   return { error: null, savedAt: Date.now() };
 }
+
+/**
+ * Archive = the properties "delete" (doc 04: DELETE ❌ — the retire path is
+ * status `withdrawn` and/or visibility `archived`, and the list scope filter
+ * treats either marker as retired).
+ *
+ * Deliberately touches `visibility` only. `status` is market truth — a villa
+ * that SOLD must still read `sold` after archiving, or the outcome is lost
+ * from reporting and from the timeline. Archiving answers "should this show
+ * up", which is a visibility question.
+ *
+ * RLS decides who may (admin/LM any property, agent their assigned ones);
+ * the row-count guard surfaces a denial instead of a phantom success.
+ */
+export async function archiveProperty(propertyId: string): Promise<PropertyActionState> {
+  const supabase = await createClient();
+  const profile = await getCurrentProfile(supabase);
+
+  const { data: current } = await supabase
+    .from("properties")
+    .select("id, visibility")
+    .eq("id", propertyId)
+    .maybeSingle();
+  if (!current) return { error: "Property not found" };
+  if (current.visibility === "archived") return { error: "Already archived" };
+
+  const { data: rows, error } = await supabase
+    .from("properties")
+    .update({ visibility: "archived" })
+    .eq("id", propertyId)
+    .neq("visibility", "archived")
+    .select("id");
+  if (error) return { error: error.message };
+  if (!rows || rows.length === 0) {
+    return { error: "You don't have permission to archive this property." };
+  }
+
+  await logEvent(supabase, {
+    orgId: profile.orgId,
+    actorId: profile.id,
+    entityType: "property",
+    entityId: propertyId,
+    eventType: "archived",
+    payload: { manual: true, visibility: { from: current.visibility, to: "archived" } },
+  });
+
+  revalidatePath(`/properties/${propertyId}`);
+  revalidatePath("/properties");
+  return { error: null };
+}
+
+/**
+ * Restore returns visibility to `private`, never to `public` — republishing a
+ * listing is an explicit decision made on the Details tab (and gated by the
+ * quality score), not a side effect of un-archiving.
+ *
+ * It also clears a `withdrawn` status back to `available`, because withdrawn
+ * is the OTHER retire marker: leaving it set would drop the property straight
+ * back into the Archived list and make Restore look broken. Every other status
+ * (sold, rented, reserved, under_offer, draft) is market truth and survives.
+ */
+export async function restoreProperty(propertyId: string): Promise<PropertyActionState> {
+  const supabase = await createClient();
+  const profile = await getCurrentProfile(supabase);
+
+  const { data: current } = await supabase
+    .from("properties")
+    .select("id, status, visibility")
+    .eq("id", propertyId)
+    .maybeSingle();
+  if (!current) return { error: "Property not found" };
+  const wasRetired = current.visibility === "archived" || current.status === "withdrawn";
+  if (!wasRetired) return { error: "Not archived" };
+
+  const { resolveRestoreUpdates } = await import("@/lib/validators/properties");
+  const updates: Database["public"]["Tables"]["properties"]["Update"] =
+    resolveRestoreUpdates(current);
+
+  const { data: rows, error } = await supabase
+    .from("properties")
+    .update(updates)
+    .eq("id", propertyId)
+    .select("id");
+  if (error) return { error: error.message };
+  if (!rows || rows.length === 0) {
+    return { error: "You don't have permission to restore this property." };
+  }
+
+  await logEvent(supabase, {
+    orgId: profile.orgId,
+    actorId: profile.id,
+    entityType: "property",
+    entityId: propertyId,
+    eventType: "unarchived",
+    payload: {
+      manual: true,
+      ...(updates.visibility
+        ? { visibility: { from: current.visibility, to: updates.visibility } }
+        : {}),
+      ...(updates.status ? { status: { from: current.status, to: updates.status } } : {}),
+    },
+  });
+
+  // visibility feeds the quality score / publish gate inputs
+  const { recomputeQualityScore } = await import("@/lib/services/quality-score");
+  await recomputeQualityScore(supabase, propertyId);
+
+  revalidatePath(`/properties/${propertyId}`);
+  revalidatePath("/properties");
+  return { error: null };
+}
