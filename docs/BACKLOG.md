@@ -59,13 +59,19 @@ built without explicit direction.
   message, or nudging GoTrue/Supabase clock-skew tolerance. Diagnosis note: the
   local fix is clearing cookies + re-login to mint a fresh token, NOT
   restarting the Supabase stack.
-- GDPR erasure path (no owner yet, legal exposure): contacts are archived, never
-  erased, so a data-subject erasure request cannot be honoured today. Needs an
-  admin-only action that redacts the PII columns on `contacts` and deletes the
-  KYC files from storage. It must NOT touch `events` payloads — the chain hash
-  covers `payload::text`, so editing one breaks `verify_events_chain` from that
-  row on and blocks evidence-report generation. The erasure itself is recorded
-  as a new appended event.
+- Retention-expiry view (T-contact-erasure follow-up): erasure stamps
+  `contacts.retention_until` (erasure date + 5y AML duty) but nothing yet acts
+  on it, so retained KYC documents would sit in the bucket forever — which is
+  the GDPR storage-limitation problem in slow motion. Needs an admin view
+  listing contacts whose `retention_until` has passed (the partial index
+  `contacts_retention_idx` from 0017 already supports the query) plus a
+  "purge retained documents" action reusing the erasure action's guarded
+  delete + storage-removal path. Deliberately deferred: the earliest real
+  expiry is 2031.
+- Erasure coverage gaps (T-contact-erasure): `deals.commission_notes` and
+  `viewings.notes` are free text that may name the data subject; both are
+  retained today under the legal-claims basis. If a data subject disputes that,
+  they need a review path. Also `leads.lost_reason` is left intact.
 - Add-lead dialog: optional property link (schema + createLead already accept
   `property_id`; the form never sends it) and an optional backdated
   `received_at` for leads entered after the fact, so the response-time KPI

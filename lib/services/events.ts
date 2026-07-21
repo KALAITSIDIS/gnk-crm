@@ -231,6 +231,12 @@ const EVENT_LINES: Record<string, (p: P) => string> = {
   },
   archived: () => "Archived",
   unarchived: () => "Unarchived",
+  erased: (p) => {
+    const retention = asText(p.retention_until);
+    const base = "Personal data erased (GDPR Art.17)";
+    // the retention date is the operator's answer to "what did you keep?"
+    return retention ? `${base} — KYC records retained until ${retention}` : base;
+  },
   imported: (p) => {
     const ref = asText(p.reference) ?? asText(p.name);
     return ref ? `Imported — ${ref}` : "Imported from CSV";

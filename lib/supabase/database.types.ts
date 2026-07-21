@@ -110,6 +110,8 @@ export type Database = {
           created_by: string | null
           display_name: string | null
           email: string | null
+          erased_at: string | null
+          erased_by: string | null
           first_name: string | null
           gdpr_notes: string | null
           has_whatsapp: boolean
@@ -127,6 +129,7 @@ export type Database = {
           preferences: Json
           preferred_channel: Database["public"]["Enums"]["comm_channel"] | null
           psychology: Database["public"]["Enums"]["psychology_profile"] | null
+          retention_until: string | null
           source: Database["public"]["Enums"]["lead_source"] | null
           source_detail: string | null
           telegram_username: string | null
@@ -146,6 +149,8 @@ export type Database = {
           created_by?: string | null
           display_name?: string | null
           email?: string | null
+          erased_at?: string | null
+          erased_by?: string | null
           first_name?: string | null
           gdpr_notes?: string | null
           has_whatsapp?: boolean
@@ -163,6 +168,7 @@ export type Database = {
           preferences?: Json
           preferred_channel?: Database["public"]["Enums"]["comm_channel"] | null
           psychology?: Database["public"]["Enums"]["psychology_profile"] | null
+          retention_until?: string | null
           source?: Database["public"]["Enums"]["lead_source"] | null
           source_detail?: string | null
           telegram_username?: string | null
@@ -182,6 +188,8 @@ export type Database = {
           created_by?: string | null
           display_name?: string | null
           email?: string | null
+          erased_at?: string | null
+          erased_by?: string | null
           first_name?: string | null
           gdpr_notes?: string | null
           has_whatsapp?: boolean
@@ -199,6 +207,7 @@ export type Database = {
           preferences?: Json
           preferred_channel?: Database["public"]["Enums"]["comm_channel"] | null
           psychology?: Database["public"]["Enums"]["psychology_profile"] | null
+          retention_until?: string | null
           source?: Database["public"]["Enums"]["lead_source"] | null
           source_detail?: string | null
           telegram_username?: string | null
@@ -216,6 +225,13 @@ export type Database = {
           {
             foreignKeyName: "contacts_created_by_fkey"
             columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contacts_erased_by_fkey"
+            columns: ["erased_by"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]

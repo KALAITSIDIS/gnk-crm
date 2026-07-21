@@ -711,6 +711,55 @@ silent. Format: date · task · decision · rationale.
   actions file — "use server" modules may only export async functions (see the
   2026-07-16 prod crash note).
 
+- **2026-07-21 · T-contact-erasure (migration 0017)** — GDPR Article 17 erasure
+  for contacts. Full design + the legal reasoning:
+  `docs/superpowers/specs/2026-07-21-gdpr-contact-erasure-design.md`.
+
+  **Erasure is a REDACTION, not a delete, and that is forced by the data model,
+  not a shortcut.** Three of the six places personal data lives cannot be
+  rewritten: `events.payload` carries `contact_name`/`signer_name` and is
+  covered by the `trg_events_hash` chain (editing one breaks
+  `verify_events_chain` from that row on and blocks ALL evidence-report
+  generation); `viewing_slips` hold the signer's name, signature image and GPS
+  and are immutable by doc 04 because they are the commission evidence;
+  generated evidence PDFs have names in bytes whose SHA-256 is recorded in the
+  log. Two legal bases cover retaining them — GDPR Art.17(3)(e) (defence of
+  legal claims) and Art.17(3)(b) with the Cyprus AML 5-year customer
+  due-diligence retention duty. A "delete everything" button would destroy the
+  commission evidence AND breach a statutory duty, so it is not built.
+
+  What ships: the profiling layer is cleared (notes, psychology, preferences,
+  source detail, telegram, additional phones, nationality, languages, banking
+  readiness, marketing consent), `temperature` is forced to `inactive` so the
+  contact can never resurface on a marketing/hot-buyer surface, the contact is
+  archived and frozen read-only, and `leads.message` — the person's own words,
+  an ordinary column and NOT hash-chained — is replaced with a marker.
+  Identity fields (name/phone/email) are kept by operator decision so past
+  transactions stay readable.
+
+  **The KYC branch is decided per contact, and it is the reason the planner is
+  a separate pure module.** No deal, no viewing slip and no mandate means no
+  customer due-diligence relationship ever existed, so the documents and their
+  storage objects are destroyed outright and the KYC checklist is wiped. With
+  any of those, the files are retained and `retention_until` is stamped 5 years
+  out — the checklist IS the due-diligence record in that case. That branch
+  decides whether a passport scan is destroyed, so `planContactErasure` lives
+  in `lib/services/erasure.ts` with no I/O and is unit-tested, including a test
+  asserting identity fields never appear in the patch and one asserting the
+  audit payload never becomes a copy of the erased data.
+
+  Admin-only enforced in the action, not just the UI — the contacts UPDATE
+  policy also admits the assigned/creating agent, the same lesson as
+  `T-property-archive`. Confirmation is a typed contact name because erasure is
+  irreversible by design. The `contact.erased` event carries categories and
+  counts only (fields cleared, leads redacted, documents deleted vs retained,
+  retention date, AML basis) and is append-only, so it is the compliance record
+  and cannot be quietly undone.
+
+  Not built, deliberately: anything that acts on `retention_until` (earliest
+  real expiry is 2031 — BACKLOG), erasure of `deals.commission_notes` (retained
+  under the legal-claims basis), and any undo.
+
 - **2026-07-21 · T-audit-reports-3** — Reports i18n (the last open line from the
   T-audit-reports block) + the first REAL evidence report generated on prod.
   1. **`reports` namespace in en/el/ru** (127 keys per locale), wired with

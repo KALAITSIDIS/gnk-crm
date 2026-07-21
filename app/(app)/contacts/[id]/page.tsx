@@ -11,6 +11,7 @@ import {
   ContactDocumentsTab,
   type ContactDocument,
 } from "@/components/features/contacts/documents-tab";
+import { EraseContactDialog } from "@/components/features/contacts/erase-dialog";
 import { MergeDialog } from "@/components/features/contacts/merge-dialog";
 import { ChatLinks } from "@/components/features/shared/chat-links";
 import { EventTimeline } from "@/components/features/shared/event-timeline";
@@ -132,8 +133,19 @@ export default async function ContactDetailPage({
   // mirror of the contacts UPDATE policies (doc 04): admin any, agent own/created, LM none
   const ownsContact = c.assigned_agent_id === profile.id || c.created_by === profile.id;
   const mayUpdate = profile.role === "admin" || (profile.role === "agent" && ownsContact);
-  const canEdit = mayUpdate && !c.is_archived;
-  const readOnlyHint = c.is_archived
+  // an erased contact is frozen for everyone: re-editing it would re-create the
+  // personal data the erasure request removed
+  // truthiness, not `!== null`: the page selects "*", so if this deploy lands
+  // before migration 0017 the column is simply ABSENT (undefined) — and
+  // `undefined !== null` would mark every contact erased and freeze the module.
+  // Vercel deploys on push while migrations are applied by hand, so code must
+  // never hard-depend on a migration having landed (see DECISIONS 2026-07-21).
+  const isErased = Boolean(c.erased_at);
+  const eraserName = c.erased_by ? (profileName.get(c.erased_by) ?? null) : null;
+  const canEdit = mayUpdate && !c.is_archived && !isErased;
+  const readOnlyHint = isErased
+    ? "Personal data was erased under GDPR Art.17 — this contact is read-only."
+    : c.is_archived
     ? "Archived contact — unarchive it to edit."
     : profile.role === "agent"
       ? "Read-only — this contact isn't assigned to you and you didn't create it."
@@ -180,11 +192,30 @@ export default async function ContactDetailPage({
                 isArchived={c.is_archived}
               />
             ) : null}
-            {profile.role === "admin" && !c.is_archived ? (
+            {profile.role === "admin" && !c.is_archived && !isErased ? (
               <MergeDialog primaryId={c.id} primaryName={c.display_name ?? "this contact"} />
+            ) : null}
+            {profile.role === "admin" && !isErased ? (
+              <EraseContactDialog
+                contactId={c.id}
+                contactName={c.display_name ?? "this contact"}
+              />
             ) : null}
           </div>
         </div>
+        {isErased ? (
+          <p className="mt-2 rounded-[8px] border border-danger/40 bg-surface px-3 py-2 text-xs text-text-2">
+            <span className="font-medium text-text-1">
+              Personal data erased under GDPR Article 17
+            </span>{" "}
+            on {formatDateTime(c.erased_at as string)}
+            {eraserName ? ` by ${eraserName}` : ""}.{" "}
+            {c.retention_until
+              ? `KYC records are retained until ${c.retention_until} to satisfy the AML record-keeping duty.`
+              : "No records were retained — this contact never entered a transaction."}{" "}
+            Signed viewing slips, the event log and evidence reports are unaltered by design.
+          </p>
+        ) : null}
         {c.merged_into_id && absorber ? (
           <p className="mt-1 text-xs text-text-3">
             Merged into{" "}
