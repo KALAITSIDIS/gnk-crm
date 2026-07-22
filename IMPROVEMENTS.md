@@ -15,7 +15,7 @@ are marked **[BACKLOG]** so this file does not silently fork the roadmap.
 |---|---|---|---|---|
 | A1 | ~~Per-purchaser transfer fees (CALC-1)~~ | ✅ **Done in `qa/full-audit`.** Joint purchases were quoted €2,800 too much on a €300,000 property. Now assessed per share, with a "Purchasers" field and per-share working shown. | — | ships with the branch |
 | A2 | **Deploy this branch** (SEC-1…4 + CALC-1 + CALC-2) | All three fixes are written and tested but protect nothing until deployed. The live calculator still over-quotes couples today. | 15 min | merge `qa/full-audit` |
-| A3 | **Move `shadcn` to devDependencies** (DEP-1) | Removes a CLI, the MCP SDK and hono from the production deploy, and 3 of 7 audit vulnerabilities with them. | 15 min | — |
+| A3 | ~~Move `shadcn` to devDependencies (DEP-1)~~ | ✅ **Done** in `fix/dep-1-shadcn-devdep`. Production `npm audit` 7 → 4. Note it is a *build-time* dep (`globals.css` imports `shadcn/tailwind.css`), not just a CLI — safe because Vercel installs devDependencies at build, as `tailwindcss` already relies on. | — | ships with the branch |
 | A4 | **Label every Select trigger** (A11Y-1) | WCAG 4.1.2 failure on every dropdown in the app. Also unblocks name-based E2E selectors. ~15 `<Label htmlFor>` + `<SelectTrigger id>` pairs. | 2 h | — |
 | A5 | ~~"Showing 100 of 437" notice on capped lists~~ | ✅ **Superseded by B1** — real pagination shipped in `fix/perf-2-pagination`, so the interim notice was never needed. | — | — |
 | A6 | **Disable the relief tick when "VAT was paid" is on** (UX-4) | Removes a confusing screen state during a live client conversation. | 30 min | — |

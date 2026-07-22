@@ -27,7 +27,7 @@ The defects that remain are concentrated in three places:
 | `npm run test:rls` | ✅ **25 passed** |
 | `npm run build` | ✅ compiled in 21.4s, no warnings |
 | `npx playwright test` | ✅ **122 passed** (desktop 1280px + mobile 390px) |
-| `npm audit` | ⚠️ 7 vulnerabilities (4 moderate, 3 high) — see DEP-1/DEP-2 |
+| `npm audit --omit=dev` | ⚠️ **4** vulnerabilities (1 moderate, 3 high) — was 7; all remaining are inside Next's bundled tree, see DEP-2 |
 
 ### Pass/fail across all 11 modules
 
@@ -108,13 +108,23 @@ Production `HEAD https://gnk-crm.vercel.app/login` returned only Vercel's `Stric
 
 **Verified:** 27/27 security specs pass locally. **Production still needs a deploy of this branch to be protected.**
 
-#### DEP-1 — `shadcn` CLI is a production dependency
+#### DEP-1 — `shadcn` was a production dependency ✅ FIXED IN THIS BRANCH
 
-**Module:** build/deps · **Status:** OPEN · **Evidence:** `package.json:36`, `npm audit`
+**Module:** build/deps · **Status:** **FIXED** · **Evidence:** `package.json`, `package-lock.json`, `npm audit --omit=dev`
 
-`shadcn` (the scaffolding CLI) sits in `dependencies`, not `devDependencies`. It drags `@modelcontextprotocol/sdk` → `@hono/node-server` into the deployed bundle and accounts for 3 of the 7 audit findings, including a path-traversal advisory in `@hono/node-server`'s static server.
+`shadcn` sat in `dependencies`, dragging `@modelcontextprotocol/sdk` → `@hono/node-server` into the production dependency tree and accounting for 3 of the 7 audit findings, including a path-traversal advisory in `@hono/node-server`'s static file server.
 
-**Fix:** `npm uninstall shadcn && npm install -D shadcn`. It is a code generator — nothing at runtime imports it. Verify with `npm run build` afterwards.
+**Correction to the original write-up.** It said *"it is a code generator — nothing at runtime imports it."* **That was wrong.** `app/globals.css:3` does `@import "shadcn/tailwind.css"`, and the package's exports map resolves it to a real 16 KB stylesheet. So `shadcn` is a genuine **build-time** dependency, not merely a CLI, and anyone acting on the original sentence would have been surprised.
+
+It still belongs in `devDependencies` — that is exactly the home for build-time-only packages, and the compiled CSS is emitted into `.next` so nothing needs the package at runtime. The safety argument is not "unused" but **precedent**: `tailwindcss` is *already* a devDependency and is imported on line 1 of the same file, so this build has always depended on devDependencies being installed at build time (Vercel installs them by default).
+
+**Verified:**
+- Clean rebuild after deleting `.next` succeeds, and the emitted CSS chunk is **`40qd1pfdocoh7.css` both before and after — an identical hash, i.e. byte-identical output.** A shadcn-specific token (`--scroll-fade-t`) is still present in it.
+- Lockfile now marks `shadcn`, `@modelcontextprotocol/sdk` and `@hono/node-server` as `dev: true`; version stays pinned at 4.13.0.
+- **`npm audit --omit=dev`: 7 → 4 vulnerabilities.** The four that remain (`next`, `sharp`, `postcss`, `fast-uri`) are all inside Next's own bundled tree — that is DEP-2, and it is upstream.
+- typecheck 0, lint 0, 283 unit, 25 RLS, 122 E2E green.
+
+**Residual risk, stated plainly:** a build run as `npm ci --omit=dev` would now fail at the CSS import. That was already true of `tailwindcss`, so it is not a new constraint — but if a deployment pipeline ever adds `--omit=dev`, both packages need moving back, not just this one.
 
 #### DEP-2 — `next` bundles a vulnerable `sharp` and `postcss`
 
@@ -284,6 +294,6 @@ The part of PERF-2 worth shipping soonest is not the pagination itself — it is
 
 After that, the remaining list is genuinely hygiene:
 
-1. **DEP-1** — move `shadcn` to devDependencies (15 minutes, drops 3 of 7 vulnerabilities).
-2. **A11Y-1** — label the form Selects (~2 hours, WCAG 4.1.2).
-3. **PERF-3** — push dashboard money sums into Postgres (known, in `docs/BACKLOG.md`).
+1. **A11Y-1** — label the form Selects (~2 hours, WCAG 4.1.2).
+2. **PERF-3** — push dashboard money sums into Postgres (known, in `docs/BACKLOG.md`).
+3. **DEP-2** — the last 4 vulnerabilities are inside Next's bundled tree; they clear on a Next patch bump. **Never** run `npm audit fix --force` — it proposes `next@9.3.3`.
