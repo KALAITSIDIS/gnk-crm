@@ -826,3 +826,35 @@ silent. Format: date · task · decision · rationale.
      the line routes through `t`, RED before the refactor) plus real-English
      parity; `messages.test.ts` compiles every `events` message in all three
      locales and pins key parity, so a half-translated file fails CI.
+
+- **2026-07-22 · T-audit-pdf-ligatures** — Generated PDFs looked correct but
+  their TEXT LAYER was lossy: a real production commission report extracted as
+  "Lead corrected — ?rst-response reset" / "chain veri?ed", and the report hash
+  extracted as nothing at all. Both matter — an evidence document gets
+  text-searched and quoted, and the hash is exactly what a verifier pastes into
+  "Verify a report".
+  1. **Ligatures.** @react-pdf/renderer shapes with fontkit and draws the
+     resulting glyphs itself, bypassing pdfkit's `encode()` — the only path
+     that records `glyph.codePoints` into the ToUnicode CMap. A substituted
+     `fi`/`ff` glyph therefore lands in the embedded subset with NO ToUnicode
+     entry. react-pdf exposes no way to pass OpenType features (textkit
+     hardcodes `font.layout(str, undefined, …)`), so we disable the
+     substitutions in the fonts we bundle: `scripts/fonts/disable-ligatures.mjs`
+     renames the `liga`-family FeatureRecord tags in GSUB to an inert uppercase
+     tag (length-preserving — no offsets move). Re-run it if the fonts are ever
+     re-downloaded from upstream. Noto is OFL with NO Reserved Font Name, so
+     modifying and redistributing under the same name is permitted.
+  2. **Courier.** The hash lines used `fontFamily: "Courier"`, a standard-14
+     font that embeds without a ToUnicode CMap — its text cannot be copied or
+     searched *at all*. Both PDFs now set hashes in the embedded Noto Sans with
+     slight letterSpacing. Monospace is not needed for correctness here: the
+     hex alphabet (0-9a-f) contains none of the confusable pairs (O/0, l/1/I)
+     that motivate a monospace face for digests.
+  3. **Regression test.** `lib/testing/pdf-text.ts` decodes what a PDF actually
+     draws — resolving `/Fn` -> font object -> `/ToUnicode` per font, since each
+     embedded subset has its own glyph-id space — and surfaces unmapped glyphs
+     as U+FFFD. The evidence PDF test asserts ligature-prone words round-trip,
+     that the report hash is extractable, and that no unmapped glyph exists
+     anywhere. Note this checks the copy/paste layer, NOT the visual page.
+  Already-stored reports keep their original (lossy) text layer — they are
+  immutable artifacts; only newly generated ones benefit.

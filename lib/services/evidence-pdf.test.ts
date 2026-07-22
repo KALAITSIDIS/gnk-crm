@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderEvidencePdf } from "./evidence-pdf";
 import { renderSlipPdf } from "./slip-pdf";
+import { extractPdfText } from "@/lib/testing/pdf-text";
 import type { EvidenceData } from "./evidence";
 
 /**
@@ -65,6 +66,46 @@ describe("renderEvidencePdf (unicode)", () => {
     expect(pdf.subarray(0, 5).toString("latin1")).toBe("%PDF-");
     expect(pdf.length).toBeGreaterThan(10_000);
     expect(pdf.toString("latin1")).toContain("NotoSans");
+  });
+});
+
+describe("evidence PDF text is extractable (copy/paste + search)", () => {
+  /*
+   * A commission report gets text-searched and quoted. Ligature substitution
+   * ("fi" -> a single glyph) leaves the page looking right while the glyph
+   * carries no ToUnicode mapping, so extraction silently drops characters:
+   * "first-response" came out "?rst-response" in a real production report.
+   * Our bundled fonts therefore ship with the ligature features disabled.
+   */
+  const ligatureFixture: EvidenceData = {
+    ...evidenceFixture,
+    rows: [
+      {
+        id: 1,
+        occurredAt: "2026-07-02T08:00:00Z",
+        entityType: "lead",
+        line: "Lead corrected — first-response reset",
+        propertyRef: null,
+        actorName: "Office staff",
+      },
+    ],
+    slips: [],
+    deals: [],
+  };
+
+  it("round-trips ligature-prone words through the PDF's own ToUnicode map", async () => {
+    const text = extractPdfText(await renderEvidencePdf(ligatureFixture, "22 Jul 2026, 18:14"));
+    // fi ligature in the row, ff in the actor, fi again in the fixed template
+    expect(text).toContain("first-response reset");
+    expect(text).toContain("Office staff");
+    expect(text).toContain("chain verified");
+  });
+
+  it("leaves no unmapped glyphs anywhere in the document", async () => {
+    const text = extractPdfText(await renderEvidencePdf(ligatureFixture, "22 Jul 2026, 18:14"));
+    expect(text).not.toContain("�");
+    // the report hash is what a verifier pastes into "Verify a report"
+    expect(text).toContain(ligatureFixture.reportHash);
   });
 });
 

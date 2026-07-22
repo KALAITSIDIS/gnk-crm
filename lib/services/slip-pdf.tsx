@@ -53,7 +53,9 @@ const styles = StyleSheet.create({
   },
   signer: { marginTop: 6, fontSize: 11, fontFamily: PDF_FONT, fontWeight: 700 },
   footer: { position: "absolute", bottom: 40, left: 48, right: 48, fontSize: 8, color: "#999" },
-  hash: { fontFamily: "Courier", marginTop: 2 },
+  // NOT Courier — standard-14 fonts embed without a ToUnicode CMap, so the
+  // signature digest could not be copied or searched out of the slip.
+  hash: { fontFamily: PDF_FONT, marginTop: 2, letterSpacing: 0.3 },
 });
 
 function Field({ label, value }: { label: string; value: string }) {

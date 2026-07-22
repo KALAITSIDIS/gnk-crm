@@ -69,7 +69,11 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
   },
   slipMeta: { flex: 1, gap: 2 },
-  hash: { fontFamily: "Courier", fontSize: 7 },
+  // NOT Courier: the standard-14 fonts are embedded without a ToUnicode CMap,
+  // so their text cannot be copied or searched — and the report hash is
+  // exactly what a verifier pastes into "Verify a report". letterSpacing
+  // keeps a 64-char digest readable without a monospace face.
+  hash: { fontFamily: PDF_FONT, fontSize: 7, letterSpacing: 0.3 },
   dealRow: { marginBottom: 6 },
   dealTitle: { fontFamily: PDF_FONT, fontWeight: 700 },
   footer: {
