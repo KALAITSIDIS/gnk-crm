@@ -120,35 +120,73 @@ test.describe("scale safeguards", () => {
   });
 
   /**
-   * FINDING PERF-2: /leads, /viewings, /tasks and /keys apply a hard .limit()
-   * (100 / 500 / 200 / 300) with NO pagination and NO "showing X of Y" notice,
-   * while their headers show EXACT counts. Past the cap the header and the
-   * visible rows silently disagree — the same class of defect as the
-   * 2026-07-21 list-scope fix, but triggered by volume instead of status.
-   *
-   * This test documents the current ceiling. It passes today because the seed
-   * is small; it is here so the assertion exists when the desk grows.
+   * FINDING PERF-2 (fixed 2026-07-22). /leads, /tasks and /keys applied a hard
+   * .limit() with no pagination and no disclosure, while their headers showed
+   * EXACT counts — past the cap the header and the visible rows silently
+   * disagreed and the remainder was unreachable. They now page.
    */
-  test("[PERF-2] capped lists disclose their cap or stay under it", async ({ page }) => {
-    const capped = [
-      { path: "/leads", cap: 100 },
-      { path: "/viewings", cap: 500 },
-      { path: "/tasks", cap: 200 },
-      { path: "/keys", cap: 300 },
-    ];
-
-    for (const { path, cap } of capped) {
+  test("[PERF-2] list screens state their range and total", async ({ page }) => {
+    for (const path of ["/leads", "/tasks", "/keys"]) {
       await page.goto(path, { waitUntil: "networkidle" });
       const text = await page.locator("main").innerText();
-      const rows = await page.locator("main li, main tr").count();
-
-      if (rows >= cap) {
-        // At the cap the UI MUST say so, otherwise records are invisible.
-        expect(
-          text,
-          `${path} is at its ${cap}-row cap with no pagination or disclosure`,
-        ).toMatch(/showing|page \d|more|next/i);
-      }
+      // "Showing 1–25 of 437 leads" — the disclosure half of the fix.
+      expect(text, `${path} does not disclose its range and total`).toMatch(
+        /showing\s+\d+[–-]\d+\s+of\s+\d+/i,
+      );
     }
+  });
+
+  test("[PERF-2] a page beyond the end is an empty page, not a crash", async ({ page }) => {
+    for (const path of ["/leads", "/tasks", "/keys"]) {
+      const response = await page.goto(`${path}?page=9999`, { waitUntil: "networkidle" });
+      expect(response?.status(), `${path}?page=9999 status`).toBeLessThan(400);
+      // must render the shell + an empty-page message, never the error boundary
+      await expect(page.locator("main")).toBeVisible();
+      await expect(page.getByText(/something went wrong/i)).toHaveCount(0);
+      await expect(page.getByText(/nothing on this page|none on this page/i).first()).toBeVisible();
+    }
+  });
+
+  test("[PERF-2] a junk ?page= degrades to page 1 rather than throwing", async ({ page }) => {
+    for (const junk of ["abc", "-1", "0", ""]) {
+      const response = await page.goto(`/leads?page=${junk}`, { waitUntil: "networkidle" });
+      expect(response?.status(), `?page=${junk} status`).toBeLessThan(400);
+      await expect(page.getByText(/something went wrong/i)).toHaveCount(0);
+    }
+  });
+
+  test("[PERF-2] paging preserves the active filter", async ({ page }) => {
+    await page.goto("/leads?status=all", { waitUntil: "networkidle" });
+    const next = page.getByRole("link", { name: /next/i });
+    if ((await next.count()) === 0) {
+      test.skip(true, "seed has fewer leads than one page — nothing to page through");
+    }
+    await next.first().click();
+    await page.waitForURL(/page=2/);
+    expect(page.url(), "the status filter was dropped when paging").toContain("status=all");
+  });
+
+  test("[PERF-2] the keys filter searches the whole register, not just the page", async ({
+    page,
+  }) => {
+    // The filter moved from client useState into the URL for exactly this
+    // reason; a client-side filter over a paged array searches one page only.
+    await page.goto("/keys", { waitUntil: "networkidle" });
+    await expect(page.getByLabel(/search keys/i)).toBeVisible();
+    await page.getByLabel(/search keys/i).fill("zzz-no-such-key-zzz");
+    await page.waitForURL(/q=zzz/, { timeout: 10_000 });
+    await expect(page.getByText(/no keys match/i)).toBeVisible();
+  });
+
+  test("[PERF-2] the viewings calendar bounds its window and discloses truncation", async ({
+    page,
+  }) => {
+    await page.goto("/viewings", { waitUntil: "networkidle" });
+    const text = await page.locator("main").innerText();
+    // Either it fits the window (no banner) or it says what it is hiding.
+    if (/showing the first/i.test(text)) {
+      expect(text).toMatch(/not on this calendar/i);
+    }
+    await expect(page.getByText(/something went wrong/i)).toHaveCount(0);
   });
 });

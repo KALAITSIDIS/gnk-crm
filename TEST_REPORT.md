@@ -23,10 +23,10 @@ The defects that remain are concentrated in three places:
 |---|---|
 | `npm run typecheck` | ✅ clean |
 | `npm run lint` | ✅ 0 errors, 0 warnings |
-| `npm run test` (unit) | ✅ **268 passed** (23 files) — was 225 before this audit |
+| `npm run test` (unit) | ✅ **283 passed** (24 files) — was 225 before this audit |
 | `npm run test:rls` | ✅ **25 passed** |
 | `npm run build` | ✅ compiled in 21.4s, no warnings |
-| `npx playwright test` | ✅ **112 passed** (desktop 1280px + mobile 390px) |
+| `npx playwright test` | ✅ **122 passed** (desktop 1280px + mobile 390px) |
 | `npm audit` | ⚠️ 7 vulnerabilities (4 moderate, 3 high) — see DEP-1/DEP-2 |
 
 ### Pass/fail across all 11 modules
@@ -36,13 +36,13 @@ Legend: **Smoke** = automated load/console/network/layout at both viewports. **F
 | # | Module | Smoke (desktop) | Smoke (390px) | Flow exercised | Verdict |
 |---|---|---|---|---|---|
 | 1 | Dashboard | ✅ | ✅ | KPI rollup read after writes | 🟡 **Pass with issue** — PERF-3 silent sum cap |
-| 2 | Leads | ✅ | ✅ | ✅ create → list → count → retire | 🟡 **Pass with issue** — PERF-2 cap |
+| 2 | Leads | ✅ | ✅ | ✅ create → list → count → page → retire | ✅ **Pass** (PERF-2 fixed here) |
 | 3 | Pipeline | ✅ | ✅ | board + stage totals read | 🟡 **Pass with issue** — UX-3 no test/a11y hooks |
 | 4 | Properties | ✅ | ✅ | ✅ create wizard → list → archive | ✅ **Pass** |
 | 5 | Contacts | ✅ | ✅ | pagination verified | ✅ **Pass** |
-| 6 | Viewings | ✅ | ✅ | — (see "not tested") | 🟡 **Pass with issue** — PERF-2 cap |
-| 7 | Tasks | ✅ | ✅ | ✅ quick-add → list | 🟡 **Pass with issue** — PERF-2 cap |
-| 8 | Keys | ✅ | ✅ | — | 🟡 **Pass with issue** — PERF-2 cap |
+| 6 | Viewings | ✅ | ✅ | window bounds + truncation notice | ✅ **Pass** (PERF-2 fixed here) |
+| 7 | Tasks | ✅ | ✅ | ✅ quick-add → list → page | ✅ **Pass** (PERF-2 fixed here) |
+| 8 | Keys | ✅ | ✅ | ✅ server-side filter → page | ✅ **Pass** (PERF-2 fixed here) |
 | 9 | Reports | ✅ | ✅ | list + chain badge read | ✅ **Pass** |
 | 10 | Calculators | ✅ | ✅ | ✅ 14 E2E assertions vs statutory scale | ✅ **Pass** (CALC-1 + CALC-2 fixed here) |
 | 11 | Settings | ✅ | ✅ | config-save path reviewed | ✅ **Pass** (CALC-2 fixed here) |
@@ -150,9 +150,9 @@ Test the image pipeline after — Next uses its bundled sharp for `next/image` o
 
 **Fix applied:** `isBandArray` now enforces strictly-ascending bounds, a first bound above zero, rates within 0–1, and open-ended bands only in final position; `relief_pct` must be a 0–1 fraction; `cap` must be non-negative. 12 new tests, RED before / GREEN after. The seeded production shapes still parse (existing suite unaffected).
 
-#### PERF-2 — Four list screens are hard-capped with no pagination or disclosure
+#### PERF-2 — Four list screens were hard-capped with no pagination or disclosure ✅ FIXED IN THIS BRANCH
 
-**Module:** Leads, Viewings, Tasks, Keys · **Status:** OPEN · **Evidence:** `app/(app)/leads/page.tsx:54`, `viewings/page.tsx:34`, `tasks/page.tsx:42`, `keys/page.tsx:30`; `tests/e2e/performance.spec.ts` → `[PERF-2]`
+**Module:** Leads, Viewings, Tasks, Keys · **Status:** **FIXED** · **Evidence:** `lib/validators/pagination.ts` (+13 unit tests), `components/features/shared/pager.tsx`, the four page files; `tests/e2e/performance.spec.ts` → `[PERF-2]` (6 specs)
 
 | Screen | Cap | Paginated? | Header count |
 |---|---|---|---|
@@ -163,11 +163,21 @@ Test the image pipeline after — Next uses its bundled sharp for `next/image` o
 | `/properties` | — | ✅ `.range()` | exact |
 | `/contacts` | — | ✅ `.range()` | exact |
 
-Properties and Contacts do this correctly. The other four do not. Past the cap, `/leads` will show "437 open" above 100 rows, and the other 337 are **unreachable through the UI** — there is no next page. This is exactly the header-vs-rows disagreement the 2026-07-21 list-scope fix corrected for status; volume reintroduces it.
+Properties and Contacts did this correctly. The other four did not. Past the cap, `/leads` would show "437 open" above 100 rows, and the other 337 were **unreachable through the UI** — there was no next page. This is exactly the header-vs-rows disagreement the 2026-07-21 list-scope fix corrected for status; volume reintroduced it.
 
-**Reproduction:** seed 150 open leads → `/leads` → header reads 150, list stops at 100, no pagination control.
+**Fix applied**
 
-**Fix:** port the `PROPERTIES_PAGE_SIZE` / `.range(from, from + SIZE - 1)` pattern from `app/(app)/properties/page.tsx:180` to all four. Minimum viable interim: render "Showing 100 of 437 — refine your filter" when `rows === cap`.
+Rather than a sixth copy of the arithmetic, the pattern was extracted: `lib/validators/pagination.ts` (`LIST_PAGE_SIZE`, `pageSchema`, `pageRange`, `totalPages`, `isRangeBeyondEnd`) plus a shared `<Pager>` that always states *"Showing 1–25 of 437 leads"* — the disclosure half of the fix — and preserves every other query param so paging never drops a filter.
+
+Each screen needed a different shape, and two of them needed more than a `.range()`:
+
+- **Leads / Tasks** — straight pagination. Tasks pages over the whole open set ordered by due date, so the most overdue work stays on page 1 and the Overdue/Upcoming split stays meaningful. Its "N overdue" header became an **exact DB count**, since a page-local count would now describe only the current slice.
+- **Keys** — paginating alone would have **broken the register search**: the status and text filters were client-side `useState` over the fetched array, so they would silently have searched one page only. Both moved into the URL and into the query (`components/features/keys/filters.tsx`). The property *reference* lives on a joined table that PostgREST cannot reach from `.or()`, so it resolves to ids first and folds them into the same disjunction. `KeysRegister` is now presentational. The header counts (registered / out) are exact and describe the whole register, never the filtered page.
+- **Viewings is a calendar, not a list**, so row pagination is the wrong shape — and the real defect there was worse than a cap. The query was `.gte(now-90d)` with **no upper bound**, ordered ascending, capped at 500: on reaching the cap it silently dropped the **furthest-future** viewings, so bookings simply stopped appearing past some date with nothing on screen saying so. Both ends of the window are now explicit (−90d to +365d), the cap is 2,000, truncation renders a visible warning naming what is hidden, and the "upcoming" header is an exact count independent of the window.
+
+A stale or junk `?page=` is handled everywhere: PostgREST's `PGRST103` (range past the end) renders an empty page with a "Back to the first page" link instead of throwing to the T5.7 error boundary, and unparseable values degrade to page 1.
+
+**Verified in the browser** on 40 seeded leads: page 1 shows 25 rows under *"Showing 1–25 of 40 leads · Page 1 of 2 · Next"*; page 2 shows the remaining 15 as *"Showing 26–40 of 40"*, with Previous preserving `?status=all` and dropping the redundant `page=1`. 13 new unit tests, 6 new E2E specs.
 
 #### PERF-3 — Admin dashboard money totals silently undercount past 2,000 rows
 
@@ -181,7 +191,9 @@ Not urgent (the desk is far from 2,000 open deals), but it is a *silent* wrong n
 
 #### A11Y-1 — Radix Select triggers have no accessible name, app-wide
 
-**Module:** Properties, Leads, Settings (and every `Select` in the app) · **Status:** OPEN · **Evidence:** `components/features/properties/create-wizard.tsx:67,84,100,116`; `components/features/leads/add-lead-dialog.tsx:99,115,133`; verified in-browser
+**Module:** Properties, Leads, Settings — the **form** Selects · **Status:** OPEN · **Evidence:** `components/features/properties/create-wizard.tsx:67,84,100,116`; `components/features/leads/add-lead-dialog.tsx:99,115,133`; verified in-browser
+
+*Scope correction (2026-07-22):* an earlier draft of this finding said "every `Select` in the app". That is too broad — the **filter** Selects set `aria-label` on the trigger and are fine (`components/features/leads/filters.tsx:48`, and `keys/filters.tsx` added in the PERF-2 pass). The defect is specific to Selects that sit under a visible `<Label>`: the label carries no `htmlFor` and the trigger no `id`, so the two are never associated.
 
 Every `<Label>` above a shadcn/Radix `Select` is a **bare `<Label>` with no `htmlFor`**, and the `SelectTrigger` has no `id`, `aria-label` or `aria-labelledby`. Measured live on `/properties/new`:
 
@@ -264,10 +276,14 @@ CLS of exactly zero on all three is a genuinely good result and the metric a dev
 
 ## 6. The single most important thing to do first
 
-**Merge and deploy this branch.**
+**Deploy the pagination branch (`fix/perf-2-pagination`).**
 
-The three fixes it carries — correct transfer fees on joint purchases, a config guard that stops a Settings typo quoting a 300% fee, and the security headers — are all done, tested and verified, but **none of them protects production until this branch ships**. The calculator is still quoting €8,600 to couples on the live site right now.
+CALC-1, CALC-2 and the security headers are already live on production (deploy `dpl_2EXQtW8f8uiUFSmMdGknuC4tqiZq`, verified on `gnk-crm.vercel.app`). PERF-2 is fixed and fully tested but **not yet deployed**.
 
-After that, the highest-value remaining item is **PERF-2** (pagination on `/leads`, `/viewings`, `/tasks`, `/keys`). It is invisible at today's data volumes and becomes a silent data-loss-to-the-user problem as the desk grows — the header will say 437 while the screen shows 100, with no way to reach the rest.
+The part of PERF-2 worth shipping soonest is not the pagination itself — it is the **viewings window**. That query had no upper bound and dropped the furthest-future bookings on hitting its cap, so an agent's calendar could simply stop showing viewings past some date with nothing on screen to explain it. Volume-dependent, silent, and it costs a missed appointment rather than a wrong number.
 
-Everything else on the list is hygiene or a known deferral.
+After that, the remaining list is genuinely hygiene:
+
+1. **DEP-1** — move `shadcn` to devDependencies (15 minutes, drops 3 of 7 vulnerabilities).
+2. **A11Y-1** — label the form Selects (~2 hours, WCAG 4.1.2).
+3. **PERF-3** — push dashboard money sums into Postgres (known, in `docs/BACKLOG.md`).

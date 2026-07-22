@@ -62,3 +62,28 @@ export const markLostKeySchema = z.object({
   key_id: z.guid("Missing key"),
   note: optionalNote,
 });
+
+/**
+ * /keys list filters (audit 2026-07-22, PERF-2). These moved from client
+ * useState into the URL when the register was paginated: a filter that only
+ * searches the rows already on screen silently stops finding keys once the
+ * register is longer than one page.
+ */
+export const KEY_SCOPES = ["all", ...KEY_STATUSES] as const;
+export type KeyScope = (typeof KEY_SCOPES)[number];
+
+export const keyFiltersSchema = z.object({
+  status: z.enum(KEY_SCOPES).catch("all").default("all"),
+  q: z
+    .string()
+    .trim()
+    .max(100)
+    .optional()
+    .transform((v) => v || undefined),
+});
+export type KeyFilters = z.infer<typeof keyFiltersSchema>;
+
+/** PostgREST `.or()` needs commas/parens escaped out of the search term. */
+export function sanitizeSearchTerm(q: string): string {
+  return q.replace(/[,()\\]/g, " ").trim();
+}

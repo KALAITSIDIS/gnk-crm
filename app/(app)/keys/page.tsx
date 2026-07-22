@@ -1,13 +1,21 @@
+import { KeysFilters } from "@/components/features/keys/filters";
 import { RegisterKeyDialog } from "@/components/features/keys/key-dialogs";
 import {
   KeysRegister,
   type KeyRegisterRow,
 } from "@/components/features/keys/keys-register";
+import { Pager } from "@/components/features/shared/pager";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
 import { formatDateTime } from "@/lib/utils/format";
-import type { KeyStatus } from "@/lib/validators/keys";
+import { keyFiltersSchema, sanitizeSearchTerm, type KeyStatus } from "@/lib/validators/keys";
+import {
+  isRangeBeyondEnd,
+  pageRange,
+  pageSchema,
+  totalPages as countPages,
+} from "@/lib/validators/pagination";
 
 export const dynamic = "force-dynamic";
 
@@ -18,16 +26,63 @@ const MOVEMENT_LINES: Record<string, (holder: string | null) => string> = {
   mark_lost: (holder) => `marked lost${holder ? ` — last with ${holder}` : ""}`,
 };
 
-export default async function KeysPage() {
+export default async function KeysPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
+  const sp = await searchParams;
+  const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
+  const filters = keyFiltersSchema.parse({ status: first(sp.status), q: first(sp.q) });
+  const page = pageSchema.parse(first(sp.page));
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
 
-  const [keysRes, movementsRes] = await Promise.all([
-    supabase
-      .from("property_keys")
-      .select("id, key_code, description, status, current_holder_name, property_id, properties(reference)")
+  // The text filter used to run client-side over every fetched row. Now the
+  // register is paged, it has to run in the query or it would only ever search
+  // the current page (audit 2026-07-22, PERF-2). The property REFERENCE lives
+  // on a joined table, which PostgREST cannot reach from .or(), so resolve it
+  // to ids first and fold those into the same disjunction.
+  const term = filters.q ? sanitizeSearchTerm(filters.q) : "";
+  let matchedPropertyIds: string[] = [];
+  if (term) {
+    const { data: matches } = await supabase
+      .from("properties")
+      .select("id")
+      .ilike("reference", `%${term}%`)
+      .limit(200);
+    matchedPropertyIds = (matches ?? []).map((p) => p.id);
+  }
+
+  const applyFilters = <T extends { eq: (c: string, v: string) => T; or: (f: string) => T }>(
+    q: T,
+  ): T => {
+    let out = q;
+    if (filters.status !== "all") out = out.eq("status", filters.status);
+    if (term) {
+      const clauses = [
+        `key_code.ilike.%${term}%`,
+        `description.ilike.%${term}%`,
+        `current_holder_name.ilike.%${term}%`,
+      ];
+      if (matchedPropertyIds.length) clauses.push(`property_id.in.(${matchedPropertyIds.join(",")})`);
+      out = out.or(clauses.join(","));
+    }
+    return out;
+  };
+
+  const { from, to } = pageRange(page);
+  const [keysRes, movementsRes, registeredRes, checkedOutRes] = await Promise.all([
+    applyFilters(
+      supabase
+        .from("property_keys")
+        .select(
+          "id, key_code, description, status, current_holder_name, property_id, properties(reference)",
+          { count: "exact" },
+        ),
+    )
       .order("created_at", { ascending: false })
-      .limit(300),
+      .range(from, to),
     supabase
       .from("key_movements")
       .select(
@@ -37,9 +92,25 @@ export default async function KeysPage() {
       )
       .order("occurred_at", { ascending: false })
       .limit(30),
+    // header describes the WHOLE register, never the filtered page
+    supabase.from("property_keys").select("id", { count: "exact", head: true }),
+    supabase
+      .from("property_keys")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "checked_out"),
   ]);
-  const keyRows = unwrapRows(keysRes, "keys");
+  // a stale ?page= past the end is an empty page, not a load failure
+  const keyRows = unwrapRows(
+    isRangeBeyondEnd(keysRes.error) ? { data: [], error: null } : keysRes,
+    "keys",
+  );
   const movementRows = unwrapRows(movementsRes, "key movements");
+
+  const filteredTotal = keysRes.count ?? 0;
+  const registeredCount = registeredRes.count ?? 0;
+  const checkedOut = checkedOutRes.count ?? 0;
+  const pageCount = countPages(filteredTotal);
+  const isFiltered = filters.status !== "all" || Boolean(term);
 
   const keys: KeyRegisterRow[] = keyRows.map((k) => ({
     id: k.id,
@@ -68,7 +139,6 @@ export default async function KeysPage() {
     };
   });
 
-  const checkedOut = keys.filter((k) => k.status === "checked_out").length;
   const canEdit = profile.role === "admin" || profile.role === "listing_manager";
 
   return (
@@ -77,13 +147,33 @@ export default async function KeysPage() {
         <div>
           <h1 className="text-xl font-semibold text-text-1">Keys</h1>
           <p className="text-sm text-text-2">
-            {keys.length} registered · {checkedOut} out
+            {registeredCount} registered · {checkedOut} out
           </p>
         </div>
         {canEdit ? <RegisterKeyDialog /> : null}
       </div>
 
-      <KeysRegister keys={keys} canEdit={canEdit} />
+      <KeysFilters />
+
+      <KeysRegister
+        keys={keys}
+        canEdit={canEdit}
+        emptyText={
+          page > 1
+            ? "Nothing on this page."
+            : isFiltered
+              ? "No keys match."
+              : "No keys registered yet."
+        }
+      />
+
+      <Pager
+        page={page}
+        pageCount={pageCount}
+        total={filteredTotal}
+        searchParams={sp}
+        label={isFiltered ? "matching keys" : "keys"}
+      />
 
       <section className="rounded-[10px] border border-border bg-surface p-5">
         <h2 className="mb-3 text-sm font-semibold text-text-1">Recent movements</h2>

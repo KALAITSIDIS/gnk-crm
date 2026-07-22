@@ -1,17 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
 import Link from "next/link";
 import { KeyRound } from "lucide-react";
 import { KeyMovementActions } from "@/components/features/keys/key-dialogs";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -20,7 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { KEY_STATUSES, type KeyStatus } from "@/lib/validators/keys";
+import { type KeyStatus } from "@/lib/validators/keys";
 import { cn } from "@/lib/utils";
 
 export interface KeyRegisterRow {
@@ -44,59 +35,28 @@ function labelize(v: string) {
   return v.replace(/_/g, " ");
 }
 
-/** Org-wide key register with status/text filters (doc 05 /keys). */
-export function KeysRegister({ keys, canEdit }: { keys: KeyRegisterRow[]; canEdit: boolean }) {
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [textFilter, setTextFilter] = useState("");
-
-  const rows = useMemo(() => {
-    const q = textFilter.trim().toLowerCase();
-    return keys.filter((k) => {
-      if (statusFilter !== "all" && k.status !== statusFilter) return false;
-      if (
-        q &&
-        !k.keyCode.toLowerCase().includes(q) &&
-        !k.propertyRef.toLowerCase().includes(q) &&
-        !(k.holderName ?? "").toLowerCase().includes(q) &&
-        !(k.description ?? "").toLowerCase().includes(q)
-      ) {
-        return false;
-      }
-      return true;
-    });
-  }, [keys, statusFilter, textFilter]);
-
+/**
+ * Org-wide key register table (doc 05 /keys).
+ *
+ * Presentational since the PERF-2 pagination pass: filtering moved into the
+ * URL and the server query (components/features/keys/filters.tsx), because a
+ * client-side filter over a paged array only ever searches the current page.
+ */
+export function KeysRegister({
+  keys: rows,
+  canEdit,
+  emptyText = "No keys match.",
+}: {
+  keys: KeyRegisterRow[];
+  canEdit: boolean;
+  emptyText?: string;
+}) {
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-40">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All statuses</SelectItem>
-            {KEY_STATUSES.map((s) => (
-              <SelectItem key={s} value={s} className="capitalize">
-                {labelize(s)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Input
-          value={textFilter}
-          onChange={(e) => setTextFilter(e.target.value)}
-          placeholder="Filter by code, property, holder…"
-          className="w-64"
-        />
-        <span className="ml-auto text-sm text-text-3">
-          {rows.length} of {keys.length} keys
-        </span>
-      </div>
-
       {rows.length === 0 ? (
         <div className="flex flex-col items-center gap-2 rounded-[10px] border border-border bg-surface py-12">
           <KeyRound className="size-7 text-text-3" />
-          <p className="text-sm text-text-2">No keys match.</p>
+          <p className="text-sm text-text-2">{emptyText}</p>
         </div>
       ) : (
         <div className="overflow-x-auto rounded-[10px] border border-border bg-surface">

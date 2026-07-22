@@ -5,10 +5,17 @@ import {
   TaskSection,
   type TaskItem,
 } from "@/components/features/tasks/task-list";
+import { Pager } from "@/components/features/shared/pager";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
 import { formatDateTime } from "@/lib/utils/format";
+import {
+  isRangeBeyondEnd,
+  pageRange,
+  pageSchema,
+  totalPages as countPages,
+} from "@/lib/validators/pagination";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +26,13 @@ export const dynamic = "force-dynamic";
  * rows, so they can never drift out of sync with the viewings themselves
  * (same source the agent dashboard uses).
  */
-export default async function TasksPage() {
+export default async function TasksPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
+  const sp = await searchParams;
+  const page = pageSchema.parse(Array.isArray(sp.page) ? sp.page[0] : sp.page);
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
   const now = new Date(); // per-request clock for the overdue boundary
@@ -32,6 +45,9 @@ export default async function TasksPage() {
     // SQL: select id, scheduled_at from viewings where agent_id = :me and status='completed'
     //      and feedback is null order by scheduled_at desc limit 10;
     needFeedbackRes,
+    // exact overdue count — the header must describe the whole open set, not
+    // whichever slice this page happens to hold (PERF-2)
+    overdueRes,
   ] = await Promise.all([
     supabase
       .from("tasks")
@@ -39,7 +55,10 @@ export default async function TasksPage() {
       .eq("assignee_id", profile.id)
       .eq("is_done", false)
       .order("due_at", { ascending: true, nullsFirst: false })
-      .limit(200),
+      // Paged over the WHOLE open set, ordered by due date — so the most
+      // overdue work is always on page 1 and the Overdue/Upcoming split below
+      // stays meaningful (audit 2026-07-22, PERF-2; was a flat .limit(200)).
+      .range(pageRange(page).from, pageRange(page).to),
     supabase
       .from("tasks")
       .select("id, title, due_at, is_done, property_id, mandate_id")
@@ -55,14 +74,26 @@ export default async function TasksPage() {
       .is("feedback", null)
       .order("scheduled_at", { ascending: false })
       .limit(10),
+    supabase
+      .from("tasks")
+      .select("id", { count: "exact", head: true })
+      .eq("assignee_id", profile.id)
+      .eq("is_done", false)
+      .lt("due_at", now.toISOString()),
   ]);
   // failed queries throw to the error boundary — "0 open" must mean empty,
   // not broken (dashboard audit convention, lib/supabase/unwrap.ts)
-  const openRows = unwrapRows(openRes, "open tasks");
+  // ...except a stale ?page= past the end, which is an empty page not a fault
+  const openRows = unwrapRows(
+    isRangeBeyondEnd(openRes.error) ? { data: [], error: null } : openRes,
+    "open tasks",
+  );
   const doneRows = unwrapRows(doneRes, "done tasks");
   const needFeedback = unwrapRows(needFeedbackRes, "viewings awaiting feedback");
   const openCount = openRes.count ?? openRows.length;
   const needFeedbackCount = needFeedbackRes.count ?? needFeedback.length;
+  const overdueCount = overdueRes.count ?? 0;
+  const pageCount = countPages(openCount);
 
   const propertyIds = [
     ...new Set(
@@ -95,14 +126,30 @@ export default async function TasksPage() {
       <div>
         <h1 className="text-xl font-semibold text-text-1">Tasks</h1>
         <p className="text-sm text-text-2">
-          {openCount} open{overdue.length > 0 ? ` · ${overdue.length} overdue` : ""}
+          {openCount} open{overdueCount > 0 ? ` · ${overdueCount} overdue` : ""}
         </p>
       </div>
 
       <QuickAddTask />
 
-      <TaskSection title="Overdue" items={overdue} emptyText="Nothing overdue." />
-      <TaskSection title="Upcoming" items={upcoming} emptyText="No open tasks." />
+      <TaskSection
+        title="Overdue"
+        items={overdue}
+        emptyText={page > 1 ? "None on this page." : "Nothing overdue."}
+      />
+      <TaskSection
+        title="Upcoming"
+        items={upcoming}
+        emptyText={page > 1 ? "None on this page." : "No open tasks."}
+      />
+
+      <Pager
+        page={page}
+        pageCount={pageCount}
+        total={openCount}
+        searchParams={sp}
+        label="open tasks"
+      />
 
       {needFeedback.length > 0 ? (
         <section className="rounded-[10px] border border-warning/40 bg-warning/5 p-4">

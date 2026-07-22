@@ -4,6 +4,7 @@ import { AddLeadDialog } from "@/components/features/leads/add-lead-dialog";
 import { LeadsFilters } from "@/components/features/leads/filters";
 import { LeadRowActions } from "@/components/features/leads/lead-actions";
 import { ChatLinks } from "@/components/features/shared/chat-links";
+import { Pager } from "@/components/features/shared/pager";
 import { ResponseClock } from "@/components/features/shared/response-clock";
 import { StatusBadge } from "@/components/features/shared/status-badge";
 import { getCurrentProfile } from "@/lib/services/auth";
@@ -14,6 +15,12 @@ import {
   leadFiltersSchema,
   leadStatusesForFilter,
 } from "@/lib/validators/contacts";
+import {
+  isRangeBeyondEnd,
+  pageRange,
+  pageSchema,
+  totalPages as countPages,
+} from "@/lib/validators/pagination";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +37,7 @@ export default async function LeadsPage({
 }) {
   const sp = await searchParams;
   const filters = leadFiltersSchema.parse({ status: first(sp.status) });
+  const page = pageSchema.parse(first(sp.page));
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
 
@@ -45,30 +53,37 @@ export default async function LeadsPage({
        assigned_agent_id, lost_reason, converted_deal_id,
        contacts(id, display_name, phone_e164, telegram_username, has_whatsapp),
        properties(id, reference)`,
+      // exact count of the SCOPED set, so the pager totals match these rows
+      { count: "exact" },
     );
   if (scopedStatuses) leadsQuery = leadsQuery.in("status", [...scopedStatuses]);
 
-  // header counts are exact DB counts, not derived from the 100-row slice
-  const [{ data: leads, error: leadsError }, openCount, awaitingCount, { data: agents }] =
-    await Promise.all([
-      leadsQuery.order("received_at", { ascending: false }).limit(100),
-      supabase
-        .from("leads")
-        .select("id", { count: "exact", head: true })
-        .in("status", openStatuses),
-      supabase
-        .from("leads")
-        .select("id", { count: "exact", head: true })
-        .in("status", openStatuses)
-        .is("first_response_at", null),
-      supabase.from("profiles").select("id, full_name, is_active"),
-    ]);
+  // header counts are exact DB counts, independent of the current page
+  const { from, to } = pageRange(page);
+  const [leadsResult, openCount, awaitingCount, { data: agents }] = await Promise.all([
+    leadsQuery.order("received_at", { ascending: false }).range(from, to),
+    supabase
+      .from("leads")
+      .select("id", { count: "exact", head: true })
+      .in("status", openStatuses),
+    supabase
+      .from("leads")
+      .select("id", { count: "exact", head: true })
+      .in("status", openStatuses)
+      .is("first_response_at", null),
+    supabase.from("profiles").select("id, full_name, is_active"),
+  ]);
+
+  // a stale ?page= past the end is an empty page, not a load failure
+  const leadsError = isRangeBeyondEnd(leadsResult.error) ? null : leadsResult.error;
 
   const agentName = new Map(
     (agents ?? []).map((a) => [a.id, a.is_active ? a.full_name : `${a.full_name} (inactive)`]),
   );
 
-  const rows = leads ?? [];
+  const rows = leadsResult.data ?? [];
+  const scopedTotal = leadsResult.count ?? 0;
+  const pageCount = countPages(scopedTotal);
 
   return (
     <div className="flex flex-col gap-4">
@@ -95,12 +110,19 @@ export default async function LeadsPage({
         <div className="flex flex-col items-center gap-3 rounded-[10px] border border-border bg-surface py-16">
           <Inbox className="size-8 text-text-3" />
           <p className="text-sm text-text-2">
-            {filters.status === "open"
-              ? "Inbox zero — no open leads."
-              : filters.status === "all"
-                ? "No leads yet."
-                : `No ${filters.status} leads.`}
+            {page > 1
+              ? "Nothing on this page."
+              : filters.status === "open"
+                ? "Inbox zero — no open leads."
+                : filters.status === "all"
+                  ? "No leads yet."
+                  : `No ${filters.status} leads.`}
           </p>
+          {page > 1 ? (
+            <Link href="?" className="text-sm font-medium text-brand-700 hover:underline">
+              Back to the first page
+            </Link>
+          ) : null}
         </div>
       ) : (
         <ul className="flex flex-col gap-2">
@@ -199,6 +221,16 @@ export default async function LeadsPage({
             );
           })}
         </ul>
+      )}
+
+      {leadsError ? null : (
+        <Pager
+          page={page}
+          pageCount={pageCount}
+          total={scopedTotal}
+          searchParams={sp}
+          label="leads"
+        />
       )}
     </div>
   );

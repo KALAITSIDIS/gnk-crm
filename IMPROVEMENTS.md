@@ -17,7 +17,7 @@ are marked **[BACKLOG]** so this file does not silently fork the roadmap.
 | A2 | **Deploy this branch** (SEC-1…4 + CALC-1 + CALC-2) | All three fixes are written and tested but protect nothing until deployed. The live calculator still over-quotes couples today. | 15 min | merge `qa/full-audit` |
 | A3 | **Move `shadcn` to devDependencies** (DEP-1) | Removes a CLI, the MCP SDK and hono from the production deploy, and 3 of 7 audit vulnerabilities with them. | 15 min | — |
 | A4 | **Label every Select trigger** (A11Y-1) | WCAG 4.1.2 failure on every dropdown in the app. Also unblocks name-based E2E selectors. ~15 `<Label htmlFor>` + `<SelectTrigger id>` pairs. | 2 h | — |
-| A5 | **"Showing 100 of 437" notice on capped lists** (PERF-2, interim) | Stops the header and the visible rows silently disagreeing. Buys time before real pagination. | 2 h | — |
+| A5 | ~~"Showing 100 of 437" notice on capped lists~~ | ✅ **Superseded by B1** — real pagination shipped in `fix/perf-2-pagination`, so the interim notice was never needed. | — | — |
 | A6 | **Disable the relief tick when "VAT was paid" is on** (UX-4) | Removes a confusing screen state during a live client conversation. | 30 min | — |
 | A7 | **`data-stage-id` + `role="list"` on kanban columns** (UX-3) | Makes the pipeline testable and screen-reader navigable. | 1 h | — |
 | A8 | **Isolate the RLS suite's database** (TEST-1) | The local dev dashboard is currently dominated by `Test admin …` fixtures after any RLS run, which makes manual verification unreliable. | 3 h | — |
@@ -34,8 +34,8 @@ are marked **[BACKLOG]** so this file does not silently fork the roadmap.
 
 Ordered by value-per-effort for a Cyprus advisory desk.
 
-### B1. Real pagination on Leads / Viewings / Tasks / Keys — **2 days**
-The `.range()` pattern already exists in `app/(app)/properties/page.tsx:180`; port it to the four capped screens. **Why:** at 1,000+ records those screens quietly hide data today. **Depends on:** A5 (or supersedes it).
+### B1. ~~Real pagination on Leads / Viewings / Tasks / Keys~~ — ✅ **DONE** (`fix/perf-2-pagination`)
+Shipped as a shared `lib/validators/pagination.ts` + `<Pager>` rather than a fifth copy of the arithmetic. Keys also needed its filters moved from client state into the URL (a client-side filter over a paged array searches one page only), and viewings — being a calendar — got a bounded window plus a truncation notice instead of row paging. **Follow-up worth doing:** drive the viewings window from the calendar's own anchor date, so navigating past the fetched range refetches rather than showing an empty week. ~1 day.
 
 ### B2. Push the dashboard aggregates into Postgres — **2 days** **[BACKLOG]**
 Replace the TypeScript `.reduce()` over `.limit(2000)` rows with an RPC returning `sum()`/`count()` grouped by stage and status (finding PERF-3). **Why:** the headline € KPI silently under-reports past the cap, and this also removes the largest payload on the heaviest page. **Depends on:** nothing.
