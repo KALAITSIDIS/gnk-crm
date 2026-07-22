@@ -1,8 +1,24 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { createTranslator } from "next-intl";
 import type { Database, Json } from "@/lib/supabase/database.types";
-import { describeEvent } from "@/lib/services/events";
+import en from "@/messages/en.json";
+import { describeEvent, type EventTranslator } from "@/lib/services/events";
 import { sha256Hex } from "@/lib/services/hash";
 import { zonedDateRangeToUtc } from "@/lib/utils/tz";
+
+/**
+ * Evidence lines are ENGLISH regardless of request locale: this record is a
+ * preview of the deliberately-English commission PDF (DECISIONS T-audit-
+ * reports-3), so the two must read identically. Built with createTranslator
+ * over the imported en messages rather than getTranslations({locale:"en"}) —
+ * i18n/request.ts pins getRequestConfig to defaultLocale and ignores the
+ * requested locale, so the latter would follow whatever locale is live.
+ */
+const enEventT = ((key, values) =>
+  createTranslator({ locale: "en", messages: en, namespace: "events" })(
+    key as never,
+    values as never,
+  )) as EventTranslator;
 
 /**
  * Commission evidence assembly (T5.2, doc 02 §C6): the chronological,
@@ -262,11 +278,14 @@ export async function assembleEvidence(
       id: e.id,
       occurredAt: e.occurred_at,
       entityType: e.entity_type,
-      line: describeEvent({
-        entity_type: e.entity_type,
-        event_type: e.event_type,
-        payload: e.payload as Json,
-      }),
+      line: describeEvent(
+        {
+          entity_type: e.entity_type,
+          event_type: e.event_type,
+          payload: e.payload as Json,
+        },
+        enEventT,
+      ),
       propertyRef: e.entity_id
         ? (refById.get(propertyByEntity.get(e.entity_id) ?? "") ?? null)
         : null,

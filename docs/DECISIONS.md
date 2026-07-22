@@ -792,3 +792,37 @@ silent. Format: date · task · decision · rationale.
      stored report hash matched the preview hash exactly — the T-audit-reports
      determinism fix confirmed on real data — and the PDF verified "Authentic"
      through the new tool on the live site.
+
+- **2026-07-22 · T-audit-events-i18n** — `describeEvent` (the event-line
+  vocabulary shared by every timeline: property/contact/deal/lead/keys
+  activity, the dashboard "Latest events", and the commission evidence record)
+  is now translatable, closing the last i18n line in BACKLOG.
+  1. **`describeEvent(e, t)` takes a translator** — a minimal `EventTranslator`
+     type so the module stays free of next-intl and unit-testable with a plain
+     function. Each registry entry still does the payload branching in TS
+     (which message, what values) but the fixed text lives in the `events`
+     namespace (en/el/ru). Only the TEMPLATE translates; interpolated payload
+     data (names, section keys, channels, stage names, user-typed reasons, file
+     names, de-DE-formatted money) stays exactly as stored — a Greek user still
+     sees the reason a lead was lost in the language it was typed.
+  2. **`EventTimeline` is now an async server component** that calls
+     `getTranslations("events")` and passes the request-locale translator down.
+     All four call sites (dashboard, deal/contact/property detail) are RSCs, so
+     no page changed. A localized `events.noActivity` replaces the old
+     hardcoded English default.
+  3. **The evidence record stays English** (preview AND PDF), per
+     T-audit-reports-3. `assembleEvidence` builds its lines with a translator
+     pinned to English. **NOT via `getTranslations({locale:"en"})`** — that was
+     the first attempt and it rendered the preview in Greek, because
+     `i18n/request.ts`'s `getRequestConfig` hardcodes `defaultLocale` and
+     ignores the requested locale, so an explicit-locale `getTranslations`
+     silently follows whatever locale is live. Fixed with `createTranslator`
+     over the imported `en` messages (request-config-independent). Proven by
+     generating a report while the request locale was Russian: the PDF came out
+     fully English and its hash matched the el-mode preview.
+  4. **ICU pluralization is a real gain over the old string concat:** "1 event"
+     not "1 events" (en), and correct Slavic forms in Russian ("9 событий" =
+     the *many* form). The events unit test now runs a fake translator (proves
+     the line routes through `t`, RED before the refactor) plus real-English
+     parity; `messages.test.ts` compiles every `events` message in all three
+     locales and pins key parity, so a half-translated file fails CI.

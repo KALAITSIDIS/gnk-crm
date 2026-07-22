@@ -73,6 +73,17 @@ export interface TimelineEvent {
 
 type P = Record<string, unknown>;
 
+/**
+ * A translator scoped to the `events` namespace. Structurally the next-intl
+ * `t` you get from `getTranslations("events")` / `useTranslations("events")`;
+ * kept as a minimal type so this module stays free of next-intl and unit-
+ * testable with a plain function.
+ */
+export type EventTranslator = (
+  key: string,
+  values?: Record<string, string | number>,
+) => string;
+
 const asObject = (payload: Json | null | undefined): P =>
   payload && typeof payload === "object" && !Array.isArray(payload) ? (payload as P) : {};
 
@@ -90,189 +101,220 @@ const asMoney = (v: unknown): string | null => {
   }).format(n);
 };
 
-const fromTo = (verb: string, p: P): string => {
-  const from = asText(p.from);
-  const to = asText(p.to);
-  return from && to ? `${verb} ${from} → ${to}` : verb;
-};
-
-const EVENT_LINES: Record<string, (p: P) => string> = {
-  created: (p) => {
+/*
+ * Each entry chooses a message key (and its interpolation values) from the
+ * payload; the fixed text lives in messages/*.json under `events.*`. Only the
+ * template is translated — interpolated data (names, channels, stage names,
+ * user-typed reasons, file names, formatted money) stays as stored.
+ */
+const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
+  created: (p, t) => {
     const amount = asMoney(p.amount);
-    return amount ? `Created — ${amount}` : "Created";
+    return amount ? t("createdAmount", { amount }) : t("created");
   },
-  updated: (p) => {
+  updated: (p, t) => {
     const section = asText(p.section);
-    return section ? `Updated — ${section.replace(/_/g, " ")}` : "Updated";
+    return section ? t("updatedSection", { section: section.replace(/_/g, " ") }) : t("updated");
   },
-  stage_changed: (p) => fromTo("Stage", p),
-  status_changed: (p) => {
-    const line = fromTo("Status", p);
+  stage_changed: (p, t) => {
+    const from = asText(p.from);
+    const to = asText(p.to);
+    return from && to ? t("stageChange", { from, to }) : t("stage");
+  },
+  status_changed: (p, t) => {
+    const from = asText(p.from);
+    const to = asText(p.to);
     const amount = asMoney(p.amount);
-    return amount ? `${line} (${amount})` : line;
+    if (from && to) return amount ? t("statusChangeAmount", { from, to, amount }) : t("statusChange", { from, to });
+    return amount ? t("statusAmount", { amount }) : t("status");
   },
-  won: (p) => (p.override === true ? "Marked won — admin override" : "Marked won"),
-  won_override: () => "Admin override authorized — no accepted offer",
-  lost: (p) => {
+  won: (p, t) => (p.override === true ? t("wonOverride") : t("won")),
+  won_override: (_p, t) => t("wonOverrideAuthorized"),
+  lost: (p, t) => {
     const reason = asText(p.reason);
-    return reason ? `Marked lost — ${reason}` : "Marked lost";
+    return reason ? t("lostReason", { reason }) : t("lost");
   },
-  spam: () => "Marked spam",
-  claimed: () => "Claimed",
-  assigned: (p) => {
+  spam: (_p, t) => t("spam"),
+  claimed: (_p, t) => t("claimed"),
+  assigned: (p, t) => {
     const name = asText(p.to_name);
-    return name ? `Reassigned to ${name}` : "Reassigned";
+    return name ? t("reassignedTo", { name }) : t("reassigned");
   },
-  contact_linked: (p) => {
+  contact_linked: (p, t) => {
     const name = asText(p.contact_name);
-    return name ? `Contact linked — ${name}` : "Contact linked";
+    return name ? t("contactLinkedName", { name }) : t("contactLinked");
   },
-  corrected: (p) => {
-    const parts: string[] = [];
-    if (p.reopened === true) parts.push("reopened");
-    if (p.reset_response === true) parts.push("first-response reset");
-    return parts.length ? `Lead corrected — ${parts.join(", ")}` : "Lead corrected";
+  corrected: (p, t) => {
+    const reopened = p.reopened === true;
+    const reset = p.reset_response === true;
+    if (reopened && reset) return t("correctedBoth");
+    if (reopened) return t("correctedReopened");
+    if (reset) return t("correctedResetResponse");
+    return t("corrected");
   },
-  contacted: () => "Marked contacted",
-  called: () => "Marked called",
-  conversation_logged: (p) => {
+  contacted: (_p, t) => t("contacted"),
+  called: (_p, t) => t("called"),
+  conversation_logged: (p, t) => {
     const channel = asText(p.channel);
-    return channel ? `Conversation logged (${channel})` : "Conversation logged";
+    return channel ? t("conversationLoggedChannel", { channel }) : t("conversationLogged");
   },
-  chat_link_opened: (p) => {
+  chat_link_opened: (p, t) => {
     const channel = asText(p.channel);
-    return channel ? `Chat opened (${channel})` : "Chat opened";
+    return channel ? t("chatOpenedChannel", { channel }) : t("chatOpened");
   },
-  converted: () => "Converted to deal",
-  viewing_slip_signed: (p) => {
+  converted: (_p, t) => t("converted"),
+  viewing_slip_signed: (p, t) => {
     const name = asText(p.signer_name);
-    return name ? `Viewing slip signed by ${name}` : "Viewing slip signed";
+    return name ? t("slipSignedBy", { name }) : t("slipSigned");
   },
-  key_checkout: (p) => {
+  key_checkout: (p, t) => {
     const code = asText(p.key_code);
     const holder = asText(p.holder);
-    return `Key${code ? ` ${code}` : ""} checked out${holder ? ` to ${holder}` : ""}`;
+    if (code && holder) return t("keyCheckoutCodeHolder", { code, holder });
+    if (code) return t("keyCheckoutCode", { code });
+    if (holder) return t("keyCheckoutHolder", { holder });
+    return t("keyCheckout");
   },
-  key_return: (p) => {
+  key_return: (p, t) => {
     const code = asText(p.key_code);
-    return `Key${code ? ` ${code}` : ""} returned to office`;
+    return code ? t("keyReturnCode", { code }) : t("keyReturn");
   },
-  key_transfer: (p) => {
-    const code = asText(p.key_code);
-    const holder = asText(p.holder);
-    return `Key${code ? ` ${code}` : ""} handed to owner${holder ? ` (${holder})` : ""}`;
-  },
-  key_lost: (p) => {
+  key_transfer: (p, t) => {
     const code = asText(p.key_code);
     const holder = asText(p.holder);
-    return `Key${code ? ` ${code}` : ""} marked lost${holder ? ` — last with ${holder}` : ""}`;
+    if (code && holder) return t("keyTransferCodeHolder", { code, holder });
+    if (code) return t("keyTransferCode", { code });
+    if (holder) return t("keyTransferHolder", { holder });
+    return t("keyTransfer");
   },
-  completed: (p) => {
+  key_lost: (p, t) => {
+    const code = asText(p.key_code);
+    const holder = asText(p.holder);
+    if (code && holder) return t("keyLostCodeHolder", { code, holder });
+    if (code) return t("keyLostCode", { code });
+    if (holder) return t("keyLostHolder", { holder });
+    return t("keyLost");
+  },
+  completed: (p, t) => {
     const title = asText(p.title);
-    return title ? `Task completed — ${title}` : "Completed";
+    return title ? t("completedTitle", { title }) : t("completed");
   },
-  reopened: (p) => {
+  reopened: (p, t) => {
     const title = asText(p.title);
-    return title ? `Task reopened — ${title}` : "Reopened";
+    return title ? t("reopenedTitle", { title }) : t("reopened");
   },
-  invited: (p) => {
+  invited: (p, t) => {
     const email = asText(p.email);
     const role = asText(p.role);
-    return `User invited${email ? ` — ${email}` : ""}${role ? ` (${role.replace(/_/g, " ")})` : ""}`;
+    const roleClean = role ? role.replace(/_/g, " ") : null;
+    if (email && roleClean) return t("invitedEmailRole", { email, role: roleClean });
+    if (email) return t("invitedEmail", { email });
+    if (roleClean) return t("invitedRole", { role: roleClean });
+    return t("invited");
   },
-  role_changed: (p) => {
-    const line = fromTo("Role", p);
-    return line === "Role" ? "Role changed" : line;
+  role_changed: (p, t) => {
+    const from = asText(p.from);
+    const to = asText(p.to);
+    return from && to ? t("roleChange", { from, to }) : t("roleChanged");
   },
-  deactivated: () => "User deactivated",
-  reactivated: () => "User reactivated",
-  stages_updated: (p) => {
+  deactivated: (_p, t) => t("deactivated"),
+  reactivated: (_p, t) => t("reactivated"),
+  stages_updated: (p, t) => {
     const action = asText(p.action) ?? "updated";
-    if (action === "rename") return `Stage renamed ${asText(p.from) ?? ""} → ${asText(p.to) ?? ""}`;
-    if (action === "add") return `Stage added — ${asText(p.name) ?? ""}`;
-    if (action === "delete") return `Stage deleted — ${asText(p.name) ?? ""}`;
-    if (action === "reorder") return `Stage moved — ${asText(p.stage) ?? ""} ${asText(p.direction) ?? ""}`;
-    return "Stages updated";
+    if (action === "rename")
+      return t("stageRenamed", { from: asText(p.from) ?? "", to: asText(p.to) ?? "" });
+    if (action === "add") return t("stageAdded", { name: asText(p.name) ?? "" });
+    if (action === "delete") return t("stageDeleted", { name: asText(p.name) ?? "" });
+    if (action === "reorder")
+      return t("stageMoved", { stage: asText(p.stage) ?? "", direction: asText(p.direction) ?? "" });
+    return t("stagesUpdated");
   },
-  locations_updated: (p) => {
+  locations_updated: (p, t) => {
     const action = asText(p.action);
-    if (action === "add_area") return `Area added — ${asText(p.name) ?? ""}`;
+    if (action === "add_area") return t("areaAdded", { name: asText(p.name) ?? "" });
     if (action === "rename_area")
-      return `Area renamed ${asText(p.from) ?? ""} → ${asText(p.to) ?? ""}`;
-    return "Locations updated";
+      return t("areaRenamed", { from: asText(p.from) ?? "", to: asText(p.to) ?? "" });
+    return t("locationsUpdated");
   },
-  evidence_report_generated: (p) => {
-    const rows = Number(p.rows) || 0;
-    return `Commission evidence report generated (${rows} events, chain ${p.chain_ok === true ? "verified" : "FAILED"})`;
-  },
-  document_uploaded: (p) => {
+  evidence_report_generated: (p, t) =>
+    t("evidenceGenerated", { count: Number(p.rows) || 0, ok: p.chain_ok === true ? "yes" : "no" }),
+  document_uploaded: (p, t) => {
     const title = asText(p.title);
-    return title ? `Document uploaded — ${title}` : "Document uploaded";
+    return title ? t("documentUploadedTitle", { title }) : t("documentUploaded");
   },
-  document_deleted: (p) => {
+  document_deleted: (p, t) => {
     const title = asText(p.title);
-    return title ? `Document deleted — ${title}` : "Document deleted";
+    return title ? t("documentDeletedTitle", { title }) : t("documentDeleted");
   },
-  renewal_task_created: () => "Renewal reminder task created",
-  route_updated: (p) => {
-    const stops = Number(p.stops) || 0;
+  renewal_task_created: (_p, t) => t("renewalTaskCreated"),
+  route_updated: (p, t) => {
+    const count = Number(p.stops) || 0;
     const date = asText(p.route_date);
-    return `Day route updated — ${stops} stop${stops === 1 ? "" : "s"}${date ? ` (${date})` : ""}`;
+    return date ? t("routeUpdatedDate", { count, date }) : t("routeUpdated", { count });
   },
-  viewing_feedback: (p) => {
+  viewing_feedback: (p, t) => {
     const rating = Number(p.rating);
-    const stars = Number.isFinite(rating) && rating > 0 ? ` ${"★".repeat(rating)}` : "";
+    const stars = Number.isFinite(rating) && rating > 0 ? "★".repeat(rating) : null;
     const note = asText(p.comment) ?? asText(p.liked);
-    return `Viewing feedback${stars}${note ? ` — ${note}` : ""}`;
+    if (stars && note) return t("viewingFeedbackStarsNote", { stars, note });
+    if (stars) return t("viewingFeedbackStars", { stars });
+    if (note) return t("viewingFeedbackNote", { note });
+    return t("viewingFeedback");
   },
-  merged: (p) => {
+  merged: (p, t) => {
     const name = asText(p.merged_contact_name);
-    return name ? `Merged in ${name}` : "Merged in a duplicate";
+    return name ? t("mergedName", { name }) : t("merged");
   },
-  archived: () => "Archived",
-  unarchived: () => "Unarchived",
-  erased: (p) => {
+  archived: (_p, t) => t("archived"),
+  unarchived: (_p, t) => t("unarchived"),
+  erased: (p, t) => {
     const retention = asText(p.retention_until);
-    const base = "Personal data erased (GDPR Art.17)";
     // the retention date is the operator's answer to "what did you keep?"
-    return retention ? `${base} — KYC records retained until ${retention}` : base;
+    return retention ? t("erasedRetention", { retention }) : t("erased");
   },
-  imported: (p) => {
+  imported: (p, t) => {
     const ref = asText(p.reference) ?? asText(p.name);
-    return ref ? `Imported — ${ref}` : "Imported from CSV";
+    return ref ? t("importedRef", { ref }) : t("imported");
   },
-  media_uploaded: (p) => {
+  media_uploaded: (p, t) => {
     const file = asText(p.file);
-    return file ? `Photo uploaded — ${file}` : "Photo uploaded";
+    return file ? t("mediaUploadedFile", { file }) : t("mediaUploaded");
   },
-  media_deleted: (p) => {
+  media_deleted: (p, t) => {
     const file = asText(p.file);
-    return file ? `Photo deleted — ${file}` : "Photo deleted";
+    return file ? t("mediaDeletedFile", { file }) : t("mediaDeleted");
   },
   // written by the price_history DB trigger (T1.7); from/to are numeric
-  price_changed: (p) => {
+  price_changed: (p, t) => {
     const from = asMoney(p.from);
     const to = asMoney(p.to);
-    return from && to ? `Price ${from} → ${to}` : "Price changed";
+    return from && to ? t("priceChange", { from, to }) : t("priceChanged");
   },
-  media_reordered: () => "Photos reordered",
-  media_cover_set: () => "Cover photo set",
-  publish_override: (p) =>
-    `Publish gate overridden (score ${Number(p.score) || 0} < ${Number(p.threshold) || 0})`,
-  payment_plan_created: () => "Payment plan created",
-  price_list_created: () => "Price list created",
+  media_reordered: (_p, t) => t("mediaReordered"),
+  media_cover_set: (_p, t) => t("mediaCoverSet"),
+  publish_override: (p, t) =>
+    t("publishOverride", { score: Number(p.score) || 0, threshold: Number(p.threshold) || 0 }),
+  payment_plan_created: (_p, t) => t("paymentPlanCreated"),
+  price_list_created: (_p, t) => t("priceListCreated"),
 };
 
 /** Entity prefixes for feeds that mix entities (deal page merges offer events). */
-const ENTITY_PREFIX: Partial<Record<string, string>> = {
-  offer: "Offer",
+const ENTITY_PREFIX_KEY: Partial<Record<string, string>> = {
+  offer: "offerPrefix",
 };
 
+/**
+ * Human-readable timeline line for an event. `t` is a translator over the
+ * `events` namespace — general-purpose timelines pass the request-locale
+ * translator; the commission evidence record passes an English one so the
+ * preview matches its deliberately-English PDF.
+ */
 export function describeEvent(
   e: Pick<TimelineEvent, "entity_type" | "event_type" | "payload">,
+  t: EventTranslator,
 ): string {
   const p = asObject(e.payload);
-  const line = EVENT_LINES[e.event_type]?.(p) ?? e.event_type.replace(/_/g, " ");
-  const prefix = ENTITY_PREFIX[e.entity_type];
-  return prefix ? `${prefix}: ${line}` : line;
+  const line = EVENT_LINES[e.event_type]?.(p, t) ?? e.event_type.replace(/_/g, " ");
+  const prefixKey = ENTITY_PREFIX_KEY[e.entity_type];
+  return prefixKey ? `${t(prefixKey)}: ${line}` : line;
 }

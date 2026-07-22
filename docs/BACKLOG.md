@@ -141,10 +141,10 @@ built without explicit direction.
 - ~~Reports follow-ups (T-audit-reports)~~ — ALL SHIPPED: deal filter,
   generated-reports list, verify-a-report and the nightly chain cache as
   T-audit-reports-2 (migrations 0015/0016); module i18n as T-audit-reports-3.
-- Event-line vocabulary i18n (`describeEvent` in lib/services/events.ts): every
-  timeline in the app (properties, contacts, deals, keys, leads, and the
-  evidence preview) renders these strings in English, so they are the last
-  English text left on otherwise-translated screens. App-wide job, not a
-  per-module one — and note the evidence PDF stays English deliberately either
-  way (DECISIONS T-audit-reports-3), so translating them must not be wired into
-  the PDF renderer.
+- ~~Event-line vocabulary i18n (`describeEvent`)~~ — SHIPPED as
+  T-audit-events-i18n: `describeEvent` takes a translator; `EventTimeline`
+  passes the request-locale one so every general timeline translates; the
+  evidence record passes a pinned English one so preview + PDF stay English.
+  `events` namespace in en/el/ru. The event PAYLOAD values (names, section
+  keys, channels, stage names, user-typed reasons, file names) deliberately
+  stay as-stored — only the template text translates.
