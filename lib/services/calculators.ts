@@ -113,7 +113,13 @@ export function computeBandRows(price: number, bands: FeeBand[]): BandRow[] {
 }
 
 export interface TransferFeesResult {
+  /** band breakdown for ONE purchaser's share (see `purchasers`) */
   rows: BandRow[];
+  /** number of purchasers the assessment was split across (>= 1) */
+  purchasers: number;
+  /** fee for a single share, before relief */
+  perShareGross: number;
+  /** perShareGross x purchasers, before relief */
   gross: number;
   reliefApplied: boolean;
   reliefAmount: number;
@@ -121,14 +127,38 @@ export interface TransferFeesResult {
   total: number;
 }
 
+/** A purchaser count must be a whole number of people, at least one. */
+function normalisePurchasers(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 1;
+  return Math.max(1, Math.floor(value));
+}
+
+/**
+ * Transfer fees on the DLS progressive scale.
+ *
+ * The scale is assessed on EACH PURCHASER'S SHARE, not on the contract as a
+ * whole — the seeded `cyprus_config` row says so ("progressive, per purchaser
+ * share"). So the bands restart for every purchaser: a couple buying jointly
+ * at EUR 300,000 is assessed as two shares of 150,000, not one of 300,000,
+ * which is EUR 2,800 cheaper after relief. Equal shares are assumed; that is
+ * the ordinary case and the only split the screen collects.
+ * (Audit 2026-07-22, finding CALC-1.)
+ *
+ * Stamp duty deliberately does NOT take a purchaser count — it is charged on
+ * the contract and capped per document.
+ */
 export function computeTransferFees(
   price: number,
   config: TransferFeesConfig,
-  opts: { relief: boolean; vatPaid: boolean },
+  opts: { relief: boolean; vatPaid: boolean; purchasers?: number },
 ): TransferFeesResult {
+  const purchasers = normalisePurchasers(opts.purchasers);
+
   if (opts.vatPaid && config.vat_paid_exempt) {
     return {
       rows: [],
+      purchasers,
+      perShareGross: 0,
       gross: 0,
       reliefApplied: false,
       reliefAmount: 0,
@@ -136,11 +166,17 @@ export function computeTransferFees(
       total: 0,
     };
   }
-  const rows = computeBandRows(price, config.bands);
-  const gross = round2(rows.reduce((s, r) => s + r.fee, 0));
+
+  // one share's breakdown; the UI multiplies it out for the reader
+  const rows = computeBandRows(price / purchasers, config.bands);
+  const perShareGross = round2(rows.reduce((s, r) => s + r.fee, 0));
+  const gross = round2(perShareGross * purchasers);
   const reliefAmount = opts.relief ? round2(gross * config.relief_pct) : 0;
+
   return {
     rows,
+    purchasers,
+    perShareGross,
     gross,
     reliefApplied: opts.relief,
     reliefAmount,

@@ -10,7 +10,8 @@ loudly if a Cyprus formula or constant drifts.
 
 ```
 tests/
-  unit/calculators.audit.test.ts   33 tests — statutory scales + config guards
+  unit/calculators.audit.test.ts   43 tests — statutory scales, per-purchaser
+                                   assessment, and config guards
   e2e/
     helpers.ts                     shared fixtures, problem watchers, module map
     auth.setup.ts                  logs in once, stores the session
@@ -25,9 +26,9 @@ tests/
 ## Running
 
 ```bash
-npm run test          # unit — 258 tests, no external deps
+npm run test          # unit — 268 tests, no external deps
 npm run test:rls      # RLS  — 25 tests, needs the local Supabase stack up
-npm run test:e2e      # E2E  — 109 specs, desktop 1280px + mobile 390px
+npm run test:e2e      # E2E  — 112 specs, desktop 1280px + mobile 390px
 ```
 
 Useful subsets:

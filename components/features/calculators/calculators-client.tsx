@@ -90,33 +90,47 @@ export function CalculatorsClient({
   initialPrice: number | null;
 }) {
   const [priceInput, setPriceInput] = useState(initialPrice ? String(initialPrice) : "");
+  const [purchasersInput, setPurchasersInput] = useState("1");
   const [relief, setRelief] = useState(true); // default ON (doc 02 §C8)
   const [vatPaid, setVatPaid] = useState(false);
 
   const price = Number(priceInput);
   const valid = Number.isFinite(price) && price > 0;
+  // the service normalises anything odd, but keep the field usable while typing
+  const purchasers = Math.max(1, Math.floor(Number(purchasersInput) || 1));
 
   const transfer = useMemo(
     () =>
       valid && transferConfig
-        ? computeTransferFees(price, transferConfig, { relief, vatPaid })
+        ? computeTransferFees(price, transferConfig, { relief, vatPaid, purchasers })
         : null,
-    [valid, price, transferConfig, relief, vatPaid],
+    [valid, price, transferConfig, relief, vatPaid, purchasers],
   );
   const stamp = useMemo(
     () => (valid && stampConfig ? computeStampDuty(price, stampConfig) : null),
     [valid, price, stampConfig],
   );
 
+  const joint = transfer !== null && transfer.purchasers > 1;
+
   const transferSummary =
     transfer &&
     [
-      `Transfer fees for ${formatMoney(price)}:`,
+      `Transfer fees for ${formatMoney(price)}` +
+        (joint ? ` (${transfer.purchasers} purchasers):` : ":"),
       ...(transfer.vatExempt
         ? ["No transfer fees — transaction was subject to VAT."]
         : [
+            ...(joint
+              ? [`Assessed per purchaser on ${formatMoney(price / transfer.purchasers)} each:`]
+              : []),
             ...transfer.rows.map((b) => `  ${bandLabel(b)} @ ${pct(b.rate)} = ${formatMoney(b.fee)}`),
-            `Gross: ${formatMoney(transfer.gross)}`,
+            ...(joint
+              ? [
+                  `Per purchaser: ${formatMoney(transfer.perShareGross)}`,
+                  `× ${transfer.purchasers} purchasers = ${formatMoney(transfer.gross)}`,
+                ]
+              : [`Gross: ${formatMoney(transfer.gross)}`]),
             ...(transfer.reliefApplied
               ? [`50% relief: −${formatMoney(transfer.reliefAmount)}`]
               : []),
@@ -139,16 +153,32 @@ export function CalculatorsClient({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex max-w-xs flex-col gap-1.5">
-        <Label htmlFor="calc-price">Purchase price (€)</Label>
-        <Input
-          id="calc-price"
-          type="number"
-          min="0"
-          value={priceInput}
-          onChange={(e) => setPriceInput(e.target.value)}
-          placeholder="e.g. 300000"
-        />
+      <div className="flex flex-wrap items-start gap-4">
+        <div className="flex w-full max-w-xs flex-col gap-1.5">
+          <Label htmlFor="calc-price">Purchase price (€)</Label>
+          <Input
+            id="calc-price"
+            type="number"
+            min="0"
+            value={priceInput}
+            onChange={(e) => setPriceInput(e.target.value)}
+            placeholder="e.g. 300000"
+          />
+        </div>
+        {/* The DLS scale restarts for each purchaser's share, so a joint
+            purchase is materially cheaper than a sole one (finding CALC-1). */}
+        <div className="flex w-32 flex-col gap-1.5">
+          <Label htmlFor="calc-purchasers">Purchasers</Label>
+          <Input
+            id="calc-purchasers"
+            type="number"
+            min="1"
+            step="1"
+            value={purchasersInput}
+            onChange={(e) => setPurchasersInput(e.target.value)}
+          />
+          <p className="text-xs text-text-3">Equal shares</p>
+        </div>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -182,8 +212,27 @@ export function CalculatorsClient({
                   </p>
                 ) : (
                   <>
+                    {joint ? (
+                      <p className="text-xs text-text-3">
+                        Assessed per purchaser on{" "}
+                        <span className="tabular-nums text-text-2">
+                          {formatMoney(price / transfer.purchasers)}
+                        </span>{" "}
+                        each — the bands restart for every buyer.
+                      </p>
+                    ) : null}
                     <BandTable rows={transfer.rows} />
                     <dl className="flex flex-col gap-1 border-t border-border pt-2 text-sm">
+                      {joint ? (
+                        <div className="flex justify-between">
+                          <dt className="text-text-2">
+                            Per purchaser × {transfer.purchasers}
+                          </dt>
+                          <dd className="tabular-nums text-text-1">
+                            {formatMoney(transfer.perShareGross)}
+                          </dd>
+                        </div>
+                      ) : null}
                       <div className="flex justify-between">
                         <dt className="text-text-2">Gross</dt>
                         <dd className="tabular-nums text-text-1">{formatMoney(transfer.gross)}</dd>

@@ -63,6 +63,44 @@ test.describe("Cyprus purchase-cost calculators", () => {
     assertNoProblems(problems, "calculators");
   });
 
+  /**
+   * FINDING CALC-1 (fixed 2026-07-22). The DLS scale restarts for each
+   * purchaser's share, so the figure an agent quotes a couple must be lower
+   * than the sole-purchaser one. This is the assertion that would have caught
+   * the original defect on the screen the agent actually reads.
+   */
+  test("[CALC-1] a joint purchase is assessed per share (€5,800, not €8,600)", async ({
+    page,
+  }) => {
+    await priceIn(page, "300000");
+    expect(parseEuro(await totalOf(page, /transfer fees/i))).toBe(8600); // sole purchaser
+
+    await page.getByLabel(/purchasers/i).fill("2");
+    await expect(page.getByText(/assessed per purchaser/i)).toBeVisible();
+    await expect(page.getByText(/€\s?150[.,]000/).first()).toBeVisible();
+
+    expect(
+      parseEuro(await totalOf(page, /transfer fees/i)),
+      "joint purchase must be assessed on two shares of €150,000",
+    ).toBe(5800);
+  });
+
+  test("[CALC-1] stamp duty is per contract and ignores the purchaser count", async ({
+    page,
+  }) => {
+    await priceIn(page, "300000");
+    expect(parseEuro(await totalOf(page, /stamp duty/i))).toBe(507.5);
+    await page.getByLabel(/purchasers/i).fill("4");
+    expect(
+      parseEuro(await totalOf(page, /stamp duty/i)),
+      "stamp duty is charged on the document, not per buyer",
+    ).toBe(507.5);
+  });
+
+  test("[CALC-1] the purchasers field defaults to a sole purchaser", async ({ page }) => {
+    await expect(page.getByLabel(/purchasers/i)).toHaveValue("1");
+  });
+
   test("unticking relief doubles the transfer fee to the gross €17,200", async ({ page }) => {
     await priceIn(page, "300000");
     await page.getByRole("checkbox", { name: /50% relief/i }).uncheck();

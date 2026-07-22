@@ -92,27 +92,140 @@ describe("transfer fees — statutory scale, hand-computed", () => {
     expect(r.total).toBe(17200);
   });
 
-  /**
-   * FINDING CALC-1 (High, open). The DLS scale is assessed on each
-   * PURCHASER'S SHARE — the seeded config even says so ("per purchaser
-   * share") — but neither computeTransferFees nor the Calculators screen
-   * accepts a purchaser count, so a joint purchase is over-quoted.
-   *
-   * This test pins the CURRENT single-assessment behaviour so the defect is
-   * visible and so implementing the fix has to come here and change it.
-   * The commented figures are what a two-purchaser assessment should yield.
-   */
-  it("[CALC-1] assesses the whole price once, ignoring joint purchasers", () => {
-    const joint = computeTransferFees(300000, TRANSFER, { relief: true, vatPaid: false });
-    expect(joint.total).toBe(8600); // current: 300,000 assessed as one share
+});
 
-    // Correct for a couple buying jointly: two shares of 150,000 each ->
-    // (2,550 + 65,000 x 5%) = 5,800 each -> 11,600 gross -> 5,800 after relief.
-    const oneShare = computeTransferFees(150000, TRANSFER, { relief: false, vatPaid: false });
-    expect(oneShare.total).toBe(5800);
-    const correctJointTotal = (oneShare.total * 2) / 2; // gross 11,600, less 50% relief
-    expect(correctJointTotal).toBe(5800);
-    expect(joint.total).toBeGreaterThan(correctJointTotal); // over-quoted by 2,800
+/**
+ * FINDING CALC-1 (fixed 2026-07-22). The DLS scale is assessed on each
+ * PURCHASER'S SHARE — the seeded config says so ("per purchaser share") —
+ * so the bands RESTART for every purchaser. Assessing the whole price once
+ * over-quotes every joint purchase, which in Paphos is most of them.
+ *
+ * Equal shares are assumed: that is the ordinary case and the only one the
+ * screen collects. Unequal shares would need a per-share price list.
+ */
+describe("[CALC-1] transfer fees are assessed per purchaser share", () => {
+  it("a couple buying at EUR 300,000 pays on two shares of 150,000", () => {
+    // one share: 2,550 + (65,000 x 5%) = 5,800 -> x2 = 11,600 gross
+    const joint = computeTransferFees(300000, TRANSFER, {
+      relief: true,
+      vatPaid: false,
+      purchasers: 2,
+    });
+    expect(joint.gross).toBe(11600);
+    expect(joint.reliefAmount).toBe(5800);
+    expect(joint.total).toBe(5800);
+  });
+
+  it("the joint assessment is cheaper than the single one — the whole point", () => {
+    const single = computeTransferFees(300000, TRANSFER, { relief: true, vatPaid: false });
+    const joint = computeTransferFees(300000, TRANSFER, {
+      relief: true,
+      vatPaid: false,
+      purchasers: 2,
+    });
+    expect(single.total).toBe(8600);
+    expect(joint.total).toBe(5800);
+    expect(single.total - joint.total).toBe(2800); // the amount previously over-quoted
+  });
+
+  it("omitting purchasers is identical to a single purchaser (back-compatible)", () => {
+    const implicit = computeTransferFees(300000, TRANSFER, { relief: false, vatPaid: false });
+    const explicit = computeTransferFees(300000, TRANSFER, {
+      relief: false,
+      vatPaid: false,
+      purchasers: 1,
+    });
+    expect(implicit.total).toBe(17200);
+    expect(explicit.total).toBe(17200);
+    expect(implicit.purchasers).toBe(1);
+  });
+
+  it("three purchasers at EUR 255,000 each take the 3% band only", () => {
+    // 255,000 / 3 = 85,000 per share -> 2,550 each -> 7,650 gross
+    const r = computeTransferFees(255000, TRANSFER, {
+      relief: false,
+      vatPaid: false,
+      purchasers: 3,
+    });
+    expect(r.perShareGross).toBe(2550);
+    expect(r.gross).toBe(7650);
+    expect(r.rows.map((b) => b.fee)).toEqual([2550]); // a single band, per share
+  });
+
+  it("reports the per-share breakdown, not the combined one", () => {
+    const r = computeTransferFees(300000, TRANSFER, {
+      relief: false,
+      vatPaid: false,
+      purchasers: 2,
+    });
+    // rows describe ONE share of 150,000: 85,000 @ 3% then 65,000 @ 5%
+    expect(r.rows.map((b) => b.taxable)).toEqual([85000, 65000]);
+    expect(r.perShareGross).toBe(5800);
+    expect(r.gross).toBe(11600);
+    expect(r.purchasers).toBe(2);
+  });
+
+  it("handles a share that does not divide evenly", () => {
+    // 300,001 / 2 = 150,000.50 -> 2,550 + (65,000.50 x 5%) = 5,800.03 per share
+    const r = computeTransferFees(300001, TRANSFER, {
+      relief: false,
+      vatPaid: false,
+      purchasers: 2,
+    });
+    expect(r.perShareGross).toBe(5800.03);
+    expect(r.gross).toBe(11600.06);
+  });
+
+  it("coerces a nonsensical purchaser count to a single share", () => {
+    for (const bad of [0, -3, 0.4, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const r = computeTransferFees(300000, TRANSFER, {
+        relief: false,
+        vatPaid: false,
+        purchasers: bad,
+      });
+      expect(r.purchasers, `purchasers=${bad}`).toBe(1);
+      expect(r.total).toBe(17200);
+    }
+  });
+
+  it("truncates a fractional purchaser count rather than splitting a person", () => {
+    const r = computeTransferFees(300000, TRANSFER, {
+      relief: false,
+      vatPaid: false,
+      purchasers: 2.9,
+    });
+    expect(r.purchasers).toBe(2);
+  });
+
+  it("a VAT-paid purchase is nil however many purchasers there are", () => {
+    const r = computeTransferFees(300000, TRANSFER, {
+      relief: true,
+      vatPaid: true,
+      purchasers: 4,
+    });
+    expect(r.vatExempt).toBe(true);
+    expect(r.total).toBe(0);
+    expect(r.gross).toBe(0);
+  });
+
+  it("more purchasers never costs more than fewer", () => {
+    let prev = Number.POSITIVE_INFINITY;
+    for (let n = 1; n <= 6; n++) {
+      const total = computeTransferFees(600000, TRANSFER, {
+        relief: false,
+        vatPaid: false,
+        purchasers: n,
+      }).total;
+      expect(total).toBeLessThanOrEqual(prev);
+      prev = total;
+    }
+  });
+
+  it("STAMP DUTY is per contract and must NOT be split per purchaser", () => {
+    // Cyprus stamp duty is charged on the document, capped per contract —
+    // unlike transfer fees it does not restart for each buyer. This test
+    // exists so nobody "helpfully" threads purchasers into it later.
+    expect(computeStampDuty(300000, STAMP).total).toBe(507.5);
   });
 });
 

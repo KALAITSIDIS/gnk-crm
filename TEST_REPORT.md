@@ -11,11 +11,11 @@ This is a **well-built codebase**. That is not reassurance — it is the finding
 
 The defects that remain are concentrated in three places:
 
-1. **The money the app quotes to buyers.** The Cyprus constants are correct, but transfer fees are assessed on the whole purchase price instead of **per purchaser's share** — the seeded config's own description says "per purchaser share". A couple jointly buying at €300,000 is quoted **€8,600 when the correct figure is €5,800**. Joint purchases are the norm in Paphos. This is the single most important thing to fix.
+1. **The money the app quotes to buyers.** The Cyprus constants are correct, but transfer fees were assessed on the whole purchase price instead of **per purchaser's share** — the seeded config's own description says "per purchaser share". A couple jointly buying at €300,000 was quoted **€8,600 when the correct figure is €5,800**. Joint purchases are the norm in Paphos. **Fixed in this branch** (CALC-1).
 2. **The perimeter.** The app shipped with **no security headers at all** — no `X-Frame-Options`, no CSP, no `nosniff`, no `Referrer-Policy`, on local *and* on production. For an app whose admin can irreversibly erase a contact's personal data in one click, framing was a real risk. **Fixed during this audit and covered by tests; needs a deploy to reach production.**
 3. **Behaviour at volume.** Four list screens (`/leads`, `/viewings`, `/tasks`, `/keys`) apply a hard row cap with no pagination and no "showing X of Y" notice, while their headers show exact counts. Past the cap the header and the visible rows silently disagree — the same defect class as the 2026-07-21 list-scope fix, triggered by volume instead of status.
 
-**Two findings were fixed in this branch** (CALC-2 config validation, SEC-1…4 security headers), each with tests that fail loudly on regression. The rest are reported with proposed fixes, not implemented — scaling this list down is the operator's call.
+**Three findings were fixed in this branch** (CALC-1 per-purchaser fees, CALC-2 config validation, SEC-1…4 security headers), each with tests that fail loudly on regression. The rest are reported with proposed fixes, not implemented — scaling this list down is the operator's call.
 
 ### Verification evidence
 
@@ -23,10 +23,10 @@ The defects that remain are concentrated in three places:
 |---|---|
 | `npm run typecheck` | ✅ clean |
 | `npm run lint` | ✅ 0 errors, 0 warnings |
-| `npm run test` (unit) | ✅ **258 passed** (23 files) — was 225 before this audit |
+| `npm run test` (unit) | ✅ **268 passed** (23 files) — was 225 before this audit |
 | `npm run test:rls` | ✅ **25 passed** |
-| `npm run build` | ✅ compiled in 21.1s, no warnings |
-| `npx playwright test` | ✅ **109 passed** (desktop 1280px + mobile 390px) |
+| `npm run build` | ✅ compiled in 21.4s, no warnings |
+| `npx playwright test` | ✅ **112 passed** (desktop 1280px + mobile 390px) |
 | `npm audit` | ⚠️ 7 vulnerabilities (4 moderate, 3 high) — see DEP-1/DEP-2 |
 
 ### Pass/fail across all 11 modules
@@ -44,7 +44,7 @@ Legend: **Smoke** = automated load/console/network/layout at both viewports. **F
 | 7 | Tasks | ✅ | ✅ | ✅ quick-add → list | 🟡 **Pass with issue** — PERF-2 cap |
 | 8 | Keys | ✅ | ✅ | — | 🟡 **Pass with issue** — PERF-2 cap |
 | 9 | Reports | ✅ | ✅ | list + chain badge read | ✅ **Pass** |
-| 10 | Calculators | ✅ | ✅ | ✅ 11 E2E assertions vs statutory scale | 🔴 **Fail** — CALC-1 wrong fee on joint purchase |
+| 10 | Calculators | ✅ | ✅ | ✅ 14 E2E assertions vs statutory scale | ✅ **Pass** (CALC-1 + CALC-2 fixed here) |
 | 11 | Settings | ✅ | ✅ | config-save path reviewed | ✅ **Pass** (CALC-2 fixed here) |
 
 Screenshots: `tests/screenshots/<module>-desktop.png` and `-mobile.png` (22 files).
@@ -55,9 +55,9 @@ Screenshots: `tests/screenshots/<module>-desktop.png` and `-mobile.png` (22 file
 
 ### 🔴 Critical
 
-#### CALC-1 — Transfer fees are not assessed per purchaser share
+#### CALC-1 — Transfer fees were not assessed per purchaser share ✅ FIXED IN THIS BRANCH
 
-**Module:** Calculators · **Status:** OPEN · **Evidence:** `lib/services/calculators.ts:97`, `components/features/calculators/calculators-client.tsx:92-109`, `supabase/migrations/0003_seed.sql` (transfer_fees description), `tests/unit/calculators.audit.test.ts` → test `[CALC-1]`
+**Module:** Calculators · **Status:** **FIXED** · **Evidence:** `lib/services/calculators.ts` (`computeTransferFees`), `components/features/calculators/calculators-client.tsx`, `supabase/migrations/0003_seed.sql` (transfer_fees description), `tests/unit/calculators.audit.test.ts` → `[CALC-1]` block (10 tests), `tests/e2e/calculators.spec.ts` → `[CALC-1]` (3 specs)
 
 The Cyprus Department of Lands & Surveys transfer-fee scale (3% / 5% / 8%) is **progressive per purchaser's share**, not per contract. The seeded config says so explicitly: *"Department of Lands & Surveys transfer fee bands (progressive, per purchaser share)"*. Neither `computeTransferFees` nor the Calculators screen accepts a purchaser count, so every joint purchase is over-quoted.
 
@@ -71,24 +71,19 @@ each share = €2,550 + (€65,000 × 5%) = €5,800 → gross €11,600 → **�
 
 **Actual:** €8,600 — the whole €300,000 assessed as a single share (€2,550 + €4,250 + €10,400 = €17,200 gross).
 
-**Impact:** €2,800 overstated on a routine Paphos transaction. An agent quoting purchase costs to a couple gives them a materially wrong number. Over-quoting is commercially safer than under-quoting, but it is still wrong, and the same code path under-quotes nothing only by luck.
+**Impact:** €2,800 overstated on a routine Paphos transaction. An agent quoting purchase costs to a couple gave them a materially wrong number. Over-quoting is commercially safer than under-quoting, but it is still wrong, and the same code path under-quoted nothing only by luck.
 
-**Proposed fix**
-```ts
-// lib/services/calculators.ts
-export function computeTransferFees(
-  price: number,
-  config: TransferFeesConfig,
-  opts: { relief: boolean; vatPaid: boolean; purchasers?: number },
-): TransferFeesResult {
-  const shares = Math.max(1, Math.floor(opts.purchasers ?? 1));
-  // assess ONE share, then multiply — the bands restart for each purchaser
-  const perShare = computeBandRows(price / shares, config.bands);
-  const gross = round2(perShare.reduce((s, r) => s + r.fee, 0) * shares);
-  ...
-}
-```
-Add a "Number of purchasers" number input (default 1) to `calculators-client.tsx`, show the per-share breakdown *and* the combined total, and update the copy summary. Then change the `[CALC-1]` test to assert €5,800 — it is written to fail when the behaviour changes, which is the point.
+**Fix applied**
+
+`computeTransferFees` now takes an optional `purchasers` count, assesses **one share** (`price / purchasers`) against the bands, then multiplies out. `TransferFeesResult` gained `purchasers` and `perShareGross` so the UI can show the working. A "Purchasers" number input (default 1, labelled "Equal shares") sits beside the price field; when it is above 1 the card explains *"Assessed per purchaser on €150.000 each — the bands restart for every buyer"*, shows the per-share band breakdown, then `Per purchaser × 2` → `Gross` → relief → `Total`. The copy summary carries the same structure.
+
+Deliberate details:
+- **Stamp duty is untouched.** It is charged on the contract and capped per document, so it must *not* be split per purchaser. There is a test named exactly that, so nobody threads `purchasers` into it later.
+- **Equal shares are assumed** — the ordinary case and the only split the screen collects. Unequal shares would need a per-share price list.
+- A nonsensical count (`0`, negative, `NaN`, `Infinity`) coerces to 1; a fractional one truncates rather than splitting a person.
+- Omitting `purchasers` is byte-identical to the old behaviour, so nothing else that calls this function changed.
+
+**Verified on screen** at `/calculators?price=300000` with purchasers = 2: bands €2.550 + €3.250, `Per purchaser × 2` €5.800, Gross €11.600, 50% relief −€5.800, **Total €5.800** — and stamp duty still €507,50. 10 new unit tests and 3 new E2E specs, RED before / GREEN after.
 
 ---
 
@@ -267,10 +262,12 @@ CLS of exactly zero on all three is a genuinely good result and the metric a dev
 
 ---
 
-## 6. The single most important thing to fix first
+## 6. The single most important thing to do first
 
-**CALC-1 — assess transfer fees per purchaser's share.**
+**Merge and deploy this branch.**
 
-Everything else on this list is a robustness, hygiene or scale problem that bites later. CALC-1 is wrong *today*, on the most common transaction a Paphos desk handles, in the one screen whose entire job is to give a buyer a number. €2,800 of error on a €300,000 joint purchase is the kind of thing a client remembers. The fix is roughly twenty lines plus an input field, and the test that pins the wrong behaviour is already written and waiting to be inverted.
+The three fixes it carries — correct transfer fees on joint purchases, a config guard that stops a Settings typo quoting a 300% fee, and the security headers — are all done, tested and verified, but **none of them protects production until this branch ships**. The calculator is still quoting €8,600 to couples on the live site right now.
 
-Deploy the security-header fix (SEC-1…4) in the same push — it is already done and tested, and it only reaches production when this branch does.
+After that, the highest-value remaining item is **PERF-2** (pagination on `/leads`, `/viewings`, `/tasks`, `/keys`). It is invisible at today's data volumes and becomes a silent data-loss-to-the-user problem as the desk grows — the header will say 437 while the screen shows 100, with no way to reach the rest.
+
+Everything else on the list is hygiene or a known deferral.

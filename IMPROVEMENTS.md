@@ -13,8 +13,8 @@ are marked **[BACKLOG]** so this file does not silently fork the roadmap.
 
 | # | Item | Why it matters for a Paphos desk | Effort | Depends on |
 |---|---|---|---|---|
-| A1 | **Per-purchaser transfer fees** (finding CALC-1) | The most common Cyprus purchase is a couple buying jointly. Today they are quoted €2,800 too much on a €300,000 property. This is the calculator's core job. | 3 h | — |
-| A2 | **Deploy the security headers** (SEC-1…4, already written) | Clickjacking on an admin who can irreversibly erase a contact. Code is done and tested; it only protects production once this branch ships. | 15 min | merge `qa/full-audit` |
+| A1 | ~~Per-purchaser transfer fees (CALC-1)~~ | ✅ **Done in `qa/full-audit`.** Joint purchases were quoted €2,800 too much on a €300,000 property. Now assessed per share, with a "Purchasers" field and per-share working shown. | — | ships with the branch |
+| A2 | **Deploy this branch** (SEC-1…4 + CALC-1 + CALC-2) | All three fixes are written and tested but protect nothing until deployed. The live calculator still over-quotes couples today. | 15 min | merge `qa/full-audit` |
 | A3 | **Move `shadcn` to devDependencies** (DEP-1) | Removes a CLI, the MCP SDK and hono from the production deploy, and 3 of 7 audit vulnerabilities with them. | 15 min | — |
 | A4 | **Label every Select trigger** (A11Y-1) | WCAG 4.1.2 failure on every dropdown in the app. Also unblocks name-based E2E selectors. ~15 `<Label htmlFor>` + `<SelectTrigger id>` pairs. | 2 h | — |
 | A5 | **"Showing 100 of 437" notice on capped lists** (PERF-2, interim) | Stops the header and the visible rows silently disagreeing. Buys time before real pagination. | 2 h | — |
@@ -24,7 +24,9 @@ are marked **[BACKLOG]** so this file does not silently fork the roadmap.
 | A9 | **Run Lighthouse once on live `/dashboard`** | The only performance gap this audit could not close (needs prod credentials). Establishes the real-world baseline. | 30 min | prod login |
 | A10 | **Turn on Supabase leaked-password protection** | One dashboard toggle. Blocks known-breached passwords at signup/reset. Long outstanding. | 5 min | Supabase dashboard |
 
-**Suggested first push:** A2 + A3 + A1. Security reaches production, the deploy slims down, and the headline correctness bug closes — all in under a day.
+**Suggested first push:** A2 + A3. Deploying the branch closes the headline correctness bug and the security-header gap in one go; moving `shadcn` to devDependencies slims the deploy and drops 3 of 7 vulnerabilities. Under an hour of work.
+
+**Possible follow-up to A1:** the calculator now assumes **equal** shares. If unequal splits (say 70/30 between spouses, or an investor pair) turn out to be common on the desk, the fix is a per-share price list rather than a single count — roughly a day. Worth asking the agents before building it.
 
 ---
 
