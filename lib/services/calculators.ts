@@ -33,23 +33,47 @@ export interface BandRow {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+const isFraction = (n: unknown): n is number =>
+  typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1;
+
+/**
+ * A band table is only safe to compute with if it is STRICTLY ASCENDING and
+ * only its LAST band is open-ended. `computeBandRows` walks the bands in
+ * array order and slices between the previous bound and this one, so a table
+ * that violates either rule produces silently wrong money:
+ *   - descending bounds  -> a negative slice, i.e. a negative fee;
+ *   - an open band in the middle -> the loop breaks and later bands vanish.
+ * Rates are likewise bounded to 0..1, because the single most likely edit in
+ * Settings is typing "3" for 3% — which would quote a 300% fee.
+ * (Audit 2026-07-22, finding CALC-2: cyprus_config is admin-editable and this
+ * guard is the only thing between a typo and a wrong figure shown to a buyer.)
+ */
 function isBandArray(v: unknown): v is FeeBand[] {
-  return (
-    Array.isArray(v) &&
-    v.length > 0 &&
-    v.every(
-      (b) =>
-        b !== null &&
-        typeof b === "object" &&
-        (typeof (b as FeeBand).up_to === "number" || (b as FeeBand).up_to === null) &&
-        typeof (b as FeeBand).rate === "number",
-    )
-  );
+  if (!Array.isArray(v) || v.length === 0) return false;
+
+  let prev = 0;
+  for (let i = 0; i < v.length; i++) {
+    const b = v[i] as FeeBand | null;
+    if (b === null || typeof b !== "object") return false;
+    if (!isFraction(b.rate)) return false;
+
+    const isLast = i === v.length - 1;
+    if (b.up_to === null) {
+      // open-ended band is legal only as the final entry
+      if (!isLast) return false;
+      continue;
+    }
+    if (typeof b.up_to !== "number" || !Number.isFinite(b.up_to)) return false;
+    // strictly ascending, and the first bound must be above zero
+    if (b.up_to <= prev) return false;
+    prev = b.up_to;
+  }
+  return true;
 }
 
 export function parseTransferFeesConfig(value: unknown): TransferFeesConfig | null {
   const v = value as Partial<TransferFeesConfig> | null;
-  if (!v || !isBandArray(v.bands) || typeof v.relief_pct !== "number") return null;
+  if (!v || !isBandArray(v.bands) || !isFraction(v.relief_pct)) return null;
   return {
     bands: v.bands,
     relief_pct: v.relief_pct,
@@ -60,6 +84,9 @@ export function parseTransferFeesConfig(value: unknown): TransferFeesConfig | nu
 export function parseStampDutyConfig(value: unknown): StampDutyConfig | null {
   const v = value as Partial<StampDutyConfig> | null;
   if (!v || !isBandArray(v.bands)) return null;
+  if (v.cap !== undefined && v.cap !== null) {
+    if (typeof v.cap !== "number" || !Number.isFinite(v.cap) || v.cap < 0) return null;
+  }
   return { bands: v.bands, cap: typeof v.cap === "number" ? v.cap : null };
 }
 

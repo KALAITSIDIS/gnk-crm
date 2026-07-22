@@ -12,6 +12,11 @@
 
 # testing
 /coverage
+# Playwright: keep the specs and the module screenshots, drop the run artifacts
+/tests/.auth
+/tests/.playwright-output
+/tests/.playwright-report
+/test-results
 
 # next.js
 /.next/

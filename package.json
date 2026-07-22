@@ -10,6 +10,10 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:rls": "vitest run -c vitest.rls.config.ts",
+    "test:e2e": "playwright test",
+    "test:e2e:desktop": "playwright test --project=setup --project=desktop",
+    "test:e2e:security": "playwright test tests/e2e/security.spec.ts",
+    "test:e2e:report": "playwright show-report tests/.playwright-report",
     "db:types": "npx supabase gen types typescript --local > lib/supabase/database.types.ts",
     "import:contacts": "node --env-file=.env.local scripts/import/contacts.mts",
     "import:properties": "node --env-file=.env.local scripts/import/properties.mts"
@@ -41,6 +45,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
