@@ -104,8 +104,12 @@ describe("evidence PDF text is extractable (copy/paste + search)", () => {
   it("leaves no unmapped glyphs anywhere in the document", async () => {
     const text = extractPdfText(await renderEvidencePdf(ligatureFixture, "22 Jul 2026, 18:14"));
     expect(text).not.toContain("�");
-    // the report hash is what a verifier pastes into "Verify a report"
-    expect(text).toContain(ligatureFixture.reportHash);
+    // The report hash is what a verifier pastes into "Verify a report". Assert
+    // it across run boundaries: react-pdf may split a text run mid-string (a
+    // real production report drew the digest as "0" + the remaining 63 chars),
+    // which viewers rejoin by position but our per-run decoder reports as two
+    // lines. What matters is that every character is present and mapped.
+    expect(text.replace(/\n/g, "")).toContain(ligatureFixture.reportHash);
   });
 });
 
