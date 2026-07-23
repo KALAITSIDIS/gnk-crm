@@ -71,20 +71,25 @@ test.describe.serial("critical path", () => {
     const problems = watchForProblems(page);
     await page.goto("/pipeline", { waitUntil: "networkidle" });
 
-    const board = page.locator("main");
+    const board = page.getByTestId("kanban-board");
     await expect(board).toBeVisible();
 
-    // FINDING UX-3: the kanban columns are plain <div>s — no data-stage-id, no
-    // role="list", no heading element; stage names are bare <span>s. There is
-    // therefore no stable hook to count columns, so this asserts on the seeded
-    // stage vocabulary instead. Adding `data-stage-id` would make this exact.
-    const text = await board.innerText();
-    const seededStages = ["New", "Qualified", "Viewing"];
-    for (const stage of seededStages) {
-      expect(text, `pipeline is missing the "${stage}" stage column`).toContain(stage);
+    // UX-3 fixed 2026-07-23: columns carry `data-stage-id`, so this counts the
+    // real thing instead of grepping the page for seeded stage names.
+    const columns = board.locator("[data-stage-id]");
+    const columnCount = await columns.count();
+    expect(columnCount, "pipeline rendered no stage columns").toBeGreaterThan(0);
+
+    // every column must expose an id, a heading and a money total
+    for (let i = 0; i < columnCount; i++) {
+      const col = columns.nth(i);
+      await expect(col).toHaveAttribute("data-stage-id", /.+/);
+      await expect(
+        col.getByRole("heading"),
+        "each stage column needs a heading to navigate by",
+      ).toHaveCount(1);
+      await expect(col, "stage column shows no money total").toContainText("€");
     }
-    // every column prints a money total, even when empty
-    expect(text, "pipeline shows no stage totals").toMatch(/€/);
 
     assertNoProblems(problems, "pipeline");
   });

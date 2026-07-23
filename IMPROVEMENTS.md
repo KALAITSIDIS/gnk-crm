@@ -19,7 +19,7 @@ are marked **[BACKLOG]** so this file does not silently fork the roadmap.
 | A4 | ~~Label every Select trigger (A11Y-1)~~ | ✅ **Done** in `fix/a11y-1-select-labels`. Scoped at ~15 pairs / 2h; actually **40 orphaned labels across 15 files** plus 3 controls with no label at all that only a DOM walk could find. Guarded by `tests/e2e/accessibility.spec.ts`. | — | ships with the branch |
 | A5 | ~~"Showing 100 of 437" notice on capped lists~~ | ✅ **Superseded by B1** — real pagination shipped in `fix/perf-2-pagination`, so the interim notice was never needed. | — | — |
 | A6 | **Disable the relief tick when "VAT was paid" is on** (UX-4) | Removes a confusing screen state during a live client conversation. | 30 min | — |
-| A7 | **`data-stage-id` + `role="list"` on kanban columns** (UX-3) | Makes the pipeline testable and screen-reader navigable. | 1 h | — |
+| A7 | ~~`data-stage-id` + list semantics on kanban columns (UX-3)~~ | ✅ **Done 2026-07-23.** Columns are labelled `<section>`s with `<h3>` headings and `<ul>/<li>` deal lists; drag-and-drop verified intact by a full keyboard move. | — | ships with the branch |
 | A8 | **Isolate the RLS suite's database** (TEST-1) | The local dev dashboard is currently dominated by `Test admin …` fixtures after any RLS run, which makes manual verification unreliable. | 3 h | — |
 | A9 | **Run Lighthouse once on live `/dashboard`** | The only performance gap this audit could not close (needs prod credentials). Establishes the real-world baseline. | 30 min | prod login |
 | A10 | **Turn on Supabase leaked-password protection** | One dashboard toggle. Blocks known-breached passwords at signup/reset. Long outstanding. | 5 min | Supabase dashboard |

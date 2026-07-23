@@ -151,10 +151,26 @@ function StageColumn({
   const closedColumn = stage.is_won || stage.is_lost;
   const { setNodeRef, isOver } = useDroppable({ id: stage.id, disabled: closedColumn });
   const total = deals.reduce((sum, d) => sum + (d.expected_value ?? 0), 0);
+  const headingId = `stage-heading-${stage.id}`;
 
+  /**
+   * Audit 2026-07-22 (UX-3): this column used to be a bare <div> with the
+   * stage name in a <span>, so a screen reader met the whole board as one
+   * undifferentiated run of text — no headings to jump between, no list
+   * boundaries, and the bare "3" beside the name read as a stray number.
+   * Automated tests had nothing to hold onto either and had to assert on
+   * seeded stage NAMES; `data-stage-id` gives them the real hook.
+   *
+   * The cards stay inside <li>s rather than carrying the list roles
+   * themselves: dnd-kit puts role="button" on the draggable via its
+   * `attributes`, and overwriting that would cost the drag affordance.
+   */
   return (
-    <div
+    <section
       ref={setNodeRef}
+      data-stage-id={stage.id}
+      data-stage-closed={closedColumn ? "true" : undefined}
+      aria-labelledby={headingId}
       title={closedColumn ? "Deals close via the guarded flow on the deal page" : undefined}
       className={cn(
         "flex w-64 shrink-0 flex-col gap-2 rounded-[10px] border border-border bg-surface-2 p-2",
@@ -163,28 +179,39 @@ function StageColumn({
       )}
     >
       <div className="flex items-center justify-between px-1 pt-1">
-        <span className="text-[13px] font-semibold text-text-1">
+        <h3 id={headingId} className="text-[13px] font-semibold text-text-1">
           {stage.name}
           {stage.is_won ? " ✓" : stage.is_lost ? " ✕" : ""}
+        </h3>
+        {/* the bare count needs a name of its own or it reads as a loose digit */}
+        <span
+          className="text-xs tabular-nums text-text-3"
+          aria-label={`${deals.length} ${deals.length === 1 ? "deal" : "deals"}`}
+        >
+          {deals.length}
         </span>
-        <span className="text-xs tabular-nums text-text-3">{deals.length}</span>
       </div>
       <span className="px-1 text-xs tabular-nums text-text-2">{formatMoney(total)}</span>
-      <div className="flex min-h-16 flex-col gap-2">
-        {deals.map((deal) =>
-          deal.status === "open" ? (
-            <DraggableCard key={deal.id} deal={deal} />
-          ) : (
-            <DealCard key={deal.id} deal={deal} />
-          ),
-        )}
-      </div>
+      <ul
+        aria-label={`${stage.name} deals`}
+        className="flex min-h-16 list-none flex-col gap-2"
+      >
+        {deals.map((deal) => (
+          <li key={deal.id}>
+            {deal.status === "open" ? (
+              <DraggableCard deal={deal} />
+            ) : (
+              <DealCard deal={deal} />
+            )}
+          </li>
+        ))}
+      </ul>
       {closedColumn ? (
         <p className="px-1 pb-1 text-[11px] leading-snug text-text-3">
           Last 30 days — close deals from the deal page
         </p>
       ) : null}
-    </div>
+    </section>
   );
 }
 
@@ -275,6 +302,9 @@ export function KanbanBoard({
       onDragEnd={onDragEnd}
     >
       <div
+        role="group"
+        aria-label="Pipeline stages"
+        data-testid="kanban-board"
         className={cn("flex gap-3 overflow-x-auto pb-2", isPending && "pointer-events-none opacity-70")}
       >
         {stages.map((stage) => (

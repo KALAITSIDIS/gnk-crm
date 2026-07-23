@@ -186,3 +186,54 @@ test("[A11Y-1] checkbox groups are exposed as named groups, not orphan labels", 
   await expect(page.getByRole("group", { name: /languages/i })).toBeVisible();
   await expect(page.getByRole("group", { name: /contact types/i })).toBeVisible();
 });
+
+/**
+ * UX-3 (fixed 2026-07-23). The kanban was one undifferentiated run of text to
+ * a screen reader: columns were bare <div>s, stage names bare <span>s, and the
+ * per-column deal count read as a loose digit. These pin the structure that
+ * replaced it.
+ */
+test.describe("[UX-3] pipeline kanban structure", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto("/pipeline", { waitUntil: "networkidle" });
+  });
+
+  test("the board is a named group of stage columns", async ({ page }) => {
+    await expect(page.getByRole("group", { name: /pipeline stages/i })).toBeVisible();
+    const columns = page.locator("[data-stage-id]");
+    expect(await columns.count(), "no stage columns rendered").toBeGreaterThan(0);
+  });
+
+  test("every stage is a heading a screen reader can jump to", async ({ page }) => {
+    const columns = page.locator("[data-stage-id]");
+    const count = await columns.count();
+    for (let i = 0; i < count; i++) {
+      // exactly one heading per column, and it names the column via
+      // aria-labelledby (so the section is announced with the stage name)
+      await expect(columns.nth(i).getByRole("heading")).toHaveCount(1);
+      await expect(columns.nth(i)).toHaveAttribute("aria-labelledby", /stage-heading-/);
+    }
+  });
+
+  test("deals are exposed as a named list, not loose divs", async ({ page }) => {
+    const lists = page.getByRole("list").filter({ hasNotText: /^$/ });
+    expect(await lists.count(), "kanban exposed no lists").toBeGreaterThan(0);
+    // each column's list carries the stage name, so "3 items" has context
+    const firstColumn = page.locator("[data-stage-id]").first();
+    await expect(firstColumn.getByRole("list")).toHaveAttribute("aria-label", /deals$/);
+  });
+
+  test("the per-column count is named, not a stray number", async ({ page }) => {
+    const firstColumn = page.locator("[data-stage-id]").first();
+    await expect(firstColumn.getByLabel(/^\d+ deals?$/)).toBeVisible();
+  });
+
+  test("won/lost columns are marked as closed for styling and tests", async ({ page }) => {
+    // Not every board has a closed column in view, so this only asserts the
+    // contract when one is present.
+    const closed = page.locator("[data-stage-closed='true']");
+    if (await closed.count()) {
+      await expect(closed.first()).toHaveAttribute("data-stage-id", /.+/);
+    }
+  });
+});

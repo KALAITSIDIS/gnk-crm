@@ -255,8 +255,24 @@ Three distinct fix shapes were needed, not one:
 
 ### 🟢 Low
 
-#### UX-3 — Kanban columns have no test hook, list role or heading
-`components/features/pipeline/kanban.tsx:156` — columns are plain `<div>`s; stage names are `<span>`s. No `data-stage-id`, no `role="list"`, no heading element. A screen reader gets an undifferentiated pile of text, and automated tests cannot count columns (the E2E spec asserts on stage *names* instead). **Fix:** add `data-stage-id={stage.id}`, `role="list"` + `aria-label={stage.name}`, and promote the stage name to an `<h3>`.
+#### UX-3 — Kanban columns had no test hook, list role or heading ✅ FIXED
+
+**Module:** Pipeline · **Status:** **FIXED** · **Evidence:** `components/features/pipeline/kanban.tsx`, `tests/e2e/accessibility.spec.ts` → `[UX-3]` block (5 specs), `tests/e2e/happy-path.spec.ts` step 3
+
+Columns were plain `<div>`s with stage names in `<span>`s — no `data-stage-id`, no list semantics, no heading. A screen reader met the whole board as one undifferentiated run of text with no headings to jump between, and the bare deal count beside each stage read as a stray digit. Automated tests had nothing stable to hold onto either: the happy-path spec had to grep the page for seeded stage *names*.
+
+**Fix applied:**
+- Each column is now a `<section data-stage-id aria-labelledby>` with the stage name promoted to an `<h3>`.
+- Deals sit in a `<ul aria-label="<stage> deals">` with one `<li>` per card, so a screen reader announces list boundaries and position.
+- The bare per-column count carries `aria-label="N deals"` instead of reading as a loose number.
+- The scrolling container is `role="group" aria-label="Pipeline stages"` with a `data-testid`.
+- Won/lost columns expose `data-stage-closed="true"`.
+
+**The one real risk here was breaking drag-and-drop**, since the cards were re-parented into `<li>`s. dnd-kit puts `role="button"` on the draggable through its `attributes`, so the list roles deliberately went on the wrapper elements rather than the cards. Verified in-browser: `draggableRole` is still `"button"` on open-stage cards and absent on the read-only Completed column, and a **full keyboard move ran end to end** — pickup → ArrowRight → drop moved "Audit Apt Beta" from Qualified to Viewing, with the announcements naming stages correctly ("was dropped on the Viewing stage"). Confirmed it persisted rather than being optimistic UI: psql shows the deal in `Viewing` with its `stage_changed` event written.
+
+Layout is unchanged — all eight columns still measure 256px wide.
+
+**Verified:** typecheck 0, lint 0, 283 unit, 26 RLS, **160 E2E**, build clean.
 
 #### TEST-1 — The RLS suite pollutes the shared local dev database
 `npm run test:rls` writes fixtures (`Test admin admin-a-…`, `RLS Stage …`, keys `K18-…`) into the same local Postgres the dev server reads, and never cleans up — because `events` is append-only and RLS denies DELETE. After one run the dev dashboard's "Top agents by activity" and "Latest events" are dominated by test rows. Harmless to production, but it makes local manual verification noisy and makes real data hard to eyeball. **Fix:** run the RLS suite against a dedicated throwaway database/schema, or namespace its org and filter that org out of dev dashboards.
