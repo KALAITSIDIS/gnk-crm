@@ -52,8 +52,14 @@ npm run test:e2e:report      # open the last HTML report
 ## Running against a deployed environment
 
 ```bash
-E2E_BASE_URL=https://gnk-crm.vercel.app npx playwright test tests/e2e/security.spec.ts
+E2E_BASE_URL=https://gnk-crm.vercel.app npx playwright test --project=desktop --no-deps tests/e2e/security.spec.ts
 ```
+
+`--no-deps` is required: the `setup` project logs in with the LOCAL seed
+credentials, which correctly fails against a deployed environment. The
+security suite is entirely anonymous, so it needs no session and skipping the
+dependency is the right call — don't "fix" this by putting production
+credentials in `E2E_EMAIL` / `E2E_PASSWORD`.
 
 The **write** specs (`happy-path`) self-skip unless the base URL is localhost —
 a deliberate guard so the suite can never mutate the client's production data.

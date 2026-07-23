@@ -123,6 +123,59 @@ test.describe("security headers", () => {
     );
   });
 
+  /**
+   * SEC-5 (investigated 2026-07-23 — no code change warranted).
+   *
+   * Production returns `Access-Control-Allow-Origin: *`, which the audit
+   * flagged. Investigation showed it comes from Vercel's CDN defaults for
+   * STATIC and prerendered responses (there is no vercel.json and no CORS
+   * code in the app — the only `cors` hits in the repo are a transitive
+   * lockfile entry). Those responses are public by construction: compiled
+   * JS/CSS and the logged-out login form. They contain no user data.
+   *
+   * Every DYNAMIC route carries no ACAO at all, and nothing anywhere sets
+   * `Access-Control-Allow-Credentials`, so a cross-origin script cannot read
+   * an authenticated response even where the wildcard is present.
+   *
+   * Removing the wildcard from static assets would be cosmetic. What is worth
+   * guarding is the invariant that actually protects data, so that is what
+   * these tests pin — they would fail if someone ever added a permissive CORS
+   * policy to the app routes or turned on credentialed CORS.
+   */
+  test("[SEC-5] authenticated routes never advertise CORS", async ({ request, baseURL }) => {
+    const protectedPaths = [
+      "/dashboard",
+      "/properties",
+      "/contacts",
+      "/leads",
+      "/reports",
+      "/settings/users",
+    ];
+
+    for (const path of protectedPaths) {
+      const res = await request.get(`${baseURL}${path}`, { maxRedirects: 0 });
+      const headers = res.headers();
+      expect(
+        headers["access-control-allow-origin"],
+        `${path} advertises CORS — a cross-origin script could read app responses`,
+      ).toBeUndefined();
+    }
+  });
+
+  test("[SEC-5] credentialed CORS is never enabled, anywhere", async ({ request, baseURL }) => {
+    // The wildcard on static assets is only safe while this stays off: with
+    // `Allow-Credentials: true` a wildcard origin would let any site read
+    // authenticated responses. Browsers reject that combination, but a
+    // specific-origin echo plus credentials would not be rejected.
+    for (const path of ["/login", "/dashboard", "/"]) {
+      const res = await request.get(`${baseURL}${path}`, { maxRedirects: 0 });
+      expect(
+        res.headers()["access-control-allow-credentials"],
+        `${path} enables credentialed CORS`,
+      ).toBeUndefined();
+    }
+  });
+
   test("the signing screen keeps geolocation permitted for self", async ({ page }) => {
     // Regression guard: locking geolocation down would silently stop viewing
     // slips being geotagged, and slips are the commission evidence.

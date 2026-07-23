@@ -341,8 +341,27 @@ That still matters: CI runs a fresh stack on every push, and a disaster-recovery
 
 Hosted verified after apply: `anon ✗ / authenticated ✗ / service_role ✓`, history 19 rows, `non_filename_versions = 0`, `verify-events-chain` cron intact.
 
-#### SEC-5 — `Access-Control-Allow-Origin: *` on production responses
-Production returns `Access-Control-Allow-Origin: *` on the login HTML. Low risk in practice — auth is cookie-based and the header carries no `Allow-Credentials`, so a cross-origin read of authenticated content still fails. Worth removing anyway to avoid a future change turning it into a real leak. Likely Vercel default; check project settings.
+#### SEC-5 — `Access-Control-Allow-Origin: *` on production responses ✅ INVESTIGATED — no change warranted
+
+**Module:** app-wide · **Status:** **CLOSED**, guard added · **Evidence:** `tests/e2e/security.spec.ts` → `[SEC-5]` (2 specs)
+
+My original write-up said this was "worth removing anyway". Having investigated, **it isn't** — and removing it would have been cosmetic work on the wrong thing.
+
+**Where it comes from.** There is no `vercel.json` and no CORS code in the app; the only `cors` hits in the repo are a transitive lockfile entry. The header is Vercel's CDN default for **static and prerendered** responses.
+
+**Which responses actually carry it** (measured on production):
+
+| Response | ACAO | Contains user data? |
+|---|---|---|
+| `/_next/static/…css` (compiled asset) | `*` | no |
+| `/login` (prerendered, logged out) | `*` | no |
+| `/dashboard`, `/properties`, `/contacts`, `/leads`, `/reports`, `/settings/users` | **none** | yes |
+
+Every dynamic route — i.e. everything that can return client data — advertises no CORS at all, and **nothing anywhere sets `Access-Control-Allow-Credentials`**. A cross-origin script therefore cannot read an authenticated response even where the wildcard is present. A wildcard on public compiled assets is what every CDN does and is not a finding.
+
+**What was done instead of a cosmetic fix:** two regression specs pin the invariant that actually protects data — *authenticated routes never advertise CORS*, and *credentialed CORS is never enabled anywhere*. Those would fail if someone later added a permissive CORS policy to the app routes, or switched on `Allow-Credentials` (which, paired with a specific-origin echo rather than a wildcard, browsers would happily accept).
+
+**Verified against production**, not just locally: both `[SEC-5]` specs pass against `https://gnk-crm.vercel.app`, alongside the header and bundle-hygiene checks.
 
 #### UX-4 — Relief and "VAT was paid" are presented as independent ticks
 `calculators-client.tsx:161-176` — the two checkboxes are logically exclusive (relief applies to transfers *not* subject to VAT; VAT-paid means no transfer fee at all). The computation resolves it correctly (VAT-paid short-circuits first), so the number is right, but leaving "50% relief" ticked and visible next to a nil assessment is confusing. **Fix:** disable/grey the relief tick when "VAT was paid" is on.
