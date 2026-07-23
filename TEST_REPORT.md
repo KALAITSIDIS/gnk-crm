@@ -189,15 +189,31 @@ A stale or junk `?page=` is handled everywhere: PostgREST's `PGRST103` (range pa
 
 **Verified in the browser** on 40 seeded leads: page 1 shows 25 rows under *"Showing 1–25 of 40 leads · Page 1 of 2 · Next"*; page 2 shows the remaining 15 as *"Showing 26–40 of 40"*, with Previous preserving `?status=all` and dropping the redundant `page=1`. 13 new unit tests, 6 new E2E specs.
 
-#### PERF-3 — Admin dashboard money totals silently undercount past 2,000 rows
+#### PERF-3 — Admin dashboard money totals silently undercounted past 2,000 rows ✅ FIXED
 
-**Module:** Dashboard · **Status:** OPEN (known, in `docs/BACKLOG.md`) · **Evidence:** `components/features/dashboard/admin-dashboard.tsx:102-142,159-160`
+**Module:** Dashboard · **Status:** **FIXED** (migration 0018, awaiting hosted apply) · **Evidence:** `supabase/migrations/0018_dashboard_aggregates.sql`, `components/features/dashboard/admin-dashboard.tsx`, RLS test 22
 
-`OPEN PIPELINE` and `WON THIS MONTH` are summed **in TypeScript** over rows fetched with `.limit(2000)`; `Listings by status` counts over `.limit(2000)`. Counts use `count: "exact"` and stay honest, but the **€ figures do not** — past 2,000 rows they under-report with no warning on screen.
+`OPEN PIPELINE` and `WON THIS MONTH` were summed **in TypeScript** over rows fetched with `.limit(2000)`; `Listings by status` and `Leads by source` counted the same way, and `Top agents` ranked a `.limit(5000)` sample of events. Counts used `count: "exact"` and stayed honest — the **€ figures did not**.
 
-Not urgent (the desk is far from 2,000 open deals), but it is a *silent* wrong number on the headline KPI, and `Listings by status` is the one plausibly reachable within a few years.
+**Demonstrated, not assumed.** Inside a transaction that was rolled back, 2,100 synthetic open deals were added to the seeded org (2,122 total):
 
-**Fix:** move the aggregation into Postgres — an RPC returning `sum(expected_value)` and `count(*)` grouped by stage, as already scoped in `docs/BACKLOG.md`. Until then, show a "figures capped at 2,000 rows" note when the cap is hit.
+| | Open pipeline |
+|---|---|
+| New RPC (no cap) | **€2,845,000** ✅ |
+| Old capped `.limit(2000)` sum | €2,723,000 |
+| **Silent error** | **−€122,000** |
+
+Nothing was left behind — `open_deals_after_rollback=22, probes_left=0`.
+
+**Fix applied:** `admin_dashboard_stats(p_month_start, p_d7, p_d30)` — one `SECURITY INVOKER`, `stable` function doing every group-by in SQL and returning jsonb. Design points worth keeping:
+- **SECURITY INVOKER is load-bearing.** The aggregates run under the *caller's* RLS, exactly like the queries they replace, so this can never become a way to read another org's totals. RLS test 22 pins it: org B's figures are reconciled against org B's own row query and asserted different from org A's.
+- **Window bounds are parameters, not computed in SQL.** The Cyprus wall-clock month boundary already lives in `lib/utils/tz.ts` with unit tests (doc 02 §A11); re-deriving it in SQL would be a second source of truth that could drift across a DST edge.
+- **Two indexes added.** `deals_stage_idx` is *partial* on `status='open'`, so the won-this-month window had no usable index at all; `leads_status_idx` leads with `(org_id, status, …)` so a `received_at` range across all statuses could not use it. Added `deals_won_idx` and `leads_received_idx`.
+- **Stamp duty of round trips:** 9 dashboard queries became 4.
+
+**Verified:** every on-screen figure reconciled against direct SQL scoped to the same org — open pipeline €745.000/22, won €350.000/1, draft listings 26, new leads 7d 51, top agent 71 events — plus internal reconciliation (stage breakdown sums to the KPI). typecheck 0, lint 0, 283 unit, **26 RLS**, 86 E2E desktop, build clean.
+
+**⚠️ Not yet on production.** Migration 0018 must be hand-applied to hosted `yjgirvzgoiywdojnpkpd` before this deploys, or the dashboard will call a function that does not exist. See "Deploying PERF-3" below.
 
 #### A11Y-1 — Form controls have no accessible name ✅ FIXED IN THIS BRANCH
 
@@ -294,6 +310,22 @@ CLS of exactly zero on all three is a genuinely good result and the metric a dev
 - **The manual production smoke test** (login + create property + sign slip on live) remains outstanding — it writes real client data and is the operator's to run.
 
 ---
+
+## 5a. Deploying PERF-3 — read before pushing
+
+This is the **first audit fix that carries a migration**, and in this project code and schema land out of order: Vercel deploys on push, but hosted migrations are applied by hand. `admin_dashboard_stats` must exist on hosted **before** the deploy, or the admin dashboard throws to its error boundary for every admin.
+
+Order of operations:
+
+1. Apply `supabase/migrations/0018_dashboard_aggregates.sql` to hosted `yjgirvzgoiywdojnpkpd`. The working recipe (see project history) is the Supabase MCP `execute_sql` for the DDL, then a second `execute_sql` recording the version so history stays filename-keyed:
+   ```sql
+   insert into supabase_migrations.schema_migrations (version, name)
+   values ('0018','0018_dashboard_aggregates.sql') on conflict do nothing;
+   ```
+2. Verify on hosted: function exists, `SECURITY INVOKER`, `search_path` pinned, EXECUTE `anon ✗ / authenticated ✓ / service_role ✓`, and both new indexes present.
+3. Only then push `main`.
+
+The index creations use `create index if not exists` and the function uses `create or replace`, so re-running the migration is safe.
 
 ## 6. The single most important thing to do first
 

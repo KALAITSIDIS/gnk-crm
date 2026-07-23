@@ -1054,4 +1054,92 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     const rpc = await adminA.client.rpc("run_chain_checks");
     expect(rpc.error, "run_chain_checks must be revoked from authenticated").not.toBeNull();
   });
+
+  it("22. admin_dashboard_stats: SECURITY INVOKER — org-scoped, exact, anon denied", async () => {
+    // PERF-3 (migration 0018). The dashboard used to sum money in TS over
+    // .limit(2000) fetches, so the € tiles silently undercounted past the cap.
+    // This RPC does the group-bys in SQL and MUST stay under the caller's RLS.
+    const args = {
+      p_month_start: new Date(Date.now() - 365 * 86_400_000).toISOString(),
+      p_d7: new Date(Date.now() - 7 * 86_400_000).toISOString(),
+      p_d30: new Date(Date.now() - 30 * 86_400_000).toISOString(),
+    };
+
+    // anon must never reach org aggregates
+    const anonRes = await anonClient().rpc("admin_dashboard_stats", args);
+    expect(anonRes.error, "anon must not execute admin_dashboard_stats").not.toBeNull();
+
+    const { data: statsA, error: errA } = await adminA.client.rpc("admin_dashboard_stats", args);
+    expect(errA).toBeNull();
+    expect(statsA).toBeTruthy();
+
+    // RECONCILIATION: the aggregate must equal the row-level query it replaced.
+    // This is the assertion that would have caught the original defect.
+    const { data: openRows } = await adminA.client
+      .from("deals")
+      .select("expected_value")
+      .eq("status", "open");
+    const expectedTotal = (openRows ?? []).reduce(
+      (s, d) => s + Number(d.expected_value ?? 0),
+      0,
+    );
+    expect(
+      Number(statsA.open_pipeline.total),
+      "RPC open-pipeline sum must equal the sum of the rows RLS shows the caller",
+    ).toBeCloseTo(expectedTotal, 2);
+    expect(Number(statsA.open_pipeline.count)).toBe((openRows ?? []).length);
+
+    // per-stage totals must add up to the headline figure
+    const stageSum = (statsA.stages as { total: number }[]).reduce(
+      (s, r) => s + Number(r.total),
+      0,
+    );
+    expect(stageSum, "stage breakdown must reconcile with the KPI").toBeCloseTo(
+      Number(statsA.open_pipeline.total),
+      2,
+    );
+
+    // ORG ISOLATION: org B's agent runs the same RPC and must not see org A's
+    // money. Comparing against B's own row-level query keeps this true even if
+    // the fixture org later grows deals of its own.
+    const { data: statsB, error: errB } = await agentB.client.rpc(
+      "admin_dashboard_stats",
+      args,
+    );
+    expect(errB).toBeNull();
+    const { data: openRowsB } = await agentB.client
+      .from("deals")
+      .select("expected_value")
+      .eq("status", "open");
+    const expectedTotalB = (openRowsB ?? []).reduce(
+      (s, d) => s + Number(d.expected_value ?? 0),
+      0,
+    );
+    expect(
+      Number(statsB.open_pipeline.total),
+      "org B must only aggregate org B rows",
+    ).toBeCloseTo(expectedTotalB, 2);
+    expect(
+      Number(statsB.open_pipeline.total),
+      "SECURITY INVOKER regression: org B is seeing org A's pipeline",
+    ).not.toBe(Number(statsA.open_pipeline.total));
+
+    // shape contract the dashboard relies on
+    for (const key of [
+      "open_pipeline",
+      "won_month",
+      "stages",
+      "leads7",
+      "lead_sources30",
+      "property_statuses",
+      "top_actors30",
+    ]) {
+      expect(statsA, `missing ${key}`).toHaveProperty(key);
+    }
+    expect(Array.isArray(statsA.top_actors30)).toBe(true);
+    expect(
+      (statsA.top_actors30 as unknown[]).length,
+      "top agents is capped at 5",
+    ).toBeLessThanOrEqual(5);
+  });
 });

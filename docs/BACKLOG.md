@@ -22,11 +22,11 @@ built without explicit direction.
   `11111111-…` fixture ids. `optionalUuid` in deals/properties validators
   already fixed to `z.guid()` (T3.2); the rest only ever see
   `gen_random_uuid()` values today so they are safe in practice.
-- Dashboard SQL-side aggregates: KPI sums (open pipeline €, won €, top-agent
-  event counts) still aggregate in TS over row-capped fetches (2000/5000).
-  Counts are exact since 2026-07-16, but past the caps the SUMS undercount.
-  Fix = `SECURITY INVOKER` RPC doing the group-bys in SQL (RLS still applies),
-  which also collapses ~11 dashboard round trips into 1–2.
+- ~~Dashboard SQL-side aggregates~~ — **DONE 2026-07-23** (audit PERF-3,
+  migration 0018 `admin_dashboard_stats`). The SUMS no longer undercount past
+  the caps; proven with a rolled-back 2,100-deal probe (old capped sum was
+  €122,000 light). 9 dashboard round trips became 4. RLS test 22 pins the
+  SECURITY INVOKER org scoping.
 - Dashboard KPI deltas vs the previous period (7d vs prior 7d, month vs last
   month) — same queries with a shifted window.
 - "Lost this month" counter beside "Won this month" for honest pipeline health.

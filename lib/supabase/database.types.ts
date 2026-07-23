@@ -2144,6 +2144,10 @@ export type Database = {
             }
             Returns: string
           }
+      admin_dashboard_stats: {
+        Args: { p_d30: string; p_d7: string; p_month_start: string }
+        Returns: Json
+      }
       current_org_id: { Args: never; Returns: string }
       current_role_gnk: {
         Args: never

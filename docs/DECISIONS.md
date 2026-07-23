@@ -858,3 +858,43 @@ silent. Format: date · task · decision · rationale.
      anywhere. Note this checks the copy/paste layer, NOT the visual page.
   Already-stored reports keep their original (lossy) text layer — they are
   immutable artifacts; only newly generated ones benefit.
+
+## 2026-07-23 · T-audit-perf3 — dashboard aggregates move into SQL
+
+The admin dashboard summed money in TypeScript over row-capped fetches
+(deals/leads/properties `.limit(2000)`, events `.limit(5000)`). Counts had been
+exact since 2026-07-16, but the € figures had not: past the cap the headline
+"Open pipeline" and "Won this month" tiles under-reported with nothing on
+screen saying so. Measured, not assumed — a rolled-back probe adding 2,100 open
+deals showed the RPC at €2,845,000 against the old capped sum's €2,723,000, a
+silent €122,000 shortfall.
+
+Migration 0018 adds `admin_dashboard_stats(p_month_start, p_d7, p_d30)`
+returning jsonb.
+
+- **SECURITY INVOKER, not DEFINER.** The aggregates must run under the caller's
+  RLS, exactly like the queries they replace. A DEFINER function here would be
+  a cross-org read primitive one bug away from leaking another org's pipeline.
+  RLS test 22 reconciles each org's RPC output against that org's own row-level
+  query and asserts the two orgs differ.
+- **Window bounds are parameters.** The Cyprus wall-clock month boundary lives
+  in `lib/utils/tz.ts` with unit tests (doc 02 §A11). Re-deriving it in SQL
+  would create a second source of truth that could drift across a DST edge, so
+  the caller passes the instants in.
+- **`stage_id` only, no names.** The RPC returns stage ids; the page still
+  reads `deal_stages` for names and ordering. That table is tiny and the join
+  belongs where the i18n/labelling already is.
+- **Two indexes.** `deals_stage_idx` is partial on `status='open'`, so the
+  won-this-month window had no usable index at all — that predicate has always
+  been unindexed, the RPC just made it the aggregate of record. `leads_status_idx`
+  leads with `(org_id, status, …)`, so a `received_at` range across all statuses
+  could not use it either. Added `deals_won_idx` and `leads_received_idx`.
+- **Top agents is now exact.** It previously ranked whatever fell inside the
+  most recent 5,000 events, so a busy month could rank the wrong people.
+
+Side effect: 9 dashboard round trips became 4.
+
+Deployment note: this is the first audit fix carrying a migration. 0018 must be
+applied to hosted BEFORE the code deploys, or every admin hits the error
+boundary. `create index if not exists` + `create or replace function` make the
+migration safely re-runnable.

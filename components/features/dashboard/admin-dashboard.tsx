@@ -9,19 +9,36 @@ import { zonedParts, zonedWallClockToUtc } from "@/lib/utils/tz";
 
 /**
  * Admin dashboard (T5.3, doc 05 + doc 02 §C9). Every number is reproducible
- * by the SQL documented above its query — acceptance requires the on-screen
- * figure to match the manual query on seeded data. All queries are org-scoped
- * by RLS; TS aggregates replace SQL aggregates (PostgREST aggregates are off),
- * with the equivalent SQL in the comment (SQL-side aggregates via RPC are in
- * BACKLOG for when row caps start to matter).
+ * by the SQL in `admin_dashboard_stats` (migration 0018) — acceptance requires
+ * the on-screen figure to match the manual query on seeded data.
  *
  * Audit 2026-07-16: every response is unwrapped — a failed query throws to
  * the segment error boundary instead of painting €0 as if it were real data.
  * Calendar boundaries (today, month start, expiry window) are Cyprus
  * wall-clock days (doc 02 §A11), matching the agent dashboard; rolling
- * 7d/30d windows are instant-relative and zone-free. KPI counts come from
- * `count: "exact"` so they stay honest past the row caps on the summed rows.
+ * 7d/30d windows are instant-relative and zone-free.
+ *
+ * Audit 2026-07-23 (PERF-3): the aggregates moved OUT of TypeScript and into
+ * SQL. They used to be `.reduce()` over row-capped fetches (deals/leads/
+ * properties at 2000, events at 5000); counts were exact but the € SUMS
+ * silently undercounted past the cap, and "top agents" ranked a 5000-event
+ * sample rather than the month. `admin_dashboard_stats` is SECURITY INVOKER,
+ * so the group-bys run under exactly the same RLS as the queries they replace
+ * (pinned by RLS test 22). Window bounds are passed IN, because the Cyprus
+ * wall-clock month boundary lives in lib/utils/tz.ts and must not be
+ * re-derived in SQL. Side benefit: 9 dashboard round trips became 4.
  */
+
+/** Shape of the `admin_dashboard_stats` jsonb payload (migration 0018). */
+interface DashboardStats {
+  open_pipeline: { total: number; count: number };
+  won_month: { total: number; count: number };
+  stages: { stage_id: string; total: number; count: number }[];
+  leads7: { total: number; answered: number; avg_response_min: number | null };
+  lead_sources30: { source: string; count: number }[];
+  property_statuses: { status: string; count: number }[];
+  top_actors30: { actor_id: string; count: number }[];
+}
 
 function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
@@ -70,55 +87,29 @@ export async function AdminDashboard() {
     .slice(0, 10);
 
   const [
-    // SQL: select stage_id, expected_value from deals where status='open';
-    //      (count: exact keeps the KPI honest if rows exceed the 2000 cap)
-    openDealsRes,
-    // SQL: select expected_value from deals where status='won'
-    //      and won_at >= :cyprus_month_start;
-    wonDealsRes,
-    // SQL: select received_at, first_response_at from leads
-    //      where received_at >= now() - interval '7 days';
-    leads7Res,
+    // Every aggregate in one SQL round trip, under the caller's RLS.
+    // See supabase/migrations/0018_dashboard_aggregates.sql for the exact SQL.
+    statsRes,
     // SQL: select id, name, deal_type, sort_order from deal_stages
     //      where is_won=false and is_lost=false;
+    //      (kept client-side: tiny table, and the RPC returns stage_id only)
     stagesRes,
-    // SQL: select source from leads where received_at >= now() - interval '30 days';
-    leads30Res,
     // SQL: select id, property_id, type, expiry_date from mandates_safe
     //      where status='active' and expiry_date between :cyprus_today and :cyprus_today + 30;
     expiringRes,
     // SQL: select * from events order by occurred_at desc limit 10;
     latestEventsRes,
-    // SQL: select status from properties;
-    propStatusesRes,
-    // SQL: select actor_id, count(*) from events where occurred_at >= now() - interval '30 days'
-    //      and actor_id is not null group by actor_id order by count desc limit 5;
-    //      (sampled over the most recent 5000 events — ordered so the sample
-    //      is deterministic and recent if the org ever exceeds the cap)
-    actorEventsRes,
   ] = await Promise.all([
-    supabase
-      .from("deals")
-      .select("stage_id, expected_value", { count: "exact" })
-      .eq("status", "open")
-      .limit(2000),
-    supabase
-      .from("deals")
-      .select("expected_value", { count: "exact" })
-      .eq("status", "won")
-      .gte("won_at", monthStart)
-      .limit(2000),
-    supabase
-      .from("leads")
-      .select("received_at, first_response_at", { count: "exact" })
-      .gte("received_at", d7)
-      .limit(2000),
+    supabase.rpc("admin_dashboard_stats", {
+      p_month_start: monthStart,
+      p_d7: d7,
+      p_d30: d30,
+    }),
     supabase
       .from("deal_stages")
       .select("id, name, deal_type, sort_order")
       .eq("is_won", false)
       .eq("is_lost", false),
-    supabase.from("leads").select("source").gte("received_at", d30).limit(2000),
     supabase
       .from("mandates_safe")
       .select("id, property_id, type, expiry_date")
@@ -132,45 +123,30 @@ export async function AdminDashboard() {
       .select("id, occurred_at, entity_type, entity_id, event_type, payload, actor_id")
       .order("occurred_at", { ascending: false })
       .limit(10),
-    supabase.from("properties").select("status").limit(2000),
-    supabase
-      .from("events")
-      .select("actor_id")
-      .gte("occurred_at", d30)
-      .not("actor_id", "is", null)
-      .order("occurred_at", { ascending: false })
-      .limit(5000),
   ]);
 
-  const openDeals = unwrapRows(openDealsRes, "open deals");
-  const wonDeals = unwrapRows(wonDealsRes, "won deals");
-  const leads7 = unwrapRows(leads7Res, "leads 7d");
+  // A failed aggregate must reach the error boundary, never paint €0 as real.
+  if (statsRes.error) {
+    throw new Error(`Query failed (dashboard stats): ${statsRes.error.message}`);
+  }
+  const stats = statsRes.data as unknown as DashboardStats;
+
   const stages = unwrapRows(stagesRes, "deal stages");
-  const leads30 = unwrapRows(leads30Res, "leads 30d");
   const expiring = unwrapRows(expiringRes, "expiring mandates");
   const latestEvents = unwrapRows(latestEventsRes, "latest events");
-  const propStatuses = unwrapRows(propStatusesRes, "property statuses");
-  const actorEvents = unwrapRows(actorEventsRes, "actor events");
 
-  const openDealsCount = openDealsRes.count ?? openDeals.length;
-  const wonDealsCount = wonDealsRes.count ?? wonDeals.length;
-  const leads7Count = leads7Res.count ?? leads7.length;
+  const openDealsCount = Number(stats.open_pipeline.count);
+  const wonDealsCount = Number(stats.won_month.count);
+  const leads7Count = Number(stats.leads7.total);
 
-  const openPipeline = openDeals.reduce((s, d) => s + Number(d.expected_value ?? 0), 0);
-  const wonValue = wonDeals.reduce((s, d) => s + Number(d.expected_value ?? 0), 0);
+  const openPipeline = Number(stats.open_pipeline.total);
+  const wonValue = Number(stats.won_month.total);
 
-  const answered = leads7.filter((l) => l.first_response_at);
-  // avg(first_response_at - received_at) over answered leads of the last 7 days
+  // avg(first_response_at - received_at) over ANSWERED leads of the last 7 days,
+  // computed in SQL — null when nothing has been answered yet
   const avgResponseMin =
-    answered.length > 0
-      ? answered.reduce(
-          (s, l) =>
-            s + (new Date(l.first_response_at!).getTime() - new Date(l.received_at).getTime()),
-          0,
-        ) /
-        answered.length /
-        60_000
-      : null;
+    stats.leads7.avg_response_min === null ? null : Number(stats.leads7.avg_response_min);
+  const answeredCount = Number(stats.leads7.answered);
   const avgResponseLabel =
     avgResponseMin === null
       ? "—"
@@ -180,12 +156,12 @@ export async function AdminDashboard() {
 
   // pipeline € by stage (open deals only), ordered by deal type then stage
   // order; stages with deals but no expected value still show (as €0 · N)
-  const stageValue = new Map<string, number>();
-  const stageCount = new Map<string, number>();
-  for (const d of openDeals) {
-    stageValue.set(d.stage_id, (stageValue.get(d.stage_id) ?? 0) + Number(d.expected_value ?? 0));
-    stageCount.set(d.stage_id, (stageCount.get(d.stage_id) ?? 0) + 1);
-  }
+  const stageValue = new Map<string, number>(
+    stats.stages.map((s) => [s.stage_id, Number(s.total)]),
+  );
+  const stageCount = new Map<string, number>(
+    stats.stages.map((s) => [s.stage_id, Number(s.count)]),
+  );
   const stageRows = stages
     .sort((a, b) => a.deal_type.localeCompare(b.deal_type) || a.sort_order - b.sort_order)
     .filter((s) => (stageCount.get(s.id) ?? 0) > 0)
@@ -195,23 +171,23 @@ export async function AdminDashboard() {
       display: `${formatMoney(stageValue.get(s.id) ?? 0)} · ${stageCount.get(s.id)}`,
     }));
 
-  const sourceAgg = new Map<string, number>();
-  for (const l of leads30) sourceAgg.set(l.source, (sourceAgg.get(l.source) ?? 0) + 1);
-  const sourceRows = [...sourceAgg.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([label, value]) => ({ label: label.replace(/_/g, " "), value, display: String(value) }));
+  // all three already come back grouped and ordered from SQL
+  const sourceRows = stats.lead_sources30.map((r) => ({
+    label: r.source.replace(/_/g, " "),
+    value: Number(r.count),
+    display: String(r.count),
+  }));
 
-  const statusAgg = new Map<string, number>();
-  for (const p of propStatuses) statusAgg.set(p.status, (statusAgg.get(p.status) ?? 0) + 1);
-  const statusRows = [...statusAgg.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([label, value]) => ({ label: label.replace(/_/g, " "), value, display: String(value) }));
+  const statusRows = stats.property_statuses.map((r) => ({
+    label: r.status.replace(/_/g, " "),
+    value: Number(r.count),
+    display: String(r.count),
+  }));
 
-  const actorAgg = new Map<string, number>();
-  for (const e of actorEvents) {
-    if (e.actor_id) actorAgg.set(e.actor_id, (actorAgg.get(e.actor_id) ?? 0) + 1);
-  }
-  const topActorIds = [...actorAgg.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const topActorIds: [string, number][] = stats.top_actors30.map((r) => [
+    r.actor_id,
+    Number(r.count),
+  ]);
 
   // one profiles fetch covers the top-agents bars AND the event-feed bylines;
   // one properties fetch covers mandate references AND event-feed references
@@ -272,7 +248,7 @@ export async function AdminDashboard() {
         <Kpi
           label={t("kpi.avgFirstResponse")}
           value={avgResponseLabel}
-          sub={t("answered", { count: answered.length })}
+          sub={t("answered", { count: answeredCount })}
         />
       </div>
 
