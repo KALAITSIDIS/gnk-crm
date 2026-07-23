@@ -113,6 +113,14 @@ export function CalculatorsClient({
 
   const joint = transfer !== null && transfer.purchasers > 1;
 
+  // UX-4: a VAT-paid purchase is exempt outright, so the relief toggle cannot
+  // move the total. Mirror `computeTransferFees`'s own early-return condition
+  // exactly (`vatPaid && config.vat_paid_exempt`) rather than just `vatPaid` —
+  // a config with `vat_paid_exempt: false` still charges fees, and there relief
+  // must stay live. The tick is disabled, never reset: un-ticking VAT gives the
+  // agent back the choice they had made.
+  const reliefMoot = vatPaid && transferConfig?.vat_paid_exempt === true;
+
   const transferSummary =
     transfer &&
     [
@@ -189,13 +197,25 @@ export function CalculatorsClient({
           ) : (
             <>
               <div className="flex flex-col gap-2">
-                <label className="flex items-center gap-2 text-sm text-text-1">
+                <label
+                  className={
+                    reliefMoot
+                      ? "flex items-center gap-2 text-sm text-text-3"
+                      : "flex items-center gap-2 text-sm text-text-1"
+                  }
+                >
                   <Checkbox
                     checked={relief}
+                    disabled={reliefMoot}
                     onCheckedChange={(v) => setRelief(v === true)}
                   />
                   Apply 50% relief (transfers not subject to VAT)
                 </label>
+                {reliefMoot ? (
+                  <p className="pl-6 text-xs text-text-3">
+                    No relief to apply — a VAT-paid purchase carries no transfer fee.
+                  </p>
+                ) : null}
                 <label className="flex items-center gap-2 text-sm text-text-1">
                   <Checkbox
                     checked={vatPaid}

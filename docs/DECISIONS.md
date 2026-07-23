@@ -934,3 +934,124 @@ with 42501, the precise state it used to swallow.
 Standing lesson: a test that calls an action and ignores the returned error can
 hide a permission regression indefinitely. Assert on `error` even when the
 call is only setup.
+
+## 2026-07-23 · T-backup-drill — the backup premise was wrong; runbook written
+
+Scoped as "prove the restore works" (`IMPROVEMENTS.md` C6, `HANDOVER.md` §2.2).
+Verifying the starting conditions before writing the drill found three things
+that change the task. Full runbook in `docs/BACKUP_RESTORE.md`; verification
+pack in `scripts/backup/verify-restore.sql`. **No code or schema was changed.**
+
+1. **There is no backup to restore.** The org is on the **Free** plan. Supabase
+   documents daily backups for Pro/Team/Enterprise only, and tells free-tier
+   projects to self-export with `supabase db dump` and keep off-site copies. A
+   troubleshooting note adds that free-project dailies are taken but only become
+   reachable *after upgrading*, with no commitment to keep taking them. So the
+   audit's "Supabase takes backups, nobody has proven a restore" understated it:
+   the RPO today is unbounded, not 24h. The first task is creating a backup, not
+   restoring one.
+
+2. **Storage is in no database backup, on any plan** — Supabase states backups
+   exclude Storage API objects, holding only their metadata. That is 26 objects
+   today: the signed viewing-slip PNG+PDF, three evidence report PDFs, KYC
+   documents, property renditions. A DB-only restore returns `viewing_slips`
+   rows asserting a SHA-256 whose bytes no longer exist — the row claims
+   evidence that is gone. Storage export via `supabase storage cp -r` is
+   therefore mandatory forever, including later on Pro+PITR.
+
+3. **`verify_events_chain` is session-`TimeZone`-dependent.** `trg_events_hash`
+   hashes `occurred_at::text`, and a `timestamptz` renders through the session
+   `TimeZone`, carrying the UTC offset into the digest. Hosted runs `UTC`, which
+   is what every stored hash was computed under. Proven read-only on event id 1:
+   the stored hash recomputes `true` against `…427181+00` and `false` against
+   the `Asia/Nicosia` rendering `…427181+03`.
+
+   **Decision: mitigate operationally, do not touch the hash function.** Pin the
+   restore target to `TimeZone = UTC` and check `show timezone` before drawing
+   any conclusion from a chain failure. Rewriting the digest to a
+   timezone-stable rendering would invalidate every hash already stored —
+   including hashes printed inside issued evidence PDFs, which are immutable
+   artifacts. The chain is append-only precisely so it cannot be rewritten.
+   `TZ=Asia/Nicosia` on Vercel is the Node process timezone and does not reach
+   the Postgres session, which is why the app has never tripped this; the Cyprus
+   wall-clock logic stays in `lib/utils/tz.ts` (doc 02 §A11) unchanged.
+
+The verification pack asserts 43 checks in one query — row counts, seed counts,
+migration history, cron, bucket visibility, the chain, storage-file existence
+for slips and evidence reports, and the full function-grant matrix (the TEST-2
+surface, where a lost `service_role` grant is invisible on screen). Run against
+hosted as a self-test: **43/43 pass**. Proven able to fail, not just to pass —
+re-pointing the slip and evidence checks at a bucket without the files reports
+`1 missing` and `3 missing`, which is precisely the DB-only-restore signature.
+
+Proposed **RPO 24h / RTO 4h** on a nightly self-managed dump, for operator
+sign-off, with Pro+PITR (RPO ~2 min, ~$125/mo) as the revision trigger once real
+client volume arrives. Both figures are in §6 of the runbook.
+
+## 2026-07-23 · T-csv-export — contacts CSV export (IMPROVEMENTS B10)
+
+First list export. Establishes the pattern the other lists will copy, plus a few
+choices worth not re-litigating.
+
+- **Export = the filtered list, by construction.** The list page and the export
+  route share one filter parser and one predicate applier
+  (`lib/queries/contacts-list.ts`). The export drops only pagination — it is the
+  whole filtered set, not the current page. They cannot disagree about which
+  rows match because the WHERE clause has a single source.
+- **A GET route handler, not a server action.** A download is a navigation, so a
+  plain `<a href>` to `/contacts/export?<filters>` is the right primitive. Being
+  under the proxy matcher it inherits the auth gate (verified: anonymous →
+  307 /login, in `security.spec.ts`), and it uses the caller's RLS-scoped client,
+  so an agent exports only their own scope — never the admin client.
+- **BOM + CRLF + RFC-4180.** The leading UTF-8 BOM is not cosmetic: without it
+  Excel renders Greek and Cyrillic names as mojibake, and this is a Paphos desk.
+  The serializer round-trips through the import-side parser's rules.
+- **Formula-injection guard.** Export fields are user-typed (names, notes). A
+  value like `=HYPERLINK(...)` or `+1+1` executes on open in Excel/Sheets, so a
+  leading `= + - @ \t \r` is prefixed with a single quote (OWASP "CSV Injection").
+  This is why the phone column, formatted as `+357 …`, exports as `'+357 …`.
+- **10,000-row cap.** PERF-2's rule (no unbounded reads) applies to the export
+  too. Far above any realistic single-desk contact book; revisit with streaming
+  if a client approaches it.
+- **No audit event — for now.** A bulk PII export is arguably worth logging, but
+  `events` is entity-scoped and the guardrail reserves it for entity
+  create/update. An export event would be a new org-level shape; that is a
+  decision for the operator before the pattern spreads, logged in BACKLOG, not
+  taken unilaterally here.
+
+Row rendering lives in a pure module (`lib/services/contact-export.ts`) so it is
+unit-tested without a request or DB; the E2E only covers the HTTP contract the
+running app alone can prove. 16 unit + 3 E2E added.
+
+## 2026-07-23 · T-export-audit — bulk CSV exports are logged
+
+Operator's call (asked after the contacts export shipped): a bulk PII export
+moves a lot of KYC/contact data in one action, so it is recorded on the same
+append-only event log as mutations.
+
+- **New org-level event.** `entity_type = "export"` (added to `ENTITY_TYPES`),
+  `entity_id = null`, one `event_type = "exported"` for every list, distinguished
+  by `payload.list`. This is deliberately NOT entity-scoped — an export is not
+  about one row. The events INSERT policy (`with check org_id = current_org_id()`)
+  already permits it, so **no migration** was needed.
+- **Written before the CSV is returned, fail-closed.** `logListExport` runs after
+  the rows are fetched (so `count` is exact) and before the response is built;
+  `logEvent` throws on failure, which 500s the export. No PII leaves without an
+  audit row. Consistent with the guardrail "a feature without its events is not
+  done".
+- **On a GET.** The download wants a plain `<a href>`, so the audit is a side
+  effect of a GET. That is fine here: it is an append to a log, the route is
+  auth-gated, and browsers do not prefetch attachment downloads.
+- **Visibility follows the events SELECT policy.** Admins see every org export;
+  an agent sees their own. That is the right audience for an export audit.
+- **Timeline line.** Registered in `describeEvent` + the `events` i18n namespace
+  (en/el/ru, ICU plurals) so it reads well on the dashboard "Latest events" and
+  passes the `messages.test.ts` parity gate. The `list` slug is interpolated raw
+  (stays as stored, like stage names/channels); translating the seven list nouns
+  is a possible later refinement, not done now.
+
+Verified on the local DB: two authenticated exports produced two `exported` rows
+with `{list, count, filters}`, and `verify_events_chain` stayed `true` across all
+orgs — the new event type does not disturb the hash chain. Unit: `export-audit`
+row shape + `events` line (fake-translator routing + English plural parity) +
+`messages` parity. E2E: the route contract and the anon gate.

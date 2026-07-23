@@ -240,6 +240,7 @@
     "areaRenamed": "Area renamed {from} → {to}",
     "locationsUpdated": "Locations updated",
     "evidenceGenerated": "Commission evidence report generated ({count, plural, one {# event} other {# events}}, chain {ok, select, yes {verified} other {FAILED}})",
+    "exported": "Exported {count, plural, one {# record} other {# records}} from {list} to CSV",
     "documentUploaded": "Document uploaded",
     "documentUploadedTitle": "Document uploaded — {title}",
     "documentDeleted": "Document deleted",

@@ -113,6 +113,27 @@ test.describe("Cyprus purchase-cost calculators", () => {
     await expect(page.getByText(/no transfer fees/i)).toBeVisible();
   });
 
+  test("[UX-4] the relief tick is disabled while VAT was paid", async ({ page }) => {
+    await priceIn(page, "300000");
+    const relief = page.getByRole("checkbox", { name: /50% relief/i });
+    const vat = page.getByRole("checkbox", { name: /VAT was paid/i });
+
+    await expect(relief).toBeEnabled();
+
+    // A VAT-paid purchase carries no transfer fee at all, so relief cannot
+    // change the number. Leaving the tick live invites an agent to toggle it
+    // mid-conversation and watch nothing happen.
+    await vat.check();
+    await expect(relief).toBeDisabled();
+    await expect(page.getByText(/no relief to apply/i)).toBeVisible();
+
+    // Un-ticking VAT restores it WITH the prior choice intact — the control is
+    // disabled, not reset.
+    await vat.uncheck();
+    await expect(relief).toBeEnabled();
+    await expect(relief).toBeChecked();
+  });
+
   test("band breakdown is shown, not just a total (agents quote the bands)", async ({ page }) => {
     await priceIn(page, "300000");
     await expect(page.getByText("3%").first()).toBeVisible();

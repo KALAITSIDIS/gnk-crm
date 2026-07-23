@@ -23,6 +23,8 @@ export const ENTITY_TYPES = [
   "task",
   "config",
   "share_link",
+  // org-level, not tied to one row: a bulk CSV export of a list (audit trail)
+  "export",
 ] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 
@@ -296,6 +298,11 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
     t("publishOverride", { score: Number(p.score) || 0, threshold: Number(p.threshold) || 0 }),
   payment_plan_created: (_p, t) => t("paymentPlanCreated"),
   price_list_created: (_p, t) => t("priceListCreated"),
+  // bulk CSV export of a list; `list` is the list slug (stays as stored, like
+  // stage names/channels), `count` the rows written. Filters, if any, live in
+  // the payload for the audit record but are not shown on the one-line timeline.
+  exported: (p, t) =>
+    t("exported", { count: Number(p.count) || 0, list: asText(p.list) ?? "records" }),
 };
 
 /** Entity prefixes for feeds that mix entities (deal page merges offer events). */

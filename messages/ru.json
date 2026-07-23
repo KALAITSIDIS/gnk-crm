@@ -240,6 +240,7 @@
     "areaRenamed": "Район переименован {from} → {to}",
     "locationsUpdated": "Локации обновлены",
     "evidenceGenerated": "Создан отчёт-подтверждение по комиссии ({count, plural, one {# событие} few {# события} many {# событий} other {# события}}, цепочка {ok, select, yes {подтверждена} other {СБОЙ}})",
+    "exported": "Экспортировано {count, plural, one {# запись} few {# записи} many {# записей} other {# записи}} из {list} в CSV",
     "documentUploaded": "Документ загружен",
     "documentUploadedTitle": "Документ загружен — {title}",
     "documentDeleted": "Документ удалён",

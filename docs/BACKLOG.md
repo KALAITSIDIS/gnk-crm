@@ -148,3 +148,6 @@ built without explicit direction.
   `events` namespace in en/el/ru. The event PAYLOAD values (names, section
   keys, channels, stage names, user-typed reasons, file names) deliberately
   stay as-stored — only the template text translates.
+
+- **CSV export — remaining lists.** Contacts CSV export shipped 2026-07-23 (IMPROVEMENTS B10). Repeat for properties, leads, deals, viewings, keys, tasks: extract each list's filter parse/apply into `lib/queries/<list>.ts`, add a GET export route reusing it, define columns via `lib/services/csv.ts` `toCsv`. ~0.5 day each.
+- ~~**Export audit logging (decision needed).**~~ **Resolved 2026-07-23: yes, log exports.** Built in `lib/services/export-audit.ts` (org-level `export`/`exported` event, written before the CSV is returned). Contacts export logs; the remaining lists inherit it via `logListExport`. See DECISIONS `T-export-audit`.

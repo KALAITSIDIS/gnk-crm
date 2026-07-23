@@ -30,12 +30,28 @@ describe("describeEvent routes through the translator", () => {
     // offerPrefix resolves via t() too, then composes with ": "
     expect(describeEvent(ev("claimed", {}, "offer"), fake)).toBe("KEY:offerPrefix: KEY:claimed");
   });
+
+  it("routes a bulk export event through the translator", () => {
+    const fake: EventTranslator = (key) => `KEY:${key}`;
+    expect(
+      describeEvent(ev("exported", { list: "contacts", count: 3 }, "export"), fake),
+    ).toBe("KEY:exported");
+  });
 });
 
 describe("describeEvent registry (T3.5) — English parity", () => {
   it("renders stage changes with from → to", () => {
     expect(describeEvent(ev("stage_changed", { from: "New", to: "Qualified" }), t)).toBe(
       "Stage New → Qualified",
+    );
+  });
+
+  it("renders a bulk export with an ICU-pluralised row count and the list slug", () => {
+    expect(describeEvent(ev("exported", { list: "contacts", count: 1 }, "export"), t)).toBe(
+      "Exported 1 record from contacts to CSV",
+    );
+    expect(describeEvent(ev("exported", { list: "contacts", count: 42 }, "export"), t)).toBe(
+      "Exported 42 records from contacts to CSV",
     );
   });
 

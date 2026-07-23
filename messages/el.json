@@ -240,6 +240,7 @@
     "areaRenamed": "Περιοχή μετονομάστηκε {from} → {to}",
     "locationsUpdated": "Ενημερώθηκαν οι τοποθεσίες",
     "evidenceGenerated": "Δημιουργήθηκε αναφορά τεκμηρίωσης προμήθειας ({count, plural, one {# συμβάν} other {# συμβάντα}}, αλυσίδα {ok, select, yes {επαληθεύτηκε} other {ΑΠΕΤΥΧΕ}})",
+    "exported": "Εξαγωγή {count, plural, one {# εγγραφής} other {# εγγραφών}} από {list} σε CSV",
     "documentUploaded": "Ανέβηκε έγγραφο",
     "documentUploadedTitle": "Ανέβηκε έγγραφο — {title}",
     "documentDeleted": "Διαγράφηκε έγγραφο",

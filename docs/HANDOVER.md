@@ -11,6 +11,7 @@ Point-in-time snapshot at the end of the full QA/security audit. This file is a
 | Roadmap | `IMPROVEMENTS.md` |
 | Test suites, how to run them | `tests/README.md` |
 | Release procedure | `docs/RELEASE_CHECKLIST.md` |
+| Backup, restore, RPO/RTO | `docs/BACKUP_RESTORE.md` |
 | Build rules and guardrails | `CLAUDE.md` |
 
 ---
@@ -39,20 +40,37 @@ Supabase dashboard → Authentication → Password settings. Confirmed still
 disabled by `get_advisors` on 2026-07-23. A single admin password currently
 guards every client's PII, KYC scans and the commission evidence chain.
 
-### 2.2 Backup / restore drill · ~1 day · **the biggest unmitigated risk**
-Supabase takes backups; **nobody has ever proven a restore works.** The
-`events` table is the product's value — append-only, hash-chained, and the
-reason a commission claim is defensible. It cannot be reconstructed from
-anywhere else.
+### 2.2 Backup / restore drill · **the biggest unmitigated risk**
+**Runbook: `docs/BACKUP_RESTORE.md`. Read it before planning this.**
 
-The audit made this concrete rather than theoretical: finding TEST-2 proved a
-database rebuilt purely from the migrations is **not** identical to the hosted
-one (hosted had an explicit `service_role` grant from Supabase platform
-defaults that the migrations did not reproduce). That is exactly the class of
-surprise a restore drill exists to find.
+This section previously opened "Supabase takes backups; nobody has ever proven a
+restore works." **The first half is false** and was corrected on 2026-07-23 —
+see DECISIONS `T-backup-drill`. The org is on the **Free** plan, which Supabase
+excludes from automated daily backups, directing free projects to self-export
+instead. **There is no backup to restore today, so the RPO is unbounded, not
+24h.** The first job is creating a backup; the drill comes second.
+
+Two further findings, both in the runbook:
+
+- **Storage is in no database backup on any plan** (Supabase keeps only object
+  metadata in the DB). A DB-only restore returns `viewing_slips` rows asserting
+  a SHA-256 whose bytes are gone. Storage must be exported separately, forever.
+- **`verify_events_chain` is session-`TimeZone`-dependent** — the hash covers
+  `occurred_at::text`. Restore into a non-UTC project and the chain reads
+  `false` on perfectly intact data. Pin the target to UTC; do **not** "fix" the
+  hash function (it would invalidate every hash already inside issued evidence
+  PDFs).
+
+The `events` table is still the product's value — append-only, hash-chained, and
+the reason a commission claim is defensible. It cannot be reconstructed from
+anywhere else. Finding TEST-2 already proved a database rebuilt purely from the
+migrations is **not** identical to hosted (an explicit `service_role` grant from
+Supabase platform defaults that the migrations did not reproduce) — exactly the
+class of surprise a drill exists to find, and now check number one in
+`scripts/backup/verify-restore.sql`.
 
 Deliverable: a timed, actually-executed restore into a scratch project, plus a
-written RPO/RTO.
+written RPO/RTO. Proposed RPO 24h / RTO 4h awaits operator sign-off.
 
 ### 2.3 Archive property `GNK-PAF-0002` · 1 click
 The smoke-test listing, currently `draft`/`private`. Open it and press

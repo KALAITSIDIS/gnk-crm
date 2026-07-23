@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Plus, Users } from "lucide-react";
+import { Download, Plus, Users } from "lucide-react";
 import { ContactsFilters } from "@/components/features/contacts/filters";
 import { StatusBadge } from "@/components/features/shared/status-badge";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,10 @@ import {
 import { formatPhone } from "@/lib/services/phone";
 import { createClient } from "@/lib/supabase/server";
 import { CONTACTS_PAGE_SIZE } from "@/lib/validators/contacts";
+import {
+  applyContactListFilters,
+  parseContactListFilters,
+} from "@/lib/queries/contacts-list";
 import { formatDateTime } from "@/lib/utils/format";
 
 type SearchParams = { [key: string]: string | string[] | undefined };
@@ -36,14 +40,7 @@ export default async function ContactsPage({
   searchParams: Promise<SearchParams>;
 }) {
   const sp = await searchParams;
-  const q = first(sp.q)?.trim();
-  const type = first(sp.type);
-  const temperature = first(sp.temperature);
-  const source = first(sp.source);
-  const agent = first(sp.agent);
-  const nationality = first(sp.nationality)?.trim();
-  const language = first(sp.language);
-  const showArchived = first(sp.archived) === "1";
+  const filters = parseContactListFilters(sp);
   const page = Math.max(1, Number(first(sp.page)) || 1);
 
   const supabase = await createClient();
@@ -54,31 +51,15 @@ export default async function ContactsPage({
     .order("full_name");
   const agentOptions = (profileRows ?? []).filter((p) => p.is_active);
 
-  let query = supabase
+  const base = supabase
     .from("contacts")
     .select(
       "id, display_name, contact_kind, phone_e164, email, contact_types, temperature, source, nationality, languages, assigned_agent_id, created_at, merged_into_id",
       { count: "exact" },
-    )
-    .eq("is_archived", showArchived);
-
-  if (q) {
-    const safe = q.replace(/[%,()]/g, " ").trim();
-    if (safe) {
-      query = query.or(
-        `display_name.ilike.%${safe}%,phone_e164.ilike.%${safe}%,email.ilike.%${safe}%`,
-      );
-    }
-  }
-  if (type) query = query.contains("contact_types", [type]);
-  if (temperature) query = query.eq("temperature", temperature as never);
-  if (source) query = query.eq("source", source as never);
-  if (agent) query = query.eq("assigned_agent_id", agent);
-  if (nationality) query = query.ilike("nationality", `%${nationality}%`);
-  if (language) query = query.contains("languages", [language]);
+    );
 
   const from = (page - 1) * CONTACTS_PAGE_SIZE;
-  const result = await query
+  const result = await applyContactListFilters(base, filters)
     .order("created_at", { ascending: false })
     .range(from, from + CONTACTS_PAGE_SIZE - 1);
   if (result.error && result.error.code !== "PGRST103") {
@@ -102,20 +83,43 @@ export default async function ContactsPage({
     return `?${params.toString()}`;
   };
 
+  // Export carries the active filters but not pagination — it is the whole
+  // filtered set, not the current page. RLS scopes it to what this user can see.
+  const exportHref = (() => {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(sp)) {
+      if (k === "page") continue;
+      const val = first(v);
+      if (val) params.set(k, val);
+    }
+    const qs = params.toString();
+    return `/contacts/export${qs ? `?${qs}` : ""}`;
+  })();
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-text-1">Contacts</h1>
           <p className="text-sm text-text-2">
-            {total} {showArchived ? "archived " : ""}contact{total === 1 ? "" : "s"}
+            {total} {filters.archived ? "archived " : ""}contact{total === 1 ? "" : "s"}
           </p>
         </div>
-        <Button asChild>
-          <Link href="/contacts/new">
-            <Plus className="size-4" /> Add contact
-          </Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          {total > 0 ? (
+            <Button asChild variant="outline">
+              {/* Plain anchor, not next/link: this is a file download, not a navigation. */}
+              <a href={exportHref} download>
+                <Download className="size-4" /> Export CSV
+              </a>
+            </Button>
+          ) : null}
+          <Button asChild>
+            <Link href="/contacts/new">
+              <Plus className="size-4" /> Add contact
+            </Link>
+          </Button>
+        </div>
       </div>
 
       <ContactsFilters agents={agentOptions} />
@@ -124,11 +128,11 @@ export default async function ContactsPage({
         <div className="flex flex-col items-center gap-3 rounded-[10px] border border-border bg-surface py-16">
           <Users className="size-8 text-text-3" />
           <p className="text-sm text-text-2">
-            {showArchived
+            {filters.archived
               ? "No archived contacts match."
               : "No contacts match — add the first one."}
           </p>
-          {showArchived ? null : (
+          {filters.archived ? null : (
             <Button asChild variant="outline" size="sm">
               <Link href="/contacts/new">
                 <Plus className="size-4" /> Add contact
@@ -158,7 +162,7 @@ export default async function ContactsPage({
                     <Link href={`/contacts/${c.id}`} className="text-brand-700 hover:underline">
                       {c.display_name}
                     </Link>
-                    {showArchived && c.merged_into_id ? (
+                    {filters.archived && c.merged_into_id ? (
                       <span className="ml-2 rounded-full bg-surface-2 px-1.5 py-0.5 text-[11px] text-text-3">
                         merged
                       </span>

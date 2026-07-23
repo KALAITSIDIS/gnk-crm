@@ -57,6 +57,7 @@ const SAMPLE_PARAMS = {
   file: "photo.jpg",
   score: 40,
   threshold: 60,
+  list: "contacts",
 };
 
 describe("locale message files", () => {
