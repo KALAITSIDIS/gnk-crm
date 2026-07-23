@@ -274,8 +274,47 @@ Layout is unchanged — all eight columns still measure 256px wide.
 
 **Verified:** typecheck 0, lint 0, 283 unit, 26 RLS, **160 E2E**, build clean.
 
-#### TEST-1 — The RLS suite pollutes the shared local dev database
-`npm run test:rls` writes fixtures (`Test admin admin-a-…`, `RLS Stage …`, keys `K18-…`) into the same local Postgres the dev server reads, and never cleans up — because `events` is append-only and RLS denies DELETE. After one run the dev dashboard's "Top agents by activity" and "Latest events" are dominated by test rows. Harmless to production, but it makes local manual verification noisy and makes real data hard to eyeball. **Fix:** run the RLS suite against a dedicated throwaway database/schema, or namespace its org and filter that org out of dev dashboards.
+#### TEST-1 — The RLS suite polluted the shared local dev database ✅ FIXED
+
+**Module:** test infrastructure · **Status:** **FIXED** · **Evidence:** `supabase/tests/helpers.ts`, `supabase/tests/rls.test.ts` → test 23
+
+`npm run test:rls` wrote its fixtures into the **seeded org** — the one `admin@gnk.local` logs into — so every run left `Test admin admin-a-…` profiles, `RLS Stage …` rows and `K18-…` keys in the local dev database. They could never be cleaned up either: `events` is append-only and RLS denies DELETE on the business tables (guardrail 1), so the dev dashboard's "Top agents by activity" and "Latest events" filled with test rows and stayed that way.
+
+**A separate database was not an option.** The suite drives PostgREST and GoTrue on `:54321`, which serve one database, so an isolated DB would have meant a second Supabase stack. Filtering test orgs out of the dashboards was rejected too — that ships test-awareness into production code.
+
+**Fix applied:** both test orgs are now suite-owned fixtures. `ORG_A` moved off the seeded UUID onto `aaaaaaaa-…`, and a new `ensureTestOrg()` seeds the org-scoped reference data the suite reads: the sale `deal_stages` pipeline and a `PAF` district (needed by `generateReference`). `cyprus_config` is global so it needs no per-org row, and test 10 already restores the value it edits. New `SEEDED_ORG` constant marks the org tests must never touch, and **test 23 pins it** — it fails if a fixture is ever pointed back at the seeded org.
+
+**Verified by measurement.** Seeded-org row counts, immediately before and after a full `npm run test:rls`:
+
+| | profiles | events | deal_stages | deals | property_keys |
+|---|---|---|---|---|---|
+| Before | 126 | 403 | 26 | 26 | 22 |
+| After | **126** | **403** | **26** | **26** | **22** |
+
+Previously every run incremented all five.
+
+**Note on the existing mess:** those 126 profiles / 403 events are the accumulated residue of ~25 earlier runs and **cannot be deleted** — `events` references them and is append-only. `npx supabase db reset` is the only way to clear them, and it also wipes local fixture data. That is a local-only, operator's-choice cleanup.
+
+#### TEST-2 — `run_chain_checks()` is callable by nobody, and a test was hiding it 🟡 NEW, OPEN
+
+**Module:** Reports / test infrastructure · **Status:** OPEN · **Evidence:** `supabase/migrations/0016_evidence_backfill_and_chain_checks.sql`, `supabase/tests/rls.test.ts` test 21
+
+Found while fixing TEST-1. `run_chain_checks()` has EXECUTE for **no role at all** — `anon ✗ / authenticated ✗ / service_role ✗`:
+
+```
+run_chain_checks    | f | f | f
+verify_events_chain | f | f | t
+```
+
+This is the **exact trap migration 0010 was written to fix**: a function's `service_role` grant rides on `PUBLIC`, so 0016's `revoke execute … from public, anon, authenticated` silently stripped `service_role` too, and unlike 0010 it was never re-granted.
+
+**Production is not broken** — the nightly `verify-events-chain` pg_cron job runs as its owner, so the chain cache still refreshes at 03:30. The gap is that *nothing* can trigger a refresh on demand.
+
+It stayed invisible because test 21 called the RPC, **ignored the returned error**, and passed on rows the 0016 migration had seeded for orgs existing at migration time. A fixture org created later has no such row — which is how moving the suite to a new org surfaced it.
+
+Test 21 now asserts the real posture (cron-only, revoked even from service_role) and seeds its row through `service_role`'s table grant instead.
+
+**Fix, if on-demand verification is wanted:** `grant execute on function public.run_chain_checks() to service_role;` in a new migration. Needs a hosted apply. **Decide first whether it *should* be callable** — cron-only is a defensible design, in which case only the stale comment needs correcting.
 
 #### SEC-5 — `Access-Control-Allow-Origin: *` on production responses
 Production returns `Access-Control-Allow-Origin: *` on the login HTML. Low risk in practice — auth is cookie-based and the header carries no `Allow-Credentials`, so a cross-origin read of authenticated content still fails. Worth removing anyway to avoid a future change turning it into a real leak. Likely Vercel default; check project settings.

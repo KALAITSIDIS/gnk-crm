@@ -20,7 +20,8 @@ are marked **[BACKLOG]** so this file does not silently fork the roadmap.
 | A5 | ~~"Showing 100 of 437" notice on capped lists~~ | ✅ **Superseded by B1** — real pagination shipped in `fix/perf-2-pagination`, so the interim notice was never needed. | — | — |
 | A6 | **Disable the relief tick when "VAT was paid" is on** (UX-4) | Removes a confusing screen state during a live client conversation. | 30 min | — |
 | A7 | ~~`data-stage-id` + list semantics on kanban columns (UX-3)~~ | ✅ **Done 2026-07-23.** Columns are labelled `<section>`s with `<h3>` headings and `<ul>/<li>` deal lists; drag-and-drop verified intact by a full keyboard move. | — | ships with the branch |
-| A8 | **Isolate the RLS suite's database** (TEST-1) | The local dev dashboard is currently dominated by `Test admin …` fixtures after any RLS run, which makes manual verification unreliable. | 3 h | — |
+| A8 | ~~Isolate the RLS suite's database (TEST-1)~~ | ✅ **Done 2026-07-23.** The suite runs in its own seeded fixture org; a full run now leaves the seeded org byte-identical. Surfaced a new finding, **TEST-2** (`run_chain_checks` is callable by no role) — see TEST_REPORT.md. | — | ships with the branch |
+| A11 | **Decide TEST-2**: should `run_chain_checks()` be callable on demand? | Today only the nightly cron can refresh the evidence-chain cache; `service_role` lost EXECUTE to the same `revoke from public` trap that 0010 fixed. Cron-only may be the right design — but it should be a decision, not an accident. | 30 min + hosted migration | operator decision |
 | A9 | **Run Lighthouse once on live `/dashboard`** | The only performance gap this audit could not close (needs prod credentials). Establishes the real-world baseline. | 30 min | prod login |
 | A10 | **Turn on Supabase leaked-password protection** | One dashboard toggle. Blocks known-breached passwords at signup/reset. Long outstanding. | 5 min | Supabase dashboard |
 

@@ -10,8 +10,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   ORG_A,
   ORG_B,
+  SEEDED_ORG,
   anonClient,
   createTestUser,
+  ensureTestOrg,
   serviceClient,
   type TestUser,
 } from "./helpers";
@@ -38,10 +40,10 @@ let keyA1: string; // key on propA1
 let keyMoveA1: string; // checkout movement on keyA1 (append-only, test 13)
 
 beforeAll(async () => {
-  // org B fixture
-  await svc
-    .from("organizations")
-    .upsert({ id: ORG_B, name: "Test Org B", slug: "test-org-b" }, { onConflict: "id" });
+  // TEST-1: both orgs are suite-owned fixtures, seeded with the org-scoped
+  // reference data the tests read. The dev app's org is never written to.
+  await ensureTestOrg(svc, ORG_A, "Test Org A", "test-org-a");
+  await ensureTestOrg(svc, ORG_B, "Test Org B", "test-org-b");
 
   [adminA, agentA1, agentA2, lmA, agentB] = await Promise.all([
     createTestUser(svc, `admin-a-${run}@test.local`, "admin", ORG_A),
@@ -1018,8 +1020,31 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
   });
 
   it("21. chain_checks: org-scoped read for staff; writes denied for every app role", async () => {
-    // the 0016 seed call (and nightly cron) guarantees a row per org
-    await svc.rpc("run_chain_checks");
+    /**
+     * `run_chain_checks()` is CRON-ONLY: 0016 revoked EXECUTE from public,
+     * which (per the 0010 lesson) also stripped service_role, because a
+     * function's service_role grant rides on PUBLIC. The nightly pg_cron job
+     * runs as its owner so production is unaffected — but no API role can
+     * trigger a refresh, including this suite. That is asserted below.
+     *
+     * This test previously called the RPC and ignored the failure, silently
+     * relying on rows the 0016 migration seeded for the orgs that existed at
+     * migration time. A fixture org created later has no such row, so the row
+     * is now seeded directly with service_role's table grant.
+     */
+    const rpcAsService = await svc.rpc("run_chain_checks");
+    expect(
+      rpcAsService.error,
+      "run_chain_checks is cron-only — revoked from service_role too",
+    ).not.toBeNull();
+
+    const { error: seedErr } = await svc
+      .from("chain_checks")
+      .upsert(
+        { org_id: ORG_A, checked_at: new Date().toISOString(), ok: true },
+        { onConflict: "org_id" },
+      );
+    expect(seedErr, "service_role holds the table grant even without the RPC").toBeNull();
 
     for (const u of [adminA, agentA1, lmA]) {
       const { data, error } = await u.client.from("chain_checks").select("org_id, checked_at, ok");
@@ -1119,10 +1144,21 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       Number(statsB.open_pipeline.total),
       "org B must only aggregate org B rows",
     ).toBeCloseTo(expectedTotalB, 2);
+    // Org B owns no deals, so its aggregate must be empty. Asserting "B differs
+    // from A" would be vacuous whenever both happen to be zero, which is why
+    // this pins the absolute expectation instead.
     expect(
-      Number(statsB.open_pipeline.total),
-      "SECURITY INVOKER regression: org B is seeing org A's pipeline",
-    ).not.toBe(Number(statsA.open_pipeline.total));
+      (openRowsB ?? []).length,
+      "fixture drift: org B should own no deals, so this assertion is meaningful",
+    ).toBe(0);
+    expect(
+      Number(statsB.open_pipeline.count),
+      "SECURITY INVOKER regression: org B is counting another org's deals",
+    ).toBe(0);
+    expect(
+      Number(statsA.open_pipeline.count),
+      "org A must see its own fixture deals",
+    ).toBeGreaterThan(0);
 
     // shape contract the dashboard relies on
     for (const key of [
@@ -1141,5 +1177,43 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       (statsA.top_actors30 as unknown[]).length,
       "top agents is capped at 5",
     ).toBeLessThanOrEqual(5);
+  });
+
+  it("23. TEST-1: the suite never writes into the seeded org the dev app uses", async () => {
+    // The fixtures cannot be deleted afterwards -- `events` is append-only and
+    // RLS denies DELETE on the business tables (guardrail 1) -- so the only
+    // way to keep the dev database clean is never to dirty it. This test is
+    // the guard: if someone points a fixture back at the seeded org, it fails
+    // here rather than silently polluting the dev dashboard again.
+    expect(ORG_A, "test org A must not be the seeded org").not.toBe(SEEDED_ORG);
+    expect(ORG_B, "test org B must not be the seeded org").not.toBe(SEEDED_ORG);
+
+    // No profile from THIS RUN may live in the seeded org.
+    //
+    // Scoped to `run` on purpose: earlier runs (before this fix) left ~120
+    // `…@test.local` profiles in the seeded org and they cannot be removed —
+    // `events` references them and is append-only. Asserting on the historical
+    // total would fail forever and teach everyone to ignore this test. A
+    // `supabase db reset` is the only way to clear the old ones.
+    const { data: strays, error } = await svc
+      .from("profiles")
+      .select("email")
+      .eq("org_id", SEEDED_ORG)
+      .like("email", `%${run}%`);
+    expect(error).toBeNull();
+    expect(
+      strays ?? [],
+      "this run created profiles in the seeded org — a fixture is pointing at SEEDED_ORG",
+    ).toEqual([]);
+
+    // Nor may this run's fixtures have landed there.
+    for (const table of ["properties", "contacts", "deals"] as const) {
+      const { data: rows } = await svc
+        .from(table)
+        .select("id")
+        .eq("org_id", SEEDED_ORG)
+        .ilike(table === "deals" ? "title" : table === "contacts" ? "last_name" : "reference", `%${run}%`);
+      expect(rows ?? [], `${table}: this run's fixtures leaked into the seeded org`).toEqual([]);
+    }
   });
 });

@@ -5,13 +5,16 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { logEvent } from "../../lib/services/events";
 import { generateReference } from "../../lib/services/reference";
-import { ORG_A, createTestUser, serviceClient, type TestUser } from "./helpers";
+import { ORG_A, createTestUser, ensureTestOrg, serviceClient, type TestUser } from "./helpers";
 
 const run = `svc-${Date.now().toString(36)}`;
 const svc = serviceClient();
 let agent: TestUser;
 
 beforeAll(async () => {
+  // TEST-1: suite-owned fixture org, not the seeded org the dev app uses.
+  // generateReference() needs the PAF district ensureTestOrg creates.
+  await ensureTestOrg(svc, ORG_A, "Test Org A", "test-org-a");
   agent = await createTestUser(svc, `agent-${run}@test.local`, "agent", ORG_A);
 }, 60_000);
 
