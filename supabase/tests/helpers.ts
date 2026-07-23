@@ -30,19 +30,53 @@ export const ORG_B = "bbbbbbbb-0000-0000-0000-000000000001"; // cross-org isolat
 export const SEEDED_ORG = "00000000-0000-0000-0000-000000000001";
 
 /**
- * Sale pipeline mirroring `0003_seed.sql` — the suite reads the stage at
- * sort_order 1 and test 20 adds/reorders around these.
+ * Every pipeline from `0003_seed.sql`, verbatim.
+ *
+ * ALL FOUR deal types are required, not just `sale`: the deal fixtures read
+ * the sale stage at sort_order 1, but RLS test 20 exercises add_deal_stage /
+ * reorder_stage against **advisory**. Seeding only `sale` left advisory empty,
+ * so the stage the test added was the only one and "reorder up" had no
+ * neighbour to swap with — it passed on reruns purely because the previous
+ * run's stage was still there. A fresh database (i.e. CI) failed.
  */
-const SALE_STAGES: [string, number, boolean, boolean][] = [
-  ["New", 1, false, false],
-  ["Qualified", 2, false, false],
-  ["Viewing", 3, false, false],
-  ["Offer", 4, false, false],
-  ["Reservation", 5, false, false],
-  ["Legal & Bank", 7, false, false],
-  ["Completed", 8, true, false],
-  ["Lost", 9, false, true],
-];
+type StageSeed = [name: string, sortOrder: number, isWon: boolean, isLost: boolean];
+
+const SEED_STAGES: Record<string, StageSeed[]> = {
+  sale: [
+    ["New", 1, false, false],
+    ["Qualified", 2, false, false],
+    ["Viewing", 3, false, false],
+    ["Offer", 4, false, false],
+    ["Reservation", 5, false, false],
+    ["Legal & Bank", 6, false, false],
+    ["Completed", 7, true, false],
+    ["Lost", 8, false, true],
+  ],
+  rental: [
+    ["New", 1, false, false],
+    ["Qualified", 2, false, false],
+    ["Viewing", 3, false, false],
+    ["Application", 4, false, false],
+    ["Contract Signed", 5, true, false],
+    ["Lost", 6, false, true],
+  ],
+  antiparoxi: [
+    ["Landowner Contact", 1, false, false],
+    ["Site & Zoning Review", 2, false, false],
+    ["Developer Matching", 3, false, false],
+    ["Exchange Terms", 4, false, false],
+    ["Legal Structuring", 5, false, false],
+    ["Agreement Signed", 6, true, false],
+    ["Lost", 7, false, true],
+  ],
+  advisory: [
+    ["Enquiry", 1, false, false],
+    ["Scoping", 2, false, false],
+    ["Proposal Sent", 3, false, false],
+    ["Engaged", 4, true, false],
+    ["Lost", 5, false, true],
+  ],
+};
 
 /**
  * Creates a test org and the org-scoped reference data the suite depends on:
@@ -61,25 +95,29 @@ export async function ensureTestOrg(
     .upsert({ id: orgId, name, slug }, { onConflict: "id" });
   if (orgErr) throw new Error(`ensureTestOrg org ${slug}: ${orgErr.message}`);
 
+  // Seed each pipeline independently so a partially-seeded org self-repairs.
   const { data: existingStages, error: stageReadErr } = await admin
     .from("deal_stages")
-    .select("id")
-    .eq("org_id", orgId)
-    .eq("deal_type", "sale")
-    .limit(1);
+    .select("deal_type")
+    .eq("org_id", orgId);
   if (stageReadErr) throw new Error(`ensureTestOrg stages ${slug}: ${stageReadErr.message}`);
+  const seeded = new Set((existingStages ?? []).map((s) => s.deal_type as string));
 
-  if ((existingStages ?? []).length === 0) {
-    const { error } = await admin.from("deal_stages").insert(
-      SALE_STAGES.map(([stageName, sort_order, is_won, is_lost]) => ({
+  const missing = Object.entries(SEED_STAGES)
+    .filter(([dealType]) => !seeded.has(dealType))
+    .flatMap(([dealType, stages]) =>
+      stages.map(([stageName, sort_order, is_won, is_lost]) => ({
         org_id: orgId,
-        deal_type: "sale" as const,
+        deal_type: dealType,
         name: stageName,
         sort_order,
         is_won,
         is_lost,
       })),
     );
+
+  if (missing.length > 0) {
+    const { error } = await admin.from("deal_stages").insert(missing);
     if (error) throw new Error(`ensureTestOrg stage insert ${slug}: ${error.message}`);
   }
 

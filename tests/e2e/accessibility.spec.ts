@@ -216,11 +216,18 @@ test.describe("[UX-3] pipeline kanban structure", () => {
   });
 
   test("deals are exposed as a named list, not loose divs", async ({ page }) => {
-    const lists = page.getByRole("list").filter({ hasNotText: /^$/ });
-    expect(await lists.count(), "kanban exposed no lists").toBeGreaterThan(0);
-    // each column's list carries the stage name, so "3 items" has context
-    const firstColumn = page.locator("[data-stage-id]").first();
-    await expect(firstColumn.getByRole("list")).toHaveAttribute("aria-label", /deals$/);
+    // NB: assert on the columns' own lists, not `getByRole("list")` filtered by
+    // text — an EMPTY stage column still renders a labelled <ul>, and on a
+    // freshly reset database every column is empty. Filtering by text made this
+    // silently depend on seeded fixtures.
+    const columns = page.locator("[data-stage-id]");
+    const count = await columns.count();
+    expect(count, "kanban rendered no stage columns").toBeGreaterThan(0);
+
+    for (let i = 0; i < count; i++) {
+      // each column's list carries the stage name, so "3 items" has context
+      await expect(columns.nth(i).getByRole("list")).toHaveAttribute("aria-label", /deals$/);
+    }
   });
 
   test("the per-column count is named, not a stray number", async ({ page }) => {

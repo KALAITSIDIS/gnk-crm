@@ -76,6 +76,26 @@ archived. Rows remain, which is correct behaviour, not a leak.
 
 `npx supabase db reset` is the only true cleanup for the local database.
 
+## Behaviour on a freshly reset database
+
+`npx supabase db reset` leaves the seeded org with no leads, deals, properties
+or keys. The suites are written to cope with that — but two things follow:
+
+- **`[PERF-2] paging preserves the active filter` skips itself** with
+  "seed has fewer leads than one page — nothing to page through". That
+  assertion only exercises against a database with >25 leads, so don't read a
+  green run on a clean DB as proof that paging preserves filters.
+- Assertions about list contents must handle the empty case. Two tests
+  (`[UX-3] deals are exposed as a named list`, `[PERF-2] list screens state
+  their range and total`) originally assumed seeded fixtures and only passed
+  because earlier runs had left data behind. Both now assert the empty state
+  explicitly when the list is empty.
+
+The RLS suite must pass on the **first** run against a fresh database, because
+that is exactly what CI does (`supabase start` then `npm run test:rls`, once).
+If a test only passes on a rerun it is depending on residue from the previous
+run — that is a bug in the test, not a quirk.
+
 ## Known limitations
 
 - **Drag-and-drop is not covered.** dnd-kit sensors ignore synthetic pointer

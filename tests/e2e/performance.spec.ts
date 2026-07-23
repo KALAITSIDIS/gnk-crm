@@ -129,6 +129,19 @@ test.describe("scale safeguards", () => {
     for (const path of ["/leads", "/tasks", "/keys"]) {
       await page.goto(path, { waitUntil: "networkidle" });
       const text = await page.locator("main").innerText();
+
+      // The Pager renders nothing at all when the list is genuinely empty —
+      // "Showing 0–0 of 0" would be noise, and an empty state already says it.
+      // On a freshly reset database every list is empty, so assert the
+      // disclosure only when there is something to disclose.
+      const hasRows = (await page.locator("main li, main tbody tr").count()) > 0;
+      if (!hasRows) {
+        expect(text, `${path} is empty but shows no empty state`).toMatch(
+          /no |none|nothing|inbox zero/i,
+        );
+        continue;
+      }
+
       // "Showing 1–25 of 437 leads" — the disclosure half of the fix.
       expect(text, `${path} does not disclose its range and total`).toMatch(
         /showing\s+\d+[–-]\d+\s+of\s+\d+/i,
