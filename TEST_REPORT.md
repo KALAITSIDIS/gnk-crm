@@ -331,7 +331,15 @@ AssertionError: service_role must be able to refresh the chain cache on demand (
 
 **Verified:** local grants `anon ✗ / authenticated ✗ / service_role ✓`; typecheck 0, lint 0, 283 unit, 27 RLS, build clean.
 
-**⚠️ Not yet on production.** Migration 0019 must be hand-applied to hosted before this deploys — though unlike 0018 it is *safe to deploy in either order*, since nothing in the app calls this RPC today. See §5a for the apply recipe.
+**Applied to hosted and deployed.** But the apply turned up something worth recording, which downgrades this finding's real-world severity:
+
+**Production was never actually broken.** Hosted carries an *explicit* ACL entry — `run_chain_checks: {postgres=X/postgres, service_role=X/postgres}` — from Supabase's platform default privileges on functions created in `public`. An explicit grant is untouched by `revoke … from public`, so hosted kept `service_role ✓` throughout.
+
+The local CLI stack has no such default privilege, so there `service_role` was relying on PUBLIC and genuinely lost it. **The defect is therefore real for every environment built purely from the migrations** — local, CI, and any future restore or re-provision — but not for the current hosted project.
+
+That still matters: CI runs a fresh stack on every push, and a disaster-recovery rebuild would have produced a database where the chain cache could never be refreshed on demand. Migration 0019 makes the grant explicit in the migration history, so the state no longer depends on a platform default.
+
+Hosted verified after apply: `anon ✗ / authenticated ✗ / service_role ✓`, history 19 rows, `non_filename_versions = 0`, `verify-events-chain` cron intact.
 
 #### SEC-5 — `Access-Control-Allow-Origin: *` on production responses
 Production returns `Access-Control-Allow-Origin: *` on the login HTML. Low risk in practice — auth is cookie-based and the header carries no `Allow-Credentials`, so a cross-origin read of authenticated content still fails. Worth removing anyway to avoid a future change turning it into a real leak. Likely Vercel default; check project settings.
