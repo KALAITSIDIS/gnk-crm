@@ -48,9 +48,13 @@ export function MultilangTabs({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
-        <Label>{label}</Label>
+        {/* One visible label over THREE inputs (en/el/ru), so it labels a group
+            rather than a control; each locale input carries its own accessible
+            name below so a screen reader says which language it is editing.
+            (A11Y-1) */}
+        <Label id={`${name}-label`}>{label}</Label>
       </div>
-      <Tabs defaultValue="en">
+      <Tabs defaultValue="en" role="group" aria-labelledby={`${name}-label`}>
         <TabsList className="h-8">
           {LOCALES.map((locale) => (
             <TabsTrigger key={locale} value={locale} className="gap-1.5 px-3 text-xs">
@@ -76,7 +80,9 @@ export function MultilangTabs({
           >
             {multiline ? (
               <Textarea
+                id={`${name}_${locale}`}
                 name={`${name}_${locale}`}
+                aria-label={`${label} (${LOCALE_LABELS[locale]})`}
                 defaultValue={defaultValue[locale] ?? ""}
                 rows={rows}
                 onChange={(e) =>
@@ -85,7 +91,9 @@ export function MultilangTabs({
               />
             ) : (
               <Input
+                id={`${name}_${locale}`}
                 name={`${name}_${locale}`}
+                aria-label={`${label} (${LOCALE_LABELS[locale]})`}
                 defaultValue={defaultValue[locale] ?? ""}
                 onChange={(e) =>
                   setFilled((f) => ({ ...f, [locale]: e.target.value.trim().length > 0 }))

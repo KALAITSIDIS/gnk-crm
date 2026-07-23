@@ -50,9 +50,11 @@ function SelectField({
       : (options as { value: string; label: string }[]);
   return (
     <div className="flex flex-col gap-2">
-      <Label>{label}</Label>
+      {/* id derived from `name` — unique within a form, so every SelectField
+          in the property detail tabs gets an accessible name (A11Y-1) */}
+      <Label htmlFor={`field-${name}`}>{label}</Label>
       <Select name={name} defaultValue={defaultValue ?? ""}>
-        <SelectTrigger>
+        <SelectTrigger id={`field-${name}`}>
           <SelectValue placeholder={placeholder ?? "Select…"} />
         </SelectTrigger>
         <SelectContent>

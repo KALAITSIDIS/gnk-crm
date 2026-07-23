@@ -80,9 +80,9 @@ export function CreateContactForm() {
 
       <div className="grid gap-4 rounded-[10px] border border-border bg-surface p-6 sm:grid-cols-2">
         <div className="flex flex-col gap-2">
-          <Label>Kind</Label>
+          <Label htmlFor="contact_kind">Kind</Label>
           <Select value={kind} onValueChange={setKind}>
-            <SelectTrigger>
+            <SelectTrigger id="contact_kind">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -112,8 +112,9 @@ export function CreateContactForm() {
         )}
 
         <div className="flex flex-col gap-2">
-          <Label>Phone</Label>
+          <Label htmlFor="phone">Phone</Label>
           <PhoneInput
+            id="phone"
             name="phone"
             onValidChange={(e164) => {
               phoneRef.current = e164;
@@ -148,8 +149,9 @@ export function CreateContactForm() {
           <Input id="nationality" name="nationality" />
         </div>
         <div className="flex flex-col gap-2">
-          <Label>Languages</Label>
-          <div className="flex gap-4 pt-2">
+          {/* checkbox group: role="group" + aria-labelledby, not htmlFor (A11Y-1) */}
+          <Label id="languages-label">Languages</Label>
+          <div role="group" aria-labelledby="languages-label" className="flex gap-4 pt-2">
             {CONTACT_LANGUAGES.map((lang) => (
               <label key={lang} className="flex items-center gap-1.5 text-sm">
                 <Checkbox name="languages" value={lang} defaultChecked={lang === "en"} />
@@ -160,8 +162,12 @@ export function CreateContactForm() {
         </div>
 
         <div className="flex flex-col gap-2 sm:col-span-2">
-          <Label>Contact types</Label>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <Label id="contact-types-label">Contact types</Label>
+          <div
+            role="group"
+            aria-labelledby="contact-types-label"
+            className="grid grid-cols-2 gap-2 sm:grid-cols-4"
+          >
             {CONTACT_TYPES.map((t) => (
               <label key={t} className="flex items-center gap-1.5 text-sm">
                 <Checkbox name="contact_types" value={t} />
@@ -172,9 +178,9 @@ export function CreateContactForm() {
         </div>
 
         <div className="flex flex-col gap-2">
-          <Label>Temperature</Label>
+          <Label htmlFor="temperature">Temperature</Label>
           <Select name="temperature" defaultValue="warm">
-            <SelectTrigger>
+            <SelectTrigger id="temperature">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -187,9 +193,9 @@ export function CreateContactForm() {
           </Select>
         </div>
         <div className="flex flex-col gap-2">
-          <Label>Source</Label>
+          <Label htmlFor="source">Source</Label>
           <Select name="source" defaultValue={SELECT_NONE}>
-            <SelectTrigger>
+            <SelectTrigger id="source">
               <SelectValue placeholder="Select source…" />
             </SelectTrigger>
             <SelectContent>
@@ -208,9 +214,9 @@ export function CreateContactForm() {
           <Input id="source_detail" name="source_detail" placeholder="e.g. referred by Maria K." />
         </div>
         <div className="flex flex-col gap-2">
-          <Label>Psychology profile</Label>
+          <Label htmlFor="psychology">Psychology profile</Label>
           <Select name="psychology" defaultValue={SELECT_NONE}>
-            <SelectTrigger>
+            <SelectTrigger id="psychology">
               <SelectValue placeholder="Select…" />
             </SelectTrigger>
             <SelectContent>

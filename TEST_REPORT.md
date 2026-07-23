@@ -26,7 +26,7 @@ The defects that remain are concentrated in three places:
 | `npm run test` (unit) | ✅ **283 passed** (24 files) — was 225 before this audit |
 | `npm run test:rls` | ✅ **25 passed** |
 | `npm run build` | ✅ compiled in 21.4s, no warnings |
-| `npx playwright test` | ✅ **122 passed** (desktop 1280px + mobile 390px) |
+| `npx playwright test` | ✅ **150 passed** (desktop 1280px + mobile 390px) |
 | `npm audit --omit=dev` | ⚠️ **4** vulnerabilities (1 moderate, 3 high) — was 7; all remaining are inside Next's bundled tree, see DEP-2 |
 
 ### Pass/fail across all 11 modules
@@ -199,9 +199,9 @@ Not urgent (the desk is far from 2,000 open deals), but it is a *silent* wrong n
 
 **Fix:** move the aggregation into Postgres — an RPC returning `sum(expected_value)` and `count(*)` grouped by stage, as already scoped in `docs/BACKLOG.md`. Until then, show a "figures capped at 2,000 rows" note when the cap is hit.
 
-#### A11Y-1 — Radix Select triggers have no accessible name, app-wide
+#### A11Y-1 — Form controls have no accessible name ✅ FIXED IN THIS BRANCH
 
-**Module:** Properties, Leads, Settings — the **form** Selects · **Status:** OPEN · **Evidence:** `components/features/properties/create-wizard.tsx:67,84,100,116`; `components/features/leads/add-lead-dialog.tsx:99,115,133`; verified in-browser
+**Module:** app-wide · **Status:** **FIXED** · **Evidence:** 17 component files; `tests/e2e/accessibility.spec.ts` (15 specs)
 
 *Scope correction (2026-07-22):* an earlier draft of this finding said "every `Select` in the app". That is too broad — the **filter** Selects set `aria-label` on the trigger and are fine (`components/features/leads/filters.tsx:48`, and `keys/filters.tsx` added in the PERF-2 pass). The defect is specific to Selects that sit under a visible `<Label>`: the label carries no `htmlFor` and the trigger no `id`, so the two are never associated.
 
@@ -216,13 +216,24 @@ Every `<Label>` above a shadcn/Radix `Select` is a **bare `<Label>` with no `htm
 
 A screen-reader user hears "combobox, Select type…" with no indication of which field it is. This is a **WCAG 2.1 SC 4.1.2 (Name, Role, Value)** failure, and SC 1.3.1 for the orphaned labels. It also blocked `getByLabel()` in the E2E suite — the property-creation spec has to select by DOM index, which is documented in `tests/e2e/happy-path.spec.ts`.
 
-**Fix:** give each trigger an id and point the label at it:
-```tsx
-<Label htmlFor="property-type">Property type</Label>
-<Select name="property_type">
-  <SelectTrigger id="property-type"><SelectValue /></SelectTrigger>
-```
-Then simplify the E2E helper back to name-based selection.
+**Fix applied — and the original estimate was badly wrong.**
+
+I scoped this at "~15 pairs, ~2 hours". The actual sweep found **40 orphaned `<Label>` elements across 15 files**, plus a further class the grep could not see at all: controls with **no label element whatsoever**. Three of those only surfaced because the new test walks the rendered DOM rather than the source:
+
+| Found by | Control | Was |
+|---|---|---|
+| DOM walk | `/tasks` quick-add title | placeholder `"Quick task…"` only — its `due_date` sibling already had an `aria-label`, so this was half-done |
+| DOM walk | `/settings/users` per-row role select | announced `"combobox, agent"` with no indication **which user's** role |
+| DOM walk | `/settings/cyprus-config` JSON textareas | several per page, none named |
+
+Three distinct fix shapes were needed, not one:
+1. **Single control under a label** → `<Label htmlFor>` + `id` on the control. `PhoneInput` had to gain an `id` prop to support this; `SelectField` in `properties/detail-forms.tsx` derives `id` from its `name`, which fixed every property-detail select at once.
+2. **Checkbox/button groups** (Languages, Contact types, Areas of interest, Property types, star Rating) — these are *not* one control, so `htmlFor` is wrong. They take `role="group"` + `aria-labelledby`.
+3. **`MultilangTabs`** — one visible label over three inputs (en/el/ru). The group gets the label; each locale input gets its own `aria-label` so a screen reader says *which language* is being edited.
+
+**Correction to an earlier draft:** it claimed the viewings create dialog was also affected. It is not — `EntityPicker` already wires `<Label htmlFor={inputId}>` to `<Input id={inputId}>` correctly.
+
+**Regression guard:** `tests/e2e/accessibility.spec.ts` computes accessible names in the DOM (aria-label → aria-labelledby → `label[for]` → wrapping label → title, explicitly *not* placeholder) across 9 form pages, both wizard steps and the add-lead dialog. It deliberately skips anything `aria-hidden` or outside the tab order — Radix renders a 1×1 `aria-hidden` native `<select>` purely so forms submit, and an early version of the test wrongly flagged those.
 
 ---
 

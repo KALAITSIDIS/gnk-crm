@@ -173,9 +173,9 @@ export function AddUnitForm({ projectId }: { projectId: string }) {
           <Input id="unit_number" name="unit_number" placeholder="203" required />
         </div>
         <div className="flex flex-col gap-1.5">
-          <Label>Type</Label>
+          <Label htmlFor="unit-property-type">Type</Label>
           <Select name="property_type" defaultValue="apartment">
-            <SelectTrigger>
+            <SelectTrigger id="unit-property-type">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

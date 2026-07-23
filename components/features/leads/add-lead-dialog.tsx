@@ -96,9 +96,9 @@ function AddLeadForm({ onDone }: { onDone: () => void }) {
       <input type="hidden" name="contact_id" value={contact?.id ?? ""} />
       <div className="grid grid-cols-2 gap-3">
         <div className="flex flex-col gap-1.5">
-          <Label>Source</Label>
+          <Label htmlFor="lead-source">Source</Label>
           <Select name="source" defaultValue="phone">
-            <SelectTrigger>
+            <SelectTrigger id="lead-source">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -111,9 +111,9 @@ function AddLeadForm({ onDone }: { onDone: () => void }) {
           </Select>
         </div>
         <div className="flex flex-col gap-1.5">
-          <Label>Channel</Label>
+          <Label htmlFor="lead-channel">Channel</Label>
           <Select name="channel" defaultValue="">
-            <SelectTrigger>
+            <SelectTrigger id="lead-channel">
               <SelectValue placeholder="Optional" />
             </SelectTrigger>
             <SelectContent>
@@ -130,10 +130,11 @@ function AddLeadForm({ onDone }: { onDone: () => void }) {
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <Label>Link contact (optional)</Label>
+        <Label htmlFor="lead-contact-search">Link contact (optional)</Label>
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-text-3" />
           <Input
+            id="lead-contact-search"
             value={contact ? contact.display_name : query}
             onChange={(e) => onQueryChange(e.target.value)}
             placeholder="Search name, phone…"

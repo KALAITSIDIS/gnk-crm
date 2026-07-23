@@ -36,8 +36,9 @@ export function ViewingFeedbackForm({
       <input type="hidden" name="rating" value={rating} />
 
       <div className="flex flex-col gap-1.5">
-        <Label>Rating</Label>
-        <div className="flex gap-1">
+        {/* five toggle buttons, not one control — group semantics (A11Y-1) */}
+        <Label id="rating-label">Rating</Label>
+        <div role="group" aria-labelledby="rating-label" className="flex gap-1">
           {[1, 2, 3, 4, 5].map((n) => (
             <button
               key={n}

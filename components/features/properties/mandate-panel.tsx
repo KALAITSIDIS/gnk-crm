@@ -91,9 +91,9 @@ function MandateDialog({
 
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5">
-              <Label>Type</Label>
+              <Label htmlFor="mandate-type">Type</Label>
               <Select name="type" defaultValue={mandate?.type ?? "open"}>
-                <SelectTrigger>
+                <SelectTrigger id="mandate-type">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

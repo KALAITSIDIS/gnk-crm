@@ -25,17 +25,9 @@ test.beforeEach(async ({ baseURL }) => {
   );
 });
 
-/**
- * Picks an option from a shadcn/Radix Select BY POSITION.
- *
- * FINDING A11Y-1: none of these triggers has an accessible name — the visible
- * <Label> carries no htmlFor and the SelectTrigger carries no id, aria-label
- * or aria-labelledby, so `getByLabel` / `getByRole(name:)` cannot reach them
- * and a screen reader announces a bare "combobox". Positional selection is the
- * workaround; when the labels are fixed this helper should take a name again.
- */
-async function selectByIndex(page: Page, index: number, optionText: RegExp) {
-  await page.getByRole("combobox").nth(index).click();
+/** Picks an option from a shadcn/Radix Select by the label the user sees. */
+async function selectOption(page: Page, label: RegExp, optionText: RegExp) {
+  await page.getByLabel(label).click();
   await page.getByRole("option", { name: optionText }).first().click();
 }
 
@@ -101,11 +93,10 @@ test.describe.serial("critical path", () => {
     const problems = watchForProblems(page);
     await page.goto("/properties/new", { waitUntil: "networkidle" });
 
-    // Step 1 — classification. Selects in DOM order: 0 Kind, 1 Property type,
-    // 2 Transaction, 3 District. Kind and Transaction already default to
+    // Step 1 — classification. Kind and Transaction already default to
     // "Standalone listing" / "Sale", so only the two empty ones need setting.
-    await selectByIndex(page, 1, /apartment|villa|house/i);
-    await selectByIndex(page, 3, /paphos/i);
+    await selectOption(page, /^Property type$/, /apartment|villa|house/i);
+    await selectOption(page, /^District$/, /paphos/i);
     // NB: scope to <main> — /next/i also matches the Next.js dev-tools button.
     await page.locator("main").getByRole("button", { name: /^continue$/i }).click();
 

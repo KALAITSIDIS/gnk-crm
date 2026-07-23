@@ -89,8 +89,15 @@ export function SignSlip({
         {gdprLine}
       </p>
 
-      <div className="flex flex-col gap-1.5">
-        <Label>Sign below</Label>
+      {/* the canvas carries its own aria-label ("Signature area — draw your
+          signature here"), so this visible instruction names the REGION rather
+          than competing with it (A11Y-1) */}
+      <div
+        role="group"
+        aria-labelledby="sign-below-label"
+        className="flex flex-col gap-1.5"
+      >
+        <Label id="sign-below-label">Sign below</Label>
         <SignaturePad onChange={setSignature} />
       </div>
 

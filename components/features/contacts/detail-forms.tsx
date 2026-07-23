@@ -72,9 +72,9 @@ export function ProfileForm({
       <input type="hidden" name="contact_kind" value={kind} />
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="flex flex-col gap-2">
-          <Label>Kind</Label>
+          <Label htmlFor="contact_kind">Kind</Label>
           <Select value={kind} onValueChange={setKind}>
-            <SelectTrigger>
+            <SelectTrigger id="contact_kind">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -102,8 +102,12 @@ export function ProfileForm({
           </div>
         )}
         <div className="flex flex-col gap-2">
-          <Label>Phone</Label>
-          <PhoneInput name="phone" defaultValue={contact.phone_raw ?? contact.phone_e164 ?? ""} />
+          <Label htmlFor="phone">Phone</Label>
+          <PhoneInput
+            id="phone"
+            name="phone"
+            defaultValue={contact.phone_raw ?? contact.phone_e164 ?? ""}
+          />
           {additionalPhones.length > 0 ? (
             <p className="text-xs text-text-3">
               Also reachable at:{" "}
@@ -133,8 +137,10 @@ export function ProfileForm({
           <Input id="nationality" name="nationality" defaultValue={contact.nationality ?? ""} />
         </div>
         <div className="flex flex-col gap-2">
-          <Label>Languages</Label>
-          <div className="flex gap-4 pt-2">
+          {/* a checkbox group is not one control, so it takes role="group" +
+              aria-labelledby rather than htmlFor (A11Y-1) */}
+          <Label id="languages-label">Languages</Label>
+          <div role="group" aria-labelledby="languages-label" className="flex gap-4 pt-2">
             {CONTACT_LANGUAGES.map((lang) => (
               <label key={lang} className="flex items-center gap-1.5 text-sm">
                 <Checkbox
@@ -148,8 +154,12 @@ export function ProfileForm({
           </div>
         </div>
         <div className="flex flex-col gap-2 sm:col-span-2">
-          <Label>Contact types</Label>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <Label id="contact-types-label">Contact types</Label>
+          <div
+            role="group"
+            aria-labelledby="contact-types-label"
+            className="grid grid-cols-2 gap-2 sm:grid-cols-4"
+          >
             {CONTACT_TYPES.map((t) => (
               <label key={t} className="flex items-center gap-1.5 text-sm">
                 <Checkbox
@@ -163,9 +173,9 @@ export function ProfileForm({
           </div>
         </div>
         <div className="flex flex-col gap-2">
-          <Label>Temperature</Label>
+          <Label htmlFor="temperature">Temperature</Label>
           <Select name="temperature" defaultValue={contact.temperature ?? "warm"}>
-            <SelectTrigger>
+            <SelectTrigger id="temperature">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -178,9 +188,9 @@ export function ProfileForm({
           </Select>
         </div>
         <div className="flex flex-col gap-2">
-          <Label>Preferred channel</Label>
+          <Label htmlFor="preferred_channel">Preferred channel</Label>
           <Select name="preferred_channel" defaultValue={contact.preferred_channel ?? SELECT_NONE}>
-            <SelectTrigger>
+            <SelectTrigger id="preferred_channel">
               <SelectValue placeholder="Select…" />
             </SelectTrigger>
             <SelectContent>
@@ -194,9 +204,9 @@ export function ProfileForm({
           </Select>
         </div>
         <div className="flex flex-col gap-2">
-          <Label>Source</Label>
+          <Label htmlFor="source">Source</Label>
           <Select name="source" defaultValue={contact.source ?? SELECT_NONE}>
-            <SelectTrigger>
+            <SelectTrigger id="source">
               <SelectValue placeholder="Select source…" />
             </SelectTrigger>
             <SelectContent>
@@ -219,9 +229,9 @@ export function ProfileForm({
           />
         </div>
         <div className="flex flex-col gap-2">
-          <Label>Psychology profile</Label>
+          <Label htmlFor="psychology">Psychology profile</Label>
           <Select name="psychology" defaultValue={contact.psychology ?? SELECT_NONE}>
-            <SelectTrigger>
+            <SelectTrigger id="psychology">
               <SelectValue placeholder="Select…" />
             </SelectTrigger>
             <SelectContent>
@@ -236,9 +246,9 @@ export function ProfileForm({
         </div>
         {agents ? (
           <div className="flex flex-col gap-2">
-            <Label>Assigned agent</Label>
+            <Label htmlFor="assigned_agent_id">Assigned agent</Label>
             <Select name="assigned_agent_id" defaultValue={contact.assigned_agent_id ?? SELECT_NONE}>
-              <SelectTrigger>
+              <SelectTrigger id="assigned_agent_id">
                 <SelectValue placeholder="Unassigned" />
               </SelectTrigger>
               <SelectContent>
@@ -342,8 +352,12 @@ export function PreferencesForm({
           />
         </div>
         <div className="flex flex-col gap-2 sm:col-span-3">
-          <Label>Areas of interest</Label>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <Label id="pref-areas-label">Areas of interest</Label>
+          <div
+            role="group"
+            aria-labelledby="pref-areas-label"
+            className="grid grid-cols-2 gap-2 sm:grid-cols-4"
+          >
             {areaOptions.map((a) => (
               <label key={a.id} className="flex items-center gap-1.5 text-sm">
                 <Checkbox name="pref_areas" value={a.id} defaultChecked={areaChecked(a)} />
@@ -353,8 +367,12 @@ export function PreferencesForm({
           </div>
         </div>
         <div className="flex flex-col gap-2 sm:col-span-3">
-          <Label>Property types</Label>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <Label id="pref-property-types-label">Property types</Label>
+          <div
+            role="group"
+            aria-labelledby="pref-property-types-label"
+            className="grid grid-cols-2 gap-2 sm:grid-cols-4"
+          >
             {PROPERTY_TYPES.map((t) => (
               <label key={t} className="flex items-center gap-1.5 text-sm">
                 <Checkbox
@@ -368,9 +386,9 @@ export function PreferencesForm({
           </div>
         </div>
         <div className="flex flex-col gap-2">
-          <Label>Purpose</Label>
+          <Label htmlFor="purpose">Purpose</Label>
           <Select name="purpose" defaultValue={prefs.purpose ?? SELECT_NONE}>
-            <SelectTrigger>
+            <SelectTrigger id="purpose">
               <SelectValue placeholder="Select…" />
             </SelectTrigger>
             <SelectContent>
@@ -498,7 +516,7 @@ export function ChecklistsForm({
           <Label htmlFor="bank_pre_check_done">Bank pre-check done</Label>
         </div>
         <div className="flex flex-col gap-2">
-          <Label>Account feasibility</Label>
+          <Label htmlFor="account_feasibility">Account feasibility</Label>
           <Select
             name="account_feasibility"
             defaultValue={banking.account_feasibility ?? SELECT_NONE}
@@ -509,7 +527,7 @@ export function ChecklistsForm({
               }))
             }
           >
-            <SelectTrigger>
+            <SelectTrigger id="account_feasibility">
               <SelectValue placeholder="Select…" />
             </SelectTrigger>
             <SelectContent>

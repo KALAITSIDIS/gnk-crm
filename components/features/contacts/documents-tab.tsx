@@ -86,9 +86,9 @@ export function ContactDocumentsTab({
             <Input id="doc_title" name="title" placeholder="Defaults to the file name" />
           </div>
           <div className="flex flex-col gap-2 sm:w-48">
-            <Label>Type</Label>
+            <Label htmlFor="contact-doc-type">Type</Label>
             <Select name="doc_type" defaultValue="other">
-              <SelectTrigger>
+              <SelectTrigger id="contact-doc-type">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

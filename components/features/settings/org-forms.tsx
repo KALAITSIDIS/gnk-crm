@@ -67,7 +67,7 @@ export function BrandingUpload({
   return (
     <form action={formAction} className="flex flex-col gap-2">
       <input type="hidden" name="kind" value={kind} />
-      <Label>{title}</Label>
+      <Label htmlFor={`branding-${kind}`}>{title}</Label>
       {currentUrl ? (
         // eslint-disable-next-line @next/next/no-img-element -- storage URL, no next/image loader configured for it
         <img
@@ -79,7 +79,14 @@ export function BrandingUpload({
         <p className="text-xs text-text-3">Not uploaded yet.</p>
       )}
       <div className="flex items-center gap-2">
-        <Input name="file" type="file" accept="image/png" required className="max-w-64" />
+        <Input
+          id={`branding-${kind}`}
+          name="file"
+          type="file"
+          accept="image/png"
+          required
+          className="max-w-64"
+        />
         <Button type="submit" size="sm" disabled={pending}>
           {pending ? "Uploading…" : "Upload"}
         </Button>

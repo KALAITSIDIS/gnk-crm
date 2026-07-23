@@ -18,10 +18,14 @@ function flagEmoji(country: CountryCode | undefined): string {
 }
 
 export function PhoneInput({
+  id,
   name,
   defaultValue = "",
   onValidChange,
 }: {
+  /** wire this to the visible <Label htmlFor> — without it the field has no
+   *  accessible name (audit 2026-07-22, finding A11Y-1) */
+  id?: string;
   name: string;
   defaultValue?: string;
   onValidChange?: (e164: string | null) => void;
@@ -44,6 +48,7 @@ export function PhoneInput({
           {flagEmoji(normalized?.country)}
         </span>
         <Input
+          id={id}
           name={name}
           value={value}
           onChange={(e) => handleChange(e.target.value)}

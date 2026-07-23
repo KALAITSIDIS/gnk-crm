@@ -41,8 +41,12 @@ export function ConfigCard({ row }: { row: ConfigRow }) {
 
       <form action={formAction} className="mt-3 flex flex-col gap-3">
         <input type="hidden" name="key" value={row.key} />
+        {/* the <h2> above names the section, but the textarea itself had no
+            accessible name — several of these render on one page (A11Y-1) */}
         <Textarea
+          id={`value-json-${row.key}`}
           name="value_json"
+          aria-label={`${row.key} configuration JSON`}
           defaultValue={row.valueJson}
           rows={Math.min(16, row.valueJson.split("\n").length + 1)}
           spellCheck={false}

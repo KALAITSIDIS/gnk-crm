@@ -114,9 +114,9 @@ function InviteFlow({ onDone }: { onDone: () => void }) {
         <Input id="inv-email" name="email" type="email" required />
       </div>
       <div className="flex flex-col gap-1.5">
-        <Label>Role</Label>
+        <Label htmlFor="invite-role">Role</Label>
         <Select name="role" defaultValue="agent">
-          <SelectTrigger>
+          <SelectTrigger id="invite-role">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -181,7 +181,9 @@ function RoleSelect({ user }: { user: UserRow }) {
         })
       }
     >
-      <SelectTrigger className="w-40 capitalize">
+      {/* one of these per table row — without the user's name a screen reader
+          just says "combobox, agent" with no idea whose role it is (A11Y-1) */}
+      <SelectTrigger className="w-40 capitalize" aria-label={`Role for ${user.fullName}`}>
         <SelectValue />
       </SelectTrigger>
       <SelectContent>

@@ -64,9 +64,9 @@ export function CreatePropertyWizard({
         <div className="flex flex-col gap-4 rounded-[10px] border border-border bg-surface p-6">
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-2">
-              <Label>Kind</Label>
+              <Label htmlFor="kind">Kind</Label>
               <Select value={kind} onValueChange={setKind}>
-                <SelectTrigger>
+                <SelectTrigger id="kind">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -81,9 +81,9 @@ export function CreatePropertyWizard({
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label>Property type</Label>
+              <Label htmlFor="property_type">Property type</Label>
               <Select value={propertyType} onValueChange={setPropertyType}>
-                <SelectTrigger>
+                <SelectTrigger id="property_type">
                   <SelectValue placeholder="Select type…" />
                 </SelectTrigger>
                 <SelectContent>
@@ -97,9 +97,9 @@ export function CreatePropertyWizard({
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label>Transaction</Label>
+              <Label htmlFor="transaction_type">Transaction</Label>
               <Select value={transaction} onValueChange={setTransaction}>
-                <SelectTrigger>
+                <SelectTrigger id="transaction_type">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -113,9 +113,9 @@ export function CreatePropertyWizard({
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label>District</Label>
+              <Label htmlFor="district_id">District</Label>
               <Select value={districtId} onValueChange={setDistrictId}>
-                <SelectTrigger>
+                <SelectTrigger id="district_id">
                   <SelectValue placeholder="Select district…" />
                 </SelectTrigger>
                 <SelectContent>
@@ -154,9 +154,9 @@ export function CreatePropertyWizard({
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label>Area</Label>
+              <Label htmlFor="area_id">Area</Label>
               <Select name="area_id" defaultValue="">
-                <SelectTrigger>
+                <SelectTrigger id="area_id">
                   <SelectValue placeholder={districtAreas.length ? "Select area…" : "No areas yet"} />
                 </SelectTrigger>
                 <SelectContent>

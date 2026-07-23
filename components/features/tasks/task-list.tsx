@@ -42,8 +42,11 @@ export function QuickAddTask() {
       action={formAction}
       className="flex flex-wrap items-center gap-2 rounded-[10px] border border-border bg-surface p-3"
     >
+      {/* placeholder is not an accessible name — it disappears on input and
+          is not exposed reliably; the due-date sibling already did this (A11Y-1) */}
       <Input
         name="title"
+        aria-label="Task title"
         placeholder="Quick task…"
         required
         className="h-10 min-w-0 flex-1 basis-40"

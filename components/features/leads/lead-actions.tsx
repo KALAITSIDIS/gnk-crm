@@ -419,9 +419,9 @@ function ConvertLeadForm({
       <form action={formAction} className="flex flex-col gap-3">
         <input type="hidden" name="lead_id" value={leadId} />
         <div className="flex flex-col gap-1.5">
-          <Label>Deal type</Label>
+          <Label htmlFor="convert-deal-type">Deal type</Label>
           <Select name="deal_type" defaultValue="sale">
-            <SelectTrigger>
+            <SelectTrigger id="convert-deal-type">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -482,9 +482,9 @@ function LogConversationForm({ leadId, onDone }: { leadId: string; onDone: () =>
     <form action={formAction} className="flex flex-col gap-3">
       <input type="hidden" name="lead_id" value={leadId} />
       <div className="flex flex-col gap-1.5">
-        <Label>Channel</Label>
+        <Label htmlFor="log-channel">Channel</Label>
         <Select name="channel" defaultValue="phone">
-          <SelectTrigger>
+          <SelectTrigger id="log-channel">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

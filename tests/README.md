@@ -15,6 +15,7 @@ tests/
   e2e/
     helpers.ts                     shared fixtures, problem watchers, module map
     auth.setup.ts                  logs in once, stores the session
+    accessibility.spec.ts          every form control has an accessible name
     modules.spec.ts                all 11 modules load clean + screenshots
     security.spec.ts               anonymous access, bundle hygiene, headers
     calculators.spec.ts            on-screen figures vs the statutory scale
@@ -28,7 +29,7 @@ tests/
 ```bash
 npm run test          # unit — 283 tests, no external deps
 npm run test:rls      # RLS  — 25 tests, needs the local Supabase stack up
-npm run test:e2e      # E2E  — 122 specs, desktop 1280px + mobile 390px
+npm run test:e2e      # E2E  — 150 specs, desktop 1280px + mobile 390px
 ```
 
 Useful subsets:
@@ -73,9 +74,10 @@ archived. Rows remain, which is correct behaviour, not a leak.
 
 - **Drag-and-drop is not covered.** dnd-kit sensors ignore synthetic pointer
   input; the pipeline kanban needs a manual pass or a dedicated harness.
-- **Selects are located by DOM index** in `happy-path.spec.ts` because no
-  Select trigger in the app has an accessible name (finding A11Y-1). Once that
-  is fixed, switch the helper back to name-based selection.
+- **Radix renders a 1×1 `aria-hidden` native `<select>`** alongside each
+  Select so forms submit a value. It is not in the accessibility tree —
+  `accessibility.spec.ts` skips `aria-hidden` and out-of-tab-order elements
+  for exactly this reason. Don't "fix" those.
 - **Performance is measured locally**, not via Lighthouse on live — the heavy
   pages are behind auth and running them on production would mean handling
   production credentials.
