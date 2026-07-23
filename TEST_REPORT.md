@@ -295,9 +295,9 @@ Previously every run incremented all five.
 
 **Note on the existing mess:** those 126 profiles / 403 events are the accumulated residue of ~25 earlier runs and **cannot be deleted** — `events` references them and is append-only. `npx supabase db reset` is the only way to clear them, and it also wipes local fixture data. That is a local-only, operator's-choice cleanup.
 
-#### TEST-2 — `run_chain_checks()` is callable by nobody, and a test was hiding it 🟡 NEW, OPEN
+#### TEST-2 — `run_chain_checks()` was callable by nobody, and a test was hiding it ✅ FIXED
 
-**Module:** Reports / test infrastructure · **Status:** OPEN · **Evidence:** `supabase/migrations/0016_evidence_backfill_and_chain_checks.sql`, `supabase/tests/rls.test.ts` test 21
+**Module:** Reports / test infrastructure · **Status:** **FIXED** (migration 0019, awaiting hosted apply) · **Evidence:** `supabase/migrations/0019_restore_chain_checks_execute.sql`, `supabase/tests/rls.test.ts` test 21
 
 Found while fixing TEST-1. `run_chain_checks()` has EXECUTE for **no role at all** — `anon ✗ / authenticated ✗ / service_role ✗`:
 
@@ -312,9 +312,26 @@ This is the **exact trap migration 0010 was written to fix**: a function's `serv
 
 It stayed invisible because test 21 called the RPC, **ignored the returned error**, and passed on rows the 0016 migration had seeded for orgs existing at migration time. A fixture org created later has no such row — which is how moving the suite to a new org surfaced it.
 
-Test 21 now asserts the real posture (cron-only, revoked even from service_role) and seeds its row through `service_role`'s table grant instead.
+**Fix applied — migration 0019.** The evidence says the current state is an accident, not a design:
+- **0016's own revoke enumerates `anon, authenticated`.** Those were the intended targets; `public` was there to drop the default grant, and `service_role` was collateral — the identical shape to 0007.
+- **0010 is the precedent**, written for exactly this after 0007 broke `verify_events_chain` and `next_reference` in production. Its closing line — *"anon/authenticated stay revoked exactly as 0007 intended"* — is the pattern 0019 follows.
 
-**Fix, if on-demand verification is wanted:** `grant execute on function public.run_chain_checks() to service_role;` in a new migration. Needs a hosted apply. **Decide first whether it *should* be callable** — cron-only is a defensible design, in which case only the stale comment needs correcting.
+So 0019 is a single `grant execute on function public.run_chain_checks() to service_role;`.
+
+**anon and authenticated stay revoked, deliberately.** The RPC walks every event in the org, so an on-demand full walk triggerable from any logged-in browser session would be a self-inflicted DoS — and the `/reports` page reads the cached `chain_checks` row, which is the entire reason 0016 exists. Being able to force a re-verification matters after a restore, a bulk import, or any incident that casts doubt on the log; that is a server-side operation.
+
+**Test 21 rewritten to assert the fix rather than hide it**, and proven to catch the regression: with the grant temporarily revoked it now fails with the exact `42501` it used to swallow —
+
+```
+AssertionError: service_role must be able to refresh the chain cache on demand (0019):
+  expected { code: '42501', … } to be null
+```
+
+— then passes again once restored. It also now pins `anon ✗` alongside `authenticated ✗`.
+
+**Verified:** local grants `anon ✗ / authenticated ✗ / service_role ✓`; typecheck 0, lint 0, 283 unit, 27 RLS, build clean.
+
+**⚠️ Not yet on production.** Migration 0019 must be hand-applied to hosted before this deploys — though unlike 0018 it is *safe to deploy in either order*, since nothing in the app calls this RPC today. See §5a for the apply recipe.
 
 #### SEC-5 — `Access-Control-Allow-Origin: *` on production responses
 Production returns `Access-Control-Allow-Origin: *` on the login HTML. Low risk in practice — auth is cookie-based and the header carries no `Allow-Credentials`, so a cross-origin read of authenticated content still fails. Worth removing anyway to avoid a future change turning it into a real leak. Likely Vercel default; check project settings.

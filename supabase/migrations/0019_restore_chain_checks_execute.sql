@@ -1,0 +1,28 @@
+-- =============================================================================
+-- 0019 — Restore service_role EXECUTE on run_chain_checks (audit fix, 2026-07-23)
+--
+-- TEST-2. This is the SAME accident 0010 fixed for 0007, in a migration
+-- written after it: `revoke execute on function run_chain_checks() from
+-- public, anon, authenticated` (0016). service_role is not a superuser — its
+-- EXECUTE rides on the PUBLIC default grant — so revoking PUBLIC stripped it
+-- too, leaving the function callable by NO role at all:
+--
+--     run_chain_checks    | anon f | authenticated f | service_role f
+--
+-- 0016 clearly did not intend that: it enumerated `anon, authenticated` as
+-- the roles to lock out, exactly as 0007 had. Production never noticed
+-- because the nightly `verify-events-chain` pg_cron job runs as its owner, so
+-- the chain cache kept refreshing at 03:30 — but nothing could trigger a
+-- re-verification on demand, which is precisely what you want after a restore,
+-- a bulk import, or any incident that casts doubt on the event log.
+--
+-- It stayed hidden because RLS test 21 called the RPC and IGNORED the returned
+-- error, passing on rows 0016 had seeded at migration time.
+--
+-- anon and authenticated stay revoked, deliberately: verify_events_chain walks
+-- every event in the org, so exposing an on-demand full walk to any logged-in
+-- browser session would be a self-inflicted DoS. The /reports page reads the
+-- cached `chain_checks` row instead, which is the whole reason 0016 exists.
+-- =============================================================================
+
+grant execute on function public.run_chain_checks() to service_role;

@@ -898,3 +898,39 @@ Deployment note: this is the first audit fix carrying a migration. 0018 must be
 applied to hosted BEFORE the code deploys, or every admin hits the error
 boundary. `create index if not exists` + `create or replace function` make the
 migration safely re-runnable.
+
+## 2026-07-23 · T-audit-test2 — run_chain_checks stays server-side, but must be callable
+
+Migration 0016 locked down `run_chain_checks()` with
+`revoke execute … from public, anon, authenticated`. Because a function's
+`service_role` EXECUTE rides on the PUBLIC default grant, that left the
+function callable by **no role at all** — the same accident 0010 had already
+fixed once, for 0007.
+
+Production never noticed: the nightly `verify-events-chain` pg_cron job runs as
+its owner, so the chain cache kept refreshing at 03:30. It stayed hidden
+because RLS test 21 called the RPC, ignored the returned error, and passed on
+rows 0016 had seeded at migration time. Moving the RLS suite into its own org
+(T-audit-test1) was what exposed it — a fixture org created after the migration
+has no seeded row.
+
+Decision: restore `service_role` only (0019).
+
+- 0016 enumerated `anon, authenticated` as the roles to lock out. `public` was
+  there to drop the default grant. Losing `service_role` was collateral, not
+  intent — identical to 0007, and 0010 set the precedent for the repair.
+- **anon and authenticated stay revoked.** `verify_events_chain` walks every
+  event in the org; an on-demand full walk triggerable from any logged-in
+  browser session would be a self-inflicted DoS. The `/reports` page reads the
+  cached `chain_checks` row, which is why 0016 introduced that cache.
+- Being able to force a re-verification is genuinely needed — after a restore,
+  a bulk import, or any incident that casts doubt on the event log — but it is
+  a server-side operation, not a UI affordance.
+
+Test 21 now asserts the call SUCCEEDS for service_role and stays denied for
+anon and authenticated. Verified by sabotage: revoking the grant makes it fail
+with 42501, the precise state it used to swallow.
+
+Standing lesson: a test that calls an action and ignores the returned error can
+hide a permission regression indefinitely. Assert on `error` even when the
+call is only setup.

@@ -1021,30 +1021,22 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
 
   it("21. chain_checks: org-scoped read for staff; writes denied for every app role", async () => {
     /**
-     * `run_chain_checks()` is CRON-ONLY: 0016 revoked EXECUTE from public,
-     * which (per the 0010 lesson) also stripped service_role, because a
-     * function's service_role grant rides on PUBLIC. The nightly pg_cron job
-     * runs as its owner so production is unaffected — but no API role can
-     * trigger a refresh, including this suite. That is asserted below.
+     * TEST-2 (migration 0019). 0016 revoked EXECUTE `from public`, which — per
+     * the 0010 lesson — also stripped service_role, because a function's
+     * service_role EXECUTE rides on the PUBLIC default grant. The function was
+     * left callable by NO role. 0019 restored service_role; anon and
+     * authenticated stay revoked on purpose, since the RPC walks every event
+     * in the org and must not be triggerable from a browser session.
      *
-     * This test previously called the RPC and ignored the failure, silently
-     * relying on rows the 0016 migration seeded for the orgs that existed at
-     * migration time. A fixture org created later has no such row, so the row
-     * is now seeded directly with service_role's table grant.
+     * The original version of this test called the RPC and IGNORED the error,
+     * so it passed on rows 0016 had seeded at migration time and hid the
+     * regression completely. It now asserts the call SUCCEEDS.
      */
     const rpcAsService = await svc.rpc("run_chain_checks");
     expect(
       rpcAsService.error,
-      "run_chain_checks is cron-only — revoked from service_role too",
-    ).not.toBeNull();
-
-    const { error: seedErr } = await svc
-      .from("chain_checks")
-      .upsert(
-        { org_id: ORG_A, checked_at: new Date().toISOString(), ok: true },
-        { onConflict: "org_id" },
-      );
-    expect(seedErr, "service_role holds the table grant even without the RPC").toBeNull();
+      "service_role must be able to refresh the chain cache on demand (0019)",
+    ).toBeNull();
 
     for (const u of [adminA, agentA1, lmA]) {
       const { data, error } = await u.client.from("chain_checks").select("org_id, checked_at, ok");
@@ -1075,9 +1067,12 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       .eq("org_id", ORG_A);
     expect(delChk.count ?? 0, "admin DELETE must remove nothing").toBe(0);
 
-    // the RPC itself is service/cron-only
+    // the RPC stays service/cron-only: it walks every event in the org, so no
+    // browser session may trigger it (0019 restored service_role ONLY)
     const rpc = await adminA.client.rpc("run_chain_checks");
     expect(rpc.error, "run_chain_checks must be revoked from authenticated").not.toBeNull();
+    const rpcAnon = await anonClient().rpc("run_chain_checks");
+    expect(rpcAnon.error, "run_chain_checks must be revoked from anon").not.toBeNull();
   });
 
   it("22. admin_dashboard_stats: SECURITY INVOKER — org-scoped, exact, anon denied", async () => {
