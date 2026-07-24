@@ -6,9 +6,18 @@ import type { Database } from "@/lib/supabase/database.types";
 import { getCurrentProfile, type CurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
 import { createClient } from "@/lib/supabase/server";
+import { checkContactDuplicate, type DuplicateMatch } from "@/lib/actions/contacts";
+import { leadContactMode, splitEnquirerName } from "@/lib/services/lead-contact";
+import { normalizePhone } from "@/lib/services/phone";
 import { COMM_CHANNELS, LEAD_OPEN_STATUSES, LEAD_SOURCES } from "@/lib/validators/contacts";
 
-export type LeadActionState = { error: string | null; savedAt: number | null };
+// `duplicate` is set when creating a NEW contact from the lead hits an existing
+// one (doc 02 §C4 dedup): the form surfaces it and offers to link instead.
+export type LeadActionState = {
+  error: string | null;
+  savedAt: number | null;
+  duplicate?: DuplicateMatch | null;
+};
 
 type LeadRow = Database["public"]["Tables"]["leads"]["Row"];
 type LeadUpdate = Database["public"]["Tables"]["leads"]["Update"];
@@ -36,6 +45,11 @@ const createLeadSchema = z.object({
   message: z.preprocess(emptyToUndefined, z.string().max(5000).optional()),
   contact_id: z.preprocess(emptyToUndefined, z.guid().optional()),
   property_id: z.preprocess(emptyToUndefined, z.guid().optional()),
+  // New-enquirer capture (doc 02 §C4 "create contact"): a name plus optional
+  // phone/email. Ignored when an existing contact_id is picked.
+  new_contact_name: z.preprocess(emptyToUndefined, z.string().max(200).optional()),
+  new_contact_phone: z.preprocess(emptyToUndefined, z.string().max(40).optional()),
+  new_contact_email: z.preprocess(emptyToUndefined, z.string().email().max(200).optional()),
 });
 
 export async function createLead(
@@ -51,6 +65,76 @@ export async function createLead(
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
 
+  // Resolve which contact (if any) the lead links to. A picked existing contact
+  // wins; otherwise a typed enquirer name means "create a contact", with the
+  // §C3/§C4 duplicate check firing first so the same buyer's history never forks.
+  let contactId: string | null = d.contact_id ?? null;
+  const mode = leadContactMode({
+    contactId: d.contact_id ?? null,
+    newContactName: d.new_contact_name ?? null,
+  });
+
+  if (mode === "create") {
+    let phoneE164: string | null = null;
+    if (d.new_contact_phone) {
+      const normalized = normalizePhone(d.new_contact_phone);
+      if (!normalized) return { error: "Enquirer phone number is not valid", savedAt: null };
+      phoneE164 = normalized.e164;
+    }
+
+    const duplicate = await checkContactDuplicate(
+      d.new_contact_phone ?? null,
+      d.new_contact_email ?? null,
+    );
+    if (duplicate) {
+      // Do NOT create; surface the match so the agent links the existing contact.
+      return {
+        error: `A contact with this ${duplicate.matched_on} already exists.`,
+        savedAt: null,
+        duplicate,
+      };
+    }
+
+    const { firstName, lastName } = splitEnquirerName(d.new_contact_name!);
+    const { data: newContact, error: contactErr } = await supabase
+      .from("contacts")
+      .insert({
+        org_id: profile.orgId,
+        contact_kind: "person",
+        first_name: firstName,
+        last_name: lastName,
+        phone_e164: phoneE164,
+        phone_raw: d.new_contact_phone ?? null,
+        email: d.new_contact_email ?? null,
+        source: d.source,
+        assigned_agent_id: profile.role === "agent" ? profile.id : null,
+        created_by: profile.id,
+      })
+      .select("id")
+      .single();
+    if (contactErr) {
+      // race with the unique phone index → surface as a duplicate, not a raw error
+      if (contactErr.code === "23505") {
+        const race = await checkContactDuplicate(
+          d.new_contact_phone ?? null,
+          d.new_contact_email ?? null,
+        );
+        return { error: "A contact with this phone already exists.", savedAt: null, duplicate: race };
+      }
+      return { error: contactErr.message, savedAt: null };
+    }
+
+    contactId = newContact.id;
+    await logEvent(supabase, {
+      orgId: profile.orgId,
+      actorId: profile.id,
+      entityType: "contact",
+      entityId: contactId,
+      eventType: "created",
+      payload: { phone: phoneE164, email: d.new_contact_email ?? null, via: "lead" },
+    });
+  }
+
   const { data: created, error } = await supabase
     .from("leads")
     .insert({
@@ -58,7 +142,7 @@ export async function createLead(
       source: d.source,
       channel: d.channel ?? null,
       message: d.message ?? null,
-      contact_id: d.contact_id ?? null,
+      contact_id: contactId,
       property_id: d.property_id ?? null,
     })
     .select("id")
@@ -71,11 +155,11 @@ export async function createLead(
     entityType: "lead",
     entityId: created.id,
     eventType: "created",
-    payload: { source: d.source, channel: d.channel ?? null },
+    payload: { source: d.source, channel: d.channel ?? null, contact_id: contactId },
   });
 
   revalidatePath("/leads");
-  return { error: null, savedAt: Date.now() };
+  return { error: null, savedAt: Date.now(), duplicate: null };
 }
 
 async function getLead(leadId: string) {

@@ -27,11 +27,13 @@ import { COMM_CHANNELS, LEAD_SOURCES } from "@/lib/validators/contacts";
 import { formatPhone } from "@/lib/services/phone";
 import { cn } from "@/lib/utils";
 
-const initialState: LeadActionState = { error: null, savedAt: null };
+const initialState: LeadActionState = { error: null, savedAt: null, duplicate: null };
 
 function labelize(value: string) {
   return value.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
 }
+
+type LinkedContact = { id: string; display_name: string };
 
 export function AddLeadDialog() {
   const [open, setOpen] = useState(false);
@@ -59,7 +61,7 @@ function AddLeadForm({ onDone }: { onDone: () => void }) {
   const [state, formAction, pending] = useActionState(createLead, initialState);
   const [query, setQuery] = useState("");
   const [candidates, setCandidates] = useState<MergeCandidate[]>([]);
-  const [contact, setContact] = useState<MergeCandidate | null>(null);
+  const [contact, setContact] = useState<LinkedContact | null>(null);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchSeq = useRef(0);
   const lastToasted = useRef<number | null>(null);
@@ -130,14 +132,14 @@ function AddLeadForm({ onDone }: { onDone: () => void }) {
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="lead-contact-search">Link contact (optional)</Label>
+        <Label htmlFor="lead-contact-search">Contact</Label>
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-text-3" />
           <Input
             id="lead-contact-search"
             value={contact ? contact.display_name : query}
             onChange={(e) => onQueryChange(e.target.value)}
-            placeholder="Search name, phone…"
+            placeholder="Search an existing contact by name or phone…"
             className="pl-8"
           />
         </div>
@@ -147,7 +149,7 @@ function AddLeadForm({ onDone }: { onDone: () => void }) {
               <li key={c.id}>
                 <button
                   type="button"
-                  onClick={() => setContact(c)}
+                  onClick={() => setContact({ id: c.id, display_name: c.display_name })}
                   className={cn(
                     "flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-surface-2",
                   )}
@@ -161,14 +163,69 @@ function AddLeadForm({ onDone }: { onDone: () => void }) {
             ))}
           </ul>
         ) : null}
+        {contact ? (
+          <button
+            type="button"
+            onClick={() => {
+              setContact(null);
+              setQuery("");
+            }}
+            className="self-start text-xs font-medium text-brand-700 hover:underline"
+          >
+            Clear — link a different or new contact
+          </button>
+        ) : null}
       </div>
+
+      {/* New-enquirer capture (doc 02 §C4). Only used when no existing contact is
+          linked; the server runs the §C3 dedup check before creating. */}
+      {!contact ? (
+        <fieldset className="flex flex-col gap-3 rounded-lg border border-border p-3">
+          <legend className="px-1 text-xs font-medium text-text-2">
+            …or add a new contact
+          </legend>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="lead-new-name">Name</Label>
+            <Input id="lead-new-name" name="new_contact_name" placeholder="Enquirer name" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="lead-new-phone">Phone</Label>
+              <Input id="lead-new-phone" name="new_contact_phone" placeholder="99 123456" />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="lead-new-email">Email</Label>
+              <Input id="lead-new-email" name="new_contact_email" type="email" placeholder="Optional" />
+            </div>
+          </div>
+        </fieldset>
+      ) : null}
 
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="lead-message">Message / request</Label>
         <Textarea id="lead-message" name="message" rows={3} />
       </div>
 
-      {state.error ? (
+      {state.duplicate && !contact ? (
+        <div role="alert" className="flex flex-col gap-2 rounded-lg border border-warning/50 bg-warning/5 p-3 text-sm">
+          <span className="text-text-1">
+            Looks like <span className="font-semibold">{state.duplicate.display_name}</span> already
+            exists (same {state.duplicate.matched_on}).
+          </span>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="self-start"
+            onClick={() =>
+              setContact({ id: state.duplicate!.id, display_name: state.duplicate!.display_name })
+            }
+          >
+            Link {state.duplicate.display_name} instead
+          </Button>
+        </div>
+      ) : state.error && !contact ? (
+        // once a contact is linked, a stale new-contact error no longer applies
         <p role="alert" className="text-sm text-danger">
           {state.error}
         </p>
