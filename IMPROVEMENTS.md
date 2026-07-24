@@ -71,7 +71,9 @@ Import exists (`scripts/import/`); export did not. **Why:** accountants, lawyers
 
 **Properties export shipped 2026-07-24** — the intricate case (mandate `excludeIds` pre-query + inner/outer embed switch + transaction-context price + retired-scope), proving the shared-query abstraction generalizes. `lib/queries/properties-list.ts` (parse + `applyPropertyListFilters` + `mandateEmbed` + `fetchMandateExcludeIds`) is used by both the page and `app/(app)/properties/export/route.ts`; columns in `lib/services/property-export.ts` (money/area as raw numbers so spreadsheets sum). Verified end-to-end: 5 properties exported + audited, chain intact.
 
-**Remaining lists** (leads, deals, viewings, keys, tasks) each repeat the pattern: extract the list's filter parse/apply into `lib/queries/<list>.ts`, add an export route that calls `logListExport`, define columns. ~0.5 day each.
+**Leads export shipped 2026-07-24** — `lib/queries/leads-list.ts` (status scope) + `lib/services/lead-export.ts` (contact/property joins, formatted phone). Verified: 5 leads exported + audited, chain intact.
+
+**Remaining lists** (deals, viewings, keys, tasks) each repeat the pattern: extract the list's filter parse/apply into `lib/queries/<list>.ts`, add an export route that calls `logListExport`, define columns. ~0.5 day each.
 
 ### B11. Retention-expiry surface for GDPR — **4 days** **[BACKLOG]**
 `retention_until` is written by the erasure flow but **nothing reads it**. Build the view that lists records whose AML retention has lapsed and offers the second-stage destruction. **Why:** without it the Article 17 implementation is only half-closed — data is marked for expiry and then kept forever. Earliest real expiry is 2031, so this is not urgent, but it is a known open loop.

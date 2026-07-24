@@ -1,8 +1,9 @@
 import Link from "next/link";
-import { AlertCircle, Inbox } from "lucide-react";
+import { AlertCircle, Download, Inbox } from "lucide-react";
 import { AddLeadDialog } from "@/components/features/leads/add-lead-dialog";
 import { LeadsFilters } from "@/components/features/leads/filters";
 import { LeadRowActions } from "@/components/features/leads/lead-actions";
+import { Button } from "@/components/ui/button";
 import { ChatLinks } from "@/components/features/shared/chat-links";
 import { Pager } from "@/components/features/shared/pager";
 import { ResponseClock } from "@/components/features/shared/response-clock";
@@ -10,11 +11,8 @@ import { StatusBadge } from "@/components/features/shared/status-badge";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTime } from "@/lib/utils/format";
-import {
-  LEAD_OPEN_STATUSES,
-  leadFiltersSchema,
-  leadStatusesForFilter,
-} from "@/lib/validators/contacts";
+import { LEAD_OPEN_STATUSES } from "@/lib/validators/contacts";
+import { applyLeadListFilters, parseLeadFilters } from "@/lib/queries/leads-list";
 import {
   isRangeBeyondEnd,
   pageRange,
@@ -36,17 +34,17 @@ export default async function LeadsPage({
   searchParams: Promise<SearchParams>;
 }) {
   const sp = await searchParams;
-  const filters = leadFiltersSchema.parse({ status: first(sp.status) });
+  const filters = parseLeadFilters(sp);
   const page = pageSchema.parse(first(sp.page));
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
 
   const openStatuses = [...LEAD_OPEN_STATUSES];
-  // Leads are never deleted (doc 04: DELETE ❌ — closing sets spam/lost, and
-  // converted is terminal), so the inbox defaults to the open scope.
-  const scopedStatuses = leadStatusesForFilter(filters.status);
 
-  let leadsQuery = supabase
+  // Leads are never deleted (doc 04: DELETE ❌ — closing sets spam/lost, and
+  // converted is terminal), so the inbox defaults to the open scope. The status
+  // scope is applied through the shared helper the export route also uses.
+  const leadsBase = supabase
     .from("leads")
     .select(
       `id, source, channel, message, status, received_at, first_response_at,
@@ -56,7 +54,7 @@ export default async function LeadsPage({
       // exact count of the SCOPED set, so the pager totals match these rows
       { count: "exact" },
     );
-  if (scopedStatuses) leadsQuery = leadsQuery.in("status", [...scopedStatuses]);
+  const leadsQuery = applyLeadListFilters(leadsBase, filters);
 
   // header counts are exact DB counts, independent of the current page
   const { from, to } = pageRange(page);
@@ -85,6 +83,18 @@ export default async function LeadsPage({
   const scopedTotal = leadsResult.count ?? 0;
   const pageCount = countPages(scopedTotal);
 
+  // Export carries the active status scope but not pagination; RLS-scoped.
+  const exportHref = (() => {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(sp)) {
+      if (k === "page") continue;
+      const val = first(v);
+      if (val) params.set(k, val);
+    }
+    const qs = params.toString();
+    return `/leads/export${qs ? `?${qs}` : ""}`;
+  })();
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-4">
@@ -96,6 +106,14 @@ export default async function LeadsPage({
         </div>
         <div className="flex items-center gap-2">
           <LeadsFilters />
+          {scopedTotal > 0 ? (
+            <Button asChild variant="outline">
+              {/* Plain anchor, not next/link: this is a file download. */}
+              <a href={exportHref} download>
+                <Download className="size-4" /> Export CSV
+              </a>
+            </Button>
+          ) : null}
           <AddLeadDialog />
         </div>
       </div>

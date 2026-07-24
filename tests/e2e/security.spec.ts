@@ -33,6 +33,7 @@ test.describe("protected routes", () => {
     "/contacts/new",
     "/contacts/export",
     "/properties/export",
+    "/leads/export",
     "/route-sheet",
   ];
   for (const path of deepRoutes) {
