@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Building2, Plus } from "lucide-react";
+import { Building2, Download, Plus } from "lucide-react";
 import {
   PropertiesFilters,
   type AreaOption,
@@ -14,13 +14,13 @@ import type { MandateBadgeState } from "@/components/features/shared/mandate-bad
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
+import { PROPERTIES_PAGE_SIZE } from "@/lib/validators/properties";
 import {
-  PROPERTIES_PAGE_SIZE,
-  RETIRED_PROPERTY_STATUS,
-  RETIRED_PROPERTY_VISIBILITY,
-  propertyFiltersSchema,
-  resolvePropertyScope,
-} from "@/lib/validators/properties";
+  applyPropertyListFilters,
+  fetchMandateExcludeIds,
+  mandateEmbed,
+  parsePropertyFilters,
+} from "@/lib/queries/properties-list";
 
 type SearchParams = { [key: string]: string | string[] | undefined };
 
@@ -46,22 +46,7 @@ export default async function PropertiesPage({
   searchParams: Promise<SearchParams>;
 }) {
   const sp = await searchParams;
-  const filters = propertyFiltersSchema.parse({
-    q: first(sp.q),
-    district: first(sp.district),
-    area: first(sp.area),
-    type: first(sp.type),
-    transaction: first(sp.transaction),
-    status: first(sp.status),
-    visibility: first(sp.visibility),
-    beds: first(sp.beds),
-    price_min: first(sp.price_min),
-    price_max: first(sp.price_max),
-    mandate: first(sp.mandate),
-    scope: first(sp.scope),
-    view: first(sp.view),
-    page: first(sp.page),
-  });
+  const filters = parsePropertyFilters(sp);
 
   const supabase = await createClient();
 
@@ -80,25 +65,10 @@ export default async function PropertiesPage({
     name: (a.name as { en?: string })?.en ?? "—",
   }));
 
-  // Exclusion ids keep the filter consistent with deriveMandateState below
-  // (internal scale: fine). "none" = no active AND no expired mandate (draft/
-  // terminated-only still badges "none"); "expired" = expired but NOT active,
-  // because an active mandate wins the badge.
-  let excludeIds: string[] = [];
-  if (filters.mandate === "none" || filters.mandate === "expired") {
-    const res = await supabase
-      .from("mandates")
-      .select("property_id")
-      .in("status", filters.mandate === "none" ? ["active", "expired"] : ["active"]);
-    excludeIds = [...new Set(unwrapRows(res, "mandates").map((m) => m.property_id))];
-  }
+  // Shared with the export route so the two select exactly the same rows.
+  const excludeIds = await fetchMandateExcludeIds(supabase, filters);
 
-  const mandateEmbed =
-    filters.mandate === "active" || filters.mandate === "expired"
-      ? "mandates!inner(type, status)"
-      : "mandates(type, status)";
-
-  let query = supabase
+  const base = supabase
     .from("properties")
     .select(
       `id, reference, kind, property_type, transaction_type, status, visibility,
@@ -106,73 +76,11 @@ export default async function PropertiesPage({
        rent_price_month, quality_score,
        districts(name), areas(name),
        property_media(path_thumb, is_cover, sort_order),
-       ${mandateEmbed}`,
+       ${mandateEmbed(filters)}`,
       { count: "exact" },
     );
 
-  if (filters.q) {
-    const q = filters.q.replace(/[%,()]/g, " ").trim();
-    if (q) {
-      query = query.or(`reference.ilike.%${q}%,address.ilike.%${q}%,title->>en.ilike.%${q}%`);
-    }
-  }
-  if (filters.district) query = query.eq("district_id", filters.district);
-  if (filters.area) query = query.eq("area_id", filters.area);
-  if (filters.type) query = query.eq("property_type", filters.type);
-  // sale_or_rent listings ARE for sale and ARE for rent — both filters match them
-  if (filters.transaction === "sale") {
-    query = query.in("transaction_type", ["sale", "sale_or_rent"]);
-  } else if (filters.transaction === "rent") {
-    query = query.in("transaction_type", ["rent", "sale_or_rent"]);
-  } else if (filters.transaction === "sale_or_rent") {
-    query = query.eq("transaction_type", "sale_or_rent");
-  }
-  if (filters.status) query = query.eq("status", filters.status);
-  if (filters.visibility) query = query.eq("visibility", filters.visibility);
-  // Retired listings (withdrawn / archived) stay in the DB forever — doc 04 has
-  // no DELETE on properties — so the default scope keeps them off the list.
-  const scopeMode = resolvePropertyScope(filters);
-  if (scopeMode === "exclude-retired") {
-    query = query
-      .neq("status", RETIRED_PROPERTY_STATUS)
-      .neq("visibility", RETIRED_PROPERTY_VISIBILITY);
-  } else if (scopeMode === "only-retired") {
-    query = query.or(
-      `status.eq.${RETIRED_PROPERTY_STATUS},visibility.eq.${RETIRED_PROPERTY_VISIBILITY}`,
-    );
-  }
-  if (filters.beds !== undefined) query = query.gte("bedrooms", filters.beds);
-  // € bounds check the price that matters for the transaction context; with no
-  // transaction filter, either price may satisfy each bound (a sale_or_rent
-  // listing can pass min on asking and max on rent — accepted at this scale)
-  const priceCol =
-    filters.transaction === "rent"
-      ? "rent_price_month"
-      : filters.transaction === "sale"
-        ? "asking_price"
-        : null;
-  if (filters.price_min !== undefined) {
-    query = priceCol
-      ? query.gte(priceCol, filters.price_min)
-      : query.or(
-          `asking_price.gte.${filters.price_min},rent_price_month.gte.${filters.price_min}`,
-        );
-  }
-  if (filters.price_max !== undefined) {
-    query = priceCol
-      ? query.lte(priceCol, filters.price_max)
-      : query.or(
-          `asking_price.lte.${filters.price_max},rent_price_month.lte.${filters.price_max}`,
-        );
-  }
-  if (filters.mandate === "active") query = query.eq("mandates.status", "active");
-  if (filters.mandate === "expired") query = query.eq("mandates.status", "expired");
-  if (
-    (filters.mandate === "none" || filters.mandate === "expired") &&
-    excludeIds.length > 0
-  ) {
-    query = query.not("id", "in", `(${excludeIds.join(",")})`);
-  }
+  const query = applyPropertyListFilters(base, filters, excludeIds);
 
   const from = (filters.page - 1) * PROPERTIES_PAGE_SIZE;
   const result = await query
@@ -229,6 +137,19 @@ export default async function PropertiesPage({
     return `?${params.toString()}`;
   };
 
+  // Export carries the active filters but not pagination — the whole filtered
+  // set, RLS-scoped to what this user can see.
+  const exportHref = (() => {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(sp)) {
+      if (k === "page") continue;
+      const val = first(v);
+      if (val) params.set(k, val);
+    }
+    const qs = params.toString();
+    return `/properties/export${qs ? `?${qs}` : ""}`;
+  })();
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-4">
@@ -239,11 +160,21 @@ export default async function PropertiesPage({
             {total === 1 ? "y" : "ies"}
           </p>
         </div>
-        <Button asChild>
-          <Link href="/properties/new">
-            <Plus className="size-4" /> Add property
-          </Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          {total > 0 ? (
+            <Button asChild variant="outline">
+              {/* Plain anchor, not next/link: this is a file download. */}
+              <a href={exportHref} download>
+                <Download className="size-4" /> Export CSV
+              </a>
+            </Button>
+          ) : null}
+          <Button asChild>
+            <Link href="/properties/new">
+              <Plus className="size-4" /> Add property
+            </Link>
+          </Button>
+        </div>
       </div>
 
       <PropertiesFilters districts={districts} areas={areas} />
