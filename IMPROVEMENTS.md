@@ -62,7 +62,7 @@ Installable, offline-tolerant shell for the three mobile-first screens named in 
 ### B9. Finish the multilingual UI (el / ru) — **1 week** **[BACKLOG]**
 Shared vocabulary is done (`events`, `reports`, `dashboard`); remaining is per-module chrome for properties, contacts, viewings, tasks, keys, settings. **Why:** Paphos sells to Russian- and Greek-speaking buyers, and `messages.test.ts` already fails CI on a half-translated file, so the guard rails are in place. **Depends on:** nothing. **Note:** the evidence PDF stays English deliberately — it is the artifact quoted in disputes.
 
-### B10. CSV export on every list — **contacts shipped 2026-07-23; other lists follow the same pattern**
+### B10. CSV export on every list — ✅ **COMPLETE (all 7 lists, 2026-07-23/24)**
 Import exists (`scripts/import/`); export did not. **Why:** accountants, lawyers and the client's own reporting all want a spreadsheet, and today the answer is a screenshot. **Depends on:** the same RLS-scoped queries the lists already run.
 
 **Done for contacts.** The reusable pieces are in place: `lib/services/csv.ts` (RFC-4180 serializer — BOM for Excel/Greek/Cyrillic, CRLF, `""` escaping, **spreadsheet formula-injection guard** on user-typed fields), and the pattern of sharing the list's WHERE clause between page and export so "export = the filtered list you see" holds by construction (`lib/queries/contacts-list.ts` — `parseContactListFilters` + `applyContactListFilters`, used by both `app/(app)/contacts/page.tsx` and the new `app/(app)/contacts/export/route.ts`). Export is a GET route handler, so it inherits the proxy's auth gate and runs under the caller's RLS — an agent exports only their scope. Capped at 10,000 rows (PERF-2: no unbounded reads). Column mapping is a pure, unit-tested module (`lib/services/contact-export.ts`). Tests: 16 new unit + 2 E2E route-contract + the anon gate in `security.spec.ts`.
@@ -79,7 +79,9 @@ Import exists (`scripts/import/`); export did not. **Why:** accountants, lawyers
 
 **Keys export shipped 2026-07-24** — `lib/queries/keys-list.ts` (status + text search with the property-id pre-query, shared with the register page) + `lib/services/key-export.ts`.
 
-**Remaining list** (tasks) repeats the pattern: extract the list's filter parse/apply into `lib/queries/<list>.ts`, add an export route that calls `logListExport`, define columns. ~0.5 day.
+**Tasks export shipped 2026-07-24** — "my tasks" (assignee-scoped) but EVERY task (open + done, all time), a personal work-history report. `lib/services/task-export.ts`.
+
+**All seven lists now export CSV** (contacts, properties, leads, deals, viewings, keys, tasks), each auth-gated, RLS-scoped, capped at 10k, and audited via `logListExport`. Shared serializer `lib/services/csv.ts`; per-list column modules `lib/services/<entity>-export.ts`; shared filter modules `lib/queries/<list>-list.ts` where the list has searchParam filters (contacts, properties, leads, deals, keys). Every export writes an `exported` audit event before returning. 63 unit + 13 route-contract E2E across the feature; anon gates in `security.spec.ts`.
 
 ### B11. Retention-expiry surface for GDPR — **4 days** **[BACKLOG]**
 `retention_until` is written by the erasure flow but **nothing reads it**. Build the view that lists records whose AML retention has lapsed and offers the second-stage destruction. **Why:** without it the Article 17 implementation is only half-closed — data is marked for expiry and then kept forever. Earliest real expiry is 2031, so this is not urgent, but it is a known open loop.

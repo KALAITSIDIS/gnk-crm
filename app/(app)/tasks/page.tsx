@@ -1,10 +1,11 @@
 import Link from "next/link";
-import { MessageSquareWarning } from "lucide-react";
+import { Download, MessageSquareWarning } from "lucide-react";
 import {
   QuickAddTask,
   TaskSection,
   type TaskItem,
 } from "@/components/features/tasks/task-list";
+import { Button } from "@/components/ui/button";
 import { Pager } from "@/components/features/shared/pager";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -123,11 +124,19 @@ export default async function TasksPage({
 
   return (
     <div className="mx-auto flex w-full max-w-xl flex-col gap-4">
-      <div>
-        <h1 className="text-xl font-semibold text-text-1">Tasks</h1>
-        <p className="text-sm text-text-2">
-          {openCount} open{overdueCount > 0 ? ` · ${overdueCount} overdue` : ""}
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-semibold text-text-1">Tasks</h1>
+          <p className="text-sm text-text-2">
+            {openCount} open{overdueCount > 0 ? ` · ${overdueCount} overdue` : ""}
+          </p>
+        </div>
+        {/* Exports all of my tasks (open + done), not just this page. */}
+        <Button asChild variant="outline" size="sm">
+          <a href="/tasks/export" download>
+            <Download className="size-4" /> Export CSV
+          </a>
+        </Button>
       </div>
 
       <QuickAddTask />

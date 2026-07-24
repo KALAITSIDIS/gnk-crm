@@ -37,6 +37,7 @@ test.describe("protected routes", () => {
     "/pipeline/export",
     "/viewings/export",
     "/keys/export",
+    "/tasks/export",
     "/route-sheet",
   ];
   for (const path of deepRoutes) {
