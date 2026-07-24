@@ -1,15 +1,16 @@
 import Link from "next/link";
+import { Download } from "lucide-react";
 import {
   KanbanBoard,
   type KanbanDeal,
   type KanbanStage,
 } from "@/components/features/pipeline/kanban";
+import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
+import { DEAL_TYPES, parseDealType } from "@/lib/queries/deals-list";
 
 export const dynamic = "force-dynamic";
-
-const DEAL_TYPES = ["sale", "rental", "antiparoxi", "advisory"] as const;
 
 /** Won/lost deals stay visible on the board this long (DECISIONS, pipeline audit). */
 const CLOSED_WINDOW_DAYS = 30;
@@ -25,10 +26,7 @@ export default async function PipelinePage({
   searchParams: Promise<SearchParams>;
 }) {
   const sp = await searchParams;
-  const rawType = Array.isArray(sp.type) ? sp.type[0] : sp.type;
-  const dealType = (DEAL_TYPES as readonly string[]).includes(rawType ?? "")
-    ? (rawType as (typeof DEAL_TYPES)[number])
-    : "sale";
+  const dealType = parseDealType(sp);
 
   const supabase = await createClient();
   /* eslint-disable react-hooks/purity -- server component renders per-request; clock reads for the closed-deal window and days-in-stage are intentional */
@@ -102,11 +100,20 @@ export default async function PipelinePage({
 
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <h1 className="text-xl font-semibold text-text-1">Pipeline</h1>
-        <p className="text-sm text-text-2">
-          {openCount} open {dealType} deal{openCount === 1 ? "" : "s"} — drag between stages
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-semibold text-text-1">Pipeline</h1>
+          <p className="text-sm text-text-2">
+            {openCount} open {dealType} deal{openCount === 1 ? "" : "s"} — drag between stages
+          </p>
+        </div>
+        {/* Exports EVERY deal of this type (all statuses), not just the board's
+            30-day closed window. Plain anchor: file download. */}
+        <Button asChild variant="outline">
+          <a href={`/pipeline/export?type=${dealType}`} download>
+            <Download className="size-4" /> Export CSV
+          </a>
+        </Button>
       </div>
 
       <div className="flex gap-1 border-b border-border">

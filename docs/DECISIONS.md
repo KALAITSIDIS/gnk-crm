@@ -1055,3 +1055,23 @@ with `{list, count, filters}`, and `verify_events_chain` stayed `true` across al
 orgs — the new event type does not disturb the hash chain. Unit: `export-audit`
 row shape + `events` line (fake-translator routing + English plural parity) +
 `messages` parity. E2E: the route contract and the anon gate.
+
+## 2026-07-24 · T-csv-export-rollout — the export pattern across the lists
+
+Rolling B10 export to every list after contacts. Each list gets a shared
+`lib/queries/<list>.ts` (parse + apply, used by BOTH the page and the export so
+they select identical rows) and a `lib/services/<entity>-export.ts` column module,
+plus a GET route that logs via `logListExport`. Notes worth pinning:
+
+- **Deals export = the whole deal_type, not the board's window.** The pipeline
+  board shows open deals plus a 30-day closed window (so the won/lost columns
+  aren't permanently empty). That window is a DISPLAY convenience, not a filter
+  the user chose. `/pipeline/export?type=<t>` therefore exports EVERY deal of the
+  selected type, all statuses — reporting wants the old won deals, and "export =
+  the deal_type tab you're on" honours the filter that is real. The route lives
+  under `/pipeline` (where the button is) but the audit `list` is `"deals"`.
+- **Money and areas export as raw numbers**, never €-formatted, so a spreadsheet
+  can sum them. Dates go through `formatDateTime`. Phones through `formatPhone`
+  (and are then formula-guarded because they lead with `+`).
+- **Buyer/seller** on deals are aliased contact embeds
+  (`buyer:contacts!buyer_contact_id(display_name)`), since both FK to contacts.
