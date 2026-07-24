@@ -1,15 +1,22 @@
+import { Download } from "lucide-react";
 import { KeysFilters } from "@/components/features/keys/filters";
 import { RegisterKeyDialog } from "@/components/features/keys/key-dialogs";
 import {
   KeysRegister,
   type KeyRegisterRow,
 } from "@/components/features/keys/keys-register";
+import { Button } from "@/components/ui/button";
 import { Pager } from "@/components/features/shared/pager";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
 import { formatDateTime } from "@/lib/utils/format";
-import { keyFiltersSchema, sanitizeSearchTerm, type KeyStatus } from "@/lib/validators/keys";
+import { type KeyStatus } from "@/lib/validators/keys";
+import {
+  applyKeyListFilters,
+  fetchKeyMatchedPropertyIds,
+  parseKeyFilters,
+} from "@/lib/queries/keys-list";
 import {
   isRangeBeyondEnd,
   pageRange,
@@ -33,53 +40,28 @@ export default async function KeysPage({
 }) {
   const sp = await searchParams;
   const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
-  const filters = keyFiltersSchema.parse({ status: first(sp.status), q: first(sp.q) });
+  const filters = parseKeyFilters(sp);
   const page = pageSchema.parse(first(sp.page));
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
 
-  // The text filter used to run client-side over every fetched row. Now the
-  // register is paged, it has to run in the query or it would only ever search
-  // the current page (audit 2026-07-22, PERF-2). The property REFERENCE lives
-  // on a joined table, which PostgREST cannot reach from .or(), so resolve it
-  // to ids first and fold those into the same disjunction.
-  const term = filters.q ? sanitizeSearchTerm(filters.q) : "";
-  let matchedPropertyIds: string[] = [];
-  if (term) {
-    const { data: matches } = await supabase
-      .from("properties")
-      .select("id")
-      .ilike("reference", `%${term}%`)
-      .limit(200);
-    matchedPropertyIds = (matches ?? []).map((p) => p.id);
-  }
-
-  const applyFilters = <T extends { eq: (c: string, v: string) => T; or: (f: string) => T }>(
-    q: T,
-  ): T => {
-    let out = q;
-    if (filters.status !== "all") out = out.eq("status", filters.status);
-    if (term) {
-      const clauses = [
-        `key_code.ilike.%${term}%`,
-        `description.ilike.%${term}%`,
-        `current_holder_name.ilike.%${term}%`,
-      ];
-      if (matchedPropertyIds.length) clauses.push(`property_id.in.(${matchedPropertyIds.join(",")})`);
-      out = out.or(clauses.join(","));
-    }
-    return out;
-  };
+  // The text filter runs in the query (paged register — a client-side filter
+  // would search one page only, PERF-2). The property REFERENCE is on a joined
+  // table PostgREST cannot reach from .or(), so its ids are resolved first and
+  // folded into the disjunction. Both steps are shared with the export route.
+  const matchedPropertyIds = await fetchKeyMatchedPropertyIds(supabase, filters);
 
   const { from, to } = pageRange(page);
   const [keysRes, movementsRes, registeredRes, checkedOutRes] = await Promise.all([
-    applyFilters(
+    applyKeyListFilters(
       supabase
         .from("property_keys")
         .select(
           "id, key_code, description, status, current_holder_name, property_id, properties(reference)",
           { count: "exact" },
         ),
+      filters,
+      matchedPropertyIds,
     )
       .order("created_at", { ascending: false })
       .range(from, to),
@@ -110,7 +92,7 @@ export default async function KeysPage({
   const registeredCount = registeredRes.count ?? 0;
   const checkedOut = checkedOutRes.count ?? 0;
   const pageCount = countPages(filteredTotal);
-  const isFiltered = filters.status !== "all" || Boolean(term);
+  const isFiltered = filters.status !== "all" || Boolean(filters.q);
 
   const keys: KeyRegisterRow[] = keyRows.map((k) => ({
     id: k.id,
@@ -141,6 +123,18 @@ export default async function KeysPage({
 
   const canEdit = profile.role === "admin" || profile.role === "listing_manager";
 
+  // Export carries the active status/search filters but not pagination.
+  const keysExportHref = (() => {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(sp)) {
+      if (k === "page") continue;
+      const val = first(v);
+      if (val) params.set(k, val);
+    }
+    const qs = params.toString();
+    return `/keys/export${qs ? `?${qs}` : ""}`;
+  })();
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -150,7 +144,17 @@ export default async function KeysPage({
             {registeredCount} registered · {checkedOut} out
           </p>
         </div>
-        {canEdit ? <RegisterKeyDialog /> : null}
+        <div className="flex items-center gap-2">
+          {registeredCount > 0 ? (
+            <Button asChild variant="outline">
+              {/* Carries the active filters; plain anchor for a file download. */}
+              <a href={keysExportHref} download>
+                <Download className="size-4" /> Export CSV
+              </a>
+            </Button>
+          ) : null}
+          {canEdit ? <RegisterKeyDialog /> : null}
+        </div>
       </div>
 
       <KeysFilters />

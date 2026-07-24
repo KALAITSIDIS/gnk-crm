@@ -77,7 +77,9 @@ Import exists (`scripts/import/`); export did not. **Why:** accountants, lawyers
 
 **Viewings export shipped 2026-07-24** — the calendar has no user filters, so the export covers EVERY viewing (all time), including past viewings and their signed slips (RLS-scoped), which is what commission reporting needs. `lib/services/viewing-export.ts`; no shared query module (nothing to filter).
 
-**Remaining lists** (keys, tasks) each repeat the pattern: extract the list's filter parse/apply into `lib/queries/<list>.ts`, add an export route that calls `logListExport`, define columns. ~0.5 day each.
+**Keys export shipped 2026-07-24** — `lib/queries/keys-list.ts` (status + text search with the property-id pre-query, shared with the register page) + `lib/services/key-export.ts`.
+
+**Remaining list** (tasks) repeats the pattern: extract the list's filter parse/apply into `lib/queries/<list>.ts`, add an export route that calls `logListExport`, define columns. ~0.5 day.
 
 ### B11. Retention-expiry surface for GDPR — **4 days** **[BACKLOG]**
 `retention_until` is written by the erasure flow but **nothing reads it**. Build the view that lists records whose AML retention has lapsed and offers the second-stage destruction. **Why:** without it the Article 17 implementation is only half-closed — data is marked for expiry and then kept forever. Earliest real expiry is 2031, so this is not urgent, but it is a known open loop.
