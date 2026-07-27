@@ -10,6 +10,7 @@ const SECTIONS = [
   { href: "/settings/stages", label: "Deal stages" },
   { href: "/settings/locations", label: "Locations" },
   { href: "/settings/cyprus-config", label: "Cyprus config" },
+  { href: "/settings/retention", label: "Data retention" },
 ];
 
 export function SettingsNav() {

@@ -159,3 +159,98 @@ export async function eraseContactPersonalData(
   revalidatePath("/leads");
   return { error: null, erasedAt: now };
 }
+
+export type RetentionPurgeState = { error: string | null; purgedAt: string | null };
+
+/**
+ * Second-stage destruction once the AML retention duty has run (IMPROVEMENTS
+ * B11). Erasure keeps KYC documents when a due-diligence relationship existed
+ * and stamps `retention_until` five years out; this is the other half — after
+ * that date the legal basis for holding them is gone, so keeping them would
+ * itself breach the storage-limitation principle.
+ *
+ * Destroys ONLY the retained document rows, their storage objects, and the KYC
+ * checklist. The erasure record itself (`erased_at`/`erased_by`), the identity
+ * fields, events and viewing slips are untouched — the first three are the audit
+ * trail, the last two are immutable commission evidence.
+ *
+ * Admin-only, enforced here: the contacts UPDATE policy also admits the
+ * assigned/creating agent. Irreversible.
+ */
+export async function purgeExpiredRetention(contactId: string): Promise<RetentionPurgeState> {
+  if (!z.guid().safeParse(contactId).success) {
+    return { error: "Missing contact", purgedAt: null };
+  }
+
+  const supabase = await createClient();
+  const profile = await getCurrentProfile(supabase);
+  if (profile.role !== "admin") return { error: "Admins only.", purgedAt: null };
+
+  const { data: contact } = await supabase
+    .from("contacts")
+    .select("id, org_id, display_name, erased_at, retention_until")
+    .eq("id", contactId)
+    .maybeSingle();
+  if (!contact) return { error: "Contact not found", purgedAt: null };
+  if (!contact.retention_until) {
+    return { error: "Nothing is retained for this contact.", purgedAt: null };
+  }
+
+  const { classifyRetention } = await import("@/lib/services/retention");
+  const { zonedParts } = await import("@/lib/utils/tz");
+  const today = zonedParts(new Date()).dayKey;
+  if (classifyRetention(contact.retention_until, today) !== "expired") {
+    // Purging early would destroy records Cyprus AML still requires.
+    return {
+      error: `Retention runs until ${contact.retention_until} — these records cannot be purged yet.`,
+      purgedAt: null,
+    };
+  }
+
+  // Documents first: only files whose row the delete actually returned are
+  // removed, so an RLS-filtered no-op cannot strand objects in the bucket.
+  const { data: deletedRows, error: deleteErr } = await supabase
+    .from("documents")
+    .delete()
+    .eq("entity_type", "contact")
+    .eq("entity_id", contactId)
+    .select("id, storage_path");
+  if (deleteErr) return { error: deleteErr.message, purgedAt: null };
+  const documentsDestroyed = deletedRows?.length ?? 0;
+  const paths = (deletedRows ?? []).map((d) => d.storage_path).filter(Boolean);
+  if (paths.length > 0) {
+    await createAdminClient().storage.from("documents").remove(paths);
+  }
+
+  // Clear the marker so the row leaves the retention surface. Row-count guarded
+  // and re-checked against retention_until so two concurrent purges cannot both
+  // claim success.
+  const { data: updated, error: updateErr } = await supabase
+    .from("contacts")
+    .update({ retention_until: null, kyc: {} })
+    .eq("id", contactId)
+    .not("retention_until", "is", null)
+    .select("id");
+  if (updateErr) return { error: updateErr.message, purgedAt: null };
+  if (!updated || updated.length === 0) {
+    return { error: "You don't have permission to purge this contact.", purgedAt: null };
+  }
+
+  const purgedAt = new Date().toISOString();
+  await logEvent(supabase, {
+    orgId: contact.org_id,
+    actorId: profile.id,
+    entityType: "contact",
+    entityId: contactId,
+    eventType: "retention_purged",
+    // counts and dates only — never the destroyed values
+    payload: {
+      documents_destroyed: documentsDestroyed,
+      retention_until: contact.retention_until,
+    },
+  });
+
+  revalidatePath("/settings/retention");
+  revalidatePath(`/contacts/${contactId}`);
+  return { error: null, purgedAt };
+}

@@ -258,6 +258,7 @@
     "unarchived": "Unarchived",
     "erased": "Personal data erased (GDPR Art.17)",
     "erasedRetention": "Personal data erased (GDPR Art.17) — KYC records retained until {retention}",
+    "retentionPurged": "AML retention expired — {count, plural, one {# retained document} other {# retained documents}} destroyed",
     "imported": "Imported from CSV",
     "importedRef": "Imported — {ref}",
     "mediaUploaded": "Photo uploaded",

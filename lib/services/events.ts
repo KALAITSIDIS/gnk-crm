@@ -274,6 +274,10 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
     // the retention date is the operator's answer to "what did you keep?"
     return retention ? t("erasedRetention", { retention }) : t("erased");
   },
+  // second stage of erasure: the AML retention duty ran out and the KYC
+  // documents kept under it were destroyed (B11)
+  retention_purged: (p, t) =>
+    t("retentionPurged", { count: Number(p.documents_destroyed) || 0 }),
   imported: (p, t) => {
     const ref = asText(p.reference) ?? asText(p.name);
     return ref ? t("importedRef", { ref }) : t("imported");

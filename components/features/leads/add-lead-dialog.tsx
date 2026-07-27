@@ -132,7 +132,7 @@ function AddLeadForm({ onDone }: { onDone: () => void }) {
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="lead-contact-search">Contact</Label>
+        <Label htmlFor="lead-contact-search">Link an existing contact</Label>
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-text-3" />
           <Input

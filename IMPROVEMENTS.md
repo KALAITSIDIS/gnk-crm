@@ -85,8 +85,16 @@ Import exists (`scripts/import/`); export did not. **Why:** accountants, lawyers
 
 **All seven lists now export CSV** (contacts, properties, leads, deals, viewings, keys, tasks), each auth-gated, RLS-scoped, capped at 10k, and audited via `logListExport`. Shared serializer `lib/services/csv.ts`; per-list column modules `lib/services/<entity>-export.ts`; shared filter modules `lib/queries/<list>-list.ts` where the list has searchParam filters (contacts, properties, leads, deals, keys). Every export writes an `exported` audit event before returning. 63 unit + 13 route-contract E2E across the feature; anon gates in `security.spec.ts`.
 
-### B11. Retention-expiry surface for GDPR — **4 days** **[BACKLOG]**
-`retention_until` is written by the erasure flow but **nothing reads it**. Build the view that lists records whose AML retention has lapsed and offers the second-stage destruction. **Why:** without it the Article 17 implementation is only half-closed — data is marked for expiry and then kept forever. Earliest real expiry is 2031, so this is not urgent, but it is a known open loop.
+### B11. Retention-expiry surface for GDPR — ✅ **DONE 2026-07-24**
+`retention_until` was written by the erasure flow but **nothing read it** — data was marked for expiry and then kept forever, leaving Article 17 half-closed. Now closed at **`/settings/retention`** (admin-only): every contact whose KYC records are held under the Cyprus AML five-year duty, soonest-first, tagged `expired` / `expiring soon` (90-day notice) / `retained`, with one-click second-stage destruction once the duty has run.
+
+- **`lib/services/retention.ts`** — pure classification (9 unit tests). Expired **on** the retention date: the duty is "five years past the relationship", so on that date it has been served. Cyprus wall-clock day keys via `zonedParts().dayKey`, not UTC — the duty is a calendar obligation (doc 02 §A11).
+- **`purgeExpiredRetention`** (in `lib/actions/contact-erasure.ts`, beside the erasure it completes) — admin-only enforced in the action, refuses to purge before the date, row-count guarded, removes storage objects only for document rows the delete actually returned, writes a `retention_purged` event. Destroys **only** the KYC documents, their files and the checklist; `erased_at`/`erased_by`, identity fields, events and viewing slips are untouched (audit trail + immutable commission evidence).
+- Query is served by `contacts_retention_idx`, created in migration 0017 for exactly this. **No migration needed.**
+
+**Verified end-to-end on a seeded fixture pair** (one lapsed, one still under duty as the control): the lapsed contact's document row, storage object and KYC checklist were destroyed and `retention_until` cleared; the still-retained contact was untouched (file still downloadable); `erased_at` survived on both; the `retention_purged` event was written; `verify_events_chain` stayed true. The UI offers no destroy button for a row still under duty — asserted in `tests/e2e/retention.spec.ts`.
+
+**Still open (deliberate):** nothing runs automatically — expiry is surfaced, not auto-purged, because destruction of AML records should be a human decision with the reason visible. A nightly "retention lapsed" nudge task would be the natural follow-up (see B7's cron pattern). Earliest real expiry in production is 2031.
 
 ---
 

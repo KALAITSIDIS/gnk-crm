@@ -174,7 +174,12 @@ test("[A11Y-1] the add-lead selects are reachable by their visible label", async
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByLabel(/^Source$/)).toBeVisible();
   await expect(dialog.getByLabel(/^Channel$/)).toBeVisible();
-  await expect(dialog.getByLabel(/link contact/i)).toBeVisible();
+  // B6 split this into "link an existing contact" vs the new-contact fieldset;
+  // every control still carries its own visible label.
+  await expect(dialog.getByLabel(/link an existing contact/i)).toBeVisible();
+  await expect(dialog.getByLabel(/^Name$/)).toBeVisible();
+  await expect(dialog.getByLabel(/^Phone$/)).toBeVisible();
+  await expect(dialog.getByLabel(/^Email$/)).toBeVisible();
 });
 
 test("[A11Y-1] checkbox groups are exposed as named groups, not orphan labels", async ({

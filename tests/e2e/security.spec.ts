@@ -28,6 +28,7 @@ test.describe("protected routes", () => {
     "/settings/organization",
     "/settings/stages",
     "/settings/locations",
+    "/settings/retention",
     "/reports/commission-evidence",
     "/properties/new",
     "/contacts/new",

@@ -1075,3 +1075,39 @@ plus a GET route that logs via `logListExport`. Notes worth pinning:
   (and are then formula-guarded because they lead with `+`).
 - **Buyer/seller** on deals are aliased contact embeds
   (`buyer:contacts!buyer_contact_id(display_name)`), since both FK to contacts.
+
+## 2026-07-24 · T-retention-expiry — the second half of GDPR erasure (B11)
+
+Migration 0017 stamped `contacts.retention_until` when an erasure had to keep
+KYC records under the Cyprus AML five-year duty, and created
+`contacts_retention_idx` "for when that view ships". Nothing ever read the
+column, so records were marked for expiry and then kept forever — Article 17 was
+half-implemented, and holding data past its lawful basis is itself a
+storage-limitation breach. Closed at `/settings/retention` (admin-only).
+**No migration: the column and its index already existed.**
+
+- **Expired ON the date, not after.** The duty is "five years past the end of
+  the relationship", so when the stored date arrives the obligation has been
+  served and the records may be purged that day. `days <= 0` → expired.
+- **Cyprus wall-clock, not UTC.** `retention_until` is a `date` and the duty is
+  a calendar obligation in Cyprus, so "today" comes from
+  `zonedParts(...).dayKey` (doc 02 §A11). A UTC-midnight comparison would flip a
+  row a few hours early or late depending on the season.
+- **Surfaced, never automatic.** No cron purges anything. Destroying AML records
+  is a human decision that should be taken deliberately and attributed to an
+  actor; a 90-day `due_soon` window gives the operator notice to plan it. A
+  nightly *nudge* would be a reasonable follow-up — an automatic *purge* would
+  not.
+- **The purge destroys the minimum.** Document rows, their storage objects and
+  the KYC checklist. `erased_at`/`erased_by` stay (they are the audit record of
+  the original erasure), identity fields stay, and events and viewing slips are
+  untouched — hash-chained and immutable commission evidence respectively. The
+  action re-checks the date server-side, so a stale page cannot purge early.
+- **Admin-only in the action**, not just the UI — the contacts UPDATE policy
+  also admits the assigned/creating agent, exactly as with erasure itself.
+
+Verified against a seeded fixture pair, one lapsed and one still under duty as
+the control: the lapsed row lost its document row, its storage object (confirmed
+gone by direct download) and its checklist, and left the surface; the control
+kept all three; `erased_at` survived on both; the `retention_purged` event was
+written with counts only; `verify_events_chain` stayed true.
