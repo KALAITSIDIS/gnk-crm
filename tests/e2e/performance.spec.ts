@@ -23,6 +23,20 @@ interface Vitals {
 }
 
 async function measure(page: Page, path: string): Promise<Vitals> {
+  /**
+   * WARM THE ROUTE FIRST. `next dev` compiles a route on its first request, and
+   * that compilation lands inside the measured navigation — on a busy machine
+   * it produced an LCP of 20,000ms for a page that renders in about one second,
+   * which is a false alarm, not a regression. Measuring the second navigation
+   * removes compile time from the number and lets the budget below be tight
+   * enough to actually catch something.
+   *
+   * The counters are attached AFTER this, so the warm-up's requests are not
+   * counted. Transfer is therefore a warm-load figure (static chunks may come
+   * from cache) — it is logged for context, not asserted on.
+   */
+  await page.goto(path, { waitUntil: "networkidle" });
+
   let transferBytes = 0;
   let requests = 0;
   page.on("response", (res) => {
@@ -99,8 +113,13 @@ test.describe("page weight and Web Vitals", () => {
 
       // CLS is the one metric a dev server does not distort — hold it tight.
       expect(v.cls, `${name}: layout shifts (CLS)`).toBeLessThan(0.1);
-      // Generous ceiling: dev-mode LCP includes on-demand compilation.
-      expect(v.lcp, `${name}: LCP regression`).toBeLessThan(15_000);
+      // The route is warmed before measuring (see `measure`), so this no longer
+      // has to absorb dev-mode compilation. Observed warm: 0.6–1.1s across these
+      // three pages. 8s leaves ample headroom for a slow or contended machine
+      // while still being able to catch a real regression — the previous 15s
+      // ceiling was loose enough to catch almost nothing, and still produced a
+      // false failure at 20s when compilation was included.
+      expect(v.lcp, `${name}: LCP regression`).toBeLessThan(8_000);
     });
   }
 });
