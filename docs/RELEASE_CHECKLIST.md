@@ -13,12 +13,28 @@ CI or verified in T5.7; the **manual** ones need a human with production access.
 
 ## 2. Database (hosted Supabase, project `yjgirvzgoiywdojnpkpd`, eu-central-1)
 
-- Migrations applied and in order — check Supabase → Database → Migrations
-  matches `supabase/migrations/` (0001–0006 as of Phase 1).
-  Apply new ones with the Supabase CLI/connector, never by hand.
+- Migrations applied and in order — hosted history has one row per file in
+  `supabase/migrations/`, same versions, no extras (0001–0019 at the close of
+  Phase 1; count the directory, don't trust this number).
+  ```sql
+  select count(*) as rows,
+         count(*) filter (where version !~ '^[0-9]{4}$') as non_filename_versions
+    from supabase_migrations.schema_migrations;
+  ```
+  `non_filename_versions` must be `0`.
+- **Applying a new migration:** follow `docs/HANDOVER.md` §4. `npx supabase db
+  push` and the connector's `apply_migration` both fail in this environment; the
+  working recipe is `execute_sql` for the DDL followed by an explicit insert into
+  `supabase_migrations.schema_migrations` using the **filename** version. Apply
+  the migration *before* pushing code that depends on it — Vercel deploys on
+  push, the database does not.
 - Seed present: 5 districts, 26 deal stages, 6 `cyprus_config` rows.
 - Buckets exist: `media` (public), `documents` (private), `signatures` (private).
-- `pg_cron` job `expire-mandates` scheduled (daily 03:00).
+- `pg_cron` jobs active: `expire-mandates` (daily 03:00) and
+  `verify-events-chain` (daily 03:30, runs `run_chain_checks()`).
+  ```sql
+  select jobname, schedule, active from cron.job order by jobname;
+  ```
 - **Integrity:** `select verify_events_chain(id) from organizations;` returns
   `true` for every org.
 
