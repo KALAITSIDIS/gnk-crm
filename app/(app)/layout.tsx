@@ -1,5 +1,6 @@
 import { getTranslations } from "next-intl/server";
-import { LogOut } from "lucide-react";
+import Link from "next/link";
+import { LogOut, ShieldCheck } from "lucide-react";
 import { SidebarNav } from "@/components/features/shared/sidebar-nav";
 import { MobileNav } from "@/components/features/shared/mobile-nav";
 import { GlobalSearch } from "@/components/features/shared/global-search";
@@ -34,6 +35,12 @@ export default async function AppLayout({
           <GlobalSearch />
           <div className="ml-auto flex items-center gap-3">
             <span className="hidden text-sm text-text-2 sm:block">{user?.email}</span>
+            {/* per-user security lives outside /settings, which is admin-only */}
+            <Button variant="ghost" size="icon" asChild title="Security">
+              <Link href="/security">
+                <ShieldCheck className="size-4" />
+              </Link>
+            </Button>
             <form action={logout}>
               <Button variant="ghost" size="icon" type="submit" title="Log out">
                 <LogOut className="size-4" />

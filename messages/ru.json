@@ -231,6 +231,8 @@
     "roleChange": "Роль {from} → {to}",
     "deactivated": "Пользователь деактивирован",
     "reactivated": "Пользователь реактивирован",
+    "mfaEnrolled": "Включена двухфакторная аутентификация",
+    "mfaUnenrolled": "Двухфакторная аутентификация отключена",
     "stageRenamed": "Этап переименован {from} → {to}",
     "stageAdded": "Этап добавлен — {name}",
     "stageDeleted": "Этап удалён — {name}",

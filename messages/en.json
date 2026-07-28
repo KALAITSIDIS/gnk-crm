@@ -231,6 +231,8 @@
     "roleChange": "Role {from} → {to}",
     "deactivated": "User deactivated",
     "reactivated": "User reactivated",
+    "mfaEnrolled": "Two-factor authentication enabled",
+    "mfaUnenrolled": "Two-factor authentication removed",
     "stageRenamed": "Stage renamed {from} → {to}",
     "stageAdded": "Stage added — {name}",
     "stageDeleted": "Stage deleted — {name}",

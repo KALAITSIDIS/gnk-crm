@@ -105,8 +105,18 @@ Import exists (`scripts/import/`); export did not. **Why:** accountants, lawyers
 ### C1. Content-Security-Policy with nonces — **3 days**
 This audit added `frame-ancestors 'none'`; a real `script-src`/`style-src` policy needs a per-request nonce generated in `proxy.ts` and threaded into the Next script tags. **Why:** the app renders user-supplied text (lead messages, contact notes, property descriptions in three languages) across every screen. React escapes by default, so this is defence in depth, not a patch for a known hole — but it is the difference between "we escape" and "we cannot execute injected script". **Risk:** a wrong CSP breaks the app silently in production; stage it with `Content-Security-Policy-Report-Only` first.
 
-### C2. Two-factor authentication — **1 week**
-Recorded as spec-Essential but deferred pending client confirmation. **Why:** a single admin password currently protects every client's PII, KYC passport scans, and the commission evidence chain. Supabase Auth supports TOTP natively. **Blocker:** needs the client's decision on whether it gates Phase 1 sign-off.
+### C2. Two-factor authentication — ✅ **DONE 2026-07-24** (opt-in; DB-level enforcement outstanding)
+Spec-Essential, deferred pending the client's call — the operator asked for it on 2026-07-24. TOTP via Supabase Auth, **no migration**. Full rationale in DECISIONS `T-2fa`.
+
+**Shipped:** self-service enrolment at **`/security`** (deliberately not `/settings`, which is admin-only — an agent holds the same client PII as an admin), QR plus a copyable secret, a challenge screen at `/login/verify`, and removal behind a confirmation. Enrolment and removal both write `mfa_enrolled` / `mfa_unenrolled` events — turning a second factor *off* is what an audit needs to see. An `aal1` session may not unenrol, or a stolen password-only session could just switch 2FA off.
+
+**Opt-in, not mandatory** — forcing enrolment org-wide is one bad deploy away from locking everyone out of the KYC scans and the evidence chain. Users who don't enrol sign in as before; once enrolled, every sign-in needs the code. Mandatory enrolment remains a later decision.
+
+**Verified end-to-end** with a real RFC-6238 generator (`lib/testing/totp.ts`, pinned to the published RFC 4226/6238 vectors): enrol → sign out → password alone lands on the challenge → a wrong code is refused → `/contacts` stays unreachable → the right code gets in → remove. `tests/e2e/mfa.spec.ts`.
+
+> **⚠ Enforcement is at the application layer only.** A stolen `aal1` JWT could still hit PostgREST directly and bypass the challenge. Closing that needs `as restrictive` RLS policies asserting `auth.jwt()->>'aal' = 'aal2'` for users with a verified factor (the "opted-in" template in the Supabase MFA guide, which leaves non-enrolled users untouched). Schema-wide, real lockout risk, needs its own RLS tests — **logged in BACKLOG, not bolted on here.** The app gate already defeats the realistic threat: someone with a stolen password using the web UI.
+
+**Operator note:** hosted Supabase enables the TOTP API by default per the MFA guide; local needed `[auth.mfa.totp] enroll_enabled/verify_enabled = true` in `supabase/config.toml`. Worth confirming on the dashboard before rolling 2FA out to staff.
 
 ### C3. Public listing API for the marketing site — **2 weeks**
 A read-only, published-listings-only endpoint (no PII, no internal notes, no draft/archived rows), served from a dedicated role with its own RLS policies. **Why:** it is the clean seam between the internal CRM and any future public website, and it stops anyone reaching for the service-role key to build one. **Depends on:** the `visibility`/`status` scoping already implemented in the 2026-07-21 list-scope fix, and the quality-gate score that governs publishing. **Design constraint:** never reuse the app's Supabase client — a separate anon role with column-level grants.

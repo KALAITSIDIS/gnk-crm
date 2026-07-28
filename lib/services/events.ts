@@ -221,6 +221,9 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
   },
   deactivated: (_p, t) => t("deactivated"),
   reactivated: (_p, t) => t("reactivated"),
+  // 2FA (C2). Turning a second factor OFF is exactly what an audit needs to see.
+  mfa_enrolled: (_p, t) => t("mfaEnrolled"),
+  mfa_unenrolled: (_p, t) => t("mfaUnenrolled"),
   stages_updated: (p, t) => {
     const action = asText(p.action) ?? "updated";
     if (action === "rename")

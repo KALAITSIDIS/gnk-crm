@@ -15,6 +15,9 @@ const eslintConfig = defineConfig([
     // standalone Node import scripts (T5.6): run via `node --env-file`, type-
     // stripped at runtime, outside the app's module graph and generated types
     "scripts/**",
+    // local stack artifacts written by `supabase start` (bundled edge runtime).
+    // Already git-ignored; linting vendored, minified output is noise.
+    "supabase/.temp/**",
   ]),
 ]);
 

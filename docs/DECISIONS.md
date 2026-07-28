@@ -1145,3 +1145,58 @@ like "nothing booked".
 Verified with a viewing booked four years out: invisible when anchored at today
 (correctly outside the window) and visible when anchored at its own week. Before
 this change it was invisible from both — permanently unreachable in the UI.
+
+## 2026-07-24 · T-2fa — TOTP two-factor authentication (IMPROVEMENTS C2)
+
+Spec-Essential, deferred since Phase 1 pending the client's call; the operator
+asked for it on 2026-07-24. TOTP via Supabase Auth. **No migration.**
+
+- **Opt-in and self-service, not mandatory.** Enforcing enrolment org-wide is one
+  bad deploy away from locking every user out of a CRM holding KYC scans and the
+  commission evidence chain. A user who has not enrolled signs in exactly as
+  before; once they enrol, every later sign-in demands the code. Mandatory
+  enrolment stays available as a later decision (the Supabase docs give the
+  "enforce for all" and "enforce for new users" variants).
+- **`/security`, deliberately NOT `/settings`.** The settings area is admin-only,
+  and an agent carries the same client PII in their pocket as an admin — every
+  role must be able to protect their own account. Linked from the header.
+- **The login action routes to the challenge; the proxy is the gate.** A
+  middleware redirect issued in response to a *server-action* redirect renders
+  the challenge but leaves the browser URL on `/dashboard` — confusing and
+  unlinkable. So `login()` checks the AAL itself and redirects to
+  `/login/verify`, while `proxy.ts` still blocks direct navigation for any
+  session that owes a factor. Both were verified.
+- **An `aal1` session may not unenrol.** Otherwise a stolen password-only session
+  could simply switch 2FA off, which would make the feature decorative.
+- **Enrolment and removal both write events** (`mfa_enrolled` / `mfa_unenrolled`,
+  entity_type `user`). Turning a second factor *off* is exactly what an audit
+  needs to see.
+- **`listFactors().totp` contains only VERIFIED factors** — unverified ones are
+  reachable solely via `.all`. The first cut cleaned up abandoned enrolments
+  against `.totp` and was silently dead code; the type checker caught it.
+- **Only verified factors gate a login** (`hasVerifiedFactor`): `enroll()` creates
+  an `unverified` factor immediately, so counting those would lock out anyone who
+  closed the enrolment tab.
+
+**Enforcement is currently at the APPLICATION layer only.** A stolen `aal1` JWT
+could still reach PostgREST directly and bypass the challenge. Closing that needs
+a `as restrictive` RLS policy per table asserting `auth.jwt()->>'aal' = 'aal2'`
+for users who have a verified factor — the "enforce only for users that have
+opted-in" template in the Supabase MFA guide, which leaves non-enrolled users
+untouched. That is a schema-wide change with real lockout risk and its own RLS
+tests, so it is logged in BACKLOG rather than bolted on here. The app-layer gate
+already defeats the realistic threat (someone with a stolen password using the
+web UI).
+
+Local note: the CLI config ships `[auth.mfa.totp] enroll_enabled = false`, so
+`supabase/config.toml` had to enable it and the stack be restarted. Hosted
+Supabase enables the TOTP API by default per the MFA guide.
+
+Testing: `lib/testing/totp.ts` implements RFC 6238 and is pinned against the
+published RFC 4226/6238 vectors, so the end-to-end test behaves like a real
+authenticator: enrol → sign out → password alone lands on the challenge → a
+wrong code is refused → `/contacts` stays unreachable → the right code gets in →
+remove. The spec force-clears factors before AND after via the GoTrue admin API:
+a stranded factor makes `auth.setup.ts` land on the challenge and breaks every
+other spec, and a session that failed verification is `aal1` so it cannot undo
+its own enrolment through the UI.
