@@ -285,8 +285,15 @@ Time each phase and write the actual minutes into §6.
    first, and `media` must be `public = true` (that is migration 0008's whole
    job; a restored-but-private `media` bucket serves broken images and looks
    like a code fault).
-5. **Run the verification pack** — `scripts/backup/verify-restore.sql`, which
-   asserts every number in §2 in one pass.
+5. **Run the verification pack.** First run `scripts/backup/capture-baseline.sql`
+   against the SOURCE and paste its single output row over the `expected` block
+   in `scripts/backup/verify-restore.sql`; then run that pack against the
+   RESTORED database. Its output labels every check **invariant** (event chain,
+   function grants, cron, bucket visibility, migration history, timezone,
+   slip/report files present) or **row count**. An invariant failure is real; a
+   row-count failure usually just means the baseline snapshot is older than the
+   source. Hardcoded counts went stale once and reported false failures — the
+   worst possible signal mid-recovery, which is why capture is now a command.
 6. **Verify the chain** — `select verify_events_chain(id) from organizations;`
    must be `true`. If false, re-read §1.3 before assuming corruption.
 7. **Point a local app at it.** Copy `.env.local` to `.env.drill`, swap the URL

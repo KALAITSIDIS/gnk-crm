@@ -4,22 +4,37 @@
 -- Run against the RESTORED project. Every row must read pass = true.
 -- Read-only: it asserts, it never writes.
 --
--- BEFORE A DRILL: re-capture the baseline from hosted and update the `expected`
--- CTE below. The values shipped here are hosted as at 2026-07-23 (main bd00809)
--- and WILL be stale once anyone touches production.
+-- The output has TWO kinds of check, and the difference matters when you are
+-- reading it under pressure:
+--
+--   invariant  — true of a correct restore regardless of how much data exists:
+--                the event chain, the function grants (the TEST-2 surface),
+--                cron, bucket visibility, migration history, session timezone,
+--                and that every slip/report row still has its file. A failure
+--                here is REAL.
+--   row count  — compared against the `expected` block below, which is a
+--                SNAPSHOT. If production moved on since it was captured, these
+--                fail while the restore is perfectly fine.
+--
+-- So: **re-capture the baseline immediately before a drill** by running
+-- scripts/backup/capture-baseline.sql against the SOURCE and pasting its single
+-- output row over the `expected` block. Hardcoded counts previously went stale
+-- and reported false failures, which is the worst possible signal mid-recovery.
 --
 -- (`check` is a reserved word in Postgres, hence `check_name`.)
 
 with expected as (
+  -- BASELINE — replace via scripts/backup/capture-baseline.sql before a drill.
   select
-    1::bigint  as orgs,      2::bigint  as profiles,   60::bigint as events,
-    2::bigint  as contacts,  2::bigint  as properties,  1::bigint as deals,
-    3::bigint  as leads,     1::bigint  as viewings,    1::bigint as slips,
-    3::bigint  as documents, 1::bigint  as keys,        1::bigint as mandates,
-    0::bigint  as tasks,     6::bigint  as cyprus_config,
+    1::bigint as orgs,      2::bigint as profiles,   62::bigint as events,
+    2::bigint as contacts,  2::bigint as properties, 1::bigint as deals,
+    3::bigint as leads,     1::bigint as viewings,   1::bigint as slips,
+    3::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
+    0::bigint as tasks,     6::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint  as auth_users, 19::bigint as migrations,
-    9::bigint  as obj_documents, 2::bigint as obj_signatures, 15::bigint as obj_media
+    2::bigint as auth_users, 19::bigint as migrations,
+    9::bigint as obj_documents, 2::bigint as obj_signatures, 15::bigint as obj_media
+    -- captured 2026-07-28
 ),
 
 -- ---------- row counts ----------
@@ -128,10 +143,13 @@ misc as (
                             where o.bucket_id = 'documents' and o.name = d.storage_path))
 )
 
-select check_name, expected, actual, (expected = actual) as pass
+select kind, check_name, expected, actual, (expected = actual) as pass
 from (
-  select check_name, expected::text, actual::text from counts
-  union all select check_name, expected, actual from grant_checks
-  union all select check_name, expected, actual from misc
+  -- a mismatch here may just mean the baseline snapshot is out of date
+  select 'row count'::text as kind, check_name, expected::text, actual::text from counts
+  -- these hold for ANY correct restore; a failure here is real
+  union all select 'invariant', check_name, expected, actual from grant_checks
+  union all select 'invariant', check_name, expected, actual from misc
 ) all_checks
-order by pass, check_name;
+-- failures first, and within them invariants before baseline counts
+order by pass, kind, check_name;
