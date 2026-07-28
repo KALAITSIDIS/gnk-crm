@@ -1,8 +1,34 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { buildCsp } from "@/lib/services/csp";
 
 export default async function proxy(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({ request });
+  /**
+   * Per-request CSP nonce (IMPROVEMENTS C1). Next reads the nonce out of the
+   * `Content-Security-Policy` header we set on the REQUEST and stamps it on its
+   * own inline bootstrap scripts; the RESPONSE carries the policy as
+   * **Report-Only**, so nothing is blocked while the policy is proven against
+   * the real app. `next.config.ts` keeps enforcing `frame-ancestors 'none'`
+   * separately, so clickjacking protection is unaffected either way.
+   */
+  const nonce = crypto.randomUUID().replace(/-/g, "");
+  const csp = buildCsp({
+    nonce,
+    isDev: process.env.NODE_ENV !== "production",
+    supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
+    sentryDsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
+  });
+
+  // Rebuilt on each call so it picks up any cookies Supabase just refreshed —
+  // `request.cookies.set()` writes through to these headers.
+  const withNonce = () => {
+    const headers = new Headers(request.headers);
+    headers.set("x-nonce", nonce);
+    headers.set("Content-Security-Policy", csp);
+    return NextResponse.next({ request: { headers } });
+  };
+
+  let supabaseResponse = withNonce();
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -14,7 +40,7 @@ export default async function proxy(request: NextRequest) {
         },
         setAll(cookiesToSet) {
           cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
-          supabaseResponse = NextResponse.next({ request });
+          supabaseResponse = withNonce();
           cookiesToSet.forEach(({ name, value, options }) =>
             supabaseResponse.cookies.set(name, value, options),
           );
@@ -70,6 +96,10 @@ export default async function proxy(request: NextRequest) {
     }
   }
 
+  // Report-only: the browser reports what WOULD have been blocked and enforces
+  // nothing. Promoting this to `Content-Security-Policy` is a separate,
+  // deliberate step once the reports are proven clean.
+  supabaseResponse.headers.set("Content-Security-Policy-Report-Only", csp);
   return supabaseResponse;
 }
 

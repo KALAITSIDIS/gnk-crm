@@ -102,8 +102,17 @@ Import exists (`scripts/import/`); export did not. **Why:** accountants, lawyers
 
 ## C. Strategic / architecture
 
-### C1. Content-Security-Policy with nonces — **3 days**
-This audit added `frame-ancestors 'none'`; a real `script-src`/`style-src` policy needs a per-request nonce generated in `proxy.ts` and threaded into the Next script tags. **Why:** the app renders user-supplied text (lead messages, contact notes, property descriptions in three languages) across every screen. React escapes by default, so this is defence in depth, not a patch for a known hole — but it is the difference between "we escape" and "we cannot execute injected script". **Risk:** a wrong CSP breaks the app silently in production; stage it with `Content-Security-Policy-Report-Only` first.
+### C1. Content-Security-Policy with nonces — 🟡 **STAGED REPORT-ONLY 2026-07-24; enforcing is a separate decision**
+The per-request nonce is threaded through `proxy.ts` and the full policy ships as **`Content-Security-Policy-Report-Only`** — it reports, it does not block. `frame-ancestors 'none'` stays separately **enforced** in `next.config.ts`, so clickjacking protection is unchanged. Full rationale in DECISIONS `T-csp`.
+
+**The staging immediately earned its keep.** Against a *production* build, five screens reported `script-src / blockedURI: "eval"` — traced to **Zod 4's JIT validator compiler**, which builds schemas with the `Function` constructor. Dev had hidden it entirely (dev needs `'unsafe-eval'` anyway). Zod falls back on its own so it wouldn't have *broken*, but every page would have reported a violation and silently lost the fast path; since the enforced end-state is jitless regardless, `z.config({ jitless: true })` is now explicit.
+
+**Evidence:** `lib/services/csp.ts` (10 unit tests, origins derived from env so local/prod both work) + `tests/e2e/csp.spec.ts`, which collects `securitypolicyviolation` events across 11 modules and 7 deep routes and asserts zero — **22/22 clean against a real `next start` production build** with the strict policy.
+
+**Before enforcing (do NOT do this on local evidence alone):**
+1. Let report-only run in production for a while — real data, real screens.
+2. The sweep does **not** cover entity *detail* pages, the slip-signing canvas or PDF generation; those carry the heaviest client code and are the likeliest remaining surprise.
+3. Then flip the response header name from `Content-Security-Policy-Report-Only` to `Content-Security-Policy` in `proxy.ts` — a one-line change, trivially revertible.
 
 ### C2. Two-factor authentication — ✅ **DONE 2026-07-24** (opt-in; DB-level enforcement outstanding)
 Spec-Essential, deferred pending the client's call — the operator asked for it on 2026-07-24. TOTP via Supabase Auth, **no migration**. Full rationale in DECISIONS `T-2fa`.

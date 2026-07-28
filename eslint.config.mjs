@@ -18,6 +18,11 @@ const eslintConfig = defineConfig([
     // local stack artifacts written by `supabase start` (bundled edge runtime).
     // Already git-ignored; linting vendored, minified output is noise.
     "supabase/.temp/**",
+    // Playwright's generated HTML report and per-test output (traces,
+    // screenshots, its bundled trace viewer). Git-ignored, and the viewer alone
+    // produced ~2,800 lint warnings once a test had failed.
+    "tests/.playwright-report/**",
+    "tests/.playwright-output/**",
   ]),
 ]);
 

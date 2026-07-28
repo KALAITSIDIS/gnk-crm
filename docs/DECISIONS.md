@@ -1200,3 +1200,56 @@ remove. The spec force-clears factors before AND after via the GoTrue admin API:
 a stranded factor makes `auth.setup.ts` land on the challenge and breaks every
 other spec, and a session that failed verification is `aal1` so it cannot undo
 its own enrolment through the UI.
+
+## 2026-07-24 · T-csp — Content-Security-Policy, staged report-only (IMPROVEMENTS C1)
+
+SEC-1..4 shipped `frame-ancestors 'none'` but deliberately not a full CSP,
+because locking down `script-src` needs a per-request nonce threaded through the
+proxy. That is now in place — as **Report-Only**, exactly as the roadmap
+prescribed ("a wrong CSP breaks the app silently in production; stage it with
+`Content-Security-Policy-Report-Only` first"). **Nothing is enforced by it yet.**
+
+- **The nonce round-trip.** `proxy.ts` mints a per-request nonce, sets it on the
+  REQUEST as `Content-Security-Policy` (which is how Next finds it and stamps it
+  on its own inline bootstrap scripts) and sets the same policy on the RESPONSE
+  as `Content-Security-Policy-Report-Only`. `next.config.ts` keeps enforcing
+  `frame-ancestors 'none'` separately, so clickjacking protection is unchanged
+  either way.
+- **Origins are derived, not hardcoded** (`lib/services/csp.ts`, 10 unit tests):
+  Supabase is 127.0.0.1 locally and *.supabase.co in production, and Sentry only
+  exists when a DSN is set. Storage serves property renditions, so the Supabase
+  origin is needed in `img-src` as well as `connect-src`, plus its `wss://` form
+  for Realtime.
+- **`'unsafe-eval'` in development only.** `next dev` compiles with eval;
+  production does not, and a unit test pins that it never leaks into prod.
+- **`style-src` keeps `'unsafe-inline'`.** Tailwind, Radix and Next all write
+  inline styles; nonce-ing them would mean threading the nonce through every
+  component for far less benefit than `script-src` — inline *style* cannot
+  execute code.
+
+**What the staging actually caught — the reason to do it this way.** Against a
+production build, five screens reported `script-src / blockedURI: "eval"`.
+Tracked to **Zod 4's JIT validator compiler**, which builds schemas with the
+`Function` constructor (the bundle contains `compile(){return Function(...)}`
+and a `try{Function("")}catch` feature-probe). Dev had hidden it completely,
+because dev allows `'unsafe-eval'` anyway.
+
+Zod feature-detects and falls back, so an enforced CSP would not have BROKEN the
+app — it would have reported a violation on every page and silently dropped to
+the slow path. Since the enforced end-state is jitless regardless, we set
+`z.config({ jitless: true })` explicitly (`lib/validators/zod-jitless.ts`, plus a
+tiny client component so it applies in the browser bundle, not just on the
+server). Deterministic, and it makes the policy provably clean. The cost is nil
+here — these are small form and search-param schemas, not hot-loop parsing.
+
+**Evidence for a future decision to enforce:** `tests/e2e/csp.spec.ts` collects
+`securitypolicyviolation` events across all 11 modules and 7 deep routes and
+asserts zero. Run against a real production build (`next start`, the strict
+policy with no `'unsafe-eval'`), it is 22/22 clean. Note the gap: entity DETAIL
+pages, the slip-signing canvas and PDF generation are not in that sweep, so
+report-only should run in production for a while before anyone promotes the
+header. Do not enforce on the strength of local evidence alone.
+
+Housekeeping: eslint now also ignores `tests/.playwright-report/**` and
+`tests/.playwright-output/**` — Playwright's bundled trace viewer produced ~2,800
+lint warnings once a test had failed. Same class as the `supabase/.temp` ignore.
