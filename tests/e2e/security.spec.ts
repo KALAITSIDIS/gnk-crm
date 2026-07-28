@@ -40,6 +40,10 @@ test.describe("protected routes", () => {
     "/keys/export",
     "/tasks/export",
     "/route-sheet",
+    "/security",
+    // the 2FA challenge upgrades an EXISTING session, so it is meaningless —
+    // and confusing — to show a code prompt to an anonymous visitor
+    "/login/verify",
   ];
   for (const path of deepRoutes) {
     test(`${path} redirects an anonymous visitor to /login`, async ({ page }) => {

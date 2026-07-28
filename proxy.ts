@@ -34,7 +34,10 @@ export default async function proxy(request: NextRequest) {
   // while the session is still aal1
   const isMfaVerifyPage = path === "/login/verify";
 
-  if (!user && !isLoginPage) {
+  // The verify page is only meaningful WITH a session — it upgrades one. An
+  // anonymous visitor gets the password form, not a code prompt for an account
+  // they haven't identified.
+  if (!user && (!isLoginPage || isMfaVerifyPage)) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);
