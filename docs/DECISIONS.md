@@ -1253,3 +1253,33 @@ header. Do not enforce on the strength of local evidence alone.
 Housekeeping: eslint now also ignores `tests/.playwright-report/**` and
 `tests/.playwright-output/**` — Playwright's bundled trace viewer produced ~2,800
 lint warnings once a test had failed. Same class as the `supabase/.temp` ignore.
+
+## 2026-07-24 · T-csp-coverage — the CSP evidence now reaches the detail pages
+
+`T-csp` shipped the report-only policy but flagged a gap: the violation sweep
+covered only list/module routes, so the heaviest client code — tabbed detail
+forms, the media grid, the signature canvas — was unproven. That was the stated
+reason not to enforce. Closed.
+
+- The sweep now drives **property detail, contact detail, viewing detail and the
+  slip-signing canvas**, reaching them by clicking through from the lists so it
+  uses real record ids rather than fixtures.
+- **`img-src` is proven, not assumed.** The Supabase origin is in `img-src`
+  purely because Storage serves property renditions; with `property_media` empty
+  the directive was never exercised. The test now listens for a
+  `/storage/v1/object/public/` response and only trusts the clean result if one
+  actually happened. Verified against a temporary media fixture: image served,
+  zero violations. The fixture was removed afterwards (a 1×1 cover makes a real
+  property look broken locally), so the test self-skips again until a database
+  has media.
+- **Absent data self-skips with a reason, it does not pass.** Both viewings in
+  the local database belong to the RLS fixture org, so the seed admin genuinely
+  cannot see one — the first version of this test asserted its way to a green
+  run against `/viewings/export`, which is exactly the vacuous pass the repo's
+  standing rule warns about. Detail links are now matched on the id SHAPE
+  (`^/prefix/<uuid>$`), which cannot collide with `/new` or `/export`.
+
+Result: **27/27 clean against a real `next start` production build.** Still not
+grounds to enforce on their own — PDF generation is server-rendered and behind a
+signed URL, and a seed database has no media — but the gap that was called out
+as the blocker is now evidence rather than an unknown.

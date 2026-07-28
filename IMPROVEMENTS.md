@@ -109,9 +109,11 @@ The per-request nonce is threaded through `proxy.ts` and the full policy ships a
 
 **Evidence:** `lib/services/csp.ts` (10 unit tests, origins derived from env so local/prod both work) + `tests/e2e/csp.spec.ts`, which collects `securitypolicyviolation` events across 11 modules and 7 deep routes and asserts zero — **22/22 clean against a real `next start` production build** with the strict policy.
 
+**Coverage extended 2026-07-24 — the detail-page gap is now closed.** The sweep additionally drives **property detail, contact detail, viewing detail and the slip-signing canvas** (reached by clicking through from the lists, so it uses real ids), and proves `img-src` against an actual Supabase Storage image rather than assuming it. **27/27 clean against a production build.** Routes with no data self-skip with an explicit reason instead of passing vacuously — a green run is only evidence for what actually ran.
+
 **Before enforcing (do NOT do this on local evidence alone):**
-1. Let report-only run in production for a while — real data, real screens.
-2. The sweep does **not** cover entity *detail* pages, the slip-signing canvas or PDF generation; those carry the heaviest client code and are the likeliest remaining surprise.
+1. Let report-only run in production for a while — real data, real screens, real browsers.
+2. Two things the local sweep still cannot exercise: **PDF generation** (the evidence report renders server-side, and the download is a signed URL) and any screen whose data does not exist locally — `property_media` is empty on a seed database, so the Storage `img-src` result above came from a temporary fixture and the test self-skips without one.
 3. Then flip the response header name from `Content-Security-Policy-Report-Only` to `Content-Security-Policy` in `proxy.ts` — a one-line change, trivially revertible.
 
 ### C2. Two-factor authentication — ✅ **DONE 2026-07-24** (opt-in; DB-level enforcement outstanding)
