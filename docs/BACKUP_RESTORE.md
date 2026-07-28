@@ -213,6 +213,62 @@ same Supabase account before the drill counts as passed.
 
 ---
 
+## 3.4 What a rehearsal on 2026-07-24 proved — read before choosing a method
+
+A restore was executed end to end against a scratch database (`restore_drill`)
+built from the 19 migrations, loading a 295-event dataset. It found four things
+that change the method, not just the checklist. Full write-up: DECISIONS
+`T-backup-drill-run`.
+
+**1. A JSON/PostgREST export CANNOT back up `events`. This is the big one.**
+PostgREST hands `jsonb` to JavaScript, and JavaScript numbers carry no scale, so
+a payload stored as `{"to": 510000.00}` restores as `{"to": 510000}`.
+`verify_events_chain` hashes `payload::text`, so that one character breaks the
+hash — and because the chain is sequential, **one corrupted payload invalidates
+every event after it**. In the rehearsal, an org whose chain was `true` at the
+source came back `false` with identical row counts. A restored database that
+looks complete and reports its own evidence chain as FAILED is indistinguishable
+from a tampered one.
+
+*Production is exposed:* 1 of 62 hosted events already carries a decimal
+payload, and every price change and deal amount adds another.
+
+**→ `supabase db dump` (pg_dump) is the PRIMARY backup and is not optional.**
+`scripts/backup/export.mjs` is for **Storage** (which no database dump contains,
+§1.2) and for a readable table snapshot. It marks its own manifest
+`chainFaithful: false`.
+
+**2. The restore target must be a Supabase project, not a Postgres database.**
+The schema will not build without `auth.uid()` and `auth.users` (51 references),
+`storage.buckets`, and the `anon`/`authenticated`/`service_role` roles. Also
+`pg_cron` can only be installed in ONE database per cluster, so a scratch
+database beside the live one cannot take the full schema. This is why §4 step 1
+says *project*.
+
+**3. Restoring data needs three specific defences**, all now in
+`scripts/backup/restore.mjs`:
+- `session_replication_role = replica` for the transaction. Without it
+  `trg_events_hash` fires on every inserted row and **recomputes** the hashes,
+  so the chain verifies — against freshly minted values. That one line is the
+  difference between restoring evidence and manufacturing it.
+- `OVERRIDING SYSTEM VALUE`, because `events.id` is `GENERATED ALWAYS AS
+  IDENTITY` and `verify_events_chain` walks in id order.
+- An explicit column list that **excludes generated-stored columns** —
+  `contacts.display_name` is one, and Postgres refuses any value for it.
+- Afterwards, every sequence must be advanced past the restored maximum or the
+  first write collides.
+
+**4. `auth.users` is not in the public schema**, so neither this export nor a
+default `db dump` includes it: restore those and nobody can log in. Dump
+`--schema auth,storage` as well.
+
+**Measured timings** (295 events, 26 tables, single small bucket — mechanical
+steps only, no provisioning): export 0.7s · scratch schema from 19 migrations
+9s · data restore 1s · verification instant. **The data is not the slow part at
+this scale; provisioning and the human steps are.**
+
+---
+
 ## 4. The drill
 
 Time each phase and write the actual minutes into §6.
@@ -273,12 +329,13 @@ The drill passes only if all of these hold on the restored project:
 | RPO | **Unbounded.** No reachable backup exists. A project-level loss is total. |
 | RTO | **Unbounded.** Nothing to restore from, so nothing to time. |
 
-**Proposed, after §3 is running:**
+**Proposed, after §3 is running** — now with the mechanical half measured rather
+than guessed (§3.4):
 
 | | Target | Why this number |
 |---|---|---|
-| **RPO** | **24 hours** | A nightly dump. At current volume (~60 events in 8 days, ~8/day) a worst-case loss is a single day of activity. Cheap, and infinitely better than today. |
-| **RTO** | **4 hours** | Data volume is trivial (<1 MB DB, 755 KB storage) — restoring it is minutes. The real cost is provisioning a project, re-pointing Vercel env vars, and re-verifying. 4h is the honest figure with a human in the loop, not the machine time. |
+| **RPO** | **24 hours** | A nightly `db dump` + storage export. At current volume (~62 events in 12 days) a worst-case loss is a single day of activity. Cheap, and infinitely better than today. |
+| **RTO** | **4 hours** | The measured mechanical path — schema from migrations, load, verify — is **~11 seconds** at this data volume. Everything else is provisioning a project, restoring Storage, re-pointing Vercel env vars, and working through §5. 4h is the honest figure with a human in the loop; it is dominated by people and provisioning, not by data. |
 
 **When to revise:** the moment real client volume arrives, 24h stops being
 acceptable for commission evidence — a lost day could contain the viewing slip a

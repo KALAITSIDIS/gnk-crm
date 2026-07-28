@@ -1283,3 +1283,78 @@ Result: **27/27 clean against a real `next start` production build.** Still not
 grounds to enforce on their own — PDF generation is server-rendered and behind a
 signed URL, and a seed database has no media — but the gap that was called out
 as the blocker is now evidence rather than an unknown.
+
+## 2026-07-24 · T-backup-drill-run — the restore rehearsal, and what it broke
+
+`T-backup-drill` wrote the runbook; this is the rehearsal actually being run. It
+could not be run as written — creating a scratch Supabase project is the
+operator's call and the hosted DB password must not pass through an agent — so
+it was executed against a scratch database (`restore_drill`) in the local
+Postgres 17.6 cluster, built from the 19 migrations and loaded with a 295-event
+dataset. Tooling: `scripts/backup/export.mjs` and `scripts/backup/restore.mjs`.
+
+**The finding that matters: a JSON/PostgREST export cannot back up `events`.**
+
+PostgREST hands `jsonb` to JavaScript, and JavaScript numbers carry no scale. A
+payload stored as `{"to": 510000.00}` restores as `{"to": 510000}`.
+`verify_events_chain` hashes `payload::text`, so the hash breaks — and because
+the chain is sequential, ONE corrupted payload invalidates every event after it.
+
+In the rehearsal an organisation whose chain read `true` at the source came back
+`false` after a restore with **identical row counts** (36/36). Two other orgs
+verified fine, which is what makes it dangerous: it looks like a clean restore
+until the one table that matters is checked. A restored database reporting its
+own commission evidence chain as FAILED is indistinguishable from a tampered
+one — and this product's entire value is that the chain is defensible.
+
+Production is exposed: 1 of 62 hosted events already carries a decimal payload,
+and every price change and deal amount adds another.
+
+**Decision: `supabase db dump` (pg_dump) is the primary backup, not a
+preference.** `export.mjs` is retained for **Storage** — which no database dump
+contains on any plan — and as a readable table snapshot. It now warns on stderr
+and records `chainFaithful: false` in its own manifest, so the artefact cannot
+be mistaken for a complete backup on the strength of its row counts. There is no
+fix within PostgREST: the raw text of a jsonb column cannot be selected over
+REST.
+
+**Three further findings, all now handled in `restore.mjs`:**
+
+- **`session_replication_role = replica` is mandatory for the load.** Without
+  it, `trg_events_hash` fires on every inserted row and RECOMPUTES prev_hash and
+  hash from the new insert order. The chain then verifies — against freshly
+  minted values. That one line is the difference between restoring evidence and
+  manufacturing it, and it is the single most dangerous omission available here.
+- **`OVERRIDING SYSTEM VALUE`**, because `events.id` is GENERATED ALWAYS AS
+  IDENTITY and `verify_events_chain` walks in id order; without it Postgres
+  renumbers the rows.
+- **Generated-stored columns must be excluded from the column list** —
+  `contacts.display_name` is one, and Postgres rejects any explicit value
+  ("cannot insert a non-DEFAULT value"). The generated SQL therefore builds its
+  column list from `pg_attribute` at restore time (`attgenerated = ''`) rather
+  than hardcoding it, so it cannot drift from the schema. Sequences are then
+  advanced past the restored maximum, or the first write after a restore
+  collides on the primary key.
+
+**And a structural one: the restore target must be a Supabase PROJECT.** The
+schema will not build on bare Postgres — it needs `auth.uid()` and `auth.users`
+(51 references), `storage.buckets`, and the `anon`/`authenticated`/`service_role`
+roles; and `pg_cron` can live in only one database per cluster, so a scratch
+database beside the live one cannot take the full schema. The rehearsal stubbed
+auth/storage and stripped pg_cron to reach the data, which is why it proves data
+fidelity and the chain, not the full platform restore. `auth.users` is also
+outside the public schema, so a default dump omits it and a restore leaves
+nobody able to log in — dump `--schema auth,storage` too.
+
+**Measured** (mechanical steps only): export 0.7s · schema from 19 migrations
+9s · load 1s · verification instant. The data is not the slow part at this
+scale, which is why the proposed RTO of 4h is dominated by provisioning and
+people. RPO/RTO in BACKUP_RESTORE §6 stand, now with the mechanical half
+measured rather than assumed.
+
+**Still outstanding, and still the operator's:** a real `pg_dump` (needs the DB
+password), the Storage export against hosted (needs the hosted service key —
+`.env.local` points at the local stack), off-site copies, and a restore into a
+genuine scratch Supabase project. What is no longer outstanding is the question
+of whether the method works: the JSON method does not, and now we know before it
+mattered.
