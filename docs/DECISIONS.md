@@ -1111,3 +1111,37 @@ the control: the lapsed row lost its document row, its storage object (confirmed
 gone by direct download) and its checklist, and left the surface; the control
 kept all three; `erased_at` survived on both; the `retention_purged` event was
 written with counts only; `verify_events_chain` stayed true.
+
+## 2026-07-24 · T-calendar-window — the viewings window follows the anchor
+
+PERF-2 replaced the unbounded viewings query with a bounded window plus a
+truncation notice. The window was pinned to the server's `now`, but the
+calendar's anchor lived in client `useState`, so stepping ~53 weeks forward (or
+13 back) left the loaded range and rendered an **empty week**. That is the same
+silent lie PERF-2 set out to kill, just relocated: "not fetched" looked exactly
+like "nothing booked".
+
+- **The anchor travels in the URL** (`?d=YYYY-MM-DD`), and the window is
+  computed around it instead of around `now`. Same precedent as the keys audit,
+  which moved filters out of client state for the same reason.
+- **`?view=` travels with it.** Without that, any refetch would snap the user
+  back to week view — the anchor and the view are one navigational state.
+- **Instant inside, refetch outside.** A step whose visible range is still
+  within the loaded window is local state (no round trip); only a step that
+  leaves it pushes the URL. `isRangeWithinWindow` treats a range that merely
+  STRADDLES an edge as outside — half a week of real bookings missing is the
+  same bug in miniature.
+- **The calendar remounts on a server-driven anchor/view change** (`key` on the
+  parent) rather than syncing props into state in an effect, which the
+  `react-hooks/set-state-in-effect` lint rule correctly rejects. Local state
+  therefore cannot disagree with the window it was rendered for.
+- **`parseDayKey` round-trips through the calendar**, so a hand-edited `?d=`
+  that looks well-formed but is not a real date (`2026-13-45`) falls back to
+  today instead of producing a nonsense window.
+- `addDayKey`/`weekStartKey` moved into `lib/services/calendar-window.ts` and
+  the component's private copies were deleted — the fetch window and the
+  "is this loaded?" check now share one implementation and one test suite.
+
+Verified with a viewing booked four years out: invisible when anchored at today
+(correctly outside the window) and visible when anchored at its own week. Before
+this change it was invisible from both — permanently unreachable in the UI.

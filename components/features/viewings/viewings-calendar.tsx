@@ -2,9 +2,16 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { CalendarDays, ChevronLeft, ChevronRight, TriangleAlert } from "lucide-react";
 import { RouteBuilder } from "@/components/features/viewings/route-builder";
 import { Button } from "@/components/ui/button";
+import {
+  addDayKey as addDays,
+  isRangeWithinWindow,
+  visibleRange,
+  weekStartKey as weekStart,
+} from "@/lib/services/calendar-window";
 import type { ViewingStatus } from "@/lib/validators/viewings";
 import { cn } from "@/lib/utils";
 
@@ -36,23 +43,12 @@ const STATUS_TONES: Record<ViewingStatus, string> = {
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-/* date-only helpers — operate at UTC noon so DST never shifts the day */
+/* date-only helpers — operate at UTC noon so DST never shifts the day.
+   addDays/weekStart now come from lib/services/calendar-window (shared with the
+   server's fetch window, and unit-tested there). */
 function keyToUtcNoon(key: string): number {
   const [y, m, d] = key.split("-").map(Number);
   return Date.UTC(y, m - 1, d, 12);
-}
-function utcNoonToKey(ms: number): string {
-  const dt = new Date(ms);
-  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(
-    dt.getUTCDate(),
-  ).padStart(2, "0")}`;
-}
-function addDays(key: string, n: number): string {
-  return utcNoonToKey(keyToUtcNoon(key) + n * 86_400_000);
-}
-function weekStart(key: string): string {
-  const dow = new Date(keyToUtcNoon(key)).getUTCDay(); // 0=Sun
-  return addDays(key, -((dow + 6) % 7)); // Monday-start
 }
 function dayHeader(key: string): { wd: string; dom: number } {
   const dt = new Date(keyToUtcNoon(key));
@@ -107,16 +103,49 @@ function ViewingCard({ v, showAgent }: { v: CalendarViewing; showAgent: boolean 
 export function ViewingsCalendar({
   viewings,
   todayKey,
+  anchorKey,
+  view: initialView,
+  windowFromKey,
+  windowToKey,
   currentUserId,
   isAdmin,
 }: {
   viewings: CalendarViewing[];
   todayKey: string;
+  /** anchor the server loaded around (from `?d=`) */
+  anchorKey: string;
+  /** view the server rendered for (from `?view=`) */
+  view: ViewMode;
+  windowFromKey: string;
+  windowToKey: string;
   currentUserId: string;
   isAdmin: boolean;
 }) {
-  const [view, setView] = useState<ViewMode>("week");
-  const [anchor, setAnchor] = useState(todayKey);
+  const router = useRouter();
+  // Seeded from the server's anchor/view. After a refetch the parent remounts
+  // this component (keyed on anchor+view), so these re-initialise rather than
+  // being synced in an effect — local state can never disagree with the loaded
+  // window.
+  const [view, setView] = useState<ViewMode>(initialView);
+  const [anchor, setAnchor] = useState(anchorKey);
+
+  /**
+   * Move the calendar. Stepping inside the loaded window is instant local
+   * state; stepping OUT of it pushes the anchor into the URL so the server
+   * reloads around the new date. Without this the calendar drew an empty week
+   * past the window edge, which reads as "nothing booked" rather than "not
+   * fetched".
+   */
+  const goTo = (nextAnchor: string, nextView: ViewMode = view) => {
+    const range = visibleRange(nextAnchor, nextView);
+    if (isRangeWithinWindow(range, { fromKey: windowFromKey, toKey: windowToKey })) {
+      setAnchor(nextAnchor);
+      setView(nextView);
+      return;
+    }
+    const params = new URLSearchParams({ d: nextAnchor, view: nextView });
+    router.push(`/viewings?${params.toString()}`, { scroll: false });
+  };
 
   const byDay = useMemo(() => {
     const map = new Map<string, CalendarViewing[]>();
@@ -139,7 +168,7 @@ export function ViewingsCalendar({
     return days.map((k) => ({ day: k, items: byDay.get(k)! }));
   }, [byDay, todayKey]);
 
-  const step = (dir: 1 | -1) => setAnchor((a) => addDays(a, dir * (view === "week" ? 7 : 1)));
+  const step = (dir: 1 | -1) => goTo(addDays(anchor, dir * (view === "week" ? 7 : 1)));
 
   return (
     <div className="flex flex-col gap-4">
@@ -150,7 +179,7 @@ export function ViewingsCalendar({
               key={m}
               type="button"
               aria-pressed={view === m}
-              onClick={() => setView(m)}
+              onClick={() => goTo(anchor, m)}
               className={cn(
                 "rounded-md px-3 py-1 text-sm font-medium capitalize transition-colors",
                 view === m ? "bg-brand-100 text-brand-700" : "text-text-2 hover:text-text-1",
@@ -166,7 +195,7 @@ export function ViewingsCalendar({
             <Button variant="outline" size="sm" onClick={() => step(-1)} aria-label="Previous">
               <ChevronLeft className="size-4" />
             </Button>
-            <Button variant="outline" size="sm" onClick={() => setAnchor(todayKey)}>
+            <Button variant="outline" size="sm" onClick={() => goTo(todayKey)}>
               Today
             </Button>
             <Button variant="outline" size="sm" onClick={() => step(1)} aria-label="Next">
