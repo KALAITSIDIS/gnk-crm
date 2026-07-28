@@ -1358,3 +1358,53 @@ password), the Storage export against hosted (needs the hosted service key —
 genuine scratch Supabase project. What is no longer outstanding is the question
 of whether the method works: the JSON method does not, and now we know before it
 mattered.
+
+## 2026-07-24 · T-csp-reporting — the report-only policy had nowhere to report
+
+`T-csp` shipped `Content-Security-Policy-Report-Only` and advised letting it run
+in production before enforcing. That advice was unactionable: the policy named
+no `report-uri`, so every violation went to the visitor's own browser console
+and nowhere the operator could ever look. A report-only policy that collects
+nothing is decorative.
+
+Added a collector at **`/api/csp-report`**, advertised via both `report-uri`
+(deprecated but still the only directive every current browser honours) and
+`report-to` + a `Reporting-Endpoints` header.
+
+The endpoint is necessarily PUBLIC — browsers post reports without credentials,
+so `proxy.ts` exempts exactly that one path from the auth gate. Everything about
+it follows from that:
+
+- **It never writes to the database, and above all never to `events`.** The log
+  is append-only and hash-chained; letting an unauthenticated caller append to
+  it would be indefensible. The sink is stdout (Vercel runtime logs) plus Sentry
+  when a DSN exists.
+- **Body capped at 16 KB**, always answers `204`, never echoes input — a
+  reporting endpoint should give a prober nothing to work with.
+- **De-duplicated per instance** on `directive|blockedUri|sourceFile`. The
+  operator needs the distinct set of things the policy would block; one line per
+  page view would drown the rare violation in the common one. The set is
+  in-memory and per-instance by design — a flood guard, not a store — so a cold
+  start re-reports and the signal stays alive without unbounded state.
+- **Document URLs are reduced to their PATH**, dropping query strings so list
+  filters never reach a log line. Only http(s) is reduced: `new URL()` happily
+  parses `about:blank` and calls its pathname "blank".
+- Both report shapes are parsed (`application/csp-report`'s hyphen-cased object
+  and the Reporting API's camelCased array), and the parser returns `[]` rather
+  than throwing on anything malformed — hostile input is expected here, not
+  exceptional.
+
+**What is proven, and what is not.** The policy genuinely catches violations: an
+`img-src` probe against a dead local port raises one with disposition `report`,
+asserted in `csp.spec.ts`. That matters — without it, "zero violations
+everywhere" could equally mean the policy is inert. The endpoint genuinely
+accepts reports, including oversized and malformed bodies.
+
+**Not proven: that a real browser delivers reports to it.** No report reached
+the dev server even after a 70-second wait, and reports are emitted by the
+browser's network stack rather than the page, so Playwright cannot observe them
+either. Headless Chromium over plain `http://localhost` appears not to deliver.
+This is recorded as an open question rather than papered over: **confirm in
+production by grepping the Vercel runtime logs for `[csp]`.** An empty log there
+means either "clean" or "not delivering", and the two must not be confused
+before anyone decides to enforce.

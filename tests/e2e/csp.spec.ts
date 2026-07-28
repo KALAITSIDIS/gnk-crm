@@ -1,5 +1,7 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, request as playwrightRequest, type Page } from "@playwright/test";
 import { MODULES } from "./helpers";
+
+const baseUrl = () => process.env.E2E_BASE_URL ?? "http://localhost:3000";
 
 /**
  * Content-Security-Policy, staged report-only (IMPROVEMENTS C1).
@@ -54,6 +56,92 @@ test.describe("Content-Security-Policy (report-only)", () => {
     // must not quietly drop the clickjacking protection shipped in SEC-1..4.
     expect(headers["content-security-policy"] ?? "").toContain("frame-ancestors 'none'");
     expect(headers["x-frame-options"]).toBe("DENY");
+  });
+
+  test("the policy names a reporting endpoint, and it accepts a report anonymously", async ({
+    page,
+  }) => {
+    // Without this the report-only stage is decorative: violations reach the
+    // visitor's console and nobody else, so "let it run in production for a
+    // while" cannot be acted on.
+    const res = await page.goto("/dashboard", { waitUntil: "domcontentloaded" });
+    const headers = res!.headers();
+    expect(headers["content-security-policy-report-only"]).toContain(
+      "report-uri /api/csp-report",
+    );
+    expect(headers["reporting-endpoints"] ?? "").toContain("/api/csp-report");
+
+    // Browsers post reports WITHOUT credentials, so the endpoint must be
+    // reachable unauthenticated — if the proxy redirects it to /login every
+    // report is silently lost.
+    const anon = await playwrightRequest.newContext();
+    const posted = await anon.post(`${baseUrl()}/api/csp-report`, {
+      headers: { "content-type": "application/csp-report" },
+      data: JSON.stringify({
+        "csp-report": {
+          "document-uri": `${baseUrl()}/dashboard`,
+          "effective-directive": "script-src",
+          "blocked-uri": "eval",
+        },
+      }),
+    });
+    expect(posted.status()).toBe(204);
+    await anon.dispose();
+  });
+
+  test("the policy actually catches a violation the app does not make", async ({ page }) => {
+    // Proves the policy has teeth: something it forbids really does raise a
+    // violation, with disposition "report" (i.e. observed, not blocked).
+    // Without this, "zero violations everywhere" could equally mean the policy
+    // is inert.
+    await collectViolations(page);
+    await page.goto("/dashboard", { waitUntil: "networkidle" });
+
+    // Probe img-src, not script-src: 'strict-dynamic' deliberately TRUSTS
+    // scripts inserted by already-trusted code, so an injected <script> is no
+    // violation at all. Port 9 (discard) is a different origin from the app and
+    // never leaves the machine.
+    await page.evaluate(() => {
+      const img = document.createElement("img");
+      img.src = "http://127.0.0.1:9/csp-probe.png";
+      document.body.appendChild(img);
+    });
+
+    await expect
+      .poll(async () => (await readViolations(page)).length, { timeout: 10_000 })
+      .toBeGreaterThan(0);
+
+    const [v] = await readViolations(page);
+    expect(v.directive).toContain("img-src");
+    expect(v.blockedURI).toContain("127.0.0.1:9");
+
+    // NOTE: whether the browser then POSTS that report to /api/csp-report is
+    // deliberately NOT asserted. Reports are emitted by the browser's network
+    // stack rather than the page, so Playwright cannot observe them, and no
+    // report reached the dev server even after a 70s wait — headless Chromium
+    // over plain http://localhost appears not to deliver them. The endpoint
+    // itself is covered by the synthetic POST above. Verify real delivery in
+    // production by looking for "[csp]" in the Vercel runtime logs.
+  });
+
+  test("the reporting endpoint refuses an oversized body and never 500s", async () => {
+    const anon = await playwrightRequest.newContext();
+
+    const huge = await anon.post(`${baseUrl()}/api/csp-report`, {
+      headers: { "content-type": "application/csp-report" },
+      data: "x".repeat(20_000),
+    });
+    expect(huge.status()).toBe(413);
+
+    // Garbage from the public internet is expected, not exceptional.
+    for (const junk of ["not json at all", "[]", "{}", '{"csp-report":{}}']) {
+      const res = await anon.post(`${baseUrl()}/api/csp-report`, {
+        headers: { "content-type": "application/csp-report" },
+        data: junk,
+      });
+      expect(res.status(), `body: ${junk}`).toBe(204);
+    }
+    await anon.dispose();
   });
 
   test("a fresh nonce is issued per request — a fixed nonce is no protection", async ({ page }) => {

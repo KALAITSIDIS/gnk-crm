@@ -11,6 +11,12 @@
  * exists when a DSN is configured.
  */
 
+/** Where browsers post violation reports; exempt from auth in `proxy.ts`. */
+export const CSP_REPORT_PATH = "/api/csp-report";
+
+/** Reporting-API group name, tying `report-to` to the Reporting-Endpoints header. */
+export const CSP_REPORT_GROUP = "csp-endpoint";
+
 export interface CspOptions {
   /** per-request nonce; Next stamps this on its own inline bootstrap scripts */
   nonce: string;
@@ -78,7 +84,14 @@ export function buildCsp({ nonce, isDev, supabaseUrl, sentryDsn }: CspOptions): 
     "worker-src": ["'self'", "blob:"],
   };
 
-  return Object.entries(directives)
+  const policy = Object.entries(directives)
     .map(([name, values]) => `${name} ${values.join(" ")}`)
     .join("; ");
+
+  // Without somewhere to report TO, a report-only policy is decorative:
+  // violations reach the visitor's console and nobody else. `report-uri` is
+  // formally deprecated but is still the only directive every current browser
+  // honours; `report-to` is emitted alongside it for those that prefer it (the
+  // matching Reporting-Endpoints header is set in proxy.ts).
+  return `${policy}; report-uri ${CSP_REPORT_PATH}; report-to ${CSP_REPORT_GROUP}`;
 }

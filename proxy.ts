@@ -1,8 +1,16 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { buildCsp } from "@/lib/services/csp";
+import { buildCsp, CSP_REPORT_GROUP, CSP_REPORT_PATH } from "@/lib/services/csp";
 
 export default async function proxy(request: NextRequest) {
+  // Browsers post CSP violation reports without credentials, so this one path
+  // must bypass the auth gate — otherwise every report is redirected to /login
+  // and silently lost, which is exactly the state that made the report-only
+  // policy decorative. The handler writes nothing to the database.
+  if (request.nextUrl.pathname === CSP_REPORT_PATH) {
+    return NextResponse.next();
+  }
+
   /**
    * Per-request CSP nonce (IMPROVEMENTS C1). Next reads the nonce out of the
    * `Content-Security-Policy` header we set on the REQUEST and stamps it on its
@@ -100,6 +108,12 @@ export default async function proxy(request: NextRequest) {
   // nothing. Promoting this to `Content-Security-Policy` is a separate,
   // deliberate step once the reports are proven clean.
   supabaseResponse.headers.set("Content-Security-Policy-Report-Only", csp);
+  // Pairs with the policy's `report-to` directive for browsers that implement
+  // the Reporting API; `report-uri` covers the rest.
+  supabaseResponse.headers.set(
+    "Reporting-Endpoints",
+    `${CSP_REPORT_GROUP}="${CSP_REPORT_PATH}"`,
+  );
   return supabaseResponse;
 }
 
