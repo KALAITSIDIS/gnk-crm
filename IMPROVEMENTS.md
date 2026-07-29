@@ -57,8 +57,23 @@ Completed doc 02 §C4 "link/**create** contact (dedup applies)" — the lead for
 
 **Follow-up worth noting:** this covers manual lead entry. A public website lead form (B3 territory) would need the same dedup on its intake path.
 
-### B7. Automated follow-up nudges — **1 week**
-Cron-driven tasks: "no contact in 14 days on an active deal", "viewing done, no feedback logged", "mandate expiring in 30 days" (the last already exists via `expire_mandates`). **Why:** first-response time is already measured on the dashboard but nothing acts on it. **Depends on:** `pg_cron` (in use for `expire-mandates` and `verify-events-chain`), the `0012` renewal-task lifecycle as the pattern to copy.
+### B7. Automated follow-up nudges — ✅ **DONE 2026-07-29** (migration 0020)
+Cron-driven tasks: "no contact in 14 days on an active deal" and "viewing done, no feedback logged". (The third rule the original entry named, "mandate expiring in 30 days", already existed via `expire_mandates` and was **not** rebuilt.) **Why:** first-response time was already measured on the dashboard but nothing acted on it.
+
+`create_followup_nudges(p_org uuid default null)` runs at **03:15** — between `expire-mandates` (03:00) and `verify-events-chain` (03:30), so the night's nudge events are chain-checked by the same run. Built on the 0012 renewal lifecycle, which had already solved every hard part:
+
+- **Idempotence keyed to a cycle, not "does any task exist".** The deal cycle is the staleness **boundary** — `(last_activity_at at Cyprus)::date + 14` — stored as the task's Cyprus end-of-day due date. Contact moves `last_activity_at`, which moves the boundary, so the open task stops matching and a *later* silence is a genuinely new cycle. A deal nobody ever touches keeps exactly one open nudge, forever. The viewing rule has no cycle and guards on "any nudge for this viewing", which is correct rather than the 0006 bug: `saveViewingFeedback` can only set feedback, never clear it.
+- **Cyprus 23:59 due stamps**, deterministic from the source row rather than from when the job ran — a catch-up run after downtime stamps the date the nudge *should* have carried and shows up already overdue, instead of resetting the clock.
+- **Three-arm assignee fallback** (deal/viewing agent → creator → oldest active org admin). A NULL assignee is invisible on every surface.
+- **Stated invariants, self-healed.** An OPEN `deal_no_contact` task exists iff its deal is OPEN and its due date is that deal's current boundary; an OPEN `viewing_feedback` task exists iff its viewing is COMPLETED with null feedback. Tasks that stop matching are COMPLETED (`superseded`), never deleted. Two `AFTER UPDATE` triggers do this at edit time with `actor_id = auth.uid()` (the `trg_price_history` pattern — chosen over app-side calls because `move_deal_to_stage` is SQL-side); cron is the actor-null nightly net.
+
+**"Contact" is `deals.last_activity_at`** — the only workable signal, because `contacted`/`called`/`conversation_logged` are all lead-scoped, never deal-scoped. It is also the health score's activity input, whose cliff is *also* 14 days (doc 02 §C5), so the nudge fires exactly when that factor reaches zero.
+
+**The old "Viewings awaiting feedback" virtual section is retired** from `/tasks` and the agent dashboard; `viewing_feedback` nudges replace it with real rows that carry a 48-hour threshold, a due date, an assignee, admin visibility, CSV export and an event trail. The agent dashboard's tasks card widened from "overdue" to "due today & overdue", since every nudge is due at 23:59.
+
+`tasks.kind` (CHECK-constrained, `null` = a human typed it) is now the single system-task discriminator; `expire_mandates` was re-stated to stamp `mandate_renewal` with its guard predicate byte-identical. **Thresholds are hardcoded** — see DECISIONS `T-nudges` for why, and BACKLOG for the config option.
+
+Proven by 18 psql fixture assertions, RLS **test 24** (invariants, `p_org` scoping, anon/authenticated denied execute) and **test 17** (system tasks have no creator, so only an admin may delete them), plus `tests/e2e/nudges.spec.ts`.
 
 ### B8. Mobile PWA for the agent day — **1 week**
 Installable, offline-tolerant shell for the three mobile-first screens named in `CLAUDE.md`: slip signing, agent daily dashboard, lead inbox. **Why:** agents run viewings from a phone in a car park; the slip must sign even on bad signal. **Depends on:** the mobile nav shipped 2026-07-15. Note: the property detail screen (tabs, media grid, forms) is still desktop-oriented and is **not** in scope here.

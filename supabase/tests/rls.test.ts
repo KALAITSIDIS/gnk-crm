@@ -729,6 +729,57 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       .select("id")
       .single();
     expect(lmIns.error).toBeNull();
+
+    // System tasks (`created_by` null) — the shape both cron jobs write. The
+    // doc 04 row is `(assignee_id = uid OR created_by = uid)`, so a nudge is
+    // reachable ONLY through its assignee: that is exactly why 0012 grew a
+    // three-arm fallback and why a NULL assignee would be invisible to everyone.
+    const { data: sys, error: sysErr } = await svc
+      .from("tasks")
+      .insert({
+        org_id: ORG_A,
+        title: `No contact in 14 days: fixture ${run}`,
+        assignee_id: agentA1.id,
+        created_by: null,
+        deal_id: dealA1,
+        kind: "deal_no_contact",
+      })
+      .select("id")
+      .single();
+    expect(sysErr).toBeNull();
+
+    expect((await selectCount(agentA1.client, "tasks", "id", sys!.id)).count).toBe(1);
+    expect((await selectCount(agentA2.client, "tasks", "id", sys!.id)).count).toBe(0);
+    expect((await selectCount(agentB.client, "tasks", "id", sys!.id)).count).toBe(0);
+
+    // the assignee completes it like any other task
+    const sysToggle = await agentA1.client
+      .from("tasks")
+      .update({ is_done: true, done_at: new Date().toISOString() })
+      .eq("id", sys!.id)
+      .select("id");
+    expect(sysToggle.error).toBeNull();
+    expect(sysToggle.data).toHaveLength(1);
+
+    // DELETE is `creator or admin`, and a system task HAS no creator — so the
+    // assignee cannot delete it and only an admin can.
+    const sysDelAssignee = await agentA1.client
+      .from("tasks")
+      .delete()
+      .eq("id", sys!.id)
+      .select("id");
+    expect(sysDelAssignee.data ?? []).toHaveLength(0);
+    const sysDelAdmin = await adminA.client.from("tasks").delete().eq("id", sys!.id).select("id");
+    expect(sysDelAdmin.error).toBeNull();
+    expect(sysDelAdmin.data).toHaveLength(1);
+
+    // the CHECK constraint keeps `kind` a closed set — a typo in a future cron
+    // fails loudly instead of minting tasks no surface recognises as nudges
+    const badKind = await svc
+      .from("tasks")
+      .insert({ org_id: ORG_A, title: `bad kind ${run}`, assignee_id: agentA1.id, kind: "typo" })
+      .select("id");
+    expect(badKind.error).not.toBeNull();
   });
 
   it("18. property_keys: register/edit is admin+LM only; record_key_movement guards transitions", async () => {
@@ -1210,5 +1261,205 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
         .ilike(table === "deals" ? "title" : table === "contacts" ? "last_name" : "reference", `%${run}%`);
       expect(rows ?? [], `${table}: this run's fixtures leaked into the seeded org`).toEqual([]);
     }
+  });
+
+  it("24. create_followup_nudges: cycle-keyed, EOD-stamped, never orphaned, self-healing", async () => {
+    const dayMs = 86_400_000;
+    const iso = (ms: number) => new Date(Date.now() - ms).toISOString();
+
+    // The job is org-wide by default; p_org keeps this test off every other
+    // org, including the seeded one test 23 protects.
+    const seededBefore = await svc
+      .from("tasks")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", SEEDED_ORG)
+      .in("kind", ["deal_no_contact", "viewing_feedback"]);
+
+    // stale: silent 20 days, has an agent.  orphan: silent 20 days, no agent
+    // and no creator — the shape that produced NULL-assignee tasks before 0012.
+    // fresh: touched just now, must NOT be nudged.
+    const { data: deals, error: dealsErr } = await svc
+      .from("deals")
+      .insert([
+        {
+          org_id: ORG_A,
+          deal_type: "sale",
+          stage_id: stageSaleNew,
+          title: `Nudge stale ${run}`,
+          agent_id: agentA1.id,
+          created_by: agentA1.id,
+          last_activity_at: iso(20 * dayMs),
+        },
+        {
+          org_id: ORG_A,
+          deal_type: "sale",
+          stage_id: stageSaleNew,
+          title: `Nudge orphan ${run}`,
+          agent_id: null,
+          created_by: null,
+          last_activity_at: iso(20 * dayMs),
+        },
+        {
+          org_id: ORG_A,
+          deal_type: "sale",
+          stage_id: stageSaleNew,
+          title: `Nudge fresh ${run}`,
+          agent_id: agentA1.id,
+          created_by: agentA1.id,
+          // explicit, not omitted: a PostgREST bulk insert unions the keys, so
+          // a column left off ONE row is sent as null rather than defaulted
+          last_activity_at: new Date().toISOString(),
+        },
+      ])
+      .select("id, last_activity_at");
+    expect(dealsErr).toBeNull();
+    const [staleDeal, orphanDeal, freshDeal] = deals!;
+
+    // 49h ago needs a nudge; 47h ago does not (the 48-hour threshold).
+    const { data: viewings, error: viewErr } = await svc
+      .from("viewings")
+      .insert([
+        {
+          org_id: ORG_A,
+          property_id: propA1,
+          contact_id: contactA,
+          agent_id: agentA1.id,
+          scheduled_at: iso(49 * 3_600_000),
+          status: "completed",
+        },
+        {
+          org_id: ORG_A,
+          property_id: propA1,
+          contact_id: contactA,
+          agent_id: agentA1.id,
+          scheduled_at: iso(47 * 3_600_000),
+          status: "completed",
+        },
+      ])
+      .select("id");
+    expect(viewErr).toBeNull();
+    const [lateViewing, recentViewing] = viewings!;
+
+    // --- the job is not callable by any app role -----------------------------
+    expect((await anonClient().rpc("create_followup_nudges", { p_org: ORG_A })).error).not.toBeNull();
+    expect(
+      (await agentA1.client.rpc("create_followup_nudges", { p_org: ORG_A })).error,
+    ).not.toBeNull();
+
+    const nudges = async (col: "deal_id" | "viewing_id", id: string) => {
+      const { data, error } = await svc
+        .from("tasks")
+        .select("id, due_at, assignee_id, is_done, kind")
+        .eq(col, id)
+        .not("kind", "is", null);
+      expect(error).toBeNull();
+      return data ?? [];
+    };
+
+    // --- run 1 ---------------------------------------------------------------
+    expect((await svc.rpc("create_followup_nudges", { p_org: ORG_A })).error).toBeNull();
+
+    const staleNudges = await nudges("deal_id", staleDeal.id);
+    expect(staleNudges, "a deal silent for 20 days is nudged exactly once").toHaveLength(1);
+    expect(await nudges("deal_id", freshDeal.id), "a deal touched today is not").toHaveLength(0);
+
+    // due at Cyprus 23:59 of the staleness boundary — not midnight UTC, which
+    // would read "overdue" for the whole of the task's final day (0012 #2)
+    const cyprus = (isoStr: string) =>
+      new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Asia/Nicosia",
+        hourCycle: "h23",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(new Date(isoStr));
+    const boundary = new Date(new Date(staleDeal.last_activity_at).getTime() + 14 * dayMs);
+    expect(cyprus(staleNudges[0].due_at!)).toBe(`${cyprus(boundary.toISOString()).slice(0, 10)}, 23:59`);
+
+    // three-arm fallback: agent → creator → oldest active admin, never NULL
+    expect(staleNudges[0].assignee_id).toBe(agentA1.id);
+    const orphanNudges = await nudges("deal_id", orphanDeal.id);
+    expect(orphanNudges).toHaveLength(1);
+    expect(orphanNudges[0].assignee_id, "an orphan deal must not produce a NULL assignee").toBe(
+      adminA.id,
+    );
+
+    expect(await nudges("viewing_id", lateViewing.id), "49h → nudged").toHaveLength(1);
+    expect(await nudges("viewing_id", recentViewing.id), "47h → not yet").toHaveLength(0);
+
+    // --- run 2: no same-cycle re-nag (the 0006 bug 0012 was written to kill) --
+    expect((await svc.rpc("create_followup_nudges", { p_org: ORG_A })).error).toBeNull();
+    expect(await nudges("deal_id", staleDeal.id)).toHaveLength(1);
+    expect(await nudges("viewing_id", lateViewing.id)).toHaveLength(1);
+
+    // --- contact made: the trigger supersedes immediately, with an actor ------
+    const touched = await agentA1.client
+      .from("deals")
+      .update({ last_activity_at: new Date().toISOString() })
+      .eq("id", staleDeal.id)
+      .select("id");
+    expect(touched.error).toBeNull();
+    expect(touched.data).toHaveLength(1);
+
+    const afterContact = await nudges("deal_id", staleDeal.id);
+    expect(afterContact, "superseded, never deleted — the row survives").toHaveLength(1);
+    expect(afterContact[0].is_done, "contact closes the open nudge at edit time").toBe(true);
+
+    const { data: supersedeEvents } = await svc
+      .from("events")
+      .select("actor_id, payload")
+      .eq("event_type", "superseded")
+      .eq("entity_id", afterContact[0].id);
+    expect(supersedeEvents ?? []).toHaveLength(1);
+    expect(supersedeEvents![0].actor_id, "the trigger attributes the acting user").toBe(agentA1.id);
+
+    // --- a later silence is a NEW cycle, so a new task is minted -------------
+    expect(
+      (
+        await svc
+          .from("deals")
+          .update({ last_activity_at: iso(15 * dayMs) })
+          .eq("id", staleDeal.id)
+      ).error,
+    ).toBeNull();
+    expect((await svc.rpc("create_followup_nudges", { p_org: ORG_A })).error).toBeNull();
+    const secondCycle = await nudges("deal_id", staleDeal.id);
+    expect(secondCycle, "a second silent period nudges again").toHaveLength(2);
+    expect(secondCycle.filter((t) => !t.is_done), "and only one is open").toHaveLength(1);
+
+    // --- closing the deal supersedes ----------------------------------------
+    expect(
+      (await svc.from("deals").update({ status: "won", won_at: new Date().toISOString() }).eq("id", orphanDeal.id))
+        .error,
+    ).toBeNull();
+    expect((await nudges("deal_id", orphanDeal.id)).every((t) => t.is_done)).toBe(true);
+
+    // --- logging feedback supersedes, and cron does not re-create ------------
+    const feedback = await agentA1.client
+      .from("viewings")
+      .update({ feedback: { rating: 4 } })
+      .eq("id", lateViewing.id)
+      .select("id");
+    expect(feedback.error).toBeNull();
+    const afterFeedback = await nudges("viewing_id", lateViewing.id);
+    expect(afterFeedback).toHaveLength(1);
+    expect(afterFeedback[0].is_done).toBe(true);
+    expect((await svc.rpc("create_followup_nudges", { p_org: ORG_A })).error).toBeNull();
+    expect(await nudges("viewing_id", lateViewing.id)).toHaveLength(1);
+
+    // --- p_org really scoped the job, and the chain still verifies -----------
+    const seededAfter = await svc
+      .from("tasks")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", SEEDED_ORG)
+      .in("kind", ["deal_no_contact", "viewing_feedback"]);
+    expect(seededAfter.count ?? 0, "p_org must confine the job to the fixture org").toBe(
+      seededBefore.count ?? 0,
+    );
+
+    const { data: chainOk } = await svc.rpc("verify_events_chain", { p_org: ORG_A });
+    expect(chainOk, "the new event types keep the hash chain intact").toBe(true);
   });
 });

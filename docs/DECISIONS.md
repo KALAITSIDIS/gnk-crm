@@ -1408,3 +1408,145 @@ This is recorded as an open question rather than papered over: **confirm in
 production by grepping the Vercel runtime logs for `[csp]`.** An empty log there
 means either "clean" or "not delivering", and the two must not be confused
 before anyone decides to enforce.
+
+## 2026-07-29 · T-nudges — automated follow-up nudges (IMPROVEMENTS B7)
+
+Cron-driven follow-up tasks on the 0012 renewal-lifecycle pattern. Migration
+**0020**: `deal_no_contact` (an open deal silent for 14 days) and
+`viewing_feedback` (a completed viewing still missing feedback 48h after it was
+scheduled). The roadmap's third rule, "mandate expiring in 30 days", already
+existed via `expire_mandates` and was not rebuilt.
+
+Four design questions were settled with the operator before any code, because
+each of them changes the shape of the feature rather than its polish.
+
+- **"Contact" is `deals.last_activity_at`.** The tempting answer — count only
+  agent-initiated contact events — turned out to be an empty set: `contacted`,
+  `called`, `conversation_logged` and `chat_link_opened` are all written with
+  `entity_type='lead'` (or `'contact'`), never `'deal'`. A nudge keyed to them
+  would fire on every open deal and be unsilenceable except by converting a
+  lead. `last_activity_at` is already bumped by deal edits, the 0011 stage-move
+  RPC, offer create/decide, won/lost and `logConversation` on a converted lead,
+  and it is the health score's own activity input — whose cliff is **also 14
+  days** (doc 02 §C5). So the nudge fires exactly when the health score's
+  activity factor reaches zero. One number, one meaning.
+  *Accepted weakness:* retyping a deal title counts as contact and buys 14 days
+  of silence. Closing that needs a deal-scoped "Log contact" action → BACKLOG.
+- **One nudge per silent period**, keyed to the staleness BOUNDARY
+  (`(last_activity_at at Cyprus)::date + 14`) stored as the task's Cyprus
+  end-of-day due date. This is 0012's cycle key transposed: contact moves
+  `last_activity_at`, which moves the boundary, so the open task stops matching
+  and a later silence is a genuinely new cycle. A deal nobody ever touches keeps
+  exactly one open nudge forever — no pile-up. Escalation (re-nagging every 14
+  days) is one `floor()` away if the desk ever asks.
+- **The cron auto-completes when the condition clears.** Invariant: an OPEN
+  `deal_no_contact` task exists iff its deal is OPEN and its due date is the
+  deal's current boundary. Yes, this closes tasks a human did not — but the
+  alternative is a list full of "no contact in 14 days" on deals contacted
+  yesterday, which is how the whole surface gets ignored. Superseded tasks are
+  COMPLETED with a `superseded` event, never deleted.
+- **48 hours for viewing feedback.** 24h punishes a Friday-afternoon viewing on
+  Saturday morning; 72h is past the point where the detail an owner wants still
+  exists. The viewing rule deliberately guards on *"any nudge for this viewing"*
+  rather than a cycle — and that is **not** the 0006 one-shot bug, because a
+  viewing has one feedback lifecycle and `saveViewingFeedback` can only ever set
+  feedback, never clear it.
+
+**Thresholds are hardcoded, not config.** 14 days is the health score's own
+cliff; a separately-editable copy could disagree with it silently about what
+"stale" means. Changing either is one `create or replace function` — the same
+statement this migration already ships. `cyprus_config` is guardrail 5's home
+for Cyprus *rates*, not operational thresholds.
+
+**The virtual "Viewings awaiting feedback" section is retired.** `/tasks` and
+the agent dashboard already ran a live query for `status='completed' and
+feedback is null`, chosen (T4.3/T5.5) so it could never drift out of sync with
+the viewings. That property was real, but the surface had no threshold — it
+nagged the instant a viewing was completed — and no due date, assignee, admin
+visibility, CSV export or event trail. Task rows carry all of those, and the
+anti-drift property is restored by the 0020 invariant instead: a trigger
+supersedes the task the moment feedback is saved.
+
+**`tasks.kind` is the single discriminator; `kind is null` means a human typed
+it.** 0012 had no marker of its own and used `mandate_id is not null` as a
+proxy, already read by the /tasks "auto" badge and the CSV "Auto" column. Rather
+than teach both to test `mandate_id is not null or kind is not null` forever,
+0020 backfills `kind='mandate_renewal'` and re-states `expire_mandates()` to
+stamp it — **guard predicate and every other line byte-identical to 0012; only
+the INSERT column list changed.** A CHECK constraint keeps `kind` a closed set,
+so a typo in a future cron fails loudly instead of minting tasks no surface
+recognises as nudges. The CSV column now carries the rule slug, so the three
+kinds are distinguishable in a spreadsheet.
+
+**Edit-time supersede is trigger-level, not app-level.** 0012 supersedes from
+`saveMandate`/`setMandateStatus` so the list is honest immediately. The app-side
+equivalent here would be seven call sites *plus* `move_deal_to_stage` (0011),
+which is SQL-side and unreachable from TypeScript. Two `AFTER UPDATE` triggers
+do it instead, writing their event with `actor_id = auth.uid()` — the
+`trg_price_history` (0005) pattern, chosen there for the same reason ("direct DB
+edits and imports are covered too"). `profiles.id references auth.users(id)`, so
+`auth.uid()` *is* the profile id. `WHEN` clauses keep the triggers off the
+health-score recompute write, which touches neither column. Cron remains the
+nightly safety net and writes the same event with `actor_id` null.
+
+**`create_followup_nudges(p_org uuid default null)`.** The parameter exists for
+testability only: cron calls it with no arguments, and the RLS suite passes its
+fixture org, because RLS test 23 pins that the suite never writes into the
+seeded org the dev app uses — an org-wide function would violate that on its
+first call. Execute is revoked from `public, anon, authenticated` (it walks
+every open deal in every org) and then **re-granted explicitly to
+`service_role`**, because a function's `service_role` EXECUTE rides on the
+PUBLIC default grant — the collateral 0010 fixed for 0007 and 0019 for 0016.
+
+**Cron at 03:15**, between `expire-mandates` (03:00) and `verify-events-chain`
+(03:30), so the night's nudge events are covered by the same run's chain check —
+0016's own reason for putting the chain check last.
+
+**Timezone maths in SQL, deliberately.** 0018 says not to re-derive `tz.ts`
+logic in SQL, but that rule is about *callers*: 0018 takes its window bounds as
+parameters because a caller exists. Cron has no caller, so the Cyprus EOD stamp
+is copied verbatim from 0012 rather than reinvented — two cron paths that must
+agree should share one expression.
+
+**The agent dashboard's tasks card widened from "overdue" to "due today &
+overdue."** Every nudge is stamped Cyprus 23:59 of the day it fires, so an
+overdue-only card would not show today's work until tonight — on the screen an
+agent runs their day from. The date still turns red only when genuinely past
+due. `cards.overdueTasks`/`empty.noOverdue` were renamed to
+`cards.tasksDue`/`empty.noTasksDue` and `cards.awaitingFeedback` deleted, in all
+three locales.
+
+**Due dates are deterministic functions of the source row, not of when the job
+ran** (EOD of the boundary; EOD of `scheduled_at + 48h`). A catch-up run after
+cron downtime therefore stamps the date the nudge *should* have carried and the
+task appears already overdue — honest — instead of resetting the clock.
+
+**Proof.** A rolled-back psql fixture transaction pinned 18 assertions before
+any app code was written: EOD stamps at Cyprus 23:59 (not midnight UTC), the
+boundary as cycle key, arm-1 and arm-3 assignee resolution (orphan deal → oldest
+active admin, never NULL), the 47h/49h threshold edges, cancelled viewings never
+nudged, no same-cycle re-nag on a second run, trigger supersede on contact and
+on won, supersede on feedback with no re-create, and `verify_events_chain` true
+throughout. RLS **test 24** then pins the same invariants as a regression test
+against a real database, including that anon and `authenticated` cannot execute
+the job and that `p_org` confines it to the fixture org; **test 17** grew the
+system-task rows (a `created_by`-null task is reachable only through its
+assignee, and only an admin can delete it — it has no creator) and the CHECK
+constraint. `tests/e2e/nudges.spec.ts` proves a cron-created nudge actually
+reaches the agent: it renders on /tasks, is badged "auto", links to its deal,
+and lands in Overdue.
+
+**Known gap, matching 0012.** Both rules can land a task on a deactivated
+profile if it is still the deal's or viewing's agent; 0012 takes
+`p.assigned_agent_id` raw in exactly the same way. Fixing one without the other
+would make the two cron paths disagree, so both are left for a single later
+change → BACKLOG.
+
+**Unrelated finding, logged not fixed.** With a *freshly reset* local database,
+`csp.spec.ts`'s "property detail" and "contact detail" tests fail on
+`expect(href).toBeTruthy()` — they need a property and a contact to open, and
+only `happy-path.spec.ts` creates them, so on run 1 they lose the race and on
+run 2 they pass. That is the residue dependency HANDOVER §4 warns about, in a
+spec this change never touches; verified by stashing this work and reproducing
+both failures on the pre-change tree. It does not reach CI (which runs
+`checks` + `rls`, not Playwright). → BACKLOG.

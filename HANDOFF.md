@@ -1,4 +1,4 @@
-# HANDOFF — 2026-07-24
+# HANDOFF — 2026-07-29
 
 Written at the end of a long session so a fresh session can resume with zero
 context. **Read `docs/HANDOVER.md` and `CLAUDE.md` first** — this file is the
@@ -6,17 +6,70 @@ delta on top of them, not a replacement.
 
 | | |
 |---|---|
-| `main` | `ce0366f`, clean working tree, in sync with `origin/main` |
-| Baseline at session start | `bd00809` — 17 commits since |
-| CI | ✅ green on every push (both `checks` and `rls` jobs) |
+| `main` | `7667c60` + **uncommitted B7 work** (see §0) |
+| CI | ✅ green as of `7667c60` (both `checks` and `rls` jobs) |
 | Production | `gnk-crm.vercel.app` healthy, `/login` 200 |
-| Tests | **422 unit** (45 files) · **153 desktop E2E, 1 self-skip** (18 spec files) |
-| Migrations | 19, unchanged this session — **nothing shipped needed one** |
+| Tests | **424 unit** (45 files) · **28 RLS** · **156 desktop E2E** (19 spec files) |
+| Migrations | **20** — 0020 is written and applied LOCALLY ONLY |
+
+---
+
+## 0. STOP — read before pushing anything
+
+**B7 (automated follow-up nudges) is complete and verified locally, but
+migration `0020_followup_nudges.sql` has NOT been applied to hosted.** The
+operator has not given the go-ahead for that production write.
+
+The app code reads `tasks.kind` and `tasks.viewing_id`, which do not exist on
+hosted yet. **Pushing before the migration lands sends every user of `/tasks`
+and the agent dashboard to the error boundary.** Order is not negotiable:
+
+1. Operator says go.
+2. Apply 0020 via the Supabase connector's `execute_sql` (**not**
+   `apply_migration` — the classifier blocks it), then
+   `insert into supabase_migrations.schema_migrations (version, name) values ('0020','0020_followup_nudges.sql') on conflict do nothing;`
+   Verify `non_filename_versions = 0`.
+3. Then, and only then, push. Then check CI.
+
+0020 is safely re-runnable (`add column if not exists`,
+`create index if not exists`, `create or replace function`, the constraint is
+dropped before it is added, and the `cron.schedule` is preceded by a guarded
+`cron.unschedule`).
 
 ---
 
 ## 1. What we set out to do, and what is DONE
 
+### B7 — automated follow-up nudges (2026-07-29, migration 0020) — **not pushed**
+Two cron rules on the 0012 pattern: `deal_no_contact` (open deal silent 14 days)
+and `viewing_feedback` (completed viewing, no feedback, 48h after
+`scheduled_at`). The roadmap's third rule already existed via `expire_mandates`.
+Full reasoning in `docs/DECISIONS.md` → `T-nudges`; design in
+`docs/superpowers/specs/2026-07-28-b7-followup-nudges-design.md`.
+
+- `supabase/migrations/0020_followup_nudges.sql` — `tasks.kind` (CHECK'd) +
+  `tasks.viewing_id`, two partial indexes, `create_followup_nudges(p_org)`,
+  two `AFTER UPDATE` supersede triggers, cron at `15 3 * * *`, and
+  `expire_mandates` re-stated to stamp `kind='mandate_renewal'` (guard predicate
+  byte-identical to 0012).
+- `lib/services/events.ts` — `followup_task_created` + `superseded`
+  (the latter has been written by 0012 since July and was never registered).
+- `messages/{en,el,ru}.json` — new `events.*` keys with ICU plurals;
+  `dashboard.agent.cards.overdueTasks`→`tasksDue`,
+  `empty.noOverdue`→`noTasksDue`, `cards.awaitingFeedback` **deleted**.
+- `app/(app)/tasks/page.tsx`, `components/features/tasks/task-list.tsx`,
+  `components/features/dashboard/agent-dashboard.tsx`,
+  `lib/services/task-export.ts` (+ tests), `docs/03_DATABASE_SCHEMA.sql`.
+- `supabase/tests/rls.test.ts` — test 24 (new) and test 17 (extended).
+- `tests/e2e/nudges.spec.ts` (new).
+
+**Behaviour change worth knowing:** the "Viewings awaiting feedback" virtual
+section is gone from `/tasks` and the agent dashboard — replaced by real
+`viewing_feedback` task rows. The dashboard's tasks card now covers
+"due today & overdue" rather than overdue only, because every nudge is stamped
+Cyprus 23:59 and would otherwise be invisible there until the end of its day.
+
+### Earlier sessions
 The brief was: work the `IMPROVEMENTS.md` roadmap, one item at a time, verify
 each, push, check CI. All of the following are **shipped, pushed and CI-green**.
 
@@ -103,11 +156,12 @@ Per-request nonce through the proxy; the full policy ships as
 
 ---
 
-## 2. What is IN PROGRESS — nothing is mid-flight
+## 2. What is IN PROGRESS
 
-**No work is half-finished. The tree is clean and everything is pushed.**
+**B7 is code-complete and locally verified but NOT deployed — see §0.** Nothing
+else is half-finished.
 
-The single **exact next step** is a verification only the operator can do:
+The other outstanding step is a verification only the operator can do:
 
 > Open `https://gnk-crm.vercel.app` in a normal browser, use it briefly, then
 > search the **Vercel runtime logs for `[csp]`**.
@@ -297,7 +351,7 @@ roles, and `pg_cron` can exist in only one database per cluster.
 B3 buyer magic-link (public route + rate-limit design), B4 document templates
 (which documents — do not invent legal text for a Cyprus agency), B5 map (tile
 provider; **note it now interacts with the CSP `img-src`/`connect-src`**),
-B7 nudges (needs a migration → a production DB write), C3/C4/C5/C7.
+C3/C4/C5/C7. (**B7 is now built** — see §0/§1; only the hosted apply is left.)
 **B9 (el/ru UI chrome) is effectively blocked**: `i18n/request.ts` hardcodes
 `defaultLocale = "en"` and there is no locale switcher ("locale routing is
 deliberately absent", doc 02 §A5), so translating chrome produces strings no
@@ -320,7 +374,12 @@ Expect: clean, exit 0 (no warnings).
 ```bash
 npm run test
 ```
-**Expect: `Test Files 45 passed (45)` · `Tests 422 passed (422)`.**
+**Expect: `Test Files 45 passed (45)` · `Tests 424 passed (424)`.**
+
+```bash
+npm run test:rls
+```
+Needs the local stack. **Expect 28 passed**, first run, on a fresh database.
 
 ```bash
 npm run build
@@ -333,10 +392,18 @@ E2E needs the local stack up (`npx supabase start`) and runs its own dev server:
 ```bash
 npx playwright test --project=setup --project=desktop
 ```
-Expect: **153 passed, 1 skipped, 0 failed.** The skip is
-`property images served from Supabase Storage satisfy img-src`, which
-self-skips when the database has no `property_media` — that is correct, not a
-failure.
+156 tests. **How many pass depends on what the local database holds**, which is
+a latent bug in `csp.spec.ts`, not in the app:
+
+- **On a populated database: 152 passed, 4 skipped, 0 failed.** The four skips
+  are data-dependent self-skips (no viewing, no `property_media`, no signed
+  slip, too few rows to page) — correct, not failures.
+- **Immediately after `supabase db reset`: 2 failed.** `csp.spec.ts`'s
+  "property detail" and "contact detail" tests assert a property/contact exists
+  to open, and only `happy-path.spec.ts` creates them — so on run 1 they lose
+  the race and on run 2 they pass. **This is pre-existing**, reproduced on the
+  pre-B7 tree, and never reaches CI (which runs `checks` + `rls`, not
+  Playwright). Logged in `docs/BACKLOG.md`.
 
 Verify the CSP is live and still report-only (must show `-Report-Only`, and the
 enforced header must still be just `frame-ancestors 'none'`):

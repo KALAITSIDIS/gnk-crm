@@ -66,14 +66,13 @@
       },
       "cards": {
         "todaysViewings": "Today's viewings",
-        "overdueTasks": "Overdue tasks",
+        "tasksDue": "Tasks due today & overdue",
         "myNewLeads": "My new leads",
-        "hotIdle": "Hot buyers idle 3+ days",
-        "awaitingFeedback": "Viewings awaiting your feedback"
+        "hotIdle": "Hot buyers idle 3+ days"
       },
       "empty": {
         "noViewings": "Nothing scheduled today.",
-        "noOverdue": "Nothing overdue.",
+        "noTasksDue": "Nothing due today.",
         "noLeads": "No open leads assigned to you.",
         "hotAllTouched": "All hot buyers touched recently."
       },
@@ -248,6 +247,13 @@
     "documentDeleted": "Document deleted",
     "documentDeletedTitle": "Document deleted — {title}",
     "renewalTaskCreated": "Renewal reminder task created",
+    "followupNoContact": "Follow-up task created — no contact for {days, plural, one {# day} other {# days}}",
+    "followupViewingFeedback": "Follow-up task created — viewing feedback still missing after {hours, plural, one {# hour} other {# hours}}",
+    "followupTaskCreated": "Follow-up task created",
+    "superseded": "Task superseded",
+    "supersededDealContacted": "Follow-up task closed — the deal was contacted or closed",
+    "supersededFeedbackLogged": "Follow-up task closed — viewing feedback was logged",
+    "supersededMandate": "Renewal task superseded — the mandate was renewed or is no longer active",
     "routeUpdated": "Day route updated — {count, plural, one {# stop} other {# stops}}",
     "routeUpdatedDate": "Day route updated — {count, plural, one {# stop} other {# stops}} ({date})",
     "viewingFeedback": "Viewing feedback",

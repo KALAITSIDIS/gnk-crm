@@ -7,7 +7,7 @@ const base: TaskExportRow = {
   due_at: "2026-07-25T15:00:00Z",
   is_done: false,
   done_at: null,
-  mandate_id: null,
+  kind: null,
   created_at: "2026-07-20T09:00:00Z",
   properties: { reference: "GNK-PAF-0001" },
 };
@@ -29,14 +29,24 @@ describe("taskCsvColumns", () => {
     expect(row).toContain("GNK-PAF-0001");
   });
 
-  it("marks a done task and an auto-generated renewal", () => {
+  it("marks a done task, and names the rule behind a system-generated one", () => {
     const done = toCsv(taskCsvColumns(), [
       { ...base, is_done: true, done_at: "2026-07-24T10:00:00Z" },
     ]);
     expect(done).toContain("done");
 
-    const auto = toCsv(taskCsvColumns(), [{ ...base, mandate_id: "m1" }]);
-    // Auto is the 6th column → after Property; a set mandate marks "yes"
-    expect(line(auto)).toContain(",yes,");
+    // Auto is the 6th column → after Property. It carries the rule slug, so the
+    // three nudge types are distinguishable in a spreadsheet (B7).
+    expect(line(toCsv(taskCsvColumns(), [{ ...base, kind: "mandate_renewal" }]))).toContain(
+      ",mandate_renewal,",
+    );
+    expect(line(toCsv(taskCsvColumns(), [{ ...base, kind: "deal_no_contact" }]))).toContain(
+      ",deal_no_contact,",
+    );
+    expect(line(toCsv(taskCsvColumns(), [{ ...base, kind: "viewing_feedback" }]))).toContain(
+      ",viewing_feedback,",
+    );
+    // a human-typed task stays blank
+    expect(line(toCsv(taskCsvColumns(), [base]))).toContain(",,");
   });
 });

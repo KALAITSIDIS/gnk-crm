@@ -66,14 +66,13 @@
       },
       "cards": {
         "todaysViewings": "Просмотры на сегодня",
-        "overdueTasks": "Просроченные задачи",
+        "tasksDue": "Задачи на сегодня и просроченные",
         "myNewLeads": "Мои новые лиды",
-        "hotIdle": "Горячие покупатели без контакта 3+ дней",
-        "awaitingFeedback": "Просмотры, ожидающие вашего отзыва"
+        "hotIdle": "Горячие покупатели без контакта 3+ дней"
       },
       "empty": {
         "noViewings": "На сегодня ничего не запланировано.",
-        "noOverdue": "Просроченных нет.",
+        "noTasksDue": "На сегодня ничего нет.",
         "noLeads": "Нет открытых лидов, назначенных вам.",
         "hotAllTouched": "Со всеми горячими покупателями недавно был контакт."
       },
@@ -248,6 +247,13 @@
     "documentDeleted": "Документ удалён",
     "documentDeletedTitle": "Документ удалён — {title}",
     "renewalTaskCreated": "Создано напоминание о продлении",
+    "followupNoContact": "Создано напоминание — нет контакта уже {days, plural, one {# день} few {# дня} many {# дней} other {# дня}}",
+    "followupViewingFeedback": "Создано напоминание — отзыв о просмотре не внесён спустя {hours, plural, one {# час} few {# часа} many {# часов} other {# часа}}",
+    "followupTaskCreated": "Создано напоминание",
+    "superseded": "Задача заменена",
+    "supersededDealContacted": "Напоминание закрыто — по сделке появился контакт или она закрыта",
+    "supersededFeedbackLogged": "Напоминание закрыто — отзыв о просмотре внесён",
+    "supersededMandate": "Напоминание о продлении заменено — мандат продлён или больше не активен",
     "routeUpdated": "Маршрут дня обновлён — {count, plural, one {# остановка} few {# остановки} many {# остановок} other {# остановки}}",
     "routeUpdatedDate": "Маршрут дня обновлён — {count, plural, one {# остановка} few {# остановки} many {# остановок} other {# остановки}} ({date})",
     "viewingFeedback": "Отзыв о просмотре",

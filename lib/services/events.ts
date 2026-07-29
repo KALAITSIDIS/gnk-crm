@@ -252,6 +252,25 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
     return title ? t("documentDeletedTitle", { title }) : t("documentDeleted");
   },
   renewal_task_created: (_p, t) => t("renewalTaskCreated"),
+  // B7 follow-up nudges (0020). One event type for both rules; the line is
+  // chosen from payload.kind, like stages_updated / locations_updated.
+  followup_task_created: (p, t) => {
+    const kind = asText(p.kind);
+    if (kind === "deal_no_contact") return t("followupNoContact", { days: Number(p.days) || 14 });
+    if (kind === "viewing_feedback")
+      return t("followupViewingFeedback", { hours: Number(p.hours) || 48 });
+    return t("followupTaskCreated");
+  },
+  // A system task whose condition stopped holding: completed, never deleted, so
+  // history keeps its shape. Emitted by expire_mandates since 0012 (and never
+  // registered here until 0020 doubled the number of places that write it).
+  superseded: (p, t) => {
+    const reason = asText(p.reason);
+    if (reason === "deal_contacted_or_closed") return t("supersededDealContacted");
+    if (reason === "feedback_logged_or_viewing_reopened") return t("supersededFeedbackLogged");
+    if (p.mandate_id) return t("supersededMandate");
+    return t("superseded");
+  },
   route_updated: (p, t) => {
     const count = Number(p.stops) || 0;
     const date = asText(p.route_date);

@@ -7,14 +7,13 @@ import {
   Flame,
   Inbox,
   ListTodo,
-  MessageSquareWarning,
   UserPlus,
 } from "lucide-react";
 import { Card, CardEmpty } from "@/components/features/dashboard/card";
 import { ResponseClock } from "@/components/features/shared/response-clock";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
-import { formatDate, formatDateTime } from "@/lib/utils/format";
+import { formatDate } from "@/lib/utils/format";
 import { zonedParts, zonedWallClockToUtc } from "@/lib/utils/tz";
 import { cn } from "@/lib/utils";
 
@@ -56,8 +55,12 @@ export async function AgentDashboard({ profileId }: { profileId: string }) {
     //      order by scheduled_at;
     todaysViewingsRes,
     // SQL: select * from tasks where assignee_id = :me and is_done = false
-    //      and due_at < now() order by due_at limit 10;  (badge = exact count)
-    overdueTasksRes,
+    //      and due_at < :cyprus_day_end order by due_at limit 10;  (badge = exact count)
+    //
+    // Due-today, not just overdue (B7). Every nudge is stamped Cyprus 23:59 of
+    // the day it fires, so an "overdue only" card would not show today's work
+    // until tonight — on the screen an agent runs their day from.
+    dueTasksRes,
     // SQL: select * from leads where assigned_agent_id = :me
     //      and status in ('new','contacted') order by received_at desc limit 8;
     myLeadsRes,
@@ -65,10 +68,6 @@ export async function AgentDashboard({ profileId }: { profileId: string }) {
     //      and temperature = 'hot' and contact_types @> '{buyer}'
     //      and is_archived = false;  (doc 05: hot BUYERS)
     hotContactsRes,
-    // SQL: select id, scheduled_at from viewings where agent_id = :me
-    //      and status = 'completed' and feedback is null
-    //      order by scheduled_at desc limit 8;  (T4.3 nudge)
-    needFeedbackRes,
   ] = await Promise.all([
     supabase
       .from("viewings")
@@ -84,7 +83,7 @@ export async function AgentDashboard({ profileId }: { profileId: string }) {
       .select("id, title, due_at", { count: "exact" })
       .eq("assignee_id", profileId)
       .eq("is_done", false)
-      .lt("due_at", now.toISOString())
+      .lt("due_at", dayEnd)
       .order("due_at", { ascending: true })
       .limit(10),
     supabase
@@ -105,25 +104,15 @@ export async function AgentDashboard({ profileId }: { profileId: string }) {
       .eq("is_archived", false)
       .order("created_at", { ascending: true })
       .limit(100),
-    supabase
-      .from("viewings")
-      .select("id, scheduled_at, properties(reference)", { count: "exact" })
-      .eq("agent_id", profileId)
-      .eq("status", "completed")
-      .is("feedback", null)
-      .order("scheduled_at", { ascending: false })
-      .limit(8),
   ]);
 
   const todaysViewings = unwrapRows(todaysViewingsRes, "today's viewings");
-  const overdueTasks = unwrapRows(overdueTasksRes, "overdue tasks");
+  const dueTasks = unwrapRows(dueTasksRes, "tasks due today");
   const myLeads = unwrapRows(myLeadsRes, "my leads");
   const hotContacts = unwrapRows(hotContactsRes, "hot contacts");
-  const needFeedback = unwrapRows(needFeedbackRes, "viewings awaiting feedback");
 
-  const overdueCount = overdueTasksRes.count ?? overdueTasks.length;
+  const dueCount = dueTasksRes.count ?? dueTasks.length;
   const myLeadsCount = myLeadsRes.count ?? myLeads.length;
-  const needFeedbackCount = needFeedbackRes.count ?? needFeedback.length;
 
   // Hot buyers idle ≥3 days: latest contact-scoped event per hot contact;
   // SQL: select entity_id, max(occurred_at) from events where entity_type='contact'
@@ -233,22 +222,31 @@ export async function AgentDashboard({ profileId }: { profileId: string }) {
       </Card>
 
       <Card
-        title={t("cards.overdueTasks")}
+        title={t("cards.tasksDue")}
         icon={<ListTodo className="size-4 text-warning" />}
-        count={overdueCount}
+        count={dueCount}
       >
-        {overdueTasks.length === 0 ? (
-          <CardEmpty text={t("empty.noOverdue")} href="/tasks" action={t("actions.allTasks")} />
+        {dueTasks.length === 0 ? (
+          <CardEmpty text={t("empty.noTasksDue")} href="/tasks" action={t("actions.allTasks")} />
         ) : (
           <ul className="flex flex-col divide-y divide-border/60 text-sm">
-            {overdueTasks.map((task) => (
+            {dueTasks.map((task) => (
               <li key={task.id}>
                 <Link
                   href="/tasks"
                   className="flex min-h-11 items-baseline justify-between gap-3 py-2 hover:text-brand-700"
                 >
                   <span className="min-w-0 truncate text-text-1">{task.title}</span>
-                  <span className="shrink-0 tabular-nums text-xs text-danger">
+                  {/* red means PAST due, not merely due — the card now holds
+                      both, and a nudge due at 23:59 tonight is not late yet */}
+                  <span
+                    className={cn(
+                      "shrink-0 tabular-nums text-xs",
+                      task.due_at && new Date(task.due_at).getTime() < now.getTime()
+                        ? "text-danger"
+                        : "text-text-3",
+                    )}
+                  >
                     {formatDate(task.due_at)}
                   </span>
                 </Link>
@@ -310,31 +308,6 @@ export async function AgentDashboard({ profileId }: { profileId: string }) {
         )}
       </Card>
 
-      {needFeedback.length > 0 ? (
-        <Card
-          title={t("cards.awaitingFeedback")}
-          icon={<MessageSquareWarning className="size-4 text-warning" />}
-          count={needFeedbackCount}
-        >
-          <ul className="flex flex-col divide-y divide-border/60 text-sm">
-            {needFeedback.map((v) => (
-              <li key={v.id}>
-                <Link
-                  href={`/viewings/${v.id}`}
-                  className="flex min-h-11 items-baseline justify-between gap-3 py-2 hover:text-brand-700"
-                >
-                  <span className="font-mono text-xs text-text-2">
-                    {(v.properties as { reference: string } | null)?.reference ?? "—"}
-                  </span>
-                  <span className="tabular-nums text-xs text-text-3">
-                    {formatDateTime(v.scheduled_at)}
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      ) : null}
     </div>
   );
 }

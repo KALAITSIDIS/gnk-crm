@@ -548,10 +548,22 @@ create table tasks (
   -- T4.5 (migration 0006): links a renewal task to its mandate; the nightly
   -- expire_mandates() insert is idempotent per expiry CYCLE (migration 0012):
   -- one task per (mandate, Cyprus due date)
-  mandate_id uuid references mandates(id)
+  mandate_id uuid references mandates(id),
+  -- B7 (migration 0020): the follow-up nudge the viewing_feedback rule is about
+  viewing_id uuid references viewings(id),
+  -- B7 (migration 0020). The single discriminator for system-generated tasks:
+  -- NULL means a human typed it. 0012 had no marker and used
+  -- `mandate_id is not null` as a proxy, which could not tell the three rules
+  -- apart once B7 added two more.
+  kind text,
+  constraint tasks_kind_chk
+    check (kind is null or kind in ('mandate_renewal','deal_no_contact','viewing_feedback'))
 );
 create index tasks_assignee_idx on tasks(org_id, assignee_id, is_done, due_at);
 create index tasks_mandate_idx on tasks(mandate_id) where mandate_id is not null;
+-- the nightly guards: "does a nudge already exist for this cycle / viewing?"
+create index tasks_nudge_deal_idx on tasks(deal_id, due_at) where kind = 'deal_no_contact';
+create index tasks_nudge_viewing_idx on tasks(viewing_id) where kind = 'viewing_feedback';
 
 -- ---------- cyprus config ----------
 create table cyprus_config (
@@ -633,7 +645,7 @@ language sql security definer set search_path = public as $$
   from flipped;
 
   with created as (
-    insert into tasks (org_id, title, due_at, assignee_id, property_id, mandate_id)
+    insert into tasks (org_id, title, due_at, assignee_id, property_id, mandate_id, kind)
     select m.org_id,
            'Mandate renewal: ' || p.reference || ' expires ' || to_char(m.expiry_date, 'DD Mon YYYY'),
            (m.expiry_date::timestamp + interval '23 hours 59 minutes') at time zone 'Asia/Nicosia',
@@ -644,7 +656,8 @@ language sql security definer set search_path = public as $$
                where pr.org_id = m.org_id and pr.role = 'admin' and pr.is_active
                order by pr.created_at limit 1)),
            m.property_id,
-           m.id
+           m.id,
+           'mandate_renewal'                       -- migration 0020
     from mandates m
     join properties p on p.id = m.property_id
     where m.status = 'active'
@@ -678,6 +691,45 @@ language sql security definer set search_path = public as $$
   from superseded;
 $$;
 select cron.schedule('expire-mandates','0 3 * * *', $$select expire_mandates()$$);
+
+-- ---------- follow-up nudges (pg_cron, daily 03:15) ----------
+-- IMPROVEMENTS B7 (migration 0020). Two more nudge rules on the 0012 pattern:
+--
+--   deal_no_contact  — an OPEN deal with no activity for 14 days. Idempotence
+--                      is keyed to the staleness BOUNDARY
+--                      ((last_activity_at Cyprus date) + 14), stored as the
+--                      task's Cyprus end-of-day due date. Contact moves
+--                      last_activity_at, which moves the boundary, so a later
+--                      silence is a NEW cycle and mints a new task.
+--   viewing_feedback — a COMPLETED viewing whose feedback is still null 48h
+--                      after scheduled_at. No cycle: a viewing has ONE feedback
+--                      lifecycle and feedback can only be set, never cleared.
+--
+-- Invariants: an OPEN deal_no_contact task exists iff its deal is OPEN and its
+-- due date is that deal's current boundary; an OPEN viewing_feedback task
+-- exists iff its viewing is COMPLETED with null feedback. Tasks that stop
+-- matching are COMPLETED ("superseded"), never deleted.
+--
+-- Assignee fallback is three-armed (deal/viewing agent → creator → oldest
+-- active org admin) — a NULL assignee is invisible on every surface.
+-- Thresholds are hardcoded: 14 days is the health score's own activity cliff
+-- (doc 02 §C5), and a second editable copy could silently disagree with it.
+--
+-- p_org exists for testability; cron calls it with no arguments. The job walks
+-- every open deal in every org, so no app role may execute it — and the
+-- service_role grant must be RE-granted explicitly after the revoke (0010/0019).
+--
+-- 03:15 sits between expire-mandates (03:00) and verify-events-chain (03:30),
+-- so the night's nudge events are covered by the same run's chain check.
+--
+-- Two AFTER UPDATE triggers (trg_supersede_deal_nudges on deals,
+-- trg_supersede_viewing_nudges on viewings) do the same supersede at EDIT time
+-- with actor_id = auth.uid(), so the task list is honest immediately rather
+-- than the next morning — the trg_price_history (0005) pattern, chosen over
+-- app-side calls because move_deal_to_stage (0011) is SQL-side.
+--
+-- Full body in supabase/migrations/0020_followup_nudges.sql.
+select cron.schedule('followup-nudges','15 3 * * *', $$select create_followup_nudges()$$);
 
 -- ---------- storage buckets ----------
 insert into storage.buckets (id, name, public) values

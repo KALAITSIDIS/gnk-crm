@@ -145,6 +145,46 @@ describe("describeEvent registry (T3.5) — English parity", () => {
     );
   });
 
+  it("renders both follow-up nudge lines from payload.kind (B7)", () => {
+    expect(
+      describeEvent(ev("followup_task_created", { kind: "deal_no_contact", days: 14 }), t),
+    ).toBe("Follow-up task created — no contact for 14 days");
+    expect(
+      describeEvent(ev("followup_task_created", { kind: "deal_no_contact", days: 1 }), t),
+    ).toBe("Follow-up task created — no contact for 1 day");
+    expect(
+      describeEvent(
+        ev("followup_task_created", { kind: "viewing_feedback", hours: 48 }, "viewing"),
+        t,
+      ),
+    ).toBe("Follow-up task created — viewing feedback still missing after 48 hours");
+    // an unknown kind still reads as a nudge rather than raw text
+    expect(describeEvent(ev("followup_task_created", { kind: "future_rule" }), t)).toBe(
+      "Follow-up task created",
+    );
+  });
+
+  it("renders supersede reasons, including 0012's, which was never registered", () => {
+    expect(
+      describeEvent(ev("superseded", { reason: "deal_contacted_or_closed" }, "task"), t),
+    ).toBe("Follow-up task closed — the deal was contacted or closed");
+    expect(
+      describeEvent(
+        ev("superseded", { reason: "feedback_logged_or_viewing_reopened" }, "task"),
+        t,
+      ),
+    ).toBe("Follow-up task closed — viewing feedback was logged");
+    // written by expire_mandates since 0012 — and by its backfill, which uses a
+    // different reason but always carries mandate_id
+    expect(
+      describeEvent(
+        ev("superseded", { reason: "mandate_renewed_or_inactive", mandate_id: "m1" }, "task"),
+        t,
+      ),
+    ).toBe("Renewal task superseded — the mandate was renewed or is no longer active");
+    expect(describeEvent(ev("superseded", {}, "task"), t)).toBe("Task superseded");
+  });
+
   it("falls back to the spaced event type for unregistered events", () => {
     expect(describeEvent(ev("future_event_type"), t)).toBe("future event type");
   });

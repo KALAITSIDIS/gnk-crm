@@ -1616,10 +1616,12 @@ export type Database = {
           due_at: string | null
           id: string
           is_done: boolean
+          kind: string | null
           mandate_id: string | null
           org_id: string
           property_id: string | null
           title: string
+          viewing_id: string | null
         }
         Insert: {
           assignee_id?: string | null
@@ -1631,10 +1633,12 @@ export type Database = {
           due_at?: string | null
           id?: string
           is_done?: boolean
+          kind?: string | null
           mandate_id?: string | null
           org_id: string
           property_id?: string | null
           title: string
+          viewing_id?: string | null
         }
         Update: {
           assignee_id?: string | null
@@ -1646,10 +1650,12 @@ export type Database = {
           due_at?: string | null
           id?: string
           is_done?: boolean
+          kind?: string | null
           mandate_id?: string | null
           org_id?: string
           property_id?: string | null
           title?: string
+          viewing_id?: string | null
         }
         Relationships: [
           {
@@ -1706,6 +1712,13 @@ export type Database = {
             columns: ["property_id"]
             isOneToOne: false
             referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_viewing_id_fkey"
+            columns: ["viewing_id"]
+            isOneToOne: false
+            referencedRelation: "viewings"
             referencedColumns: ["id"]
           },
         ]
@@ -2148,6 +2161,7 @@ export type Database = {
         Args: { p_d30: string; p_d7: string; p_month_start: string }
         Returns: Json
       }
+      create_followup_nudges: { Args: { p_org?: string }; Returns: undefined }
       current_org_id: { Args: never; Returns: string }
       current_role_gnk: {
         Args: never

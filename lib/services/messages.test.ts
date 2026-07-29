@@ -28,6 +28,7 @@ function leafPaths(node: unknown, prefix = ""): string[] {
 const SAMPLE_PARAMS = {
   count: 2,
   days: 3,
+  hours: 48,
   status: "OK",
   when: "21 Jul 2026, 09:14",
   hash: "abc123",

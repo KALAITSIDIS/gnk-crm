@@ -153,3 +153,34 @@ built without explicit direction.
 - ~~**Export audit logging (decision needed).**~~ **Resolved 2026-07-23: yes, log exports.** Built in `lib/services/export-audit.ts` (org-level `export`/`exported` event, written before the CSV is returned). Contacts export logs; the remaining lists inherit it via `logListExport`. See DECISIONS `T-export-audit`.
 - **Database-level 2FA enforcement (security, follow-up to C2).** 2FA shipped 2026-07-24 but is enforced only in the app (`login()` + `proxy.ts`). A stolen `aal1` JWT can still reach PostgREST directly and bypass the challenge. Fix: add `as restrictive` RLS policies asserting `auth.jwt()->>'aal' = 'aal2'` for users who have a verified factor — use the "enforce only for users that have opted-in" template from the Supabase MFA guide so non-enrolled users are unaffected. Touches every business table, carries real lockout risk, and needs its own RLS suite coverage (doc 04 guardrail 3), so it is its own piece of work. See DECISIONS `T-2fa`.
 - **Mandatory 2FA (decision, follow-up to C2).** Enrolment is currently opt-in. If the client wants it required, the Supabase guide gives "enforce for all users" and "enforce for new users only" variants. Do the DB-level enforcement above first, and plan a recovery path — Supabase issues no recovery codes, so the practical answer is a second enrolled factor per user plus an admin who can delete a factor via the GoTrue admin API.
+- **Deal-scoped "Log contact" action (follow-up to B7).** The `deal_no_contact`
+  nudge measures silence with `deals.last_activity_at`, which every deal edit
+  bumps — so retyping a title reads as contact and buys 14 days of quiet. There
+  is no way to record "I phoned the buyer" against a deal today: `contacted`,
+  `called` and `conversation_logged` are all lead-scoped, so a deal with no
+  source lead has nowhere to put it. Fix: a "Log contact" control on the deal
+  page writing a deal-scoped `conversation_logged` event and bumping
+  `last_activity_at`, then narrow the nudge to that signal. ~0.5 day. See
+  DECISIONS `T-nudges`.
+- **Configurable nudge thresholds (decision, follow-up to B7).** 14 days and 48
+  hours are hardcoded in `create_followup_nudges()`. 14 is deliberately the
+  health score's own activity cliff (doc 02 §C5), so making it independently
+  editable risks the two disagreeing silently about what "stale" means. If the
+  desk wants to tune them, put them in `cyprus_config` with a `coalesce` default
+  so the cron survives a missing key, add the settings row + validation + its
+  event, and decide explicitly whether the health score follows.
+- **Nudges can land on a deactivated assignee (B7 + 0012).** Both cron jobs take
+  the deal/viewing/property agent raw, so a task can be assigned to a profile
+  with `is_active = false` — invisible to them, and not surfaced as unassigned.
+  `expire_mandates` has had the same gap since 0012. Fix both together (skip
+  inactive profiles in each arm of the fallback, and re-home existing open
+  tasks), or the two cron paths will disagree about who counts as assignable.
+- **`csp.spec.ts` depends on test residue.** "property detail" and "contact
+  detail reports no CSP violations" assert `expect(href).toBeTruthy()` on the
+  first row of `/properties` and `/contacts`. Only `happy-path.spec.ts` creates
+  those rows, so against a freshly reset database both FAIL on run 1 and pass on
+  run 2 — the exact anti-pattern HANDOVER §4/§5 calls out. Not reached by CI
+  (which runs `checks` + `rls`, not Playwright), so it only bites after a local
+  `supabase db reset`. Fix: seed a property and contact in the spec's own
+  fixture, or self-skip with a message the way the viewing-detail test already
+  does. Found 2026-07-29 during B7; reproduced on the pre-change tree.

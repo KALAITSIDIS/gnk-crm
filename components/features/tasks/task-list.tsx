@@ -19,7 +19,14 @@ export interface TaskItem {
   overdue: boolean;
   propertyId: string | null;
   propertyRef: string | null;
-  isAuto: boolean; // mandate renewal etc. (system-generated)
+  /**
+   * Where a follow-up nudge points — the deal it is about, or the viewing whose
+   * feedback is missing (B7). A nudge the agent cannot act on in one click is a
+   * nudge they will learn to ignore. Null for tasks with no subject.
+   */
+  href: string | null;
+  hrefLabel: string | null;
+  isAuto: boolean; // system-generated: `tasks.kind` is set (renewal or nudge)
 }
 
 export function QuickAddTask() {
@@ -97,6 +104,14 @@ export function TaskRow({ task }: { task: TaskItem }) {
         </span>
         {task.isAuto ? <span className="text-[10px] uppercase tracking-wide text-text-3">auto</span> : null}
       </span>
+      {task.href && task.hrefLabel ? (
+        <Link
+          href={task.href}
+          className="shrink-0 text-xs text-brand-700 hover:underline"
+        >
+          {task.hrefLabel}
+        </Link>
+      ) : null}
       {task.propertyId && task.propertyRef ? (
         <Link
           href={`/properties/${task.propertyId}`}
