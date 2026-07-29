@@ -238,6 +238,30 @@ payload, and every price change and deal amount adds another.
 §1.2) and for a readable table snapshot. It marks its own manifest
 `chainFaithful: false`.
 
+**`scripts/backup/export-events.sql` is the belt to that braces** (added
+2026-07-29). It emits `events` as INSERT statements straight from Postgres, with
+`payload::text` re-parsed as `::jsonb` on restore — the payload never becomes a
+JavaScript number, so the defect above cannot occur:
+
+```bash
+psql "$DB_URL" -At -f scripts/backup/export-events.sql -o ../gnk-backups/$(date +%Y-%m-%d)/events.sql
+```
+
+`-At` is required (the script explains why). Apply the output with
+`session_replication_role = replica` — see §"Three restore hazards" — or
+`trg_events_hash` recomputes the hashes and the chain then verifies against
+freshly minted values, which proves nothing.
+
+**Proven, not asserted:** against a local database seeded with
+`{"to": 510000.00, "from": 499999.50}` — the exact failing shape — the file
+carried the payload verbatim, and a wipe-and-restore round trip returned 26/26
+rows with `verify_events_chain` **true** and the payload still reading
+`510000.00`.
+
+It covers ONE table. It is not a backup by itself: no business tables, no
+`auth.users`, no Storage objects. It exists because `events` is the one table
+whose corruption is both silent and total.
+
 **2. The restore target must be a Supabase project, not a Postgres database.**
 The schema will not build without `auth.uid()` and `auth.users` (51 references),
 `storage.buckets`, and the `anon`/`authenticated`/`service_role` roles. Also
