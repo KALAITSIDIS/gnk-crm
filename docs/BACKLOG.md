@@ -184,3 +184,14 @@ built without explicit direction.
   `supabase db reset`. Fix: seed a property and contact in the spec's own
   fixture, or self-skip with a message the way the viewing-detail test already
   does. Found 2026-07-29 during B7; reproduced on the pre-change tree.
+- **CSP report delivery cannot be confirmed "later" — Vercel log retention is
+  ~1 hour on this plan (C1).** `/api/csp-report` sinks to stdout, and HANDOFF
+  told the operator to browse production and then grep the runtime logs for
+  `[csp]`. A 7-day query returns *"the requested window likely exceeds your
+  plan's runtime-log retention (Hobby 1h, Pro 1 day…)"*, so any check made more
+  than an hour after browsing will find nothing — and "no `[csp]` lines" would
+  be misread as "the policy is clean" when it may mean "reports were never
+  delivered, or expired". Those two must not be confused before anyone promotes
+  the policy from Report-Only to enforced. Fix: browse and grep inside the same
+  hour, or give the endpoint a durable sink (configure the Sentry DSN, which the
+  handler already writes to, or add a Vercel Log Drain). Found 2026-07-29.

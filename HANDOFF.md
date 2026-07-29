@@ -21,7 +21,7 @@ Applied and verified 2026-07-29, then pushed (`9067c65`), CI green on both jobs,
 
 | check | value |
 |---|---|
-| migrations | **20**, `0020` registered, `non_filename_versions = 0` |
+| migrations | **21**, `0020` + `0021` registered, `non_filename_versions = 0` |
 | `tasks` | `kind` + `viewing_id` present, `tasks_kind_chk` enforced |
 | indexes | `tasks_nudge_deal_idx`, `tasks_nudge_viewing_idx` |
 | triggers | `deals_supersede_nudges`, `viewings_supersede_nudges` |
@@ -31,6 +31,16 @@ Applied and verified 2026-07-29, then pushed (`9067c65`), CI green on both jobs,
 
 All four function bodies were diffed against local after applying (normalised
 for comments/whitespace) and matched exactly — no transcription drift.
+
+**0021 fixes fallout from 0020, caught by the Supabase security advisor.**
+0007 §1 revoked EXECUTE on every trigger function ("fired by the engine, not
+called"). 0020's two new trigger functions were created *after* 0007 and
+inherited Supabase's default grant to `anon` + `authenticated`, re-opening
+advisors 0028/0029 and exposing them at `/rest/v1/rpc/*`. Not exploitable —
+Postgres refuses to call a `returns trigger` function outside trigger context —
+but wrong, and it contradicted a lockdown this repo made deliberately. Both are
+revoked; the advisor entries are gone. **Run `get_advisors` after any migration
+that adds a function.**
 
 **The first cron run creates nothing:** prod has 0 open deals and 0
 completed-viewings-awaiting-feedback, so the job simply starts watching.
