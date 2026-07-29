@@ -195,20 +195,14 @@ built without explicit direction.
   the policy from Report-Only to enforced. Fix: browse and grep inside the same
   hour, or give the endpoint a durable sink (configure the Sentry DSN, which the
   handler already writes to, or add a Vercel Log Drain). Found 2026-07-29.
-- **Hosted has `service_role` EXECUTE grants that no migration produces (schema
-  drift).** `verify-restore.sql` expects `service_role` to execute
-  `current_org_id`, `current_role_gnk` and `expire_mandates`; hosted does, and a
-  database built purely from `supabase/migrations` does NOT — 0010 restores that
-  grant for only `verify_events_chain` and `next_reference`. So those three
-  invariants pass against hosted and fail against any migration-built database,
-  including a restore. Found 2026-07-29 running the pack locally after
-  refreshing the baseline.
-  **Do not "fix" this by adding grants to match hosted** — that widens privilege
-  to fit drift. Establish first WHERE the hosted grant came from (a hand-applied
-  statement, or hosted `service_role` inheriting from a Supabase-managed role
-  that the local stack does not mirror). If it is hand-applied, either capture it
-  as a migration with a stated reason or revoke it; if it is a platform
-  difference, the pack should assert the migration-built expectation and note the
-  platform variance. Until then a restore will report three invariant failures
-  that are drift, not corruption — exactly the false-alarm class `6b26feb` set
-  out to kill.
+- ~~**Hosted has `service_role` EXECUTE grants that no migration produces (schema
+  drift).**~~ **RESOLVED 2026-07-29 (migration 0022).** Diagnosed from the ACLs:
+  hosted carried explicit `service_role=X/postgres` entries on `current_org_id`,
+  `current_role_gnk` and `expire_mandates` — hand-applied, not role inheritance
+  and not a platform default. Revoked rather than captured as a migration,
+  because nothing needs them: the first two are RLS helpers and `service_role`
+  bypasses RLS, and `expire_mandates` is pg_cron-only, run as `postgres`, which
+  keeps its own grant (0007 §1 said exactly that). Verified no caller exists in
+  app code, scripts or tests. `verify-restore.sql`'s expectations, which had
+  encoded the drift, were corrected — a migration-built database now passes all
+  25 invariants, where four failed before.

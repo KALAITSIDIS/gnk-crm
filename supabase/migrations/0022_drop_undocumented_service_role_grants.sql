@@ -1,0 +1,42 @@
+-- 0022: remove three service_role EXECUTE grants that exist on hosted but in no
+-- migration — i.e. make production reproducible from its own history again.
+--
+-- FOUND: 2026-07-29, running scripts/backup/verify-restore.sql against a
+-- migration-built database after refreshing its baseline. Three `invariant`
+-- rows failed. They were not corruption; they were drift:
+--
+--   function            migration-built      hosted
+--   current_org_id      postgres,authed      + service_role
+--   current_role_gnk    postgres,authed      + service_role
+--   expire_mandates     postgres             + service_role
+--
+-- The hosted ACLs read `service_role=X/postgres`: EXPLICIT grants made by
+-- `postgres`, not role inheritance and not a Supabase platform default (the
+-- platform does not grant on user-defined functions like expire_mandates).
+-- Almost certainly hand-applied around the 2026-07-16 audit while 0010 was
+-- being worked out — 0010 captured only the two grants that were actually
+-- needed, each with a stated reason, and these three were never written down.
+--
+-- WHY REVOKE RATHER THAN CAPTURE AS A MIGRATION
+-- Nothing needs them, so codifying them would permanently bless a grant with no
+-- justification:
+--   * current_org_id / current_role_gnk are RLS helpers. service_role BYPASSES
+--     RLS, so its queries never evaluate the policies that call them.
+--   * expire_mandates is pg_cron-only — and pg_cron runs it as `postgres`,
+--     which keeps its own EXECUTE, so the nightly job is unaffected. 0007 §1
+--     said exactly this ("pg_cron only (runs as superuser; grant-agnostic)").
+-- Verified before applying: no application code, script or test calls any of
+-- the three through a service-role client — every hit in the repo is a comment.
+--
+-- The security gain is honestly ~nil (service_role is already the god role that
+-- bypasses RLS). The point is REPRODUCIBILITY: a database built from these
+-- migrations must equal production, or a restore silently produces a different
+-- database and verify-restore.sql reports three failures that are drift rather
+-- than damage — the exact false-alarm class 6b26feb set out to kill.
+--
+-- Reversible: if some undocumented caller does surface, re-granting is one
+-- statement — but capture it as a migration WITH its reason this time.
+
+revoke execute on function public.current_org_id()   from service_role;
+revoke execute on function public.current_role_gnk() from service_role;
+revoke execute on function public.expire_mandates()  from service_role;

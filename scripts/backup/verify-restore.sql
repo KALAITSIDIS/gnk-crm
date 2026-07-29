@@ -68,10 +68,15 @@ counts as (
 grants_expected(fn, secdef, anon, auth, service) as (values
   ('verify_events_chain',  true,  false, false, true),
   ('run_chain_checks',     true,  false, false, true),
-  ('expire_mandates',      true,  false, false, true),
+  -- service_role = false on these three since 0022. They had UNDOCUMENTED
+  -- hosted grants that no migration produced, so this table encoded drift and
+  -- reported three failures against any migration-built restore. Nothing calls
+  -- them via service_role: the two are RLS helpers (service_role bypasses RLS)
+  -- and expire_mandates is pg_cron-only, run as `postgres`.
+  ('expire_mandates',      true,  false, false, false),
   ('next_reference',       true,  false, true,  true),
-  ('current_org_id',       true,  false, true,  true),
-  ('current_role_gnk',     true,  false, true,  true),
+  ('current_org_id',       true,  false, true,  false),
+  ('current_role_gnk',     true,  false, true,  false),
   ('record_key_movement',  true,  false, true,  true),
   ('move_deal_to_stage',   false, false, true,  true),
   ('add_deal_stage',       false, false, true,  true),
