@@ -43,6 +43,48 @@ async function removeFixture(svc: SupabaseClient): Promise<void> {
   }
 }
 
+/** Admin profile + the org's first sale stage — the minimum to mint a deal. */
+async function fixtureContext(svc: SupabaseClient) {
+  const { data: profile } = await svc
+    .from("profiles")
+    .select("id, org_id")
+    .eq("email", ADMIN_EMAIL)
+    .single();
+  expect(profile, `no profile for ${ADMIN_EMAIL} — is the local stack seeded?`).not.toBeNull();
+
+  const { data: stage } = await svc
+    .from("deal_stages")
+    .select("id")
+    .eq("org_id", profile!.org_id)
+    .eq("deal_type", "sale")
+    .order("sort_order")
+    .limit(1)
+    .single();
+  expect(stage, "the seeded org has no sale pipeline").not.toBeNull();
+
+  return { profileId: profile!.id, orgId: profile!.org_id, stageId: stage!.id };
+}
+
+/** A deal silent for `daysSilent` days, assigned to the signed-in admin. */
+async function seedStaleDeal(svc: SupabaseClient, daysSilent: number) {
+  const { profileId, orgId, stageId } = await fixtureContext(svc);
+  const { data: deal, error } = await svc
+    .from("deals")
+    .insert({
+      org_id: orgId,
+      deal_type: "sale",
+      stage_id: stageId,
+      title: DEAL_TITLE,
+      agent_id: profileId,
+      created_by: profileId,
+      last_activity_at: new Date(Date.now() - daysSilent * 86_400_000).toISOString(),
+    })
+    .select("id")
+    .single();
+  expect(error).toBeNull();
+  return { dealId: deal!.id, orgId };
+}
+
 test.describe("Follow-up nudges", () => {
   test.beforeEach(async ({ baseURL }) => {
     test.skip(
@@ -60,43 +102,14 @@ test.describe("Follow-up nudges", () => {
   test("a cron-created no-contact nudge reaches the agent's task list", async ({ page }) => {
     const svc = serviceClient();
 
-    const { data: profile } = await svc
-      .from("profiles")
-      .select("id, org_id")
-      .eq("email", ADMIN_EMAIL)
-      .single();
-    expect(profile, `no profile for ${ADMIN_EMAIL} — is the local stack seeded?`).not.toBeNull();
-
-    const { data: stage } = await svc
-      .from("deal_stages")
-      .select("id")
-      .eq("org_id", profile!.org_id)
-      .eq("deal_type", "sale")
-      .order("sort_order")
-      .limit(1)
-      .single();
-    expect(stage, "the seeded org has no sale pipeline").not.toBeNull();
-
     // Silent for 60 days, so the nudge is comfortably the most overdue task on
     // page 1 whatever else the local database happens to hold.
-    const { data: deal, error: dealErr } = await svc
-      .from("deals")
-      .insert({
-        org_id: profile!.org_id,
-        deal_type: "sale",
-        stage_id: stage!.id,
-        title: DEAL_TITLE,
-        agent_id: profile!.id,
-        created_by: profile!.id,
-        last_activity_at: new Date(Date.now() - 60 * 86_400_000).toISOString(),
-      })
-      .select("id")
-      .single();
-    expect(dealErr).toBeNull();
+    const { dealId, orgId } = await seedStaleDeal(svc, 60);
 
     // exactly what pg_cron runs at 03:15, scoped to this org
-    const { error: rpcErr } = await svc.rpc("create_followup_nudges", { p_org: profile!.org_id });
+    const { error: rpcErr } = await svc.rpc("create_followup_nudges", { p_org: orgId });
     expect(rpcErr).toBeNull();
+    const deal = { id: dealId };
 
     const problems = watchForProblems(page);
     await page.goto("/tasks", { waitUntil: "networkidle" });
@@ -119,6 +132,45 @@ test.describe("Follow-up nudges", () => {
     await expect(overdue.getByText(`No contact in 14 days: ${DEAL_TITLE}`)).toBeVisible();
 
     assertNoProblems(problems, "tasks with a follow-up nudge");
+  });
+
+  test("contact on the deal clears the nudge — the loop a user actually sees", async ({ page }) => {
+    // The invariant is pinned in the database by RLS test 24, and the previous
+    // test proves a nudge RENDERS. Neither proves the thing the feature is FOR:
+    // that acting on a deal makes its nudge go away on the screen the agent
+    // reads. A nudge that lingers after the call was made is worse than none —
+    // it teaches the desk that the list lies.
+    const svc = serviceClient();
+    const { dealId, orgId } = await seedStaleDeal(svc, 60);
+    expect((await svc.rpc("create_followup_nudges", { p_org: orgId })).error).toBeNull();
+
+    const title = `No contact in 14 days: ${DEAL_TITLE}`;
+    const overdue = page
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: /^Overdue/ }) });
+    const recentlyDone = page
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: /^Recently done/ }) });
+
+    await page.goto("/tasks", { waitUntil: "networkidle" });
+    await expect(overdue.getByText(title)).toBeVisible();
+
+    // Contact made. Every deal mutation moves last_activity_at — a deal edit, a
+    // stage move, an offer, a conversation logged on its source lead — and the
+    // 0020 trigger fires on that column, so this is the same code path the UI
+    // takes, without depending on the shape of the deal form.
+    const touched = await svc
+      .from("deals")
+      .update({ last_activity_at: new Date().toISOString() })
+      .eq("id", dealId)
+      .select("id");
+    expect(touched.error).toBeNull();
+    expect(touched.data).toHaveLength(1);
+
+    await page.reload({ waitUntil: "networkidle" });
+    await expect(overdue.getByText(title)).toHaveCount(0);
+    // completed, not deleted — history keeps its shape (0020 invariant)
+    await expect(recentlyDone.getByText(title)).toBeVisible();
   });
 
   test("the old virtual 'viewings awaiting feedback' section is gone", async ({ page }) => {
