@@ -32,9 +32,10 @@ with expected as (
     3::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     6::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 19::bigint as migrations,
+    2::bigint as auth_users, 21::bigint as migrations,
     9::bigint as obj_documents, 2::bigint as obj_signatures, 15::bigint as obj_media
-    -- captured 2026-07-28
+    -- captured 2026-07-29 from hosted (yjgirvzgoiywdojnpkpd); only `migrations`
+    -- moved, 19 -> 21, from 0020 + 0021
 ),
 
 -- ---------- row counts ----------
@@ -105,6 +106,18 @@ misc as (
   union all
   select 'cron: verify-events-chain active', 'true',
          coalesce((select active::text from cron.job where jobname = 'verify-events-chain'), 'JOB MISSING')
+  union all
+  select 'cron: followup-nudges active (migration 0020)', 'true',
+         coalesce((select active::text from cron.job where jobname = 'followup-nudges'), 'JOB MISSING')
+  union all
+  -- 0021: trigger functions must not be callable over PostgREST (0007 §1). A
+  -- restore that re-creates them without the revoke silently re-opens
+  -- advisors 0028/0029, which is invisible in row counts.
+  select 'grants: nudge triggers not executable by authenticated', 'false',
+         has_function_privilege('authenticated','trg_supersede_deal_nudges()','EXECUTE')::text
+  union all
+  select 'grants: create_followup_nudges executable by service_role', 'true',
+         has_function_privilege('service_role','create_followup_nudges(uuid)','EXECUTE')::text
   union all
   select 'storage: media bucket is public (migration 0008)', 'true',
          coalesce((select public::text from storage.buckets where id = 'media'), 'BUCKET MISSING')
