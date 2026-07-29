@@ -14,42 +14,42 @@ delta on top of them, not a replacement.
 
 ---
 
-## 0. STOP — read before pushing anything
+## 0. B7 is SHIPPED — migration 0020 is live on hosted
 
-**B7 (automated follow-up nudges) is complete and verified locally, but
-migration `0020_followup_nudges.sql` has NOT been applied to hosted.** The
-operator has not given the go-ahead for that production write.
+Applied and verified 2026-07-29, then pushed (`9067c65`), CI green on both jobs,
+`/login` 200. Hosted now reports:
 
-The app code reads `tasks.kind` and `tasks.viewing_id`, which do not exist on
-hosted yet. **Pushing before the migration lands sends every user of `/tasks`
-and the agent dashboard to the error boundary.** Order is not negotiable:
+| check | value |
+|---|---|
+| migrations | **20**, `0020` registered, `non_filename_versions = 0` |
+| `tasks` | `kind` + `viewing_id` present, `tasks_kind_chk` enforced |
+| indexes | `tasks_nudge_deal_idx`, `tasks_nudge_viewing_idx` |
+| triggers | `deals_supersede_nudges`, `viewings_supersede_nudges` |
+| cron | `expire-mandates 03:00` · **`followup-nudges 03:15`** · `verify-events-chain 03:30` |
+| grants | `service_role` ✓ · `authenticated` ✗ · `anon` ✗ |
+| chain | `verify_events_chain` true, 62 events |
 
-1. **The OPERATOR applies 0020** — an agent no longer can. `execute_sql` joined
-   `apply_migration` on the classifier's blocked list on 2026-07-29 (verified
-   with both a multi-statement script and a bare `alter table`; reads still
-   work), and `db push` needs credentials an agent must not handle. See the
-   rewritten HANDOVER §4, including the two SQL-editor traps that wasted a
-   session here.
+All four function bodies were diffed against local after applying (normalised
+for comments/whitespace) and matched exactly — no transcription drift.
 
-   ```bash
-   npx supabase login && npx supabase link --project-ref yjgirvzgoiywdojnpkpd && npx supabase db push
-   ```
+**The first cron run creates nothing:** prod has 0 open deals and 0
+completed-viewings-awaiting-feedback, so the job simply starts watching.
 
-   As of the end of this session, **hosted is still at 19 migrations and
-   `tasks` is unchanged** — five separate attempts (dashboard editor ×3, CLI ×1)
-   left it byte-identical, and the CLI was never linked or authenticated from
-   this working directory (`supabase/.temp/project-ref` absent,
-   `supabase projects list` returns `LegacyPlatformAuthRequiredError`).
-2. Claude verifies over `execute_sql`: both columns, `tasks_kind_chk`, both
-   `tasks_nudge_*` indexes, both supersede triggers, `followup-nudges @ 15 3 * * *`
-   in `cron.job`, migrations = 20, `non_filename_versions = 0`,
-   `verify_events_chain` still true.
-3. Then, and only then, push. Then check CI.
+### How the apply actually happened — read this before the next migration
+`execute_sql` was refused by the **auto-mode classifier**, not by Supabase and
+not for want of credentials. The fix was one entry in
+`.claude/settings.local.json`:
 
-**Nothing is half-applied.** Every failed attempt left hosted untouched, and
-0020 is idempotent, so it converges whenever it does run. A dry run against
-hosted also showed **0 open deals and 0 completed-viewings-awaiting-feedback**,
-so the first night creates no nudges at all — the job simply starts watching.
+```json
+"mcp__728f3c26-074c-4f63-839e-0d81840c3291__execute_sql"
+```
+
+**The operator must add it — an agent editing its own permission file is also
+blocked, correctly.** With it present, `execute_sql` applies DDL normally.
+
+Note what that entry permits: **any** SQL through that tool, in this directory,
+in future sessions too — not just migrations. If that is wider than intended,
+remove the line and the block returns.
 
 0020 is safely re-runnable (`add column if not exists`,
 `create index if not exists`, `create or replace function`, the constraint is

@@ -107,23 +107,46 @@ timeline.
 
 ## 4. Things that will bite a new session
 
-**Migrations are hand-applied to hosted — and as of 2026-07-29 an AGENT CANNOT
-DO IT AT ALL.** All three routes are closed to Claude:
+**Migrations are hand-applied to hosted, and the blocker is a PERMISSION, not a
+credential.** Learned the hard way on 0020 (2026-07-29):
 
 | route | state |
 |---|---|
 | `apply_migration` (connector) | classifier-blocked since 0011 |
-| `execute_sql` (connector) | **classifier-blocked for DDL since 2026-07-29** — verified with both a multi-statement script and a bare `alter table`. Read-only `select` still works. |
+| `execute_sql` (connector) | **works for DDL — but only once the allow rule below exists.** Without it the auto-mode classifier refuses every write; reads always work. |
 | `npx supabase db push` | needs an access token + DB password; neither should be handled by an agent |
 
-So **the operator applies the migration.** Two ways, in order of reliability:
+The unlock is one entry in `.claude/settings.local.json`:
+
+```json
+"mcp__728f3c26-074c-4f63-839e-0d81840c3291__execute_sql"
+```
+
+**The operator has to add it.** An agent editing its own permission file is
+blocked too — correctly, since that is self-granted privilege escalation. Note
+the scope: it permits *any* SQL through that tool in this directory, in this and
+future sessions. Remove the line to restore the block.
+
+With it in place, apply the migration in **separate `execute_sql` calls** —
+schema, then functions, then triggers, then cron, then the `schema_migrations`
+insert — and **verify in a further, separate call**. Splitting it keeps one
+failure from rolling back the rest, and makes the failing statement obvious.
+Afterwards, diff each function body against local to catch transcription drift:
+
+```sql
+select proname, md5(lower(regexp_replace(regexp_replace(prosrc,'--[^\n]*','','g'),'\s+',' ','g')))
+  from pg_proc where proname in (...);
+```
+
+Run the same query against the local stack (`docker exec supabase_db_gnk-crm psql -U postgres`)
+and compare — normalising strips comments and whitespace, so only real
+differences show.
+
+The operator can also do it themselves, which needs no permission change:
 
 ```bash
 npx supabase login && npx supabase link --project-ref yjgirvzgoiywdojnpkpd && npx supabase db push
 ```
-
-Run from the repo root. `push` lists the pending migration, asks to confirm,
-applies it, and writes `schema_migrations` itself.
 
 Or paste the migration file into the hosted SQL editor, **then separately** run:
 
