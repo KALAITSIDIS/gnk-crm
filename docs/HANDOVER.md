@@ -107,20 +107,46 @@ timeline.
 
 ## 4. Things that will bite a new session
 
-**Migrations are hand-applied to hosted.** `npx supabase db push` does not work
-here (CLI not logged in, and neither an access token nor the DB password should
-be handled). The recipe that works is the Supabase MCP connector's
-`execute_sql` — **not** `apply_migration`, which the safety classifier has
-blocked since 0011:
+**Migrations are hand-applied to hosted — and as of 2026-07-29 an AGENT CANNOT
+DO IT AT ALL.** All three routes are closed to Claude:
+
+| route | state |
+|---|---|
+| `apply_migration` (connector) | classifier-blocked since 0011 |
+| `execute_sql` (connector) | **classifier-blocked for DDL since 2026-07-29** — verified with both a multi-statement script and a bare `alter table`. Read-only `select` still works. |
+| `npx supabase db push` | needs an access token + DB password; neither should be handled by an agent |
+
+So **the operator applies the migration.** Two ways, in order of reliability:
+
+```bash
+npx supabase login && npx supabase link --project-ref yjgirvzgoiywdojnpkpd && npx supabase db push
+```
+
+Run from the repo root. `push` lists the pending migration, asks to confirm,
+applies it, and writes `schema_migrations` itself.
+
+Or paste the migration file into the hosted SQL editor, **then separately** run:
 
 ```sql
--- 1. run the migration DDL with execute_sql, then:
 insert into supabase_migrations.schema_migrations (version, name)
 values ('00NN','00NN_name.sql') on conflict do nothing;
 ```
 
 Filename versions, matching local. Verify afterwards that
 `non_filename_versions = 0` — a 2026-07-21 repair fixed exactly that drift.
+
+**Two editor traps that cost a whole session on 0020.** The dashboard SQL editor
+can silently discard DDL: a statement runs, a `select` in the *same* run sees
+its effect, and then the transaction is thrown away — so it looks applied and
+is not. Suspect **read-only mode**, or a *"potentially destructive operation"*
+confirmation modal that was never confirmed. **Always verify in a SECOND,
+SEPARATE run**, never in the same one. And because the editor wraps a
+multi-statement script in one transaction, a failure on the LAST statement
+(e.g. the `schema_migrations` insert) rolls back all of the DDL before it.
+
+Claude can still VERIFY over `execute_sql`, and should, before any push:
+columns, constraints, indexes, triggers, `cron.job`, the migrations count,
+`non_filename_versions = 0`, and `verify_events_chain`.
 
 **Code and schema land out of order.** Vercel deploys on push; migrations are
 applied by hand. Apply the migration **first** whenever the new code calls new
