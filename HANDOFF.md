@@ -114,18 +114,26 @@ And two testing lessons:
 
 **Done:** A (all), B1, B2, B3, B6, B7, B8, B10, B11, C1 (report-only), C2, C6.
 
-**Left, all gated on an operator decision:**
+**Operator decisions taken 2026-07-29:**
+- **Build nothing next — stabilise and let the desk use it.** Three features
+  shipped today and none has been used in anger: the nudge cron fires nightly
+  against zero open deals, no proposal link has been minted, the PWA is on
+  nobody's phone. Real usage will surface better work than guessing at B4.
+- **C1 finishes via Sentry.** The `/api/csp-report` handler already calls
+  `Sentry.captureMessage`; `instrumentation.ts` and `instrumentation-client.ts`
+  are both correctly DSN-gated and no-op without one. **Nothing to build** — it
+  needs `SENTRY_DSN` and `NEXT_PUBLIC_SENTRY_DSN` set in Vercel. Once set,
+  `csp.ts` also adds the Sentry origin to `connect-src` automatically.
+- **The `execute_sql` permission entry stays** in `.claude/settings.local.json`.
+  Deliberate: it permits any SQL through that tool in this directory, in future
+  sessions too. Kept because the alternative cost half a session, and every
+  migration today was applied in separate verified steps with a body-diff
+  against local afterwards. Remove the line to restore the block.
+- **B9 is closed, not deferred** — the desk works in English. See IMPROVEMENTS.
+
+**Left, both gated on an operator decision:**
 - **B4 documents** — which documents? Do not invent legal text for a Cyprus agency.
 - **B5 map** — tile provider, and it now needs a CSP `img-src`/`connect-src` call.
-- **B9 el/ru chrome** — **HANDOFF previously said this was blocked by a missing
-  locale switcher. That is wrong.** `profiles.locale` exists and is unread;
-  wiring it into `getRequestConfig` plus a control on `/security` is about an
-  hour and needs no locale *routing* (doc 02 §A5 excludes routing, not
-  per-user locale). The real work is that **only 13 of 128 files use
-  translations** — 114 of the 144 existing keys are the event timeline alone.
-  Flipping the locale today would give a Russian sidebar around eight English
-  modules, so the switcher must land *last*. And since B3 already ships el/ru to
-  buyers, the open question is whether *staff* need a Greek/Russian interface.
 
 ---
 
