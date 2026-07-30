@@ -141,6 +141,15 @@ export default async function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     // Everything except Next.js internals and static assets.
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    //
+    // `sw.js` and `manifest.webmanifest` are named explicitly (IMPROVEMENTS
+    // B8): the extension list below does not cover `.js`/`.webmanifest`, so
+    // without this both fell through to the auth gate and answered 307 to
+    // /login. A browser fetches the manifest and registers the worker without
+    // necessarily carrying credentials, so installing the app failed for
+    // anyone not already signed in. Caught in production, not by the local
+    // suite, because Playwright's `request` fixture is authenticated.
+    // Neither file contains any data.
+    "/((?!_next/static|_next/image|favicon.ico|sw\\.js|manifest\\.webmanifest|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

@@ -14,6 +14,12 @@ import { test, expect } from "@playwright/test";
  */
 
 test.describe("PWA", () => {
+  // ANONYMOUS on purpose. A browser fetches the manifest and registers the
+  // service worker without necessarily carrying credentials, so both must be
+  // reachable with no session. Using Playwright's default (authenticated)
+  // request fixture hid a production 307 to /login on exactly these two files.
+  test.use({ storageState: { cookies: [], origins: [] } });
+
   test("serves a valid, installable manifest", async ({ request }) => {
     const res = await request.get("/manifest.webmanifest");
     expect(res.status()).toBe(200);
@@ -46,13 +52,17 @@ test.describe("PWA", () => {
     expect((await request.get("/apple-touch-icon.png")).status()).toBe(200);
   });
 
-  test("the layout links the manifest and sets a theme colour", async ({ page }) => {
+  test("the layout links the manifest and sets a theme colour", async ({ browser }) => {
+    // needs a session — this one asserts the signed-in shell
+    const ctx = await browser.newContext({ storageState: "tests/.auth/admin.json" });
+    const page = await ctx.newPage();
     await page.goto("/dashboard", { waitUntil: "networkidle" });
     await expect(page.locator('link[rel="manifest"]')).toHaveAttribute(
       "href",
       /manifest\.webmanifest/,
     );
     await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", "#0B1F33");
+    await ctx.close();
   });
 
   test("the service worker is served as JavaScript from the root scope", async ({ request }) => {
@@ -70,9 +80,9 @@ test.describe("PWA", () => {
   });
 
   test("the offline fallback renders without a session", async ({ browser }) => {
-    // A genuinely anonymous context: the fallback exists for the case where
-    // there is no network, and the worker precaches it at install time. Behind
-    // the auth gate it would cache a redirect to /login instead.
+    // The fallback exists for the case where there is no network, and the
+    // worker precaches it at install time. Behind the auth gate it would cache
+    // a redirect to /login instead.
     const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
     const page = await context.newPage();
     try {
