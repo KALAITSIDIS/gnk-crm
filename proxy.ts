@@ -11,27 +11,6 @@ export default async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Buyer proposal pages (IMPROVEMENTS B3). Doc 01 §4 forbids buyer logins
-  // ever, so the tokenised page MUST be reachable without a session — the auth
-  // gate below would otherwise bounce every buyer to /login.
-  //
-  // Kept as narrow as the CSP exemption above: exactly the `/p/` prefix and
-  // nothing else. The page holds an anon client that can reach only the two
-  // functions migration 0023 grants `anon` by name, so an unauthenticated
-  // visitor's reach is "resolve one token" regardless of what this route does.
-  if (request.nextUrl.pathname.startsWith("/p/")) {
-    return NextResponse.next();
-  }
-
-  // The offline fallback (IMPROVEMENTS B8) must be reachable with no session.
-  // The service worker precaches it at install time, and behind the auth gate
-  // that fetch would store a redirect to /login instead — so the one screen
-  // that exists for "you have no network" would itself need the network.
-  // It is static and renders no data, so exempting it exposes nothing.
-  if (request.nextUrl.pathname === "/offline") {
-    return NextResponse.next();
-  }
-
   /**
    * Per-request CSP nonce (IMPROVEMENTS C1). Next reads the nonce out of the
    * `Content-Security-Policy` header we set on the REQUEST and stamps it on its
@@ -56,6 +35,33 @@ export default async function proxy(request: NextRequest) {
     headers.set("Content-Security-Policy", csp);
     return NextResponse.next({ request: { headers } });
   };
+
+  /**
+   * Routes that skip the AUTH gate but must still carry the CSP.
+   *
+   *  - `/p/*`     buyer proposal pages (B3). Doc 01 §4 forbids buyer logins
+   *               ever, so these must be reachable with no session.
+   *  - `/offline` the PWA fallback (B8). The service worker precaches it at
+   *               install; behind the gate that fetch stores a redirect to
+   *               /login, so the one screen for "you have no network" would
+   *               itself need the network.
+   *
+   * These used to `return NextResponse.next()` ABOVE the nonce, which skipped
+   * the policy as well as the gate — so the only unauthenticated HTML this app
+   * serves was also the only HTML with no `script-src`, which is backwards.
+   * Found by diffing the response headers of /login against /p/ in production.
+   * Kept exactly as narrow as before: the `/p/` prefix and that one pathname.
+   */
+  const path = request.nextUrl.pathname;
+  if (path.startsWith("/p/") || path === "/offline") {
+    const publicResponse = withNonce();
+    publicResponse.headers.set("Content-Security-Policy-Report-Only", csp);
+    publicResponse.headers.set(
+      "Reporting-Endpoints",
+      `${CSP_REPORT_GROUP}="${CSP_REPORT_PATH}"`,
+    );
+    return publicResponse;
+  }
 
   let supabaseResponse = withNonce();
 
@@ -83,7 +89,6 @@ export default async function proxy(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const path = request.nextUrl.pathname;
   const isLoginPage = path.startsWith("/login");
   // the second-factor screen is part of signing in, so it must stay reachable
   // while the session is still aal1

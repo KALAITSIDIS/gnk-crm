@@ -324,4 +324,33 @@ test.describe("Content-Security-Policy (report-only)", () => {
       `sign page would break under an enforced CSP: ${JSON.stringify(violations)}`,
     ).toEqual([]);
   });
+
+  /**
+   * The PUBLIC routes must carry the policy too.
+   *
+   * They skip the AUTH gate, and for a while they skipped the CSP with it —
+   * which meant the only unauthenticated HTML this app serves was also the only
+   * HTML with no `script-src`. That is backwards: the buyer page is the one
+   * page a stranger can reach, so it is the one that most needs the policy.
+   * Caught by diffing production response headers, not by a test, so this is
+   * the guard that stops it coming back.
+   */
+  test.describe("public routes are not exempt from the policy", () => {
+    test.use({ storageState: { cookies: [], origins: [] } });
+
+    for (const path of ["/p/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "/offline"]) {
+      test(`${path} carries the report-only policy`, async ({ page }) => {
+        const response = await page.goto(path, { waitUntil: "domcontentloaded" });
+        expect(response?.status(), `${path} must be reachable anonymously`).toBe(200);
+
+        const policy = response?.headers()["content-security-policy-report-only"];
+        expect(policy, `${path} is served with no CSP`).toBeTruthy();
+        expect(policy).toContain("script-src");
+        expect(policy).toContain("object-src 'none'");
+        // clickjacking protection is enforced separately in next.config.ts and
+        // must survive on the public routes as well
+        expect(response?.headers()["content-security-policy"]).toContain("frame-ancestors 'none'");
+      });
+    }
+  });
 });
