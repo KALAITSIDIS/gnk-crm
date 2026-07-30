@@ -1,11 +1,11 @@
 import { getTranslations } from "next-intl/server";
 import Link from "next/link";
-import { LogOut, ShieldCheck } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
+import { LogoutButton } from "@/components/features/shared/logout-button";
 import { SidebarNav } from "@/components/features/shared/sidebar-nav";
 import { MobileNav } from "@/components/features/shared/mobile-nav";
 import { GlobalSearch } from "@/components/features/shared/global-search";
 import { createClient } from "@/lib/supabase/server";
-import { logout } from "@/lib/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -41,11 +41,8 @@ export default async function AppLayout({
                 <ShieldCheck className="size-4" />
               </Link>
             </Button>
-            <form action={logout}>
-              <Button variant="ghost" size="icon" type="submit" title="Log out">
-                <LogOut className="size-4" />
-              </Button>
-            </form>
+            {/* B8: purges the offline page cache before signing out */}
+            <LogoutButton />
           </div>
         </header>
         <main className="mx-auto w-full max-w-[1440px] flex-1 p-6">

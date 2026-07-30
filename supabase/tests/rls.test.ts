@@ -1382,9 +1382,23 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(staleNudges[0].assignee_id).toBe(agentA1.id);
     const orphanNudges = await nudges("deal_id", orphanDeal.id);
     expect(orphanNudges).toHaveLength(1);
-    expect(orphanNudges[0].assignee_id, "an orphan deal must not produce a NULL assignee").toBe(
-      adminA.id,
-    );
+
+    // The invariant is "never NULL, and lands on an active admin of this org" —
+    // NOT "lands on adminA". The fallback picks the org's OLDEST active admin,
+    // and the fixture org accumulates admins across local reruns, so pinning
+    // the identity made this pass only on a freshly reset database. CI always
+    // starts fresh so it stayed green, which is exactly how such a test hides.
+    expect(orphanNudges[0].assignee_id, "an orphan deal must not produce a NULL assignee")
+      .not.toBeNull();
+    const { data: orphanAssignee } = await svc
+      .from("profiles")
+      .select("role, is_active, org_id")
+      .eq("id", orphanNudges[0].assignee_id!)
+      .single();
+    expect(orphanAssignee, "the fallback assignee must exist").not.toBeNull();
+    expect(orphanAssignee!.role, "arm 3 falls back to an admin").toBe("admin");
+    expect(orphanAssignee!.is_active, "an inactive admin would be invisible too").toBe(true);
+    expect(orphanAssignee!.org_id, "and must be in the deal's own org").toBe(ORG_A);
 
     expect(await nudges("viewing_id", lateViewing.id), "49h → nudged").toHaveLength(1);
     expect(await nudges("viewing_id", recentViewing.id), "47h → not yet").toHaveLength(0);

@@ -23,6 +23,15 @@ export default async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // The offline fallback (IMPROVEMENTS B8) must be reachable with no session.
+  // The service worker precaches it at install time, and behind the auth gate
+  // that fetch would store a redirect to /login instead — so the one screen
+  // that exists for "you have no network" would itself need the network.
+  // It is static and renders no data, so exempting it exposes nothing.
+  if (request.nextUrl.pathname === "/offline") {
+    return NextResponse.next();
+  }
+
   /**
    * Per-request CSP nonce (IMPROVEMENTS C1). Next reads the nonce out of the
    * `Content-Security-Policy` header we set on the REQUEST and stamps it on its

@@ -1609,3 +1609,48 @@ limiter budget, chain intact); RLS test 25; 5 E2E including an anonymous visitor
 asserting `internal_notes`, `owner_net_price` and `min_acceptable_price` appear
 nowhere in the rendered DOM; and a real unauthenticated `curl` of `/p/<token>`
 returning 200 with no redirect to `/login`.
+
+## 2026-07-29 · T-pwa — installable agent app, deliberately not offline-first (B8)
+
+CLAUDE.md names three mobile-first screens (slip signing, agent daily dashboard,
+lead inbox) and B8 asked for an "installable, offline-tolerant shell". The
+operator chose **installable + resilient reads** over a full offline sync queue.
+
+- **Writes are never queued.** Offline slip signing is what the roadmap
+  literally asks for, but it would hold commission evidence — signature, SHA-256,
+  geolocation — in client-side storage until a network appeared, with replay and
+  conflict handling around the hash chain. That chain is this product's
+  differentiator in a dispute; putting it behind a queue trades the one thing
+  that must never be doubted for convenience on a bad signal. Writes fail
+  honestly with a retry instead, and `/offline` says outright that nothing was
+  sent and nothing recorded — an agent who just signed a slip needs to know
+  whether to redo it.
+- **Every cache is purged on sign-out, and the purge is awaited.** The worker
+  caches whole rendered pages so a visited screen survives a dead signal. On a
+  shared or lost phone that is client PII and KYC at rest, readable with no
+  session. `LogoutButton` awaits `purgeOfflineCaches()` before calling `logout()`
+  — fire-and-forget would race the redirect and leave behind exactly what
+  signing out is meant to remove.
+- **Never cache `/api/`, never cache RSC.** A cached auth response would be
+  actively dangerous. And Next's RSC payload shares a URL with the HTML
+  document, so caching both under one key serves an RSC blob to a document
+  request and the page renders as garbage — the worker handles only real
+  navigations without an `RSC` header.
+- **Registration is production-only.** In dev, a cache-first worker turns
+  every edit into stale-module confusion that looks like a build bug.
+- **`/offline` is exempt from the auth gate.** The worker precaches it at
+  install; behind the gate that fetch stores a redirect to `/login`, so the one
+  screen that exists for "you have no network" would itself need the network.
+  It is static and renders no data.
+
+Proven against a real production build, not asserted: the worker registers and
+activates, a previously visited screen still renders with the network cut, an
+unvisited screen shows the fallback, and the purge empties every cache (3 → 0).
+
+**A test-quality fix found on the way.** RLS test 24 (B7, written this morning)
+asserted the orphan-deal fallback landed on `adminA` specifically. The fallback
+picks the org's OLDEST active admin, and the fixture org accumulates admins
+across local reruns, so it passed only on a freshly reset database. CI always
+starts fresh, so it stayed green — which is exactly how such a test hides. It
+now asserts the invariant that matters (never NULL; an active admin of that org)
+and passes both fresh and on a dirty rerun.
