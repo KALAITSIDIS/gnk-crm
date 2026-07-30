@@ -76,10 +76,28 @@ alter table share_link_attempts   enable row level security;
 -- through resolve_share_link, whose allowlist is the exposure boundary; no
 -- SELECT grant means a mistake in a future policy still cannot open the table
 -- to the public. RLS test 25 asserts exactly that.
+-- REVOKE FIRST, and explicitly. Hosted Supabase applies default privileges that
+-- hand `anon` and `authenticated` full DML on every new table in `public`; the
+-- local stack does not. So a migration that only GRANTs produces two different
+-- databases — verified on 0023's own apply, where hosted came up with
+-- anon:SELECT,INSERT,UPDATE,DELETE on share_links and local came up with none.
+-- RLS still denied anon every row (current_org_id() is null for a public
+-- caller), so nothing was exposed — but the belt-and-braces this design relies
+-- on was missing exactly where it matters most, and hosted diverged from the
+-- migration history, which is what 0022 was written to stop.
+revoke all on share_links           from anon, authenticated;
+revoke all on share_link_properties from anon, authenticated;
+revoke all on share_link_attempts   from anon, authenticated;
+
 grant select, insert, update         on share_links           to authenticated;
 grant select, insert, delete         on share_link_properties to authenticated;
 -- share_link_attempts: no grants to any app role. Only the security-definer
 -- functions below touch it.
+--
+-- `anon` keeps NOTHING on all three. A buyer reaches this data solely through
+-- resolve_share_link, whose allowlist is the exposure boundary; with no table
+-- grant, even a future mistake in a policy cannot open the table to the public.
+-- RLS test 25 asserts anon reads zero rows.
 
 -- ---------- RLS (doc 04 conventions) ----------------------------------------
 -- Staff read their org's links; anyone on staff may mint one; only the creator

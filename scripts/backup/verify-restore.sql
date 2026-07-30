@@ -32,11 +32,11 @@ with expected as (
     3::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     6::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 22::bigint as migrations,
+    2::bigint as auth_users, 23::bigint as migrations,
     9::bigint as obj_documents, 2::bigint as obj_signatures, 15::bigint as obj_media
-    -- captured 2026-07-29 from hosted (yjgirvzgoiywdojnpkpd). `migrations` moved
-    -- 19 -> 22 across 0020/0021/0022, and becomes 23 the moment 0023 is applied
-    -- to hosted — re-capture then rather than leaving a number you know is stale
+    -- captured 2026-07-29 from hosted (yjgirvzgoiywdojnpkpd), after 0023.
+    -- `migrations` moved 19 -> 23 across 0020/0021/0022/0023; every other count
+    -- is unchanged (share_links ships empty).
 ),
 
 -- ---------- row counts ----------
