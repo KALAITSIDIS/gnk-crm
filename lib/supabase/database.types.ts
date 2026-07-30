@@ -1581,6 +1581,143 @@ export type Database = {
           },
         ]
       }
+      share_link_attempts: {
+        Row: {
+          attempts: number
+          ip_hash: string
+          window_start: string
+        }
+        Insert: {
+          attempts?: number
+          ip_hash: string
+          window_start: string
+        }
+        Update: {
+          attempts?: number
+          ip_hash?: string
+          window_start?: string
+        }
+        Relationships: []
+      }
+      share_link_properties: {
+        Row: {
+          property_id: string
+          share_link_id: string
+          sort_order: number
+        }
+        Insert: {
+          property_id: string
+          share_link_id: string
+          sort_order?: number
+        }
+        Update: {
+          property_id?: string
+          share_link_id?: string
+          sort_order?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "share_link_properties_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "share_link_properties_share_link_id_fkey"
+            columns: ["share_link_id"]
+            isOneToOne: false
+            referencedRelation: "share_links"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      share_links: {
+        Row: {
+          contact_id: string | null
+          created_at: string
+          created_by: string | null
+          expires_at: string
+          first_opened_at: string | null
+          id: string
+          kind: string
+          last_opened_at: string | null
+          locale: string
+          message: string | null
+          org_id: string
+          revoked_at: string | null
+          revoked_by: string | null
+          title: string | null
+          token_sha256: string
+          view_count: number
+        }
+        Insert: {
+          contact_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          expires_at: string
+          first_opened_at?: string | null
+          id?: string
+          kind?: string
+          last_opened_at?: string | null
+          locale?: string
+          message?: string | null
+          org_id: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+          title?: string | null
+          token_sha256: string
+          view_count?: number
+        }
+        Update: {
+          contact_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          expires_at?: string
+          first_opened_at?: string | null
+          id?: string
+          kind?: string
+          last_opened_at?: string | null
+          locale?: string
+          message?: string | null
+          org_id?: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+          title?: string | null
+          token_sha256?: string
+          view_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "share_links_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "share_links_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "share_links_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "share_links_revoked_by_fkey"
+            columns: ["revoked_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       spatial_ref_sys: {
         Row: {
           auth_name: string | null
@@ -2309,6 +2446,10 @@ export type Database = {
         Args: { p_district_code: string; p_org: string }
         Returns: string
       }
+      note_share_link_miss: {
+        Args: { p_ip_hash: string; p_limit?: number }
+        Returns: boolean
+      }
       populate_geometry_columns:
         | { Args: { tbl_oid: unknown; use_typmod?: boolean }; Returns: number }
         | { Args: { use_typmod?: boolean }; Returns: string }
@@ -2363,6 +2504,7 @@ export type Database = {
         Args: { p_direction: string; p_stage_id: string }
         Returns: undefined
       }
+      resolve_share_link: { Args: { p_token_sha256: string }; Returns: Json }
       run_chain_checks: { Args: never; Returns: undefined }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }

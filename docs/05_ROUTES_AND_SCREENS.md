@@ -7,6 +7,8 @@ App Router. `(auth)` = public auth pages; `(app)` = authenticated shell (sidebar
 | Route | Screen | Roles |
 |---|---|---|
 | `/login` | Email+password, forgot password. No signup. | public |
+| `/p/[token]` | **Buyer proposal page** — curated shortlist, photos, price, areas, agent contact card. No login, ever (doc 01 §4). Renders in the link's locale. Expired/revoked/unknown all show one neutral page. | **public, unauthenticated** |
+| `/share-links` (nav: **Proposals**) | Mint a proposal link (pick properties, locale, expiry, message), watch opens, revoke. Token shown once. | all staff |
 | `/dashboard` | Role-aware: admin variant / agent variant 📱 | all |
 | `/properties` | List: table + card toggle; filters (district, area, type, transaction, status, visibility, beds, price range, mandate status); fuzzy search box; "Add property" | all |
 | `/properties/new` | Create wizard: Step 1 kind+type+district → generates reference; Step 2 core details | A, LM, AG |

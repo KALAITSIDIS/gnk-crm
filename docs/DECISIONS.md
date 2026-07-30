@@ -1550,3 +1550,62 @@ run 2 they pass. That is the residue dependency HANDOVER §4 warns about, in a
 spec this change never touches; verified by stashing this work and reproducing
 both failures on the pre-change tree. It does not reach CI (which runs
 `checks` + `rls`, not Playwright). → BACKLOG.
+
+## 2026-07-29 · T-share-links — buyer proposal magic links (IMPROVEMENTS B3)
+
+`share_links` was listed in doc 01 §6.1 from v2 onward but existed in no
+migration and no DDL — only the `share_link` slot in `ENTITY_TYPES`. 0023 builds
+it. Doc 01 §0.1 is explicit that buyer portal logins were *removed* and replaced
+with "no-login magic-link proposal pages (tokenized URL, expiry date, per-open
+view tracking)", so this is the sanctioned shape, not new scope.
+
+- **The token is never stored — only `sha256(token)`.** A database leak
+  therefore yields no working links, the same reasoning as password hashing.
+  The plaintext exists only in `createShareLink`'s return value, so the UI shows
+  it once and it is unrecoverable afterwards (the invite-dialog pattern). A unit
+  test pins the digest against the value Postgres produces: the app hashes in
+  Node and the database looks up by that hash, so a divergence would silently
+  orphan every live link.
+- **`anon` has no grant on the tables at all.** A buyer reaches data solely
+  through `resolve_share_link`, a security-definer RPC whose body enumerates the
+  allowlist. The boundary therefore lives in SQL and cannot drift with a
+  component edit, and a future mistake in a policy still cannot open the table
+  to the public. RLS test 25 asserts the exact returned key set, so adding
+  `select *` to the RPC fails the suite rather than production.
+- **A bearer token may append to `events`; an anonymous CSP report may not.**
+  HANDOFF constraint 1 forbids `/api/csp-report` from ever writing to the
+  hash-chained log. The distinction is that a share-link token is a credential
+  the agency minted, so the append is authorised by something the org issued —
+  and an invalid token appends nothing. The **throttle** is what keeps that
+  defensible: `view_count` is exact on every open, but the `opened` event is one
+  per link per Cyprus day. A buyer refreshing on a train must not be able to
+  grow the evidence chain, and "shown on the 14th" is the granularity a
+  commission dispute argues over anyway.
+- **Dead links are indistinguishable.** Expired, revoked, unknown and malformed
+  all render one neutral page — same reasoning that makes `/api/csp-report`
+  always answer 204. A prober learns nothing about which tokens exist.
+- **The rate limiter is honest about its job.** Brute-forcing a 32-byte token is
+  infeasible, so a limiter does not help there; the real threats are scanning
+  and log-flooding, which only ever produce FAILED lookups, so that is what is
+  counted. It does not stop a real DDoS — platform-level protection does, and
+  that is an operator decision in BACKLOG.
+- **An archived property drops out of the payload** rather than 404-ing the
+  proposal: retiring one listing must not silently break an unrelated buyer's
+  link. The page states how many were withheld instead of quietly showing fewer.
+- **Agent picks en/el/ru per link.** This is the one surface that can ship
+  multilingual value while B9 stays blocked on the missing locale switcher — the
+  marketing text is already multilingual jsonb, and the page's own chrome is
+  translated because it is small and self-contained.
+
+**A bug the E2E caught that reading could not:** RLS policies do not imply table
+GRANTs. 0002 grants each table to `authenticated` one by one, and a table
+created eleven migrations later inherits nothing from that, so the manage page
+died with `permission denied for table share_links` despite correct policies.
+Same class as 0021. Fixed inside 0023 (it had not yet been applied to hosted).
+`anon` is deliberately left with no grant.
+
+Verified: 22 psql fixture assertions (throttle, allowlist, locale, dead links,
+limiter budget, chain intact); RLS test 25; 5 E2E including an anonymous visitor
+asserting `internal_notes`, `owner_net_price` and `min_acceptable_price` appear
+nowhere in the rendered DOM; and a real unauthenticated `curl` of `/p/<token>`
+returning 200 with no redirect to `/login`.

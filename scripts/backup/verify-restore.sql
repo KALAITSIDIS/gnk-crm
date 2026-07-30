@@ -32,10 +32,11 @@ with expected as (
     3::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     6::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 21::bigint as migrations,
+    2::bigint as auth_users, 22::bigint as migrations,
     9::bigint as obj_documents, 2::bigint as obj_signatures, 15::bigint as obj_media
-    -- captured 2026-07-29 from hosted (yjgirvzgoiywdojnpkpd); only `migrations`
-    -- moved, 19 -> 21, from 0020 + 0021
+    -- captured 2026-07-29 from hosted (yjgirvzgoiywdojnpkpd). `migrations` moved
+    -- 19 -> 22 across 0020/0021/0022, and becomes 23 the moment 0023 is applied
+    -- to hosted — re-capture then rather than leaving a number you know is stale
 ),
 
 -- ---------- row counts ----------
@@ -81,7 +82,13 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   ('move_deal_to_stage',   false, false, true,  true),
   ('add_deal_stage',       false, false, true,  true),
   ('reorder_stage',        false, false, true,  true),
-  ('admin_dashboard_stats',false, false, true,  true)
+  ('admin_dashboard_stats',false, false, true,  true),
+  -- B3 (0023). anon = TRUE here is DELIBERATE and unique in this table: this is
+  -- the buyer entry point, the only function a public visitor may call. The
+  -- Supabase advisor flags it by design; a restore that DROPS this grant breaks
+  -- every live proposal link silently, which is why it is pinned.
+  ('resolve_share_link',   true,  true,  true,  true),
+  ('note_share_link_miss', true,  true,  true,  true)
 ),
 grants_actual as (
   select p.proname::text as fn, p.prosecdef as secdef,

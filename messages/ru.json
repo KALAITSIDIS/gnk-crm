@@ -13,6 +13,7 @@
     "tasks": "Задачи",
     "keys": "Ключи",
     "reports": "Отчёты",
+    "shareLinks": "Подборки",
     "calculators": "Калькуляторы",
     "settings": "Настройки"
   },
@@ -247,6 +248,8 @@
     "documentDeleted": "Документ удалён",
     "documentDeletedTitle": "Документ удалён — {title}",
     "renewalTaskCreated": "Создано напоминание о продлении",
+    "shareLinkOpened": "Ссылка на подборку открыта — {count, plural, one {# объект} few {# объекта} many {# объектов} other {# объекта}}",
+    "shareLinkRevoked": "Ссылка на подборку отозвана после {count, plural, one {# просмотра} few {# просмотров} many {# просмотров} other {# просмотров}}",
     "followupNoContact": "Создано напоминание — нет контакта уже {days, plural, one {# день} few {# дня} many {# дней} other {# дня}}",
     "followupViewingFeedback": "Создано напоминание — отзыв о просмотре не внесён спустя {hours, plural, one {# час} few {# часа} many {# часов} other {# часа}}",
     "followupTaskCreated": "Создано напоминание",

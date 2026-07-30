@@ -13,6 +13,7 @@
     "tasks": "Tasks",
     "keys": "Keys",
     "reports": "Reports",
+    "shareLinks": "Proposals",
     "calculators": "Calculators",
     "settings": "Settings"
   },
@@ -247,6 +248,8 @@
     "documentDeleted": "Document deleted",
     "documentDeletedTitle": "Document deleted — {title}",
     "renewalTaskCreated": "Renewal reminder task created",
+    "shareLinkOpened": "Proposal link opened — {count, plural, one {# property} other {# properties}}",
+    "shareLinkRevoked": "Proposal link revoked after {count, plural, one {# view} other {# views}}",
     "followupNoContact": "Follow-up task created — no contact for {days, plural, one {# day} other {# days}}",
     "followupViewingFeedback": "Follow-up task created — viewing feedback still missing after {hours, plural, one {# hour} other {# hours}}",
     "followupTaskCreated": "Follow-up task created",

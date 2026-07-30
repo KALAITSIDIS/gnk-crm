@@ -1462,4 +1462,124 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     const { data: chainOk } = await svc.rpc("verify_events_chain", { p_org: ORG_A });
     expect(chainOk, "the new event types keep the hash chain intact").toBe(true);
   });
+
+  it("25. share_links: anon reads nothing, resolves only a LIVE token, and only allowlisted fields", async () => {
+    const svc = serviceClient();
+    const anon = anonClient();
+    const { createHash, randomBytes } = await import("node:crypto");
+    const mint = () => randomBytes(32).toString("base64url");
+    const sha = (t: string) => createHash("sha256").update(t).digest("hex");
+
+    const { data: prop } = await svc
+      .from("properties")
+      .insert({
+        org_id: ORG_A,
+        reference: `SHR-${randomBytes(4).toString("hex")}`,
+        property_type: "villa",
+        visibility: "public",
+        title: { en: "Shared villa" },
+        asking_price: 500000,
+        owner_net_price: 444444,
+        min_acceptable_price: 455555,
+        internal_notes: "NEVER-LEAK-THIS",
+      })
+      .select("id")
+      .single();
+
+    const mkLink = async (extra: Record<string, unknown>) => {
+      const token = mint();
+      const { data } = await svc
+        .from("share_links")
+        .insert({
+          org_id: ORG_A,
+          token_sha256: sha(token),
+          expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+          created_by: adminA.id,
+          ...extra,
+        })
+        .select("id")
+        .single();
+      await svc
+        .from("share_link_properties")
+        .insert({ share_link_id: data!.id, property_id: prop!.id, sort_order: 0 });
+      return { token, id: data!.id };
+    };
+
+    const live = await mkLink({});
+    const revoked = await mkLink({ revoked_at: new Date().toISOString() });
+    const expired = await mkLink({
+      expires_at: new Date(Date.now() - 86_400_000).toISOString(),
+    });
+
+    // --- anon may not read the tables at all --------------------------------
+    const anonLinks = await anon.from("share_links").select("id");
+    expect(anonLinks.data ?? [], "anon must not read share_links").toHaveLength(0);
+    const anonJoin = await anon.from("share_link_properties").select("property_id");
+    expect(anonJoin.data ?? [], "anon must not read share_link_properties").toHaveLength(0);
+
+    // --- but anon MAY resolve a live token (the buyer entry point) ----------
+    const ok = await anon.rpc("resolve_share_link", { p_token_sha256: sha(live.token) });
+    expect(ok.error).toBeNull();
+    expect(ok.data, "a live token must resolve for anon").not.toBeNull();
+
+    const payload = ok.data as Record<string, unknown>;
+    expect(Object.keys(payload).sort()).toEqual(
+      [
+        "agent",
+        "expires_at",
+        "locale",
+        "message",
+        "org",
+        "properties",
+        "property_count",
+        "title",
+      ].sort(),
+    );
+
+    // The exposure boundary is the point of this feature: assert the private
+    // numbers and notes are absent from the WHOLE serialized payload, so a
+    // future `select *` in the RPC fails here rather than in production.
+    const asText = JSON.stringify(payload);
+    expect(asText).not.toContain("NEVER-LEAK-THIS");
+    expect(asText).not.toContain("444444");
+    expect(asText).not.toContain("455555");
+    expect(asText).toContain("500000");
+
+    // --- dead tokens are indistinguishable ----------------------------------
+    for (const [label, token] of [
+      ["revoked", revoked.token],
+      ["expired", expired.token],
+      ["unknown", mint()],
+    ] as const) {
+      const res = await anon.rpc("resolve_share_link", { p_token_sha256: sha(token) });
+      expect(res.error, `${label}: must not error`).toBeNull();
+      expect(res.data, `${label} token must resolve to null`).toBeNull();
+    }
+
+    // --- the throttle: many opens, ONE event per Cyprus day -----------------
+    await anon.rpc("resolve_share_link", { p_token_sha256: sha(live.token) });
+    await anon.rpc("resolve_share_link", { p_token_sha256: sha(live.token) });
+
+    const { data: after } = await svc
+      .from("share_links")
+      .select("view_count")
+      .eq("id", live.id)
+      .single();
+    expect(after!.view_count, "every open is counted exactly").toBe(3);
+
+    const { count: openedEvents } = await svc
+      .from("events")
+      .select("id", { count: "exact", head: true })
+      .eq("entity_type", "share_link")
+      .eq("entity_id", live.id)
+      .eq("event_type", "opened");
+    expect(openedEvents, "throttled to one opened event per Cyprus day").toBe(1);
+
+    // --- cross-org isolation for staff --------------------------------------
+    const bSees = await agentB.client.from("share_links").select("id").eq("id", live.id);
+    expect(bSees.data ?? [], "org B must not see org A's links").toHaveLength(0);
+
+    const { data: chainOk } = await svc.rpc("verify_events_chain", { p_org: ORG_A });
+    expect(chainOk, "share_link events keep the chain intact").toBe(true);
+  });
 });

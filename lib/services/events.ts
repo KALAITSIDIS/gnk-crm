@@ -252,6 +252,17 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
     return title ? t("documentDeletedTitle", { title }) : t("documentDeleted");
   },
   renewal_task_created: (_p, t) => t("renewalTaskCreated"),
+  // B3 buyer proposal links. `opened` is actor-null — the opener is a buyer,
+  // not a user — and is throttled to one per link per Cyprus day (0023), so a
+  // timeline shows the days a proposal was read, not every refresh.
+  opened: (p, t) => {
+    const count = Number(p.property_count) || 0;
+    return t("shareLinkOpened", { count });
+  },
+  revoked: (p, t) => {
+    const views = Number(p.views_at_revocation) || 0;
+    return t("shareLinkRevoked", { count: views });
+  },
   // B7 follow-up nudges (0020). One event type for both rules; the line is
   // chosen from payload.kind, like stages_updated / locations_updated.
   followup_task_created: (p, t) => {

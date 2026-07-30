@@ -13,6 +13,7 @@
     "tasks": "Εργασίες",
     "keys": "Κλειδιά",
     "reports": "Αναφορές",
+    "shareLinks": "Προτάσεις",
     "calculators": "Υπολογιστές",
     "settings": "Ρυθμίσεις"
   },
@@ -247,6 +248,8 @@
     "documentDeleted": "Διαγράφηκε έγγραφο",
     "documentDeletedTitle": "Διαγράφηκε έγγραφο — {title}",
     "renewalTaskCreated": "Δημιουργήθηκε υπενθύμιση ανανέωσης",
+    "shareLinkOpened": "Άνοιγμα συνδέσμου πρότασης — {count, plural, one {# ακίνητο} other {# ακίνητα}}",
+    "shareLinkRevoked": "Ο σύνδεσμος πρότασης ανακλήθηκε μετά από {count, plural, one {# προβολή} other {# προβολές}}",
     "followupNoContact": "Δημιουργήθηκε εργασία παρακολούθησης — καμία επικοινωνία για {days, plural, one {# ημέρα} other {# ημέρες}}",
     "followupViewingFeedback": "Δημιουργήθηκε εργασία παρακολούθησης — λείπει ακόμη σχόλιο υπόδειξης μετά από {hours, plural, one {# ώρα} other {# ώρες}}",
     "followupTaskCreated": "Δημιουργήθηκε εργασία παρακολούθησης",

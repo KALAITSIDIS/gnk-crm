@@ -11,6 +11,18 @@ export default async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // Buyer proposal pages (IMPROVEMENTS B3). Doc 01 §4 forbids buyer logins
+  // ever, so the tokenised page MUST be reachable without a session — the auth
+  // gate below would otherwise bounce every buyer to /login.
+  //
+  // Kept as narrow as the CSP exemption above: exactly the `/p/` prefix and
+  // nothing else. The page holds an anon client that can reach only the two
+  // functions migration 0023 grants `anon` by name, so an unauthenticated
+  // visitor's reach is "resolve one token" regardless of what this route does.
+  if (request.nextUrl.pathname.startsWith("/p/")) {
+    return NextResponse.next();
+  }
+
   /**
    * Per-request CSP nonce (IMPROVEMENTS C1). Next reads the nonce out of the
    * `Content-Security-Policy` header we set on the REQUEST and stamps it on its

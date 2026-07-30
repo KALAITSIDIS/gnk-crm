@@ -776,3 +776,44 @@ begin
 end $$;
 create trigger properties_reference_immutable before update on properties
   for each row execute function protect_property_reference();
+
+-- ---------- share_links (migration 0023, IMPROVEMENTS B3) -------------------
+-- Listed in doc 01 §6.1 since v2 but unbuilt until 0023. Doc 01 §0.1: buyer
+-- portal logins were REMOVED and replaced with "no-login magic-link proposal
+-- pages (tokenized URL, expiry date, per-open view tracking)".
+--
+-- THE TOKEN IS NEVER STORED — only sha256(token), so a DB leak yields no
+-- working links. Lookup is by hash (unique index), a single equality probe.
+create table share_links (
+  id              uuid primary key default gen_random_uuid(),
+  org_id          uuid not null references organizations(id),
+  kind            text not null default 'proposal' check (kind in ('proposal')),
+  token_sha256    text not null unique,
+  contact_id      uuid references contacts(id),
+  locale          text not null default 'en' check (locale in ('en','el','ru')),
+  title           text,
+  message         text,
+  expires_at      timestamptz not null,
+  revoked_at      timestamptz,
+  revoked_by      uuid references profiles(id),
+  view_count      int not null default 0,
+  first_opened_at timestamptz,
+  last_opened_at  timestamptz,
+  created_by      uuid references profiles(id),
+  created_at      timestamptz not null default now()
+);
+create table share_link_properties (
+  share_link_id uuid not null references share_links(id) on delete cascade,
+  property_id   uuid not null references properties(id),
+  sort_order    int not null default 0,
+  primary key (share_link_id, property_id)
+);
+-- failed-lookup counter; written only by security-definer functions
+create table share_link_attempts (
+  ip_hash text not null, window_start timestamptz not null,
+  attempts int not null default 1, primary key (ip_hash, window_start)
+);
+-- resolve_share_link(text) -> jsonb: SECURITY DEFINER, granted to anon. The
+-- ONLY thing a public visitor may call. Its body enumerates the exposure
+-- allowlist; `select *` must never appear in it. Bumps view_count on every
+-- open and writes ONE `opened` event per link per Cyprus day.

@@ -24,6 +24,9 @@ Legend: ✅ full · 🔒 restricted (condition in Notes) · ❌ denied
 | viewings | A AG LM | A AG | A ✅ · AG 🔒 (`agent_id = uid`) | ❌ (status cancelled) | |
 | viewing_slips | A AG (agent of viewing) | A AG 🔒 (agent of the viewing) | ❌ | ❌ | Immutable once created |
 | documents | A ✅ · AG LM 🔒 (`visibility = 'internal'`; `admin_only` hidden) | A AG LM | A 🔒 (title/type only) | A | File bodies via signed URLs only |
+| share_links | A AG LM (own org) | A AG LM (`created_by = uid`) | creator or A | ❌ **no policy** | anon: **no grant at all** — buyers reach data only via `resolve_share_link` |
+| share_link_properties | A AG LM (via parent link) | A AG LM (via parent link) | ❌ | creator or A | |
+| share_link_attempts | ❌ no policy, no grant | ❌ | ❌ | ❌ | written only by security-definer functions |
 | tasks | A ✅ · AG LM 🔒 (`assignee_id = uid` OR created_by = uid) | A AG LM | assignee or A | creator or A | |
 | cyprus_config | A AG LM (read) | A | A | ❌ | Edits write `config` events |
 | events | A ✅ · AG LM 🔒 (`actor_id = uid` OR entity is a record they can read — implement pragmatically: A + AG/LM where actor_id = uid; timeline pages assemble via server actions with service role for cross-entity reads, still org-scoped) | A AG LM (org check only) | ❌ **no policy + revoked** | ❌ **no policy + revoked** | The spine. Insert check: `org_id = current_org_id()` |
