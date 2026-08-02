@@ -628,7 +628,8 @@ revoke update, delete, truncate on events from anon, authenticated;
 -- T4.5 (migration 0006), reworked by migration 0012: flips expired mandates,
 -- creates ONE renewal task per active mandate per expiry cycle (due Cyprus
 -- end-of-day of the expiry; assignee = property agent → mandate creator →
--- oldest active org admin), and supersedes open renewal tasks whose mandate is
+-- oldest active org admin, each arm skipped unless that profile is ACTIVE —
+-- migration 0024), and supersedes open renewal tasks whose mandate is
 -- no longer active or whose expiry moved. Invariant: an OPEN renewal task
 -- exists iff its mandate is ACTIVE with a MATCHING expiry. All actions write
 -- system events (actor_id null).
@@ -649,9 +650,9 @@ language sql security definer set search_path = public as $$
     select m.org_id,
            'Mandate renewal: ' || p.reference || ' expires ' || to_char(m.expiry_date, 'DD Mon YYYY'),
            (m.expiry_date::timestamp + interval '23 hours 59 minutes') at time zone 'Asia/Nicosia',
-           coalesce(
-             p.assigned_agent_id,
-             m.created_by,
+           coalesce(                               -- every arm active-only, 0024
+             (select pr.id from profiles pr where pr.id = p.assigned_agent_id and pr.is_active),
+             (select pr.id from profiles pr where pr.id = m.created_by and pr.is_active),
              (select pr.id from profiles pr
                where pr.org_id = m.org_id and pr.role = 'admin' and pr.is_active
                order by pr.created_at limit 1)),
@@ -711,7 +712,14 @@ select cron.schedule('expire-mandates','0 3 * * *', $$select expire_mandates()$$
 -- matching are COMPLETED ("superseded"), never deleted.
 --
 -- Assignee fallback is three-armed (deal/viewing agent → creator → oldest
--- active org admin) — a NULL assignee is invisible on every surface.
+-- active org admin) — a NULL assignee is invisible on every surface. Migration
+-- 0024 skips any arm whose profile is DEACTIVATED: such an assignee is equally
+-- invisible but no longer LOOKS unassigned, so nothing can find it. 0024 also
+-- adds a fifth step to this job — re-home OPEN system tasks (every `kind`,
+-- mandate_renewal included, since this runs 15 min after expire-mandates) whose
+-- assignee has since been deactivated, onto the active-admin arm, each with a
+-- `reassigned` event. Invariant: an OPEN system task is never held by an
+-- inactive profile, given the org has an active admin.
 -- Thresholds are hardcoded: 14 days is the health score's own activity cliff
 -- (doc 02 §C5), and a second editable copy could silently disagree with it.
 --

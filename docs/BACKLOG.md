@@ -169,12 +169,27 @@ built without explicit direction.
   desk wants to tune them, put them in `cyprus_config` with a `coalesce` default
   so the cron survives a missing key, add the settings row + validation + its
   event, and decide explicitly whether the health score follows.
-- **Nudges can land on a deactivated assignee (B7 + 0012).** Both cron jobs take
-  the deal/viewing/property agent raw, so a task can be assigned to a profile
-  with `is_active = false` — invisible to them, and not surfaced as unassigned.
-  `expire_mandates` has had the same gap since 0012. Fix both together (skip
-  inactive profiles in each arm of the fallback, and re-home existing open
-  tasks), or the two cron paths will disagree about who counts as assignable.
+- ~~**Nudges can land on a deactivated assignee (B7 + 0012).**~~ **RESOLVED
+  2026-08-02 (migration 0024).** Every arm of the three-armed fallback is now
+  active-only in all three system kinds (`deal_no_contact`, `viewing_feedback`,
+  `mandate_renewal`) — previously only arm 3 checked `is_active`, so the guard
+  stopped exactly where the fallback started. Fixing the arms alone was not
+  enough: the cycle guards refuse to re-mint a task for a boundary that already
+  has one, and deactivation usually happens *after* assignment, so the re-home
+  is stated as an invariant and self-healed nightly as step 5 of
+  `create_followup_nudges` (which runs 03:15, after expire-mandates at 03:00, so
+  one place owns it for all three kinds) plus a one-time backfill. RLS test 26
+  pins it. Note the test asserts the assignee **as minted**, read from the
+  `followup_task_created` event: step 5 re-homes within the same invocation, so
+  asserting on `tasks.assignee_id` alone passes even with the arms reverted —
+  verified by reverting them and watching it still pass.
+- **Human-assigned tasks are still stranded by deactivation.** 0024's sweep is
+  deliberately scoped to system-generated rows (`kind is not null`); a task one
+  person assigned to another by hand still sits invisible if the assignee is
+  deactivated. Re-homing those silently would overwrite a human's deliberate
+  choice, so it wants a surface (an admin "tasks held by deactivated users" list
+  with an explicit reassign) rather than a cron rule. Pairs naturally with the
+  org-wide overdue/unassigned admin view already in this file.
 - **`csp.spec.ts` depends on test residue.** "property detail" and "contact
   detail reports no CSP violations" assert `expect(href).toBeTruthy()` on the
   first row of `/properties` and `/contacts`. Only `happy-path.spec.ts` creates

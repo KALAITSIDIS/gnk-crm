@@ -1596,4 +1596,148 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     const { data: chainOk } = await svc.rpc("verify_events_chain", { p_org: ORG_A });
     expect(chainOk, "share_link events keep the chain intact").toBe(true);
   });
+
+  it("26. create_followup_nudges: a deactivated agent or creator never receives a nudge", async () => {
+    // 0012 taught that a NULL assignee is invisible: /tasks and the agent
+    // dashboard both filter assignee_id = me. An assignee who is DEACTIVATED is
+    // worse than NULL — the task is equally invisible (test 19: is_active =
+    // false kills the session), but it no longer LOOKS unassigned, so no
+    // "unassigned tasks" surface can ever find it.
+    //
+    // Test 24 pinned this for arm 3 only ("an inactive admin would be invisible
+    // too"). Arms 1 and 2 took the agent and the creator raw, so the guard
+    // stopped exactly where the fallback started.
+    const dayMs = 86_400_000;
+    const iso = (ms: number) => new Date(Date.now() - ms).toISOString();
+
+    const ghost = await createTestUser(svc, `ghost-agent-${run}@test.local`, "agent", ORG_A);
+    const off = await svc.from("profiles").update({ is_active: false }).eq("id", ghost.id);
+    expect(off.error).toBeNull();
+
+    const { data: deals, error: dealsErr } = await svc
+      .from("deals")
+      .insert([
+        {
+          org_id: ORG_A,
+          deal_type: "sale",
+          stage_id: stageSaleNew,
+          title: `Nudge ghost-agent ${run}`,
+          agent_id: ghost.id, // arm 1 must skip this
+          created_by: null,
+          last_activity_at: iso(20 * dayMs),
+        },
+        {
+          org_id: ORG_A,
+          deal_type: "sale",
+          stage_id: stageSaleNew,
+          title: `Nudge ghost-creator ${run}`,
+          agent_id: null,
+          created_by: ghost.id, // arm 2 must skip this
+          last_activity_at: iso(20 * dayMs),
+        },
+      ])
+      .select("id");
+    expect(dealsErr).toBeNull();
+    const [ghostAgentDeal, ghostCreatorDeal] = deals!;
+
+    const { data: viewing, error: viewErr } = await svc
+      .from("viewings")
+      .insert({
+        org_id: ORG_A,
+        property_id: propA1,
+        contact_id: contactA,
+        agent_id: ghost.id, // the viewing rule has the same two arms
+        created_by: null,
+        scheduled_at: iso(49 * 3_600_000),
+        status: "completed",
+      })
+      .select("id")
+      .single();
+    expect(viewErr).toBeNull();
+
+    expect((await svc.rpc("create_followup_nudges", { p_org: ORG_A })).error).toBeNull();
+
+    /** The one open nudge for an entity, with its assignee's active state. */
+    const assigneeOf = async (col: "deal_id" | "viewing_id", id: string) => {
+      const { data: tasks, error } = await svc
+        .from("tasks")
+        .select("id, assignee_id")
+        .eq(col, id)
+        .not("kind", "is", null)
+        .eq("is_done", false);
+      expect(error).toBeNull();
+      expect(tasks ?? [], `${col} ${id} must have exactly one open nudge`).toHaveLength(1);
+
+      const assigneeId = tasks![0].assignee_id;
+      expect(assigneeId, "a nudge with no assignee is invisible (0012)").not.toBeNull();
+
+      const { data: profile } = await svc
+        .from("profiles")
+        .select("id, role, is_active, org_id")
+        .eq("id", assigneeId!)
+        .single();
+      expect(profile, "the assignee must exist").not.toBeNull();
+      return profile!;
+    };
+
+    /**
+     * The assignee AS MINTED, read from the creation event rather than the task
+     * row. Step 5 of the job re-homes stranded tasks in the SAME invocation that
+     * creates them, so the final `tasks.assignee_id` cannot distinguish "the
+     * fallback skipped the deactivated arm" from "the fallback used it and the
+     * sweep cleaned up after". Verified by reverting the arms and watching this
+     * test still pass on the row alone. The event is written inside step 1/2,
+     * before the sweep, so it is the only witness to what the arms chose.
+     */
+    const mintedAssigneeOf = async (entityType: "deal" | "viewing", id: string) => {
+      const { data: created, error } = await svc
+        .from("events")
+        .select("payload")
+        .eq("entity_type", entityType)
+        .eq("entity_id", id)
+        .eq("event_type", "followup_task_created");
+      expect(error).toBeNull();
+      expect(created ?? [], `${entityType} ${id} must have one creation event`).toHaveLength(1);
+      return (created![0].payload as { assignee_id: string | null }).assignee_id;
+    };
+
+    for (const [label, entityType, col, id] of [
+      ["deal agent", "deal", "deal_id", ghostAgentDeal.id],
+      ["deal creator", "deal", "deal_id", ghostCreatorDeal.id],
+      ["viewing agent", "viewing", "viewing_id", viewing!.id],
+    ] as const) {
+      const minted = await mintedAssigneeOf(entityType, id);
+      expect(minted, `${label}: the fallback ARM must skip a deactivated profile`).not.toBe(
+        ghost.id,
+      );
+
+      const assignee = await assigneeOf(col, id);
+      expect(assignee.id, `${label}: a deactivated profile must not be nudged`).not.toBe(ghost.id);
+      expect(assignee.is_active, `${label}: the fallback must land on an ACTIVE profile`).toBe(true);
+      expect(assignee.org_id, `${label}: and stay inside the entity's own org`).toBe(ORG_A);
+    }
+
+    // The standing invariant, stated once: no open system-generated task in this
+    // org may sit on a profile nobody can sign in as.
+    const { data: openSystemTasks } = await svc
+      .from("tasks")
+      .select("id, assignee_id, kind")
+      .eq("org_id", ORG_A)
+      .not("kind", "is", null)
+      .not("assignee_id", "is", null)
+      .eq("is_done", false);
+
+    const { data: inactive } = await svc
+      .from("profiles")
+      .select("id")
+      .eq("org_id", ORG_A)
+      .eq("is_active", false);
+    const inactiveIds = new Set((inactive ?? []).map((p) => p.id));
+
+    const stranded = (openSystemTasks ?? []).filter((t) => inactiveIds.has(t.assignee_id!));
+    expect(stranded, "open system tasks stranded on deactivated profiles").toEqual([]);
+
+    const { data: chainOk } = await svc.rpc("verify_events_chain", { p_org: ORG_A });
+    expect(chainOk, "the nudge events keep the hash chain intact").toBe(true);
+  });
 });

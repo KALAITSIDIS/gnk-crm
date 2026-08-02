@@ -32,11 +32,12 @@ with expected as (
     3::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     6::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 23::bigint as migrations,
+    2::bigint as auth_users, 24::bigint as migrations,
     9::bigint as obj_documents, 2::bigint as obj_signatures, 15::bigint as obj_media
     -- captured 2026-07-29 from hosted (yjgirvzgoiywdojnpkpd), after 0023.
-    -- `migrations` moved 19 -> 23 across 0020/0021/0022/0023; every other count
-    -- is unchanged (share_links ships empty).
+    -- `migrations` moved 19 -> 23 across 0020/0021/0022/0023, then 23 -> 24 with
+    -- 0024 (2026-08-02). Every other count is unchanged: 0024 replaces two
+    -- function bodies and its backfill was a no-op on hosted (tasks = 0).
 ),
 
 -- ---------- row counts ----------

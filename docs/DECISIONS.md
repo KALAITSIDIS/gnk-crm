@@ -1654,3 +1654,76 @@ across local reruns, so it passed only on a freshly reset database. CI always
 starts fresh, so it stayed green — which is exactly how such a test hides. It
 now asserts the invariant that matters (never NULL; an active admin of that org)
 and passes both fresh and on a dirty rerun.
+
+## 2026-08-02 · T-nudge-active-assignee — a deactivated assignee is worse than none (0024)
+
+0012 established that a NULL assignee is invisible: `/tasks` and the agent
+dashboard both filter `assignee_id = me`. Its answer was a three-armed fallback
+— entity agent → creator → the org's oldest **active** admin. Only that third
+arm ever checked `is_active`, so the guard stopped exactly where the fallback
+started, and all three system task kinds inherited the gap: `deal_no_contact`
+and `viewing_feedback` (0020) took `agent_id`/`created_by` raw, `mandate_renewal`
+(0012, re-stated in 0020) took `assigned_agent_id`/`created_by` raw.
+
+**A deactivated assignee is strictly worse than a NULL one.** The task is
+equally invisible — 0014 makes `is_active = false` kill RLS access, so the
+person cannot sign in to see it — but the row no longer *looks* unassigned, so
+no orphan-tasks surface can find it either. It is lost in a way the 0012 bug at
+least advertised. RLS test 24 had already written the reason down in a comment
+("an inactive admin would be invisible too") while asserting it for one arm out
+of three.
+
+**Each raw arm became "that profile, if it is active."** Inlined as a scalar
+subquery rather than extracted into a helper function, deliberately: a new
+`security definer` function in `public` is anon-executable by default (0007, and
+the 0021 regression that followed 0020 for exactly this reason), and this needed
+no new grant surface at all. `create or replace` preserves the ACL, so 0007's
+lockdown and 0022's deliberate *removal* of the `service_role` grant on
+`expire_mandates` both survived untouched — confirmed by reading `proacl` before
+and after, on hosted and local.
+
+**Fixing the arms was necessary but not sufficient, for two reasons.** Tasks
+minted before today are already stranded and the cycle guards ("a nudge exists
+for THIS boundary") deliberately refuse to mint a replacement, so nothing would
+ever repair them. And deactivation happens *after* assignment far more often
+than before it — a user deactivated tomorrow strands every open task they hold,
+which no one-time backfill can see. So the re-home is stated as an invariant and
+self-healed nightly (0020's own design rule), as step 5 of
+`create_followup_nudges`, plus the same statement run once inline at the bottom
+of the migration so the database is correct now rather than at 03:15.
+
+**Step 5 covers every system `kind`, mandate_renewal included.** The nudge job
+runs at 03:15, fifteen minutes after `expire_mandates` at 03:00, so one place
+can own the invariant for all three kinds instead of each cron re-implementing
+it. It re-homes to the active-admin arm rather than re-deriving the per-kind
+arms — those arms are exactly what went stale — and only where an active admin
+exists, so a degenerate org is left alone rather than having its assignee
+nulled. NULL is invisible too; silently making it worse is not a repair.
+
+**Scoped to `kind is not null`.** A task one person assigned to another by hand
+has the same invisibility problem, but re-homing it silently would overwrite a
+deliberate human choice. That wants an admin surface with an explicit reassign,
+not a cron rule — logged in BACKLOG.
+
+**A test that would have passed for the wrong reason.** Test 26 first asserted
+on `tasks.assignee_id`. But step 5 re-homes stranded tasks in the *same
+invocation* that mints them, so the final row cannot distinguish "the arm
+skipped the deactivated profile" from "the arm used it and the sweep cleaned up
+after". Verified rather than assumed: the arms were reverted with step 5 left
+in place, and the test still passed. It now also asserts the assignee **as
+minted**, read from the `followup_task_created` event written inside step 1/2
+before the sweep — the only witness to what the arms actually chose. Against the
+reverted arms that assertion fails; against 0024 it passes.
+
+`expire_mandates()` takes no `p_org` and holds no `service_role` grant (0022),
+so it is unreachable from the service-key RLS suite by design. Adding either to
+test it would reverse a deliberate decision for the sake of coverage, so it was
+not done; its arms are identical to the two that test 26 does pin, and step 5
+covers its output. Noted as the residual gap.
+
+Verified: 30 RLS (up from 29) · 437 unit · typecheck · lint · build. Hosted and
+local function bodies are byte-identical (matching `md5(prosrc)`), ACLs
+unchanged on both, `verify_events_chain` still true, and `get_advisors` returns
+the same set as before the change — no new finding, which is the check whose
+absence caused 0021. The hosted backfill was a provable no-op (`tasks` = 0);
+locally it re-homed 3 rows.
