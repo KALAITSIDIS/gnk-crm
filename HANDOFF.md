@@ -1,14 +1,14 @@
-# HANDOFF — 2026-07-31
+# HANDOFF — 2026-08-02
 
 Read `docs/HANDOVER.md` and `CLAUDE.md` first; this is the delta on top of them.
 
 | | |
 |---|---|
-| `main` | `db3bf63`, clean, in sync with `origin/main`, only branch |
-| CI | ✅ green (both `checks` and `rls`) on every push |
-| Production | `gnk-crm.vercel.app` healthy — build is commit `21c25fc` |
-| Hosted DB | `yjgirvzgoiywdojnpkpd` — **23 migrations**, `non_filename_versions = 0`, chain verifies, 62 events |
-| Tests | **437 unit** · **29 RLS** (first-run on a fresh DB) · **165 desktop E2E**, 4 skipped |
+| `main` | `1f75350`, clean, **1 commit ahead of `origin/main`** — not pushed (§0) |
+| CI | ✅ green (both `checks` and `rls`) on every push; last run `d8caa60` |
+| Production | `gnk-crm.vercel.app` healthy — `/login` 200 |
+| Hosted DB | `yjgirvzgoiywdojnpkpd` — **24 migrations**, `non_filename_versions = 0`, chain verifies, 62 events |
+| Tests | **437 unit** · **30 RLS** (first-run on a fresh DB) · **165 desktop E2E**, 4 skipped |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
 | Backups | ✅ complete + verified, `../gnk-backups/2026-07-30` and `2026-07-31` (§2) |
 
@@ -16,11 +16,23 @@ Read `docs/HANDOVER.md` and `CLAUDE.md` first; this is the delta on top of them.
 
 ## 0. START HERE
 
-**Nothing is broken and nothing is half-finished.** The tree is clean, everything
-is pushed, CI is green, and the roadmap's decision-free work is exhausted.
+**One thing is genuinely half-finished, and it is one command.** Migration 0024
+is applied to hosted and committed locally, but `main` has **not been pushed**.
+The DoD in CLAUDE.md ends at "committed", and a push is outward-facing, so it
+was left for the operator. Until it lands, the hosted database carries 0024 and
+the GitHub repo does not:
+
+```bash
+cd "C:/Users/user/OneDrive/Desktop/TSOPOZIDIS/gnk-crm" && git push origin main
+```
+
+No app code changed in 0024 — a migration, a test and docs — so the Vercel
+deploy it triggers is a no-op in behaviour.
 
 **One open item, and it is the operator's:** §2b — the legacy `service_role` key
-was exposed in a chat transcript and is still live. Low likelihood (transcript
+was exposed in a chat transcript and is still live. Re-confirmed 2026-08-02:
+`get_publishable_keys` still returns the legacy `anon` entry with
+`disabled: false`, so nothing has been revoked yet. Low likelihood (transcript
 only, never published or committed) but it bypasses RLS entirely. Everything
 needed to revoke it safely is written out there, including the blocker that
 stopped eight attempts.
@@ -28,26 +40,55 @@ stopped eight attempts.
 **Do not start B4 or B5** — both need a decision only the operator can give
 (§5). **B9 is closed, not deferred.**
 
-**The operator chose to stabilise rather than build.** Three features shipped
-and none has met a real user yet. If asked "what next", the honest answer is
-usage, not code: mint one proposal link, install the PWA on a phone, and look at
-`/tasks` after the 03:15 cron.
+**The desk still has not used the system.** `share_links` = 0, `tasks` = 0,
+events = 62, all unchanged since 2026-07-31. The nudge cron has been firing
+nightly against zero open deals. If asked "what next", the honest answer is
+still usage, not code: mint one proposal link, install the PWA on a phone, and
+look at `/tasks` after the 03:15 cron.
 
 A first useful check in a new session — all read-only:
 
 ```bash
-cd "C:/Users/user/OneDrive/Desktop/TSOPOZIDIS/gnk-crm" && git log --oneline -3 && git status --short
+cd "C:/Users/user/OneDrive/Desktop/TSOPOZIDIS/gnk-crm" && git log --oneline -3 && git status -sb
 ```
 
-Then verify hosted is unchanged via the Supabase connector (`execute_sql`,
-read-only): migrations = 23, `non_filename_versions` = 0,
-`verify_events_chain` true, and `share_links`/`tasks` row counts (both were 0 —
-if either is non-zero, the desk has started using B3/B7 and that is worth
-reading before doing anything else).
+Then verify hosted via the Supabase connector (`execute_sql`, read-only):
+migrations = 24, `non_filename_versions` = 0, chain verifies, and
+`share_links`/`tasks` row counts (both were 0 — if either is non-zero, the desk
+has started using B3/B7 and that is worth reading before doing anything else).
+
+**Two snippet corrections, found the hard way on 2026-08-02.**
+`verify_events_chain` takes an argument — `verify_events_chain(p_org uuid)`;
+calling it bare raises `42883 function does not exist`, which reads like a
+missing migration and is not. And `non_filename_versions` must test
+`version !~ '^[0-9]{4}$'` (versions are `0001`…`0024`, matching the migration
+filenames); the 14-digit timestamp shape reports every row as non-conforming.
+`scripts/backup/verify-restore.sql` had the right regex all along.
 
 ---
 
-## 1. Shipped 2026-07-29/31 (all applied to hosted, pushed, CI-green)
+## 1. Shipped
+
+### 2026-08-02 — applied to hosted, committed, **not yet pushed**
+
+- **0024 — system tasks never land on a deactivated profile**
+  (`T-nudge-active-assignee`). 0012's three-armed fallback only checked
+  `is_active` on the **third** arm, so `deal_no_contact`, `viewing_feedback` and
+  `mandate_renewal` could all assign a task to a profile nobody can sign in as —
+  invisible like the 0012 NULL bug, but no longer *looking* unassigned, so no
+  orphan surface could find it. Every arm is now active-only; a new step 5 in
+  `create_followup_nudges` re-homes stranded open system tasks nightly (it runs
+  15 min after `expire-mandates`, so one place owns the invariant for all three
+  kinds); a one-time backfill repaired existing rows. RLS test 26 pins it.
+  **The hosted backfill was a provable no-op** — `tasks` = 0 — and it re-homed 3
+  rows locally.
+  - Body diff done as `md5(prosrc)`: hosted and local are byte-identical.
+  - ACLs re-read after the replace: `create_followup_nudges` keeps
+    `service_role`, `expire_mandates` keeps **none** (0022's deliberate state).
+    `create or replace` preserves ACLs — it does not reset them.
+  - `get_advisors` returned the same set as before the change. No 0021 repeat.
+
+### 2026-07-29/31 (all applied to hosted, pushed, CI-green)
 
 - **B7 — follow-up nudges** (0020). Cron-driven `deal_no_contact` (14d silent) and
   `viewing_feedback` (48h) tasks, cycle-keyed like 0012, Cyprus EOD due stamps,
@@ -218,6 +259,14 @@ treatment an earlier migration or decision applied.**
    `resolve_share_link`, be a deliberate exception pinned in
    `verify-restore.sql`.
 
+A fourth, learned on 0024: **a self-healing step can hide the bug it heals.**
+Step 5 re-homes stranded tasks in the *same* invocation that mints them, so a
+test asserting on the final `tasks.assignee_id` passed even with the buggy arms
+put back. Confirmed by actually reverting them rather than reasoning about it.
+Test 26 now also asserts the assignee **as minted**, read from the
+`followup_task_created` event written before the sweep. Whenever a job both
+creates and repairs in one pass, assert on the creation event, not the row.
+
 And two testing lessons:
 
 - **Playwright's `request` fixture is authenticated.** It reported 200 for
@@ -254,6 +303,17 @@ And two testing lessons:
 **Left, both gated on an operator decision:**
 - **B4 documents** — which documents? Do not invent legal text for a Cyprus agency.
 - **B5 map** — tile provider, and it now needs a CSP `img-src`/`connect-src` call.
+
+**Decision-free work that is left is bug-shaped, not roadmap-shaped.** The
+roadmap itself is exhausted, but `docs/BACKLOG.md` holds diagnosed defects that
+need no decision. Two worth knowing about:
+- **`csp.spec.ts` depends on test residue** (§6) — fix is written down, but
+  proving it needs a local `supabase db reset` + repopulate cycle, and disk was
+  down to 9.3 GB on 2026-08-02. That is a risk call for the operator, which is
+  why it was not taken unilaterally.
+- **Human-assigned tasks are still stranded by deactivation** — 0024's sweep is
+  deliberately limited to system-generated rows, because re-homing a person's
+  deliberate assignment silently is the wrong default. Wants an admin surface.
 
 ---
 
@@ -323,7 +383,7 @@ npm run test:rls
 npx playwright test --project=setup --project=desktop
 ```
 
-Expect 437 unit · 29 RLS · 165 E2E (4 skipped). The E2E needs a populated
+Expect 437 unit · 30 RLS · 165 E2E (4 skipped). The E2E needs a populated
 database: on a freshly reset DB the two `csp.spec.ts` detail tests fail on the
 first run and pass on the second, once `happy-path.spec.ts` has created a
 property and a contact.
