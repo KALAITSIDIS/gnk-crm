@@ -1,19 +1,53 @@
-# HANDOFF — 2026-07-29
+# HANDOFF — 2026-07-31
 
 Read `docs/HANDOVER.md` and `CLAUDE.md` first; this is the delta on top of them.
 
 | | |
 |---|---|
-| `main` | `7802a75`, clean, in sync with `origin/main`, only branch |
-| CI | ✅ green (both `checks` and `rls`) on every push today |
-| Production | `gnk-crm.vercel.app` healthy |
+| `main` | `db3bf63`, clean, in sync with `origin/main`, only branch |
+| CI | ✅ green (both `checks` and `rls`) on every push |
+| Production | `gnk-crm.vercel.app` healthy — build is commit `21c25fc` |
 | Hosted DB | `yjgirvzgoiywdojnpkpd` — **23 migrations**, `non_filename_versions = 0`, chain verifies, 62 events |
 | Tests | **437 unit** · **29 RLS** (first-run on a fresh DB) · **165 desktop E2E**, 4 skipped |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
+| Backups | ✅ complete + verified, `../gnk-backups/2026-07-30` and `2026-07-31` (§2) |
 
 ---
 
-## 1. Shipped today (all applied to hosted, pushed, CI-green)
+## 0. START HERE
+
+**Nothing is broken and nothing is half-finished.** The tree is clean, everything
+is pushed, CI is green, and the roadmap's decision-free work is exhausted.
+
+**One open item, and it is the operator's:** §2b — the legacy `service_role` key
+was exposed in a chat transcript and is still live. Low likelihood (transcript
+only, never published or committed) but it bypasses RLS entirely. Everything
+needed to revoke it safely is written out there, including the blocker that
+stopped eight attempts.
+
+**Do not start B4 or B5** — both need a decision only the operator can give
+(§5). **B9 is closed, not deferred.**
+
+**The operator chose to stabilise rather than build.** Three features shipped
+and none has met a real user yet. If asked "what next", the honest answer is
+usage, not code: mint one proposal link, install the PWA on a phone, and look at
+`/tasks` after the 03:15 cron.
+
+A first useful check in a new session — all read-only:
+
+```bash
+cd "C:/Users/user/OneDrive/Desktop/TSOPOZIDIS/gnk-crm" && git log --oneline -3 && git status --short
+```
+
+Then verify hosted is unchanged via the Supabase connector (`execute_sql`,
+read-only): migrations = 23, `non_filename_versions` = 0,
+`verify_events_chain` true, and `share_links`/`tasks` row counts (both were 0 —
+if either is non-zero, the desk has started using B3/B7 and that is worth
+reading before doing anything else).
+
+---
+
+## 1. Shipped 2026-07-29/31 (all applied to hosted, pushed, CI-green)
 
 - **B7 — follow-up nudges** (0020). Cron-driven `deal_no_contact` (14d silent) and
   `viewing_feedback` (48h) tasks, cycle-keyed like 0012, Cyprus EOD due stamps,
@@ -228,6 +262,24 @@ And two testing lessons:
 ## 7. Environment traps
 
 - **Do not `rm -rf .next` or build while a dev server is running.**
+- **The Vercel dashboard can silently swallow every action.** On 2026-07-31 a
+  full-screen *"Secure Your Account with 2FA"* interstitial sat in front of the
+  dashboard: env-var saves and Redeploy clicks appeared to work and nothing was
+  recorded. Env rows still read *Updated Jul 15 / Jul 11* after several attempts
+  and no deployment was ever created. **Verify by the row's date changing and by
+  a new deployment appearing** — never by the click seeming to land. The CLI
+  (`npx vercel …`) prints real errors and is the fallback.
+- **`supabase login` may never persist a token** (nothing in `~/.supabase`,
+  nothing in Windows Credential Manager) — even `login --token`. When that
+  happens `db dump` / `db push` are unusable; use `--db-url` instead, which
+  needs neither `login` nor `link`.
+- **`npx supabase stop` can drop the local volume.** After any stop/start check
+  `select count(*) from supabase_migrations.schema_migrations` and `db reset` if
+  it is empty. After a `db reset`, PostgREST's schema cache can also be stale
+  (`Could not find the table 'public.organizations' in the schema cache`).
+- **A shell left `cd`'d into a directory locks it on Windows** — `rm -rf` then
+  fails with "Device or resource busy". `cd` out first. OneDrive holds handles
+  too, so an emptied directory may refuse to disappear.
 - **`npx supabase stop` can drop the local volume** — after any stop/start,
   check `select count(*) from supabase_migrations.schema_migrations` and
   `db reset` if it is empty.
