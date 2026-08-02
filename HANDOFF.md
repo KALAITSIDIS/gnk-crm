@@ -4,11 +4,11 @@ Read `docs/HANDOVER.md` and `CLAUDE.md` first; this is the delta on top of them.
 
 | | |
 |---|---|
-| `main` | `1f75350`, clean, **1 commit ahead of `origin/main`** — not pushed (§0) |
-| CI | ✅ green (both `checks` and `rls`) on every push; last run `d8caa60` |
+| `main` | `26f2bf4`, clean, in sync with `origin/main`, only branch |
+| CI | ✅ green (both `checks` and `rls`); confirmed on `3aa7efb` |
 | Production | `gnk-crm.vercel.app` healthy — `/login` 200 |
 | Hosted DB | `yjgirvzgoiywdojnpkpd` — **24 migrations**, `non_filename_versions = 0`, chain verifies, 62 events |
-| Tests | **437 unit** · **30 RLS** (first-run on a fresh DB) · **165 desktop E2E**, 4 skipped |
+| Tests | **437 unit** · **30 RLS** · **167 desktop E2E**, 4 skipped (`--list` says 171 total) |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
 | Backups | ✅ complete + verified, `../gnk-backups/2026-07-30` and `2026-07-31` (§2) |
 
@@ -16,18 +16,10 @@ Read `docs/HANDOVER.md` and `CLAUDE.md` first; this is the delta on top of them.
 
 ## 0. START HERE
 
-**One thing is genuinely half-finished, and it is one command.** Migration 0024
-is applied to hosted and committed locally, but `main` has **not been pushed**.
-The DoD in CLAUDE.md ends at "committed", and a push is outward-facing, so it
-was left for the operator. Until it lands, the hosted database carries 0024 and
-the GitHub repo does not:
-
-```bash
-cd "C:/Users/user/OneDrive/Desktop/TSOPOZIDIS/gnk-crm" && git push origin main
-```
-
-No app code changed in 0024 — a migration, a test and docs — so the Vercel
-deploy it triggers is a no-op in behaviour.
+**Nothing is broken and nothing is half-finished.** The tree is clean, `main` is
+pushed and in sync, CI is green, and hosted is at 24 migrations matching the
+repo. Two diagnosed defects were closed on 2026-08-02 — 0024 (§1) and the
+`csp.spec.ts` residue dependency (§6).
 
 **One open item, and it is the operator's:** §2b — the legacy `service_role` key
 was exposed in a chat transcript and is still live. Re-confirmed 2026-08-02:
@@ -69,7 +61,7 @@ filenames); the 14-digit timestamp shape reports every row as non-conforming.
 
 ## 1. Shipped
 
-### 2026-08-02 — applied to hosted, committed, **not yet pushed**
+### 2026-08-02 — applied to hosted, pushed, CI-green
 
 - **0024 — system tasks never land on a deactivated profile**
   (`T-nudge-active-assignee`). 0012's three-armed fallback only checked
@@ -87,6 +79,10 @@ filenames); the 14-digit timestamp shape reports every row as non-conforming.
     `service_role`, `expire_mandates` keeps **none** (0022's deliberate state).
     `create or replace` preserves ACLs — it does not reset them.
   - `get_advisors` returned the same set as before the change. No 0021 repeat.
+- **`csp.spec.ts` no longer depends on test residue** (`T-csp-fixture`). The two
+  detail tests seed their own property and contact when the list is empty,
+  preferring a real row when one exists, and sweep them by marker afterwards.
+  Verified without a `db reset` by forcing the empty branch — see §6.
 
 ### 2026-07-29/31 (all applied to hosted, pushed, CI-green)
 
@@ -306,14 +302,14 @@ And two testing lessons:
 
 **Decision-free work that is left is bug-shaped, not roadmap-shaped.** The
 roadmap itself is exhausted, but `docs/BACKLOG.md` holds diagnosed defects that
-need no decision. Two worth knowing about:
-- **`csp.spec.ts` depends on test residue** (§6) — fix is written down, but
-  proving it needs a local `supabase db reset` + repopulate cycle, and disk was
-  down to 9.3 GB on 2026-08-02. That is a risk call for the operator, which is
-  why it was not taken unilaterally.
+need no decision — that is where to look next, not IMPROVEMENTS. The two named
+here on 2026-08-02 are both dealt with (0024, and the `csp.spec.ts` residue fix
+in §6). What remains there is mostly nice-to-have, with one genuine follow-up:
 - **Human-assigned tasks are still stranded by deactivation** — 0024's sweep is
   deliberately limited to system-generated rows, because re-homing a person's
-  deliberate assignment silently is the wrong default. Wants an admin surface.
+  deliberate assignment silently is the wrong default. Wants an admin surface
+  ("tasks held by deactivated users", with an explicit reassign), which pairs
+  with the org-wide overdue/unassigned view already in BACKLOG.
 
 ---
 
@@ -325,9 +321,10 @@ need no decision. Two worth knowing about:
   read as clean. Fix: check within the hour, or give the endpoint a durable sink
   (the handler already writes to Sentry; it needs a DSN). In `docs/BACKLOG.md`.
 - **2FA is enforced at the application layer only.**
-- **Two `csp.spec.ts` tests fail on a freshly reset local DB** (they need a
-  property and contact that `happy-path.spec.ts` creates). Pre-existing, never
-  reaches CI, logged in BACKLOG.
+- ~~Two `csp.spec.ts` tests fail on a freshly reset local DB~~ — **fixed
+  2026-08-02.** They now seed their own property and contact when the list is
+  empty (preferring a real row when one exists) and sweep them by marker
+  afterwards. See DECISIONS `T-csp-fixture`.
 - **B8 does not queue writes.** Offline slip signing was considered and
   rejected: it would put commission evidence in a client-side queue.
 
@@ -383,10 +380,10 @@ npm run test:rls
 npx playwright test --project=setup --project=desktop
 ```
 
-Expect 437 unit · 30 RLS · 165 E2E (4 skipped). The E2E needs a populated
-database: on a freshly reset DB the two `csp.spec.ts` detail tests fail on the
-first run and pass on the second, once `happy-path.spec.ts` has created a
-property and a contact.
+Expect 437 unit · 30 RLS · 167 E2E passed, 4 skipped (`--list` counts 171
+including the self-skips and the `setup` project). The `csp.spec.ts` detail
+tests no longer need a populated database — they seed what they need — so a
+freshly reset DB is now a clean first run.
 
 ```bash
 curl -s "https://api.github.com/repos/KALAITSIDIS/gnk-crm/actions/runs?per_page=5"
