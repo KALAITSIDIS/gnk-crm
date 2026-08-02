@@ -35,23 +35,95 @@ Read `docs/HANDOVER.md` and `CLAUDE.md` first; this is the delta on top of them.
 
 ---
 
-## 2. THE ONE THING THAT STILL MATTERS MOST
+## 2. Backups — DONE 2026-07-30/31, and verified
 
-**There is still no backup of production.** Free plan = no automated backups.
-Everything else here is polish next to this:
+Production had **no** recoverable backup until 2026-07-30. It now has two
+complementary sets in `../gnk-backups/` (outside the repo, untracked):
+
+| set | contents | verification |
+|---|---|---|
+| `2026-07-30/` | `events.sql` (62 rows, **chain-faithful**), `business-data.json` (15 tables), `auth-and-storage-manifest.json` (2 accounts + all 26 file names/sizes), `README.md` restore guide | md5 computed **inside Postgres** and re-checked on disk — all three match |
+| `2026-07-31/` | `export.mjs` output: **all 26 Storage files** + every table as JSON | every file size checked against the independent manifest; `manifest.json` confirms `source: https://yjgirvzgoiywdojnpkpd.supabase.co` |
+
+**Keep both, and know why.** `export.mjs` warns about itself: its `events` copy
+is NOT chain-faithful (PostgREST hands `jsonb` to JavaScript and numeric scale is
+lost, so `verify_events_chain` fails on restore). `2026-07-31` has the FILES;
+`2026-07-30/events.sql` has the events that actually restore.
+
+**Traps learned taking it:**
+- `export.mjs` reads `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` from the
+  SHELL and loads no `.env`. With nothing set it falls back to
+  `NEXT_PUBLIC_SUPABASE_URL` — **your local stack** — and silently backs up the
+  wrong database. Always check `manifest.json`'s `source` afterwards. The old
+  `2026-07-28/` folder was exactly this mistake (3 orgs, 295 events, localhost);
+  it has been deleted.
+- `supabase login` never persisted a token on this machine (nothing in
+  `~/.supabase`, nothing in Windows Credential Manager), so `db dump`/`db push`
+  were unusable all session. `--db-url` avoids `login`/`link` entirely — see
+  BACKUP_RESTORE §3.
+- The `media` bucket is public (0008), so its 15 files need **no credential** —
+  plain HTTPS from `/storage/v1/object/public/media/…`.
+
+**Still to do: `supabase db dump --db-url …` for a true pg_dump.** The above is
+a genuine, verified safety net, but pg_dump remains the primary per
+BACKUP_RESTORE §3.
+
+---
+
+## 2b. OPEN SECURITY ITEM — rotate the service_role key
+
+**The legacy `service_role` key was pasted into a chat transcript on 2026-07-30
+and is still live.** It bypasses RLS entirely: full read/write on client PII, KYC
+documents and the evidence chain. Not committed, not posted publicly — the
+exposure is the transcript only, so likelihood is low — but it must be revoked.
+
+**It is load-bearing:** `createAdminClient()` (`lib/supabase/admin.ts`) reads
+`SUPABASE_SERVICE_ROLE_KEY`, used by commission evidence, organisation settings,
+contact documents, document uploads and GDPR erasure. Revoking without replacing
+takes those down.
+
+Sequence (each step must be *seen* to take effect — several attempts silently
+did nothing):
+
+1. Supabase → API Keys → *Publishable and secret* → a secret key
+   (`sb_secret_…`) **already exists**; copy it with the ⧉ icon, not the eye.
+2. Vercel → Environment Variables → edit `SUPABASE_SERVICE_ROLE_KEY` to that,
+   and `NEXT_PUBLIC_SUPABASE_ANON_KEY` to the publishable key
+   (`sb_publishable_…`, safe to share). **The row's date must change to today —
+   that is the only proof it saved.**
+3. Deployments → ⋯ → Redeploy, **build cache OFF** (`NEXT_PUBLIC_*` is baked
+   into the client bundle at build time; a cached build keeps the old key).
+4. Verify: a deployment newer than `21c25fc`; the live page ships
+   `sb_publishable_…`; `/settings/organization` still works (it exercises the
+   service-role path).
+5. Supabase → API Keys → **Legacy anon, service_role** tab → **Disable
+   JWT-based API keys**. This is the step that actually revokes it. Nothing on
+   the *Publishable and secret* tab does.
+
+**Test that it worked** — must return **401**, not 200:
 
 ```bash
-cd "C:/Users/user/OneDrive/Desktop/TSOPOZIDIS/gnk-crm" && npx supabase db dump --schema public,auth,storage -f backup.sql
+curl -s -o /dev/null -w "%{http_code}\n" "https://yjgirvzgoiywdojnpkpd.supabase.co/rest/v1/organizations?select=id&limit=1" -H "apikey: <OLD_KEY>" -H "Authorization: Bearer <OLD_KEY>"
 ```
 
-`--schema public,auth,storage` is not optional: `auth.users` lives outside
-`public`, and a restore without it is a database nobody can log into. Storage
-objects (26: KYC scans, signed slips, property media) are files and reach no SQL
-export — `scripts/backup/export.mjs` covers those.
+**Known blocker:** as of 2026-07-31 the Vercel dashboard would not persist env
+edits — the rows still read *Updated Jul 15 / Jul 11* after several attempts, and
+no redeploy was ever created. A **"Secure Your Account with 2FA" interstitial**
+was blocking the dashboard and is the likely cause; it was skipped, but the
+edits still did not save. If the dates will not change, use the CLI instead —
+it prints real errors rather than failing silently:
 
-Other operator-only items: **leaked-password protection is still off**
-(advisor-confirmed today), and `GNK-PAF-0002` still wants archiving **via the UI
-button** so `archiveProperty` writes its event.
+```bash
+npx vercel login && npx vercel env rm SUPABASE_SERVICE_ROLE_KEY production && npx vercel env add SUPABASE_SERVICE_ROLE_KEY production && npx vercel --prod
+```
+
+---
+
+## 2c. Other operator-only items
+
+**Leaked-password protection is still off** (advisor-confirmed 2026-07-29), and
+`GNK-PAF-0002` still wants archiving **via the UI button** so `archiveProperty`
+writes its event.
 
 ---
 
