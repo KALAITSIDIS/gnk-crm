@@ -190,15 +190,22 @@ built without explicit direction.
   choice, so it wants a surface (an admin "tasks held by deactivated users" list
   with an explicit reassign) rather than a cron rule. Pairs naturally with the
   org-wide overdue/unassigned admin view already in this file.
-- **`csp.spec.ts` depends on test residue.** "property detail" and "contact
-  detail reports no CSP violations" assert `expect(href).toBeTruthy()` on the
-  first row of `/properties` and `/contacts`. Only `happy-path.spec.ts` creates
-  those rows, so against a freshly reset database both FAIL on run 1 and pass on
-  run 2 — the exact anti-pattern HANDOVER §4/§5 calls out. Not reached by CI
-  (which runs `checks` + `rls`, not Playwright), so it only bites after a local
-  `supabase db reset`. Fix: seed a property and contact in the spec's own
-  fixture, or self-skip with a message the way the viewing-detail test already
-  does. Found 2026-07-29 during B7; reproduced on the pre-change tree.
+- ~~**`csp.spec.ts` depends on test residue.**~~ **RESOLVED 2026-08-02.** The
+  two detail tests asserted `expect(href).toBeTruthy()` on the first row of
+  `/properties` and `/contacts`, which only `happy-path.spec.ts` creates — so
+  against a freshly reset database both FAILED on run 1 and passed on run 2.
+  Of the two fixes offered here, **seeding** was chosen over self-skipping:
+  these are the heaviest client routes in the app (tabbed forms, media grid),
+  and dropping their CSP evidence silently on a fresh database is the worse
+  trade. The spec now prefers a real row when one exists — real data exercises
+  media and documents a bare fixture does not — and seeds its own property and
+  contact when the list is empty, removing them in `afterAll`. Cleanup is
+  marker-based (`reference like 'CSP-FIXTURE-%'`; `contacts.notes`, since
+  `properties` has no `notes` column) so a crashed run is swept by the next one
+  rather than leaking rows. Seeding needs the service key, so against a
+  non-local base URL the tests still self-skip rather than assert falsely.
+  Verified without a `db reset` by forcing the empty-list branch, confirming
+  both rows were really created, and watching the marker sweep remove them.
 - **CSP report delivery cannot be confirmed "later" — Vercel log retention is
   ~1 hour on this plan (C1).** `/api/csp-report` sinks to stdout, and HANDOFF
   told the operator to browse production and then grep the runtime logs for

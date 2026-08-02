@@ -1727,3 +1727,46 @@ unchanged on both, `verify_events_chain` still true, and `get_advisors` returns
 the same set as before the change — no new finding, which is the check whose
 absence caused 0021. The hosted backfill was a provable no-op (`tasks` = 0);
 locally it re-homed 3 rows.
+
+## 2026-08-02 · T-csp-fixture — the CSP detail tests seed rather than skip
+
+`csp.spec.ts`'s "property detail" and "contact detail" tests took the first row
+of `/properties` and `/contacts` and asserted it existed. Only
+`happy-path.spec.ts` creates those rows, so against a freshly reset database
+both FAILED on run 1 and passed on run 2 — a test depending on the *residue* of
+another spec, the anti-pattern HANDOVER §4/§5 names. CI runs `checks` + `rls`,
+not Playwright, so it never showed there; it only bit after a local
+`supabase db reset`.
+
+BACKLOG offered two fixes: seed a fixture, or self-skip the way the
+viewing-detail test does. **Seeding was chosen.** The skip is cheaper and has a
+precedent in the same file, but these are the heaviest client routes in the app
+— tabbed forms, the media grid — and a fresh database would silently lose their
+CSP evidence exactly when someone is deciding whether to promote the policy from
+Report-Only to enforced. A green run that proves nothing is the failure mode
+this whole spec exists to avoid.
+
+**An existing row is still preferred when one is there.** Real data exercises
+media and documents that a bare fixture does not, so the seed is a fallback, not
+a replacement. Only when the list is empty does the spec create its own property
+and contact through the local service key — the same convention `nudges.spec.ts`
+already uses, and gated on a localhost base URL, so against a deployed
+environment the tests still self-skip rather than assert falsely.
+
+**Cleanup is marker-based, not id-based.** `afterAll` deletes by
+`reference like 'CSP-FIXTURE-%'` and `contacts.notes = 'csp-detail-fixture'`, so
+a crashed run is swept by the next one instead of leaking rows. `properties` has
+no `notes` column — only `contacts` does — which is why the two markers differ;
+the property marker rides on `reference`, which is required anyway and is
+legible in the UI if a row ever does leak.
+
+**Verified without a `db reset`, which is the point.** Proving the old bug
+normally costs a reset-and-repopulate cycle, and disk was down to 9.3 GB. Since
+the fix removes the branch on database state, both paths could be exercised
+directly instead: the populated path passes using an existing row; the empty
+path was forced by stubbing the list lookup to null, and the seeded property
+(`CSP-FIXTURE-msc9m2t5`) and contact were confirmed present in Postgres with the
+cleanup suppressed, then swept by a normal run. Full spec 30 passed / 3 skipped
+(the pre-existing viewing, storage-image and slip-canvas self-skips); full
+desktop suite 167 passed / 4 skipped, and `--list` reports 171 tests before and
+after, so no test was added or lost.

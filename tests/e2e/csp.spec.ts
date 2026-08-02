@@ -1,7 +1,34 @@
 import { test, expect, request as playwrightRequest, type Page } from "@playwright/test";
-import { MODULES } from "./helpers";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { ADMIN_EMAIL, MODULES } from "./helpers";
 
 const baseUrl = () => process.env.E2E_BASE_URL ?? "http://localhost:3000";
+const isLocal = () => /localhost|127\.0\.0\.1/.test(baseUrl());
+
+/**
+ * Local-stack service key — the standard demo key printed by `supabase status`.
+ * Not a secret, only ever reaches 127.0.0.1, and used exactly as nudges.spec.ts
+ * uses it: to seed a fixture the UI would otherwise need a whole wizard to make.
+ */
+const LOCAL_SERVICE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ??
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU";
+
+/**
+ * Markers so a crashed run self-heals on the next one rather than leaking rows.
+ * `contacts` has a `notes` column; `properties` does not, so its marker is the
+ * reference prefix.
+ */
+const CSP_FIXTURE_TAG = "csp-detail-fixture";
+const CSP_FIXTURE_REF = "CSP-FIXTURE-";
+
+function serviceClient(): SupabaseClient {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL ?? "http://127.0.0.1:54321",
+    LOCAL_SERVICE_KEY,
+    { auth: { autoRefreshToken: false, persistSession: false } },
+  );
+}
 
 /**
  * Content-Security-Policy, staged report-only (IMPROVEMENTS C1).
@@ -205,10 +232,23 @@ test.describe("Content-Security-Policy (report-only)", () => {
 
   /**
    * Entity DETAIL pages carry the heavy client code the list pages do not —
-   * tabbed forms, the media grid, the signature canvas, the PDF builder. They
-   * are reached by clicking through from a list so the test uses real ids
-   * rather than fixtures, and it fails loudly if a list is empty rather than
-   * passing vacuously.
+   * tabbed forms, the media grid, the signature canvas, the PDF builder.
+   *
+   * These used to take the first row of the list and assert it existed, which
+   * made them depend on RESIDUE: only happy-path.spec.ts creates a property and
+   * a contact, so against a freshly reset database both FAILED on run 1 and
+   * passed on run 2 — the exact anti-pattern HANDOVER §4/§5 calls out, and
+   * invisible to CI, which runs `checks` + `rls` rather than Playwright.
+   *
+   * Skipping when the list is empty would have been the cheap fix, but these
+   * are the heaviest client routes in the app: losing their CSP evidence
+   * silently on a fresh database is the wrong trade. So the spec seeds its own
+   * property and contact when the list has none, and removes them afterwards.
+   * An existing row is still preferred when one is there — real data exercises
+   * media and documents that a bare fixture does not.
+   *
+   * Seeding needs the service key, so it is local-only; against a deployed base
+   * URL the tests still self-skip on an empty list rather than assert falsely.
    */
   /** First href on the page whose id has a UUID shape (never /new or /export). */
   async function firstDetailHref(page: Page, prefix: string): Promise<string | null> {
@@ -239,9 +279,73 @@ test.describe("Content-Security-Policy (report-only)", () => {
     return null;
   }
 
-  const DETAIL_ROUTES: { name: string; list: string; hrefPrefix: string }[] = [
-    { name: "property detail", list: "/properties", hrefPrefix: "/properties/" },
-    { name: "contact detail", list: "/contacts", hrefPrefix: "/contacts/" },
+  /** The seeded org the local dev app signs into. */
+  async function fixtureOrgId(svc: SupabaseClient): Promise<string> {
+    const { data: profile } = await svc
+      .from("profiles")
+      .select("org_id")
+      .eq("email", ADMIN_EMAIL)
+      .single();
+    expect(profile, `no profile for ${ADMIN_EMAIL} — is the local stack seeded?`).not.toBeNull();
+    return profile!.org_id;
+  }
+
+  /** Minimal rows: enough for the detail page to render its client code. */
+  async function seedDetail(svc: SupabaseClient, kind: "property" | "contact"): Promise<string> {
+    const orgId = await fixtureOrgId(svc);
+    const tag = Date.now().toString(36);
+
+    if (kind === "property") {
+      // `properties` has no `notes` column, so the marker is the reference —
+      // which is required anyway, and readable in the UI if a row ever leaks.
+      const { data, error } = await svc
+        .from("properties")
+        .insert({
+          org_id: orgId,
+          reference: `${CSP_FIXTURE_REF}${tag}`,
+          property_type: "villa",
+          asking_price: 250000,
+        })
+        .select("id")
+        .single();
+      expect(error, `seeding a property: ${error?.message}`).toBeNull();
+      return `/properties/${data!.id}`;
+    }
+
+    const { data, error } = await svc
+      .from("contacts")
+      .insert({
+        org_id: orgId,
+        first_name: "CSP",
+        last_name: `Fixture-${tag}`,
+        phone_e164: `+357990${tag.slice(-5)}`,
+        notes: CSP_FIXTURE_TAG,
+      })
+      .select("id")
+      .single();
+    expect(error, `seeding a contact: ${error?.message}`).toBeNull();
+    return `/contacts/${data!.id}`;
+  }
+
+  /**
+   * Rows this spec created. Marker-based rather than id-based so a crashed run
+   * is cleaned up by the next one. Events stay — append-only by design.
+   */
+  test.afterAll(async () => {
+    if (!isLocal()) return;
+    const svc = serviceClient();
+    await svc.from("properties").delete().like("reference", `${CSP_FIXTURE_REF}%`);
+    await svc.from("contacts").delete().eq("notes", CSP_FIXTURE_TAG);
+  });
+
+  const DETAIL_ROUTES: {
+    name: string;
+    list: string;
+    hrefPrefix: string;
+    kind: "property" | "contact";
+  }[] = [
+    { name: "property detail", list: "/properties", hrefPrefix: "/properties/", kind: "property" },
+    { name: "contact detail", list: "/contacts", hrefPrefix: "/contacts/", kind: "contact" },
   ];
 
   for (const route of DETAIL_ROUTES) {
@@ -249,10 +353,17 @@ test.describe("Content-Security-Policy (report-only)", () => {
       await collectViolations(page);
       await page.goto(route.list, { waitUntil: "networkidle" });
 
-      const href = await firstDetailHref(page, route.hrefPrefix);
-      expect(href, `no ${route.name} to open — this assertion would be vacuous`).toBeTruthy();
+      let href = await firstDetailHref(page, route.hrefPrefix);
+      if (!href) {
+        // Empty list. Seed rather than skip — see the note above the helpers.
+        test.skip(
+          !isLocal(),
+          `no ${route.name} to open and seeding needs the local service key`,
+        );
+        href = await seedDetail(serviceClient(), route.kind);
+      }
 
-      await page.goto(href!, { waitUntil: "networkidle" });
+      await page.goto(href, { waitUntil: "networkidle" });
       await page.waitForTimeout(700); // tabs/hydration settle
 
       const violations = await readViolations(page);
