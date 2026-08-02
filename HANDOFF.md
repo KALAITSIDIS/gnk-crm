@@ -134,11 +134,25 @@ did nothing):
    JWT-based API keys**. This is the step that actually revokes it. Nothing on
    the *Publishable and secret* tab does.
 
-**Test that it worked** — must return **401**, not 200:
+**Test that it worked — no need for the old key's value.** The exposed key lives
+only in the 2026-07-31 transcript, so a later session cannot curl it. Use the
+Supabase connector instead: `get_publishable_keys` returns the legacy `anon`
+entry with a `disabled` field.
 
-```bash
-curl -s -o /dev/null -w "%{http_code}\n" "https://yjgirvzgoiywdojnpkpd.supabase.co/rest/v1/organizations?select=id&limit=1" -H "apikey: <OLD_KEY>" -H "Authorization: Bearer <OLD_KEY>"
-```
+- **Before:** `{"name":"anon","type":"legacy","disabled":false, … "iat":1783611943}`
+- **After disabling:** that entry reads `disabled: true` (or is gone).
+
+Both legacy keys — `anon` and `service_role` — are JWTs signed by the same
+secret and share that `iat`, so the state of one tells you the state of the
+other. If `anon` is disabled, the exposed `service_role` key is dead too.
+
+Then confirm production still serves: `/login` 200, and `/settings/organization`
+loads for a signed-in admin (that page uses `createAdminClient()`, so it is the
+one that proves the replacement secret key is actually wired).
+
+If you still have the old value to hand, the direct check is a request to
+`/rest/v1/organizations?select=id&limit=1` with it as both `apikey` and
+`Authorization: Bearer` — must return **401**, not 200.
 
 **Known blocker:** as of 2026-07-31 the Vercel dashboard would not persist env
 edits — the rows still read *Updated Jul 15 / Jul 11* after several attempts, and
