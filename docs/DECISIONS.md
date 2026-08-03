@@ -1815,3 +1815,48 @@ key was exercised live against hosted: PostgREST accepts it as `anon`
 being rejected), `contacts` yields no PII, and `resolve_share_link` returns
 `200 null` for an unknown token, so B3 proposal links survive the swap. Recorded
 in HANDOFF §2b so the operator does not have to rediscover it.
+
+## 2026-08-03 · T-2b-verification — §2b step 4 asked for something that cannot exist
+
+While pre-flighting the key rotation, a second problem turned up in the
+instructions themselves rather than the code.
+
+HANDOFF §2b step 4 said: verify "the live page ships `sb_publishable_…`". **It
+never will, and it never shipped the legacy key either.** The browser receives
+no Supabase credential of any kind.
+
+Verified three independent ways:
+- `createBrowserClient` is called in exactly one place, `lib/supabase/client.ts`,
+  and **no module imports its exported `createClient`**. The app is server
+  components and server actions end to end.
+- A production `.next/static` build has 63 JS chunks; none contains a JWT-shaped
+  string, and none even contains `supabase.co`.
+- The same scan against the chunks production actually serves on `/login` found
+  neither the legacy key nor a publishable one.
+
+This matters more than a stale doc line. §2b is already the item where **eight
+attempts silently did nothing**, and §7 warns that the Vercel dashboard can
+swallow actions so verification must be by observed effect. Step 4 handed the
+operator a check that returns empty *on success* — so a correct rotation would
+have looked exactly like another silent failure, and the natural response is to
+redo the steps that already worked.
+
+**Step 4 now drops the impossible sub-check.** Its two remaining halves cover
+both keys between them: signing in exercises `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+(still load-bearing, but server-side only — `lib/supabase/server.ts`,
+`lib/supabase/public.ts`, `proxy.ts`), and `/settings/organization` exercises the
+secret key through `createAdminClient()`. A wrong publishable key makes GoTrue
+refuse the session, so "I signed in" is real evidence rather than an absence.
+
+**Step 3's cache-off redeploy stays, but its stated reason was wrong.** It said
+`NEXT_PUBLIC_*` is baked into the client bundle at build time; for this app
+nothing of the sort is in the client bundle. Kept anyway — it costs nothing and
+forecloses any server-side build-time inlining — but the reasoning is corrected
+so nobody builds on a false premise later.
+
+**`lib/supabase/client.ts` is therefore dead code, and its deadness is load-
+bearing for the above.** Logged in BACKLOG rather than deleted: removing it is
+tidy, but the point worth preserving is that importing it would start shipping
+the anon key to the browser. That is normal and safe for a publishable key — it
+is designed to be public — but it changes what step 4 can verify, so it should
+be a decision, not an accident.

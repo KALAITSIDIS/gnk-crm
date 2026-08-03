@@ -228,3 +228,14 @@ built without explicit direction.
   app code, scripts or tests. `verify-restore.sql`'s expectations, which had
   encoded the drift, were corrected — a migration-built database now passes all
   25 invariants, where four failed before.
+- **`lib/supabase/client.ts` is dead code — and that is currently a security
+  asset.** `createBrowserClient` is called there and nowhere else; no module
+  imports the exported `createClient`. Verified 2026-08-03: no JWT-shaped string
+  and no `supabase.co` appears in any of the 63 chunks of a production
+  `.next/static` build, so the browser receives no Supabase credential at all.
+  Deleting it is the tidy answer, but note the consequence of the opposite
+  choice: the day someone imports it, `NEXT_PUBLIC_SUPABASE_ANON_KEY` starts
+  shipping to the browser. That is normal and safe for an anon/publishable key —
+  it is *designed* to be public — but it should be a conscious decision rather
+  than a side effect, and it changes what HANDOFF §2b step 4 can verify. Keep or
+  delete deliberately; do not let it happen by accident.

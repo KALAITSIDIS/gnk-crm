@@ -162,11 +162,12 @@ did nothing):
    and `NEXT_PUBLIC_SUPABASE_ANON_KEY` to the publishable key
    (`sb_publishable_…`, safe to share). **The row's date must change to today —
    that is the only proof it saved.**
-3. Deployments → ⋯ → Redeploy, **build cache OFF** (`NEXT_PUBLIC_*` is baked
-   into the client bundle at build time; a cached build keeps the old key).
-4. Verify: a deployment newer than `21c25fc`; the live page ships
-   `sb_publishable_…`; `/settings/organization` still works (it exercises the
-   service-role path).
+3. Deployments → ⋯ → Redeploy, **build cache OFF**. (Keep doing this — it is
+   cheap and removes all doubt — but see the correction below: the stated reason
+   does not actually apply to this app.)
+4. Verify: a deployment newer than `21c25fc`; sign in, and
+   `/settings/organization` still loads (it exercises the service-role path).
+   **Do NOT look for `sb_publishable_…` in the page — see below.**
 5. Supabase → API Keys → **Legacy anon, service_role** tab → **Disable
    JWT-based API keys**. This is the step that actually revokes it. Nothing on
    the *Publishable and secret* tab does.
@@ -185,6 +186,32 @@ would have made step 2 a production incident were checked instead of assumed:
   not the key being rejected), `contacts` returns no PII, and
   `resolve_share_link` — the one RPC a buyer's proposal link needs — returns
   `200 null` for an unknown token. So B3 links keep working after the swap.
+
+**Correction to step 3/4: no Supabase key of any kind reaches the browser.**
+Step 4 told you to confirm "the live page ships `sb_publishable_…`". **There is
+nothing there to find, before or after the rotation** — so following it as
+written would show you an empty result and imply the redeploy failed, which is
+exactly the misread that cost eight attempts last time.
+
+Verified three independent ways on 2026-08-03:
+- `createBrowserClient` is called in exactly one place, `lib/supabase/client.ts`,
+  and **nothing imports that module**. The app is server components + server
+  actions throughout.
+- None of the 63 chunks in a production `.next/static` build contains a
+  JWT-shaped string, or even `supabase.co`.
+- The same scan over the chunks prod actually serves on `/login` found neither
+  the legacy key nor a publishable one.
+
+`NEXT_PUBLIC_SUPABASE_ANON_KEY` **is** still load-bearing — `lib/supabase/
+server.ts`, `lib/supabase/public.ts` and `proxy.ts` all read it — but they run on
+the server. So the honest verification for that half is simply **that you can
+sign in**: a wrong publishable key makes GoTrue reject the session, and step 4
+already has you sign in to reach `/settings/organization`. The two halves of
+step 4 therefore cover both keys between them, once the impossible sub-check is
+removed.
+
+Leave the cache-off redeploy in place anyway — it costs nothing and rules out
+any server-side build-time inlining.
 
 **A trap this uncovered, now fixed (commit below).** The client-bundle leak test
 in `tests/e2e/security.spec.ts` asserted `not.toContain("service_role")`. A
