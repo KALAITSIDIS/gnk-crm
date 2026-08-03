@@ -1,10 +1,10 @@
-# HANDOFF — 2026-08-02
+# HANDOFF — 2026-08-03
 
 Read `docs/HANDOVER.md` and `CLAUDE.md` first; this is the delta on top of them.
 
 | | |
 |---|---|
-| `main` | `4d18ab0`, clean, in sync with `origin/main`, only branch |
+| `main` | `4e35b29`, clean, in sync with `origin/main`, only branch |
 | CI | ✅ green (`checks` + `rls`); `checks` now **builds** too (2026-08-03) |
 | Production | `gnk-crm.vercel.app` healthy — `/login` 200; **auto-deploys every push** (§2b) |
 | Hosted DB | `yjgirvzgoiywdojnpkpd` — **24 migrations**, `non_filename_versions = 0`, chain verifies, 62 events |
@@ -18,13 +18,25 @@ Read `docs/HANDOVER.md` and `CLAUDE.md` first; this is the delta on top of them.
 
 **Nothing is broken and nothing is half-finished.** The tree is clean, `main` is
 pushed and in sync, CI is green, and hosted is at 24 migrations matching the
-repo. Two diagnosed defects were closed on 2026-08-02 — 0024 (§1) and the
-`csp.spec.ts` residue dependency (§6).
+repo.
 
-**The long-standing open item is CLOSED.** §2b — the exposed `service_role` key —
-was revoked on 2026-08-03 and verified from both ends: the legacy pair returns
-`401 Legacy API keys are disabled`, and production is healthy on the new
-publishable/secret pair. **There is now no known outstanding security item.**
+**Both long-standing operator items are CLOSED.**
+- **§2b — the exposed `service_role` key is revoked** (2026-08-03), verified
+  from both ends: the legacy pair returns `401 Legacy API keys are disabled`
+  (the hint names `service_role` explicitly) and production is healthy on the
+  new publishable/secret pair. **No known outstanding security item remains.**
+- **C1 — Sentry is wired and confirmed receiving** (§5), so the report-only CSP
+  finally has a durable sink. Promoting it to enforced is now an evidence-backed
+  decision rather than a guess — but it wants real traffic first.
+
+Four diagnosed defects were closed on 2026-08-02/03: 0024 (§1), the
+`csp.spec.ts` residue dependency (§6), the client-bundle leak guard that would
+have gone blind at key rotation (§2b), and **production silently discarding CSP
+reports with 413** (§6) — that last one found by reading the Vercel runtime logs,
+which is now cheap and worth doing after any production change.
+
+**A pattern worth carrying forward:** every one of those was found by checking
+something already marked done, not by building anything new.
 
 **Do not start B4 or B5** — both need a decision only the operator can give
 (§5). **B9 is closed, not deferred.**
