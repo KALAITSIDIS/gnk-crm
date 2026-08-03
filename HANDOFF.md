@@ -474,6 +474,22 @@ in §6). What remains there is mostly nice-to-have, with one genuine follow-up:
 
 ## 7. Environment traps
 
+- **A Vercel env var is PER-ENVIRONMENT, and "set for Preview only" is
+  indistinguishable from "not set".** Cost a full verification cycle on
+  2026-08-03: `NEXT_PUBLIC_SENTRY_DSN` was saved with only Preview ticked, so
+  production built without it while the dashboard showed the variable present.
+  When a value does not appear in production, check the environment ticks before
+  suspecting the save or the build.
+- **Do not poll a production domain in a tight loop — Vercel will challenge
+  you.** ~80 requests over ten minutes on 2026-08-03 triggered the firewall:
+  every response became `403` with `X-Vercel-Mitigated: challenge` and a
+  "Vercel Security Checkpoint" body. **Real users are unaffected** (a real
+  browser solves the JS challenge; that was verified), but every scripted check
+  from that IP fails, and the 403 looks exactly like an outage. Wait on
+  `get_deployment().state` through the connector instead, and make one request
+  at the end. Related: polling a deployment's own `*.vercel.app` URL for a 200
+  never succeeds anyway — `ssoProtection` is on for
+  `all_except_custom_domains`, so those URLs answer 401/403 by design.
 - **Do not `rm -rf .next` or build while a dev server is running.**
 - **The Vercel dashboard can silently swallow every action.** On 2026-07-31 a
   full-screen *"Secure Your Account with 2FA"* interstitial sat in front of the
