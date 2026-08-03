@@ -2012,3 +2012,11 @@ immediately" is never valid for a build-time value.
 With this, **C1's durable sink exists**: CSP reports now leave stdout (~1h
 retention) and reach a store that outlives it, which is what "let report-only run
 for a while and then decide whether to enforce" always required.
+
+**Confirmed end to end 2026-08-03:** the operator sees the probe message in
+Sentry. That closes the last unproven link — the SERVER-side `SENTRY_DSN`, which
+is the half C1 actually depends on, since `/api/csp-report` runs server-side.
+**C1 is complete: the policy has a durable sink, and promoting it from
+Report-Only to enforced is now a decision backed by evidence rather than a
+guess.** It still wants real traffic first: the accumulated violations are the
+input to that decision, and there is no rush to enforce before they exist.

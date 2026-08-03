@@ -417,9 +417,15 @@ And two testing lessons:
       observation, not an absence.
     - the browser SDK initialises (`window.__SENTRY__`, v10.65.0), which also
       proves the DSN parses.
-    - a probe report POSTed to `/api/csp-report` returned 204 and the runtime log
-      shows the handler processing it — the same line the code hands to
-      `Sentry.captureMessage`.
+    - a probe report POSTed to `/api/csp-report` returned 204, the runtime log
+      shows the handler processing it, and **the operator confirmed the message
+      arrived in Sentry** — which is what proves the SERVER-side `SENTRY_DSN`,
+      the half that matters for C1 since the handler runs server-side.
+    - the probe message is `[csp] img-src blocked
+      https://sentry-wiring-probe.invalid/asset.png on /verification-probe`.
+      `.invalid` is a reserved, unresolvable TLD, so it is unmistakably the
+      wiring probe and not a real violation — **resolve or delete it in Sentry**
+      so it does not pollute the real signal.
   - **What took six deployments, and the lesson: the variable was set for
     PREVIEW only, and every check after fixing it was made before a new BUILD.**
     A Vercel env var is per-environment, and "set for Preview" is
