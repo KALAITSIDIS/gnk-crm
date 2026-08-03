@@ -1860,3 +1860,49 @@ tidy, but the point worth preserving is that importing it would start shipping
 the anon key to the browser. That is normal and safe for a publishable key — it
 is designed to be public — but it changes what step 4 can verify, so it should
 be a decision, not an accident.
+
+## 2026-08-03 · T-key-rotation — the exposed service_role key is revoked
+
+The legacy `service_role` key, exposed in a chat transcript on 2026-07-30, is
+dead. Supabase disabled the legacy JWT pair at
+`2026-08-03T17:40:12.572433+00:00`. Nine earlier attempts had silently failed.
+
+**Why this attempt worked: the Redeploy button was never used.** The Vercel
+connector showed six consecutive pushes each producing a `READY` production
+deployment, which proved the Git→Vercel pipeline was healthy and localised the
+fault to the *dashboard's* env-save and Redeploy controls. So the env change was
+picked up by pushing a commit (`aae6dc1`) instead, and the resulting deployment
+(`dpl_D3WRnCp…`) was confirmed `READY` and aliased to the production domain
+through the API. The failing control was routed around rather than retried.
+
+**Order, which is the part that must not be reordered:** save env → deploy →
+verify both keys in production → *then* disable the legacy pair. Vercel injects
+env vars at deploy time, so until the new deployment is live the running app is
+still authenticating with the OLD keys; disabling first would revoke what
+production is actively using. Everything before the toggle is reversible; the
+toggle is not. The operator asked to disable immediately after saving the env
+vars and was asked to hold until the deploy and both verifications had passed.
+
+**Both keys were proven in production before the irreversible step, by positive
+observation rather than absence of errors:**
+- publishable — `/p/<unknown token>` returned 200 rendering "This link is no
+  longer available", which is only reachable if `resolve_share_link` actually
+  round-tripped to Supabase through `lib/supabase/public.ts`. An error boundary
+  would have printed "something went wrong"; grep counted zero.
+- secret — `/settings/organization` loads, which is the page that exercises
+  `createAdminClient()`. Operator-checked, since it needs a session.
+
+**The revocation confirmed itself better than planned.** §2b had expected to
+infer the `service_role` key's state from `anon`'s, since both are JWTs signed by
+the same secret sharing one `iat`. In the event, a REST call with the legacy key
+returned `401 Legacy API keys are disabled` with a hint naming
+`(anon, service_role)` explicitly — direct evidence, no inference needed.
+
+Post-revocation production checks all pass: `/login` 200, `/p/…` 200 with the
+correct page, `/dashboard` 307→`/login`, `/offline` and `/manifest.webmanifest`
+200.
+
+Three findings from the pre-flight that made this safe are recorded separately:
+`T-sb-key-guard` (the bundle-leak test would have gone blind), `T-2b-verification`
+(step 4 asked for a string that cannot exist), and the confirmation that no code
+assumes the JWT key format.

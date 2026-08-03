@@ -21,13 +21,10 @@ pushed and in sync, CI is green, and hosted is at 24 migrations matching the
 repo. Two diagnosed defects were closed on 2026-08-02 — 0024 (§1) and the
 `csp.spec.ts` residue dependency (§6).
 
-**One open item, and it is the operator's:** §2b — the legacy `service_role` key
-was exposed in a chat transcript and is still live. Re-confirmed 2026-08-02:
-`get_publishable_keys` still returns the legacy `anon` entry with
-`disabled: false`, so nothing has been revoked yet. Low likelihood (transcript
-only, never published or committed) but it bypasses RLS entirely. Everything
-needed to revoke it safely is written out there, including the blocker that
-stopped eight attempts.
+**The long-standing open item is CLOSED.** §2b — the exposed `service_role` key —
+was revoked on 2026-08-03 and verified from both ends: the legacy pair returns
+`401 Legacy API keys are disabled`, and production is healthy on the new
+publishable/secret pair. **There is now no known outstanding security item.**
 
 **Do not start B4 or B5** — both need a decision only the operator can give
 (§5). **B9 is closed, not deferred.**
@@ -141,7 +138,43 @@ BACKUP_RESTORE §3.
 
 ---
 
-## 2b. OPEN SECURITY ITEM — rotate the service_role key
+## 2b. ~~OPEN SECURITY ITEM~~ — **RESOLVED 2026-08-03: the key is revoked**
+
+**Done. The exposed `service_role` key is dead.** Supabase disabled the legacy
+JWT pair at `2026-08-03T17:40:12.572433+00:00`. Nothing here is outstanding; the
+procedure below is kept as the record of how it was done and what nearly went
+wrong.
+
+Evidence, all captured after the toggle:
+
+| check | result |
+|---|---|
+| `get_publishable_keys` → legacy `anon` | `disabled: true` (was `false`) |
+| REST call with the legacy key | **401** `Legacy API keys are disabled` — and the hint names **`(anon, service_role)`**, so the exposed key is confirmed dead directly, not by the shared-`iat` inference |
+| REST call with `sb_publishable_…` | 200 |
+| prod `/login` | 200 |
+| prod `/p/…` (public client + `resolve_share_link` round-trip) | 200, correct "link no longer available" page, no error boundary |
+| prod `/dashboard` | 307 → `/login` |
+| prod `/offline`, `/manifest.webmanifest` | 200, 200 |
+| `/settings/organization` (service-role path, operator-checked) | loads |
+
+**What made it work on the tenth attempt, after nine silent failures:** the
+Redeploy button was never used. Git pushes deploy reliably (verified: six
+consecutive `READY` production deployments), so the env change was picked up by
+pushing commit `aae6dc1`, and the resulting deployment `dpl_D3WRnCp…` was
+confirmed `READY` and aliased to `gnk-crm.vercel.app` through the Vercel
+connector. Every step was checked by a positive observation rather than by a
+click appearing to land.
+
+**Order that must be preserved if this is ever repeated:** save env → **deploy**
+→ **verify both keys in production** → *only then* disable the legacy pair.
+Vercel injects env vars at deploy time, so before the redeploy the running app
+is still authenticating with the OLD keys; disabling first revokes what
+production is actively using. Everything before the toggle is reversible and the
+toggle is not.
+
+<details>
+<summary>Original item and procedure (historical)</summary>
 
 **The legacy `service_role` key was pasted into a chat transcript on 2026-07-30
 and is still live.** It bypasses RLS entirely: full read/write on client PII, KYC
@@ -271,6 +304,8 @@ it prints real errors rather than failing silently:
 ```bash
 npx vercel login && npx vercel env rm SUPABASE_SERVICE_ROLE_KEY production && npx vercel env add SUPABASE_SERVICE_ROLE_KEY production && npx vercel --prod
 ```
+
+</details>
 
 ---
 
