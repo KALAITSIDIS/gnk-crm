@@ -27,6 +27,18 @@ jobs:
       - name: Test
         run: npm run test
 
+      # Until 2026-08-03 a broken production build only surfaced on Vercel,
+      # after the push had already been called green.
+      #
+      # Deliberately NO env/secrets: verified that `npm run build` exits 0 with
+      # no .env at all, because every route is server-rendered on demand and
+      # nothing imports lib/supabase/client.ts, so no NEXT_PUBLIC_* value is
+      # needed at build time. Do not add Supabase secrets here to "fix" it —
+      # if this step ever needs them, something has started reaching the
+      # database at build time and that is the thing to investigate.
+      - name: Build
+        run: npm run build
+
   rls:
     runs-on: ubuntu-latest
     steps:
