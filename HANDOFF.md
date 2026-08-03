@@ -4,8 +4,8 @@ Read `docs/HANDOVER.md` and `CLAUDE.md` first; this is the delta on top of them.
 
 | | |
 |---|---|
-| `main` | `26f2bf4`, clean, in sync with `origin/main`, only branch |
-| CI | ✅ green (both `checks` and `rls`); confirmed on `3aa7efb` |
+| `main` | `4d18ab0`, clean, in sync with `origin/main`, only branch |
+| CI | ✅ green (`checks` + `rls`); `checks` now **builds** too (2026-08-03) |
 | Production | `gnk-crm.vercel.app` healthy — `/login` 200 |
 | Hosted DB | `yjgirvzgoiywdojnpkpd` — **24 migrations**, `non_filename_versions = 0`, chain verifies, 62 events |
 | Tests | **437 unit** · **30 RLS** · **167 desktop E2E**, 4 skipped (`--list` says 171 total) |
@@ -437,4 +437,25 @@ freshly reset DB is now a clean first run.
 
 ```bash
 curl -s "https://api.github.com/repos/KALAITSIDIS/gnk-crm/actions/runs?per_page=5"
+```
+
+**What CI does and does not cover.** `checks` = typecheck · lint · unit ·
+**build** (added 2026-08-03; until then a broken production build was called
+green on push and only failed later on Vercel). `rls` = the RLS suite against a
+real stack. The build step takes **no secrets on purpose** — `npm run build`
+exits 0 with no `.env` at all, verified by moving `.env.local` aside, because
+every route is server-rendered on demand and nothing imports
+`lib/supabase/client.ts`. If that step ever starts needing secrets, something
+has begun reaching the database at build time; investigate that rather than
+adding them.
+
+**Playwright still does not run in CI.** All 167 desktop E2E tests — including
+the `security.spec.ts` bundle-leak guard — only execute when someone runs them
+locally. Adding them needs a Supabase stack plus a dev server in the workflow
+(the `rls` job already proves the stack part is possible) and would add real
+minutes per push, so it is left as a deliberate choice rather than assumed.
+Confirm a step actually RAN before trusting it:
+
+```bash
+curl -s "https://api.github.com/repos/KALAITSIDIS/gnk-crm/actions/runs/<RUN_ID>/jobs"
 ```
