@@ -1946,3 +1946,44 @@ This does not change the C1 conclusion that a durable sink is still needed —
 Vercel's ~1h retention means stdout alone cannot support "let it run for a
 while". It does mean that when `SENTRY_DSN` is finally set, the reports will
 actually reach it.
+
+## 2026-08-03 · T-sentry-dsn — diagnosing an env var that never arrives
+
+Setting `SENTRY_DSN` / `NEXT_PUBLIC_SENTRY_DSN` took several attempts. The
+useful part is not the outcome but the diagnostic, which generalises to any
+"I set the variable and nothing happened".
+
+**The sibling-variable test.** `proxy.ts` calls `buildCsp` with two adjacent
+`NEXT_PUBLIC_*` reads — `NEXT_PUBLIC_SUPABASE_URL` and
+`NEXT_PUBLIC_SENTRY_DSN`. When the Supabase origin appears in `connect-src` and
+the Sentry origin does not, from the same function in the same build, every
+explanation involving the build, the bundler, the cache or the framework is
+eliminated at once: one value was present in the environment and the other was
+not. That single observation is worth more than any amount of reasoning about
+inlining, and it needs no access to the env vars themselves.
+
+**Two wrong turns, recorded because each looked convincing.**
+- *Build cache.* The build log said "Restored build cache from previous
+  deployment", and that deployment predated the fix, which is a genuinely
+  plausible cause for a build-time-inlined value. It was wrong: `proxy.ts` was
+  edited, so its module recompiled, and its sibling read inlined correctly in
+  that same recompilation. Commit `5fd43fe`'s message asserts the cache was the
+  cause — it was not, and the comments it added remain accurate for a different
+  reason (`NEXT_PUBLIC_*` really is inlined at build time) but did not fix
+  anything.
+- *Stale edge cache.* `/login` answers `x-vercel-cache: HIT`, so a cached
+  response with stale headers was worth ruling out. Ruled out by the nonce:
+  it differs between two consecutive requests, which proves middleware runs
+  fresh per request and the CSP header is generated live rather than served
+  from cache.
+
+**The actual cause was mundane and is now a documented trap:** the variable was
+saved for Preview only. A Vercel env var is per-environment, and "set for
+Preview" is indistinguishable from "not set" when you are looking at production.
+See HANDOFF §7.
+
+**Corollary that cost a deployment: changing a `NEXT_PUBLIC_*` variable requires
+a new BUILD, not merely a new request.** The value is compiled in. So after
+correcting the variable, the currently-live deployment still cannot know about
+it — checking production immediately will always show the old state and is not
+evidence the fix failed.
