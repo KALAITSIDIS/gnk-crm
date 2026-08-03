@@ -1906,3 +1906,43 @@ Three findings from the pre-flight that made this safe are recorded separately:
 `T-sb-key-guard` (the bundle-leak test would have gone blind), `T-2b-verification`
 (step 4 asked for a string that cannot exist), and the confirmation that no code
 assumes the JWT key format.
+
+## 2026-08-03 · T-csp-413 — production was collecting CSP reports and throwing them away
+
+Found by reading Vercel runtime logs within the ~1h retention window, right after
+the key rotation. `/api/csp-report` had taken three POSTs, and **two returned
+413**. Genuine browser violation reports were arriving and being discarded.
+
+This is strictly worse than the gap §6 already described. §6 warned that "no
+`[csp]` lines" must not be read as "the policy is clean", because reports might
+have expired from the log. The real situation was that reports *were delivered*
+and the endpoint *rejected* them — and the 413 path had no log line at all, so
+the only trace was a status code in the access log. Nobody would have found it
+except by looking directly.
+
+**The cap was 16 KB, on the stated premise "reports are small; anything larger is
+not a browser". That premise is wrong for the `report-to` shape.** Browsers batch
+violations into a single array, and every envelope repeats `originalPolicy` —
+this app's whole CSP string, several hundred bytes each. A page with a dozen
+violations clears 16 KB on policy text alone. A representative 24-violation
+Chromium-shaped batch measures ~23 KB, which is now pinned by an E2E test built
+from the real field shapes rather than padded with filler, so it stays
+representative.
+
+Raised to 128 KB. Worth being precise about what the cap does: `request.text()`
+has already materialised the body by the time the length is checked, so it bounds
+PARSING and LOGGING work, not transfer — the platform's request limit bounds
+that. Raising it is therefore cheap, and the guard is retained rather than
+removed, because the endpoint is public and unauthenticated.
+
+**The more important half of the fix: the drop is now logged.** The old code
+returned a bare 413. It now prints
+`[csp] report DROPPED: <n> bytes exceeds <cap>`, which converts an invisible loss
+into a visible one and supplies the evidence to re-tune the number instead of
+guessing at it a second time. Both behaviours were observed in the test run's
+server output, not merely asserted.
+
+This does not change the C1 conclusion that a durable sink is still needed —
+Vercel's ~1h retention means stdout alone cannot support "let it run for a
+while". It does mean that when `SENTRY_DSN` is finally set, the reports will
+actually reach it.

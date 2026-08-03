@@ -151,12 +151,72 @@ test.describe("Content-Security-Policy (report-only)", () => {
     // production by looking for "[csp]" in the Vercel runtime logs.
   });
 
+  test("a real batched report-to payload is accepted, not dropped as oversized", async () => {
+    // Found in production 2026-08-03: two genuine browser reports were POSTed
+    // and BOTH returned 413, so real violations were collected and thrown away.
+    // The old cap was 16 KB on the premise that "reports are small; anything
+    // larger is not a browser" — which is wrong for the `report-to` shape.
+    // Browsers BATCH violations into one array, and every envelope repeats
+    // `originalPolicy`, i.e. this app's entire CSP string. A page with a dozen
+    // violations therefore exceeds 16 KB on policy text alone.
+    //
+    // This asserts the endpoint survives the shape it actually receives. The
+    // payload below is built to look like what Chromium sends, not padded with
+    // filler, so the size is representative rather than arbitrary.
+    const anon = await playwrightRequest.newContext();
+
+    const originalPolicy =
+      "default-src 'self'; script-src 'self' 'nonce-abc123def456' 'strict-dynamic' " +
+      "'unsafe-inline' https:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: " +
+      "https://yjgirvzgoiywdojnpkpd.supabase.co; connect-src 'self' " +
+      "https://yjgirvzgoiywdojnpkpd.supabase.co; font-src 'self' data:; object-src 'none'; " +
+      "base-uri 'self'; frame-ancestors 'none'; report-uri /api/csp-report";
+
+    const batch = Array.from({ length: 24 }, (_, i) => ({
+      type: "csp-violation",
+      age: i * 12,
+      url: `${baseUrl()}/properties/0e6f3c1a-7b21-4d55-9f0c-2a1b8c4d5e6f`,
+      user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      body: {
+        documentURL: `${baseUrl()}/properties/0e6f3c1a-7b21-4d55-9f0c-2a1b8c4d5e6f`,
+        referrer: `${baseUrl()}/properties`,
+        blockedURL: `https://cdn.example.com/asset-${i}.png`,
+        effectiveDirective: "img-src",
+        originalPolicy,
+        sourceFile: `${baseUrl()}/_next/static/chunks/${i}-a1b2c3d4e5f6.js`,
+        sample: "",
+        disposition: "report",
+        statusCode: 200,
+        lineNumber: 1,
+        columnNumber: 4096,
+      },
+    }));
+
+    const payload = JSON.stringify(batch);
+    // Guard the guard: if this ever drops below the old 16 KB cap the test stops
+    // reproducing the bug and would pass for the wrong reason.
+    expect(payload.length, "payload must exceed the old 16 KB cap to be meaningful").toBeGreaterThan(
+      16_384,
+    );
+
+    const batched = await anon.post(`${baseUrl()}/api/csp-report`, {
+      headers: { "content-type": "application/reports+json" },
+      data: payload,
+    });
+    expect(
+      batched.status(),
+      `a ${payload.length}-byte batched report must be accepted, not 413'd`,
+    ).toBe(204);
+    await anon.dispose();
+  });
+
   test("the reporting endpoint refuses an oversized body and never 500s", async () => {
     const anon = await playwrightRequest.newContext();
 
+    // Above the raised cap — the flood guard must still exist.
     const huge = await anon.post(`${baseUrl()}/api/csp-report`, {
       headers: { "content-type": "application/csp-report" },
-      data: "x".repeat(20_000),
+      data: "x".repeat(200_000),
     });
     expect(huge.status()).toBe(413);
 
