@@ -239,3 +239,13 @@ built without explicit direction.
   it is *designed* to be public — but it should be a conscious decision rather
   than a side effect, and it changes what HANDOFF §2b step 4 can verify. Keep or
   delete deliberately; do not let it happen by accident.
+- **`JWT issued at future` — third sighting, now with a deployment stamp.** Seen
+  again on prod 2026-08-03T17:07:18Z, route `/properties`, count 1, users 1, on
+  deployment `dpl_D3WRnCp…`. Same shape as 2026-07-19 and 2026-07-21: a
+  slightly future-dated access token makes PostgREST reject the query and the
+  user gets the "Couldn't load properties" boundary until they reload or
+  re-login. Unrelated to the key rotation — this is the session JWT's `iat`, not
+  the API key. It is now the only recurring runtime error in production, and
+  `get_runtime_errors` on the Vercel connector makes it cheap to keep counting.
+  Options unchanged: a one-shot retry on that specific PostgREST message, or
+  widening GoTrue clock-skew tolerance.

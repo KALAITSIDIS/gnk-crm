@@ -311,7 +311,16 @@ npx vercel login && npx vercel env rm SUPABASE_SERVICE_ROLE_KEY production && np
 
 ## 2c. Other operator-only items
 
-**Leaked-password protection is still off** (advisor-confirmed 2026-07-29), and
+**Leaked-password protection is still off — and it is NOT a free toggle.**
+Established 2026-08-03: the setting is gated to **Supabase Pro** on this
+project's plan, so closing it is a spend decision, not a click. Previous
+handoffs implied it was one switch away and that was wrong. Until the plan
+changes, the advisor finding `auth_leaked_password_protection` will keep
+appearing and should be read as *accepted*, not *unnoticed*. Not reachable by
+agent in any case: the Supabase connector has no auth-config tool, and the
+setting is platform config rather than database state (the `auth` schema holds
+only data tables — there is no `auth.config` to write).
+
 `GNK-PAF-0002` still wants archiving **via the UI button** so `archiveProperty`
 writes its event.
 
@@ -420,11 +429,21 @@ in §6). What remains there is mostly nice-to-have, with one genuine follow-up:
 
 ## 6. Known gaps
 
-- **CSP is still Report-Only, and its verification is unachievable as written.**
-  Vercel runtime-log retention is ~1h on this plan, so "browse prod then grep
-  for `[csp]`" always comes back empty if done later — and empty must not be
-  read as clean. Fix: check within the hour, or give the endpoint a durable sink
-  (the handler already writes to Sentry; it needs a DSN). In `docs/BACKLOG.md`.
+- **CSP is still Report-Only.** Retention is ~1h on this plan, so "browse prod
+  then grep for `[csp]`" comes back empty if done later — and empty must not be
+  read as clean. Give the endpoint a durable sink (the handler already writes to
+  Sentry; it needs a DSN), or check inside the hour.
+  - **2026-08-03: doing exactly that found something worse.** Reports *were*
+    being delivered — and two of three were answered **413** and discarded,
+    with no log line on that path. The 16 KB cap assumed reports are small; the
+    `report-to` shape batches violations into one array where every envelope
+    repeats `originalPolicy` (the whole CSP string), so ~a dozen violations
+    clears 16 KB. Fixed in `42d017d`: cap raised to 128 KB and **the drop is now
+    logged**. See DECISIONS `T-csp-413`.
+  - Reading the runtime logs is now easy and worth doing after any prod change —
+    the Vercel connector exposes `get_runtime_errors` and `get_runtime_logs`
+    (`group_by: statusCode` / `requestPath` is fast; full-text `query` tends to
+    time out — scope to a `deploymentId` or a narrow window instead).
 - **2FA is enforced at the application layer only.**
 - ~~Two `csp.spec.ts` tests fail on a freshly reset local DB~~ — **fixed
   2026-08-02.** They now seed their own property and contact when the list is
