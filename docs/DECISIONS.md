@@ -1987,3 +1987,11 @@ a new BUILD, not merely a new request.** The value is compiled in. So after
 correcting the variable, the currently-live deployment still cannot know about
 it — checking production immediately will always show the old state and is not
 evidence the fix failed.
+
+**Addendum — installing a Vercel integration does NOT trigger a redeploy.** The
+Sentry integration was installed at ~18:5x; `list_deployments` confirmed **zero**
+deployments after it. Since `NEXT_PUBLIC_*` is compiled into the bundle, whatever
+variables an integration provisions are invisible to production until the next
+build. Checking production immediately after installing an integration therefore
+always shows the old state, exactly as it does after editing a variable by hand.
+Push a commit, then check.
