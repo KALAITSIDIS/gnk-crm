@@ -171,6 +171,29 @@ did nothing):
    JWT-based API keys**. This is the step that actually revokes it. Nothing on
    the *Publishable and secret* tab does.
 
+**Pre-flight done for you on 2026-08-02 — the swap is safe.** Two things that
+would have made step 2 a production incident were checked instead of assumed:
+
+- **No code assumes the JWT key format.** Every use of
+  `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY`
+  (`lib/supabase/{client,server,admin,public}.ts`, `proxy.ts`) passes the env var
+  straight to `createClient`. Nothing decodes it, reads its claims, or matches
+  its shape.
+- **The publishable key really works against hosted.** Tested live with
+  `sb_publishable_OLvLtIvinqqMuY-Y4ppIEg_Bj9ldXxj`: PostgREST accepts it as
+  `anon` (protected tables answer `42501 permission denied`, i.e. RLS refusing —
+  not the key being rejected), `contacts` returns no PII, and
+  `resolve_share_link` — the one RPC a buyer's proposal link needs — returns
+  `200 null` for an unknown token. So B3 links keep working after the swap.
+
+**A trap this uncovered, now fixed (commit below).** The client-bundle leak test
+in `tests/e2e/security.spec.ts` asserted `not.toContain("service_role")`. A
+modern `sb_secret_…` key contains no such string, so **the moment you finish
+this rotation that guard would have gone on passing while no longer able to
+detect a leaked secret key.** It now also scans for `sb_secret_` and for any
+non-publishable `sb_` key. Proven by planting a fake secret in the login bundle
+and watching the old assertions pass while the new one caught it.
+
 **Test that it worked — no need for the old key's value.** The exposed key lives
 only in the 2026-07-31 transcript, so a later session cannot curl it. Use the
 Supabase connector instead: `get_publishable_keys` returns the legacy `anon`

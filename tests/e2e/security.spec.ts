@@ -72,9 +72,28 @@ test.describe("client bundle hygiene", () => {
       1000,
     );
 
+    // --- legacy JWT-format keys ---------------------------------------------
     // A service_role JWT always carries this claim; the anon key never does.
     expect(bundle, "service_role JWT found in client bundle").not.toContain('"role":"service_role"');
     expect(bundle).not.toContain("service_role");
+
+    // --- modern (sb_) keys ---------------------------------------------------
+    // Supabase's replacement for the legacy pair is `sb_publishable_…` (safe to
+    // ship) and `sb_secret_…` (never). Both checks above key on the literal
+    // string "service_role", which a modern secret key does NOT contain — so on
+    // the day the legacy keys are rotated out (HANDOFF §2b) this test would go
+    // on passing while having quietly lost its ability to catch the very thing
+    // it exists to catch. Detect the secret key by its own prefix instead.
+    expect(bundle, "a modern sb_secret_ key reached the client bundle").not.toContain("sb_secret_");
+
+    // Belt and braces: any Supabase key material that is NOT the publishable
+    // one. Written as a prefix scan rather than an assignment-shape regex
+    // because a leak arrives inlined into minified code, not as
+    // `NAME = "value"`.
+    const sbKeys = [...bundle.matchAll(/sb_[a-z]+_[A-Za-z0-9_-]{10,}/g)].map((m) => m[0]);
+    const nonPublishable = sbKeys.filter((k) => !k.startsWith("sb_publishable_"));
+    expect(nonPublishable, `non-publishable Supabase key(s) in the bundle`).toEqual([]);
+
     expect(bundle).not.toMatch(/SUPABASE_SERVICE_ROLE_KEY\s*[:=]\s*["'][A-Za-z0-9._-]{20,}/);
     expect(bundle).not.toMatch(/RESEND_API_KEY\s*[:=]\s*["'][^"']{10,}/);
   });

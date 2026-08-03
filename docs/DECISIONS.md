@@ -1770,3 +1770,48 @@ cleanup suppressed, then swept by a normal run. Full spec 30 passed / 3 skipped
 (the pre-existing viewing, storage-image and slip-canvas self-skips); full
 desktop suite 167 passed / 4 skipped, and `--list` reports 171 tests before and
 after, so no test was added or lost.
+
+## 2026-08-03 · T-sb-key-guard — the bundle-leak test would have gone blind at rotation
+
+Pre-flighting the §2b key rotation (legacy `anon`/`service_role` JWTs →
+`sb_publishable_…`/`sb_secret_…`) turned up a guard that was about to stop
+guarding.
+
+`tests/e2e/security.spec.ts` "no service-role key or private env var reaches the
+browser" captured every `.js` served on `/login` and asserted:
+
+    not.toContain('"role":"service_role"')   -- the JWT payload claim
+    not.toContain("service_role")
+
+Both key on the literal string `service_role`. A modern secret key is
+`sb_secret_<random>` and contains neither it nor a JWT payload. The third
+assertion, `/SUPABASE_SERVICE_ROLE_KEY\s*[:=]\s*["']…/`, only matches an
+assignment shape, which is not how a leak arrives — Next inlines values into
+minified code, and non-`NEXT_PUBLIC_` vars are not inlined at all.
+
+So on the day the operator completes the rotation, this test would have kept
+passing while having silently lost the ability to catch the one thing it exists
+to catch. That is worse than no test: it is a green light with nothing behind
+it, on the surface that protects client PII and the evidence chain.
+
+**Fixed by detecting the key by its own prefix**, not by a claim inside it:
+`not.toContain("sb_secret_")`, plus a scan for any `sb_<word>_<10+ chars>` that
+is not `sb_publishable_` — defence in depth against a future key type nobody has
+told us about yet. The legacy `service_role` assertions stay: the rotation has
+not happened, both formats will coexist until it does, and neither check costs
+anything.
+
+**Proven rather than asserted.** A fake `sb_secret_…` literal was planted in the
+login client bundle. The run showed the two legacy assertions PASSING and the
+new one failing — which is the whole finding in one line of output. Probe
+removed, `security.spec.ts` 40 passed.
+
+**Also verified, and worth recording because it de-risks the rotation itself:**
+no code anywhere assumes the JWT key format — `lib/supabase/{client,server,
+admin,public}.ts` and `proxy.ts` each pass the env var straight to
+`createClient`, with no decode, claim read or shape check. And the publishable
+key was exercised live against hosted: PostgREST accepts it as `anon`
+(protected tables answer `42501 permission denied` — RLS refusing, not the key
+being rejected), `contacts` yields no PII, and `resolve_share_link` returns
+`200 null` for an unknown token, so B3 proposal links survive the swap. Recorded
+in HANDOFF §2b so the operator does not have to rediscover it.
