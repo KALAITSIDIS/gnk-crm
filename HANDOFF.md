@@ -398,11 +398,29 @@ And two testing lessons:
   shipped today and none has been used in anger: the nudge cron fires nightly
   against zero open deals, no proposal link has been minted, the PWA is on
   nobody's phone. Real usage will surface better work than guessing at B4.
-- **C1 finishes via Sentry.** The `/api/csp-report` handler already calls
-  `Sentry.captureMessage`; `instrumentation.ts` and `instrumentation-client.ts`
-  are both correctly DSN-gated and no-op without one. **Nothing to build** — it
-  needs `SENTRY_DSN` and `NEXT_PUBLIC_SENTRY_DSN` set in Vercel. Once set,
-  `csp.ts` also adds the Sentry origin to `connect-src` automatically.
+- **C1 finishes via Sentry — DSNs set 2026-08-03.** The `/api/csp-report`
+  handler calls `Sentry.captureMessage`; `instrumentation.ts` (server, reads
+  `SENTRY_DSN`) and `instrumentation-client.ts` (browser, reads
+  `NEXT_PUBLIC_SENTRY_DSN`) are both genuinely DSN-gated — re-verified by reading
+  them, not assumed — so each is a true no-op without a value. `csp.ts` adds the
+  Sentry origin to `connect-src` from `NEXT_PUBLIC_SENTRY_DSN` via `proxy.ts`.
+  **Nothing was built for this; it was configuration only.**
+  - **Both vars matter and they do different jobs.** `SENTRY_DSN` is what gives
+    C1 its durable sink (the CSP handler runs server-side).
+    `NEXT_PUBLIC_SENTRY_DSN` instruments the browser *and* is what puts the
+    Sentry origin in `connect-src` — set only the first and the policy would
+    block Sentry the day it is enforced.
+  - **How to verify the DSNs actually took effect**, since env changes need a
+    new deployment and the dashboard cannot be trusted to report one: the
+    `content-security-policy-report-only` response header must gain the Sentry
+    origin. Before it was set, production served exactly
+    `connect-src 'self' https://yjgirvzgoiywdojnpkpd.supabase.co wss://yjgirvzgoiywdojnpkpd.supabase.co`
+    — so the origin appearing is a positive observation, not an absence.
+    That header proves `NEXT_PUBLIC_SENTRY_DSN` only; `SENTRY_DSN` is proved by
+    a CSP report actually landing in the Sentry project.
+  - Source-map upload is deliberately skipped (no build plugin), so client stack
+    traces arrive minified. `tracesSampleRate` is 0.1 on both — errors and
+    messages are unsampled, only performance traces are.
 - **The `execute_sql` permission entry stays** in `.claude/settings.local.json`.
   Deliberate: it permits any SQL through that tool in this directory, in future
   sessions too. Kept because the alternative cost half a session, and every
