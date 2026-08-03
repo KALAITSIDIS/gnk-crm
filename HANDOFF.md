@@ -6,7 +6,7 @@ Read `docs/HANDOVER.md` and `CLAUDE.md` first; this is the delta on top of them.
 |---|---|
 | `main` | `4d18ab0`, clean, in sync with `origin/main`, only branch |
 | CI | ✅ green (`checks` + `rls`); `checks` now **builds** too (2026-08-03) |
-| Production | `gnk-crm.vercel.app` healthy — `/login` 200 |
+| Production | `gnk-crm.vercel.app` healthy — `/login` 200; **auto-deploys every push** (§2b) |
 | Hosted DB | `yjgirvzgoiywdojnpkpd` — **24 migrations**, `non_filename_versions = 0`, chain verifies, 62 events |
 | Tests | **437 unit** · **30 RLS** · **167 desktop E2E**, 4 skipped (`--list` says 171 total) |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
@@ -240,6 +240,26 @@ one that proves the replacement secret key is actually wired).
 If you still have the old value to hand, the direct check is a request to
 `/rest/v1/organizations?select=id&limit=1` with it as both `apikey` and
 `Authorization: Bearer` — must return **401**, not 200.
+
+**The blocker is narrower than it looked — git pushes deploy fine.** Checked via
+the Vercel connector on 2026-08-03: every one of the day's six pushes produced a
+`READY` production deployment, automatically. So the Git→Vercel pipeline is
+healthy and it is specifically the **dashboard's** env-save and Redeploy controls
+that were swallowing actions.
+
+**Therefore: never use the Redeploy button for this.** After saving the env vars,
+push any commit — that builds a fresh deployment with the new environment and
+gives you a SHA to verify against. Confirm it with `list_deployments` and match
+`meta.githubCommitSha`; a positive observation beats an absence.
+
+Note the old step-4 check "a deployment newer than `21c25fc`" is now useless —
+production passed that six deployments ago. Compare against the SHA you just
+pushed instead.
+
+**Order matters and is not negotiable: deploy → verify → then disable.** Vercel
+injects env vars at deploy time, so until a new deployment is live, production is
+still authenticating with the OLD keys. Disabling the legacy keys before that
+revokes what the running app is actively using.
 
 **Known blocker:** as of 2026-07-31 the Vercel dashboard would not persist env
 edits — the rows still read *Updated Jul 15 / Jul 11* after several attempts, and
