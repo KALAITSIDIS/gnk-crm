@@ -20,6 +20,13 @@ export default async function proxy(request: NextRequest) {
    * separately, so clickjacking protection is unaffected either way.
    */
   const nonce = crypto.randomUUID().replace(/-/g, "");
+  // NOTE: both NEXT_PUBLIC_* reads below are INLINED AT BUILD TIME, not read at
+  // runtime. Changing either in Vercel therefore requires a build that does not
+  // restore the previous build cache — a cached build silently keeps the old
+  // value compiled in. That is not theoretical: on 2026-08-03 the Sentry origin
+  // stayed missing from connect-src through a READY deployment because the
+  // build log said "Restored build cache from previous deployment", and that
+  // previous deployment predated the variable being set for Production.
   const csp = buildCsp({
     nonce,
     isDev: process.env.NODE_ENV !== "production",
