@@ -1995,3 +1995,20 @@ variables an integration provisions are invisible to production until the next
 build. Checking production immediately after installing an integration therefore
 always shows the old state, exactly as it does after editing a variable by hand.
 Push a commit, then check.
+
+**Outcome — working, verified 2026-08-03 on `dpl_2MoMJrB…`.** `connect-src`
+carries `https://o4511848269479936.ingest.de.sentry.io`; the browser SDK
+initialises (`window.__SENTRY__`, v10.65.0), which also proves the DSN parses;
+and a probe report to `/api/csp-report` returned 204 with the runtime log showing
+the handler processing it — the same line passed to `Sentry.captureMessage`.
+
+The root cause was the per-environment trap: the variable existed, but for
+**Preview** only. Every check after that was corrected still read the old state,
+because `NEXT_PUBLIC_*` is compiled in and no new build had run — including after
+the Sentry integration was installed, which provisions variables but triggers no
+deployment. Six deployments went into rediscovering that "check production
+immediately" is never valid for a build-time value.
+
+With this, **C1's durable sink exists**: CSP reports now leave stdout (~1h
+retention) and reach a store that outlives it, which is what "let report-only run
+for a while and then decide whether to enforce" always required.

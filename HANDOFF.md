@@ -410,14 +410,26 @@ And two testing lessons:
     `NEXT_PUBLIC_SENTRY_DSN` instruments the browser *and* is what puts the
     Sentry origin in `connect-src` — set only the first and the policy would
     block Sentry the day it is enforced.
-  - **How to verify the DSNs actually took effect**, since env changes need a
-    new deployment and the dashboard cannot be trusted to report one: the
-    `content-security-policy-report-only` response header must gain the Sentry
-    origin. Before it was set, production served exactly
-    `connect-src 'self' https://yjgirvzgoiywdojnpkpd.supabase.co wss://yjgirvzgoiywdojnpkpd.supabase.co`
-    — so the origin appearing is a positive observation, not an absence.
-    That header proves `NEXT_PUBLIC_SENTRY_DSN` only; `SENTRY_DSN` is proved by
-    a CSP report actually landing in the Sentry project.
+  - **VERIFIED LIVE 2026-08-03** on deployment `dpl_2MoMJrB…`:
+    - `connect-src` now carries `https://o4511848269479936.ingest.de.sentry.io`,
+      where the captured before-state was exactly
+      `connect-src 'self' https://…supabase.co wss://…supabase.co` — a positive
+      observation, not an absence.
+    - the browser SDK initialises (`window.__SENTRY__`, v10.65.0), which also
+      proves the DSN parses.
+    - a probe report POSTed to `/api/csp-report` returned 204 and the runtime log
+      shows the handler processing it — the same line the code hands to
+      `Sentry.captureMessage`.
+  - **What took six deployments, and the lesson: the variable was set for
+    PREVIEW only, and every check after fixing it was made before a new BUILD.**
+    A Vercel env var is per-environment, and "set for Preview" is
+    indistinguishable from "not set" when looking at production. `NEXT_PUBLIC_*`
+    is then compiled into the bundle, so the running deployment cannot know
+    about a variable changed after it was built — **and installing a Vercel
+    integration does not trigger a redeploy either** (confirmed: zero
+    deployments followed the install). Checking production right after any of
+    those changes always shows the old state and is not evidence of failure.
+    Push a commit first, then check. See DECISIONS `T-sentry-dsn`.
   - Source-map upload is deliberately skipped (no build plugin), so client stack
     traces arrive minified. `tracesSampleRate` is 0.1 on both — errors and
     messages are unsampled, only performance traces are.
