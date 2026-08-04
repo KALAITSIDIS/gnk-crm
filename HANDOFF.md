@@ -4,6 +4,11 @@ Read `docs/HANDOVER.md` and `CLAUDE.md` first; this is the delta on top of them.
 **History lives in `docs/DECISIONS.md` and git — this file is state, traps and
 what to do next. Keep it short; move narrative out rather than growing it.**
 
+**Code- and framework-level gotchas live in `docs/ENGINEERING_NOTES.md`** — the
+two bugs that only exist in production, Radix/dnd-kit/next-intl traps, testing
+discipline and local-stack recovery. §7 below covers *operational* traps
+(Vercel, Supabase, the machine); that file covers the codebase.
+
 | | |
 |---|---|
 | `main` | clean, in sync with `origin/main`, only branch (SHA: `git log --oneline -1` — deliberately not pinned here, it went stale on every commit) |
