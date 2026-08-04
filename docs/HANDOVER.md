@@ -1,4 +1,15 @@
-# HANDOVER — 2026-07-23
+# HANDOVER — 2026-07-23 *(snapshot; state sections corrected 2026-08-04)*
+
+> **Read `HANDOFF.md` §0 first for current state.** This file is the end-of-audit
+> snapshot: §4 and §5 are still the best writeup of the migration mechanics and
+> the mistakes worth not repeating, and they are why it is worth keeping. But
+> anything here describing *where things stand* is a photograph of 2026-07-23.
+>
+> **Do not copy live numbers into this file.** On 2026-08-04 an audit found the
+> same two stale facts — "leaked-password protection is one 5-minute toggle" and
+> "there is no backup to restore" — repeated across **four** documents, so each
+> correction had to be made four times and two instances were missed. Volatile
+> state now lives in HANDOFF only; everything else points at it.
 
 Point-in-time snapshot at the end of the full QA/security audit. This file is a
 **starting point, not a source of truth** — the canonical documents are:
@@ -18,14 +29,19 @@ Point-in-time snapshot at the end of the full QA/security audit. This file is a
 
 ## 1. Where things stand
 
-| | |
+**As at 2026-07-23** — for current numbers see `HANDOFF.md`, which is maintained;
+these are left as the audit-close snapshot and are now out of date by design.
+
+| | at audit close (2026-07-23) |
 |---|---|
-| `main` | `6ab07d2`, in sync with origin, working tree clean |
-| CI | ✅ green on `6ab07d2` (both `checks` and `rls` jobs) |
-| Production | `gnk-crm.vercel.app` live, security headers present, no runtime errors |
-| Hosted DB | `yjgirvzgoiywdojnpkpd` (eu-central-1) — 19 migrations, history clean (`non_filename_versions = 0`) |
-| Tests | 283 unit · 27 RLS · 164 E2E (162 pass, 2 self-skip on a clean DB) |
-| Phase 1 | **Complete.** The manual production smoke test — the last gate — was run and passed on 2026-07-23. |
+| `main` | `6ab07d2` |
+| Hosted DB | `yjgirvzgoiywdojnpkpd` (eu-central-1) — 19 migrations, `non_filename_versions = 0` |
+| Tests | 283 unit · 27 RLS · 164 E2E |
+| Phase 1 | **Complete.** The manual production smoke test — the last gate — passed 2026-07-23. |
+
+*(For scale: by 2026-08-04 that reads 24 migrations and 437 unit · 30 RLS ·
+167 E2E. The point is not the numbers, it is that this table stops being true
+the day after it is written.)*
 
 **The audit is closed.** Every finding was fixed and shipped, except SEC-5
 (investigated, no change warranted) and DEP-2 (upstream). Full detail with
@@ -35,10 +51,16 @@ evidence is in `TEST_REPORT.md`.
 
 ## 2. Outstanding — all operator actions, none are code
 
-### 2.1 Enable Auth leaked-password protection · 1 click
-Supabase dashboard → Authentication → Password settings. Confirmed still
-disabled by `get_advisors` on 2026-07-23. A single admin password currently
-guards every client's PII, KYC scans and the commission evidence chain.
+### 2.1 Enable Auth leaked-password protection · ~~1 click~~ **a plan upgrade**
+**CORRECTED 2026-08-04: this is NOT a toggle.** The setting is gated to
+**Supabase Pro** on this project's plan, so closing it is a spend decision, not
+five minutes in the dashboard. Until the plan changes, the standing
+`auth_leaked_password_protection` advisor finding should be read as **accepted,
+not unnoticed**. It is also not agent-reachable: the Supabase connector has no
+auth-config tool, and this is platform config rather than database state.
+
+The underlying risk statement stands — a single admin password guards every
+client's PII, KYC scans and the commission evidence chain.
 
 ### 2.2 Backup / restore drill · **the biggest unmitigated risk**
 **Runbook: `docs/BACKUP_RESTORE.md`. Read it before planning this.**
@@ -47,8 +69,15 @@ This section previously opened "Supabase takes backups; nobody has ever proven a
 restore works." **The first half is false** and was corrected on 2026-07-23 —
 see DECISIONS `T-backup-drill`. The org is on the **Free** plan, which Supabase
 excludes from automated daily backups, directing free projects to self-export
-instead. **There is no backup to restore today, so the RPO is unbounded, not
-24h.** The first job is creating a backup; the drill comes second.
+instead.
+
+**CORRECTED 2026-08-04 — backups now exist.** Three sets live in
+`../gnk-backups/` (2026-07-30, -07-31, and a verified -08-04 delta); RPO is
+roughly 5 days ad-hoc rather than unbounded. **RTO is still untested** — no drill
+has been run — and the one real gap is that **`auth.users` has only a manifest,
+not a restorable dump, so a restore today leaves nobody able to log in.** Closing
+that needs `supabase db dump` with the database password, which is the operator's.
+See BACKUP_RESTORE's STATUS block (top of file) for the apply order.
 
 Two further findings, both in the runbook:
 
@@ -80,9 +109,13 @@ artifact). Deliberately **not** archived via SQL, because `archiveProperty`
 writes an `archived` event and a direct `UPDATE` would leave the retire
 unlogged.
 
-### 2.4 Decide on 2FA
-Spec-Essential, deferred, needs a client decision on whether it gates Phase 1
-sign-off. Supabase Auth supports TOTP natively.
+### 2.4 ~~Decide on 2FA~~ — **SHIPPED 2026-07-24** (IMPROVEMENTS C2)
+TOTP two-factor is built and live, opt-in. **Two things remain, both in
+BACKLOG:** enforcement is application-layer only (`login()` + `proxy.ts`), so a
+stolen `aal1` JWT can still reach PostgREST directly — closing that needs
+`as restrictive` RLS policies asserting `aal = 'aal2'`, which touches every
+business table and carries real lockout risk. And whether enrolment should be
+*mandatory* is still the client's call.
 
 ---
 
@@ -215,12 +248,16 @@ and removing it would have been cosmetic). Both corrections are in
 
 ## 6. Suggested first actions for a new session
 
-1. `git branch -d` the eight merged `fix/*` and `qa/full-audit` branches — all
-   are in `main` and only add noise.
+1. ~~`git branch -d` the merged branches~~ — **done; `main` is the only branch
+   as of 2026-08-04.**
 2. Read `docs/DECISIONS.md` from `2026-07-22` onward — that is the audit's
    reasoning, and several entries exist specifically to stop a future session
    re-litigating a settled call (per-purchaser fees, SECURITY INVOKER on the
    dashboard RPC, cron-only `run_chain_checks`).
 3. Do not start anything in `IMPROVEMENTS.md` §B or §C without the operator
-   choosing it. The highest-value item there is the buyer magic-link proposal
-   flow (B3); the most overdue is the backup drill (C6).
+   choosing it. ~~The highest-value item there is B3; the most overdue is C6.~~
+   **Both moved on: B3 shipped 2026-07-29 and is now proven end to end in
+   production; C6's backups exist, though the drill itself is still unrun.**
+   As of 2026-08-04 the roadmap's decision-free work is exhausted — B4 and B5
+   need an operator decision, and everything else actionable is bug-shaped and
+   lives in `docs/BACKLOG.md`.

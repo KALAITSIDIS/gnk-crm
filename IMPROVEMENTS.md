@@ -23,7 +23,7 @@ are marked **[BACKLOG]** so this file does not silently fork the roadmap.
 | A8 | ~~Isolate the RLS suite's database (TEST-1)~~ | ✅ **Done 2026-07-23.** The suite runs in its own seeded fixture org; a full run now leaves the seeded org byte-identical. Surfaced a new finding, **TEST-2** (`run_chain_checks` is callable by no role) — see TEST_REPORT.md. | — | ships with the branch |
 | A11 | ~~Decide TEST-2: should `run_chain_checks()` be callable on demand?~~ | ✅ **Done 2026-07-23** (migration 0019). Settled on evidence: 0016 enumerated `anon, authenticated` as its targets, so losing `service_role` was the same collateral 0010 fixed for 0007. `service_role` restored; anon/authenticated stay revoked because the RPC walks every event in the org. | — | ✅ hosted apply confirmed 2026-07-23 |
 | A9 | **Run Lighthouse once on live `/dashboard`** | The only performance gap this audit could not close (needs prod credentials). Establishes the real-world baseline. | 30 min | prod login |
-| A10 | **Turn on Supabase leaked-password protection** | One dashboard toggle. Blocks known-breached passwords at signup/reset. Long outstanding. | 5 min | Supabase dashboard |
+| A10 | **Turn on Supabase leaked-password protection** | ⚠️ **NOT a toggle — corrected 2026-08-04.** Gated to **Supabase Pro** on this plan, so it is a spend decision, not 5 minutes. Until the plan changes the standing `auth_leaked_password_protection` advisor finding is **accepted, not unnoticed**. Not agent-reachable either (no auth-config tool on the connector; platform config, not DB state). | plan upgrade | operator |
 
 **Suggested first push:** A2 + A3. Deploying the branch closes the headline correctness bug and the security-header gap in one go; moving `shadcn` to devDependencies slims the deploy and drops 3 of 7 vulnerabilities. Under an hour of work.
 
@@ -117,7 +117,26 @@ Import exists (`scripts/import/`); export did not. **Why:** accountants, lawyers
 
 ## C. Strategic / architecture
 
-### C1. Content-Security-Policy with nonces — 🟡 **STAGED REPORT-ONLY 2026-07-24; enforcing is a separate decision**
+### C1. Content-Security-Policy with nonces — 🟡 **STAGED REPORT-ONLY; reporting now VERIFIED end to end (2026-08-03)**
+
+> **UPDATE 2026-08-03 — the "Unverified" caveat below is resolved, and checking
+> it found a real bug.** Sentry is wired (`SENTRY_DSN` + `NEXT_PUBLIC_SENTRY_DSN`,
+> both confirmed live: the ingest origin appears in `connect-src`, the browser SDK
+> initialises, and a probe report was confirmed arriving in Sentry), so the policy
+> finally has a **durable sink** instead of a ~1h stdout window.
+>
+> **But reports were being delivered and thrown away.** Reading the runtime logs
+> inside the retention window showed `/api/csp-report` had taken three POSTs and
+> **two returned 413**. The 16 KB cap assumed reports are small; the `report-to`
+> shape *batches* violations into one array where every envelope repeats
+> `originalPolicy` — the whole CSP string — so ~a dozen violations clears 16 KB.
+> Fixed in `42d017d`: cap raised to 128 KB **and the drop is now logged**, so a
+> future loss is visible rather than silent. See DECISIONS `T-csp-413`.
+>
+> This is exactly the trap step 1 below warns about, in a worse form than
+> written: not "an empty log might mean not-delivering", but "reports arrive and
+> the endpoint rejects them". **Enforcement still wants real traffic first** — the
+> accumulated violations are the input to that decision, and there is no rush.
 The per-request nonce is threaded through `proxy.ts` and the full policy ships as **`Content-Security-Policy-Report-Only`** — it reports, it does not block. `frame-ancestors 'none'` stays separately **enforced** in `next.config.ts`, so clickjacking protection is unchanged. Full rationale in DECISIONS `T-csp`.
 
 **The staging immediately earned its keep.** Against a *production* build, five screens reported `script-src / blockedURI: "eval"` — traced to **Zod 4's JIT validator compiler**, which builds schemas with the `Function` constructor. Dev had hidden it entirely (dev needs `'unsafe-eval'` anyway). Zod falls back on its own so it wouldn't have *broken*, but every page would have reported a violation and silently lost the fast path; since the enforced end-state is jitless regardless, `z.config({ jitless: true })` is now explicit.
@@ -157,7 +176,23 @@ Agent performance, source ROI, time-to-close, stage conversion, price-reduction 
 ### C5. Event-log partitioning and archival — **1 week**
 `events` grows forever and by design is never deleted. Every timeline, the dashboard, and `verify_events_chain` read it. **Why:** at a few million rows the chain walk and the per-entity timelines will become the app's bottleneck, and the nightly `run_chain_checks()` cron is the canary. **Fix direction:** partition by `occurred_at` range, index per partition, and keep chain verification incremental against the last verified checkpoint rather than walking from genesis. **Do before C4.**
 
-### C6. Backup and restore drill — **runbook written 2026-07-23, execution outstanding**
+### C6. Backup and restore drill — **backups TAKEN 2026-07-30/31 + 08-04; the drill itself is still unrun**
+
+> **UPDATE 2026-08-04 — "there is no reachable backup today" is no longer true.**
+> Three sets exist in `../gnk-backups/`: chain-faithful `events` (ids 1–62, plus a
+> verified 63–73 delta), business tables, all 26 Storage files, and an auth +
+> storage manifest. Integrity is md5-checked **inside Postgres** and again on
+> disk. RPO is ~5 days ad-hoc rather than unbounded.
+>
+> **Two things still open, and the first is the real one:**
+> 1. **`supabase db dump` has never been taken.** `auth.users` exists only as a
+>    manifest, and a manifest does not restore — a recovery today would return
+>    the data with **nobody able to log in**. Needs the database password, so it
+>    is the operator's.
+> 2. **RTO remains unmeasured** — no drill has been executed against these
+>    sources, so the 4h target is still a guess.
+>
+> See the STATUS block at the top of `docs/BACKUP_RESTORE.md` for the apply order.
 **See `docs/BACKUP_RESTORE.md` and DECISIONS `T-backup-drill`.** This item was scoped as "Supabase takes backups; nobody has proven a restore" — **that premise was wrong.** The org is on the Free plan, which Supabase excludes from automated daily backups; there is no reachable backup today, so the RPO is unbounded rather than 24h. Two further findings: storage objects (signed slips, evidence PDFs, KYC scans) are in **no** database backup on any plan, and `verify_events_chain` is session-`TimeZone`-dependent, so a restore into a non-UTC project reads `false` on intact data. **Why it still matters:** the commission evidence chain is the product's core value and it is append-only — a corrupted or lost `events` table cannot be reconstructed from anywhere else. **Remaining deliverable:** take the first backup (§3, under an hour, removes most of the risk on its own), get it off-site, then run the timed drill (§4) and sign off the proposed RPO 24h / RTO 4h (§6). Verification pack `scripts/backup/verify-restore.sql` is written and self-tested 43/43 against hosted.
 
 ### C7. Role model beyond the three fixed roles — **1.5 weeks**
