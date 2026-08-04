@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { generateShareToken, hashShareToken } from "./share-links-token";
 import {
   DEFAULT_EXPIRY_DAYS,
   daysUntilExpiry,
   expiryFromNow,
-  generateShareToken,
-  hashShareToken,
   isWellFormedShareToken,
   shareLinkPath,
   shareLinkState,

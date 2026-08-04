@@ -1,11 +1,8 @@
 import { createHash } from "node:crypto";
 import { headers } from "next/headers";
 import { Proposal as ProposalView } from "@/components/features/share-links/proposal";
-import {
-  hashShareToken,
-  isWellFormedShareToken,
-  type Proposal,
-} from "@/lib/services/share-links";
+import { isWellFormedShareToken, type Proposal } from "@/lib/services/share-links";
+import { hashShareToken } from "@/lib/services/share-links-token";
 import { createPublicClient } from "@/lib/supabase/public";
 
 export const dynamic = "force-dynamic";

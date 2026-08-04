@@ -9,10 +9,9 @@ import {
   MAX_EXPIRY_DAYS,
   SHARE_LOCALES,
   expiryFromNow,
-  generateShareToken,
-  hashShareToken,
   shareLinkPath,
 } from "@/lib/services/share-links";
+import { generateShareToken, hashShareToken } from "@/lib/services/share-links-token";
 import { createClient } from "@/lib/supabase/server";
 
 export type ShareLinkActionState = {

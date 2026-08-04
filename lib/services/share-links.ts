@@ -1,5 +1,3 @@
-import { createHash, randomBytes } from "node:crypto";
-
 /**
  * Buyer proposal magic links (IMPROVEMENTS B3, migration 0023).
  *
@@ -10,10 +8,13 @@ import { createHash, randomBytes } from "node:crypto";
  * The token is a bearer credential: whoever holds the URL sees the proposal.
  * That is the point (a buyer must not need an account), and it is why the
  * token is generated with a CSPRNG, never stored, and always revocable.
+ *
+ * **THIS MODULE MUST STAY FREE OF `node:*` IMPORTS.** `share-links-client.tsx`
+ * is a client component and imports the constants and pure helpers below, so
+ * anything Node-only here lands in the browser bundle. Token minting and
+ * hashing therefore live in `share-links-token.ts`, which is `server-only`;
+ * see that file's header for the CSP violation this caused.
  */
-
-/** 32 bytes = 256 bits. Guessing one is infeasible; see the design's §5. */
-export const SHARE_TOKEN_BYTES = 32;
 
 /** Matches a viewing-decision cycle. The agent may shorten or extend. */
 export const DEFAULT_EXPIRY_DAYS = 14;
@@ -21,23 +22,6 @@ export const MAX_EXPIRY_DAYS = 90;
 
 export const SHARE_LOCALES = ["en", "el", "ru"] as const;
 export type ShareLocale = (typeof SHARE_LOCALES)[number];
-
-/**
- * URL-safe, no padding — it goes in a path segment and gets pasted into
- * WhatsApp, where `+` and `/` would be mangled.
- */
-export function generateShareToken(): string {
-  return randomBytes(SHARE_TOKEN_BYTES).toString("base64url");
-}
-
-/**
- * Only the HASH is stored (migration 0023). A database leak therefore yields no
- * working links — the same reasoning as password hashing. Lookup by hash stays
- * a single indexed equality probe.
- */
-export function hashShareToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
-}
 
 /**
  * A token that could not have come from `generateShareToken` is rejected before

@@ -61,3 +61,85 @@ jobs:
 
       - name: RLS suite (12 mandatory tests, doc 04)
         run: npm run test:rls
+
+  # Added 2026-08-04. Until then all 167 Playwright tests ran nowhere but a
+  # developer's machine, so guards like security.spec.ts's client-bundle leak
+  # check protected nothing on a push.
+  #
+  # This runs against a PRODUCTION BUILD (`next start`), not `next dev`, and that
+  # is the whole point: `lib/services/csp.ts` ships 'unsafe-eval' in dev, so
+  # script-src violations are INVISIBLE there. On its first run this job caught a
+  # real one — a client component importing a module that also did `node:crypto`
+  # token minting, dragging Node polyfills (which call `Function(...)`) into the
+  # browser bundle. `/share-links` would have broken the day the CSP was
+  # enforced. See DECISIONS T-share-links-eval.
+  #
+  # playwright.config.ts has `reuseExistingServer: true`, so starting the server
+  # here means Playwright reuses it instead of running `npm run dev`.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browser
+        # chromium only — the desktop project is Desktop Chrome. --with-deps
+        # pulls the system libraries a headless browser needs on ubuntu.
+        run: npx playwright install --with-deps chromium
+
+      - name: Start local Supabase stack
+        run: supabase start
+
+      # Unlike `checks`, this job DOES need Supabase env: the app must actually
+      # talk to a database. These are the local stack's well-known demo values,
+      # printed by the CLI — not secrets, and never production credentials.
+      - name: Export local stack env
+        run: |
+          supabase status -o env | sed 's/^/export /' > /tmp/sb.env
+          . /tmp/sb.env
+          {
+            echo "NEXT_PUBLIC_SUPABASE_URL=$API_URL"
+            echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=$ANON_KEY"
+            echo "SUPABASE_SERVICE_ROLE_KEY=$SERVICE_ROLE_KEY"
+          } >> "$GITHUB_ENV"
+
+      - name: Build
+        run: npm run build
+
+      - name: Start production server
+        # Plain curl poll rather than `npx wait-on` — that is not a dependency
+        # here and would be fetched from the network mid-job.
+        run: |
+          npx next start -p 3000 > /tmp/next-start.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf -o /dev/null http://localhost:3000/login; then
+              echo "server ready after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "server did not become ready; log follows:"; cat /tmp/next-start.log; exit 1
+
+      # The suite must pass on a FRESH database — CI is the only place it meets
+      # one, which is exactly where residue-dependent tests hide. Verified
+      # locally on 2026-08-04 after `supabase db reset`: 168 passed, 4 skipped.
+      - name: Desktop E2E
+        run: npx playwright test --project=setup --project=desktop
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: tests/.playwright-report
+          retention-days: 7

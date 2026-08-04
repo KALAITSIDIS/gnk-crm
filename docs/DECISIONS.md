@@ -2020,3 +2020,53 @@ is the half C1 actually depends on, since `/api/csp-report` runs server-side.
 Report-Only to enforced is now a decision backed by evidence rather than a
 guess.** It still wants real traffic first: the accumulated violations are the
 input to that decision, and there is no rush to enforce before they exist.
+
+## 2026-08-04 · T-share-links-eval — a client component pulled `node:crypto` into the browser
+
+Adding Playwright to CI (`T-e2e-ci`) found a real defect on its first run:
+`/share-links` reported `script-src / blockedURI: "eval"`, meaning the Proposals
+page **would have broken the day the CSP was enforced**.
+
+**It was not Zod.** IMPROVEMENTS C1 had recorded exactly this symptom on five
+screens in 2026-07-24, traced to Zod 4's JIT validator compiler and fixed with
+`z.config({ jitless: true })`, so that was the obvious suspect. Checking the
+offending chunk instead of assuming showed **zero Zod fingerprints** — and three
+Node polyfills: `vm-browserify` (`Script.prototype.runInThisContext = eval(…)`),
+`function-bind` (`Function("binder", …)`) and `is-generator-function`.
+
+**Root cause.** `components/features/share-links/share-links-client.tsx` is a
+client component and imported `SHARE_LOCALES`, `daysUntilExpiry`,
+`shareLinkState` and the expiry constants from `lib/services/share-links.ts` —
+a module whose first line was `import { createHash, randomBytes } from
+"node:crypto"`. That single import dragged Node crypto into the browser bundle,
+where the bundler polyfills it, and those shims call the `Function` constructor.
+
+**Fix: split the module.** Token minting and hashing moved to
+`lib/services/share-links-token.ts`, which opens with `import "server-only"` —
+so a repeat is a **build error**, not a silent regression. That is the same
+guard `lib/supabase/admin.ts` already uses. The pure constants and helpers stay
+in `share-links.ts`, which now carries a header saying it must remain free of
+`node:*` imports and why.
+
+Only three non-test call sites needed updating, all server-side
+(`lib/actions/share-links.ts`, `app/p/[token]/page.tsx`, and the unit test).
+
+**Why it hid for six days.** B3 shipped 2026-07-29; C1's production-build CSP
+sweep ran 2026-07-24, so `/share-links` was never in it. And the violation only
+reproduces against a **production build** — `lib/services/csp.ts` deliberately
+ships `'unsafe-eval'` under `next dev`, so local runs were clean. It took a CI
+job running `next start` to see it at all.
+
+**Verified:** `Proposals reports no CSP violations` failed before the split and
+passes after; full desktop suite **168 passed / 4 skipped** on a freshly reset
+database against a clean production build; typecheck, lint and 437 unit tests
+clean.
+
+**A self-inflicted detour worth recording.** Mid-verification I rebuilt `.next`
+while `next start` was still serving, so the second server never bound
+(`EADDRINUSE`) and the stale process served a half-replaced build — which
+surfaced as a *different* test failing and briefly looked like the fix had broken
+the page. HANDOFF §7 already says "do not build while a dev server is running";
+it applies to `next start` too. The rebuild then hit `EPERM` on a locked
+`.next/static` file (the OneDrive handle issue) and needed a PowerShell
+`Remove-Item -Recurse -Force`.
