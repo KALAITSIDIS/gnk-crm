@@ -41,11 +41,31 @@ something already marked done, not by building anything new.
 **Do not start B4 or B5** — both need a decision only the operator can give
 (§5). **B9 is closed, not deferred.**
 
-**The desk still has not used the system.** `share_links` = 0, `tasks` = 0,
-events = 62, all unchanged since 2026-07-31. The nudge cron has been firing
-nightly against zero open deals. If asked "what next", the honest answer is
-still usage, not code: mint one proposal link, install the PWA on a phone, and
-look at `/tasks` after the 03:15 cron.
+**EVERY ROW IN PRODUCTION IS OPERATOR-CREATED TEST DATA. There is no live
+client data yet** (operator-confirmed 2026-08-04). The contacts, properties,
+deals and the `MARIOS ANDREOU` deal were all made for testing. State this as a
+fact about the database rather than inferring usage from row counts — on
+2026-08-04 an agent saw a real-looking deal with a real agent assigned and
+"corrected" the handoff to say the desk had started using the system. It had
+not. Counts tell you what exists, not who created it or why.
+
+What follows from it:
+- destructive testing on hosted is cheaper than it looks — no client PII is at
+  risk today, though that changes the moment the desk starts entering real work;
+- §2b's exposed key reached a test dataset, not live client records and KYC
+  documents. Revoking it was still right, and the ordering discipline and leak
+  guard carry forward — but calibrate the severity honestly.
+
+**B3 and B7 have now been exercised end to end in production** (2026-08-04):
+share link minted → opened → revoked → re-minted, and lead → deal →
+`deal_no_contact` nudge → superseded-on-contact, with correct actor attribution
+throughout (system for the cron, the user for the supersede) and the chain
+verifying at every step. `events` 62 → 73. The seed rows were deleted
+afterwards; their events remain, which is correct and by design.
+
+**The desk still has not used the system for real work.** If asked "what next",
+the honest answer is still usage, not code — a real buyer sent a real proposal
+link, and the PWA on a phone.
 
 A first useful check in a new session — all read-only:
 
@@ -54,9 +74,10 @@ cd "C:/Users/user/OneDrive/Desktop/TSOPOZIDIS/gnk-crm" && git log --oneline -3 &
 ```
 
 Then verify hosted via the Supabase connector (`execute_sql`, read-only):
-migrations = 24, `non_filename_versions` = 0, chain verifies, and
-`share_links`/`tasks` row counts (both were 0 — if either is non-zero, the desk
-has started using B3/B7 and that is worth reading before doing anything else).
+migrations = 24, `non_filename_versions` = 0, chain verifies, `events` = 73 and
+`share_links` = 2 (1 live, 1 revoked), `tasks` = 0. **Do not read a changed
+count as "the desk is using it"** — see the test-data note above. Ask, or check
+`events.actor_id` and the payloads, before concluding anything about usage.
 
 **Two snippet corrections, found the hard way on 2026-08-02.**
 `verify_events_chain` takes an argument — `verify_events_chain(p_org uuid)`;
