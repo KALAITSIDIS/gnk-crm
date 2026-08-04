@@ -16,7 +16,7 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 | Production | `gnk-crm.vercel.app` healthy; **auto-deploys every push** |
 | Hosted DB | `yjgirvzgoiywdojnpkpd` — **24 migrations**, `non_filename_versions` = 0, chain verifies, **73 events** |
 | Data | `share_links` 2 (1 live, 1 revoked) · `tasks` 0 · `deals` 1 · **all of it operator test data** (§0) |
-| Tests | **437 unit** · **30 RLS** · **167 desktop E2E** (4 skipped) |
+| Tests | **437 unit** · **30 RLS** · **168 desktop E2E** (4 skipped) — all three run in CI |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
 | Backups | ✅ verified, `../gnk-backups/2026-07-30` and `2026-07-31` (§2) |
 
@@ -272,7 +272,9 @@ deliberate assignment is the wrong default. Wants an admin surface.
 - **2FA is enforced at the application layer only.**
 - **B8 does not queue writes.** Offline slip signing was considered and
   rejected: it would put commission evidence in a client-side queue.
-- **Playwright does not run in CI** (§8).
+- ~~Playwright does not run in CI~~ — **fixed 2026-08-04**, and it caught a real
+  CSP-breaking `eval` on `/share-links` on its first run (§8, DECISIONS
+  `T-share-links-eval`).
 
 ---
 
@@ -345,20 +347,30 @@ npm run test:rls
 npx playwright test --project=setup --project=desktop
 ```
 
-Expect **437 unit · 30 RLS · 167 E2E passed, 4 skipped** (`--list` counts 171,
-including self-skips and the `setup` project). A freshly reset DB is now a clean
+Expect **437 unit · 30 RLS · 168 E2E passed, 4 skipped** (`--list` counts 172,
+including self-skips and the `setup` project). A freshly reset DB is a clean
 first run — the `csp.spec.ts` detail tests seed what they need.
 
-**What CI covers:** `checks` = typecheck · lint · unit · **build**; `rls` = the
-RLS suite against a real stack. The build step takes **no secrets on purpose** —
-`npm run build` exits 0 with no `.env` at all (verified). If it ever needs them,
-something has started reaching the database at build time; investigate that
-rather than adding them.
+**What CI covers — all three jobs:**
+- `checks` — typecheck · lint · unit · **build**. Takes **no secrets on purpose**:
+  `npm run build` exits 0 with no `.env` at all (verified). If it ever needs
+  them, something has started reaching the database at build time; investigate
+  that rather than adding them.
+- `rls` — the RLS suite against a real Supabase stack.
+- `e2e` — **added 2026-08-04.** Desktop Playwright against a real stack **and a
+  production build**. ~8 min, so pushes are slower; if that becomes a problem the
+  lever is scoping it to `pull_request` + `main` rather than every push.
 
-**Playwright does not run in CI.** All 167 E2E tests — including the
-`security.spec.ts` bundle-leak guard — only run locally. Adding them needs a
-Supabase stack plus a dev server in the workflow (the `rls` job proves the stack
-part works) and costs real minutes per push, so it is a deliberate open choice.
+**The `e2e` job runs `next start`, NOT `next dev`, and that is load-bearing.**
+`lib/services/csp.ts` ships `'unsafe-eval'` under dev, so `script-src`
+violations are **invisible** there. On its first run this job caught a real one
+(`/share-links`, DECISIONS `T-share-links-eval`) that had been live for six days.
+`playwright.config.ts` sets `reuseExistingServer`, so the job starting the server
+means Playwright reuses it instead of launching `npm run dev`.
+
+**Unlike `checks`, `e2e` needs Supabase env** — the app must actually reach a
+database. It exports the local stack's well-known demo values from
+`supabase status -o env`; those are not secrets and never production credentials.
 
 **Confirm a CI step actually RAN** before trusting a green tick:
 

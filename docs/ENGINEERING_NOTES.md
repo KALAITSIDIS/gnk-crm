@@ -13,11 +13,13 @@ and a fixed bug may have been refixed differently since.
 
 ---
 
-## 1. Two bugs that only exist in production
+## 1. Three bugs that only exist in production
 
-Both shipped to prod undetected because local dev is more forgiving than the
-Vercel runtime. **Any change to upload or server-action plumbing should be
-verified against a production build (`next build && next start`), not `next dev`.**
+All three shipped undetected because local dev is more forgiving than a
+production build. **Any change to upload, server-action or client/server
+boundary plumbing should be verified against `next build && next start`, not
+`next dev`.** Since 2026-08-04 the `e2e` CI job does exactly that on every push
+— it found the third one on its first run.
 
 **Binary uploads must be wrapped in a `Blob`** (2026-07-15, `3a546e2`).
 `@supabase/storage-js` sends a raw Node `Buffer`/`Uint8Array` as a *direct* fetch
@@ -33,6 +35,26 @@ evidence PDF, branding. `File` objects can be passed directly.
 image/webp`, but `sharp().metadata()` throws; first bytes read
 `52494646 78EFBFBD…` (RIFF, then replacement chars). **Already-corrupt files
 cannot be repaired — delete and re-upload.**
+
+**A client component importing a `node:*` module poisons the browser bundle**
+(2026-08-04, `8f614a6`). `share-links-client.tsx` is a client component and
+imported constants and pure helpers from `lib/services/share-links.ts`, whose
+first line was `import { createHash, randomBytes } from "node:crypto"`. That one
+import dragged Node crypto into the browser bundle, where the bundler polyfills
+it — `vm-browserify`, `function-bind`, `is-generator-function` — and those shims
+call the `Function` constructor. Result: a real
+`script-src / blockedURI: "eval"` violation, i.e. `/share-links` **would have
+broken the day the CSP was enforced**.
+*Fix:* split the module. Node-dependent functions moved to
+`share-links-token.ts` behind `import "server-only"`, which makes a repeat a
+**build error** rather than a silent regression — the guard `admin.ts` uses.
+Pure constants and helpers stayed put, with a header saying the file must remain
+free of `node:*` imports.
+*Two traps in one:* it is invisible under `next dev` (which ships
+`'unsafe-eval'`), **and** the symptom exactly matched a documented Zod 4 JIT
+issue that had been fixed weeks earlier — inspecting the actual chunk showed
+zero Zod fingerprints. **When a symptom matches a known cause, still check the
+bytes.**
 
 **A `"use server"` file may only export async functions** (2026-07-16, `c824b83`).
 Exporting a runtime const (an options array, say) works in dev, but the
@@ -182,6 +204,22 @@ email or password". Fix: `npx supabase stop && npx supabase start`.
 `.next/dev/types/validator.ts` and break `npm run typecheck`. When a route 404s
 but the page file is on disk, delete `.next` before debugging the code. Stop the
 dev server first.
+
+**Never rebuild while a server is serving — `next start` counts, not just
+`next dev`** (2026-08-04). Rebuilding under a running `next start` leaves it
+serving a half-replaced `.next`: the second server fails to bind
+(`EADDRINUSE`, easy to miss if backgrounded) and the stale one renders the error
+boundary on pages that are actually fine. It cost a false "my fix broke the
+page" during the share-links investigation. Kill the listener first:
+
+```powershell
+Get-NetTCPConnection -LocalPort 3000 -State Listen |
+  Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force }
+```
+
+Then expect `npm run build` to fail once with `EPERM: unlink .next/static/…`
+(the OneDrive handle lock) — clear it with
+`Remove-Item -LiteralPath .next -Recurse -Force` in PowerShell and rebuild.
 
 **Docker/WSL dies when the machine sleeps or the disk fills.** Recovery:
 `wsl --shutdown`, start Docker Desktop, `npx supabase start` (retry once if the
