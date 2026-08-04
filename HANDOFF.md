@@ -102,8 +102,20 @@ verified:
 
 | set | contents |
 |---|---|
-| `2026-07-30/` | `events.sql` (**chain-faithful**), `business-data.json` (15 tables), auth + storage manifest, restore guide |
+| `2026-07-30/` | `events.sql` ids 1–62 (**chain-faithful**), `business-data.json` (15 tables), auth + storage manifest, restore guide |
 | `2026-07-31/` | `export.mjs` output: **all 26 Storage files** + every table as JSON |
+| `2026-08-04/` | **delta** — `events` ids 63–73 + `share_links`/`share_link_properties`; apply order in its README |
+
+**2026-08-04 is a delta and that is sound, not a shortcut.** `events` has no
+UPDATE/DELETE grant, so an older export stays a valid prefix — verified, not
+assumed: production's first 62 rows still hash to the md5 in the 2026-07-30
+header. Storage was not re-copied because the newest object anywhere dates from
+2026-07-23, before the 2026-07-31 capture.
+
+**Verifying an export on disk has an md5 trap** — the header hash is over
+LF-joined insert lines with no trailing newline, and OneDrive stores the file
+CRLF, so the naive `grep | md5sum` makes an intact backup look corrupt. Correct
+command in BACKUP_RESTORE §5.
 
 **Keep both.** `export.mjs`'s `events` copy is NOT chain-faithful — PostgREST
 hands `jsonb` to JavaScript and numeric scale is lost, so `verify_events_chain`

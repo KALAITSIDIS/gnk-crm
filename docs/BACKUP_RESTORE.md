@@ -9,9 +9,28 @@ this document leads with *creating* a backup rather than restoring one.
 
 ---
 
+> ## ⚠️ STATUS 2026-08-04 — READ THIS FIRST IF YOU ARE MID-INCIDENT
+>
+> **Backups now exist.** §1.1, §6 and §7 below were written on 2026-07-24, when
+> they did not, and their "nothing to restore from" framing is **no longer true**.
+> Restore sources live in `../gnk-backups/` (outside the repo, untracked):
+>
+> | set | contents |
+> |---|---|
+> | `2026-07-30/` | `events.sql` ids 1–62 (**chain-faithful**), `business-data.json` (15 tables), auth + storage manifest, README |
+> | `2026-07-31/` | all **26** Storage files + every table as JSON |
+> | `2026-08-04/` | delta: `events` ids 63–73, `share_links`/`share_link_properties`; see its README for the apply order |
+>
+> **Still missing: a real `supabase db dump`.** `auth.users` exists only as a
+> manifest, and a manifest does not restore — without it nobody can log in. That
+> is the one genuine gap; §3.1 is still the instruction to close it.
+>
+> The Free-plan analysis in §1.1 remains accurate and is why all of the above is
+> hand-rolled.
+
 ## 1. Three findings that change the shape of this task
 
-### 1.1 There is no backup to restore. The plan is Free.
+### 1.1 There is no backup to restore. The plan is Free. *(as of 2026-07-24 — see STATUS above)*
 
 `HANDOVER.md` §2.2 says "Supabase takes backups; nobody has ever proven a
 restore works." The first half is **not true for this project**.
@@ -340,7 +359,9 @@ The drill passes only if all of these hold on the restored project:
 - [ ] `verify_events_chain` = `true` for every org
 - [ ] the function-grant table in §2 reproduces **exactly** — this is the TEST-2
       check, and the one most likely to differ
-- [ ] `non_filename_versions` = 0 and 19 migration rows
+- [ ] `non_filename_versions` = 0 and **24** migration rows (19 when this list was
+      written; re-check against `supabase/migrations/` rather than trusting this
+      number — it moves with every migration)
 - [ ] both cron jobs present and active
 - [ ] storage object counts 9 / 2 / 15, and `media.public` = true
 - [ ] the signed slip PDF for the smoke viewing downloads and opens
@@ -349,16 +370,41 @@ The drill passes only if all of these hold on the restored project:
       chain survived
 - [ ] at least one login works
 
+### Verifying an `events.sql` export on disk — the md5 trap
+
+Each export header records an md5 of its **insert lines only, joined by `\n`,
+with no trailing newline**. On Windows/OneDrive the file is stored CRLF, so the
+obvious command gives a *different* hash and the backup looks corrupt. This cost
+a false alarm on 2026-08-04 against a file that was perfectly intact — exactly
+the wrong discovery to make mid-recovery. Use:
+
+```bash
+grep "^insert into events" events.sql | tr -d '\r' | printf '%s' "$(cat)" | md5sum
+```
+
+The same hash can be recomputed **inside Postgres** and compared, which is how
+these exports are proven lossless end to end:
+
+```sql
+select md5(string_agg(l, E'\n' order by id)) from ( /* the format() from
+  scripts/backup/export-events.sql */ ) lines;
+```
+
+Because `events` has no UPDATE or DELETE grant, an older export stays a valid
+**prefix** of production forever — verified on 2026-08-04, where production's
+first 62 rows still hashed to the 2026-07-30 header value. That is what makes
+the delta files in `2026-08-04/` sound rather than a shortcut.
+
 ---
 
 ## 6. Proposed RPO / RTO — for operator sign-off
 
 **Today, honestly stated:**
 
-| | Current |
-|---|---|
-| RPO | **Unbounded.** No reachable backup exists. A project-level loss is total. |
-| RTO | **Unbounded.** Nothing to restore from, so nothing to time. |
+| | As written 2026-07-24 | **Actual, 2026-08-04** |
+|---|---|---|
+| RPO | **Unbounded.** No reachable backup exists. A project-level loss is total. | **~5 days**, ad-hoc. Last capture 2026-08-04 (events + business delta); Storage last captured 2026-07-31 and unchanged since (newest object 2026-07-23). Manual, not scheduled — so this number drifts by definition. |
+| RTO | **Unbounded.** Nothing to restore from, so nothing to time. | **Untested.** The sources exist and are md5-verified, but no drill has been run against them, and `auth.users` has no restorable dump — so login recovery is unproven. |
 
 **Proposed, after §3 is running** — now with the mechanical half measured rather
 than guessed (§3.4):
@@ -382,13 +428,18 @@ cp -r` export in §3.2 remains necessary on every plan, forever.
 
 ## 7. Recommended sequence
 
-1. Take one manual backup today (§3). This alone removes the largest unmitigated
-   risk on the project, and takes under an hour.
-2. Get it off-site (§3.3).
-3. Run the drill (§4) and fill in the real timings.
-4. Decide Free-plus-nightly-dump versus Pro-plus-PITR (§6) with the volume you
+1. ~~Take one manual backup today (§3).~~ **DONE 2026-07-30, extended 2026-08-04.**
+2. **`supabase db dump` — still open, and now the top item.** Everything captured
+   so far is hand-rolled and covers rows and files; `auth.users` exists only as a
+   manifest, so a restore today leaves nobody able to log in. Needs the database
+   password, so it is the operator's:
+   ```bash
+   supabase db dump --db-url "postgresql://postgres:[PASSWORD]@db.yjgirvzgoiywdojnpkpd.supabase.co:5432/postgres" --schema public,auth,storage -f pg_dump.sql
+   ```
+3. Get it off-site (§3.3). `../gnk-backups/` is under OneDrive — sync, not backup.
+4. Run the drill (§4) and fill in the real timings. **RTO is still unmeasured.**
+5. Decide Free-plus-nightly-dump versus Pro-plus-PITR (§6) with the volume you
    actually expect in Phase 2.
 
-Steps 1 and 2 are worth doing before anything else on the outstanding list.
-Until they are done, every other item is a refinement on a system that cannot
-survive losing its database.
+Step 2 is the one that still matters. Until it is done, the restore path is
+proven for events and business rows but **not for logging in afterwards**.
