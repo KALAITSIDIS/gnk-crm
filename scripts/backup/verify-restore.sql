@@ -26,7 +26,7 @@
 with expected as (
   -- BASELINE — replace via scripts/backup/capture-baseline.sql before a drill.
   select
-    1::bigint as orgs,      2::bigint as profiles,   62::bigint as events,
+    1::bigint as orgs,      2::bigint as profiles,   73::bigint as events,
     2::bigint as contacts,  2::bigint as properties, 1::bigint as deals,
     3::bigint as leads,     1::bigint as viewings,   1::bigint as slips,
     3::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
@@ -34,10 +34,19 @@ with expected as (
     26::bigint as deal_stages, 5::bigint as districts,
     2::bigint as auth_users, 24::bigint as migrations,
     9::bigint as obj_documents, 2::bigint as obj_signatures, 15::bigint as obj_media
-    -- captured 2026-07-29 from hosted (yjgirvzgoiywdojnpkpd), after 0023.
-    -- `migrations` moved 19 -> 23 across 0020/0021/0022/0023, then 23 -> 24 with
-    -- 0024 (2026-08-02). Every other count is unchanged: 0024 replaces two
-    -- function bodies and its backfill was a no-op on hosted (tasks = 0).
+    -- captured 2026-08-04 from hosted (yjgirvzgoiywdojnpkpd) via
+    -- capture-baseline.sql. Previous capture was 2026-07-29 (events 62).
+    --
+    -- `events` IS THE ONE THAT GOES STALE. It is append-only, so it drifts
+    -- upward on every single use of the app and never returns — 62 -> 73 came
+    -- from one afternoon of exercising B3/B7, and re-running the pack then
+    -- reported that single row as a FALSE FAILURE while all 20 other counts
+    -- still matched exactly. Check `events` first when this block looks wrong,
+    -- and re-capture rather than assuming a bad restore.
+    --
+    -- The others are stable between schema changes: `migrations` moves only
+    -- when one is applied (19 -> 23 across 0020-0023, then 24 with 0024), and
+    -- the rest only when the desk creates or deletes real rows.
 ),
 
 -- ---------- row counts ----------
