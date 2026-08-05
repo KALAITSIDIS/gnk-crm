@@ -9,9 +9,10 @@
 --
 --   invariant  — true of a correct restore regardless of how much data exists:
 --                the event chain, the function grants (the TEST-2 surface),
---                cron, bucket visibility, migration history, session timezone,
---                and that every slip/report row still has its file. A failure
---                here is REAL.
+--                cron, bucket visibility, migration history, session timezone.
+--                A failure here is REAL.
+--   metadata    — rows agreeing with rows. Cannot see bucket contents, so it
+--                 CANNOT prove a file survived. Green here is not evidence.
 --   row count  — compared against the `expected` block below, which is a
 --                SNAPSHOT. If production moved on since it was captured, these
 --                fail while the restore is perfectly fine.
@@ -158,12 +159,24 @@ misc as (
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.
   -- signature_path / pdf_path equal storage.objects.name exactly (no bucket prefix).
-  select 'INTEGRITY: every viewing_slip signature PNG exists', '0 missing',
+  --
+  -- ⚠️ THESE THREE CHECK METADATA, NOT BYTES — AND THAT IS A KNOWN FALSE PASS.
+  -- Proven in the 2026-08-05 drill: `data.sql` restores `storage.objects` ROWS,
+  -- so on a restore where no file was ever copied all three still report
+  -- "0 missing" while every byte is absent. They catch a DB-only restore that
+  -- also skipped storage.objects; they do NOT catch one that restored the
+  -- metadata and not the files, which is the likelier accident.
+  --
+  -- SQL cannot see bucket contents, so this cannot be fixed here. The byte-level
+  -- proof is BACKUP_RESTORE §4 step 7: open the app against the restored project
+  -- and download a slip PDF. Treat a green result below as "the rows agree with
+  -- each other", never as "the evidence survived".
+  select 'METADATA ONLY (see note): viewing_slip signature rows', '0 missing',
          (select count(*)::text || ' missing' from viewing_slips vs
           where not exists (select 1 from storage.objects o
                             where o.bucket_id = 'signatures' and o.name = vs.signature_path))
   union all
-  select 'INTEGRITY: every viewing_slip PDF exists', '0 missing',
+  select 'METADATA ONLY (see note): viewing_slip PDF rows', '0 missing',
          (select count(*)::text || ' missing' from viewing_slips vs
           where vs.pdf_path is not null
             and not exists (select 1 from storage.objects o
@@ -171,7 +184,7 @@ misc as (
   union all
   -- Evidence report PDFs live in `documents` under <org>/reports/evidence-*.
   -- Their bytes are what a commission claim is checked against.
-  select 'INTEGRITY: every stored evidence report file exists', '0 missing',
+  select 'METADATA ONLY (see note): evidence report rows', '0 missing',
          (select count(*)::text || ' missing' from documents d
           where d.storage_path like '%/reports/evidence-%'
             and not exists (select 1 from storage.objects o

@@ -417,6 +417,85 @@ Time each phase and write the actual minutes into §6.
 
 ---
 
+## 4b. DRILL RESULT — executed 2026-08-05, and it found four defects
+
+**Ran for real** against a throwaway project (`gnk-crm-restore-drill`,
+eu-central-1) and, in parallel, an isolated local database. **The headline is a
+pass:** the backup restores and
+
+```
+verify_events_chain = TRUE      timezone UTC
+events 73/73 · contacts 2/2 · properties 2/2 · share_links 2/2 · slips 1/1 · orgs 1/1
+public tables 30 · RLS policies 86/86 · auth.users 2
+```
+
+That had never been proven before. Everything below is what the drill existed to
+find.
+
+### 1. The dump contains NO `CREATE EXTENSION` — restore fails without them
+
+A fresh project has no PostGIS or `pg_trgm`, so `properties`
+(`geography(point,4326)`) cannot be created and the failure cascades:
+
+```
+type "public.geography" does not exist            -> properties, then 42 dependents
+operator class "public.gin_trgm_ops" missing      -> viewing_slips (11), mandates_safe (4)
+```
+
+**Enable `postgis`, `pg_trgm`, `pgcrypto`, `uuid-ossp` on the target BEFORE
+loading the schema.** With that done, errors fell 131 -> 71 and policies went
+77 -> **86/86**.
+
+### 2. Dumping `--schema public,auth,storage` is wrong for the SCHEMA dump
+
+`auth` and `storage` are platform-managed and owned by `supabase_admin`, so the
+dump emits ownership changes no connectable role can perform:
+
+```
+must be able to SET ROLE "supabase_admin"          <- FATAL at line 19
+must be able to SET ROLE "supabase_auth_admin"     (37)
+must be able to SET ROLE "supabase_storage_admin"  (26)
+```
+
+With `ON_ERROR_STOP=1` the restore dies immediately and nothing is created —
+which is exactly what happened on the first attempt. **Schema dump: `--schema
+public` only. Data dump: keep `public,auth,storage` — that is how `auth.users`
+comes back.**
+
+### 3. Function grants do NOT survive — `anon` gets EXECUTE on everything
+
+The TEST-2 surface, and §5 already warned it was "the one most likely to
+differ". It differed on **11 of 13**:
+
+| function | expected | after restore |
+|---|---|---|
+| `verify_events_chain` | `anon ✗` | **`anon ✓`** |
+| `expire_mandates` | `anon ✗ auth ✗ svc ✗` | **all ✓** |
+| `current_org_id` / `current_role_gnk` | `anon ✗` | **`anon ✓`** |
+
+A restored project is therefore **less secure than the source** until the
+lockdown migrations (0007/0010/0019/0021/0022) are re-applied. Re-run them, or
+re-apply the revokes by hand, and re-check with this pack before letting anyone
+in.
+
+### 4. `pg_cron` is absent, so all three jobs are silently gone
+
+`expire-mandates`, `followup-nudges` and `verify-events-chain` do not exist on
+the restored project — mandates stop expiring, nudges stop firing and the
+nightly chain check stops running, with nothing on screen to say so. Enable
+`pg_cron` and re-run the migrations that schedule them.
+
+**Also:** `supabase_migrations.schema_migrations` is not in the dump (0 rows
+restored). A later `db push` would try to re-run all 24 migrations. Re-seed that
+table as part of any restore.
+
+### What the drill did NOT cover
+
+Storage **files** were not copied, so §4 step 4 and step 7 are still unexecuted.
+That gap is what exposed the false-pass described in §5.
+
+---
+
 ## 5. What "passed" means
 
 The drill passes only if all of these hold on the restored project:
