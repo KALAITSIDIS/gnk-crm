@@ -1,4 +1,4 @@
-# HANDOFF — 2026-08-04
+# HANDOFF — 2026-08-05
 
 Read `docs/HANDOVER.md` and `CLAUDE.md` first; this is the delta on top of them.
 **History lives in `docs/DECISIONS.md` and git — this file is state, traps and
@@ -130,14 +130,14 @@ B8 installable PWA · backup tooling (`scripts/backup/export-events.sql`).
 
 ## 2. Backups
 
-Two complementary sets in `../gnk-backups/` (outside the repo, untracked), both
-verified:
+Three sets in `../gnk-backups/` (outside the repo, untracked). **`2026-08-04` is
+the primary — it is a real `pg_dump` and it has been restore-tested (§0).**
 
 | set | contents |
 |---|---|
 | `2026-07-30/` | `events.sql` ids 1–62 (**chain-faithful**), `business-data.json` (15 tables), auth + storage manifest, restore guide |
 | `2026-07-31/` | `export.mjs` output: **all 26 Storage files** + every table as JSON |
-| `2026-08-04/` | **delta** — `events` ids 63–73 + `share_links`/`share_link_properties`; apply order in its README |
+| `2026-08-04/` | **PRIMARY** — `pg_dump.sql` (schema), `data.sql` (**`auth.users` 2**, `events` 73), `roles.sql`, plus the earlier hand-rolled deltas as an independent second copy. Restore order + drill caveats in its README |
 
 **2026-08-04 is a delta and that is sound, not a shortcut.** `events` has no
 UPDATE/DELETE grant, so an older export stays a valid prefix — verified, not
