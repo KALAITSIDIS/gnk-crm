@@ -32,9 +32,10 @@ this document leads with *creating* a backup rather than restoring one.
 > `events` 73 rows, all counts matching the §2 baseline) and `roles.sql`. The
 > "restore returns the data with nobody able to log in" gap is gone.
 >
-> **THE DRILL HAS RUN — 2026-08-05, and it passed.** Full result and the four
-> defects it found: **§4b**. What it did *not* cover is the Storage half (§4
-> steps 4 and 7) and **RTO, which remains unmeasured** — no stopwatch was run.
+> **THE DRILL HAS RUN — 2026-08-05, both halves, and both passed.** Database:
+> **§4b** (and the four defects it found). Storage and the app check: **§4c** —
+> all 26 objects byte-identical, and the evidence PDFs still hash to their
+> generation events. **RTO remains unmeasured** — no stopwatch was run.
 >
 > The Free-plan analysis in §1.1 remains accurate and is why all of the above is
 > hand-rolled.
@@ -357,18 +358,16 @@ gap; see §4b.4.
 
 ### 3.2 Storage — the part no database backup covers
 
-The CLI has native recursive copy, so this needs no bespoke script:
+**Out:**
 
 ```bash
-npx supabase storage cp -r ss:///documents ../gnk-backups/$(date +%Y-%m-%d)/storage/documents --experimental
+SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... node scripts/backup/export.mjs --out ../gnk-backups
 ```
 
-```bash
-npx supabase storage cp -r ss:///signatures ../gnk-backups/$(date +%Y-%m-%d)/storage/signatures --experimental
-```
+**Back in:**
 
 ```bash
-npx supabase storage cp -r ss:///media ../gnk-backups/$(date +%Y-%m-%d)/storage/media --experimental
+SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... node scripts/backup/restore-storage.mjs --from ../gnk-backups/2026-07-31
 ```
 
 `documents` and `signatures` are the two that carry evidentiary weight. `media`
@@ -376,6 +375,18 @@ is property photos — reproducible in principle, expensive in practice, so back
 it up but restore it last.
 
 Verify the counts match §2 (9 / 2 / 15) before calling the backup good.
+`restore-storage.mjs` does this for you: it re-downloads every object it just
+uploaded and compares SHA-256 against the file on disk, so a silent partial
+restore cannot report success. `--verify-only` runs that check without writing.
+
+> **What happened to `supabase storage cp -r`?** Earlier revisions of this
+> section told you to use it. **It has never been run here, in either
+> direction** — the 2026-07-31 export was taken with `export.mjs`, and until
+> 2026-08-05 no restore-side tool existed at all. The CLI path also needs a
+> persisted CLI login, which does not reliably work on this machine (HANDOFF §7).
+> The scripts need only the service key, which is the credential `export.mjs`
+> already uses. If you ever do get `storage cp` working, verify it against the
+> hashes rather than the file count.
 
 ### 3.3 Off-site
 
@@ -481,11 +492,13 @@ Time each phase and write the actual minutes into §6.
    optional and it is not in the dump — see §3.1 ("BEFORE the schema restore").
    Restoring the schema first costs you 57 errors and a database with no
    `properties` table.
-4. **Restore storage** — the same `supabase storage cp -r` commands with source
-   and destination swapped, against the scratch project. Buckets must exist
-   first, and `media` must be `public = true` (that is migration 0008's whole
-   job; a restored-but-private `media` bucket serves broken images and looks
-   like a code fault).
+4. **Restore storage** — `node scripts/backup/restore-storage.mjs --from
+   ../gnk-backups/2026-07-31`, pointed at the scratch project. It creates each
+   bucket with the correct `public` flag (`media` **must** be `true` — migration
+   0008's whole job; a restored-but-private `media` serves broken images and
+   looks like a code fault), uploads with the right content type, and
+   re-downloads every object to compare SHA-256. Do **not** use `supabase
+   storage cp -r`; §3.2 explains why. Executed 2026-08-05 — **§4c**.
 5. **Run the verification pack.** First run `scripts/backup/capture-baseline.sql`
    against the SOURCE and paste its single output row over the `expected` block
    in `scripts/backup/verify-restore.sql`; then run that pack against the
@@ -501,10 +514,16 @@ Time each phase and write the actual minutes into §6.
    and keys for the scratch project's, and run `npm run dev`. Log in, open
    `/reports`, and confirm the chain badge reads OK and a stored evidence report
    downloads and opens. **This is the real test** — it is the only step that
-   proves database and storage came back consistent with each other.
-8. **Delete the scratch project.** Free-plan org, so leaving it costs a project
-   slot; it also holds a full copy of real client PII and KYC scans, which is a
-   GDPR exposure of its own. Deleting it is part of the drill, not cleanup after.
+   proves database and storage came back consistent with each other. Do not stop
+   at "a file downloaded": **hash it and compare against the `pdf_sha256` in its
+   generation event.** A 200 proves plumbing; the hash proves evidence.
+   Executed 2026-08-05 — **§4c**.
+8. **Delete the scratch project, and clean up whatever else the drill touched.**
+   Free-plan org, so leaving it costs a project slot; it also holds a full copy of
+   the entire dataset, which is an exposure of its own even while that data is
+   only test data. If the drill borrowed the local stack instead, put it back —
+   remove the restored objects and rows, or you have left residue that a later
+   test may quietly depend on (HANDOFF §4).
 
 ---
 
@@ -582,30 +601,127 @@ table as part of any restore.
 
 ### What the drill did NOT cover
 
-Storage **files** were not copied, so §4 step 4 and step 7 are still unexecuted.
-That gap is what exposed the false-pass described in §5.
+Storage **files** were not copied. That gap is what exposed the false-pass
+described in §5. It was closed the same day — **§4c**.
+
+---
+
+## 4c. DRILL RESULT, STORAGE HALF — executed 2026-08-05, and it PASSES
+
+§4 steps 4 and 7, the half §4b left open. **The headline is the one thing no
+previous drill had ever shown: the evidence bytes survive a restore and still
+hash to what the event chain says they should.**
+
+```
+26/26 objects restored, every one SHA-256-identical to the backup
+documents 9 / 272,984 B · signatures 2 / 29,893 B · media 15 / 452,342 B
+media.public = true · documents + signatures unreadable to anon
+```
+
+| artefact | production event | expected SHA-256 | out of restored storage |
+|---|---|---|---|
+| `evidence-…870770.pdf` | 52 `pdf_sha256` | `fdb6fb3d…c661` | ✅ match |
+| `evidence-…297008.pdf` | 53 `pdf_sha256` | `98a4d55e…cd30` | ✅ match |
+| `evidence-…142710.pdf` | 54 `pdf_sha256` | `25e2963e…074c` | ✅ match |
+| signed slip `.png` | 60 `sha256` | `b6668dec…a660` | ✅ match |
+
+**Step 7, through the app's own code path:** `/reports` renders the chain badge
+**OK**, lists all three restored reports, and *Download* → RLS-checked
+`documents` read → signed URL → `200 application/pdf`, 22,639 bytes, header
+`%PDF-1.3`, 25 objects, 1 page, `%%EOF` intact, SHA-256 exactly event 52's
+`pdf_sha256`. **That is the end-to-end proof §5 asks for.**
+
+### ⚠️ Read this before trusting the result: what the target actually was
+
+The target was the **local Supabase stack**, not a fresh cloud project. Both
+cloud routes were shut: a scratch project's schema restore needs the database
+password (operator-held, and §3.1 forbids it entering a chat), and the CLI
+storage path needs a persisted `supabase login`, which does not work here.
+
+**Proven:** the backup files are complete and uncorrupted; the upload path
+restores them byte-identically; buckets, visibility and access control come back
+correct; the app serves a restored evidence PDF that still hashes to the chain.
+**Not proven:** the same against Supabase's cloud S3 storage backend, at a scale
+larger than 755 KB. The bytes-and-hashes result does not depend on the backend;
+throughput and any S3-specific behaviour are still untested.
+
+The app check also used three `documents` rows restored by hand — the local seed
+has none — with `uploaded_by` remapped to the local admin profile, because the
+database half was not re-restored locally (§4b already proved it). The storage
+paths, ids, titles and timestamps are production's, unmodified.
+
+**RTO is still unmeasured.** No stopwatch has been run, in either half.
+
+### 1. Buckets are in no backup, and `media.public` is load-bearing
+
+Nothing in `pg_dump.sql`, `data.sql` or the file export creates a bucket with the
+right visibility. `media` must be `public = true` — that is migration 0008's
+whole job, and a restored-but-private `media` serves broken images that look
+exactly like a code fault. `restore-storage.mjs` now creates each bucket with the
+correct flag and corrects it if it has drifted.
+
+### 2. `storage.objects` IS in the dump. The bytes are not. Confirmed.
+
+`data.sql` carries **26 `storage.objects` rows** — verified in the file. So a
+database-only restore produces a project reporting a full set of signed slips and
+evidence PDFs with **nothing behind them**, which is precisely why
+`verify-restore.sql`'s file-existence checks reported `0 missing` against a
+database with no files (§0). Those checks are metadata only. **§4c is the
+byte-level proof; nothing else in the pack is.**
+
+### 3. Content type must be set on upload, or evidence PDFs arrive unopenable
+
+The Storage API defaults to `application/octet-stream`. An evidence PDF served
+that way downloads as an opaque blob the browser will not open inline — on
+screen, indistinguishable from a corrupted restore. The restore script sets it
+per extension; the drill confirmed `application/pdf` and `image/png` come back.
+
+### 4. Upload must `upsert` if the database was restored first
+
+The restored `storage.objects` row already claims the key, so a plain upload
+returns 409 *resource already exists* on **every single file**. Restore order is
+therefore database → storage, with upsert — or storage first, then let the
+database restore overwrite the metadata.
+
+### Two smaller things worth knowing
+
+- **The slip event hashes the PNG, not the PDF.** Event 60's `sha256` is the
+  signature image. `viewing_slips.pdf_path` has **no recorded hash anywhere**, so
+  a corrupted slip PDF is not detectable the way a corrupted report PDF is.
+  Backlog, not a restore defect.
+- **`data.sql` opens with `SET session_replication_role = replica;`** — line 1,
+  emitted by the CLI. So §3.4's worst hazard is already handled by the dump, and
+  §4b's `verify_events_chain = TRUE` was a real pass, not hashes recomputed by
+  `trg_events_hash` on the way in. Worth knowing, because that distinction is
+  otherwise invisible.
 
 ---
 
 ## 5. What "passed" means
 
-The drill passes only if all of these hold on the restored project:
+The drill passes only if all of these hold on the restored project. Ticks below
+record the 2026-08-05 runs (§4b database half, §4c storage half).
 
-- [ ] `show timezone` = `UTC`
-- [ ] every row count in §2 matches
-- [ ] `verify_events_chain` = `true` for every org
+- [x] `show timezone` = `UTC` — §4b
+- [x] every row count in §2 matches — §4b
+- [x] `verify_events_chain` = `true` for every org — §4b
 - [ ] the function-grant table in §2 reproduces **exactly** — this is the TEST-2
-      check, and the one most likely to differ
+      check, and the one most likely to differ. **FAILED in §4b: `anon` regained
+      EXECUTE on 11 of 13.** Re-apply 0007/0010/0019/0021/0022 (§3.1).
 - [ ] `non_filename_versions` = 0 and **24** migration rows (19 when this list was
       written; re-check against `supabase/migrations/` rather than trusting this
-      number — it moves with every migration)
-- [ ] both cron jobs present and active
-- [ ] storage object counts 9 / 2 / 15, and `media.public` = true
-- [ ] the signed slip PDF for the smoke viewing downloads and opens
-- [ ] a stored evidence report downloads, and its SHA-256 still matches the
+      number — it moves with every migration). **FAILED in §4b: 0 rows dumped.**
+- [ ] both cron jobs present and active — **FAILED in §4b: `pg_cron` absent, all
+      three gone.**
+- [x] storage object counts 9 / 2 / 15, and `media.public` = true — §4c
+- [ ] the signed slip **PDF** for the smoke viewing downloads and opens — the PNG
+      round-trips and matches event 60 (§4c); the PDF has no recorded hash to
+      check it against, so this one cannot be fully closed as written
+- [x] a stored evidence report downloads, and its SHA-256 still matches the
       `pdf_sha256` in its event payload — the end-to-end proof that the evidence
-      chain survived
-- [ ] at least one login works
+      chain survived. **§4c: all three match, and the third was pulled through
+      the app's own download button, not a script.**
+- [x] at least one login works — §4b (`auth.users` 2, restored from `data.sql`)
 
 ### Verifying an `events.sql` export on disk — the md5 trap
 
@@ -638,10 +754,10 @@ the delta files in `2026-08-04/` sound rather than a shortcut.
 
 **Today, honestly stated:**
 
-| | As written 2026-07-24 | **Actual, 2026-08-04** |
+| | As written 2026-07-24 | **Actual, 2026-08-05** |
 |---|---|---|
-| RPO | **Unbounded.** No reachable backup exists. A project-level loss is total. | **Hours as of the last capture** — a full `pg_dump.sql` + `data.sql` + `roles.sql` was taken 2026-08-04, Storage 2026-07-31 (unchanged since; newest object 2026-07-23). But it is **manual and unscheduled**, so this drifts from the moment it is written. |
-| RTO | **Unbounded.** Nothing to restore from, so nothing to time. | **Still untested — but now testable.** The sources are complete for the first time (schema + data + roles + files, `auth.users` included) and verified by row counts and md5. No drill has been executed, so the 4h target below remains a guess. |
+| RPO | **Unbounded.** No reachable backup exists. A project-level loss is total. | **Hours as of the last capture** — a full `pg_dump.sql` + `data.sql` + `roles.sql` was taken 2026-08-04, Storage 2026-07-31 (still byte-current: production storage is unchanged, newest object 2026-07-23, re-confirmed 2026-08-05). But it is **manual and unscheduled**, so this drifts from the moment it is written. |
+| RTO | **Unbounded.** Nothing to restore from, so nothing to time. | **Still unmeasured, but no longer unproven.** Both halves of the drill have now run and passed (§4b, §4c) — the restore *works*, including the evidence bytes. Nobody has held a stopwatch to it, so the 4h target below is still a guess, and §4b's four defects each add human time to it. |
 
 **Proposed, after §3 is running** — now with the mechanical half measured rather
 than guessed (§3.4):
@@ -676,13 +792,14 @@ cp -r` export in §3.2 remains necessary on every plan, forever.
    npx.cmd supabase db dump --db-url 'postgresql://postgres.yjgirvzgoiywdojnpkpd:[PASSWORD]@aws-0-eu-central-1.pooler.supabase.com:5432/postgres' --schema public -f ../gnk-backups/$(date +%Y-%m-%d)/pg_dump.sql
    ```
 3. Get it off-site (§3.3). `../gnk-backups/` is under OneDrive — sync, not backup.
-4. ~~Run the drill (§4).~~ **DONE 2026-08-05, database half only** — §4b.
-   Steps 4 and 7 (Storage files, app against the restored project) are still
-   unexecuted, and **RTO is still unmeasured**: no stopwatch was run.
+4. ~~Run the drill (§4).~~ **DONE 2026-08-05, both halves** — §4b (database) and
+   §4c (Storage + the app check). **RTO is still unmeasured**: no stopwatch was
+   run, and §4c's target was the local stack rather than a fresh cloud project.
 5. Decide Free-plus-nightly-dump versus Pro-plus-PITR (§6) with the volume you
    actually expect in Phase 2.
 
-**What is left is items 2, 3 and the second half of 4.** The restore path is
-proven for schema, rows, the event chain and logging in. It is **not** proven for
-Storage bytes — and Storage is where the signed slips and evidence PDFs live, so
-that is the half that decides whether a commission claim survives a recovery.
+**What is left is items 2, 3, 5 — and timing a run.** The restore path is now
+proven end to end: schema, rows, the event chain, logging in, and the evidence
+bytes still hashing to their generation events. The open items are a re-taken
+schema dump (§3.1), getting a copy off this machine, an RTO number, and the
+operator's plan decision. **None of them is "does it work" any more.**

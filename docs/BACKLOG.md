@@ -249,3 +249,16 @@ built without explicit direction.
   `get_runtime_errors` on the Vercel connector makes it cheap to keep counting.
   Options unchanged: a one-shot retry on that specific PostgREST message, or
   widening GoTrue clock-skew tolerance.
+- **The signed slip PDF has no recorded hash anywhere.** Found during the
+  2026-08-05 Storage restore drill (BACKUP_RESTORE §4c). `viewing_slips` stores
+  `signature_sha256` for the signature PNG, and event 60's payload carries that
+  same hash — so a corrupted or substituted signature image is detectable. The
+  slip **PDF** (`viewing_slips.pdf_path`) has no hash in the row and none in the
+  event, so nothing can prove a restored slip PDF is byte-identical to the one
+  that was signed. Evidence reports do not share the gap: their generation event
+  carries `pdf_sha256`, and that is what made the drill's end-to-end proof
+  possible. Fix is small — hash the PDF at generation and put it in the row and
+  the `viewing_slip_signed` payload — but it is only forward-looking: the one
+  existing slip stays unhashable, so the change wants a decision about whether to
+  backfill from the current bytes (which asserts they are the right bytes) or
+  leave it null.

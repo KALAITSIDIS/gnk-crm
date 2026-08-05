@@ -167,10 +167,16 @@ misc as (
   -- also skipped storage.objects; they do NOT catch one that restored the
   -- metadata and not the files, which is the likelier accident.
   --
-  -- SQL cannot see bucket contents, so this cannot be fixed here. The byte-level
-  -- proof is BACKUP_RESTORE §4 step 7: open the app against the restored project
-  -- and download a slip PDF. Treat a green result below as "the rows agree with
-  -- each other", never as "the evidence survived".
+  -- SQL cannot see bucket contents, so this cannot be fixed here. Confirmed at
+  -- the file level 2026-08-05: data.sql carries 26 storage.objects rows, so a
+  -- database-only restore makes all three of these checks report "0 missing"
+  -- against a project holding no files whatsoever.
+  --
+  -- The byte-level proof is `node scripts/backup/restore-storage.mjs`, which
+  -- re-downloads every object and compares SHA-256, plus BACKUP_RESTORE §4 step
+  -- 7 (download a report through the app and hash it against the pdf_sha256 in
+  -- its generation event). Result of both: §4c. Treat a green result below as
+  -- "the rows agree with each other", never as "the evidence survived".
   select 'METADATA ONLY (see note): viewing_slip signature rows', '0 missing',
          (select count(*)::text || ' missing' from viewing_slips vs
           where not exists (select 1 from storage.objects o

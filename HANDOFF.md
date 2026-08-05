@@ -18,7 +18,7 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 | Data | `share_links` 2 (1 live, 1 revoked) · `tasks` 0 · `deals` 1 · **all of it operator test data** (§0) |
 | Tests | **437 unit** · **30 RLS** · **168 desktop E2E** (4 skipped) — all three run in CI |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
-| Backups | ✅ verified **and restore-tested** — `../gnk-backups/` 07-30 · 07-31 · 08-04 (§2, drill result §4b of BACKUP_RESTORE) |
+| Backups | ✅ verified **and restore-tested end to end, both halves** — `../gnk-backups/` 07-30 · 07-31 · 08-04 (§2; drill results §4b database + §4c storage of BACKUP_RESTORE) |
 
 ---
 
@@ -29,14 +29,27 @@ security item.** Both long-standing operator items are closed: the exposed
 `service_role` key is revoked (§2b) and Sentry is wired and confirmed receiving,
 so C1's report-only CSP finally has a durable sink.
 
-**C6 IS CLOSED — the restore drill ran 2026-08-05 and PASSES.** A throwaway
-project was restored from the 2026-08-04 dumps: `verify_events_chain = true`,
-every row count matching production, 86/86 RLS policies, `auth.users` back.
-**The backup restores and the evidence chain survives it** — what C6 existed to
-prove. Scratch project deleted; local `drilltest` DB dropped.
+**C6 IS CLOSED — the restore drill ran 2026-08-05, BOTH HALVES, and PASSES.** A
+throwaway project was restored from the 2026-08-04 dumps: `verify_events_chain =
+true`, every row count matching production, 86/86 RLS policies, `auth.users`
+back. Then the Storage half (BACKUP_RESTORE **§4c**): all **26 objects restored
+byte-identical**, and **the three evidence PDFs and the signed slip PNG still
+hash to the `pdf_sha256`/`sha256` in their generation events** — one of them
+pulled through the app's own Download button, with the chain badge reading OK.
+**The backup restores, and the evidence survives it as evidence, not just as
+rows.** Scratch project deleted; local `drilltest` DB dropped; the local stack
+was used as the §4c target and has been returned to its pre-drill state.
 
-**But it does not restore *as documented*.** Four defects, written up with fixes
-in BACKUP_RESTORE **§4b**, every one of which would bite during a real recovery:
+**§3.1 has been corrected to match** (2026-08-05) — it previously told the reader
+to run the exact commands the drill proved do not work. **Note what that
+correction exposed: `2026-08-04/pg_dump.sql` was itself taken with the wrong
+`--schema` flag.** `ALTER SCHEMA "auth" OWNER TO "supabase_admin"` is on line 19
+of the file and `CREATE EXTENSION` appears zero times, so the primary schema
+backup carries the defect, not just the doc. Re-taking it needs the database
+password and is therefore the operator's — BACKUP_RESTORE §7 step 2.
+
+**Four defects, written up with fixes in BACKUP_RESTORE §4b**, every one of which
+would bite during a real recovery:
 
 1. **No `CREATE EXTENSION` in the dump.** Enable `postgis`, `pg_trgm`,
    `pgcrypto`, `uuid-ossp` on the target FIRST, or the schema cascades into 57
@@ -56,11 +69,23 @@ in BACKUP_RESTORE **§4b**, every one of which would bite during a real recovery
 three "every slip/report file exists" checks query `storage.objects` — which
 `data.sql` restores — so they reported `0 missing` against a database with **no
 files at all**, on the two checks that exist to protect commission evidence.
-Renamed **METADATA ONLY**; the byte-level proof is §4 step 7. Green there is not
-evidence.
+Renamed **METADATA ONLY**. Now confirmed at the file level: `data.sql` carries
+**26 `storage.objects` rows**. Green there is not evidence; §4c is.
 
-**What is still unmeasured is RTO as a number** (no stopwatch was run) and the
-**Storage file round-trip** (§4 steps 4 and 7) — the drill was database-only.
+**`scripts/backup/restore-storage.mjs` is new** — there was no storage restore
+path at all before it, in any tool. §3.2's `supabase storage cp -r` commands had
+**never been run in either direction** (the 2026-07-31 export was `export.mjs`),
+and the CLI needs a persisted login that does not work here. The script uploads
+with the right content type, `upsert`s (a database restore has already claimed
+every key — otherwise 409 on all 26), creates buckets with the correct `public`
+flag, and re-downloads everything to compare SHA-256 so a partial restore cannot
+report success.
+
+**What is still unmeasured is RTO as a number** — no stopwatch was run, in either
+half. And §4c's target was the **local Supabase stack**, not a fresh cloud
+project: both cloud routes need credentials the operator holds (the DB password,
+and a CLI login that does not persist). Bytes, hashes, buckets and the app path
+are proven; cloud S3 behaviour at larger scale is inferred, not measured.
 
 **EVERY ROW IN PRODUCTION IS OPERATOR-CREATED TEST DATA. There is no live client
 data yet** (operator-confirmed 2026-08-04). Contacts, properties and the
