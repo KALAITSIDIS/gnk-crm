@@ -21,9 +21,14 @@ this document leads with *creating* a backup rather than restoring one.
 > | `2026-07-31/` | all **26** Storage files + every table as JSON |
 > | `2026-08-04/` | delta: `events` ids 63–73, `share_links`/`share_link_properties`; see its README for the apply order |
 >
-> **Still missing: a real `supabase db dump`.** `auth.users` exists only as a
-> manifest, and a manifest does not restore — without it nobody can log in. That
-> is the one genuine gap; §3.1 is still the instruction to close it.
+> **CLOSED 2026-08-04 — `supabase db dump` has been taken.** `2026-08-04/` now
+> holds `pg_dump.sql` (schema: public 29 / auth 23 / storage 8 tables, 86 RLS
+> policies, 43 functions, 17 triggers), `data.sql` (**`auth.users` 2 rows**,
+> `events` 73 rows, all counts matching the §2 baseline) and `roles.sql`. The
+> "restore returns the data with nobody able to log in" gap is gone.
+>
+> **What is still open is the DRILL.** RTO remains unmeasured — no restore has
+> been executed against these sources. §4 is now actionable for the first time.
 >
 > The Free-plan analysis in §1.1 remains accurate and is why all of the above is
 > hand-rolled.
@@ -196,7 +201,37 @@ your own password manager.** Do not paste either into this repo or into a chat �
 > **The password cannot be looked up.** Supabase states it "isn't viewable after
 > creation" — only *Reset database password* (Database → Settings), which breaks
 > existing direct connections. The app is unaffected by a reset: it reaches
-> Postgres through PostgREST with the API keys, not this password.
+> Postgres through PostgREST with the API keys, not this password. Verified
+> 2026-08-04: no direct Postgres connection exists anywhere in the app — no `pg`
+> client, no `DATABASE_URL`, and `.env.local` holds only API keys.
+>
+> **It is NOT your Supabase account password.** The dashboard login identifies
+> *you*; this is a Postgres role password belonging to this one project. Entering
+> the account password produces `SASL auth failed / invalid password`, which is
+> the most likely cause the first time this is attempted.
+>
+> ### 🔒 The password goes from the dashboard to the terminal and nowhere else
+>
+> **Never paste it into a chat, a notes file, a commit, or an issue.** It happened
+> on 2026-08-04 and the password had to be reset immediately. This project has now
+> lost three credentials the same way — the `service_role` key (§2b, which took
+> nine attempts and most of two sessions to revoke), a live proposal-link token,
+> and this. All three were cheap to rotate *because they were caught at once*;
+> the expensive one was the one that sat in a transcript for four days.
+>
+> If a password has already been shared anywhere, treat it as burned and reset it
+> before use — resetting costs nothing here, since nothing depends on it.
+>
+> ### Two Windows traps that cost a full round trip each
+>
+> - **`-p` / `--password` is ignored when `--db-url` is used.** It applies to
+>   `--linked` mode. With a connection string the password must be *inside* the
+>   URL, or `pg_dump` fails with `fe_sendauth: no password supplied` after
+>   prompting. Percent-encode it if it contains `@ : / ? # &`.
+> - **Use `npx.cmd`, not `npx`.** Plain `npx` resolves to `npx.ps1`, which
+>   PowerShell's default `RemoteSigned` policy refuses to run
+>   (`UnauthorizedAccess`). `npx.cmd` sidesteps the wrapper and needs no policy
+>   change. Wrap the URL in **single** quotes so PowerShell cannot expand `$`.
 >
 > Also confirmed on the dashboard the same day: **"Free Plan does not include
 > project backups"** — so §1.1's analysis still holds and self-export is the only
@@ -435,8 +470,8 @@ the delta files in `2026-08-04/` sound rather than a shortcut.
 
 | | As written 2026-07-24 | **Actual, 2026-08-04** |
 |---|---|---|
-| RPO | **Unbounded.** No reachable backup exists. A project-level loss is total. | **~5 days**, ad-hoc. Last capture 2026-08-04 (events + business delta); Storage last captured 2026-07-31 and unchanged since (newest object 2026-07-23). Manual, not scheduled — so this number drifts by definition. |
-| RTO | **Unbounded.** Nothing to restore from, so nothing to time. | **Untested.** The sources exist and are md5-verified, but no drill has been run against them, and `auth.users` has no restorable dump — so login recovery is unproven. |
+| RPO | **Unbounded.** No reachable backup exists. A project-level loss is total. | **Hours as of the last capture** — a full `pg_dump.sql` + `data.sql` + `roles.sql` was taken 2026-08-04, Storage 2026-07-31 (unchanged since; newest object 2026-07-23). But it is **manual and unscheduled**, so this drifts from the moment it is written. |
+| RTO | **Unbounded.** Nothing to restore from, so nothing to time. | **Still untested — but now testable.** The sources are complete for the first time (schema + data + roles + files, `auth.users` included) and verified by row counts and md5. No drill has been executed, so the 4h target below remains a guess. |
 
 **Proposed, after §3 is running** — now with the mechanical half measured rather
 than guessed (§3.4):
