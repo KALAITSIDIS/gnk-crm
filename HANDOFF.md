@@ -81,11 +81,25 @@ every key — otherwise 409 on all 26), creates buckets with the correct `public
 flag, and re-downloads everything to compare SHA-256 so a partial restore cannot
 report success.
 
-**What is still unmeasured is RTO as a number** — no stopwatch was run, in either
-half. And §4c's target was the **local Supabase stack**, not a fresh cloud
-project: both cloud routes need credentials the operator holds (the DB password,
-and a CLI login that does not persist). Bytes, hashes, buckets and the app path
-are proven; cloud S3 behaviour at larger scale is inferred, not measured.
+**RTO IS NOW MEASURED — BACKUP_RESTORE §6b.** A full restore was timed phase by
+phase: **~19 s of mechanical work** locally (create DB · extensions · roles ·
+schema · data · verify · lockdown · migration history · 26 Storage objects),
+ending at `verify_events_chain = TRUE` with every count matching production.
+**Do not quote 19 s.** Corrected for a 65.5 ms median RTT to the eu-central-1
+pooler — psql waits a round trip per statement and the schema dump is 1,457 of
+them — it is **~2–2.5 min over the wire**, plus a **measured 72 s** Vercel
+redeploy. **Still untimed: Supabase project provisioning and every human step.**
+The finding is the ratio: ~4 minutes of machine inside a 4-hour target. Shaving
+the restore is pointless; the levers are the password being to hand, scripting
+the Vercel env swap, and not improvising the provisioning step.
+
+**Both drill targets were local, and that is a real limit.** §4c and §6b both ran
+against the local stack because the cloud routes need credentials the operator
+holds (the DB password, and a CLI login that does not persist). Bytes, hashes,
+buckets, the app path and the mechanical timings are proven; **cloud S3
+behaviour, network cost and the §4b.3 grant defect are not reproducible locally**
+— §6b shows `anon` correctly restricted there, which is HANDOFF §4.2, not a
+contradiction of §4b. **§4b stays the authority on grants.**
 
 **EVERY ROW IN PRODUCTION IS OPERATOR-CREATED TEST DATA. There is no live client
 data yet** (operator-confirmed 2026-08-04). Contacts, properties and the

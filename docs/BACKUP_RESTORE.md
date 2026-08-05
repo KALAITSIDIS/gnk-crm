@@ -35,7 +35,9 @@ this document leads with *creating* a backup rather than restoring one.
 > **THE DRILL HAS RUN — 2026-08-05, both halves, and both passed.** Database:
 > **§4b** (and the four defects it found). Storage and the app check: **§4c** —
 > all 26 objects byte-identical, and the evidence PDFs still hash to their
-> generation events. **RTO remains unmeasured** — no stopwatch was run.
+> generation events. **RTO is timed in §6b**: ~19 s of mechanical work locally,
+> ~2–2.5 min over the wire, +72 s to redeploy Vercel. Project provisioning and
+> the human steps are still untimed and are the bulk of the 4h target.
 >
 > The Free-plan analysis in §1.1 remains accurate and is why all of the above is
 > hand-rolled.
@@ -765,7 +767,7 @@ than guessed (§3.4):
 | | Target | Why this number |
 |---|---|---|
 | **RPO** | **24 hours** | A nightly `db dump` + storage export. At current volume (~62 events in 12 days) a worst-case loss is a single day of activity. Cheap, and infinitely better than today. |
-| **RTO** | **4 hours** | The measured mechanical path — schema from migrations, load, verify — is **~11 seconds** at this data volume. Everything else is provisioning a project, restoring Storage, re-pointing Vercel env vars, and working through §5. 4h is the honest figure with a human in the loop; it is dominated by people and provisioning, not by data. |
+| **RTO** | **4 hours** | Kept, and now defensible rather than guessed — see §6b. The machine does ~4 minutes of the work; the other 3h 56m is provisioning, credentials and a human reading §5. **The target is dominated by people, and the way to improve it is to remove human steps, not to make the restore faster.** |
 
 **When to revise:** the moment real client volume arrives, 24h stops being
 acceptable for commission evidence — a lost day could contain the viewing slip a
@@ -774,8 +776,87 @@ takes RPO to ~2 minutes (WAL archived at 2-minute intervals). Pro is $25/mo;
 7-day PITR is ~$100/mo on top. That is a business call about what the evidence
 chain is worth, and it belongs to the operator, not to this document.
 
-Note that **PITR still does not cover storage** (§1.2). The `supabase storage
-cp -r` export in §3.2 remains necessary on every plan, forever.
+Note that **PITR still does not cover storage** (§1.2). The export in §3.2
+remains necessary on every plan, forever.
+
+---
+
+## 6b. RTO — MEASURED 2026-08-05
+
+A full restore was run end to end and timed phase by phase: fresh database →
+extensions → roles → schema → data → verify → lockdown → migration history →
+Storage. It ended with `verify_events_chain = TRUE`, `events` 73, `contacts` 2,
+`properties` 2, `share_links` 2, `viewing_slips` 1, `auth.users` 2 — production
+exactly.
+
+| # | phase | measured (local) |
+|---|---|---|
+| A | create target database | 2,082 ms |
+| B | extensions (postgis, pg_trgm, pgcrypto, uuid-ossp) | 3,643 ms |
+| C | `roles.sql` | 736 ms |
+| D | `pg_dump.sql` — schema, 219 KB, 1,457 statements | 4,816 ms |
+| E | `data.sql` — 84 KB, 59 `COPY` blocks | 677 ms |
+| F | verify chain + row counts | 519 ms |
+| G | re-apply lockdown 0007/0010/0019/0021/0022 | 2,755 ms |
+| H | re-seed `supabase_migrations` (24 rows, one statement) | 532 ms |
+| I | Storage — 26 objects / 755 KB, incl. SHA-256 verify | 3,168 ms |
+| | **total mechanical** | **≈ 19 s** |
+
+**Do not quote 19 seconds as the RTO.** It is a local-socket number and it is the
+smallest term in the problem. Three corrections, in increasing order of size:
+
+**1. Network — the schema phase is ~20× slower over the wire.** psql waits a
+round trip per statement. Measured TCP RTT from this machine to
+`aws-0-eu-central-1.pooler.supabase.com`: **median 65.5 ms** (n=5, 61.7–87.1).
+1,457 statements × 65.5 ms ≈ **95 s** for phase D alone, against 4.8 s locally.
+`data.sql` barely moves — `COPY` streams, so it is 59 round trips, not 73 rows'
+worth. Storage becomes 52 HTTPS round trips (26 up, 26 verify). **Realistic
+over-the-wire mechanical total: ~2–2.5 minutes.** Derived, not measured.
+
+**2. Vercel redeploy — 72 s, measured.** A restored project has new URL and keys,
+so production must be rebuilt to pick them up (`NEXT_PUBLIC_*` is inlined at
+build time — HANDOFF §7). Taken from `dpl_CmHhSe3W…`: `ready − buildingAt` =
+**71.3 s**, plus 1.3 s queued.
+
+**3. Everything else, and it is the actual RTO.** Unmeasured, and each of these
+is minutes-to-tens-of-minutes with a human in the loop:
+
+- **Provisioning a Supabase project.** Never timed. Likely the single largest
+  machine term after it, and it gates everything.
+- **The database password.** Supabase states it "isn't viewable after creation".
+  If it is not already in the password manager, the first step of the recovery is
+  a password *reset* — more steps, under pressure.
+- **Re-pointing three Vercel env vars by hand,** in the right environment.
+  Getting that wrong cost six deployments on 2026-08-03 and looked like a build
+  failure (HANDOFF §7).
+- **`pg_cron` and the three cron jobs** (§4b.4). Not exercised here: `pg_cron`
+  can only live in one database per cluster (§3.4), so the scratch target could
+  not take it.
+- **Working through §5 as a human**, plus deciding to restore at all.
+
+**So: ~4 minutes of machine, and a 4-hour target that is 98% people.** That ratio
+is the finding. Shaving the mechanical path is pointless; the levers that would
+actually move RTO are having the password already to hand, scripting the Vercel
+env swap, and writing down the provisioning step so nobody improvises it.
+
+### What this run could not test
+
+The target was a scratch database in the **local** cluster, for the same
+credential reasons as §4c. Two consequences, both making the local result
+*optimistic*:
+
+- **Network is absent**, hence correction 1 above.
+- **The §4b.3 grant defect cannot reproduce locally.** After restore, `anon` held
+  EXECUTE on only the 4 deliberate exceptions (`resolve_share_link`,
+  `note_share_link_miss`, `protect_property_reference`, `set_updated_at`) — *not*
+  the 11-of-13 §4b saw on cloud. That is HANDOFF §4.2 ("hosted grants to `anon`
+  by default; local does not"), visible in this run as 6
+  `permission denied to change default privileges` errors. **§4b remains the
+  authority on grants; this run says nothing about them.**
+
+The schema restore otherwise reproduced §4b exactly: **71 errors**, all of them
+`must be able to SET ROLE` (65) plus those 6 — i.e. entirely the §4b.2 auth/storage
+ownership defect, with the extensions enabled first as §3.1 now instructs.
 
 ---
 
@@ -792,9 +873,11 @@ cp -r` export in §3.2 remains necessary on every plan, forever.
    npx.cmd supabase db dump --db-url 'postgresql://postgres.yjgirvzgoiywdojnpkpd:[PASSWORD]@aws-0-eu-central-1.pooler.supabase.com:5432/postgres' --schema public -f ../gnk-backups/$(date +%Y-%m-%d)/pg_dump.sql
    ```
 3. Get it off-site (§3.3). `../gnk-backups/` is under OneDrive — sync, not backup.
-4. ~~Run the drill (§4).~~ **DONE 2026-08-05, both halves** — §4b (database) and
-   §4c (Storage + the app check). **RTO is still unmeasured**: no stopwatch was
-   run, and §4c's target was the local stack rather than a fresh cloud project.
+4. ~~Run the drill (§4) and fill in the real timings.~~ **DONE 2026-08-05** —
+   §4b (database), §4c (Storage + app check), **§6b (timed: ~19 s local, ~2–2.5
+   min over the wire, +72 s Vercel redeploy)**. What remains untimed is
+   **Supabase project provisioning** and the human steps, which are the bulk of
+   the 4h target. Both drill targets were local, for credential reasons.
 5. Decide Free-plus-nightly-dump versus Pro-plus-PITR (§6) with the volume you
    actually expect in Phase 2.
 
