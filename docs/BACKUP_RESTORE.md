@@ -170,6 +170,38 @@ your own password manager.** Do not paste either into this repo or into a chat �
 
 ### 3.1 Database
 
+> ## ⚠️ USE THE SESSION POOLER, NOT THE DIRECT HOST (verified 2026-08-04)
+>
+> The direct host `db.yjgirvzgoiywdojnpkpd.supabase.co` resolves to **IPv6 only**
+> — a dedicated IPv4 address is a paid add-on — so from this machine (and any
+> IPv4-only network) it simply times out. Measured:
+>
+> | host | DNS | TCP 5432 |
+> |---|---|---|
+> | `db.yjgirvzgoiywdojnpkpd.supabase.co` | AAAA only | ❌ fails |
+> | `aws-0-eu-central-1.pooler.supabase.com` | A records | ✅ succeeds |
+>
+> **`$DB_URL` below must therefore be the SESSION pooler** (session mode, not
+> transaction mode — `pg_dump` needs session state and the transaction pooler
+> will not serve it):
+>
+> ```
+> postgresql://postgres.yjgirvzgoiywdojnpkpd:[PASSWORD]@aws-0-eu-central-1.pooler.supabase.com:5432/postgres
+> ```
+>
+> Note the **username carries the project ref** (`postgres.yjgirvzgoiywdojnpkpd`),
+> unlike the direct string's plain `postgres`. Percent-encode the password if it
+> contains special characters.
+>
+> **The password cannot be looked up.** Supabase states it "isn't viewable after
+> creation" — only *Reset database password* (Database → Settings), which breaks
+> existing direct connections. The app is unaffected by a reset: it reaches
+> Postgres through PostgREST with the API keys, not this password.
+>
+> Also confirmed on the dashboard the same day: **"Free Plan does not include
+> project backups"** — so §1.1's analysis still holds and self-export is the only
+> path.
+
 Three dumps, because they cover different things and only the first is included
 by default:
 
@@ -432,9 +464,10 @@ cp -r` export in §3.2 remains necessary on every plan, forever.
 2. **`supabase db dump` — still open, and now the top item.** Everything captured
    so far is hand-rolled and covers rows and files; `auth.users` exists only as a
    manifest, so a restore today leaves nobody able to log in. Needs the database
-   password, so it is the operator's:
+   password, so it is the operator's. **Use the session pooler — the direct host
+   is IPv6-only and will time out (see §3.1):**
    ```bash
-   supabase db dump --db-url "postgresql://postgres:[PASSWORD]@db.yjgirvzgoiywdojnpkpd.supabase.co:5432/postgres" --schema public,auth,storage -f pg_dump.sql
+   npx supabase db dump --db-url "postgresql://postgres.yjgirvzgoiywdojnpkpd:[PASSWORD]@aws-0-eu-central-1.pooler.supabase.com:5432/postgres" --schema public,auth,storage -f ../gnk-backups/$(date +%Y-%m-%d)/pg_dump.sql
    ```
 3. Get it off-site (§3.3). `../gnk-backups/` is under OneDrive — sync, not backup.
 4. Run the drill (§4) and fill in the real timings. **RTO is still unmeasured.**
