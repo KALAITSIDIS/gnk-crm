@@ -18,7 +18,7 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 | Data | `share_links` 2 (1 live, 1 revoked) · `tasks` 0 · `deals` 1 · **all of it operator test data** (§0) |
 | Tests | **437 unit** · **30 RLS** · **168 desktop E2E** (4 skipped) — all three run in CI |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
-| Backups | ✅ verified, `../gnk-backups/2026-07-30` and `2026-07-31` (§2) |
+| Backups | ✅ verified **and restore-tested** — `../gnk-backups/` 07-30 · 07-31 · 08-04 (§2, drill result §4b of BACKUP_RESTORE) |
 
 ---
 
@@ -28,6 +28,39 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 security item.** Both long-standing operator items are closed: the exposed
 `service_role` key is revoked (§2b) and Sentry is wired and confirmed receiving,
 so C1's report-only CSP finally has a durable sink.
+
+**C6 IS CLOSED — the restore drill ran 2026-08-05 and PASSES.** A throwaway
+project was restored from the 2026-08-04 dumps: `verify_events_chain = true`,
+every row count matching production, 86/86 RLS policies, `auth.users` back.
+**The backup restores and the evidence chain survives it** — what C6 existed to
+prove. Scratch project deleted; local `drilltest` DB dropped.
+
+**But it does not restore *as documented*.** Four defects, written up with fixes
+in BACKUP_RESTORE **§4b**, every one of which would bite during a real recovery:
+
+1. **No `CREATE EXTENSION` in the dump.** Enable `postgis`, `pg_trgm`,
+   `pgcrypto`, `uuid-ossp` on the target FIRST, or the schema cascades into 57
+   errors (`geography` type missing → `properties` → 42 dependents).
+2. **`--schema public,auth,storage` is wrong for the SCHEMA dump.** Those are
+   `supabase_admin`-owned; fatal at line 19 under `ON_ERROR_STOP=1`. Schema =
+   `--schema public` only. The DATA dump keeps all three — that is how
+   `auth.users` comes back.
+3. **Function grants do NOT survive — `anon` gains EXECUTE on 11 of 13.** A
+   restored project is **less secure than its source** until 0007 / 0010 / 0019 /
+   0021 / 0022 are re-applied. §5 predicted this was the likeliest to differ.
+4. **`pg_cron` absent → all three crons silently gone**, and
+   `supabase_migrations` is not dumped (0 rows), so a later `db push` would
+   re-run all 24 migrations.
+
+**A false pass in our own `verify-restore.sql` was also found and fixed.** Its
+three "every slip/report file exists" checks query `storage.objects` — which
+`data.sql` restores — so they reported `0 missing` against a database with **no
+files at all**, on the two checks that exist to protect commission evidence.
+Renamed **METADATA ONLY**; the byte-level proof is §4 step 7. Green there is not
+evidence.
+
+**What is still unmeasured is RTO as a number** (no stopwatch was run) and the
+**Storage file round-trip** (§4 steps 4 and 7) — the drill was database-only.
 
 **EVERY ROW IN PRODUCTION IS OPERATOR-CREATED TEST DATA. There is no live client
 data yet** (operator-confirmed 2026-08-04). Contacts, properties and the
