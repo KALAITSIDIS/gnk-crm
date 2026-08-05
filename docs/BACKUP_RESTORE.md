@@ -9,7 +9,12 @@ this document leads with *creating* a backup rather than restoring one.
 
 ---
 
-> ## ⚠️ STATUS 2026-08-04 — READ THIS FIRST IF YOU ARE MID-INCIDENT
+> ## ⚠️ STATUS 2026-08-05 — READ THIS FIRST IF YOU ARE MID-INCIDENT
+>
+> **If you are actually restoring right now, read §3.1 and §4b before running
+> anything.** The dump commands are flag-sensitive, the dump does not contain the
+> extensions the schema needs, and a restored project starts out *less secure*
+> than its source. All three are measured, not theoretical.
 >
 > **Backups now exist.** §1.1, §6 and §7 below were written on 2026-07-24, when
 > they did not, and their "nothing to restore from" framing is **no longer true**.
@@ -19,7 +24,7 @@ this document leads with *creating* a backup rather than restoring one.
 > |---|---|
 > | `2026-07-30/` | `events.sql` ids 1–62 (**chain-faithful**), `business-data.json` (15 tables), auth + storage manifest, README |
 > | `2026-07-31/` | all **26** Storage files + every table as JSON |
-> | `2026-08-04/` | delta: `events` ids 63–73, `share_links`/`share_link_properties`; see its README for the apply order |
+> | `2026-08-04/` | **PRIMARY** — `pg_dump.sql` (schema), `data.sql` (`auth.users` 2, `events` 73), `roles.sql`, plus the earlier hand-rolled deltas as an independent second copy. Apply order in its README; **schema-dump caveat in §3.1** |
 >
 > **CLOSED 2026-08-04 — `supabase db dump` has been taken.** `2026-08-04/` now
 > holds `pg_dump.sql` (schema: public 29 / auth 23 / storage 8 tables, 86 RLS
@@ -27,8 +32,9 @@ this document leads with *creating* a backup rather than restoring one.
 > `events` 73 rows, all counts matching the §2 baseline) and `roles.sql`. The
 > "restore returns the data with nobody able to log in" gap is gone.
 >
-> **What is still open is the DRILL.** RTO remains unmeasured — no restore has
-> been executed against these sources. §4 is now actionable for the first time.
+> **THE DRILL HAS RUN — 2026-08-05, and it passed.** Full result and the four
+> defects it found: **§4b**. What it did *not* cover is the Storage half (§4
+> steps 4 and 7) and **RTO, which remains unmeasured** — no stopwatch was run.
 >
 > The Free-plan analysis in §1.1 remains accurate and is why all of the above is
 > hand-rolled.
@@ -237,36 +243,117 @@ your own password manager.** Do not paste either into this repo or into a chat �
 > project backups"** — so §1.1's analysis still holds and self-export is the only
 > path.
 
-Three dumps, because they cover different things and only the first is included
-by default:
+Three dumps, because they cover different things and no single invocation
+covers all three.
+
+> **The `--schema` flags below are not decoration and they are not
+> interchangeable.** The 2026-08-05 drill (§4b) ran these commands for real. The
+> schema dump and the data dump need *different* flags, and getting the schema
+> one wrong is fatal on the first line that matters — it creates nothing at all.
+> Everything in this section is what the drill measured, not what looks
+> reasonable.
 
 ```bash
 mkdir -p ../gnk-backups/$(date +%Y-%m-%d)
 ```
 
-```bash
-npx supabase db dump --db-url "$DB_URL" -f ../gnk-backups/$(date +%Y-%m-%d)/schema.sql
-```
+**1 — Schema. `--schema public` ONLY.**
 
 ```bash
-npx supabase db dump --db-url "$DB_URL" --data-only --use-copy -f ../gnk-backups/$(date +%Y-%m-%d)/data.sql
+npx.cmd supabase db dump --db-url "$DB_URL" --schema public -f ../gnk-backups/$(date +%Y-%m-%d)/schema.sql
 ```
+
+Do **not** add `auth,storage` here. Those schemas are platform-managed and owned
+by `supabase_admin`, so the dump emits ownership changes that **no role you can
+connect as is able to perform**:
+
+```
+must be able to SET ROLE "supabase_admin"          <- line 19
+must be able to SET ROLE "supabase_auth_admin"     (37 occurrences)
+must be able to SET ROLE "supabase_storage_admin"  (26)
+```
+
+Under `ON_ERROR_STOP=1` — which is how you should restore — psql dies on line 19
+and **nothing is created**. That is exactly what happened on the drill's first
+attempt.
+
+**2 — Data. `--schema public,auth,storage`, all three.**
 
 ```bash
-npx supabase db dump --db-url "$DB_URL" --role-only -f ../gnk-backups/$(date +%Y-%m-%d)/roles.sql
+npx.cmd supabase db dump --db-url "$DB_URL" --schema public,auth,storage --data-only --use-copy -f ../gnk-backups/$(date +%Y-%m-%d)/data.sql
 ```
 
-Notes that matter:
+`auth,storage` belongs *here*, and here it works — this is how `auth.users` comes
+back, proven in the drill (2 users restored, login functional). Without it a
+restored project has all the business data and nobody who can log in.
+`--use-copy` is irrelevant at 73 events, but keep it: it is what makes the dump
+reloadable in one pass.
 
-- `db dump` covers `public` by default. **`auth.users` is not in it** — add
-  `--schema auth,storage` for a fourth dump if you want the two login accounts
-  and the storage metadata to come back with the data. Without it a restored
-  project has the business data and nobody who can log in.
-- `--use-copy` matters at scale, not at 60 events, but keep it — it is what
-  makes the dump reloadable in one pass later.
-- Daily backups on paid plans *"do not store passwords for custom roles"*. This
-  project uses the stock Supabase roles, so `roles.sql` is a formality today —
-  take it anyway so the drill proves the whole shape.
+**3 — Roles.**
+
+```bash
+npx.cmd supabase db dump --db-url "$DB_URL" --role-only -f ../gnk-backups/$(date +%Y-%m-%d)/roles.sql
+```
+
+Daily backups on paid plans *"do not store passwords for custom roles"*. This
+project uses the stock Supabase roles, so `roles.sql` is a formality today —
+take it anyway so the drill proves the whole shape.
+
+#### ⚠️ The existing `2026-08-04/pg_dump.sql` was taken the OLD way
+
+It was dumped with `--schema public,auth,storage` — the schema-dump mistake
+above, baked into the primary backup set. Confirmed on the file: `ALTER SCHEMA
+"auth" OWNER TO "supabase_admin";` sits on **line 19**, and `CREATE EXTENSION`
+appears **zero** times.
+
+It is still restorable — that is what the drill proved — but only if you either
+re-dump with `--schema public` or restore it without `ON_ERROR_STOP` and accept
+the `auth`/`storage` ownership statements failing harmlessly. **Prefer the
+re-dump.** Mid-incident is the wrong moment to be reasoning about which errors
+are safe to ignore.
+
+### Two things the dump does NOT contain, both needed before/after a restore
+
+The dump is a necessary half of the contract, not the whole of it. Both of the
+following were measured in the drill; skipping either produces a restore that
+looks finished and is not.
+
+#### BEFORE the schema restore — enable the extensions by hand
+
+**The dump contains zero `CREATE EXTENSION` statements.** A fresh project has no
+PostGIS and no `pg_trgm`, so `properties` (`geography(point,4326)`) cannot be
+created and the failure cascades:
+
+```
+type "public.geography" does not exist        -> properties, then 42 dependents
+operator class "public.gin_trgm_ops" missing  -> viewing_slips (11), mandates_safe (4)
+```
+
+That is **57 errors from this cause alone**. Run this against the TARGET project
+*before* loading `schema.sql`:
+
+```sql
+create extension if not exists postgis;
+create extension if not exists pg_trgm;
+create extension if not exists pgcrypto;
+create extension if not exists "uuid-ossp";
+```
+
+With that done the drill's total error count fell 131 → 71 and RLS policies went
+77 → **86/86**.
+
+#### AFTER the restore — re-apply the grant lockdown
+
+**Function grants do not survive the dump: `anon` comes back holding EXECUTE on
+11 of 13 functions**, including `verify_events_chain`, `current_org_id` and
+`current_role_gnk` (full table in §4b.3). A restored project is therefore **less
+secure than the project it was copied from**, and nothing on screen says so.
+
+Re-apply migrations **0007 / 0010 / 0019 / 0021 / 0022** — or the revokes by hand
+— and re-check with `scripts/backup/verify-restore.sql` **before letting anyone
+in**. `pg_cron` (all three cron jobs silently absent) and
+`supabase_migrations.schema_migrations` (0 rows dumped) are the same class of
+gap; see §4b.4.
 
 ### 3.2 Storage — the part no database backup covers
 
@@ -369,8 +456,9 @@ says *project*.
   first write collides.
 
 **4. `auth.users` is not in the public schema**, so neither this export nor a
-default `db dump` includes it: restore those and nobody can log in. Dump
-`--schema auth,storage` as well.
+default `db dump` includes it: restore those and nobody can log in. Add
+`--schema public,auth,storage` — **to the DATA dump only.** On the schema dump
+the same flag is fatal; §3.1 has the measured reason.
 
 **Measured timings** (295 events, 26 tables, single small bucket — mechanical
 steps only, no provisioning): export 0.7s · scratch schema from 19 migrations
@@ -388,8 +476,11 @@ Time each phase and write the actual minutes into §6.
 2. **Confirm the timezone first** — `show timezone;` must return `UTC`. If it
    does not, set it before loading anything, or §1.3 will make step 6 fail for
    the wrong reason.
-3. **Restore roles, then schema, then data**, in that order, via the scratch
-   project's connection string.
+3. **Enable the extensions, then restore roles, then schema, then data**, in that
+   order, via the scratch project's connection string. The extension step is not
+   optional and it is not in the dump — see §3.1 ("BEFORE the schema restore").
+   Restoring the schema first costs you 57 errors and a database with no
+   `properties` table.
 4. **Restore storage** — the same `supabase storage cp -r` commands with source
    and destination swapped, against the scratch project. Buckets must exist
    first, and `media` must be `public = true` (that is migration 0008's whole
@@ -575,18 +666,23 @@ cp -r` export in §3.2 remains necessary on every plan, forever.
 ## 7. Recommended sequence
 
 1. ~~Take one manual backup today (§3).~~ **DONE 2026-07-30, extended 2026-08-04.**
-2. **`supabase db dump` — still open, and now the top item.** Everything captured
-   so far is hand-rolled and covers rows and files; `auth.users` exists only as a
-   manifest, so a restore today leaves nobody able to log in. Needs the database
-   password, so it is the operator's. **Use the session pooler — the direct host
-   is IPv6-only and will time out (see §3.1):**
+2. ~~`supabase db dump`.~~ **DONE 2026-08-04** — `2026-08-04/` holds
+   `pg_dump.sql`, `data.sql` and `roles.sql`, and the 2026-08-05 drill restored
+   from them. **But the schema file was taken with the wrong `--schema` flag**
+   (§3.1), so the open item is now a *re-take* of the schema dump, not a first
+   take. Needs the database password, so it is the operator's. **Use the session
+   pooler — the direct host is IPv6-only and will time out (see §3.1):**
    ```bash
-   npx supabase db dump --db-url "postgresql://postgres.yjgirvzgoiywdojnpkpd:[PASSWORD]@aws-0-eu-central-1.pooler.supabase.com:5432/postgres" --schema public,auth,storage -f ../gnk-backups/$(date +%Y-%m-%d)/pg_dump.sql
+   npx.cmd supabase db dump --db-url 'postgresql://postgres.yjgirvzgoiywdojnpkpd:[PASSWORD]@aws-0-eu-central-1.pooler.supabase.com:5432/postgres' --schema public -f ../gnk-backups/$(date +%Y-%m-%d)/pg_dump.sql
    ```
 3. Get it off-site (§3.3). `../gnk-backups/` is under OneDrive — sync, not backup.
-4. Run the drill (§4) and fill in the real timings. **RTO is still unmeasured.**
+4. ~~Run the drill (§4).~~ **DONE 2026-08-05, database half only** — §4b.
+   Steps 4 and 7 (Storage files, app against the restored project) are still
+   unexecuted, and **RTO is still unmeasured**: no stopwatch was run.
 5. Decide Free-plus-nightly-dump versus Pro-plus-PITR (§6) with the volume you
    actually expect in Phase 2.
 
-Step 2 is the one that still matters. Until it is done, the restore path is
-proven for events and business rows but **not for logging in afterwards**.
+**What is left is items 2, 3 and the second half of 4.** The restore path is
+proven for schema, rows, the event chain and logging in. It is **not** proven for
+Storage bytes — and Storage is where the signed slips and evidence PDFs live, so
+that is the half that decides whether a commission claim survives a recovery.
