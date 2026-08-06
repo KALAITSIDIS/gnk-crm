@@ -18,7 +18,7 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 | Data | `share_links` 2 (1 live, 1 revoked) · `tasks` 0 · `deals` 1 · **all of it operator test data** (§0) |
 | Tests | **437 unit** · **30 RLS** · **168 desktop E2E** (4 skipped) — all three run in CI |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
-| Backups | ✅ verified **and restore-tested end to end, both halves** — `../gnk-backups/` 07-30 · 07-31 · 08-04 (§2; drill results §4b database + §4c storage of BACKUP_RESTORE) |
+| Backups | ✅ **`2026-08-06` is the primary — complete, correctly flagged and restore-verified**, all 73 event hashes byte-identical to production. Sets: 07-30 · 07-31 (Storage) · 08-04 (superseded) · **08-06** (§2; drills §4b/§4c) |
 
 ---
 
@@ -54,11 +54,19 @@ errors, and object counts identical to production on all eight dimensions
 (30 tables · 3 views · 86 policies · 22 functions · 13 triggers · 62 indexes ·
 25 enums · 86 FKs). **BACKUP_RESTORE §7 step 2 is closed.**
 
-**`2026-08-06/` is schema-only, though.** `data.sql` and `roles.sql` are still
-the `2026-08-04/` copies, and they remain valid *only* because production has not
-moved (`events` 73, max id 73, latest `2026-08-04T17:05:35Z`, `auth.users` 2,
-`storage.objects` 26 — re-confirmed 2026-08-06). **The first row written breaks
-that.** Commands in §7 step 2.
+**`data.sql` and `roles.sql` were taken the same day, so `2026-08-06/` is a
+COMPLETE, RESTORE-VERIFIED SET** — the first that is both. Loaded end to end into
+a scratch database: schema `ON_ERROR_STOP=1` exit 0, `data.sql` clean bar a benign
+`spatial_ref_sys` permission error (PostGIS's own table), `verify_events_chain`
+**true**, every row count and the latest-event timestamp matching production.
+
+**And the check that actually matters: all 73 event hashes are byte-identical to
+production** — `md5(string_agg(hash))` = `42cd4a8ba900245504b7d45bb3045ed6` on
+both sides. `verify_events_chain = true` alone could never show that: if
+`trg_events_hash` had fired during the load it would re-mint every hash and the
+chain would verify against invented values. **Comparing hashes to the source is
+now a §5 checklist item**, and it is the one that separates restored evidence
+from manufactured evidence.
 
 **Three traps hit getting there, all worth keeping:** the pooler username must be
 **`postgres.yjgirvzgoiywdojnpkpd`**, not plain `postgres` — three attempts failed
@@ -214,7 +222,8 @@ the primary — it is a real `pg_dump` and it has been restore-tested (§0).**
 |---|---|
 | `2026-07-30/` | `events.sql` ids 1–62 (**chain-faithful**), `business-data.json` (15 tables), auth + storage manifest, restore guide |
 | `2026-07-31/` | `export.mjs` output: **all 26 Storage files** + every table as JSON |
-| `2026-08-04/` | **PRIMARY** — `pg_dump.sql` (schema), `data.sql` (**`auth.users` 2**, `events` 73), `roles.sql`, plus the earlier hand-rolled deltas as an independent second copy. Restore order + drill caveats in its README |
+| `2026-08-04/` | superseded — its `pg_dump.sql` carries the wrong-`--schema` defect. Keep for the hand-rolled deltas (an independent second copy of `events`) and as the artefact that exposed it |
+| `2026-08-06/` | **PRIMARY** — `pg_dump.sql` (`--schema public`, correct), `data.sql` (**`auth.users` 2**, `events` 73), `roles.sql`. Restore-verified end to end; README has the evidence |
 
 **2026-08-04 is a delta and that is sound, not a shortcut.** `events` has no
 UPDATE/DELETE grant, so an older export stays a valid prefix — verified, not

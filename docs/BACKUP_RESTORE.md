@@ -24,7 +24,8 @@ this document leads with *creating* a backup rather than restoring one.
 > |---|---|
 > | `2026-07-30/` | `events.sql` ids 1–62 (**chain-faithful**), `business-data.json` (15 tables), auth + storage manifest, README |
 > | `2026-07-31/` | all **26** Storage files + every table as JSON |
-> | `2026-08-04/` | **PRIMARY** — `pg_dump.sql` (schema), `data.sql` (`auth.users` 2, `events` 73), `roles.sql`, plus the earlier hand-rolled deltas as an independent second copy. Apply order in its README; **schema-dump caveat in §3.1** |
+> | `2026-08-04/` | superseded — same contents, but its `pg_dump.sql` carries the wrong-`--schema` defect (§3.1). Keep for the hand-rolled deltas and as the artefact that exposed it |
+> | `2026-08-06/` | **PRIMARY — complete and restore-verified.** `pg_dump.sql` (`--schema public`, correct), `data.sql` (`auth.users` 2, `events` 73), `roles.sql`. All 73 event hashes come back byte-identical to production. Apply order and full evidence in its README |
 >
 > **CLOSED 2026-08-04 — `supabase db dump` has been taken.** `2026-08-04/` now
 > holds `pg_dump.sql` (schema: public 29 / auth 23 / storage 8 tables, 86 RLS
@@ -831,6 +832,32 @@ record the 2026-08-05 runs (§4b database half, §4c storage half).
       chain survived. **§4c: all three match, and the third was pulled through
       the app's own download button, not a script.**
 - [x] at least one login works — §4b (`auth.users` 2, restored from `data.sql`)
+- [x] **every event hash is byte-identical to the source.** Added 2026-08-06 and
+      it belongs at the top of this list — see below.
+
+### `verify_events_chain = true` is NOT sufficient. Compare the hashes.
+
+The chain function recomputes each hash from the row and checks it links to the
+previous one. **If `trg_events_hash` fired during the load, every hash was
+re-minted from the restored rows — and the chain then verifies perfectly against
+values the restore itself invented.** True either way. It cannot tell restored
+evidence from manufactured evidence, which is precisely the distinction a
+commission claim rests on.
+
+The check that can, and it is one query on each side:
+
+```sql
+select md5(string_agg(hash, ',' order by id)), count(*) from events;
+```
+
+Run it against the source and the restored database and compare. **2026-08-06:
+`42cd4a8ba900245504b7d45bb3045ed6` over 73 rows on both** — so the 2026-08-06 set
+restores the real chain, not a freshly minted one. What makes that possible is
+`data.sql` line 1, `SET session_replication_role = replica;`, emitted by the CLI.
+
+*(A benign error to expect while loading `data.sql`:
+`permission denied for table spatial_ref_sys` — PostGIS's own system table, not
+project data. One error, and it is not a failure.)*
 
 ### Verifying an `events.sql` export on disk — the md5 trap
 
@@ -1035,18 +1062,11 @@ ownership defect, with the extensions enabled first as §3.1 now instructs.
    under `ON_ERROR_STOP=1` with object counts matching production (§3.1).
    **`2026-08-06/` is now the schema of record.**
 
-   **But that set is schema-only.** `data.sql` and `roles.sql` still live in
-   `2026-08-04/`, and they remain valid — production has not moved since
-   (`events` 73, max id 73, latest `2026-08-04T17:05:35Z`, `auth.users` 2,
-   `storage.objects` 26, all re-confirmed 2026-08-06). **The moment a row is
-   written, that stops being true.** Take the other two into a fresh dated folder
-   next time the password is to hand:
-   ```bash
-   npx.cmd supabase db dump --db-url 'postgresql://postgres.yjgirvzgoiywdojnpkpd:[PASSWORD]@aws-0-eu-central-1.pooler.supabase.com:5432/postgres' --schema public,auth,storage --data-only --use-copy -f ../gnk-backups/$(date +%Y-%m-%d)/data.sql
-   ```
-   ```bash
-   npx.cmd supabase db dump --db-url 'postgresql://postgres.yjgirvzgoiywdojnpkpd:[PASSWORD]@aws-0-eu-central-1.pooler.supabase.com:5432/postgres' --role-only -f ../gnk-backups/$(date +%Y-%m-%d)/roles.sql
-   ```
+   **`data.sql` and `roles.sql` were taken the same day**, so `2026-08-06/` is a
+   **complete, restore-verified set** — the first one that is both complete and
+   correctly flagged. Its README records the full verification; the headline is
+   that all 73 event hashes come back byte-identical to production, not merely
+   `verify_events_chain = true` (§5).
 3. Get it off-site (§3.3). `../gnk-backups/` is under OneDrive — sync, not backup.
 4. ~~Run the drill (§4) and fill in the real timings.~~ **DONE 2026-08-05** —
    §4b (database), §4c (Storage + app check), **§6b (timed: ~19 s local, ~2–2.5
