@@ -527,6 +527,13 @@ Time each phase and write the actual minutes into §6.
    remove the restored objects and rows, or you have left residue that a later
    test may quietly depend on (HANDOFF §4).
 
+   > **⚠️ Deletion is operator-only. The Supabase connector cannot delete a
+   > project** — it exposes `create_project`, `pause_project` and
+   > `restore_project`, and no delete. An agent running this drill can create the
+   > scratch project but can only *pause* it afterwards, so step 8 always ends
+   > with a human in the dashboard. Plan for that, or the drill quietly leaks a
+   > project every time it runs.
+
 ---
 
 ## 4b. DRILL RESULT — executed 2026-08-05, and it found four defects
@@ -818,31 +825,85 @@ so production must be rebuilt to pick them up (`NEXT_PUBLIC_*` is inlined at
 build time — HANDOFF §7). Taken from `dpl_CmHhSe3W…`: `ready − buildingAt` =
 **71.3 s**, plus 1.3 s queued.
 
-**3. Everything else, and it is the actual RTO.** Unmeasured, and each of these
+**3. Provisioning — 48 s, measured 2026-08-06.** A throwaway project
+(`gnk-crm-rto-drill`, eu-central-1) was created and polled. **Time from the
+create call to PostgREST answering: 48.4 s.**
+
+> **Do not trust the status field.** `create_project` returned
+> `status: ACTIVE_HEALTHY` **immediately** — while the API was still 48 seconds
+> from serving anything. Poll `https://<ref>.supabase.co/rest/v1/` until it
+> returns 401 instead; that is the first moment the project is real.
+
+**4. Everything else, and it is the actual RTO.** Unmeasured, and each of these
 is minutes-to-tens-of-minutes with a human in the loop:
 
-- **Provisioning a Supabase project.** Never timed. Likely the single largest
-  machine term after it, and it gates everything.
 - **The database password.** Supabase states it "isn't viewable after creation".
   If it is not already in the password manager, the first step of the recovery is
   a password *reset* — more steps, under pressure.
 - **Re-pointing three Vercel env vars by hand,** in the right environment.
   Getting that wrong cost six deployments on 2026-08-03 and looked like a build
   failure (HANDOFF §7).
-- **`pg_cron` and the three cron jobs** (§4b.4). Not exercised here: `pg_cron`
-  can only live in one database per cluster (§3.4), so the scratch target could
-  not take it.
+- **Re-scheduling the three cron jobs** (§4b.4). `pg_cron` itself is fine — see
+  below, it installs on the free plan in 105 ms — but the jobs must be recreated.
 - **Working through §5 as a human**, plus deciding to restore at all.
 
-**So: ~4 minutes of machine, and a 4-hour target that is 98% people.** That ratio
-is the finding. Shaving the mechanical path is pointless; the levers that would
-actually move RTO are having the password already to hand, scripting the Vercel
-env swap, and writing down the provisioning step so nobody improvises it.
+**Machine time, all in: ~4.5 minutes.**
+
+| term | |
+|---|---|
+| provision the project | **48 s** measured |
+| mechanical restore over the wire | ~2–2.5 min derived (19 s measured local + RTT) |
+| Vercel rebuild | **72 s** measured |
+
+**A 4-hour target that is ~98% people.** That ratio is the finding. Shaving the
+mechanical path is pointless; the levers that would actually move RTO are having
+the password already to hand, scripting the Vercel env swap, and writing the
+provisioning step down so nobody improvises it.
+
+### What a FRESH cloud project actually looks like — measured 2026-08-06
+
+Facts §3.1 and §4 had been asserting without ever checking, now checked on a real
+new project:
+
+| | |
+|---|---|
+| `TimeZone` | **`UTC` by default** — §1.3's requirement is met without action, but still verify it |
+| Postgres | 17.6 — **but `17.6.1.155` against production's `17.6.1.141`.** A restored project is not necessarily on the source's patch version |
+| already installed | `pgcrypto` 1.3, `uuid-ossp` 1.1, `pg_stat_statements`, `plpgsql`, `supabase_vault` |
+| **NOT installed** | **`postgis`, `pg_trgm`, `pg_cron`** — available, but off. Exactly the §4b.1 / §4b.4 defects, from the other direction |
+
+Enabling all of them took **1.5 s total** on cloud (postgis 1,222 ms · pg_trgm
+198 ms · pgcrypto 8 ms · uuid-ossp 5 ms · **pg_cron 105 ms**) — *faster* than the
+3.6 s measured locally, and `pg_cron` installs fine on the Free plan, so §4b.4's
+remedy is executable.
+
+### §4b.3's root cause, isolated and proven
+
+The one thing a local target cannot show. On the fresh cloud project, before any
+restore:
+
+```sql
+create function public._grant_probe() returns int language sql security definer …
+create table public._grant_probe_tbl(id int);
+```
+
+| new object | `anon` | `authenticated` |
+|---|---|---|
+| `security definer` function | **EXECUTE ✓** | EXECUTE ✓ |
+| table | **SELECT ✓** | SELECT ✓ |
+
+**That is the whole mechanism.** Nothing in the dump grants `anon` anything — the
+platform's default privileges do it to every new object, which is why a restored
+project comes back with `anon` holding EXECUTE on 11 of 13 functions (§4b.3) and
+why the lockdown migrations must be re-applied. It is also the first direct proof
+of HANDOFF §4.2 and §4.3, which had been inferred from migration behaviour rather
+than demonstrated.
 
 ### What this run could not test
 
-The target was a scratch database in the **local** cluster, for the same
-credential reasons as §4c. Two consequences, both making the local result
+The *restore* target was a scratch database in the **local** cluster, for the same
+credential reasons as §4c — only the provisioning and fresh-project measurements
+above ran on cloud. Two consequences, both making the local restore timing
 *optimistic*:
 
 - **Network is absent**, hence correction 1 above.
@@ -851,8 +912,14 @@ credential reasons as §4c. Two consequences, both making the local result
   `note_share_link_miss`, `protect_property_reference`, `set_updated_at`) — *not*
   the 11-of-13 §4b saw on cloud. That is HANDOFF §4.2 ("hosted grants to `anon`
   by default; local does not"), visible in this run as 6
-  `permission denied to change default privileges` errors. **§4b remains the
-  authority on grants; this run says nothing about them.**
+  `permission denied to change default privileges` errors, and now proven
+  directly by the grant probe above. **§4b remains the authority on grants; the
+  local restore says nothing about them.**
+
+**Loading production data into a cloud project is still not reachable from here**
+— `data.sql` is `COPY … FROM stdin`, which needs psql, which needs the database
+password. The drill project therefore received the probes above and nothing else;
+no production data ever left this machine.
 
 The schema restore otherwise reproduced §4b exactly: **71 errors**, all of them
 `must be able to SET ROLE` (65) plus those 6 — i.e. entirely the §4b.2 auth/storage

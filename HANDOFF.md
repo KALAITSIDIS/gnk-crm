@@ -87,11 +87,22 @@ schema · data · verify · lockdown · migration history · 26 Storage objects)
 ending at `verify_events_chain = TRUE` with every count matching production.
 **Do not quote 19 s.** Corrected for a 65.5 ms median RTT to the eu-central-1
 pooler — psql waits a round trip per statement and the schema dump is 1,457 of
-them — it is **~2–2.5 min over the wire**, plus a **measured 72 s** Vercel
-redeploy. **Still untimed: Supabase project provisioning and every human step.**
-The finding is the ratio: ~4 minutes of machine inside a 4-hour target. Shaving
-the restore is pointless; the levers are the password being to hand, scripting
-the Vercel env swap, and not improvising the provisioning step.
+them — it is **~2–2.5 min over the wire**. Add **48 s** to provision a project
+(measured 2026-08-06 on a real throwaway) and a **measured 72 s** Vercel rebuild:
+**~4.5 minutes of machine, inside a 4-hour target.** That ratio is the finding.
+Shaving the restore is pointless; the levers are the password being to hand,
+scripting the Vercel env swap, and not improvising the provisioning step. Still
+untimed: every human step.
+
+**Three things the cloud run nailed down that had only ever been asserted:**
+`create_project` reports `ACTIVE_HEALTHY` **48 seconds before the API serves
+anything** — poll `/rest/v1/` for a 401, never trust the status field. A fresh
+project has `pgcrypto` and `uuid-ossp` but **not** `postgis`, `pg_trgm` or
+`pg_cron` (all three install fine, `pg_cron` included, in 1.5 s total on Free).
+And **§4b.3's root cause is now proven in isolation**: on a fresh project a new
+`security definer` function is `anon`-EXECUTE and a new table is `anon`-SELECT
+**by default** — the platform does it, not the dump. First direct proof of §4.2
+and §4.3 below.
 
 **Both drill targets were local, and that is a real limit.** §4c and §6b both ran
 against the local stack because the cloud routes need credentials the operator
@@ -237,6 +248,13 @@ tool and the setting is platform config, not database state.
 
 **`GNK-PAF-0002`** still wants archiving **via the UI button** so
 `archiveProperty` writes its event.
+
+**DELETE THE PAUSED DRILL PROJECT `gnk-crm-rto-drill` (`qxkpoqxiudkrctlvrvwg`).**
+Created 2026-08-06 to time provisioning (§6b), left **PAUSED** because **the
+Supabase connector has no delete tool** — only create/pause/restore. It holds no
+production data (a probe function and an empty table, nothing else) so this is
+tidiness and a free-plan project slot, not an exposure. Dashboard → project →
+Settings → General → Delete project.
 
 ---
 
