@@ -175,6 +175,79 @@ broken in a way nothing on screen will show:
 
 ## 3. Taking a backup
 
+### 3.0 The automated path — start here
+
+**`scripts/backup/capture.mjs` takes a complete set in one command and refuses to
+call it a backup unless it verifies.**
+
+```bash
+SUPABASE_DB_URL=... SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... node scripts/backup/capture.mjs
+```
+
+Schema (`--schema public`), data (`--schema public,auth,storage --data-only
+--use-copy`), roles, Storage objects and table JSON, into
+`../gnk-backups/<date>/`, plus `SHA256SUMS` and a `manifest.json`. Flags:
+`--out`, `--force` (replace today's set), `--skip-storage`, `--keep N` (retention).
+
+**Exit codes are meaningful, because a scheduler only sees the number:**
+`0` verified · `1` produced but NOT trustworthy · `2` refused to start
+(bad config, or today's folder exists without `--force`).
+
+It checks its own output against every failure this project has actually hit:
+
+| check | the failure it catches |
+|---|---|
+| zero `supabase_admin` in the schema file | the wrong `--schema` flag — restore dies at line 19 (§4b.2) |
+| `data.sql` line 1 is `SET session_replication_role = replica;` | otherwise `trg_events_hash` re-mints every hash on restore (§5) |
+| `auth.users` / `events` / `storage.objects` COPY blocks present | a restore where nobody can log in |
+| **events in the dump == events live right now** | a truncated dump, which does not error |
+| size floors, and partial output deleted on failure | the 0-byte `pg_dump.sql` that reads as a backup |
+
+Anything failing is listed on stderr *and* recorded as `verified:false` in
+`manifest.json`, so a set that went wrong says so from inside.
+
+**Retention (`--keep N`) is deliberately timid.** It only considers folders it
+made (those with a `manifest.json`), only prunes ones marked `verified:true`, and
+keeps the N most recent. The hand-rolled historical sets have no manifest and are
+untouchable by it; a failed set is kept until a human looks at it.
+
+#### The nightly task — installed 2026-08-06
+
+```
+Task     : "gnk-crm nightly backup"     Daily 03:45     Logon Mode: Interactive only
+Runs     : C:\Users\user\.gnk-crm\run-backup.cmd
+Which is : node --env-file=…\backup.env capture.mjs --out …\gnk-backups --force --keep 14
+Log      : C:\Users\user\.gnk-crm\backup.log   (exit=N appended per run)
+```
+
+03:45 sits after the 03:30 `verify-events-chain` cron, so each set contains that
+night's chain check.
+
+**`C:\Users\user\.gnk-crm\` is outside the OneDrive tree on purpose.** A database
+password inside it would sync to the cloud. Never copy `backup.env` into the repo
+either — `gnk-crm` is **public**.
+
+Three things to know about it:
+
+- **It does nothing until `backup.env` exists.** Copy `backup.env.example`
+  alongside it and fill in the two credentials; until then every run exits `2`
+  and logs why.
+- **"Interactive only" means it runs when the user is logged on.** A machine that
+  is off or logged out at 03:45 silently takes no backup — check the log, or
+  Task Scheduler's Last Run Result, rather than assuming.
+- **It does not solve off-site** (§3.3). It writes to the same OneDrive tree.
+
+Health check — is the newest set good?
+
+```bash
+cat "$(ls -d ../gnk-backups/*/ | tail -1)manifest.json"
+```
+
+The rest of §3 is the manual path and the reasoning behind each flag. Read it
+before changing anything above.
+
+---
+
 Run from `gnk-crm/`. `pg_dump` is not on PATH here; the Supabase CLI (2.109.1)
 runs it inside Docker, which is installed.
 

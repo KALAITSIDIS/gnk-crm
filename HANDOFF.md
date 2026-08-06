@@ -246,10 +246,26 @@ events that actually restore.
 re-taken correctly 2026-08-06. pg_dump is primary; the hand-rolled exports above
 are the independent second copy, not the safety net of last resort they once were.
 
-**Still open: getting a copy OFF THIS MACHINE, and automating the capture.**
-`../gnk-backups/` is under OneDrive — sync, not backup: a deletion propagates,
-and so does an encryption. Every file in every set was taken by hand, so RPO
-drifts from the moment it is written.
+**Capture is AUTOMATED as of 2026-08-06 — but it needs one operator action to
+start working.** `scripts/backup/capture.mjs` takes a complete set in one command
+and **verifies its own output**, refusing to call it a backup otherwise: zero
+`supabase_admin` in the schema file, `session_replication_role = replica` on line
+1 of `data.sql`, the `auth.users`/`events`/`storage.objects` COPY blocks present,
+and **events-in-the-dump compared against events-live-right-now** (a truncated
+dump does not error). Exit `0` verified · `1` produced but untrustworthy · `2`
+refused to start. Failures also land in `manifest.json` as `verified:false`.
+
+A scheduled task **"gnk-crm nightly backup"** runs it daily at 03:45 (after the
+03:30 chain-check cron) with `--keep 14`. **It exits 2 every night until
+`C:\Users\user\.gnk-crm\backup.env` is created** from the `.example` beside it —
+that is the operator action (§2c). That directory is outside OneDrive on purpose:
+a password in the OneDrive tree would sync to the cloud. The task is
+"Interactive only", so a machine that is off or logged out at 03:45 takes no
+backup silently — the log is `C:\Users\user\.gnk-crm\backup.log`.
+
+**Still open: getting a copy OFF THIS MACHINE.** `../gnk-backups/` is under
+OneDrive — sync, not backup: a deletion propagates, and so does an encryption.
+Automation does not change that; the nightly set lands in the same tree.
 
 **A verified archive is staged and waiting for a destination:**
 `TSOPOZIDIS/gnk-backups-offsite-2026-08-06.tar.gz` — 1.3 MB, 84 files,
@@ -300,6 +316,14 @@ tool and the setting is platform config, not database state.
 
 **`GNK-PAF-0002`** still wants archiving **via the UI button** so
 `archiveProperty` writes its event.
+
+**CREATE `C:\Users\user\.gnk-crm\backup.env` — the nightly backup does nothing
+until you do.** Copy `backup.env.example` in that directory and fill in
+`SUPABASE_DB_URL` (**session pooler**, username `postgres.<ref>` — the bare
+`postgres` fails, §3.1) and `SUPABASE_SERVICE_ROLE_KEY`. Until then the 03:45
+task exits `2` nightly and logs why. Agent-unreachable by design: it holds the
+database password. **That directory is outside OneDrive deliberately — do not
+move it in, and never copy it into the repo, which is public.**
 
 **DELETE THE DRILL PROJECT `gnk-crm-rto-drill` (`qxkpoqxiudkrctlvrvwg`) —
 DEFERRED 2026-08-06, and it does not delete.** Created that day to time
