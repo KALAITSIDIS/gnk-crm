@@ -249,20 +249,30 @@ tool and the setting is platform config, not database state.
 **`GNK-PAF-0002`** still wants archiving **via the UI button** so
 `archiveProperty` writes its event.
 
-**DELETE THE DRILL PROJECT `gnk-crm-rto-drill` (`qxkpoqxiudkrctlvrvwg`) — and it
-is STUCK.** Created 2026-08-06 to time provisioning (§6b). It holds no production
-data (a probe function and an empty table) so this is a free-plan project slot,
-not an exposure.
+**DELETE THE DRILL PROJECT `gnk-crm-rto-drill` (`qxkpoqxiudkrctlvrvwg`) —
+DEFERRED 2026-08-06, and it does not delete.** Created that day to time
+provisioning (§6b). It holds **no production data** (a probe function and an
+empty table), so the cost is one free-plan project slot, not an exposure.
+Production is untouched and healthy. **Deliberately parked by the operator — not
+forgotten.**
 
-**It was wedged in `PAUSING` for 66 minutes** — during which the dashboard delete
-was accepted but did not apply, and `restore_project` was refused outright. It
-then reached `INACTIVE` on its own (no ticket needed), and `restore_project`
-succeeded immediately. **It is now coming back up, so it can be deleted.**
+**Three dashboard deletes were reported and none applied.** State when parked:
+`ACTIVE_HEALTHY`, `rest/v1/` answering 401. Confirmed against a negative control
+— a nonexistent ref gives HTTP 000 / DNS failure, this gives 401 exactly like
+production — so it is genuinely alive and the listing is **not** stale.
 
-Cause, recorded so it is not repeated: the connector **has no delete tool**
-(create/pause/restore only), so the project was paused as the nearest available
-cleanup. That was wrong — pausing is what made it undeletable. **Leave a scratch
-project ACTIVE for the operator to delete.** BACKUP_RESTORE §4 step 8.
+**Working diagnosis: management-API writes from the operator's browser silently
+no-op.** A rename also reported success and also did not persist — the listing
+still shows the original name. Untried when parked: a clean incognito session,
+and the Network tab (`DELETE api.supabase.com/v1/projects/<ref>` — does it fire,
+does it error). If both fail it is Supabase-side and wants a support ticket.
+
+**Do not read this as "pausing broke it" — that was the first conclusion here and
+it was wrong.** Pausing genuinely blocks both delete and restore *during* the
+`PAUSING` transition (66 minutes, §4 step 8), but the deletes failed just as
+completely from `ACTIVE_HEALTHY` afterwards, so the pause is not the cause. What
+remains true: the connector has **no delete tool** (create/pause/restore only),
+so this drill leaks a project unless a human removes it. BACKUP_RESTORE §4 step 8.
 
 ---
 

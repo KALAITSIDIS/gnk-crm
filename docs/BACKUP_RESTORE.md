@@ -534,7 +534,7 @@ Time each phase and write the actual minutes into §6.
    > the dashboard. Plan for that, or the drill quietly leaks a project every
    > time it runs.
    >
-   > **And do NOT pause it as a substitute — that makes deletion HARDER.**
+   > **And do NOT pause it as a substitute — it buys nothing and costs an hour.**
    > Measured 2026-08-06: **`PAUSING` took 66 minutes** (3,961 s) to reach
    > `INACTIVE`, and for that whole hour **both** the dashboard delete and
    > `restore_project` were refused —
@@ -553,6 +553,14 @@ Time each phase and write the actual minutes into §6.
    > trusting: the first `pause_project` call returned **503** and did not apply,
    > and a later `get_project` also 503'd — `list_projects` was the reliable read
    > throughout.
+   >
+   > **But do not assume ACTIVE guarantees you can delete either.** On the same
+   > day, three dashboard deletes against an `ACTIVE_HEALTHY` project were
+   > reported and **none applied** — nor did a rename. The project stayed alive
+   > (`rest/v1/` → 401, against HTTP 000 / DNS failure for a nonexistent ref,
+   > which is the control that proves it). Whatever that was, it was not the
+   > pause. **Verify the deletion with `list_projects` plus a live endpoint probe;
+   > a dashboard that says "deleted" is not evidence.**
 
 ---
 
