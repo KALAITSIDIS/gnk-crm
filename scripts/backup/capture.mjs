@@ -73,6 +73,17 @@ for (const [name, val] of [["SUPABASE_DB_URL", dbUrl], ["SUPABASE_SERVICE_ROLE_K
     process.exit(2);
   }
 }
+// A legacy JWT service key fails every REST request with "Legacy API keys are
+// disabled" (HANDOFF §2b, disabled 2026-08-03). The dumps would still succeed —
+// they use the database password — so without this the run gets most of the way
+// and then fails on Storage and the live count, which reads like a network fault.
+// The local stack legitimately uses a demo JWT, so only guard hosted.
+if (key_isLegacy(svcKey) && !apiUrl.includes("127.0.0.1") && !apiUrl.includes("localhost")) {
+  console.error("SUPABASE_SERVICE_ROLE_KEY is a legacy JWT key (starts 'eyJ'). Those were disabled 2026-08-03 — use the sb_secret_… key (§2b).");
+  process.exit(2);
+}
+function key_isLegacy(k) { return k.startsWith("eyJ"); }
+
 // The pooler needs the project ref in the username. Only applies to pooler hosts;
 // a local stack legitimately uses the bare role.
 if (dbUrl.includes("pooler.supabase.com") && /:\/\/postgres:/.test(dbUrl)) {

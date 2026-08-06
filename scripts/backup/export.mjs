@@ -44,6 +44,20 @@ if (!url || !key) {
 }
 
 /**
+ * A legacy JWT service key fails every request with "Legacy API keys are
+ * disabled" (HANDOFF §2b — the pair was disabled 2026-08-03). Caught here rather
+ * than 26 tables later, because the failure otherwise surfaces as an unhandled
+ * rejection whose exit code is 3221226505 and means nothing to a scheduler.
+ */
+if (key.startsWith("eyJ")) {
+  console.error(
+    "SUPABASE_SERVICE_ROLE_KEY is a legacy JWT key (starts 'eyJ'). Those were disabled\n" +
+      "2026-08-03 and every request returns 401. Use the sb_secret_… key instead.",
+  );
+  process.exit(1);
+}
+
+/**
  * Load order is irrelevant on restore (it runs with session_replication_role =
  * replica, so FKs are deferred), but keeping parents first makes a partial
  * restore readable if anyone ever does one by hand.
