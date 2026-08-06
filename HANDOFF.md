@@ -246,10 +246,19 @@ events that actually restore.
 re-taken correctly 2026-08-06. pg_dump is primary; the hand-rolled exports above
 are the independent second copy, not the safety net of last resort they once were.
 
-**What is actually still open on backups: getting a copy OFF THIS MACHINE**
-(§3.3 — `../gnk-backups/` is under OneDrive, which is sync, not backup: a
-deletion propagates) **and automating the capture.** Every file in every set was
-taken by hand, so RPO drifts from the moment it is written.
+**Still open: getting a copy OFF THIS MACHINE, and automating the capture.**
+`../gnk-backups/` is under OneDrive — sync, not backup: a deletion propagates,
+and so does an encryption. Every file in every set was taken by hand, so RPO
+drifts from the moment it is written.
+
+**A verified archive is staged and waiting for a destination:**
+`TSOPOZIDIS/gnk-backups-offsite-2026-08-06.tar.gz` — 1.3 MB, 84 files,
+`sha256 b728b21e…68ea` (in the adjacent `.sha256`). Round-trip checked: extracted
+and compared, all 84 byte-identical. **Moving it is operator-only** — no
+off-machine destination is agent-reachable, and it must not become one casually:
+it carries `auth.users` bcrypt hashes plus the signed slips and evidence PDFs,
+and **`gnk-crm` is a PUBLIC repo**, so the archive must never land in it. Verify
+with `sha256sum -c` **at the destination**, not here. §3.3.
 
 **Trap:** `export.mjs` reads `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` from
 the SHELL and loads no `.env`. With nothing set it silently falls back to

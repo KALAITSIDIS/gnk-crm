@@ -467,8 +467,40 @@ restore cannot report success. `--verify-only` runs that check without writing.
 
 `../gnk-backups/` sits outside the repo deliberately. Note that the working
 directory is under **OneDrive**, which is sync, not backup — a deletion
-propagates. Copy the dated folder somewhere that is neither this machine nor the
-same Supabase account before the drill counts as passed.
+propagates, and so does an encryption. Copy the dated folder somewhere that is
+neither this machine nor the same Supabase account.
+
+**Package it as one checksummed archive** so the transfer is a single verifiable
+step rather than 84 files that might arrive partially:
+
+```bash
+cd "C:/Users/user/OneDrive/Desktop/TSOPOZIDIS" && tar -czf gnk-backups-offsite-$(date +%Y-%m-%d).tar.gz gnk-backups/ && sha256sum gnk-backups-offsite-$(date +%Y-%m-%d).tar.gz | tee gnk-backups-offsite-$(date +%Y-%m-%d).tar.gz.sha256
+```
+
+**Then verify at the destination, not here.** A checksum computed on the machine
+you are copying *from* proves nothing about what arrived:
+
+```bash
+sha256sum -c gnk-backups-offsite-<date>.tar.gz.sha256
+```
+
+> ### 🔒 This archive is sensitive. It is not a public artefact.
+>
+> `data.sql` and `pg_dump.sql` contain `auth.users` rows including
+> **`encrypted_password` bcrypt hashes**, and the Storage export contains signed
+> viewing slips and evidence PDFs. **Never put it in the repo** — `gnk-crm` is a
+> **public** GitHub repository — and never in a public bucket, a pastebin, a chat
+> or an issue. Acceptable destinations are a personal cloud account that is not
+> the Supabase one, an encrypted USB drive, or another machine.
+>
+> The current dataset is operator test data (§0), which lowers the stakes *today*
+> and not one day longer than that.
+
+**Taken 2026-08-06:** `gnk-backups-offsite-2026-08-06.tar.gz`, 1.3 MB, 84 files,
+`sha256 b728b21e1e51fafa193fdfa3f6f029f89506bae6afefa04c1bbc8b7f6bf668ea`.
+Verified by extracting it and comparing every file against the original — all 84
+byte-identical. **Sitting on this machine awaiting a destination; until it is
+moved, the off-site gap is still open.**
 
 ---
 
