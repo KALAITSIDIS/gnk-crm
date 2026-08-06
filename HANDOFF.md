@@ -68,13 +68,22 @@ chain would verify against invented values. **Comparing hashes to the source is
 now a §5 checklist item**, and it is the one that separates restored evidence
 from manufactured evidence.
 
-**Three traps hit getting there, all worth keeping:** the pooler username must be
-**`postgres.yjgirvzgoiywdojnpkpd`**, not plain `postgres` — three attempts failed
-`password authentication failed for user "postgres"`, which is the dashboard's
-*Direct connection* string used against the pooler host; a failed `db dump`
-**leaves a 0-byte file** at the `-f` path (one was found and removed — an empty
-`pg_dump.sql` among real backups reads as a backup); and `-f` does not create the
-directory, which fails as an alarming-looking `NotFound: FileSystem.writeFile`.
+**Three traps hit getting there, all worth keeping:**
+
+1. **`password authentication failed for user "postgres"` does NOT mean the
+   username is wrong.** The pooler reports the bare role whatever you send —
+   proven 2026-08-06 with a connection whose username was definitively
+   `postgres.yjgirvzgoiywdojnpkpd`. An earlier version of this file claimed that
+   message diagnosed a bare-`postgres` username; **it was wrong and cost most of
+   an evening.** Read it as "auth failed, cause unstated" — in practice the
+   password (account password instead of the project's, an unencoded special
+   character, or an unreplaced placeholder). Do still use the **session pooler**
+   string: the username really does need the ref, and the direct host is
+   IPv6-only. Just don't diagnose from the message.
+2. A failed `db dump` **leaves a 0-byte file** at the `-f` path — an empty
+   `pg_dump.sql` among real backups reads as a backup. One was found and removed.
+3. `-f` **does not create the directory**; it fails as an alarming-looking
+   `NotFound: FileSystem.writeFile`.
 
 **The stopgap turned out to be exactly right, which is worth knowing for next
 time.** `scripts/backup/split-dump-by-schema.py` recovered a public-only schema

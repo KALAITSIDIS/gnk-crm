@@ -206,6 +206,23 @@ It checks its own output against every failure this project has actually hit:
 Anything failing is listed on stderr *and* recorded as `verified:false` in
 `manifest.json`, so a set that went wrong says so from inside.
 
+> #### It stages, and that is load-bearing
+>
+> Everything is written to `.staging-<pid>/` and moved into place **only once
+> every check passes**. A failed run cannot touch the destination; the worst it
+> does is leave a staging folder, which the next run sweeps.
+>
+> This is not caution for its own sake. The first version wrote straight into
+> `<date>/`, and on 2026-08-06 a failed run **destroyed the verified set already
+> there**: the CLI created `pg_dump.sql` and `roles.sql` as 0-byte files (the
+> cleanup deleted them, taking the good ones with them) and wrote a 41-byte
+> fragment over a good 84 KB `data.sql` — too large to look empty. Recovered only
+> because a snapshot had been taken first.
+>
+> **A backup tool that eats last night's good backup when tonight's fails is
+> worse than no backup tool.** Verified by test: a deliberately failing run
+> against an existing set leaves it byte-identical.
+
 **Retention (`--keep N`) is deliberately timid.** It only considers folders it
 made (those with a `manifest.json`), only prunes ones marked `verified:true`, and
 keeps the N most recent. The hand-rolled historical sets have no manifest and are
@@ -402,13 +419,25 @@ production, and it is **verified, not assumed**:
 **Use this file.** The 2026-08-04 `pg_dump.sql` is kept only as the historical
 artefact that exposed the defect.
 
-Getting it took three failed attempts, all the same cause, all worth knowing:
+Getting it took three failed attempts, all worth knowing:
 
-- **The pooler username must carry the project ref** —
-  `postgres.yjgirvzgoiywdojnpkpd`, not plain `postgres`. The dashboard's *Direct
-  connection* string uses the bare form; swapping only the host keeps the wrong
-  username and fails `password authentication failed for user "postgres"`. Copy
-  the **Session pooler** string instead.
+- > ### ⚠️ `password authentication failed for user "postgres"` DOES NOT MEAN THE USERNAME IS WRONG
+  >
+  > **The pooler reports the bare role in that message no matter what username
+  > you sent.** Proven 2026-08-06: a connection whose username was definitively
+  > `postgres.yjgirvzgoiywdojnpkpd` — parsed out of the config and printed — still
+  > failed with `for user "postgres"`. **An earlier revision of this section said
+  > the message diagnosed a bare-`postgres` username. It does not, and chasing
+  > that cost most of an evening.**
+  >
+  > Treat it as what it is: **authentication failed, cause unstated.** In practice
+  > it is almost always the password — the Supabase *account* password instead of
+  > the project's Postgres one, an unencoded special character, or a placeholder
+  > that was never replaced.
+  >
+  > Still use the **Session pooler** string rather than *Direct connection*: the
+  > username genuinely does need the ref (`postgres.<ref>`), and the direct host
+  > is IPv6-only. Just don't diagnose from that error message.
 - **A failed `db dump` still creates the output file — empty.** A 0-byte
   `pg_dump.sql` was left behind by a failed attempt. In a backup directory that
   reads as a backup. Check the byte count, not just the filename.
