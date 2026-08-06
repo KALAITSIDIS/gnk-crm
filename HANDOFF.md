@@ -225,11 +225,12 @@ the primary — it is a real `pg_dump` and it has been restore-tested (§0).**
 | `2026-08-04/` | superseded — its `pg_dump.sql` carries the wrong-`--schema` defect. Keep for the hand-rolled deltas (an independent second copy of `events`) and as the artefact that exposed it |
 | `2026-08-06/` | **PRIMARY** — `pg_dump.sql` (`--schema public`, correct), `data.sql` (**`auth.users` 2**, `events` 73), `roles.sql`. Restore-verified end to end; README has the evidence |
 
-**2026-08-04 is a delta and that is sound, not a shortcut.** `events` has no
-UPDATE/DELETE grant, so an older export stays a valid prefix — verified, not
-assumed: production's first 62 rows still hash to the md5 in the 2026-07-30
-header. Storage was not re-copied because the newest object anywhere dates from
-2026-07-23, before the 2026-07-31 capture.
+**The older sets stay valid as prefixes, and that is sound, not a shortcut.**
+`events` has no UPDATE/DELETE grant, so an older export remains a valid prefix of
+production forever — verified, not assumed: production's first 62 rows still hash
+to the md5 in the 2026-07-30 header. Storage has not been re-copied since
+2026-07-31 because the newest object anywhere still dates from 2026-07-23
+(re-confirmed 2026-08-06).
 
 **Verifying an export on disk has an md5 trap** — the header hash is over
 LF-joined insert lines with no trailing newline, and OneDrive stores the file
@@ -241,8 +242,14 @@ hands `jsonb` to JavaScript and numeric scale is lost, so `verify_events_chain`
 fails on restore. `2026-07-31` has the FILES; `2026-07-30/events.sql` has the
 events that actually restore.
 
-**Still to do: `supabase db dump --db-url …` for a true pg_dump.** The above is
-a real safety net, but pg_dump remains primary per BACKUP_RESTORE §3.
+~~**Still to do: `supabase db dump` for a true pg_dump.**~~ **DONE** — and
+re-taken correctly 2026-08-06. pg_dump is primary; the hand-rolled exports above
+are the independent second copy, not the safety net of last resort they once were.
+
+**What is actually still open on backups: getting a copy OFF THIS MACHINE**
+(§3.3 — `../gnk-backups/` is under OneDrive, which is sync, not backup: a
+deletion propagates) **and automating the capture.** Every file in every set was
+taken by hand, so RPO drifts from the moment it is written.
 
 **Trap:** `export.mjs` reads `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` from
 the SHELL and loads no `.env`. With nothing set it silently falls back to
