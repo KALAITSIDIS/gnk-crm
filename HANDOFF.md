@@ -47,23 +47,33 @@ correction exposed: `2026-08-04/pg_dump.sql` was itself taken with the wrong
 of the file and `CREATE EXTENSION` appears zero times, so the primary schema
 backup carries the defect, not just the doc.
 
-**A validated public-only file now exists as a stopgap:
-`../gnk-backups/2026-08-06/pg_dump-public.sql`**, derived from that dump by
-`scripts/backup/split-dump-by-schema.py` and **proven by restore** — 1,026
-statements split with none lost, `ON_ERROR_STOP=1` exit 0 with 0 errors, and
-object counts identical to production on all eight dimensions checked
+**RESOLVED 2026-08-06 — `../gnk-backups/2026-08-06/pg_dump.sql` is a correct
+`--schema public` dump and is now the SCHEMA OF RECORD.** Verified rather than
+assumed: zero `supabase_admin` mentions, `ON_ERROR_STOP=1` restore exit 0 with 0
+errors, and object counts identical to production on all eight dimensions
 (30 tables · 3 views · 86 policies · 22 functions · 13 triggers · 62 indexes ·
-25 enums · 86 FKs). **It is still a reshaped 2026-08-04 snapshot, not a fresh
-dump.** Re-taking properly needs the database password and stays the operator's —
-BACKUP_RESTORE §7 step 2 remains open.
+25 enums · 86 FKs). **BACKUP_RESTORE §7 step 2 is closed.**
 
-**Two live traps hit while attempting that re-dump (2026-08-06):** the pooler
-username must be **`postgres.yjgirvzgoiywdojnpkpd`**, not plain `postgres` —
-three attempts failed `password authentication failed for user "postgres"`,
-which is the dashboard's *direct* connection string used against the pooler host.
-And a failed `db dump` **leaves a 0-byte file behind** at the `-f` path; one was
-found and removed from `2026-08-06/`. An empty `pg_dump.sql` among real backups
-reads as a backup.
+**`2026-08-06/` is schema-only, though.** `data.sql` and `roles.sql` are still
+the `2026-08-04/` copies, and they remain valid *only* because production has not
+moved (`events` 73, max id 73, latest `2026-08-04T17:05:35Z`, `auth.users` 2,
+`storage.objects` 26 — re-confirmed 2026-08-06). **The first row written breaks
+that.** Commands in §7 step 2.
+
+**Three traps hit getting there, all worth keeping:** the pooler username must be
+**`postgres.yjgirvzgoiywdojnpkpd`**, not plain `postgres` — three attempts failed
+`password authentication failed for user "postgres"`, which is the dashboard's
+*Direct connection* string used against the pooler host; a failed `db dump`
+**leaves a 0-byte file** at the `-f` path (one was found and removed — an empty
+`pg_dump.sql` among real backups reads as a backup); and `-f` does not create the
+directory, which fails as an alarming-looking `NotFound: FileSystem.writeFile`.
+
+**The stopgap turned out to be exactly right, which is worth knowing for next
+time.** `scripts/backup/split-dump-by-schema.py` recovered a public-only schema
+from the *bad* dump before the password worked, and once the real dump arrived
+the two compared **statement-for-statement identical** — 581 each, zero
+differences either way. So if a future incident has an unusable dump and no
+reachable password, that script gets a correct schema out of it.
 
 **Four defects, written up with fixes in BACKUP_RESTORE §4b**, every one of which
 would bite during a real recovery:

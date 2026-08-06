@@ -315,12 +315,37 @@ the `auth`/`storage` ownership statements failing harmlessly. **Prefer the
 re-dump.** Mid-incident is the wrong moment to be reasoning about which errors
 are safe to ignore.
 
-#### A validated public-only file exists in the meantime — `2026-08-06/`
+#### ✅ SUPERSEDED — a correct dump was taken 2026-08-06
 
-The re-dump needs the database password and is therefore the operator's (§7 step
-2). Until it happens, `../gnk-backups/2026-08-06/` holds a **derived** public-only
-schema recovered from the 2026-08-04 dump by
-`scripts/backup/split-dump-by-schema.py`:
+`../gnk-backups/2026-08-06/pg_dump.sql` is a real `--schema public` dump of
+production, and it is **verified, not assumed**:
+
+- zero `supabase_admin` mentions; the only `CREATE SCHEMA` is `"public"`, line 16
+- restored into a scratch database under **`ON_ERROR_STOP=1`: exit 0, 0 errors**
+- object counts identical to production: **30** tables · 3 views · **86** policies
+  · 22 functions · 13 triggers · 62 indexes · 25 enums · 86 FKs
+
+**Use this file.** The 2026-08-04 `pg_dump.sql` is kept only as the historical
+artefact that exposed the defect.
+
+Getting it took three failed attempts, all the same cause, all worth knowing:
+
+- **The pooler username must carry the project ref** —
+  `postgres.yjgirvzgoiywdojnpkpd`, not plain `postgres`. The dashboard's *Direct
+  connection* string uses the bare form; swapping only the host keeps the wrong
+  username and fails `password authentication failed for user "postgres"`. Copy
+  the **Session pooler** string instead.
+- **A failed `db dump` still creates the output file — empty.** A 0-byte
+  `pg_dump.sql` was left behind by a failed attempt. In a backup directory that
+  reads as a backup. Check the byte count, not just the filename.
+- **`-f` does not create the directory.** The first attempt died on
+  `NotFound: FileSystem.writeFile`, which looks alarming and means only that
+  `mkdir -p` had not been run.
+
+#### The derived file — kept, and it turned out to be exactly right
+
+Before the password worked, a public-only schema was recovered from the bad
+2026-08-04 dump by `scripts/backup/split-dump-by-schema.py`:
 
 | file | |
 |---|---|
@@ -344,9 +369,23 @@ is a heuristic, so it was verified by restoring rather than by reading:
 | production | 30 | 3 | 86 | 22 | 13 | 62 | 25 | 86 |
 | restored from the derived file | **30** | **3** | **86** | **22** | **13** | **62** | **25** | **86** |
 
-**It is still a workaround.** It is a 2026-08-04 snapshot reshaped by a script,
-not a dump taken from the live database, and it inherits anything the original
-got wrong. §7 step 2 stays open until a real `--schema public` dump replaces it.
+**And then the real dump arrived, which let the workaround be graded rather than
+trusted.** Normalised statement-for-statement against
+`pg_dump.sql`:
+
+```
+real --schema public dump : 581 statements
+derived (script)          : 581 statements
+in real but missing from derived : 0
+in derived but not in real       : 0
+```
+
+**Identical.** The heuristic — classify by first quoted schema qualifier, with a
+splitter that understands dollar-quoted bodies — reproduced a genuine
+`--schema public` dump exactly. That is a real result for the next incident: if
+the password is unreachable and all you have is a badly-flagged dump, this script
+recovers a correct schema from it. It is still second choice, because it can only
+ever reshape an existing snapshot and inherits anything that snapshot got wrong.
 
 ### Two things the dump does NOT contain, both needed before/after a restore
 
@@ -991,14 +1030,22 @@ ownership defect, with the extensions enabled first as §3.1 now instructs.
 ## 7. Recommended sequence
 
 1. ~~Take one manual backup today (§3).~~ **DONE 2026-07-30, extended 2026-08-04.**
-2. ~~`supabase db dump`.~~ **DONE 2026-08-04** — `2026-08-04/` holds
-   `pg_dump.sql`, `data.sql` and `roles.sql`, and the 2026-08-05 drill restored
-   from them. **But the schema file was taken with the wrong `--schema` flag**
-   (§3.1), so the open item is now a *re-take* of the schema dump, not a first
-   take. Needs the database password, so it is the operator's. **Use the session
-   pooler — the direct host is IPv6-only and will time out (see §3.1):**
+2. ~~`supabase db dump`, re-taken with the correct flag.~~ **CLOSED 2026-08-06** —
+   `2026-08-06/pg_dump.sql` is a real `--schema public` dump, restore-verified
+   under `ON_ERROR_STOP=1` with object counts matching production (§3.1).
+   **`2026-08-06/` is now the schema of record.**
+
+   **But that set is schema-only.** `data.sql` and `roles.sql` still live in
+   `2026-08-04/`, and they remain valid — production has not moved since
+   (`events` 73, max id 73, latest `2026-08-04T17:05:35Z`, `auth.users` 2,
+   `storage.objects` 26, all re-confirmed 2026-08-06). **The moment a row is
+   written, that stops being true.** Take the other two into a fresh dated folder
+   next time the password is to hand:
    ```bash
-   npx.cmd supabase db dump --db-url 'postgresql://postgres.yjgirvzgoiywdojnpkpd:[PASSWORD]@aws-0-eu-central-1.pooler.supabase.com:5432/postgres' --schema public -f ../gnk-backups/$(date +%Y-%m-%d)/pg_dump.sql
+   npx.cmd supabase db dump --db-url 'postgresql://postgres.yjgirvzgoiywdojnpkpd:[PASSWORD]@aws-0-eu-central-1.pooler.supabase.com:5432/postgres' --schema public,auth,storage --data-only --use-copy -f ../gnk-backups/$(date +%Y-%m-%d)/data.sql
+   ```
+   ```bash
+   npx.cmd supabase db dump --db-url 'postgresql://postgres.yjgirvzgoiywdojnpkpd:[PASSWORD]@aws-0-eu-central-1.pooler.supabase.com:5432/postgres' --role-only -f ../gnk-backups/$(date +%Y-%m-%d)/roles.sql
    ```
 3. Get it off-site (§3.3). `../gnk-backups/` is under OneDrive — sync, not backup.
 4. ~~Run the drill (§4) and fill in the real timings.~~ **DONE 2026-08-05** —
@@ -1009,8 +1056,9 @@ ownership defect, with the extensions enabled first as §3.1 now instructs.
 5. Decide Free-plus-nightly-dump versus Pro-plus-PITR (§6) with the volume you
    actually expect in Phase 2.
 
-**What is left is items 2, 3, 5 — and timing a run.** The restore path is now
-proven end to end: schema, rows, the event chain, logging in, and the evidence
-bytes still hashing to their generation events. The open items are a re-taken
-schema dump (§3.1), getting a copy off this machine, an RTO number, and the
-operator's plan decision. **None of them is "does it work" any more.**
+**What is left is items 3 and 5.** The restore path is proven end to end —
+schema, rows, the event chain, logging in, and the evidence bytes still hashing
+to their generation events — the schema dump is correct and verified, and RTO is
+measured. The open items are **getting a copy off this machine** and **the
+operator's plan decision**, plus refreshing `data.sql`/`roles.sql` into the
+current folder. **None of them is "does it work" any more.**
