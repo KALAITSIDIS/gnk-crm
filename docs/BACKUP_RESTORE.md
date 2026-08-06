@@ -535,13 +535,24 @@ Time each phase and write the actual minutes into §6.
    > time it runs.
    >
    > **And do NOT pause it as a substitute — that makes deletion HARDER.**
-   > Learned 2026-08-06: pausing the drill project left it stuck in `PAUSING` for
-   > over an hour, and in that state **both** the dashboard delete and
-   > `restore_project` are refused —
-   > *"no longer in a paused state, it is PAUSING, it may take a while"*. The
-   > project keeps serving its API throughout, so it is neither gone nor
-   > recoverable. **Leave the scratch project ACTIVE and delete it directly.**
-   > A paused project is not a tidier project; it is a project you cannot act on.
+   > Measured 2026-08-06: **`PAUSING` took 66 minutes** (3,961 s) to reach
+   > `INACTIVE`, and for that whole hour **both** the dashboard delete and
+   > `restore_project` were refused —
+   > *"no longer in a paused state, it is PAUSING, it may take a while"* — while
+   > the project's REST endpoint kept answering 401. Neither gone nor
+   > recoverable, for an hour, on an empty project.
+   >
+   > Once it finally reached `INACTIVE` the endpoint returned **540** and
+   > `restore_project` succeeded immediately (`COMING_UP`). So the lock is
+   > specific to the *transition*, not the paused state — but the transition is
+   > long and there is no way to cancel it.
+   >
+   > **Leave the scratch project ACTIVE and delete it directly.** A paused
+   > project is not a tidier project; it is a project nobody can act on for an
+   > hour. Pause/restore state changes are also worth verifying rather than
+   > trusting: the first `pause_project` call returned **503** and did not apply,
+   > and a later `get_project` also 503'd — `list_projects` was the reliable read
+   > throughout.
 
 ---
 
