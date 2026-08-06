@@ -530,9 +530,18 @@ Time each phase and write the actual minutes into §6.
    > **⚠️ Deletion is operator-only. The Supabase connector cannot delete a
    > project** — it exposes `create_project`, `pause_project` and
    > `restore_project`, and no delete. An agent running this drill can create the
-   > scratch project but can only *pause* it afterwards, so step 8 always ends
-   > with a human in the dashboard. Plan for that, or the drill quietly leaks a
-   > project every time it runs.
+   > scratch project but never remove it, so step 8 always ends with a human in
+   > the dashboard. Plan for that, or the drill quietly leaks a project every
+   > time it runs.
+   >
+   > **And do NOT pause it as a substitute — that makes deletion HARDER.**
+   > Learned 2026-08-06: pausing the drill project left it stuck in `PAUSING` for
+   > over an hour, and in that state **both** the dashboard delete and
+   > `restore_project` are refused —
+   > *"no longer in a paused state, it is PAUSING, it may take a while"*. The
+   > project keeps serving its API throughout, so it is neither gone nor
+   > recoverable. **Leave the scratch project ACTIVE and delete it directly.**
+   > A paused project is not a tidier project; it is a project you cannot act on.
 
 ---
 

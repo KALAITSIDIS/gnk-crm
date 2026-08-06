@@ -249,12 +249,22 @@ tool and the setting is platform config, not database state.
 **`GNK-PAF-0002`** still wants archiving **via the UI button** so
 `archiveProperty` writes its event.
 
-**DELETE THE PAUSED DRILL PROJECT `gnk-crm-rto-drill` (`qxkpoqxiudkrctlvrvwg`).**
-Created 2026-08-06 to time provisioning (§6b), left **PAUSED** because **the
-Supabase connector has no delete tool** — only create/pause/restore. It holds no
-production data (a probe function and an empty table, nothing else) so this is
-tidiness and a free-plan project slot, not an exposure. Dashboard → project →
-Settings → General → Delete project.
+**DELETE THE DRILL PROJECT `gnk-crm-rto-drill` (`qxkpoqxiudkrctlvrvwg`) — and it
+is STUCK.** Created 2026-08-06 to time provisioning (§6b). It holds no production
+data (a probe function and an empty table) so this is a free-plan project slot,
+not an exposure.
+
+**It has been wedged in `PAUSING` for over an hour, and in that state nothing
+works:** the dashboard delete is accepted but does not apply, and
+`restore_project` is refused outright (*"no longer in a paused state, it is
+PAUSING"*). Its REST endpoint keeps answering 401 throughout, so "still serving"
+is the only honest reading. Supabase's own error says to open a support ticket
+after 30 minutes — **that is now the likely path.**
+
+Cause, recorded so it is not repeated: the connector **has no delete tool**
+(create/pause/restore only), so the project was paused as the nearest available
+cleanup. That was wrong — pausing is what made it undeletable. **Leave a scratch
+project ACTIVE for the operator to delete.** BACKUP_RESTORE §4 step 8.
 
 ---
 
