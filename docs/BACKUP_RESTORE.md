@@ -315,6 +315,39 @@ the `auth`/`storage` ownership statements failing harmlessly. **Prefer the
 re-dump.** Mid-incident is the wrong moment to be reasoning about which errors
 are safe to ignore.
 
+#### A validated public-only file exists in the meantime — `2026-08-06/`
+
+The re-dump needs the database password and is therefore the operator's (§7 step
+2). Until it happens, `../gnk-backups/2026-08-06/` holds a **derived** public-only
+schema recovered from the 2026-08-04 dump by
+`scripts/backup/split-dump-by-schema.py`:
+
+| file | |
+|---|---|
+| `pg_dump-public.sql` | 124 KB — schema for `public` only. **Use this one.** |
+| `pg_dump-platform.sql` | 94 KB — the `auth`/`storage` remainder. A real Supabase project already has these; keep it only for reference |
+
+The CLI **strips pg_dump's `-- Name: …; Schema: …` headers** (there are zero in
+the file), so the split classifies statements by their first quoted schema
+qualifier, with a splitter that understands dollar-quoted function bodies. That
+is a heuristic, so it was verified by restoring rather than by reading:
+
+- 1,026 statements parsed, **none lost** — 12 preamble · 569 public · 445 platform
+- **zero** `supabase_admin` ownership statements in the public half; line 19 is now
+  `CREATE SCHEMA IF NOT EXISTS "public";` where the original had the fatal one
+- restored into a scratch database under **`ON_ERROR_STOP=1`: exit 0, 0 errors** —
+  the test the original file fails outright
+- object counts identical to production on every dimension checked:
+
+| | tables | views | policies | functions | triggers | indexes | enums | FKs |
+|---|---|---|---|---|---|---|---|---|
+| production | 30 | 3 | 86 | 22 | 13 | 62 | 25 | 86 |
+| restored from the derived file | **30** | **3** | **86** | **22** | **13** | **62** | **25** | **86** |
+
+**It is still a workaround.** It is a 2026-08-04 snapshot reshaped by a script,
+not a dump taken from the live database, and it inherits anything the original
+got wrong. §7 step 2 stays open until a real `--schema public` dump replaces it.
+
 ### Two things the dump does NOT contain, both needed before/after a restore
 
 The dump is a necessary half of the contract, not the whole of it. Both of the

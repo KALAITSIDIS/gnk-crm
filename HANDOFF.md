@@ -45,8 +45,25 @@ to run the exact commands the drill proved do not work. **Note what that
 correction exposed: `2026-08-04/pg_dump.sql` was itself taken with the wrong
 `--schema` flag.** `ALTER SCHEMA "auth" OWNER TO "supabase_admin"` is on line 19
 of the file and `CREATE EXTENSION` appears zero times, so the primary schema
-backup carries the defect, not just the doc. Re-taking it needs the database
-password and is therefore the operator's — BACKUP_RESTORE §7 step 2.
+backup carries the defect, not just the doc.
+
+**A validated public-only file now exists as a stopgap:
+`../gnk-backups/2026-08-06/pg_dump-public.sql`**, derived from that dump by
+`scripts/backup/split-dump-by-schema.py` and **proven by restore** — 1,026
+statements split with none lost, `ON_ERROR_STOP=1` exit 0 with 0 errors, and
+object counts identical to production on all eight dimensions checked
+(30 tables · 3 views · 86 policies · 22 functions · 13 triggers · 62 indexes ·
+25 enums · 86 FKs). **It is still a reshaped 2026-08-04 snapshot, not a fresh
+dump.** Re-taking properly needs the database password and stays the operator's —
+BACKUP_RESTORE §7 step 2 remains open.
+
+**Two live traps hit while attempting that re-dump (2026-08-06):** the pooler
+username must be **`postgres.yjgirvzgoiywdojnpkpd`**, not plain `postgres` —
+three attempts failed `password authentication failed for user "postgres"`,
+which is the dashboard's *direct* connection string used against the pooler host.
+And a failed `db dump` **leaves a 0-byte file behind** at the `-f` path; one was
+found and removed from `2026-08-06/`. An empty `pg_dump.sql` among real backups
+reads as a backup.
 
 **Four defects, written up with fixes in BACKUP_RESTORE §4b**, every one of which
 would bite during a real recovery:
