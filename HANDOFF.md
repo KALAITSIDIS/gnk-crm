@@ -288,8 +288,8 @@ Automation does not change that; the nightly set lands in the same tree.
 six sets including the first automated one, `sha256 b689df4f…0b50` (in the
 adjacent `.sha256`). Verified twice: 141/141 byte-identical after extraction, and
 `sha256sum -c SHA256SUMS` passing 55/55 inside the extracted `2026-08-07` set.
-The `2026-08-06` archive beside it is superseded and can go once this one is off
-the machine.
+It is the only archive — the earlier `2026-08-06` one was deleted after checking
+it was a strict subset, so there is no chance of moving the wrong file.
 
 **Moving it is operator-only** — no off-machine destination is agent-reachable,
 and it must not become one casually: it carries `auth.users` bcrypt hashes plus

@@ -635,8 +635,10 @@ byte-identical**), then ran `sha256sum -c SHA256SUMS` *inside the extracted
 2026-08-07 set* (**55/55**). Integrity holds end to end, not just at the archive
 boundary.
 
-`gnk-backups-offsite-2026-08-06.tar.gz` is superseded — the new archive is a
-strict superset. Delete it once the current one is off the machine.
+The earlier `2026-08-06` archive was deleted 2026-08-07 after confirming it was a
+strict subset (0 entries absent from the new one) and that the new archive's
+checksum still verified. One archive, one checksum — two of them invites moving
+the wrong file.
 
 > **STILL ON THIS MACHINE.** Until it is copied somewhere that is neither this
 > laptop nor the same Supabase account, the off-site gap is open and OneDrive is
