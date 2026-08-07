@@ -208,8 +208,21 @@ shape flags every row.
 
 Full write-ups in `docs/DECISIONS.md`; migrations in `supabase/migrations/`.
 
-**2026-08-07** — 0025 `T-deal-contact`: the `deal_no_contact` nudge could be
-silenced by a typo. It keyed off `last_activity_at`, which every deal edit
+**2026-08-07** — 0025 `T-deal-contact` — **applied to hosted the same day via §3
+and verified** (column present, 0 unbackfilled, 25 migration rows,
+`non_filename_versions` 0, trigger `WHEN` reads `last_contact_at`,
+`anon` cannot execute the job, `service_role` can, chain verifies, events 73).
+`get_advisors` clean — no new finding; neither `create_followup_nudges` nor
+`trg_supersede_deal_nudges` appears in the anon/authenticated lists.
+
+> **The migration went out AFTER the code, and for a few minutes production ran
+> code referencing a column that did not exist.** Pushing is enough to deploy
+> (Vercel auto-deploys `main`) but it is NOT enough to migrate — hosted only
+> changes when someone runs §3. `logConversation` on a converted lead would have
+> failed in that window. **Apply the migration to hosted BEFORE pushing code that
+> depends on it**, or accept a deliberate gap and say so.
+
+The bug: the `deal_no_contact` nudge could be silenced by a typo. It keyed off `last_activity_at`, which every deal edit
 stamps, so renaming a deal **closed the open chase-up** and logged
 `reason: deal_contacted_or_closed` against the editing user — the log asserted
 contact nobody had claimed. Silence now has its own column, `last_contact_at`,
