@@ -255,8 +255,14 @@ events that actually restore.
 re-taken correctly 2026-08-06. pg_dump is primary; the hand-rolled exports above
 are the independent second copy, not the safety net of last resort they once were.
 
-**Capture is AUTOMATED as of 2026-08-06 — but it needs one operator action to
-start working.** `scripts/backup/capture.mjs` takes a complete set in one command
+**CAPTURE IS AUTOMATED AND LIVE. First green run 2026-08-07** — `2026-08-07/`,
+55 files / 1,010 KB: schema 125,258 · data 84,661 with **73 events matching
+production live** · roles · **26 Storage objects** · `verified: true,
+problems: []`. The scheduled task also fired unattended at 03:45:02 that morning
+and exited `2` with a clear reason while the config was still incomplete, so both
+the happy and the unhappy path are proven in the wild.
+
+`scripts/backup/capture.mjs` takes a complete set in one command
 and **verifies its own output**, refusing to call it a backup otherwise: zero
 `supabase_admin` in the schema file, `session_replication_role = replica` on line
 1 of `data.sql`, the `auth.users`/`events`/`storage.objects` COPY blocks present,
@@ -326,13 +332,13 @@ tool and the setting is platform config, not database state.
 **`GNK-PAF-0002`** still wants archiving **via the UI button** so
 `archiveProperty` writes its event.
 
-**CREATE `C:\Users\user\.gnk-crm\backup.env` — the nightly backup does nothing
-until you do.** Copy `backup.env.example` in that directory and fill in
-`SUPABASE_DB_URL` (**session pooler**, username `postgres.<ref>` — the bare
-`postgres` fails, §3.1) and `SUPABASE_SERVICE_ROLE_KEY`. Until then the 03:45
-task exits `2` nightly and logs why. Agent-unreachable by design: it holds the
-database password. **That directory is outside OneDrive deliberately — do not
-move it in, and never copy it into the repo, which is public.**
+~~CREATE `C:\Users\user\.gnk-crm\backup.env`.~~ **DONE 2026-08-07.** The nightly
+backup is live and its first full run is green — see §2 for the result. If it
+ever needs re-doing, use
+`powershell -ExecutionPolicy Bypass -File C:\Users\user\.gnk-crm\set-credentials-clipboard.ps1`,
+which reads both values from the clipboard, validates them and tests the key
+before writing. **Do not hand-edit `backup.env`** — three attempts to do so never
+reached disk.
 
 **DELETE THE DRILL PROJECT `gnk-crm-rto-drill` (`qxkpoqxiudkrctlvrvwg`) —
 DEFERRED 2026-08-06, and it does not delete.** Created that day to time

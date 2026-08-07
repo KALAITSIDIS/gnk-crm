@@ -254,6 +254,29 @@ Three things to know about it:
   Task Scheduler's Last Run Result, rather than assuming.
 - **It does not solve off-site** (§3.3). It writes to the same OneDrive tree.
 
+#### Two API-key facts that cost an evening on 2026-08-06/07
+
+Both were discovered validating the service key, and neither is obvious:
+
+> **1. `/rest/v1/` returns 401 on this project even with a perfectly valid key.**
+> Its RLS policies call `current_org_id()`, migration 0007 revoked `EXECUTE` on
+> it for `anon`, and **PostgREST reports that Postgres permission error (42501)
+> as HTTP 401** — indistinguishable from a bad credential unless you read the
+> body. Measured with a known-good key: `/rest/v1/organizations` 401,
+> `/rest/v1/districts` 401, `/rest/v1/` 401, **`/auth/v1/settings` 200.**
+> **Validate a key against `/auth/v1/settings`, never a REST table.**
+>
+> **2. Supabase refuses secret keys sent from anything that looks like a
+> browser** — `{"message":"Forbidden use of secret API key in browser"}`, HTTP
+> 401. PowerShell's `Invoke-WebRequest` defaults to a `Mozilla/…` User-Agent and
+> trips it. Send an explicit non-browser `-UserAgent`. `supabase-js` under Node
+> is unaffected — confirmed by the first green backup, which read all 26 Storage
+> objects with the same key.
+
+Together these produced three separate false "your key is dead" verdicts against
+a key that was correct all along. **If a secret key appears rejected, read the
+response body before believing it.**
+
 Health check — is the newest set good?
 
 ```bash
