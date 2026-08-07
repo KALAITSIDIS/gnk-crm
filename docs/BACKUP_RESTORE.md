@@ -25,7 +25,8 @@ this document leads with *creating* a backup rather than restoring one.
 > | `2026-07-30/` | `events.sql` ids 1–62 (**chain-faithful**), `business-data.json` (15 tables), auth + storage manifest, README |
 > | `2026-07-31/` | all **26** Storage files + every table as JSON |
 > | `2026-08-04/` | superseded — same contents, but its `pg_dump.sql` carries the wrong-`--schema` defect (§3.1). Keep for the hand-rolled deltas and as the artefact that exposed it |
-> | `2026-08-06/` | **PRIMARY — complete and restore-verified.** `pg_dump.sql` (`--schema public`, correct), `data.sql` (`auth.users` 2, `events` 73), `roles.sql`. All 73 event hashes come back byte-identical to production. Apply order and full evidence in its README |
+> | `2026-08-06/` | **the restore-PROVEN set.** `pg_dump.sql` (`--schema public`, correct), `data.sql` (`auth.users` 2, `events` 73), `roles.sql`. Loaded end to end; all 73 event hashes byte-identical to production. Apply order and full evidence in its README. Carries no Storage of its own — use `2026-07-31/storage/` |
+> | `2026-08-07/` | **PRIMARY — the first automated set, and the only COMPLETE one.** Schema · data · roles · **26 Storage objects** · table JSON · `SHA256SUMS` · `manifest.json` saying `verified:true` with events 73 matching live. Restore from this one; `2026-08-06` is what proved the method |
 >
 > **CLOSED 2026-08-04 — `supabase db dump` has been taken.** `2026-08-04/` now
 > holds `pg_dump.sql` (schema: public 29 / auth 23 / storage 8 tables, 86 RLS
@@ -625,7 +626,7 @@ sha256sum -c gnk-backups-offsite-<date>.tar.gz.sha256
 files**, all six sets including the first automated one.
 
 ```
-sha256  0295d16eae0469b472f7f011a28e1183f9a540f849f3e04ccb82d22bdfb5c5d4
+sha256  b689df4f2e2b280950a0c8aa61613ca8a788cceecfc90c61879008d9258d0b50
 ```
 
 Verified twice, because a tar that lists cleanly is not a tar that restores:

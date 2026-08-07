@@ -18,7 +18,7 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 | Data | `share_links` 2 (1 live, 1 revoked) · `tasks` 0 · `deals` 1 · **all of it operator test data** (§0) |
 | Tests | **437 unit** · **30 RLS** · **168 desktop E2E** (4 skipped) — all three run in CI |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
-| Backups | ✅ **`2026-08-06` is the primary — complete, correctly flagged and restore-verified**, all 73 event hashes byte-identical to production. Sets: 07-30 · 07-31 (Storage) · 08-04 (superseded) · **08-06** (§2; drills §4b/§4c) |
+| Backups | ✅ **`2026-08-07` is the primary** — first automated set, and the only one holding schema + data + roles + **Storage** together, `verified:true`. `2026-08-06` is the restore-*proven* set (all 73 event hashes byte-identical to production). Sets: 07-30 · 07-31 (Storage) · 08-04 (superseded) · 08-06 · **08-07**. Nightly at 03:45 (§2; drills §4b/§4c) |
 
 ---
 
@@ -232,7 +232,8 @@ the primary — it is a real `pg_dump` and it has been restore-tested (§0).**
 | `2026-07-30/` | `events.sql` ids 1–62 (**chain-faithful**), `business-data.json` (15 tables), auth + storage manifest, restore guide |
 | `2026-07-31/` | `export.mjs` output: **all 26 Storage files** + every table as JSON |
 | `2026-08-04/` | superseded — its `pg_dump.sql` carries the wrong-`--schema` defect. Keep for the hand-rolled deltas (an independent second copy of `events`) and as the artefact that exposed it |
-| `2026-08-06/` | **PRIMARY** — `pg_dump.sql` (`--schema public`, correct), `data.sql` (**`auth.users` 2**, `events` 73), `roles.sql`. Restore-verified end to end; README has the evidence |
+| `2026-08-06/` | **the restore-PROVEN set** — `pg_dump.sql` (`--schema public`, correct), `data.sql` (**`auth.users` 2**, `events` 73), `roles.sql`. Loaded end to end with all 73 hashes matching production; README has the evidence. No Storage of its own |
+| `2026-08-07/` | **PRIMARY — first automated set, and the only COMPLETE one.** Schema · data · roles · **26 Storage objects** · table JSON · `SHA256SUMS` · `manifest.json` (`verified:true`, `problems:[]`, events 73 = live). Produced and self-verified by `capture.mjs` |
 
 **The older sets stay valid as prefixes, and that is sound, not a shortcut.**
 `events` has no UPDATE/DELETE grant, so an older export remains a valid prefix of
@@ -284,7 +285,7 @@ Automation does not change that; the nightly set lands in the same tree.
 
 **A verified archive is staged and waiting for a destination:**
 `TSOPOZIDIS/gnk-backups-offsite-2026-08-07.tar.gz` — **2.0 MB, 141 files**, all
-six sets including the first automated one, `sha256 0295d16e…c5d4` (in the
+six sets including the first automated one, `sha256 b689df4f…0b50` (in the
 adjacent `.sha256`). Verified twice: 141/141 byte-identical after extraction, and
 `sha256sum -c SHA256SUMS` passing 55/55 inside the extracted `2026-08-07` set.
 The `2026-08-06` archive beside it is superseded and can go once this one is off
