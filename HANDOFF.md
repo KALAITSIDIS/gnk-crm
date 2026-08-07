@@ -283,13 +283,18 @@ OneDrive — sync, not backup: a deletion propagates, and so does an encryption.
 Automation does not change that; the nightly set lands in the same tree.
 
 **A verified archive is staged and waiting for a destination:**
-`TSOPOZIDIS/gnk-backups-offsite-2026-08-06.tar.gz` — 1.3 MB, 84 files,
-`sha256 b728b21e…68ea` (in the adjacent `.sha256`). Round-trip checked: extracted
-and compared, all 84 byte-identical. **Moving it is operator-only** — no
-off-machine destination is agent-reachable, and it must not become one casually:
-it carries `auth.users` bcrypt hashes plus the signed slips and evidence PDFs,
-and **`gnk-crm` is a PUBLIC repo**, so the archive must never land in it. Verify
-with `sha256sum -c` **at the destination**, not here. §3.3.
+`TSOPOZIDIS/gnk-backups-offsite-2026-08-07.tar.gz` — **2.0 MB, 141 files**, all
+six sets including the first automated one, `sha256 0295d16e…c5d4` (in the
+adjacent `.sha256`). Verified twice: 141/141 byte-identical after extraction, and
+`sha256sum -c SHA256SUMS` passing 55/55 inside the extracted `2026-08-07` set.
+The `2026-08-06` archive beside it is superseded and can go once this one is off
+the machine.
+
+**Moving it is operator-only** — no off-machine destination is agent-reachable,
+and it must not become one casually: it carries `auth.users` bcrypt hashes plus
+the signed slips and evidence PDFs, and **`gnk-crm` is a PUBLIC repo**, so the
+archive must never land in it. Verify with `sha256sum -c` **at the destination**,
+not here. §3.3.
 
 **Trap:** `export.mjs` reads `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` from
 the SHELL and loads no `.env`. With nothing set it silently falls back to

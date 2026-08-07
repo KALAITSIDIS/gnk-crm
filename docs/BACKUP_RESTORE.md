@@ -621,11 +621,25 @@ sha256sum -c gnk-backups-offsite-<date>.tar.gz.sha256
 > The current dataset is operator test data (§0), which lowers the stakes *today*
 > and not one day longer than that.
 
-**Taken 2026-08-06:** `gnk-backups-offsite-2026-08-06.tar.gz`, 1.3 MB, 84 files,
-`sha256 b728b21e1e51fafa193fdfa3f6f029f89506bae6afefa04c1bbc8b7f6bf668ea`.
-Verified by extracting it and comparing every file against the original — all 84
-byte-identical. **Sitting on this machine awaiting a destination; until it is
-moved, the off-site gap is still open.**
+**Current archive — `gnk-backups-offsite-2026-08-07.tar.gz`**, 2.0 MB, **141
+files**, all six sets including the first automated one.
+
+```
+sha256  0295d16eae0469b472f7f011a28e1183f9a540f849f3e04ccb82d22bdfb5c5d4
+```
+
+Verified twice, because a tar that lists cleanly is not a tar that restores:
+extracted and compared every file against the original (**141/141
+byte-identical**), then ran `sha256sum -c SHA256SUMS` *inside the extracted
+2026-08-07 set* (**55/55**). Integrity holds end to end, not just at the archive
+boundary.
+
+`gnk-backups-offsite-2026-08-06.tar.gz` is superseded — the new archive is a
+strict superset. Delete it once the current one is off the machine.
+
+> **STILL ON THIS MACHINE.** Until it is copied somewhere that is neither this
+> laptop nor the same Supabase account, the off-site gap is open and OneDrive is
+> not a substitute: it syncs, so a deletion or an encryption propagates.
 
 ---
 
