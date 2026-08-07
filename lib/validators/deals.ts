@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { COMM_CHANNELS } from "@/lib/validators/contacts";
 
 export const OFFER_STATUSES = [
   "submitted",
@@ -124,4 +125,20 @@ export const saveOfferSchema = z.object({
     .optional()
     .transform((v) => v || undefined),
   valid_until: optionalDate,
+});
+
+/**
+ * "I spoke to the buyer." The one signal the deal_no_contact nudge trusts
+ * (migration 0025) — deliberately an explicit claim rather than something
+ * inferred from editing, which is what made the nudge silenceable by a typo.
+ */
+export const logDealContactSchema = z.object({
+  deal_id: z.guid("Missing deal"),
+  channel: z.enum(COMM_CHANNELS, { message: "Choose how you made contact" }),
+  note: z
+    .string()
+    .trim()
+    .max(2000, "Keep the note under 2000 characters")
+    .optional()
+    .transform((v) => v || undefined),
 });

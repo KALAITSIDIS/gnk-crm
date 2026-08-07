@@ -153,15 +153,18 @@ built without explicit direction.
 - ~~**Export audit logging (decision needed).**~~ **Resolved 2026-07-23: yes, log exports.** Built in `lib/services/export-audit.ts` (org-level `export`/`exported` event, written before the CSV is returned). Contacts export logs; the remaining lists inherit it via `logListExport`. See DECISIONS `T-export-audit`.
 - **Database-level 2FA enforcement (security, follow-up to C2).** 2FA shipped 2026-07-24 but is enforced only in the app (`login()` + `proxy.ts`). A stolen `aal1` JWT can still reach PostgREST directly and bypass the challenge. Fix: add `as restrictive` RLS policies asserting `auth.jwt()->>'aal' = 'aal2'` for users who have a verified factor — use the "enforce only for users that have opted-in" template from the Supabase MFA guide so non-enrolled users are unaffected. Touches every business table, carries real lockout risk, and needs its own RLS suite coverage (doc 04 guardrail 3), so it is its own piece of work. See DECISIONS `T-2fa`.
 - **Mandatory 2FA (decision, follow-up to C2).** Enrolment is currently opt-in. If the client wants it required, the Supabase guide gives "enforce for all users" and "enforce for new users only" variants. Do the DB-level enforcement above first, and plan a recovery path — Supabase issues no recovery codes, so the practical answer is a second enrolled factor per user plus an admin who can delete a factor via the GoTrue admin API.
-- **Deal-scoped "Log contact" action (follow-up to B7).** The `deal_no_contact`
-  nudge measures silence with `deals.last_activity_at`, which every deal edit
-  bumps — so retyping a title reads as contact and buys 14 days of quiet. There
-  is no way to record "I phoned the buyer" against a deal today: `contacted`,
-  `called` and `conversation_logged` are all lead-scoped, so a deal with no
-  source lead has nowhere to put it. Fix: a "Log contact" control on the deal
-  page writing a deal-scoped `conversation_logged` event and bumping
-  `last_activity_at`, then narrow the nudge to that signal. ~0.5 day. See
-  DECISIONS `T-nudges`.
+- ~~**Deal-scoped "Log contact" action (follow-up to B7).**~~ **SHIPPED
+  2026-08-07 (migration 0025).** It was worse than this entry described: the
+  edit did not merely buy 14 days of quiet, it CLOSED the open chase-up
+  immediately via `deals_supersede_nudges` and logged
+  `reason: deal_contacted_or_closed` against the editing user — the log asserted
+  contact nobody had claimed. Silence now has its own column, `last_contact_at`,
+  written only by `logDealContact` and by `logConversation` on a converted lead;
+  `last_activity_at` still drives the health score and is still bumped by edits.
+  The trigger's `WHEN` clause had to move with the predicate — it fired on
+  `last_activity_at or status`, so the function alone would have been correct
+  while the feature stayed broken. RLS test 27 and the reworked E2E nudge spec
+  pin both directions. See DECISIONS `T-deal-contact`.
 - **Configurable nudge thresholds (decision, follow-up to B7).** 14 days and 48
   hours are hardcoded in `create_followup_nudges()`. 14 is deliberately the
   health score's own activity cliff (doc 02 §C5), so making it independently

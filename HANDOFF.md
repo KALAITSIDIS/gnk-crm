@@ -14,9 +14,9 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 | `main` | clean, in sync with `origin/main`, only branch (SHA: `git log --oneline -1` — deliberately not pinned here, it went stale on every commit) |
 | CI | ✅ green — `checks` (typecheck · lint · unit · **build**) + `rls` |
 | Production | `gnk-crm.vercel.app` healthy; **auto-deploys every push** |
-| Hosted DB | `yjgirvzgoiywdojnpkpd` — **24 migrations**, `non_filename_versions` = 0, chain verifies, **73 events** |
+| Hosted DB | `yjgirvzgoiywdojnpkpd` — **25 migrations**, `non_filename_versions` = 0, chain verifies, **73 events** |
 | Data | `share_links` 2 (1 live, 1 revoked) · `tasks` 0 · `deals` 1 · **all of it operator test data** (§0) |
-| Tests | **437 unit** · **30 RLS** · **168 desktop E2E** (4 skipped) — all three run in CI |
+| Tests | **437 unit** · **31 RLS** · **168 desktop E2E** (4 skipped) — all three run in CI |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
 | Backups | ✅ **`2026-08-07` is the primary** — first automated set, and the only one holding schema + data + roles + **Storage** together, `verified:true`. `2026-08-06` is the restore-*proven* set (all 73 event hashes byte-identical to production). Sets: 07-30 · 07-31 (Storage) · 08-04 (superseded) · 08-06 · **08-07**. Nightly at 03:45 (§2; drills §4b/§4c) |
 
@@ -107,7 +107,7 @@ would bite during a real recovery:
    0021 / 0022 are re-applied. §5 predicted this was the likeliest to differ.
 4. **`pg_cron` absent → all three crons silently gone**, and
    `supabase_migrations` is not dumped (0 rows), so a later `db push` would
-   re-run all 24 migrations.
+   re-run all 25 migrations.
 
 **A false pass in our own `verify-restore.sql` was also found and fixed.** Its
 three "every slip/report file exists" checks query `storage.objects` — which
@@ -207,6 +207,16 @@ shape flags every row.
 ## 1. Shipped
 
 Full write-ups in `docs/DECISIONS.md`; migrations in `supabase/migrations/`.
+
+**2026-08-07** — 0025 `T-deal-contact`: the `deal_no_contact` nudge could be
+silenced by a typo. It keyed off `last_activity_at`, which every deal edit
+stamps, so renaming a deal **closed the open chase-up** and logged
+`reason: deal_contacted_or_closed` against the editing user — the log asserted
+contact nobody had claimed. Silence now has its own column, `last_contact_at`,
+written only by the new `logDealContact` action and by `logConversation` on a
+converted lead. **The trigger's `WHEN` clause had to move with the predicate**;
+the function alone would have been correct while the feature stayed broken, and
+RLS test 27's second half is what caught it.
 
 **2026-08-02/04** — 0024 `T-nudge-active-assignee` (system tasks never land on a
 deactivated profile; every fallback arm active-only, nightly re-home sweep, RLS
@@ -533,8 +543,20 @@ deliberate assignment is the wrong default. Wants an admin surface.
   handles too, so an emptied directory may refuse to disappear. `git worktree
   remove` can fail this way — prune, then remove with PowerShell.
 - The working directory is under **OneDrive**, which is sync, not backup.
-- Disk runs tight (~6 GB free after a heavy session). `.next` and
-  `tests/.playwright-report` are the reclaimable bulk.
+- **Disk runs tight, and a FULL disk truncated a tracked file to 0 bytes
+  (2026-08-07).** `C:` hit 100% mid-session while a full Playwright run was
+  going; the next `pathlib.write_text` on `HANDOFF.md` truncated it and then
+  failed with `OSError: [Errno 28]`, leaving an empty file. Recovered with
+  `git restore` — nothing was lost only because the file was committed.
+  - **`.next` is the bulk: it reached 3.6 GB.** `tests/.playwright-output` and
+    `-report` were 9 MB combined, so clearing them buys nothing; `.next` is the
+    one worth deleting. Stop the dev server first (see above).
+  - **Write files atomically when the disk may be tight** — temp file plus
+    `os.replace`, not a direct `write_text`, which truncates before it writes.
+  - **`npx playwright test` (full desktop) locally is what fills it**, because
+    the run builds `.next` for `next start`. CI runs the same suite on every
+    push, so prefer pushing over re-running the whole suite locally; scope local
+    runs to the affected spec.
 
 ---
 

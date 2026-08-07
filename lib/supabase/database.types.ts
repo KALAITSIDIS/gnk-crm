@@ -333,6 +333,7 @@ export type Database = {
           health_score: number
           id: string
           last_activity_at: string
+          last_contact_at: string | null
           lost_at: string | null
           lost_reason: string | null
           org_id: string
@@ -357,6 +358,7 @@ export type Database = {
           health_score?: number
           id?: string
           last_activity_at?: string
+          last_contact_at?: string | null
           lost_at?: string | null
           lost_reason?: string | null
           org_id: string
@@ -381,6 +383,7 @@ export type Database = {
           health_score?: number
           id?: string
           last_activity_at?: string
+          last_contact_at?: string | null
           lost_at?: string | null
           lost_reason?: string | null
           org_id?: string

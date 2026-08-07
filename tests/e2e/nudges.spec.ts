@@ -77,6 +77,9 @@ async function seedStaleDeal(svc: SupabaseClient, daysSilent: number) {
       title: DEAL_TITLE,
       agent_id: profileId,
       created_by: profileId,
+      // 0025: silence is last_contact_at. last_activity_at is set to match so
+      // the fixture reads as stale under either column.
+      last_contact_at: new Date(Date.now() - daysSilent * 86_400_000).toISOString(),
       last_activity_at: new Date(Date.now() - daysSilent * 86_400_000).toISOString(),
     })
     .select("id")
@@ -155,13 +158,29 @@ test.describe("Follow-up nudges", () => {
     await page.goto("/tasks", { waitUntil: "networkidle" });
     await expect(overdue.getByText(title)).toBeVisible();
 
-    // Contact made. Every deal mutation moves last_activity_at — a deal edit, a
-    // stage move, an offer, a conversation logged on its source lead — and the
-    // 0020 trigger fires on that column, so this is the same code path the UI
-    // takes, without depending on the shape of the deal form.
+    // First, the case 0025 fixed. Editing the deal moves last_activity_at, and
+    // until 0025 the trigger fired on THAT column — so renaming a deal cleared
+    // the chase-up off this very screen and logged it as contact. The nudge must
+    // survive an edit, or the desk can silence its own follow-ups by typing.
+    const edited = await svc
+      .from("deals")
+      .update({ title: DEAL_TITLE, last_activity_at: new Date().toISOString() })
+      .eq("id", dealId)
+      .select("id");
+    expect(edited.error).toBeNull();
+
+    await page.reload({ waitUntil: "networkidle" });
+    await expect(
+      overdue.getByText(title),
+      "an edit is not contact — the nudge must still be on the screen",
+    ).toBeVisible();
+
+    // Now contact, for real. last_contact_at is what logDealContact writes, so
+    // this is the same column the UI moves, without depending on the shape of
+    // the dialog.
     const touched = await svc
       .from("deals")
-      .update({ last_activity_at: new Date().toISOString() })
+      .update({ last_contact_at: new Date().toISOString() })
       .eq("id", dealId)
       .select("id");
     expect(touched.error).toBeNull();

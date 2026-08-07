@@ -6,6 +6,7 @@ import {
   DealDetailsForm,
   HealthPanel,
 } from "@/components/features/deals/detail-forms";
+import { LogDealContact } from "@/components/features/deals/log-contact";
 import { DealOutcomeActions } from "@/components/features/deals/outcome-actions";
 import { OffersCard, type OfferRow } from "@/components/features/deals/offers";
 import { EventTimeline } from "@/components/features/shared/event-timeline";
@@ -189,11 +190,14 @@ export default async function DealDetailPage({
               <span>No accepted offer yet — Won requires one (admin can override).</span>
             )}
           </span>
-          <DealOutcomeActions
-            dealId={deal.id}
-            wonEligible={wonEligible}
-            isAdmin={profile.role === "admin"}
-          />
+          <div className="flex items-center gap-2">
+            <LogDealContact dealId={deal.id} />
+            <DealOutcomeActions
+              dealId={deal.id}
+              wonEligible={wonEligible}
+              isAdmin={profile.role === "admin"}
+            />
+          </div>
         </div>
       ) : (
         <div

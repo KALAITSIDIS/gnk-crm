@@ -2070,3 +2070,51 @@ the page. HANDOFF §7 already says "do not build while a dev server is running";
 it applies to `next start` too. The rebuild then hit `EPERM` on a locked
 `.next/static` file (the OneDrive handle issue) and needed a PowerShell
 `Remove-Item -Recurse -Force`.
+
+## 2026-08-07 · T-deal-contact — the no-contact nudge could be silenced by a typo
+
+B7's `deal_no_contact` nudge measured silence with `deals.last_activity_at`.
+`lib/actions/deals.ts` stamps that column on **every** field change, and
+`deals_supersede_nudges` fired on exactly that column — so renaming a deal
+closed its open chase-up on the spot and recorded
+
+```json
+{"kind": "deal_no_contact", "reason": "deal_contacted_or_closed"}
+```
+
+attributed via `auth.uid()` to whoever happened to be editing. The nightly job
+then declined to re-mint it, because the 14-day boundary had moved too. **A deal
+could be edited every week and never once be chased**, and the event log would
+say contact was made each time.
+
+That last part is what makes it more than a scheduling bug. The log asserted
+something about the world that nobody had claimed.
+
+**Fix (migration 0025): contact gets its own column.** `last_contact_at` is
+written only by `logDealContact` (and by `logConversation` on a converted lead,
+where the call genuinely is contact with the buyer). `last_activity_at` is
+untouched and still drives the health score's activity decay (doc 02 §C5) — the
+two columns answer different questions and both stay true.
+
+Deals with no contact ever logged fall back to `created_at`, so a deal nobody
+touches is still chased 14 days after it opens. Existing rows were backfilled
+from `last_activity_at`, so nothing lurched the morning this shipped.
+
+**The trigger's `WHEN` clause was the trap, and a test caught it.** Changing the
+function to read `last_contact_at` was not enough: 0020's trigger fired on
+`last_activity_at or status`, so after the change it would never have fired for
+the one event that should close a nudge. The function would have been correct
+and the feature still broken — logging contact would have left the chase-up
+open. RLS test 27's second half caught it in the same cycle that introduced it,
+which is the argument for writing the "and the good path still works" assertion
+rather than only the regression one.
+
+Also split the supersede reason: `deal_closed` and `deal_contacted` are now
+distinct, where 0020 wrote `deal_contacted_or_closed` for both and so recorded a
+closure that may not have happened.
+
+**Verified** by RLS test 27 (edit does not silence; contact does, with the right
+reason), the reworked E2E nudge spec (an edit leaves the nudge on the screen the
+agent reads, contact removes it), and end to end in the running app: a title
+edit through the deal form moved `last_activity_at` to today, left
+`last_contact_at` at 20 days ago, and the chase-up stayed open.

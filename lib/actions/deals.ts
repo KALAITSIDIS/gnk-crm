@@ -11,6 +11,7 @@ import {
   OFFER_TRANSITIONS,
   dealCommissionSchema,
   dealDetailsSchema,
+  logDealContactSchema,
   markLostSchema,
   markWonSchema,
   saveOfferSchema,
@@ -505,5 +506,70 @@ export async function markDealLost(
   revalidatePath(`/deals/${dealId}`);
   revalidatePath("/pipeline");
   revalidatePath("/dashboard");
+  return { error: null, savedAt: Date.now() };
+}
+
+/**
+ * "I spoke to the buyer" — the only signal that silences a deal_no_contact
+ * nudge (migration 0025).
+ *
+ * Before 0025 the nudge measured silence with `last_activity_at`, which the
+ * generic update path above stamps on every field change. Renaming a deal
+ * therefore closed the open chase-up and logged it as contact, so a deal could
+ * be edited weekly and never actually chased. Contact is now a claim someone
+ * makes here, deliberately, and nowhere else.
+ *
+ * `last_activity_at` is bumped too: talking to the buyer is genuine activity
+ * and the health score decays from it (doc 02 §C5). The two columns answer
+ * different questions and both are true after this.
+ */
+export async function logDealContact(
+  _prev: DealSectionState,
+  formData: FormData,
+): Promise<DealSectionState> {
+  const supabase = await createClient();
+  const profile = await getCurrentProfile(supabase);
+
+  const parsed = logDealContactSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input", savedAt: null };
+  }
+  const { deal_id: dealId, channel, note } = parsed.data;
+
+  const { data: deal } = await supabase
+    .from("deals")
+    .select("id, org_id, status")
+    .eq("id", dealId)
+    .maybeSingle();
+  if (!deal) return { error: "Deal not found", savedAt: null };
+  if (deal.status !== "open") {
+    return { error: `Deal is already ${deal.status}`, savedAt: null };
+  }
+
+  const now = new Date().toISOString();
+  // .select() so an RLS-filtered 0-row update surfaces instead of logging a
+  // contact event for a write that never happened.
+  const { data: updated, error: updateErr } = await supabase
+    .from("deals")
+    .update({ last_contact_at: now, last_activity_at: now })
+    .eq("id", dealId)
+    .select("id")
+    .maybeSingle();
+  if (updateErr) return { error: updateErr.message, savedAt: null };
+  if (!updated) return { error: "You do not have permission to update this deal", savedAt: null };
+
+  await logEvent(supabase, {
+    orgId: deal.org_id,
+    actorId: profile.id,
+    entityType: "deal",
+    entityId: dealId,
+    eventType: "conversation_logged",
+    payload: { channel, ...(note ? { note } : {}) },
+  });
+
+  await recomputeDealHealth(supabase, dealId);
+  revalidatePath(`/deals/${dealId}`);
+  revalidatePath("/tasks");
+  revalidatePath("/pipeline");
   return { error: null, savedAt: Date.now() };
 }

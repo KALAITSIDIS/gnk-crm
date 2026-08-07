@@ -1288,6 +1288,9 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
           title: `Nudge stale ${run}`,
           agent_id: agentA1.id,
           created_by: agentA1.id,
+          // 0025: silence is measured by last_contact_at, not last_activity_at.
+          // Both are set so the fixture is unambiguous under either reading.
+          last_contact_at: iso(20 * dayMs),
           last_activity_at: iso(20 * dayMs),
         },
         {
@@ -1297,6 +1300,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
           title: `Nudge orphan ${run}`,
           agent_id: null,
           created_by: null,
+          last_contact_at: iso(20 * dayMs),
           last_activity_at: iso(20 * dayMs),
         },
         {
@@ -1308,10 +1312,11 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
           created_by: agentA1.id,
           // explicit, not omitted: a PostgREST bulk insert unions the keys, so
           // a column left off ONE row is sent as null rather than defaulted
+          last_contact_at: new Date().toISOString(),
           last_activity_at: new Date().toISOString(),
         },
       ])
-      .select("id, last_activity_at");
+      .select("id, last_contact_at");
     expect(dealsErr).toBeNull();
     const [staleDeal, orphanDeal, freshDeal] = deals!;
 
@@ -1375,7 +1380,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
         hour: "2-digit",
         minute: "2-digit",
       }).format(new Date(isoStr));
-    const boundary = new Date(new Date(staleDeal.last_activity_at).getTime() + 14 * dayMs);
+    const boundary = new Date(new Date(staleDeal.last_contact_at!).getTime() + 14 * dayMs);
     expect(cyprus(staleNudges[0].due_at!)).toBe(`${cyprus(boundary.toISOString()).slice(0, 10)}, 23:59`);
 
     // three-arm fallback: agent → creator → oldest active admin, never NULL
@@ -1411,7 +1416,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     // --- contact made: the trigger supersedes immediately, with an actor ------
     const touched = await agentA1.client
       .from("deals")
-      .update({ last_activity_at: new Date().toISOString() })
+      .update({ last_contact_at: new Date().toISOString() })
       .eq("id", staleDeal.id)
       .select("id");
     expect(touched.error).toBeNull();
@@ -1434,7 +1439,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       (
         await svc
           .from("deals")
-          .update({ last_activity_at: iso(15 * dayMs) })
+          .update({ last_contact_at: iso(15 * dayMs) })
           .eq("id", staleDeal.id)
       ).error,
     ).toBeNull();
@@ -1624,6 +1629,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
           title: `Nudge ghost-agent ${run}`,
           agent_id: ghost.id, // arm 1 must skip this
           created_by: null,
+          last_contact_at: iso(20 * dayMs),
           last_activity_at: iso(20 * dayMs),
         },
         {
@@ -1633,6 +1639,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
           title: `Nudge ghost-creator ${run}`,
           agent_id: null,
           created_by: ghost.id, // arm 2 must skip this
+          last_contact_at: iso(20 * dayMs),
           last_activity_at: iso(20 * dayMs),
         },
       ])
@@ -1739,5 +1746,94 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
 
     const { data: chainOk } = await svc.rpc("verify_events_chain", { p_org: ORG_A });
     expect(chainOk, "the nudge events keep the hash chain intact").toBe(true);
+  });
+
+  it("27. editing a deal does not silence its no-contact nudge", async () => {
+    // B7 measures silence with deals.last_activity_at, which lib/actions/deals.ts
+    // stamps on EVERY field change. So renaming a deal reads as "I spoke to the
+    // buyer": trg_supersede_deal_nudges closes the open chase-up immediately and
+    // records reason 'deal_contacted_or_closed' — an assertion about the world
+    // that nobody made. The nightly job then declines to re-mint it, because the
+    // boundary moved 14 days too.
+    //
+    // Contact is a claim someone makes, not a side effect of typing.
+    const dayMs = 86_400_000;
+    const silentSince = new Date(Date.now() - 20 * dayMs).toISOString();
+
+    const { data: deal, error: dealErr } = await svc
+      .from("deals")
+      .insert({
+        org_id: ORG_A,
+        deal_type: "sale",
+        stage_id: stageSaleNew,
+        title: `Nudge edit-silence ${run}`,
+        agent_id: agentA1.id,
+        // Silence is now "nobody has logged contact since", not "nothing has
+        // been typed since" — last_activity_at is set to the same instant so the
+        // deal is unambiguously stale under either reading at the start.
+        last_contact_at: silentSince,
+        last_activity_at: silentSince,
+      })
+      .select("id")
+      .single();
+    expect(dealErr).toBeNull();
+
+    expect((await svc.rpc("create_followup_nudges", { p_org: ORG_A })).error).toBeNull();
+
+    const openNudges = async () => {
+      const { data, error } = await svc
+        .from("tasks")
+        .select("id, is_done")
+        .eq("deal_id", deal!.id)
+        .eq("kind", "deal_no_contact")
+        .eq("is_done", false);
+      expect(error).toBeNull();
+      return data ?? [];
+    };
+
+    expect(await openNudges(), "a 20-day-silent deal must get one nudge").toHaveLength(1);
+
+    // Exactly what lib/actions/deals.ts:138 does for any edit — a title change
+    // carrying the same last_activity_at stamp the generic update path applies.
+    const { error: editErr } = await svc
+      .from("deals")
+      .update({ title: `Nudge edit-silence ${run} (renamed)`, last_activity_at: new Date().toISOString() })
+      .eq("id", deal!.id);
+    expect(editErr).toBeNull();
+
+    expect(
+      await openNudges(),
+      "renaming a deal is not contact — the chase-up must survive the edit",
+    ).toHaveLength(1);
+
+    // And the nightly job must not close it either.
+    expect((await svc.rpc("create_followup_nudges", { p_org: ORG_A })).error).toBeNull();
+    expect(
+      await openNudges(),
+      "the nightly sweep must not treat an edit as contact",
+    ).toHaveLength(1);
+
+    // The other half, and the reason this test is not satisfied by simply
+    // breaking supersede: logging contact MUST still close the chase-up.
+    const [{ id: nudgeId }] = await openNudges();
+    const { error: contactErr } = await svc
+      .from("deals")
+      .update({ last_contact_at: new Date().toISOString() })
+      .eq("id", deal!.id);
+    expect(contactErr).toBeNull();
+
+    expect(await openNudges(), "logging contact must close the chase-up").toHaveLength(0);
+
+    // And it must say WHY in terms that are true. 0020 recorded
+    // 'deal_contacted_or_closed' for both causes, so the log asserted a closure
+    // that may not have happened; 0025 splits them.
+    const { data: why } = await svc
+      .from("events")
+      .select("payload")
+      .eq("entity_type", "task")
+      .eq("entity_id", nudgeId)
+      .eq("event_type", "superseded");
+    expect(why ?? [], "closing a nudge is evented").toHaveLength(1);
+    expect((why![0].payload as { reason: string }).reason).toBe("deal_contacted");
   });
 });

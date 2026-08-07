@@ -441,11 +441,17 @@ export async function logConversation(
   });
 
   // Conversations count as deal activity once the lead is converted — the
-  // health activity factor decays from last_activity_at (doc 02 §C5, T3.3)
+  // health activity factor decays from last_activity_at (doc 02 §C5, T3.3).
+  //
+  // last_contact_at moves too, and must: this IS contact with the buyer, so a
+  // call logged against the lead has to silence the deal's no-contact nudge
+  // (migration 0025). Without it the desk would log the call in the one place
+  // it naturally belongs and get chased anyway.
   if (lead.converted_deal_id) {
+    const nowIso = new Date().toISOString();
     await supabase
       .from("deals")
-      .update({ last_activity_at: new Date().toISOString() })
+      .update({ last_activity_at: nowIso, last_contact_at: nowIso })
       .eq("id", lead.converted_deal_id);
     const { recomputeDealHealth } = await import("@/lib/services/health-score");
     await recomputeDealHealth(supabase, lead.converted_deal_id);
