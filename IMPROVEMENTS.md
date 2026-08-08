@@ -62,12 +62,29 @@ Cron-driven tasks: "no contact in 14 days on an active deal" and "viewing done, 
 
 `create_followup_nudges(p_org uuid default null)` runs at **03:15** — between `expire-mandates` (03:00) and `verify-events-chain` (03:30), so the night's nudge events are chain-checked by the same run. Built on the 0012 renewal lifecycle, which had already solved every hard part:
 
-- **Idempotence keyed to a cycle, not "does any task exist".** The deal cycle is the staleness **boundary** — `(last_activity_at at Cyprus)::date + 14` — stored as the task's Cyprus end-of-day due date. Contact moves `last_activity_at`, which moves the boundary, so the open task stops matching and a *later* silence is a genuinely new cycle. A deal nobody ever touches keeps exactly one open nudge, forever. The viewing rule has no cycle and guards on "any nudge for this viewing", which is correct rather than the 0006 bug: `saveViewingFeedback` can only set feedback, never clear it.
+- **Idempotence keyed to a cycle, not "does any task exist".** The deal cycle is the staleness **boundary** — `(last_activity_at at Cyprus)::date + 14`, since 0025 `(coalesce(last_contact_at, created_at) at Cyprus)::date + 14` — stored as the task's Cyprus end-of-day due date. Contact moves that column, which moves the boundary, so the open task stops matching and a *later* silence is a genuinely new cycle. A deal nobody ever touches keeps exactly one open nudge, forever. The viewing rule has no cycle and guards on "any nudge for this viewing", which is correct rather than the 0006 bug: `saveViewingFeedback` can only set feedback, never clear it.
 - **Cyprus 23:59 due stamps**, deterministic from the source row rather than from when the job ran — a catch-up run after downtime stamps the date the nudge *should* have carried and shows up already overdue, instead of resetting the clock.
 - **Three-arm assignee fallback** (deal/viewing agent → creator → oldest active org admin). A NULL assignee is invisible on every surface.
 - **Stated invariants, self-healed.** An OPEN `deal_no_contact` task exists iff its deal is OPEN and its due date is that deal's current boundary; an OPEN `viewing_feedback` task exists iff its viewing is COMPLETED with null feedback. Tasks that stop matching are COMPLETED (`superseded`), never deleted. Two `AFTER UPDATE` triggers do this at edit time with `actor_id = auth.uid()` (the `trg_price_history` pattern — chosen over app-side calls because `move_deal_to_stage` is SQL-side); cron is the actor-null nightly net.
 
-**"Contact" is `deals.last_activity_at`** — the only workable signal, because `contacted`/`called`/`conversation_logged` are all lead-scoped, never deal-scoped. It is also the health score's activity input, whose cliff is *also* 14 days (doc 02 §C5), so the nudge fires exactly when that factor reaches zero.
+> **⚠ CORRECTED 2026-08-07 (migration 0025). The paragraph below describes the
+> ORIGINAL design, and that design was a defect.** Leaving it unmarked would be
+> how it gets rebuilt. `deals.last_activity_at` is stamped by `lib/actions/deals.ts`
+> on **every field change**, so renaming a deal read as "I spoke to the buyer":
+> `trg_supersede_deal_nudges` closed the open chase-up immediately and logged
+> `reason: deal_contacted_or_closed` against whoever was editing — an assertion
+> about the world nobody had made. The nightly job then declined to re-mint it,
+> because the boundary had moved too, so a deal could be edited weekly and never
+> once be chased.
+>
+> **Contact now has its own column, `deals.last_contact_at`**, written only by
+> `logDealContact` and by `logConversation` on a converted lead. The boundary is
+> `(coalesce(last_contact_at, created_at) at Cyprus)::date + 14`, so a deal nobody
+> has ever contacted is still chased 14 days after it was opened.
+> `last_activity_at` is unchanged and still the health-score activity input.
+> See DECISIONS `T-deal-contact`.
+
+**"Contact" was `deals.last_activity_at`** — chosen as the only workable signal, because `contacted`/`called`/`conversation_logged` are all lead-scoped, never deal-scoped. It is also the health score's activity input, whose cliff is *also* 14 days (doc 02 §C5), so the nudge fires exactly when that factor reaches zero.
 
 **The old "Viewings awaiting feedback" virtual section is retired** from `/tasks` and the agent dashboard; `viewing_feedback` nudges replace it with real rows that carry a 48-hour threshold, a due date, an assignee, admin visibility, CSV export and an event trail. The agent dashboard's tasks card widened from "overdue" to "due today & overdue", since every nudge is due at 23:59.
 
@@ -176,9 +193,37 @@ Agent performance, source ROI, time-to-close, stage conversion, price-reduction 
 ### C5. Event-log partitioning and archival — **1 week**
 `events` grows forever and by design is never deleted. Every timeline, the dashboard, and `verify_events_chain` read it. **Why:** at a few million rows the chain walk and the per-entity timelines will become the app's bottleneck, and the nightly `run_chain_checks()` cron is the canary. **Fix direction:** partition by `occurred_at` range, index per partition, and keep chain verification incremental against the last verified checkpoint rather than walking from genesis. **Do before C4.**
 
-### C6. Backup and restore drill — **backups TAKEN 2026-07-30/31 + 08-04; the drill itself is still unrun**
+### C6. Backup and restore drill — ✅ **CLOSED 2026-08-05; nightly automated backups since 2026-08-07**
 
-> **UPDATE 2026-08-04 — "there is no reachable backup today" is no longer true.**
+> **UPDATE 2026-08-08 — this entry's headline and its 08-04 block below are both
+> out of date. Read this first.**
+>
+> **The drill RAN on 2026-08-05, both halves, and PASSED.** A throwaway project
+> was restored from the 08-04 dumps: `verify_events_chain = true`, every row count
+> matching production, 86/86 RLS policies, `auth.users` back. Then the Storage
+> half (BACKUP_RESTORE §4c): all **26 objects restored byte-identical**, and the
+> three evidence PDFs and the signed slip PNG still hashed to the
+> `pdf_sha256`/`sha256` in their generation events — one pulled through the app's
+> own Download button. **The backup restores, and the evidence survives it as
+> evidence rather than as rows.**
+>
+> **Point 1 below — "`supabase db dump` has never been taken" — is also no longer
+> true.** It was taken 2026-08-06 and that set is the restore-proven schema of
+> record (all 73 event hashes byte-identical to production, checked with
+> `md5(string_agg(hash))` rather than by `verify_events_chain`, which cannot tell
+> restored hashes from re-minted ones). A recovery today returns the data *with*
+> logins.
+>
+> **A nightly task has run since 2026-08-07** (03:45, `--keep 14`), producing
+> verified sets that check their own output; 2026-08-08 is the current primary.
+> **Point 2, RTO, is the honest remainder** — the drill proved recoverability but
+> was not timed against the 4h target.
+>
+> **And one thing got worse, not better:** `gnk-backups/` moved off OneDrive to
+> `D:\dev\TSOPOZIDIS` on 2026-08-07, so every set is now single-machine with no
+> cloud copy. Off-site is the open item — see BACKUP_RESTORE §3.3.
+
+> **SUPERSEDED — UPDATE 2026-08-04 — "there is no reachable backup today" is no longer true.**
 > Three sets exist in `../gnk-backups/`: chain-faithful `events` (ids 1–62, plus a
 > verified 63–73 delta), business tables, all 26 Storage files, and an auth +
 > storage manifest. Integrity is md5-checked **inside Postgres** and again on
@@ -193,7 +238,7 @@ Agent performance, source ROI, time-to-close, stage conversion, price-reduction 
 >    sources, so the 4h target is still a guess.
 >
 > See the STATUS block at the top of `docs/BACKUP_RESTORE.md` for the apply order.
-**See `docs/BACKUP_RESTORE.md` and DECISIONS `T-backup-drill`.** This item was scoped as "Supabase takes backups; nobody has proven a restore" — **that premise was wrong.** The org is on the Free plan, which Supabase excludes from automated daily backups; there is no reachable backup today, so the RPO is unbounded rather than 24h. Two further findings: storage objects (signed slips, evidence PDFs, KYC scans) are in **no** database backup on any plan, and `verify_events_chain` is session-`TimeZone`-dependent, so a restore into a non-UTC project reads `false` on intact data. **Why it still matters:** the commission evidence chain is the product's core value and it is append-only — a corrupted or lost `events` table cannot be reconstructed from anywhere else. **Remaining deliverable:** take the first backup (§3, under an hour, removes most of the risk on its own), get it off-site, then run the timed drill (§4) and sign off the proposed RPO 24h / RTO 4h (§6). Verification pack `scripts/backup/verify-restore.sql` is written and self-tested 43/43 against hosted.
+**See `docs/BACKUP_RESTORE.md` and DECISIONS `T-backup-drill`.** This item was scoped as "Supabase takes backups; nobody has proven a restore" — **that premise was wrong.** The org is on the Free plan, which Supabase excludes from automated daily backups; **as of 2026-07-30** there was no reachable backup at all, so the RPO was unbounded rather than 24h. (Six verified sets and a nightly job later, that sentence is history — it is kept because the Free-plan exclusion is still true and is *why* all of this had to be built by hand.) Two further findings: storage objects (signed slips, evidence PDFs, KYC scans) are in **no** database backup on any plan, and `verify_events_chain` is session-`TimeZone`-dependent, so a restore into a non-UTC project reads `false` on intact data. **Why it still matters:** the commission evidence chain is the product's core value and it is append-only — a corrupted or lost `events` table cannot be reconstructed from anywhere else. ~~**Remaining deliverable:** take the first backup (§3, under an hour, removes most of the risk on its own), get it off-site, then run the timed drill (§4) and sign off the proposed RPO 24h / RTO 4h (§6).~~ **Of those three, two are done** (first backup 2026-07-30, drill 2026-08-05). **What is actually left: get a set off-site** — now the only copy is on one machine — **and time a drill to sign off RTO 4h.** Verification pack `scripts/backup/verify-restore.sql` is written and self-tested 43/43 against hosted.
 
 ### C7. Role model beyond the three fixed roles — **1.5 weeks**
 Today: `admin`, `agent`, `listing_manager`, enforced by `current_role_gnk()` inside RLS helpers. **Why revisit:** the audit surfaced places where role and capability diverge — a listing manager can reach the archived state field-by-field on the Details tab even though the one-click Archive is admin-only. That is a deliberate, documented decision, but it signals that "role" is starting to do too much work. **Direction:** capability flags on the profile, checked by the same SECURITY DEFINER helpers, so policy changes stay in one place. **Do not start** before there is a concrete second-office or franchise requirement — this is the kind of generalisation that costs more than it returns if built speculatively.
