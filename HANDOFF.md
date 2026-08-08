@@ -1,4 +1,4 @@
-# HANDOFF — 2026-08-05
+# HANDOFF — 2026-08-08
 
 Read `docs/HANDOVER.md` and `CLAUDE.md` first; this is the delta on top of them.
 **History lives in `docs/DECISIONS.md` and git — this file is state, traps and
@@ -18,7 +18,7 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 | Data | `share_links` 2 (1 live, 1 revoked) · `tasks` 0 · `deals` 1 · **all of it operator test data** (§0) |
 | Tests | **437 unit** · **31 RLS** · **168 desktop E2E** (4 skipped) — all three run in CI |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
-| Backups | ✅ **`2026-08-07` is the primary** — first automated set, and the only one holding schema + data + roles + **Storage** together, `verified:true`. `2026-08-06` is the restore-*proven* set (all 73 event hashes byte-identical to production). Sets: 07-30 · 07-31 (Storage) · 08-04 (superseded) · 08-06 · **08-07**. Nightly at 03:45 (§2; drills §4b/§4c) |
+| Backups | ✅ **`2026-08-08` is the primary** — newest automated set, `verified:true` (55 files, 73 events matching production), taken after the move and so the first written to `D:\dev\TSOPOZIDIS\gnk-backups`. `2026-08-07` is the other verified set; `2026-08-06` is the restore-*proven* one (all 73 event hashes byte-identical to production). Sets: 07-30 · 07-31 (Storage) · 08-04 (superseded) · 08-06 · 08-07 · **08-08**. Nightly at 03:45 (§2; drills §4b/§4c). **All of it is single-machine now — §3.3** |
 
 ---
 
