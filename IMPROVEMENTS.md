@@ -46,8 +46,40 @@ Finding PERF-3, migration 0018 `admin_dashboard_stats` (SECURITY INVOKER). The h
 ### B3. Buyer proposal via expiring magic link — ✅ **DONE 2026-07-29** (migration 0023)
 Shipped. Tokenised, expiring, no-login page at `/p/[token]`; manage at `/share-links`. **The token is never stored** — only `sha256(token)`, so a database leak yields no working links. `anon` has **no grant on the tables at all**: a buyer reaches data solely through `resolve_share_link`, a security-definer RPC whose SQL body enumerates the exposure allowlist, so the boundary cannot drift with a component edit. Verified end-to-end that `internal_notes`, `owner_net_price` and `min_acceptable_price` never reach the rendered DOM. Opens are counted exactly and logged to `events` **once per Cyprus day** — a bearer token may append (unlike an anonymous CSP report) but must not let a refresh loop flood the chain. Expired, revoked, unknown and malformed tokens render one identical neutral page. Agent picks en/el/ru per link, which delivers multilingual value while B9 stays blocked. Original scope note: **Why:** this is the daily unlock for an advisory desk — it replaces the WhatsApp-a-pile-of-PDFs workflow and, because opens are logged, it strengthens the commission evidence chain that is already this product's differentiator. **Depends on:** doc 01 §4 forbids buyer logins — tokenised links are the sanctioned route, so honour that constraint exactly. Needs a public route outside the `proxy.ts` auth matcher and a rate limit.
 
-### B4. Document generation from templates — **1.5 weeks**
-Viewing forms, reservation agreements, mandate renewals as branded PDFs, prefilled from the property/contact/deal record. **Why:** the `@react-pdf/renderer` pipeline, font embedding (Greek/Cyrillic already solved) and the private `documents` bucket all exist — the evidence report proved the whole stack. This is mostly template work on top of shipped infrastructure. **Depends on:** `lib/services/evidence-pdf.tsx` patterns, `pdf-fonts.ts`.
+### B4. Document generation from templates — 🟡 **STARTED 2026-08-08: viewing confirmation shipped (migration 0027); the two contracts are blocked on supplied wording**
+
+**Shipped: the viewing confirmation** (doc 01 M10's "viewing confirmations").
+Generated from the record on the viewing detail page, filed as a `documents` row
+with the new `viewing_confirmation` doc type, downloadable through a short-lived
+signed URL. It follows `generateEvidenceReport` exactly, including the unwind
+order — a failed row removes the uploaded file, a failed event removes both,
+so guardrail 1 holds: no stored document without its hash-chained event. The
+event carries `pdf_sha256`, so a confirmation can be proven byte-identical the
+same way a slip now can (0026).
+
+It is **not** the signed slip and says so on the page: "This confirms the
+appointment above. It is not a reservation and does not commit either party to a
+transaction." The slip remains the evidential artifact, signed at the viewing;
+this is the sheet sent beforehand. Its GDPR line is `SLIP_GDPR_LINE`, passed in
+rather than restated so the two cannot drift.
+
+Verified at both levels. Unit (`viewing-confirmation-pdf.test.ts`, 6 tests):
+Noto Sans really embedded, Greek and Cyrillic round-tripping through the PDF's
+own ToUnicode map, **no unmapped glyphs** — this template's prose is full of
+"confirms"/"confirmation", the same `fi` pair that once extracted as
+"?rst-response" from a production report — and empty optional rows omitted
+rather than drawn as bare labels. E2E (`viewing-confirmation.spec.ts`): the real
+button, then the stored bytes re-downloaded and re-hashed against the event
+payload, exactly one document and one event, chain still verifying.
+
+**Deliberately NOT built: reservation agreements and mandate renewals.** Those
+are contracts. Their wording is a legal question for the operator's lawyer, and
+a plausible-looking generated contract is materially worse than none —
+especially over a deposit. The pipeline is now proven and each is a template
+plus an action once the text is supplied; **the blocker is the text, not the
+engineering.**
+
+Original scope note: viewing forms, reservation agreements, mandate renewals as branded PDFs, prefilled from the property/contact/deal record. **Why:** the `@react-pdf/renderer` pipeline, font embedding (Greek/Cyrillic already solved) and the private `documents` bucket all exist — the evidence report proved the whole stack. This is mostly template work on top of shipped infrastructure. **Depends on:** `lib/services/evidence-pdf.tsx` patterns, `pdf-fonts.ts`.
 
 ### B5. Map view for properties — **1 week**
 Plot listings on a map, filter by district/area, draw a radius. **Why:** Paphos buyers think in locations ("walkable to Kato Paphos harbour"), not in list rows. **Depends on:** `location geography(point,4326)` is already populated by `map-location-fields.tsx`, and PostGIS is already enabled — the data is sitting there unused. Needs a map tile provider decision (self-hosted vs. commercial) and a CSP `img-src`/`connect-src` allowance.

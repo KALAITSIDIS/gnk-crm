@@ -203,6 +203,7 @@
     "chatOpened": "Άνοιξε συνομιλία",
     "chatOpenedChannel": "Άνοιξε συνομιλία ({channel})",
     "converted": "Μετατράπηκε σε συναλλαγή",
+    "viewingConfirmationGenerated": "Δημιουργήθηκε επιβεβαίωση επίσκεψης",
     "slipSigned": "Υπογράφηκε δελτίο επίσκεψης",
     "slipSignedBy": "Υπογράφηκε δελτίο επίσκεψης από {name}",
     "keyCheckout": "Κλειδί παραλήφθηκε",

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { ArrowLeft, CheckCircle2, PenLine, Star } from "lucide-react";
 import { ViewingFeedbackForm } from "@/components/features/viewings/feedback-form";
 import { SlipDownloadButton } from "@/components/features/viewings/slip-download";
+import { ConfirmationCard } from "@/components/features/viewings/confirmation-card";
 import { ViewingStatusActions } from "@/components/features/viewings/viewing-status-actions";
 import { Button } from "@/components/ui/button";
 import { getCurrentProfile } from "@/lib/services/auth";
@@ -51,6 +52,15 @@ export default async function ViewingDetailPage({ params }: { params: Promise<{ 
     .select("id, signer_name, signed_at")
     .eq("viewing_id", id)
     .maybeSingle();
+
+  // Head-only count: the card needs "is one already filed", not the row — so
+  // the Download button appears on first paint rather than after a regenerate.
+  const { count: confirmationCount } = await supabase
+    .from("documents")
+    .select("id", { count: "exact", head: true })
+    .eq("entity_type", "viewing")
+    .eq("entity_id", id)
+    .eq("doc_type", "viewing_confirmation");
 
   const property = v.properties as { id: string; reference: string; address: string | null } | null;
   const contact = v.contacts as { id: string; display_name: string | null; phone_e164: string | null } | null;
@@ -121,6 +131,13 @@ export default async function ViewingDetailPage({ params }: { params: Promise<{ 
       {status === "scheduled" && canManage ? (
         <Card title="Status">
           <ViewingStatusActions viewingId={v.id} />
+        </Card>
+      ) : null}
+
+      {/* Same gate as the slip: the viewing's agent or an admin. */}
+      {canManage ? (
+        <Card title="Confirmation">
+          <ConfirmationCard viewingId={v.id} hasExisting={(confirmationCount ?? 0) > 0} />
         </Card>
       ) : null}
 

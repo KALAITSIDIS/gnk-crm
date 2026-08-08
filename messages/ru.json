@@ -203,6 +203,7 @@
     "chatOpened": "Открыт чат",
     "chatOpenedChannel": "Открыт чат ({channel})",
     "converted": "Преобразовано в сделку",
+    "viewingConfirmationGenerated": "Создано подтверждение просмотра",
     "slipSigned": "Лист просмотра подписан",
     "slipSignedBy": "Лист просмотра подписан: {name}",
     "keyCheckout": "Ключ выдан",

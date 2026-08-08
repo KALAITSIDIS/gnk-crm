@@ -1,0 +1,23 @@
+-- 0027 — a document type for generated viewing confirmations (B4).
+--
+-- IMPROVEMENTS B4 is "viewing forms, reservation agreements, mandate renewals
+-- as branded PDFs, prefilled from the record"; doc 01 M10 calls the first of
+-- those a *viewing confirmation*. This is the enum slot for it.
+--
+-- Why this one first, and not the other two: a viewing confirmation is
+-- derivable entirely from the record — property, attendee, agent, when, where,
+-- plus the GDPR line the signed slip already carries. Reservation agreements
+-- and mandate renewals are CONTRACTS. Their wording is a legal question for the
+-- operator's lawyer, not something to infer from a schema, and a plausible-
+-- looking generated contract is worse than none. Those templates want supplied
+-- text before they are built.
+--
+-- `evidence_report` (0015) is the precedent for a generated-rather-than-uploaded
+-- document type, and this follows it: same `documents` table, same private
+-- bucket, same "row + chained event or roll both back" discipline.
+--
+-- Appended at the end of the enum. Postgres cannot remove an enum value, so a
+-- rename later means a new value and a backfill — worth being sure of the name.
+-- `if not exists` so a re-run is harmless.
+
+alter type document_type add value if not exists 'viewing_confirmation';

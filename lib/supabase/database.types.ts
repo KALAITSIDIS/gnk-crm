@@ -3135,6 +3135,7 @@ export type Database = {
         | "photo_original"
         | "other"
         | "evidence_report"
+        | "viewing_confirmation"
       key_action: "checkout" | "return" | "transfer" | "mark_lost"
       key_status: "in_office" | "checked_out" | "with_owner" | "lost"
       lead_source:
@@ -3387,6 +3388,7 @@ export const Constants = {
         "photo_original",
         "other",
         "evidence_report",
+        "viewing_confirmation",
       ],
       key_action: ["checkout", "return", "transfer", "mark_lost"],
       key_status: ["in_office", "checked_out", "with_owner", "lost"],

@@ -203,6 +203,7 @@
     "chatOpened": "Chat opened",
     "chatOpenedChannel": "Chat opened ({channel})",
     "converted": "Converted to deal",
+    "viewingConfirmationGenerated": "Viewing confirmation generated",
     "slipSigned": "Viewing slip signed",
     "slipSignedBy": "Viewing slip signed by {name}",
     "keyCheckout": "Key checked out",

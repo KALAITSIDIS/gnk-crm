@@ -243,6 +243,7 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
   },
   evidence_report_generated: (p, t) =>
     t("evidenceGenerated", { count: Number(p.rows) || 0, ok: p.chain_ok === true ? "yes" : "no" }),
+  viewing_confirmation_generated: (_p, t) => t("viewingConfirmationGenerated"),
   document_uploaded: (p, t) => {
     const title = asText(p.title);
     return title ? t("documentUploadedTitle", { title }) : t("documentUploaded");
