@@ -82,6 +82,11 @@ export async function signViewingSlip(
   if (pngUpload.error) return { error: pngUpload.error.message, savedAt: null };
 
   let pdfPath: string | null = null;
+  // Hashed at signing time and recorded in BOTH the row and the hash-chained
+  // event (0026). The signature PNG had this and the PDF did not, so a restored
+  // slip PDF could not be proven byte-identical to the one that was signed —
+  // found by the 2026-08-05 Storage restore drill.
+  let pdfSha256: string | null = null;
   try {
     const pdf = await renderSlipPdf({
       orgName: org?.name ?? "Agency",
@@ -95,6 +100,9 @@ export async function signViewingSlip(
       signedAtLabel: formatDateTime(signedAt),
       sha256,
     });
+    // Hash the exact bytes that go to Storage, before the upload — so the
+    // recorded value describes what was sent rather than what came back.
+    pdfSha256 = sha256Hex(pdf);
     pdfPath = `${v.org_id}/${d.viewing_id}.pdf`;
     const pdfUpload = await admin.storage
       .from("signatures")
@@ -120,6 +128,7 @@ export async function signViewingSlip(
     signature_sha256: sha256,
     geolocation,
     pdf_path: pdfPath,
+    pdf_sha256: pdfSha256,
     created_by: profile.id,
   });
   if (insErr) {
@@ -136,7 +145,15 @@ export async function signViewingSlip(
     entityType: "viewing",
     entityId: d.viewing_id,
     eventType: "viewing_slip_signed",
-    payload: { sha256, signer_name: d.signer_name, geotagged: geolocation !== null },
+    // `sha256` is the signature PNG's, kept under that key so existing readers
+    // and the 2026-08-05 drill's evidence checks keep working. `pdf_sha256` is
+    // additive and is the one that makes the PDF provable.
+    payload: {
+      sha256,
+      pdf_sha256: pdfSha256,
+      signer_name: d.signer_name,
+      geotagged: geolocation !== null,
+    },
   });
 
   revalidatePath(`/viewings/${d.viewing_id}/sign`);

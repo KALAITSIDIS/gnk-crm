@@ -300,7 +300,20 @@ built without explicit direction.
   Still open, and now the only part: the underlying clock. This page makes the
   failure legible and one click from recovery; it does not stop a machine whose
   clock drifts half a minute.
-- **The signed slip PDF has no recorded hash anywhere.** Found during the
+- ~~**The signed slip PDF has no recorded hash anywhere.**~~ **RESOLVED
+  2026-08-08 (migration 0026).** `viewing_slips.pdf_sha256` is written at signing
+  time and the same value goes into the hash-chained `viewing_slip_signed`
+  payload, which is the half that cannot be edited afterwards — a column alone
+  would be as forgeable as the file. **Left NULL for the one pre-existing slip,
+  deliberately:** hashing the bytes in Storage today would assert they are the
+  bytes that were signed, which nobody can vouch for, and it would be
+  indistinguishable from a hash taken at signing. A null says "unknown", which is
+  true. Verified by signing a real slip through the real canvas, then
+  re-downloading the PDF and re-hashing it — `sha256Hex(pdf)` returning the hash
+  of its argument is trivially true and proves nothing about whether the stored
+  value describes the stored file (`tests/e2e/slip-pdf-hash.spec.ts`).
+
+  Originally diagnosed during the
   2026-08-05 Storage restore drill (BACKUP_RESTORE §4c). `viewing_slips` stores
   `signature_sha256` for the signature PNG, and event 60's payload carries that
   same hash — so a corrupted or substituted signature image is detectable. The

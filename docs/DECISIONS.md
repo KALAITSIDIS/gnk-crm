@@ -2237,3 +2237,56 @@ Two process notes worth more than the feature:
    dropped rather than isolated, because `logout()` is pre-existing and already
    covered by the header's `LogoutButton`; re-testing it destructively was a net
    negative.
+
+## 2026-08-08 · T-slip-pdf-hash — the strongest artefact this system makes was the one it could not prove
+
+`viewing_slips` recorded `signature_sha256` for the signature PNG and event 60's
+payload carried the same value, so a substituted signature IMAGE was detectable.
+The slip **PDF** had no hash in the row and none in the event. Nothing could
+prove a restored slip PDF was byte-identical to the one that was signed — found
+by the 2026-08-05 Storage restore drill (BACKUP_RESTORE §4c).
+
+The asymmetry is what makes it worth fixing rather than noting: evidence reports
+already carry `pdf_sha256` in their generation event, and that is exactly what
+let the drill prove a PDF pulled through the app's own Download button still
+hashed to the value in the chain. The signed viewing slip — doc 01 §4's "single
+strongest commission-dispute weapon" — could not be checked the same way.
+
+Migration 0026 adds `viewing_slips.pdf_sha256`, and `signViewingSlip` hashes the
+exact bytes it uploads, before uploading, so the recorded value describes what
+was sent rather than what came back. **The same value also goes into the
+`viewing_slip_signed` payload, and that is the half that matters:** `events` is
+hash-chained, so a hash recorded there cannot be edited later without breaking
+`verify_events_chain`. A column on its own would be as forgeable as the file it
+describes.
+
+**The one existing slip was deliberately left NULL.** Backfilling from the bytes
+sitting in Storage today would write an assertion nobody is in a position to
+make — that those are the bytes that were signed — and once written it would be
+indistinguishable from a hash taken at signing time. A null says "unknown", which
+is true, and an integrity column that sometimes means "trust me" is worse than one
+that admits a gap. For the same reason there is no CHECK tying `pdf_sha256` to
+`pdf_path`: that row has a path and no hash, so any such constraint would either
+fail on it or be carried `NOT VALID` forever.
+
+**Verified against the stored file, not at the unit level.** `sha256Hex(pdf)`
+returning the hash of its argument is trivially true and says nothing about
+whether the value stored beside the file describes the file. So
+`tests/e2e/slip-pdf-hash.spec.ts` signs a real slip through the real
+pointer-event canvas, then re-downloads the PDF with the service key and
+re-hashes it, and also asserts the value is not simply the PNG hash reused —
+which would look right in the row and prove nothing. Two things it caught in the
+writing:
+
+- The first assertion waited for the client's "Slip signed" panel and timed out
+  while the slip had in fact been written correctly. `revalidatePath` re-renders
+  the sign page into its server-rendered "Already signed" branch, which races the
+  client state. The test now polls for the ROW, which is what it is about.
+- The first cleanup reconstructed Storage keys as `<viewing_id>.pdf`. They are
+  `<org_id>/<viewing_id>.<ext>`, so it deleted nothing and leaked two objects into
+  the signatures bucket while reporting success. Paths now come from the row.
+  Worth remembering generally: **a wrong Storage key is not an error, it is a
+  no-op.**
+
+Applied to hosted BEFORE pushing the code that writes the column — the ordering
+0025 got wrong the day before.
