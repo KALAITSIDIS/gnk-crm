@@ -584,9 +584,16 @@ deliberate assignment is the wrong default. Wants an admin surface.
     0.8 GB of it — the move reclaimed under a gigabyte. What actually fills C:
     is `Outlook.pst` (55.8 GB) plus `archive.pst.corrupt` (11.4 GB) — user mail
     data, leave it alone — and Docker's `docker_data.vhdx` (20.7 GB) under
-    `%LOCALAPPDATA%\Docker\wsl\disk\`, which regrows on every `supabase start`.
-    Docker's disk image location is the one dev-side lever left (Docker Desktop
-    → Settings → Resources), and it is an operator action, not a repo change.
+    `%LOCALAPPDATA%\Docker\wsl\disk\`, which regrew on every `supabase start`.
+  - **Docker's disk image was moved to `D:\docker\disk` the same day, and that
+    is what actually fixed C: — 0.83 GB → 22.58 GB free.** It is a **directory
+    junction**, not a Docker setting: `mklink /J "%LOCALAPPDATA%\Docker\wsl\disk"
+    "D:\docker\disk"`. The documented-looking `DataFolder` key in
+    `%APPDATA%\Docker\settings-store.json` is silently ignored by Docker Desktop
+    4.85 — it kept the key *and* built a fresh empty disk at the default path.
+    If Docker ever reports 0 images, check that the junction still exists before
+    assuming data loss; the real vhdx is on D:. Images/volumes verified intact
+    after the move (28 images, `supabase_db_gnk-crm` volume present).
 
 ---
 
