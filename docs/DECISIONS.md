@@ -1861,6 +1861,12 @@ the anon key to the browser. That is normal and safe for a publishable key — i
 is designed to be public — but it changes what step 4 can verify, so it should
 be a decision, not an accident.
 
+> **Superseded 2026-08-08 (`T-client-dead-code`).** The file was deleted, and the
+> property stopped depending on nobody importing it: `security.spec.ts` now
+> asserts that no Supabase key of any format reaches the browser, verified with a
+> negative control. Read the paragraph above as the reasoning that led there, not
+> as current state.
+
 ## 2026-08-03 · T-key-rotation — the exposed service_role key is revoked
 
 The legacy `service_role` key, exposed in a chat transcript on 2026-07-30, is
