@@ -2118,3 +2118,37 @@ reason), the reworked E2E nudge spec (an edit leaves the nudge on the screen the
 agent reads, contact removes it), and end to end in the running app: a title
 edit through the deal form moved `last_activity_at` to today, left
 `last_contact_at` at 20 days ago, and the chase-up stayed open.
+
+## 2026-08-08 · T-csp-reset-proof — taking the verification that disk space had made unaffordable
+
+The 2026-08-02 `T-csp-fixture` entry above ends with **"Verified without a
+`db reset`, which is the point"** — the empty-list branch was forced by stubbing
+the list lookup to null, because a reset-and-repopulate cycle was too expensive
+with disk down to 9.3 GB.
+
+That substitute was sound as far as it went, and it is worth being precise about
+what it did not cover. The bug being fixed was defined by a condition the
+substitute never entered: *against a freshly reset database both FAILED on run 1
+and passed on run 2*. Stubbing proves the seeding branch executes. It does not
+prove the spec survives a real first run, which is the only scenario the fix
+exists for. The evidence and the claim were one step apart.
+
+Moving the workspace and Docker's disk image to `D:` (see HANDOFF §8) made the
+cycle affordable, so it was taken. `supabase db reset` applied all 25 migrations
+from scratch — incidentally confirming 0025 builds a fresh database and not just
+an incremental patch — leaving `properties=0 contacts=0`. Then **run 1** of
+`csp.spec.ts`: **31 passed / 3 skipped**, with `property detail` (11.6s) and
+`contact detail` (25.9s) — the exact two that used to fail — green through the
+seeding path. `CSP-FIXTURE-%` and `csp-detail-fixture` both back to 0 after
+`afterAll`, so the marker sweep works on a real run and not only a forced one.
+
+**The full desktop suite was run locally in the same cycle: 168 passed / 4
+skipped in 6.4 minutes** — the first complete local run since the disk-full that
+truncated `HANDOFF.md`. It is also the measurement that justifies the move:
+`.next` came out at **2.29 GB**, and `C:` never moved off ~22 GB free. That run
+is what used to fill the disk.
+
+No code changed here. The entry exists because "verified" meant something weaker
+than it read, and the gap was caused by a machine constraint rather than a
+judgement about the code — exactly the kind of thing that quietly stays true
+forever unless someone goes back once the constraint lifts.

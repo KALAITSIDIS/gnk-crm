@@ -574,10 +574,20 @@ deliberate assignment is the wrong default. Wants an admin surface.
     one worth deleting. Stop the dev server first (see above).
   - **Write files atomically when the disk may be tight** — temp file plus
     `os.replace`, not a direct `write_text`, which truncates before it writes.
-  - **`npx playwright test` (full desktop) locally is what fills it**, because
-    the run builds `.next` for `next start`. CI runs the same suite on every
-    push, so prefer pushing over re-running the whole suite locally; scope local
-    runs to the affected spec.
+  - **`npx playwright test` (full desktop) locally is what filled it**, because
+    the run builds `.next` for `next start`. **This is no longer a constraint**:
+    on `D:` the full suite ran 2026-08-08 in 6.4 minutes (168 passed / 4
+    skipped) with `.next` at 2.29 GB and `C:` never moving off ~22 GB free. A
+    local `supabase db reset` cycle is affordable again too — which is how the
+    `csp.spec.ts` run-1 proof finally got taken (DECISIONS 2026-08-08).
+  - **`git status` after a local full run: `tests/screenshots/*.png` are TRACKED
+    and `modules.spec.ts` overwrites all 12 with whatever your local database
+    looked like.** Run the suite right after a `db reset` and they silently
+    become pictures of an empty app — `leads-desktop.png` halved, 207 KB → 102 KB
+    — which is a downgrade, not a change, and it will ride along in your next
+    `git add -A`. They are report artifacts, not a `toHaveScreenshot` baseline,
+    so nothing fails; just `git checkout HEAD -- tests/screenshots/` unless you
+    deliberately want to refresh them against populated data.
   - **The move to `D:` fixed the build-artifact half of this, not the disk.**
     `.next`, `node_modules` and Playwright output now land on D: (123 GB free).
     But `C:` was measured at **830 MB free of 222 GB** and the repo was only

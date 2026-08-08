@@ -209,6 +209,13 @@ built without explicit direction.
   non-local base URL the tests still self-skip rather than assert falsely.
   Verified without a `db reset` by forcing the empty-list branch, confirming
   both rows were really created, and watching the marker sweep remove them.
+  **The real proof was finally taken 2026-08-08** — the substitute was only ever
+  used because disk was down to 9.3 GB, and after the workspace and Docker moved
+  to `D:` the reset cycle became affordable. `supabase db reset` (all 25
+  migrations from scratch, leaving `properties=0 contacts=0`) then **run 1** of
+  `csp.spec.ts`: 31 passed / 3 skipped, with `property detail` and `contact
+  detail` — the two that used to fail on run 1 — both green via the seeding
+  path, and `CSP-FIXTURE-%` / `csp-detail-fixture` counts back to 0 afterwards.
 - **CSP report delivery cannot be confirmed "later" — Vercel log retention is
   ~1 hour on this plan (C1).** `/api/csp-report` sinks to stdout, and HANDOFF
   told the operator to browse production and then grep the runtime logs for
