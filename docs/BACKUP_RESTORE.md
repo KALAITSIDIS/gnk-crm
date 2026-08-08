@@ -236,14 +236,26 @@ Task     : "gnk-crm nightly backup"     Daily 03:45     Logon Mode: Interactive 
 Runs     : C:\Users\user\.gnk-crm\run-backup.cmd
 Which is : node --env-file=…\backup.env capture.mjs --out …\gnk-backups --force --keep 14
 Log      : C:\Users\user\.gnk-crm\backup.log   (exit=N appended per run)
+REPO     : D:\dev\TSOPOZIDIS\gnk-crm        (repointed 2026-08-07)
+DEST     : D:\dev\TSOPOZIDIS\gnk-backups    (repointed 2026-08-07)
 ```
+
+`run-backup.cmd` hardcodes `REPO` and `DEST` as absolute paths, because Task
+Scheduler's working directory is not the repo. **Moving the workspace breaks
+this task, and it breaks quietly** — so the script now exits `3` and logs
+`REPO not found` when `capture.mjs` is missing, instead of running `node` on a
+path that no longer exists. If you relocate the workspace again, edit those two
+lines first and then run the §3.2 manual invocation to prove it still works.
 
 03:45 sits after the 03:30 `verify-events-chain` cron, so each set contains that
 night's chain check.
 
-**`C:\Users\user\.gnk-crm\` is outside the OneDrive tree on purpose.** A database
-password inside it would sync to the cloud. Never copy `backup.env` into the repo
-either — `gnk-crm` is **public**.
+**`C:\Users\user\.gnk-crm\` is outside the repo tree on purpose.** A database
+password inside it would have synced to the cloud back when the workspace was
+under OneDrive, and it must never land in git regardless. Never copy
+`backup.env` into the repo either — `gnk-crm` is **public**. This directory
+deliberately **stayed on `C:`** when the workspace moved to `D:` on 2026-08-07;
+only `REPO` and `DEST` inside `run-backup.cmd` were repointed.
 
 Three things to know about it:
 
@@ -253,7 +265,9 @@ Three things to know about it:
 - **"Interactive only" means it runs when the user is logged on.** A machine that
   is off or logged out at 03:45 silently takes no backup — check the log, or
   Task Scheduler's Last Run Result, rather than assuming.
-- **It does not solve off-site** (§3.3). It writes to the same OneDrive tree.
+- **It does not solve off-site** (§3.3), and since 2026-08-07 it is further from
+  solving it: `DEST` is now a second volume on the same machine, with no cloud
+  copy behind it.
 
 #### Two API-key facts that cost an evening on 2026-08-06/07
 
@@ -591,16 +605,24 @@ restore cannot report success. `--verify-only` runs that check without writing.
 
 ### 3.3 Off-site
 
-`../gnk-backups/` sits outside the repo deliberately. Note that the working
-directory is under **OneDrive**, which is sync, not backup — a deletion
-propagates, and so does an encryption. Copy the dated folder somewhere that is
-neither this machine nor the same Supabase account.
+`../gnk-backups/` sits outside the repo deliberately.
+
+> **This got worse on 2026-08-07, not better.** The workspace used to sit under
+> OneDrive. OneDrive is sync rather than backup — a deletion propagates and so
+> does an encryption — but it did keep a copy of `gnk-backups/` off this
+> machine. Moving to `D:\dev\TSOPOZIDIS` removed that copy. Every backup set is
+> now on **one physical machine only**, and `D:` is a second volume on the same
+> box, so it survives nothing that takes the machine with it. Until a set is
+> copied off, the off-site gap is total.
+
+Copy the dated folder somewhere that is neither this machine nor the same
+Supabase account.
 
 **Package it as one checksummed archive** so the transfer is a single verifiable
 step rather than 84 files that might arrive partially:
 
 ```bash
-cd "C:/Users/user/OneDrive/Desktop/TSOPOZIDIS" && tar -czf gnk-backups-offsite-$(date +%Y-%m-%d).tar.gz gnk-backups/ && sha256sum gnk-backups-offsite-$(date +%Y-%m-%d).tar.gz | tee gnk-backups-offsite-$(date +%Y-%m-%d).tar.gz.sha256
+cd "D:/dev/TSOPOZIDIS" && tar -czf gnk-backups-offsite-$(date +%Y-%m-%d).tar.gz gnk-backups/ && sha256sum gnk-backups-offsite-$(date +%Y-%m-%d).tar.gz | tee gnk-backups-offsite-$(date +%Y-%m-%d).tar.gz.sha256
 ```
 
 **Then verify at the destination, not here.** A checksum computed on the machine
@@ -1241,7 +1263,8 @@ ownership defect, with the extensions enabled first as §3.1 now instructs.
    correctly flagged. Its README records the full verification; the headline is
    that all 73 event hashes come back byte-identical to production, not merely
    `verify_events_chain = true` (§5).
-3. Get it off-site (§3.3). `../gnk-backups/` is under OneDrive — sync, not backup.
+3. Get it off-site (§3.3). Since 2026-08-07 `../gnk-backups/` is on `D:` — one
+   machine, no cloud copy at all.
 4. ~~Run the drill (§4) and fill in the real timings.~~ **DONE 2026-08-05** —
    §4b (database), §4c (Storage + app check), **§6b (timed: ~19 s local, ~2–2.5
    min over the wire, +72 s Vercel redeploy)**. What remains untimed is

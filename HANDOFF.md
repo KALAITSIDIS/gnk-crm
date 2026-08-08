@@ -188,10 +188,10 @@ lives in `docs/BACKLOG.md`, not IMPROVEMENTS.
 First checks in a new session — all read-only:
 
 ```bash
-cd "C:/Users/user/OneDrive/Desktop/TSOPOZIDIS/gnk-crm" && git log --oneline -3 && git status -sb
+cd "D:/dev/TSOPOZIDIS/gnk-crm" && git log --oneline -3 && git status -sb
 ```
 
-Then via the Supabase connector (`execute_sql`): migrations = 24,
+Then via the Supabase connector (`execute_sql`): migrations = 25,
 `non_filename_versions` = 0, chain verifies, `events` = 73, `share_links` = 2,
 `tasks` = 0.
 
@@ -297,14 +297,18 @@ refused to start. Failures also land in `manifest.json` as `verified:false`.
 A scheduled task **"gnk-crm nightly backup"** runs it daily at 03:45 (after the
 03:30 chain-check cron) with `--keep 14`. **It exits 2 every night until
 `C:\Users\user\.gnk-crm\backup.env` is created** from the `.example` beside it —
-that is the operator action (§2c). That directory is outside OneDrive on purpose:
-a password in the OneDrive tree would sync to the cloud. The task is
-"Interactive only", so a machine that is off or logged out at 03:45 takes no
-backup silently — the log is `C:\Users\user\.gnk-crm\backup.log`.
+that is the operator action (§2c). That directory is outside the repo on purpose
+— a password must never land in git, and back when the workspace was under
+OneDrive it would also have synced to the cloud. It **stayed on `C:`** during the
+2026-08-07 move; only `REPO`/`DEST` inside `run-backup.cmd` were repointed to
+`D:\dev\TSOPOZIDIS`. The task is "Interactive only", so a machine that is off or
+logged out at 03:45 takes no backup silently — the log is
+`C:\Users\user\.gnk-crm\backup.log`.
 
-**Still open: getting a copy OFF THIS MACHINE.** `../gnk-backups/` is under
-OneDrive — sync, not backup: a deletion propagates, and so does an encryption.
-Automation does not change that; the nightly set lands in the same tree.
+**Still open, and now worse: getting a copy OFF THIS MACHINE.** `../gnk-backups/`
+used to be under OneDrive — sync rather than backup, but it did put a copy in the
+cloud. Since 2026-08-07 it is on `D:`, a second volume in the same box. Every
+backup set is now single-machine; automation does not change that.
 
 **A verified archive is staged and waiting for a destination:**
 `TSOPOZIDIS/gnk-backups-offsite-2026-08-07.tar.gz` — **2.0 MB, 141 files**, all
@@ -552,10 +556,14 @@ deliberate assignment is the wrong default. Wants an admin surface.
 
 **Machine**
 - **Do not `rm -rf .next` or build while a dev server is running.**
-- **A shell left `cd`'d into a directory locks it on Windows**; OneDrive holds
-  handles too, so an emptied directory may refuse to disappear. `git worktree
-  remove` can fail this way — prune, then remove with PowerShell.
-- The working directory is under **OneDrive**, which is sync, not backup.
+- **A shell left `cd`'d into a directory locks it on Windows**, so an emptied
+  directory may refuse to disappear. `git worktree remove` can fail this way —
+  prune, then remove with PowerShell. (This bit the 2026-08-07 move: robocopy
+  relocated every file but could not delete the source root, because the live
+  session held it as cwd.)
+- **The working tree lives on `D:\dev\TSOPOZIDIS` (moved 2026-08-07).** It is no
+  longer under OneDrive — which also means no cloud copy of anything untracked,
+  `gnk-backups/` included. See §3.3: the off-site gap is now wider, not narrower.
 - **Disk runs tight, and a FULL disk truncated a tracked file to 0 bytes
   (2026-08-07).** `C:` hit 100% mid-session while a full Playwright run was
   going; the next `pathlib.write_text` on `HANDOFF.md` truncated it and then
@@ -570,6 +578,15 @@ deliberate assignment is the wrong default. Wants an admin surface.
     the run builds `.next` for `next start`. CI runs the same suite on every
     push, so prefer pushing over re-running the whole suite locally; scope local
     runs to the affected spec.
+  - **The move to `D:` fixed the build-artifact half of this, not the disk.**
+    `.next`, `node_modules` and Playwright output now land on D: (123 GB free).
+    But `C:` was measured at **830 MB free of 222 GB** and the repo was only
+    0.8 GB of it — the move reclaimed under a gigabyte. What actually fills C:
+    is `Outlook.pst` (55.8 GB) plus `archive.pst.corrupt` (11.4 GB) — user mail
+    data, leave it alone — and Docker's `docker_data.vhdx` (20.7 GB) under
+    `%LOCALAPPDATA%\Docker\wsl\disk\`, which regrows on every `supabase start`.
+    Docker's disk image location is the one dev-side lever left (Docker Desktop
+    → Settings → Resources), and it is an operator action, not a repo change.
 
 ---
 
