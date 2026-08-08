@@ -2152,3 +2152,40 @@ No code changed here. The entry exists because "verified" meant something weaker
 than it read, and the gap was caused by a machine constraint rather than a
 judgement about the code — exactly the kind of thing that quietly stays true
 forever unless someone goes back once the constraint lifts.
+
+## 2026-08-08 · T-jwt-skew — the retry that was written, tested, and deleted
+
+BACKLOG had carried two options for `JWT issued at future` since 2026-07-19: a
+one-shot retry on that PostgREST message, or widening clock-skew tolerance. The
+retry was picked, built at the transport layer (`global.fetch` on the server
+client, so one change covers all 47 `unwrapRows` call sites rather than the
+route where it happened to be seen), given 16 unit tests, and typechecked clean.
+
+Then it was measured against a real PostgREST instead of shipped, and the
+measurement killed it. A hand-signed token swept across `iat` offsets is
+accepted at +0/+5/+10/+20s and rejected from +31s with `401 PGRST303`. **PostgREST
+already has roughly 30 seconds of future-`iat` leeway of its own.**
+
+That single fact inverts the design. The retry assumed a sub-second blip it could
+sleep through; in reality anything that gets rejected is >30s ahead, so the
+retry would have to sleep 30+ seconds to help. Capped at 2s — the most a page can
+absorb — it returns "don't retry" on every real occurrence. The wrapper was
+correct, tested, and incapable of ever firing. It was deleted rather than
+committed: dead code that looks like a fix is worse than an open backlog item,
+because it closes the item in the reader's mind.
+
+**The reason this is written down is the order of operations.** The unit tests
+passed because they asserted against my assumption of what PostgREST returns —
+a 401 with that message, which is true — and told me nothing about whether the
+branch could be reached. Sixteen green tests, a clean typecheck, and a dead
+feature. The probe that settled it took one script and two minutes, and it also
+handed over the details the next attempt needs: the code is `PGRST303`, no
+message matching required.
+
+Kept in BACKLOG with the numbers, and narrowed to what is actually left:
+graceful degradation, which is a decision because the honest remedy is to sign
+the user out and re-mint the token, and doing that badly loops them between
+`/login` and the failing page. Also recorded there: Next redacts
+server-component error messages before `app/(app)/error.tsx` sees them, so that
+branch has to be server-side — which is not obvious and would have been the
+second wasted attempt.

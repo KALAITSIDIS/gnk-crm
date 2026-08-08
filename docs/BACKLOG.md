@@ -55,9 +55,10 @@ built without explicit direction.
   fine). A slightly future-dated access token makes PostgREST reject the query
   and the user gets the "Couldn't load properties" boundary until they reload
   or re-login. Not a code defect and rare, but it is user-visible and
-  self-inflicted-looking. Options: a one-shot retry on that specific PostgREST
-  message, or nudging GoTrue/Supabase clock-skew tolerance. Diagnosis note: the
-  local fix is clearing cookies + re-login to mint a fresh token, NOT
+  self-inflicted-looking. ~~Options: a one-shot retry on that specific PostgREST
+  message, or nudging GoTrue/Supabase clock-skew tolerance.~~ **Both measured out
+  2026-08-08 — see the third-sighting entry below for the numbers.** Diagnosis
+  note: the local fix is clearing cookies + re-login to mint a fresh token, NOT
   restarting the Supabase stack.
 - Retention-expiry view (T-contact-erasure follow-up): erasure stamps
   `contacts.retention_until` (erasure date + 5y AML duty) but nothing yet acts
@@ -257,8 +258,39 @@ built without explicit direction.
   re-login. Unrelated to the key rotation — this is the session JWT's `iat`, not
   the API key. It is now the only recurring runtime error in production, and
   `get_runtime_errors` on the Vercel connector makes it cheap to keep counting.
-  Options unchanged: a one-shot retry on that specific PostgREST message, or
-  widening GoTrue clock-skew tolerance.
+
+  **MEASURED 2026-08-08, and it rules the retry option OUT.** PostgREST already
+  carries its own future-`iat` leeway, so the two options this entry had been
+  carrying since 2026-07-19 are not equivalent — one of them cannot work.
+  Swept a hand-signed token against the local stack at increasing offsets:
+
+  | `iat` offset | result |
+  |---|---|
+  | +0s, +5s, +10s, +20s | **HTTP 200** — accepted |
+  | +31s, +60s, +120s, +300s, +3600s | **HTTP 401** `PGRST303` `JWT issued at future` |
+
+  The tolerance is ~30s. **So every rejection we have actually seen means the
+  token was more than 30 seconds ahead** — which is a broken clock, not the
+  sub-second blip the "one-shot retry" idea assumed. A retry would have to sleep
+  30+ seconds to land past the boundary, which hangs the page for far longer than
+  the error costs; capped at anything sane it never fires at all. A retry wrapper
+  was written, unit-tested, and then **deleted rather than committed**, because
+  it could only ever have been dead code (DECISIONS 2026-08-08).
+
+  Also now known precisely: the code is **`PGRST303`** at **401**, so detection
+  needs no message matching. And note Next redacts server-component error
+  messages before they reach `app/(app)/error.tsx` — the browser gets a `digest`,
+  not the text — so anything that branches on this must do so **server-side**.
+
+  What is left is graceful degradation, and it is a decision rather than
+  decision-free work: the boundary's "Try again" calls `reset()`, which re-runs
+  the segment with the same doomed token, while the documented remedy is to
+  re-mint one (clear cookies + re-login). Making the app do that automatically
+  means signing the user out on a `PGRST303` and sending them to `/login` — and
+  it must clear the cookie, or middleware will bounce an "authenticated" user
+  off `/login` and back into the failing page in a loop. Not attempted without
+  direction. Widening tolerance further is not available: PostgREST's JWT
+  settings are not exposed on Supabase.
 - **The signed slip PDF has no recorded hash anywhere.** Found during the
   2026-08-05 Storage restore drill (BACKUP_RESTORE §4c). `viewing_slips` stores
   `signature_sha256` for the signature PNG, and event 60's payload carries that
