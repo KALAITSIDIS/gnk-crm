@@ -239,8 +239,25 @@ built without explicit direction.
   app code, scripts or tests. `verify-restore.sql`'s expectations, which had
   encoded the drift, were corrected — a migration-built database now passes all
   25 invariants, where four failed before.
-- **`lib/supabase/client.ts` is dead code — and that is currently a security
-  asset.** `createBrowserClient` is called there and nowhere else; no module
+- ~~**`lib/supabase/client.ts` is dead code — and that is currently a security
+  asset.**~~ **RESOLVED 2026-08-08 — deleted, and the property it provided is now
+  ENFORCED instead of accidental.** The file was the only thing that would have
+  put a Supabase credential in the browser, and nothing imported it, so "no
+  Supabase key ships" was true by luck. `security.spec.ts` did not cover it
+  either: it blocks `service_role` / `sb_secret_` and explicitly *permits*
+  `sb_publishable_`, so the publishable key could have started shipping with the
+  suite still green. The bundle-hygiene test now asserts **no Supabase key of any
+  kind** reaches the browser, in both formats (`sb_*` prefix scan and a
+  JWT-shaped scan for the legacy anon key), with a note telling whoever trips it
+  that adding a browser client is legitimate and they should relax the assertion
+  deliberately rather than delete the file it protects.
+
+  **The guard was proved by a negative control, not assumed:** referencing
+  `NEXT_PUBLIC_SUPABASE_ANON_KEY` from a client component made the test fail, and
+  reverting made it pass. Worth doing given this file's own §2b entry lists four
+  ways a green test proved nothing.
+
+  Original entry: `createBrowserClient` is called there and nowhere else; no module
   imports the exported `createClient`. Verified 2026-08-03: no JWT-shaped string
   and no `supabase.co` appears in any of the 63 chunks of a production
   `.next/static` build, so the browser receives no Supabase credential at all.

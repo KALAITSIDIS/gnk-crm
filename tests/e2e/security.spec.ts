@@ -94,6 +94,29 @@ test.describe("client bundle hygiene", () => {
     const nonPublishable = sbKeys.filter((k) => !k.startsWith("sb_publishable_"));
     expect(nonPublishable, `non-publishable Supabase key(s) in the bundle`).toEqual([]);
 
+    /**
+     * NO Supabase credential at all, publishable included (2026-08-08).
+     *
+     * A publishable key is designed to be public, so this is not a leak
+     * assertion — it pins a stronger property this app happens to have: nothing
+     * builds a browser Supabase client, so the browser receives no Supabase
+     * credential whatsoever. Until now that was an ACCIDENT of
+     * `lib/supabase/client.ts` being unimported (BACKLOG). That file has been
+     * deleted, and this makes its absence deliberate.
+     *
+     * **If you are here because this failed, it is doing its job.** Someone
+     * added a browser client. That is a legitimate thing to do — realtime and
+     * client-side reads both need one — but it changes what ships to every
+     * visitor, so it should be a decision rather than a side effect of an
+     * import. Make the decision, then relax this to the `nonPublishable` check
+     * above.
+     */
+    expect(sbKeys, "a Supabase key reached the browser — see the note above").toEqual([]);
+    expect(
+      [...bundle.matchAll(/eyJhbGciOi[A-Za-z0-9._-]{30,}/g)].map((m) => m[0].slice(0, 12)),
+      "a JWT-shaped credential reached the browser — legacy anon keys look like this",
+    ).toEqual([]);
+
     expect(bundle).not.toMatch(/SUPABASE_SERVICE_ROLE_KEY\s*[:=]\s*["'][A-Za-z0-9._-]{20,}/);
     expect(bundle).not.toMatch(/RESEND_API_KEY\s*[:=]\s*["'][^"']{10,}/);
   });
