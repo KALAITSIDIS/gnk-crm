@@ -16,7 +16,7 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 | Production | `gnk-crm.vercel.app` healthy; **auto-deploys every push** |
 | Hosted DB | `yjgirvzgoiywdojnpkpd` — **25 migrations**, `non_filename_versions` = 0, chain verifies, **73 events** |
 | Data | `share_links` 2 (1 live, 1 revoked) · `tasks` 0 · `deals` 1 · **all of it operator test data** (§0) |
-| Tests | **437 unit** · **31 RLS** · **168 desktop E2E** (4 skipped) — all three run in CI |
+| Tests | **444 unit** · **31 RLS** · **170 desktop E2E** (4 skipped) — all three run in CI |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
 | Backups | ✅ **`2026-08-08` is the primary** — newest automated set, `verified:true` (55 files, 73 events matching production), taken after the move and so the first written to `D:\dev\TSOPOZIDIS\gnk-backups`. `2026-08-07` is the other verified set; `2026-08-06` is the restore-*proven* one (all 73 event hashes byte-identical to production). Sets: 07-30 · 07-31 (Storage) · 08-04 (superseded) · 08-06 · 08-07 · **08-08**. Nightly at 03:45 (§2; drills §4b/§4c). **All of it is single-machine now — §3.3** |
 
@@ -588,6 +588,19 @@ deliberate assignment is the wrong default. Wants an admin surface.
     `git add -A`. They are report artifacts, not a `toHaveScreenshot` baseline,
     so nothing fails; just `git checkout HEAD -- tests/screenshots/` unless you
     deliberately want to refresh them against populated data.
+  - **Killing a backgrounded `npm run dev` leaves `next dev` alive, and Playwright
+    will then reuse the wreckage.** `playwright.config.ts` sets
+    `reuseExistingServer: true` against `npm run dev`, so a half-orphaned server
+    on :3000 gets adopted by the next suite run. Symptom (2026-08-08): four
+    unrelated specs failed — `happy-path` step 4, both anonymous `share-links`
+    tests, one `csp` public-route test — and the page snapshot showed Next's
+    **"Jest worker encountered 2 child process exceptions, exceeding retry
+    limit"** overlay rather than any assertion problem. Nothing was wrong with the
+    code; the same suite passed 170/174 minutes later on a clean server. Before
+    trusting an E2E failure, check :3000 has no leftover owner — `next dev` prints
+    its PID in the "Another next dev server is already running" message, and
+    `Stop-Process -Id <pid> -Force` clears it. A stray dev server looks exactly
+    like a real regression.
   - **The move to `D:` fixed the build-artifact half of this, not the disk.**
     `.next`, `node_modules` and Playwright output now land on D: (123 GB free).
     But `C:` was measured at **830 MB free of 222 GB** and the repo was only

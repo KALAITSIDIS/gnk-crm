@@ -2182,10 +2182,58 @@ feature. The probe that settled it took one script and two minutes, and it also
 handed over the details the next attempt needs: the code is `PGRST303`, no
 message matching required.
 
-Kept in BACKLOG with the numbers, and narrowed to what is actually left:
-graceful degradation, which is a decision because the honest remedy is to sign
-the user out and re-mint the token, and doing that badly loops them between
-`/login` and the failing page. Also recorded there: Next redacts
-server-component error messages before `app/(app)/error.tsx` sees them, so that
-branch has to be server-side — which is not obvious and would have been the
-second wasted attempt.
+Also recorded: Next redacts server-component error messages before
+`app/(app)/error.tsx` sees them, so that branch has to be server-side — which is
+not obvious and would have been the second wasted attempt.
+
+### What shipped instead: `/session-clock`
+
+`unwrapRows` — the chokepoint for all 47 call sites — routes `PGRST303` to a
+recovery page rather than throwing. The page explains that the device clock is
+ahead, that reloading will not clear it, and offers one button.
+
+Three constraints shaped it, each verified rather than assumed:
+
+- **It does not sign the user out on arrival.** That would need a GET endpoint
+  with a side effect, which is a logout-CSRF surface this app does not otherwise
+  have. The button submits the existing `logout()` server action — a POST Next
+  protects — so the user is one click from the fix and nobody can trigger it for
+  them.
+- **It lives OUTSIDE the `(app)` group.** That layout builds a Supabase client of
+  its own, so a page inside it would re-enter the failing session and bounce back
+  here forever. The root layout does no data access. `proxy.ts` bounces
+  authenticated visitors off `/login` specifically, so `/session-clock` needed to
+  be neither.
+- **`getUser()` in the layout is a GoTrue call, not PostgREST**, which is why the
+  layout renders normally while every page query fails — and why the symptom
+  looks like a broken page rather than a broken login.
+
+**Verified by observation, because the retry above proves unit tests do not
+establish reachability.** A real session cookie was re-signed at increasing `iat`
+offsets and replayed against the running app:
+
+| `iat` offset | result |
+|---|---|
+| +0s, +20s | 200, page renders — PostgREST tolerates it |
+| +31s … +120s | 307 → `/session-clock` |
+
+**There are two tolerances, and the whole bug lives between them.** PostgREST
+refuses from ~31s; GoTrue still reports the user as authenticated at +120s. That
+gap is why the production symptom exists at all — the session is valid enough to
+pass the middleware and too skewed to read data.
+
+Two process notes worth more than the feature:
+
+1. **The controls earned their keep.** A first sweep showed every offset
+   redirecting to `/login`, which reads as "the page is unreachable, same dead end
+   as the retry". The untouched-cookie control failed too, which proved the
+   harness was broken rather than the app. Without it the correct conclusion was
+   indistinguishable from the wrong one.
+2. **The first draft of the E2E spec poisoned the suite.** It clicked "Sign in
+   again", and Supabase `signOut()` defaults to GLOBAL scope, so it revoked every
+   session for that user — including `tests/.auth/admin.json`, which every other
+   spec shares. That is the `csp.spec.ts` residue anti-pattern pointing the other
+   way: damaging shared state rather than depending on it. The assertion was
+   dropped rather than isolated, because `logout()` is pre-existing and already
+   covered by the header's `LogoutButton`; re-testing it destructively was a net
+   negative.

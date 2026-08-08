@@ -282,15 +282,24 @@ built without explicit direction.
   messages before they reach `app/(app)/error.tsx` — the browser gets a `digest`,
   not the text — so anything that branches on this must do so **server-side**.
 
-  What is left is graceful degradation, and it is a decision rather than
-  decision-free work: the boundary's "Try again" calls `reset()`, which re-runs
-  the segment with the same doomed token, while the documented remedy is to
-  re-mint one (clear cookies + re-login). Making the app do that automatically
-  means signing the user out on a `PGRST303` and sending them to `/login` — and
-  it must clear the cookie, or middleware will bounce an "authenticated" user
-  off `/login` and back into the failing page in a loop. Not attempted without
-  direction. Widening tolerance further is not available: PostgREST's JWT
-  settings are not exposed on Supabase.
+  **Graceful degradation SHIPPED 2026-08-08.** `unwrapRows` routes `PGRST303` to
+  a new `/session-clock` page instead of the boundary — it says the clock is
+  ahead, that reloading will not help, and offers one button wired to the
+  existing `logout()` server action. No auto sign-out (that needs a GET endpoint
+  with a side effect, i.e. a logout-CSRF surface) and the page sits outside the
+  `(app)` group, because that layout builds its own client and would loop.
+
+  Confirmed by replaying a re-signed session against the running app: +0s/+20s
+  render normally, **+31s through +120s land on `/session-clock`**. Which
+  incidentally explains why this bug exists — **there are two tolerances.**
+  PostgREST refuses from ~31s while GoTrue still calls the user authenticated at
+  +120s, so the session passes `proxy.ts` and fails every query. Widening
+  tolerance is not available: PostgREST's JWT settings are not exposed on
+  Supabase.
+
+  Still open, and now the only part: the underlying clock. This page makes the
+  failure legible and one click from recovery; it does not stop a machine whose
+  clock drifts half a minute.
 - **The signed slip PDF has no recorded hash anywhere.** Found during the
   2026-08-05 Storage restore drill (BACKUP_RESTORE §4c). `viewing_slips` stores
   `signature_sha256` for the signature PNG, and event 60's payload carries that
