@@ -411,6 +411,15 @@ explicitly. Production runs on `sb_publishable_…` / `sb_secret_…` and is hea
 > the check to repeat after any future key change.
 >
 > Confirmed recovered: `/dashboard` and every module route serving normally.
+>
+> **Post-incident sweep, 2026-08-09 — no damage.** The rollback paths in the
+> upload actions call `admin.storage.remove()`, which was itself dead during the
+> outage, so partial writes were plausible. Checked and clean: 3 document rows /
+> 0 missing files, 1 slip / 0 missing files, 0 orphan signature objects, 5
+> `property_media` rows consistent with their 5 files in both directions, chain
+> verifies, nightly backup green (`2026-08-09` set, "every check passed").
+> The only new event is `mfa_enrolled` — 2FA was turned on the same morning,
+> factor `verified`.
 
 Nine earlier attempts silently failed. **What worked: never touching the
 Redeploy button.** Git pushes deploy reliably, so the env change was picked up

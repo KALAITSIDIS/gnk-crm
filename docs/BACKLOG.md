@@ -153,6 +153,16 @@ built without explicit direction.
 - **CSV export — remaining lists.** Contacts CSV export shipped 2026-07-23 (IMPROVEMENTS B10). Repeat for properties, leads, deals, viewings, keys, tasks: extract each list's filter parse/apply into `lib/queries/<list>.ts`, add a GET export route reusing it, define columns via `lib/services/csv.ts` `toCsv`. ~0.5 day each.
 - ~~**Export audit logging (decision needed).**~~ **Resolved 2026-07-23: yes, log exports.** Built in `lib/services/export-audit.ts` (org-level `export`/`exported` event, written before the CSV is returned). Contacts export logs; the remaining lists inherit it via `logListExport`. See DECISIONS `T-export-audit`.
 - **Database-level 2FA enforcement (security, follow-up to C2).** 2FA shipped 2026-07-24 but is enforced only in the app (`login()` + `proxy.ts`). A stolen `aal1` JWT can still reach PostgREST directly and bypass the challenge. Fix: add `as restrictive` RLS policies asserting `auth.jwt()->>'aal' = 'aal2'` for users who have a verified factor — use the "enforce only for users that have opted-in" template from the Supabase MFA guide so non-enrolled users are unaffected. Touches every business table, carries real lockout risk, and needs its own RLS suite coverage (doc 04 guardrail 3), so it is its own piece of work. See DECISIONS `T-2fa`.
+- **A dormant admin has no second factor (noticed 2026-08-09).** Production has
+  two active admins. `nontari@` enrolled TOTP on 2026-08-09 (factor `verified`).
+  `gerasimos@` is also a full admin — same reach over client KYC and the
+  evidence chain — with **no verified factor and no sign-in since 2026-07-15**.
+  A dormant privileged account protected by a password alone is the cheapest way
+  into this system, and it is also the account that would carry the blast radius.
+  Operator call, not an engineering one: enrol it, downgrade it to `agent`, or
+  deactivate it until it is needed. Deliberately not changed by an agent — it is
+  someone's account. Note it doubles as the lockout safety net for C2's
+  DB-level enforcement, so decide it BEFORE that lands.
 - **Mandatory 2FA (decision, follow-up to C2).** Enrolment is currently opt-in. If the client wants it required, the Supabase guide gives "enforce for all users" and "enforce for new users only" variants. Do the DB-level enforcement above first, and plan a recovery path — Supabase issues no recovery codes, so the practical answer is a second enrolled factor per user plus an admin who can delete a factor via the GoTrue admin API.
 - ~~**Deal-scoped "Log contact" action (follow-up to B7).**~~ **SHIPPED
   2026-08-07 (migration 0025).** It was worse than this entry described: the
