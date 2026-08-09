@@ -200,6 +200,24 @@ built without explicit direction.
   `revoke … from public, anon` and a `get_advisors` pass, which is precisely
   what migration 0021 got wrong. Then a "2FA" column and an RLS test that a
   non-admin gets nothing back.
+- **Sentry has no source maps and no release tracking (noticed 2026-08-09).**
+  Delivery is fixed and alerting is proven, but the DATA is poor. `next.config.ts`
+  does not wrap with `withSentryConfig`, so stack traces arrive minified — the
+  2026-08-03 production error read
+  `.next/server/chunks/ssr/[root-of-the-server]__1852x8s._.js:1:6032`, which
+  names no file and no line — and no release is attached, so an issue cannot be
+  tied to the deploy that caused it. With several deploys a day that is the
+  difference between "this broke today" and "this broke, somewhere, sometime".
+
+  The prerequisites are ALREADY in Vercel and unused: `SENTRY_AUTH_TOKEN`,
+  `SENTRY_PROJECT` and `VERCEL_GIT_COMMIT_SHA` exist (added Aug 3 by the Sentry
+  integration) — they are exactly what the build plugin needs. So this is
+  `withSentryConfig` plus a release derived from the commit SHA.
+
+  Treat as a BUILD change, not a config tweak: it alters the production build and
+  uploads source maps at build time, so it wants a green CI run and a check that
+  the deploy still succeeds before it is trusted. Verify by reading a real stack
+  trace in Sentry afterwards, not by the plugin being present.
 - **Mandatory 2FA (decision, follow-up to C2).** Enrolment is currently opt-in. If the client wants it required, the Supabase guide gives "enforce for all users" and "enforce for new users only" variants. Do the DB-level enforcement above first, and plan a recovery path — Supabase issues no recovery codes, so the practical answer is a second enrolled factor per user plus an admin who can delete a factor via the GoTrue admin API.
 - ~~**Deal-scoped "Log contact" action (follow-up to B7).**~~ **SHIPPED
   2026-08-07 (migration 0025).** It was worse than this entry described: the
