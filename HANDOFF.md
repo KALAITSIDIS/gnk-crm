@@ -37,9 +37,32 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 >    `force-static` for the PWA and can never carry a nonce, so that is a
 >    decision first. **IMPROVEMENTS C1.**
 >
+> 3. **SERVER-SIDE SENTRY IS DARK — nothing is reaching it.** The only project
+>    still shows Sentry's seeded sample issue and the banner "Configure Sentry to
+>    start viewing real errors". Proven, not guessed: `key-health.ts` ran on
+>    2026-08-09 09:24 (its `console.error` is in the Vercel log) and the
+>    `Sentry.captureException` on the next line produced no issue.
+>    `instrumentation.ts` gates server init on **`SENTRY_DSN`** and is a complete
+>    no-op without it, so that variable is almost certainly unset in Vercel. The
+>    CLIENT DSN is set — the Sentry ingest origin appears in production's CSP
+>    `connect-src`, which is built from `NEXT_PUBLIC_SENTRY_DSN`.
+>
+>    **What is currently going nowhere:** `app/(app)/error.tsx`,
+>    `app/(app)/properties/error.tsx`, `app/global-error.tsx`, the sign-in
+>    failure report in `lib/actions/auth.ts`, the dead-key guard in
+>    `lib/supabase/key-health.ts`, and every `[csp]` violation from
+>    `/api/csp-report`. All of them fall back to `console.error`, i.e. **~1h of
+>    Vercel retention** — which is exactly how a six-day outage stayed invisible.
+>
+>    **Fix (operator):** set `SENTRY_DSN` in Vercel → Production to the same DSN
+>    as `NEXT_PUBLIC_SENTRY_DSN`, then redeploy. Verify by re-reading Sentry after
+>    the next server error rather than by assuming.
+>
 > The sentence below said production was healthy on keys, and it was believed
-> over a production error log that disagreed. Treat every "verified" claim here
-> as needing a date and a re-check.
+> over a production error log that disagreed. **The claim that "Sentry is wired
+> and confirmed receiving" is the same shape and is now known to be false for the
+> server half.** Treat every "verified" claim here as needing a date and a
+> re-check.
 
 **Nothing is broken, nothing is half-finished, and there is no outstanding
 security item.** Both long-standing operator items are closed: the exposed
