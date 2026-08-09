@@ -1,9 +1,11 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import type { Database } from "@/lib/supabase/database.types";
+import { assertModernSupabaseKey } from "@/lib/supabase/key-health";
 
 // Server client (server components / server actions) — user session, RLS enforced.
 export async function createClient() {
+  assertModernSupabaseKey("NEXT_PUBLIC_SUPABASE_ANON_KEY", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
   const cookieStore = await cookies();
 
   return createServerClient<Database>(
