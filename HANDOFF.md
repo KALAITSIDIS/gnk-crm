@@ -385,6 +385,28 @@ explicitly. Production runs on `sb_publishable_…` / `sb_secret_…` and is hea
 >    no date and no re-check is a liability.** Verify keys against the running
 >    deployment, not against this sentence.
 >
+> **BOTH keys were stale, not one — and the guard is what found the second.**
+> Fixing `NEXT_PUBLIC_SUPABASE_ANON_KEY` restored sign-in, which made the outage
+> look over. It was not: `SUPABASE_SERVICE_ROLE_KEY` still held the legacy JWT,
+> so everything running as service-role was silently broken — slip downloads,
+> evidence reports, document and photo upload/download, media renditions,
+> branding, admin invites, contact merge, GDPR erasure, and the new viewing
+> confirmation. None of it errors visibly on a page you would happen to open.
+>
+> `lib/supabase/key-health.ts` (shipped the same day) named it on the first
+> render of `/settings/organization`:
+>
+> ```
+> 09:24  GET /settings/organization  200 [error]  [supabase-key] SUPABASE_SERVICE_ROLE_KEY holds a LEGACY JWT Supabase key…
+> 09:35  GET /settings/organization  200 [info]   (silent — fixed)
+> ```
+>
+> **The guard checks SHAPE, so silence is necessary but not sufficient** — a
+> well-formed but wrong secret would also pass it. Verified by exercising a real
+> service-role call instead: "Download slip (PDF)" on viewing
+> `85fe47a1-…` produced a working signed Storage URL and served the PDF. That is
+> the check to repeat after any future key change.
+>
 > Confirmed recovered: `/dashboard` and every module route serving normally.
 
 Nine earlier attempts silently failed. **What worked: never touching the
