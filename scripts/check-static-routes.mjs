@@ -27,6 +27,7 @@
  * allowlist, checked against what was actually prerendered.
  */
 import { readdirSync, existsSync } from "node:fs";
+import { sep } from "node:path";
 
 const APP_DIR = ".next/server/app";
 
@@ -44,6 +45,24 @@ const APP_DIR = ".next/server/app";
  */
 export const ALLOWED_STATIC = new Set(["offline", "_not-found", "_global-error", "index"]);
 
+/**
+ * Every prerendered .html under `dir`, as POSIX-relative paths.
+ *
+ * MUST be recursive. This read was `readdirSync(APP_DIR)` until 2026-08-09,
+ * which only ever saw the TOP LEVEL: a prerendered `/settings/organization`
+ * lands at `.next/server/app/settings/organization.html`, so the read returned
+ * the directory `settings` — filtered out for not ending in .html — and the
+ * route was invisible. The guard therefore covered `/login` (top-level, the
+ * case it was written for) and silently nothing else. The unit tests did not
+ * catch it because they hand `findUnexpectedStatic` nested paths directly,
+ * which the caller could not produce.
+ */
+export function listPrerenderedHtml(dir) {
+  return readdirSync(dir, { recursive: true })
+    .map((f) => f.split(sep).join("/")) // Windows readdir yields backslashes
+    .filter((f) => f.endsWith(".html"));
+}
+
 /** Pure: which prerendered pages are not on the allowlist. */
 export function findUnexpectedStatic(htmlFiles, allowed = ALLOWED_STATIC) {
   return htmlFiles
@@ -59,7 +78,7 @@ function main() {
     process.exit(2);
   }
 
-  const unexpected = findUnexpectedStatic(readdirSync(APP_DIR));
+  const unexpected = findUnexpectedStatic(listPrerenderedHtml(APP_DIR));
   if (unexpected.length === 0) {
     console.log("check-static-routes: ok — no nonce-dependent route was prerendered.");
     return;

@@ -41,7 +41,7 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 > | area | state |
 > |---|---|
 > | Supabase keys | **BOTH** were the disabled legacy pair. Fixed, and verified by real calls (login + a slip download), not by reading the env. §2b |
-> | CSP | nonce blocker fixed and CI-guarded (`npm run check:static-routes`). **Still NOT enforceable** — `/offline` is `force-static` and can never carry a nonce. IMPROVEMENTS C1 |
+> | CSP | **that row said "nonce blocker fixed" and it was wrong — re-measured later the same day, production serves 22 script tags and 0 nonces.** The prerender half IS fixed; the nonce still never reaches the HTML, and the edge-cache explanation is disproven. Enforcing would refuse every script. `npm run check:csp-nonce <url>` measures it. IMPROVEMENTS C1 owns it |
 > | Sentry | server `SENTRY_DSN` was missing, so everything reported nowhere. Fixed; delivery **and** alerting proven with probes. Source maps + release tracking still missing — BACKLOG |
 >
 > **The pattern matters more than the three fixes.** Each was an undated
@@ -51,8 +51,13 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 > it.** The rest of §0 was rewritten under that lesson on 2026-08-09; §1 onward
 > still predates it.
 >
-**Nothing is BROKEN and nothing is half-APPLIED** (2026-08-09): no failed
-migration, no half-deployed change, no open incident. Both long-standing
+**Nothing is half-APPLIED** (2026-08-09): no failed migration, no half-deployed
+change, no open incident. **"Nothing is BROKEN" no longer belongs on this line:**
+re-measuring the CSP claim later the same day found it false in production
+(§0 table above, IMPROVEMENTS C1). Nothing user-visible is broken — the policy is
+report-only, so it blocks nothing — but the control itself does not work, and
+that is the fourth time a "verified" line here did not survive being re-checked.
+Both long-standing
 *operator* items are closed — the exposed `service_role` key is revoked (§2b),
 and Sentry is wired and confirmed receiving, so C1's report-only CSP finally has
 a durable sink.

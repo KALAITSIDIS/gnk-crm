@@ -17,7 +17,8 @@
     "db:types": "npx supabase gen types typescript --local > lib/supabase/database.types.ts",
     "import:contacts": "node --env-file=.env.local scripts/import/contacts.mts",
     "import:properties": "node --env-file=.env.local scripts/import/properties.mts",
-    "check:static-routes": "node scripts/check-static-routes.mjs"
+    "check:static-routes": "node scripts/check-static-routes.mjs",
+    "check:csp-nonce": "node scripts/check-csp-nonce.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

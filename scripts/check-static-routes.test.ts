@@ -1,6 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, describe, expect, it } from "vitest";
 // @ts-expect-error — plain .mjs build script, no types
-import { findUnexpectedStatic, ALLOWED_STATIC } from "./check-static-routes.mjs";
+import {
+  findUnexpectedStatic,
+  listPrerenderedHtml,
+  ALLOWED_STATIC,
+} from "./check-static-routes.mjs";
 
 /**
  * The guard has to fail for the real case, or it is decoration. The case it
@@ -39,5 +46,47 @@ describe("findUnexpectedStatic", () => {
 
   it("returns nothing for an all-dynamic build", () => {
     expect(findUnexpectedStatic([])).toEqual([]);
+  });
+});
+
+/**
+ * The tests above hand `findUnexpectedStatic` nested paths like
+ * "login/verify.html" — but the guard's own caller could never produce one. It
+ * read `.next/server/app` with a NON-RECURSIVE `readdirSync`, which returns
+ * `settings` (a directory, filtered out for not ending in .html) and never
+ * `settings/organization.html`. So every nested route was invisible to it, and
+ * the pure-function tests passed anyway. That is the gap these cover: the walk,
+ * against a real directory tree.
+ */
+describe("listPrerenderedHtml", () => {
+  const dir = mkdtempSync(join(tmpdir(), "static-routes-"));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  mkdirSync(join(dir, "settings"), { recursive: true });
+  mkdirSync(join(dir, "(app)", "reports"), { recursive: true });
+  writeFileSync(join(dir, "offline.html"), "");
+  writeFileSync(join(dir, "page.js"), "");
+  writeFileSync(join(dir, "settings", "organization.html"), "");
+  writeFileSync(join(dir, "(app)", "reports", "commission.html"), "");
+
+  it("finds NESTED prerendered pages, not just top-level ones", () => {
+    expect(listPrerenderedHtml(dir).sort()).toEqual([
+      "(app)/reports/commission.html",
+      "offline.html",
+      "settings/organization.html",
+    ]);
+  });
+
+  it("reports nested routes with forward slashes on every platform", () => {
+    // Windows readdir yields "settings\\organization.html"; the allowlist and
+    // the printed route both assume POSIX separators.
+    expect(listPrerenderedHtml(dir).every((f: string) => !f.includes("\\"))).toBe(true);
+  });
+
+  it("a statically prerendered /settings/organization is now caught", () => {
+    expect(findUnexpectedStatic(listPrerenderedHtml(dir))).toEqual([
+      "(app)/reports/commission",
+      "settings/organization",
+    ]);
   });
 });

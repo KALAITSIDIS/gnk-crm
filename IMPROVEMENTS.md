@@ -166,7 +166,53 @@ Import exists (`scripts/import/`); export did not. **Why:** accountants, lawyers
 
 ## C. Strategic / architecture
 
-### C1. Content-Security-Policy with nonces — 🟡 **The blocker is FIXED (2026-08-09). One decision left before enforcing.**
+### C1. Content-Security-Policy with nonces — 🔴 **STILL BROKEN IN PRODUCTION (re-measured 2026-08-09, later). The prerender half is fixed; the nonce still never arrives.**
+
+> **Read this block before the two below it — it corrects both.**
+>
+> Production still serves **22 script tags and 0 nonces** on `/login`. Sentry
+> proves it independently: 4 CSP issues opened, 57 events, all on
+> `/settings/organization`, all `script-src-elem`/`frame-src`.
+>
+> **The `force-dynamic` fix below did work, and the edge-cache diagnosis below
+> it is WRONG.** Both are disproven by the same measurement:
+>
+> ```
+> CSP-RO header      : script-src 'self' 'nonce-e6e66e74…' 'strict-dynamic'
+> script tags        : 22        with a nonce: 0
+> RSC payload        : "nonce":"$undefined"  on every script
+> X-Vercel-Cache     : MISS      Age: 0    Cache-Control: no-store
+> nonce per request  : DIFFERENT each fetch (proxy.ts runs every time)
+> ```
+>
+> Not cached (`MISS`/`no-store`), not prerendered (`ƒ` in the build output, only
+> 4 allowlisted routes emit `.html`), and 26→22 tags confirms the force-dynamic
+> commit is live. **So the cache theory cannot explain it.** `$undefined` in the
+> RSC payload is the real signal: Next reads the nonce from the **request-side**
+> `Content-Security-Policy` header (`app-render.js` → `getScriptNonceFromHeader`),
+> and it got nothing to read.
+>
+> **The code is correct — the platform is the variable.** `next start` against
+> the *same build*, verified this session, stamps **22 of 22**. Deployed
+> `proxy.ts`/`csp.ts`/`next.config.ts` are byte-identical to local, and the
+> production chunk names match the local build. What fails is `NextResponse.next({
+> request: { headers } })` — the `x-middleware-request-content-security-policy`
+> override does not reach the renderer on Vercel. Not a size limit: it fails on a
+> bare 7-header curl.
+>
+> **Not yet root-caused: WHICH Vercel layer drops it.** That needs a diagnostic
+> deploy (echo the header back from a route), which is a push — operator's call.
+>
+> **`npm run check:csp-nonce <url>` now measures this against any deployment**
+> and fails when the header promises a nonce the scripts do not carry. It exits 1
+> on production today and 0 on local. That is the check that was missing: the
+> build guard and every local run were honest and blind.
+>
+> Consequence unchanged and now evidenced: **enforcing today would refuse 22 of
+> 22 scripts.** Do not flip the header.
+
+> **Superseded 2026-08-09 (later) — the "FIXED" claim below is false in
+> production; the prerender half of it is true. See the block above.**
 
 > **Fixed the same day it was found.** `/login`, `/login/verify` and
 > `/session-clock` were statically prerendered, so their script tags carried no
@@ -199,6 +245,11 @@ Import exists (`scripts/import/`); export did not. **Why:** accountants, lawyers
 > Step 1 below is therefore **done and it worked**: report-only in production
 > caught a break that every local sweep called clean. What remains is the
 > `/offline` call, then the header flip.
+
+> **Superseded 2026-08-09 (later) — the FINDING here is right, the CAUSE is
+> wrong. `X-Vercel-Cache: HIT` was a coincidence of that fetch; the page is
+> `no-store` and re-measures `MISS` with the nonce still absent. See the top
+> block.**
 
 > **The production reports finally arrived, and they say the policy does not
 > hold — the opposite of what the local sweeps concluded.**
