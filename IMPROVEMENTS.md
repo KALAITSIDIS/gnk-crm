@@ -166,7 +166,46 @@ Import exists (`scripts/import/`); export did not. **Why:** accountants, lawyers
 
 ## C. Strategic / architecture
 
-### C1. Content-Security-Policy with nonces — 🟡 **STAGED REPORT-ONLY; reporting now VERIFIED end to end (2026-08-03)**
+### C1. Content-Security-Policy with nonces — 🛑 **DO NOT ENFORCE. Measured 2026-08-09: enforcing today takes the whole app down.**
+
+> **The production reports finally arrived, and they say the policy does not
+> hold — the opposite of what the local sweeps concluded.**
+>
+> Every script on `/login` is reported blocked: 18+ chunks, the inline
+> bootstrap, and `frame-src https://vercel.live`. Measured directly against
+> production:
+>
+> ```
+> CSP header nonce : nonce-5936cd54e1e745198635ef0a8797e38b
+> nonces in the HTML: 0        script tags: 26   with a nonce: 0
+> X-Vercel-Cache   : HIT       Age: 216
+> ```
+>
+> **The served HTML carries no nonce at all, while middleware mints a fresh one
+> per request into the header.** `'strict-dynamic'` makes a browser *ignore*
+> `'self'`, so with no nonce on any tag the enforced policy blocks 100% of the
+> JavaScript. Flipping the header today would leave `/login` rendering as dead
+> HTML — a worse outage than the auth one on the same day.
+>
+> **Why every local run said 22/22 and 27/27 clean:** `next start` serves the
+> page dynamically, so Next stamps the request's nonce into the tags and they
+> match. Production serves **edge-cached prerendered HTML** (`X-Vercel-Cache:
+> HIT`), which cannot carry a per-request nonce by construction. **No local test
+> can ever catch this** — the discrepancy is the caching layer, and it only
+> exists in production.
+>
+> So step 1 below ("let it run in production for a while") did its job exactly
+> as designed: it caught a break that local evidence could not. The accumulated
+> violations are not noise to clear before enforcing — they are the finding.
+>
+> **Before this can be enforced, the nonce/cache contradiction has to be
+> resolved**, and that is a real design decision rather than a header flip:
+> force dynamic rendering on pages that need the nonce, or drop `'strict-dynamic'`
+> and rely on `'self'` for same-origin chunks, or move to hashes. Each has a
+> different cost. `vercel.live` also needs a decision — allow it in `frame-src`
+> or turn the toolbar off in production.
+
+### C1 (original entry) — 🟡 **STAGED REPORT-ONLY; reporting now VERIFIED end to end (2026-08-03)**
 
 > **UPDATE 2026-08-03 — the "Unverified" caveat below is resolved, and checking
 > it found a real bug.** Sentry is wired (`SENTRY_DSN` + `NEXT_PUBLIC_SENTRY_DSN`,

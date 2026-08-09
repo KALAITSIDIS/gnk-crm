@@ -1,6 +1,8 @@
 "use server";
 
+import * as Sentry from "@sentry/nextjs";
 import { redirect } from "next/navigation";
+import { isCredentialRejection } from "@/lib/services/auth-errors";
 import { needsMfaChallenge } from "@/lib/services/mfa";
 import { createClient } from "@/lib/supabase/server";
 import { loginSchema } from "@/lib/validators/auth";
@@ -22,7 +24,22 @@ export async function login(
   const supabase = await createClient();
   const { error } = await supabase.auth.signInWithPassword(parsed.data);
   if (error) {
-    return { error: "Invalid email or password" };
+    // A real credential rejection stays deliberately vague — naming the field
+    // would turn this form into an account-existence oracle.
+    if (isCredentialRejection(error)) {
+      return { error: "Invalid email or password" };
+    }
+    // Everything else is infrastructure, and must not wear a password's clothes.
+    // See lib/services/auth-errors.ts: on 2026-08-09 a disabled API key showed
+    // here as "Invalid email or password" and cost hours. Sentry, not just
+    // console, because Vercel keeps ~1h of runtime logs on this plan and nobody
+    // reports "I can't log in" that fast.
+    Sentry.captureException(
+      new Error(`Sign-in failed: ${error.status ?? "?"} ${error.code ?? ""} ${error.message}`),
+    );
+    return {
+      error: "Sign-in is temporarily unavailable — this is not your password. Please try again shortly.",
+    };
   }
 
   // 2FA (C2): route to the challenge here rather than letting the proxy bounce

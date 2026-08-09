@@ -13,16 +13,30 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 |---|---|
 | `main` | clean, in sync with `origin/main`, only branch (SHA: `git log --oneline -1` — deliberately not pinned here, it went stale on every commit) |
 | CI | ✅ green — `checks` (typecheck · lint · unit · **build**) + `rls` |
-| Production | `gnk-crm.vercel.app` healthy; **auto-deploys every push** |
+| Production | `gnk-crm.vercel.app` healthy; **auto-deploys every push**. **A cache-restored build can keep an OLD `NEXT_PUBLIC_*` value compiled in — see §2b, it caused a login outage on 2026-08-09.** |
 | Hosted DB | `yjgirvzgoiywdojnpkpd` — **27 migrations**, `non_filename_versions` = 0, chain verifies, **73 events** |
 | Data | `share_links` 2 (1 live, 1 revoked) · `tasks` 0 · `deals` 1 · **all of it operator test data** (§0) |
-| Tests | **455 unit** · **31 RLS** · **173 desktop E2E** (4 skipped) — all three run in CI |
+| Tests | **462 unit** · **31 RLS** · **173 desktop E2E** (4 skipped) — all three run in CI |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
 | Backups | ✅ **`2026-08-08` is the primary** — newest automated set, `verified:true` (55 files, 73 events matching production), taken after the move and so the first written to `D:\dev\TSOPOZIDIS\gnk-backups`. `2026-08-07` is the other verified set; `2026-08-06` is the restore-*proven* one (all 73 event hashes byte-identical to production). Sets: 07-30 · 07-31 (Storage) · 08-04 (superseded) · 08-06 · 08-07 · **08-08**. Nightly at 03:45 (§2; drills §4b/§4c). **All of it is single-machine now — §3.3** |
 
 ---
 
 ## 0. START HERE
+
+> **READ FIRST (2026-08-09). Two corrections to the confidence below.**
+>
+> 1. **Production had a login outage** — the disabled legacy anon key survived
+>    the 08-03 rotation inside a **cache-restored build**. Fixed by setting the
+>    publishable key and redeploying with build cache OFF. **§2b**.
+> 2. **DO NOT enforce the CSP.** Production reports show the served HTML carries
+>    **zero nonces** while the header mints one per request, because pages are
+>    edge-cached; with `'strict-dynamic'` that blocks **100% of the JavaScript**.
+>    Local sweeps cannot see this. **IMPROVEMENTS C1.**
+>
+> The sentence below said production was healthy on keys, and it was believed
+> over a production error log that disagreed. Treat every "verified" claim here
+> as needing a date and a re-check.
 
 **Nothing is broken, nothing is half-finished, and there is no outstanding
 security item.** Both long-standing operator items are closed: the exposed
@@ -340,6 +354,38 @@ The exposed legacy `service_role` key is **dead**. Supabase disabled the legacy
 JWT pair at `2026-08-03T17:40:12Z`; a REST call with it returns
 `401 Legacy API keys are disabled` and the hint names `(anon, service_role)`
 explicitly. Production runs on `sb_publishable_…` / `sb_secret_…` and is healthy.
+
+> ### ⚠ THAT LAST SENTENCE WAS WRONG, AND IT CAUSED A ~6-DAY OUTAGE (2026-08-09)
+>
+> **Nobody could sign in to production.** 38 requests to `/login`, **zero** to
+> `/dashboard`, for hours. The cause was the thing this section declares fixed:
+> production was still running the **disabled legacy anon key**, so every auth
+> call returned `401 Legacy API keys are disabled`, `getUser()` saw no user, and
+> every navigation bounced back to `/login`.
+>
+> **How it survived the rotation:** `NEXT_PUBLIC_*` is **inlined at build time**
+> (see the note in `proxy.ts`), and the production build log said
+> `Restored build cache from previous deployment`. A cached build keeps the OLD
+> value compiled in no matter what the Vercel variable now says. The fix was to
+> set the publishable key and **redeploy with build cache OFF** — a plain
+> redeploy is not enough.
+>
+> **Two things made it expensive, both worth more than the fix:**
+>
+> 1. **`login()` mapped every failure to "Invalid email or password."** A total
+>    auth outage was indistinguishable from a forgotten password, so it was read
+>    as one. Fixed 2026-08-09: credential rejections stay vague (no account
+>    oracle), everything else says "temporarily unavailable — this is not your
+>    password" and goes to **Sentry**, because Vercel keeps ~1h of runtime logs
+>    and nobody reports a login problem that fast. `lib/services/auth-errors.ts`.
+> 2. **This paragraph was believed over the evidence.** A production
+>    `AuthApiError: Legacy API keys are disabled` on `/middleware` was visible in
+>    the error log on 2026-08-07 and was dismissed as a stale browser session
+>    *because this file said production was healthy*. **A "verified" claim with
+>    no date and no re-check is a liability.** Verify keys against the running
+>    deployment, not against this sentence.
+>
+> Confirmed recovered: `/dashboard` and every module route serving normally.
 
 Nine earlier attempts silently failed. **What worked: never touching the
 Redeploy button.** Git pushes deploy reliably, so the env change was picked up
