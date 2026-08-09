@@ -40,6 +40,19 @@ export default async function proxy(request: NextRequest) {
     const headers = new Headers(request.headers);
     headers.set("x-nonce", nonce);
     headers.set("Content-Security-Policy", csp);
+    // BOTH names, deliberately. Next reads the nonce off the REQUEST as
+    // `content-security-policy || content-security-policy-report-only`
+    // (app-render.js → getScriptNonceFromHeader), and on Vercel the first one
+    // does not survive: production served /login with 22 script tags and 0
+    // nonces while the response header advertised one, and the RSC payload
+    // carried `"nonce":"$undefined"` on every script — Next had nothing to
+    // read. The same build under `next start` stamps 22 of 22, so the code is
+    // right and the platform drops the override. Setting the report-only name
+    // as well costs nothing when both arrive — the value is identical, and the
+    // first is preferred — and rescues the nonce if only the second does.
+    // Verify with `npm run check:csp-nonce https://gnk-crm.vercel.app/login`:
+    // it exits 1 while this is broken and 0 once the nonce lands.
+    headers.set("Content-Security-Policy-Report-Only", csp);
     return NextResponse.next({ request: { headers } });
   };
 
