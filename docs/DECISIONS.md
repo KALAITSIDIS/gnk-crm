@@ -2296,3 +2296,60 @@ writing:
 
 Applied to hosted BEFORE pushing the code that writes the column — the ordering
 0025 got wrong the day before.
+
+## 2026-08-09 · T-prod-day — three silent failures, one shared cause
+
+Three separate things were found broken in production on the same day. Each is
+worth reading for its own mechanism, but the shared cause is the point.
+
+**1. Nobody could sign in for ~6 days.** Supabase disabled the legacy JWT keys on
+2026-08-03. `NEXT_PUBLIC_*` is inlined at BUILD time and the production build log
+said `Restored build cache from previous deployment`, so the old anon key stayed
+compiled in: every auth call returned `401 Legacy API keys are disabled`,
+`getUser()` saw no user, every route bounced to `/login`. 38 requests to `/login`,
+zero to `/dashboard`. Fixed by setting the publishable key and redeploying with
+**build cache off** — a plain redeploy is not enough.
+
+**Both keys were stale, not one.** Fixing the anon key restored sign-in and made
+the outage look over; `SUPABASE_SERVICE_ROLE_KEY` was still legacy, so slip
+downloads, evidence reports, uploads, invites, merge and erasure were all broken
+with no visible error. `lib/supabase/key-health.ts` was written that morning and
+named it on the first render after deploy.
+
+**2. The CSP could never have been enforced.** `/login`, `/login/verify` and
+`/session-clock` were statically prerendered, so they carried no nonce while
+`proxy.ts` minted one per request. Under `'strict-dynamic'` — which makes
+browsers ignore `'self'` — enforcing would have refused **every** script:
+`/login` served 26 script tags and 0 nonces. Fixed with `force-dynamic`;
+guarded by `scripts/check-static-routes.mjs` in CI after the build, because
+neither existing suite can see it (E2E runs against `npm run dev` where every
+page is dynamic; unit tests run before the build).
+
+**3. Sentry had never received a server event.** `instrumentation.ts` gates on
+`SENTRY_DSN`, and the Sentry Vercel integration had provisioned
+`SENTRY_PUBLIC_KEY`, `SENTRY_PROJECT`, `SENTRY_AUTH_TOKEN` and
+`NEXT_PUBLIC_SENTRY_DSN` — but not that one. So the three error boundaries, the
+sign-in failure report, the dead-key guard and every `[csp]` violation fell back
+to `console.error` and ~1h of Vercel retention. Alerting was a second gap on top:
+the default rule fired only on HIGH-priority issues and had `Last Triggered:
+Never`.
+
+### The shared cause, which outlives all three
+
+**Every one was an undated "verified" claim in HANDOFF that nobody re-checked,
+and every one was contradicted by evidence already sitting in a log.**
+
+- §2b said "Production runs on `sb_publishable_…` and is healthy". A production
+  `AuthApiError: Legacy API keys are disabled` on `/middleware` was visible on
+  2026-08-07 and was **dismissed because the document said otherwise**.
+- §0 said "Sentry is wired and confirmed receiving". True for the browser, never
+  true for the server, and never re-tested.
+- C1 said the policy swept "22/22 clean". True, and silent about the property
+  that mattered, because Report-Only blocks nothing and the local server renders
+  every page dynamically.
+
+So: **date every claim, and re-check rather than re-read.** A green test proves
+only what it asserts; a passing sweep in one environment says nothing about
+another. Each of these was found by exercising the real thing — replaying a
+re-signed session, POSTing a real report, clicking a real download.
+

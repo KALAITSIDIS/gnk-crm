@@ -14,67 +14,33 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 | `main` | clean, in sync with `origin/main`, only branch (SHA: `git log --oneline -1` — deliberately not pinned here, it went stale on every commit) |
 | CI | ✅ green — `checks` (typecheck · lint · unit · **build**) + `rls` |
 | Production | `gnk-crm.vercel.app` healthy; **auto-deploys every push**. **A cache-restored build can keep an OLD `NEXT_PUBLIC_*` value compiled in — see §2b, it caused a login outage on 2026-08-09.** |
-| Hosted DB | `yjgirvzgoiywdojnpkpd` — **28 migrations**, `non_filename_versions` = 0, chain verifies, **73 events** |
+| Hosted DB | `yjgirvzgoiywdojnpkpd` — **28 migrations**, `non_filename_versions` = 0, chain verifies, **74 events** |
 | Data | `share_links` 2 (1 live, 1 revoked) · `tasks` 0 · `deals` 1 · **all of it operator test data** (§0) |
 | Tests | **474 unit** · **32 RLS** · **174 desktop E2E** (3 skipped) — all three run in CI |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
-| Backups | ✅ **`2026-08-08` is the primary** — newest automated set, `verified:true` (55 files, 73 events matching production), taken after the move and so the first written to `D:\dev\TSOPOZIDIS\gnk-backups`. `2026-08-07` is the other verified set; `2026-08-06` is the restore-*proven* one (all 73 event hashes byte-identical to production). Sets: 07-30 · 07-31 (Storage) · 08-04 (superseded) · 08-06 · 08-07 · **08-08**. Nightly at 03:45 (§2; drills §4b/§4c). **All of it is single-machine now — §3.3** |
+| Backups | ✅ **`2026-08-09` is the primary** — newest automated set, `verified:true` (55 files, 73 events matching production at capture time), written to `D:\dev\TSOPOZIDIS\gnk-backups`. `2026-08-07` is the other verified set; `2026-08-06` is the restore-*proven* one (all 73 event hashes byte-identical to production). Sets: 07-30 · 07-31 (Storage) · 08-04 (superseded) · 08-06 · 08-07 · 08-08 · **08-09**. Nightly task last ran 03:45 on 2026-08-09, result 0, 0 missed runs. Nightly at 03:45 (§2; drills §4b/§4c). **All of it is single-machine now — §3.3** |
 
 ---
 
 ## 0. START HERE
 
-> **READ FIRST (2026-08-09). Two corrections to the confidence below.**
+> ### 2026-08-09 — read before trusting anything below this line
 >
-> 1. **Production had a login outage** — the disabled legacy anon key survived
->    the 08-03 rotation inside a **cache-restored build**. Fixed by setting the
->    publishable key and redeploying with build cache OFF. **§2b**.
-> 2. **The CSP blocker is FIXED** — `/login`, `/login/verify` and
->    `/session-clock` were prerendered and so carried no nonce; they are now
->    `force-dynamic` (26 tags/0 nonces → 22 of 22, matching the header).
->    `npm run check:static-routes` runs in CI after the build and fails if a
->    route is prerendered again. **Still not enforceable**: `/offline` is
->    `force-static` for the PWA and can never carry a nonce, so that is a
->    decision first. **IMPROVEMENTS C1.**
+> Three things were found broken in production and fixed the same day. Full
+> narrative in DECISIONS `T-prod-day`; what a new session needs:
 >
-> 3. ~~**SERVER-SIDE SENTRY IS DARK**~~ **FIXED 2026-08-09 — `SENTRY_DSN` added to Vercel (Production and Preview, non-sensitive so it stays auditable) and redeployed with build cache off. Verified by observation: a synthetic report POSTed to `/api/csp-report` produced a Sentry issue within seconds, on a code path that produced nothing beforehand. The Sentry Vercel integration had provisioned `SENTRY_PUBLIC_KEY`, `SENTRY_PROJECT`, `SENTRY_AUTH_TOKEN` and `NEXT_PUBLIC_SENTRY_DSN` — but NOT the plain `SENTRY_DSN` that `instrumentation.ts` reads, so the server half no-opped from 2026-08-03. Repeat the probe after any Sentry or env change; do not infer delivery from the client DSN being present.**
+> | area | state |
+> |---|---|
+> | Supabase keys | **BOTH** were the disabled legacy pair. Fixed, and verified by real calls (login + a slip download), not by reading the env. §2b |
+> | CSP | nonce blocker fixed and CI-guarded (`npm run check:static-routes`). **Still NOT enforceable** — `/offline` is `force-static` and can never carry a nonce. IMPROVEMENTS C1 |
+> | Sentry | server `SENTRY_DSN` was missing, so everything reported nowhere. Fixed; delivery **and** alerting proven with probes. Source maps + release tracking still missing — BACKLOG |
 >
->    **Alerting verified the same day, and it was a second gap.** The default rule
->    fired only on issues Sentry ranked HIGH priority — warning-level events, which
->    is what `/api/csp-report` emits, would never have qualified — and its own page
->    read `Last Triggered: Never / Total Triggers 0` since Aug 3. It now also fires
->    on **any new issue**; a probe took it from 0 to 1 trigger with the notification
->    recorded in its History. **Still missing: source maps and release tracking**
->    (`withSentryConfig`) — stack traces arrive minified and issues carry no release,
->    so an error cannot be tied to the deploy that caused it. See BACKLOG.
+> **The pattern matters more than the three fixes.** Each was an undated
+> "verified" claim in this file that nobody re-checked, and each was contradicted
+> by evidence already sitting in a log — including one this file talked a reader
+> out of believing. **Date every claim here, and re-check it rather than reading
+> it.** Everything below predates that lesson.
 >
->    Original finding: The only project
->    still shows Sentry's seeded sample issue and the banner "Configure Sentry to
->    start viewing real errors". Proven, not guessed: `key-health.ts` ran on
->    2026-08-09 09:24 (its `console.error` is in the Vercel log) and the
->    `Sentry.captureException` on the next line produced no issue.
->    `instrumentation.ts` gates server init on **`SENTRY_DSN`** and is a complete
->    no-op without it, so that variable is almost certainly unset in Vercel. The
->    CLIENT DSN is set — the Sentry ingest origin appears in production's CSP
->    `connect-src`, which is built from `NEXT_PUBLIC_SENTRY_DSN`.
->
->    **What is currently going nowhere:** `app/(app)/error.tsx`,
->    `app/(app)/properties/error.tsx`, `app/global-error.tsx`, the sign-in
->    failure report in `lib/actions/auth.ts`, the dead-key guard in
->    `lib/supabase/key-health.ts`, and every `[csp]` violation from
->    `/api/csp-report`. All of them fall back to `console.error`, i.e. **~1h of
->    Vercel retention** — which is exactly how a six-day outage stayed invisible.
->
->    **Fix (operator):** set `SENTRY_DSN` in Vercel → Production to the same DSN
->    as `NEXT_PUBLIC_SENTRY_DSN`, then redeploy. Verify by re-reading Sentry after
->    the next server error rather than by assuming.
->
-> The sentence below said production was healthy on keys, and it was believed
-> over a production error log that disagreed. **The claim that "Sentry is wired
-> and confirmed receiving" is the same shape and is now known to be false for the
-> server half.** Treat every "verified" claim here as needing a date and a
-> re-check.
-
 **Nothing is broken, nothing is half-finished, and there is no outstanding
 security item.** Both long-standing operator items are closed: the exposed
 `service_role` key is revoked (§2b) and Sentry is wired and confirmed receiving,
@@ -585,27 +551,55 @@ the mirror error is just as easy — see the row-counts warning in §0.
 
 ## 5. Roadmap state
 
-**Done:** A (all), B1, B2, B3, B6, B7, B8, B10, B11, **C1**, C2, C6.
+*Rewritten 2026-08-09. The previous version listed C1 as Done and claimed both
+Sentry DSNs were "set and verified live"; neither was true. Corrected below.*
 
-**Left, both gated on an operator decision:**
-- **B4 documents** — which documents? Do not invent legal text for a Cyprus agency.
-- **B5 map** — tile provider, plus a CSP `img-src`/`connect-src` call.
+**Done:** A (all) · B1 · B2 · B3 · B6 · B7 · B8 · B10 · B11 · C2 (opt-in) · C6.
+
+**Partly done:**
+- **B4 documents** — viewing confirmation SHIPPED 2026-08-09 (migration 0027,
+  `viewing_confirmation` doc type, hashed + evented). Reservation agreements and
+  mandate renewals deliberately NOT built: they are contracts, and inventing
+  Cyprus legal text is not an engineering decision. **Blocked on supplied wording,
+  not on code** — the pipeline is proven, each is then an afternoon.
+- **C1 CSP** — NOT done, and not enforceable today. Report-only. The nonce
+  blocker is fixed and CI-guarded, but `/offline` is `force-static` for the PWA
+  and can never carry a nonce, so enforcing means accepting it renders without
+  hydrating. **That call, plus `frame-src vercel.live`, is what remains.**
+
+**Open, needing an operator decision (not engineering):**
+- **Get a backup off this machine.** `gnk-backups-offsite-2026-08-09.tar.gz`
+  (3.5 MB, all 7 sets) is built and verified at both levels; sha256
+  `79490da63ae834c475109d8dbd5cf10ee48248ca797dc7ecf12baee1461d5ad7`. Verify at
+  the DESTINATION. **Highest-value item on this list — every backup is on one
+  machine.**
+- **B5 map** — tile provider is a spend + ToS call, and adds a CSP origin while
+  C1 is mid-staging.
+- **`gerasimos@` has no 2FA** — reviewed 2026-08-09, kept as admin deliberately.
+  He is also the only other admin, so he is the lockout safety net for C2's
+  DB-level enforcement. Decide before that lands.
+
+**Next engineering work, in order:**
+1. **C2 DB-level 2FA enforcement** — the last real security gap. `as restrictive`
+   RLS asserting `aal2` for users WITH a verified factor (the opt-in template).
+   Touches every business table, real lockout risk, wants its own session and a
+   fresh start. 0028 now makes it visible who actually has a factor.
+2. **Sentry source maps + release** (BACKLOG) — a build change; stacks are
+   currently minified and issues carry no release.
+3. Whatever `docs/BACKLOG.md` holds. Note **stranded tasks is DONE**
+   (2026-08-09, "Needs an owner" on `/tasks`) — the old pointer here was stale.
 
 **Standing decisions:**
-- **Build nothing next — stabilise and let the desk use it** (2026-07-29).
-- **B9 closed, not deferred** — the desk works in English. See IMPROVEMENTS.
-- **The `execute_sql` permission entry stays** (§3), deliberately, in future
-  sessions too.
-- **C1 is configuration, not code.** `SENTRY_DSN` (server — the CSP handler runs
-  server-side, so this is the one that matters) and `NEXT_PUBLIC_SENTRY_DSN`
-  (browser, *and* what puts the Sentry origin into `connect-src`). Both set and
-  verified live. Source maps are deliberately not uploaded, so client stacks
-  arrive minified; `tracesSampleRate` 0.1 (errors and messages unsampled).
-
-**Decision-free work is bug-shaped and lives in `docs/BACKLOG.md`.** The named
-follow-up: **human-assigned tasks are still stranded by deactivation** — 0024's
-sweep covers only system-generated rows, because silently re-homing a person's
-deliberate assignment is the wrong default. Wants an admin surface.
+- **Build nothing new — stabilise and let the desk use it** (2026-07-29). Still
+  true: `share_links` 2, `tasks` 0, `deals` 1, all operator test data.
+- **B9 closed, not deferred** — the desk works in English.
+- **The `execute_sql` permission entry stays** (§3), deliberately.
+- **Sentry is configuration, not code.** `SENTRY_DSN` (server — error boundaries,
+  the sign-in report, the key guard and the CSP handler all run server-side) and
+  `NEXT_PUBLIC_SENTRY_DSN` (browser, and what puts the ingest origin into
+  `connect-src`). The server one was MISSING until 2026-08-09 and everything
+  server-side reported nowhere. Both set now, delivery and alerting proven by
+  probe. `tracesSampleRate` 0.1.
 
 ---
 
