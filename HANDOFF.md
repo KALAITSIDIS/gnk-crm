@@ -24,6 +24,15 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 
 ## 0. START HERE
 
+> **THIS SECTION POINTS. IT DOES NOT RESTATE.** Roadmap state belongs to §5,
+> known gaps to §6, accepted-not-fixed findings to §2c, backups and drill results
+> to `docs/BACKUP_RESTORE.md`, history to `docs/DECISIONS.md`. **A conclusion
+> summarised here is stale by construction** — three of them were on 2026-08-09
+> (this section's own counts, "do not start B4", and "nothing is half-finished",
+> the last contradicted by four other sections of this file). **When you find
+> one, delete it and point at the owner. Do not correct it in place** — a
+> corrected copy is just a copy that goes stale later.
+
 > ### 2026-08-09 — read before trusting anything below this line
 >
 > Three things were found broken in production and fixed the same day. Full
@@ -39,138 +48,44 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 > "verified" claim in this file that nobody re-checked, and each was contradicted
 > by evidence already sitting in a log — including one this file talked a reader
 > out of believing. **Date every claim here, and re-check it rather than reading
-> it.** Everything below predates that lesson.
+> it.** The rest of §0 was rewritten under that lesson on 2026-08-09; §1 onward
+> still predates it.
 >
-**Nothing is broken, nothing is half-finished, and there is no outstanding
-security item.** Both long-standing operator items are closed: the exposed
-`service_role` key is revoked (§2b) and Sentry is wired and confirmed receiving,
-so C1's report-only CSP finally has a durable sink.
+**Nothing is BROKEN and nothing is half-APPLIED** (2026-08-09): no failed
+migration, no half-deployed change, no open incident. Both long-standing
+*operator* items are closed — the exposed `service_role` key is revoked (§2b),
+and Sentry is wired and confirmed receiving, so C1's report-only CSP finally has
+a durable sink.
 
-**C6 IS CLOSED — the restore drill ran 2026-08-05, BOTH HALVES, and PASSES.** A
-throwaway project was restored from the 2026-08-04 dumps: `verify_events_chain =
-true`, every row count matching production, 86/86 RLS policies, `auth.users`
-back. Then the Storage half (BACKUP_RESTORE **§4c**): all **26 objects restored
-byte-identical**, and **the three evidence PDFs and the signed slip PNG still
-hash to the `pdf_sha256`/`sha256` in their generation events** — one of them
-pulled through the app's own Download button, with the chain badge reading OK.
-**The backup restores, and the evidence survives it as evidence, not just as
-rows.** Scratch project deleted; local `drilltest` DB dropped; the local stack
-was used as the §4c target and has been returned to its pre-drill state.
+**That is NOT the same as "nothing is outstanding", which is what this line used
+to claim** — while four other sections of this same file said otherwise. Plenty
+is outstanding, including security work. **§5 owns roadmap state and the operator
+list, §6 owns the known gaps, §2c owns what is accepted rather than fixed. Go and
+read them — a summary of them here is exactly the bug this section keeps
+having.**
 
-**§3.1 has been corrected to match** (2026-08-05) — it previously told the reader
-to run the exact commands the drill proved do not work. **Note what that
-correction exposed: `2026-08-04/pg_dump.sql` was itself taken with the wrong
-`--schema` flag.** `ALTER SCHEMA "auth" OWNER TO "supabase_admin"` is on line 19
-of the file and `CREATE EXTENSION` appears zero times, so the primary schema
-backup carries the defect, not just the doc.
+**C6 is closed and the backup story is finished — `docs/BACKUP_RESTORE.md` owns
+all of it, and this section no longer summarises it.** Where to look:
 
-**RESOLVED 2026-08-06 — `../gnk-backups/2026-08-06/pg_dump.sql` is a correct
-`--schema public` dump and is now the SCHEMA OF RECORD.** Verified rather than
-assumed: zero `supabase_admin` mentions, `ON_ERROR_STOP=1` restore exit 0 with 0
-errors, and object counts identical to production on all eight dimensions
-(30 tables · 3 views · 86 policies · 22 functions · 13 triggers · 62 indexes ·
-25 enums · 86 FKs). **BACKUP_RESTORE §7 step 2 is closed.**
+| | state | owner |
+|---|---|---|
+| Restore drill, both halves | **PASSED 2026-08-05** | §4b (database — found four defects) · §4c (Storage) |
+| Schema of record | `2026-08-06/pg_dump.sql`, `--schema public` | §2 here for the set table |
+| RTO | **measured** — ~4.5 min of machine, inside a 4-hour target | §6b |
+| Restore traps (the pooler's misleading auth error, 0-byte dumps, `-f`) | still true | §3.1 |
 
-**`data.sql` and `roles.sql` were taken the same day, so `2026-08-06/` is a
-COMPLETE, RESTORE-VERIFIED SET** — the first that is both. Loaded end to end into
-a scratch database: schema `ON_ERROR_STOP=1` exit 0, `data.sql` clean bar a benign
-`spatial_ref_sys` permission error (PostGIS's own table), `verify_events_chain`
-**true**, every row count and the latest-event timestamp matching production.
+**Two things worth carrying in your head rather than looking up.** The drill
+proved the evidence survives a restore *as evidence*: the PDFs still re-hash to
+the values in their generation events, one of them pulled through the app's own
+Download button. And the check that shows it is **comparing hashes to the
+source** — `verify_events_chain = true` alone cannot, because a re-minted chain
+verifies happily against invented values (BACKUP_RESTORE §5).
 
-**And the check that actually matters: all 73 event hashes are byte-identical to
-production** — `md5(string_agg(hash))` = `42cd4a8ba900245504b7d45bb3045ed6` on
-both sides. `verify_events_chain = true` alone could never show that: if
-`trg_events_hash` had fired during the load it would re-mint every hash and the
-chain would verify against invented values. **Comparing hashes to the source is
-now a §5 checklist item**, and it is the one that separates restored evidence
-from manufactured evidence.
-
-**Three traps hit getting there, all worth keeping:**
-
-1. **`password authentication failed for user "postgres"` does NOT mean the
-   username is wrong.** The pooler reports the bare role whatever you send —
-   proven 2026-08-06 with a connection whose username was definitively
-   `postgres.yjgirvzgoiywdojnpkpd`. An earlier version of this file claimed that
-   message diagnosed a bare-`postgres` username; **it was wrong and cost most of
-   an evening.** Read it as "auth failed, cause unstated" — in practice the
-   password (account password instead of the project's, an unencoded special
-   character, or an unreplaced placeholder). Do still use the **session pooler**
-   string: the username really does need the ref, and the direct host is
-   IPv6-only. Just don't diagnose from the message.
-2. A failed `db dump` **leaves a 0-byte file** at the `-f` path — an empty
-   `pg_dump.sql` among real backups reads as a backup. One was found and removed.
-3. `-f` **does not create the directory**; it fails as an alarming-looking
-   `NotFound: FileSystem.writeFile`.
-
-**The stopgap turned out to be exactly right, which is worth knowing for next
-time.** `scripts/backup/split-dump-by-schema.py` recovered a public-only schema
-from the *bad* dump before the password worked, and once the real dump arrived
-the two compared **statement-for-statement identical** — 581 each, zero
-differences either way. So if a future incident has an unusable dump and no
-reachable password, that script gets a correct schema out of it.
-
-**Four defects, written up with fixes in BACKUP_RESTORE §4b**, every one of which
-would bite during a real recovery:
-
-1. **No `CREATE EXTENSION` in the dump.** Enable `postgis`, `pg_trgm`,
-   `pgcrypto`, `uuid-ossp` on the target FIRST, or the schema cascades into 57
-   errors (`geography` type missing → `properties` → 42 dependents).
-2. **`--schema public,auth,storage` is wrong for the SCHEMA dump.** Those are
-   `supabase_admin`-owned; fatal at line 19 under `ON_ERROR_STOP=1`. Schema =
-   `--schema public` only. The DATA dump keeps all three — that is how
-   `auth.users` comes back.
-3. **Function grants do NOT survive — `anon` gains EXECUTE on 11 of 13.** A
-   restored project is **less secure than its source** until 0007 / 0010 / 0019 /
-   0021 / 0022 are re-applied. §5 predicted this was the likeliest to differ.
-4. **`pg_cron` absent → all three crons silently gone**, and
-   `supabase_migrations` is not dumped (0 rows), so a later `db push` would
-   re-run all 25 migrations.
-
-**A false pass in our own `verify-restore.sql` was also found and fixed.** Its
-three "every slip/report file exists" checks query `storage.objects` — which
-`data.sql` restores — so they reported `0 missing` against a database with **no
-files at all**, on the two checks that exist to protect commission evidence.
-Renamed **METADATA ONLY**. Now confirmed at the file level: `data.sql` carries
-**26 `storage.objects` rows**. Green there is not evidence; §4c is.
-
-**`scripts/backup/restore-storage.mjs` is new** — there was no storage restore
-path at all before it, in any tool. §3.2's `supabase storage cp -r` commands had
-**never been run in either direction** (the 2026-07-31 export was `export.mjs`),
-and the CLI needs a persisted login that does not work here. The script uploads
-with the right content type, `upsert`s (a database restore has already claimed
-every key — otherwise 409 on all 26), creates buckets with the correct `public`
-flag, and re-downloads everything to compare SHA-256 so a partial restore cannot
-report success.
-
-**RTO IS NOW MEASURED — BACKUP_RESTORE §6b.** A full restore was timed phase by
-phase: **~19 s of mechanical work** locally (create DB · extensions · roles ·
-schema · data · verify · lockdown · migration history · 26 Storage objects),
-ending at `verify_events_chain = TRUE` with every count matching production.
-**Do not quote 19 s.** Corrected for a 65.5 ms median RTT to the eu-central-1
-pooler — psql waits a round trip per statement and the schema dump is 1,457 of
-them — it is **~2–2.5 min over the wire**. Add **48 s** to provision a project
-(measured 2026-08-06 on a real throwaway) and a **measured 72 s** Vercel rebuild:
-**~4.5 minutes of machine, inside a 4-hour target.** That ratio is the finding.
-Shaving the restore is pointless; the levers are the password being to hand,
-scripting the Vercel env swap, and not improvising the provisioning step. Still
-untimed: every human step.
-
-**Three things the cloud run nailed down that had only ever been asserted:**
-`create_project` reports `ACTIVE_HEALTHY` **48 seconds before the API serves
-anything** — poll `/rest/v1/` for a 401, never trust the status field. A fresh
-project has `pgcrypto` and `uuid-ossp` but **not** `postgis`, `pg_trgm` or
-`pg_cron` (all three install fine, `pg_cron` included, in 1.5 s total on Free).
-And **§4b.3's root cause is now proven in isolation**: on a fresh project a new
-`security definer` function is `anon`-EXECUTE and a new table is `anon`-SELECT
-**by default** — the platform does it, not the dump. First direct proof of §4.2
-and §4.3 below.
-
-**Both drill targets were local, and that is a real limit.** §4c and §6b both ran
-against the local stack because the cloud routes need credentials the operator
-holds (the DB password, and a CLI login that does not persist). Bytes, hashes,
-buckets, the app path and the mechanical timings are proven; **cloud S3
-behaviour, network cost and the §4b.3 grant defect are not reproducible locally**
-— §6b shows `anon` correctly restricted there, which is HANDOFF §4.2, not a
+**Both drill targets were local, and that is the one limit to carry.** §4c and
+§6b ran against the local stack because the cloud routes need credentials the
+operator holds. Bytes, hashes, buckets, the app path and the timings are proven;
+**cloud S3 behaviour and the §4b.3 grant defect are not reproducible locally** —
+§6b shows `anon` correctly restricted there, which is §4.2 below, *not* a
 contradiction of §4b. **§4b stays the authority on grants.**
 
 **EVERY ROW IN PRODUCTION IS OPERATOR-CREATED TEST DATA. There is no live client
@@ -188,17 +103,17 @@ no client PII is at risk *today*, though that changes the moment real work is
 entered. And §2b's exposed key reached a test dataset, not live KYC documents;
 revoking was still right, but calibrate the severity honestly.
 
-**B3 and B7 are proven end to end in production** (2026-08-04): share link
-minted → opened → revoked → re-minted, and lead → deal → `deal_no_contact`
-nudge → superseded-on-contact, with correct actor attribution throughout
-(system for the cron, the user for the trigger supersede) and the chain
-verifying at every step. Seed rows were deleted afterwards; their events remain,
-which is correct.
+**B3 and B7 are proven end to end in production, not merely shipped**
+(2026-08-04) — link minted → opened → revoked → re-minted, and lead → deal →
+nudge → superseded-on-contact, with correct actor attribution and the chain
+verifying at every step. The seed rows were deleted afterwards and **their events
+remain, which is correct** — that is why production holds events whose row is
+gone. Don't "fix" it.
 
-**B4 IS NO LONGER "DO NOT START" — its first slice shipped 2026-08-09** (0027,
-the viewing confirmation; §1). What remains of B4 is the two CONTRACT documents,
-and those are blocked on supplied wording, not on code. **B5 still needs an
-operator decision** (§5). **B9 is closed, not deferred.**
+**Do not act on a remembered "do not start B4".** That instruction lived here
+until 2026-08-09 and was already false when it was last read — its first slice
+had shipped. **§5 owns B4's real state**, and B5's. **B9 is closed, not
+deferred.**
 
 **What next is still usage, not code:** a real proposal link sent to a real
 buyer, and the PWA on a phone. Decision-free engineering work is bug-shaped and
@@ -297,8 +212,12 @@ B8 installable PWA · backup tooling (`scripts/backup/export-events.sql`).
 
 ## 2. Backups
 
-Three sets in `../gnk-backups/` (outside the repo, untracked). **`2026-08-04` is
-the primary — it is a real `pg_dump` and it has been restore-tested (§0).**
+Sets live in `../gnk-backups/`, outside the repo and untracked. **The table below
+says what each set contains; the state table at the top of this file names the
+current primary.** This paragraph used to read "Three sets … `2026-08-04` is the
+primary" while the table directly beneath it marked 08-04 *superseded* and 08-07
+*PRIMARY*. Don't reintroduce a summary here — there is nowhere for it to be
+right.
 
 | set | contents |
 |---|---|

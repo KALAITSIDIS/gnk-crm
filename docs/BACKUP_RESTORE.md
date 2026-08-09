@@ -972,7 +972,9 @@ correct flag and corrects it if it has drifted.
 database-only restore produces a project reporting a full set of signed slips and
 evidence PDFs with **nothing behind them**, which is precisely why
 `verify-restore.sql`'s file-existence checks reported `0 missing` against a
-database with no files (§0). Those checks are metadata only. **§4c is the
+database with no files — a false pass found during this drill, on the two checks
+that exist to protect commission evidence. They have since been renamed
+**METADATA ONLY**, which is all they ever were. **§4c is the
 byte-level proof; nothing else in the pack is.**
 
 ### 3. Content type must be set on upload, or evidence PDFs arrive unopenable
