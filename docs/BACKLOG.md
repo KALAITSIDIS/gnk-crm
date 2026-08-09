@@ -187,7 +187,25 @@ built without explicit direction.
   `followup_task_created` event: step 5 re-homes within the same invocation, so
   asserting on `tasks.assignee_id` alone passes even with the arms reverted —
   verified by reverting them and watching it still pass.
-- **Human-assigned tasks are still stranded by deactivation.** 0024's sweep is
+- ~~**Human-assigned tasks are still stranded by deactivation.**~~ **RESOLVED
+  2026-08-09 — "Needs an owner" on `/tasks`, admin-only.** No migration: RLS
+  already granted admins the whole org on `tasks_select`/`tasks_update`, so this
+  was a missing SURFACE, not a missing permission.
+
+  It covers **both** invisibilities, not just the one this entry named. A NULL
+  assignee is equally unreachable and is genuinely possible — `create_followup_nudges`
+  ends its three-arm coalesce at "oldest active admin", so an org with no active
+  admin mints one. Reassign is explicit and admin-only, and logs the existing
+  `assigned` event (`to_name`), so no new event type or i18n key was needed.
+
+  **The precondition is the subtle part.** `toggleTaskDone`'s pattern folds the
+  no-op check into the write so a double submit cannot log twice, but a bare
+  `.neq("assignee_id", to)` evaluates to NULL for an unassigned row and PostgREST
+  drops it — silently refusing the exact case this feature exists for. It is
+  `.or("assignee_id.is.null,assignee_id.neq.<id>")`, and `stranded-tasks.spec.ts`
+  reassigns the orphan specifically to pin that path.
+
+  Original entry: 0024's sweep is
   deliberately scoped to system-generated rows (`kind is not null`); a task one
   person assigned to another by hand still sits invisible if the assignee is
   deactivated. Re-homing those silently would overwrite a human's deliberate

@@ -16,7 +16,7 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 | Production | `gnk-crm.vercel.app` healthy; **auto-deploys every push** |
 | Hosted DB | `yjgirvzgoiywdojnpkpd` — **27 migrations**, `non_filename_versions` = 0, chain verifies, **73 events** |
 | Data | `share_links` 2 (1 live, 1 revoked) · `tasks` 0 · `deals` 1 · **all of it operator test data** (§0) |
-| Tests | **450 unit** · **31 RLS** · **172 desktop E2E** (4 skipped) — all three run in CI |
+| Tests | **455 unit** · **31 RLS** · **173 desktop E2E** (4 skipped) — all three run in CI |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
 | Backups | ✅ **`2026-08-08` is the primary** — newest automated set, `verified:true` (55 files, 73 events matching production), taken after the move and so the first written to `D:\dev\TSOPOZIDIS\gnk-backups`. `2026-08-07` is the other verified set; `2026-08-06` is the restore-*proven* one (all 73 event hashes byte-identical to production). Sets: 07-30 · 07-31 (Storage) · 08-04 (superseded) · 08-06 · 08-07 · **08-08**. Nightly at 03:45 (§2; drills §4b/§4c). **All of it is single-machine now — §3.3** |
 
@@ -601,6 +601,14 @@ deliberate assignment is the wrong default. Wants an admin surface.
     its PID in the "Another next dev server is already running" message, and
     `Stop-Process -Id <pid> -Force` clears it. A stray dev server looks exactly
     like a real regression.
+  - **Do not run `test:rls` and `test:e2e` at the same time — they share the
+    local database.** TEST-1 gave the RLS suite its own fixture *org*, not its
+    own database, and the E2E suite writes to that same org. Running them
+    concurrently on 2026-08-09 produced a **1 failed / 30 passed** RLS result
+    while an E2E fixture (a deactivated profile) happened to exist; the same
+    suite was 31/31 the moment it ran alone. HANDOFF §2b already lists "a test
+    can depend on the absence of residue" — this is the same hazard arriving
+    from a neighbouring process rather than a previous run. Sequence them.
   - **The move to `D:` fixed the build-artifact half of this, not the disk.**
     `.next`, `node_modules` and Playwright output now land on D: (123 GB free).
     But `C:` was measured at **830 MB free of 222 GB** and the repo was only

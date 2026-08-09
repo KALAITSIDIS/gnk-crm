@@ -109,3 +109,67 @@ export async function toggleTaskDone(
   revalidatePath("/dashboard");
   return { error: null };
 }
+
+/**
+ * Reassign a stranded task (BACKLOG T-audit-tasks).
+ *
+ * Admin-only, and deliberately manual: 0024's sweep re-homes SYSTEM nudges
+ * automatically, but a hand-assigned task represents somebody's decision about
+ * who owns the work, so moving it is a decision too. See
+ * `lib/queries/stranded-tasks.ts` for why these rows are invisible otherwise.
+ */
+export async function reassignTask(
+  taskId: string,
+  toProfileId: string,
+): Promise<{ error: string | null }> {
+  const supabase = await createClient();
+  const profile = await getCurrentProfile(supabase);
+  if (profile.role !== "admin") return { error: "Only an admin can reassign tasks." };
+
+  const { data: task } = await supabase
+    .from("tasks")
+    .select("id, org_id, title, assignee_id, is_done")
+    .eq("id", taskId)
+    .maybeSingle();
+  if (!task) return { error: "Task not found" };
+  if (task.is_done) return { error: "That task is already done." };
+
+  // The target must be someone who can actually see it afterwards — reassigning
+  // to another deactivated profile would just move the row between two
+  // invisibilities. RLS scopes this read to the caller's org.
+  const { data: target } = await supabase
+    .from("profiles")
+    .select("id, full_name, is_active")
+    .eq("id", toProfileId)
+    .maybeSingle();
+  if (!target) return { error: "Unknown user" };
+  if (!target.is_active) return { error: "That user is deactivated — pick an active one." };
+
+  // Precondition folded into the write, as in toggleTaskDone, so a double
+  // submit cannot log the event twice. NOT a bare `.neq`: for an unassigned row
+  // `assignee_id <> :id` evaluates to NULL and the row is filtered out — which
+  // would silently refuse the exact case this feature exists for.
+  const { data: updated, error } = await supabase
+    .from("tasks")
+    .update({ assignee_id: toProfileId })
+    .eq("id", taskId)
+    .or(`assignee_id.is.null,assignee_id.neq.${toProfileId}`)
+    .select("id");
+  if (error) return { error: error.message };
+  if (!updated || updated.length === 0) {
+    return { error: "Task was not reassigned — it may already belong to that user." };
+  }
+
+  await logEvent(supabase, {
+    orgId: task.org_id,
+    actorId: profile.id,
+    entityType: "task",
+    entityId: taskId,
+    eventType: "assigned",
+    payload: { to_name: target.full_name, to_id: target.id, from_id: task.assignee_id },
+  });
+
+  revalidatePath("/tasks");
+  revalidatePath("/dashboard");
+  return { error: null };
+}

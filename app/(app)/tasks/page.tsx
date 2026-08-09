@@ -6,6 +6,8 @@ import {
 } from "@/components/features/tasks/task-list";
 import { Button } from "@/components/ui/button";
 import { Pager } from "@/components/features/shared/pager";
+import { StrandedTasks } from "@/components/features/tasks/stranded-tasks";
+import { fetchStrandedTasks } from "@/lib/queries/stranded-tasks";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
@@ -120,6 +122,24 @@ export default async function TasksPage({
   const upcoming = open.filter((t) => !t.overdue);
   const done = doneRows.map(toItem);
 
+  // Admin-only, and org-wide rather than assignee-scoped: these are precisely
+  // the rows every other query on this page filters out (BACKLOG T-audit-tasks).
+  // Only fetched for admins — an agent's page must not pay for a query whose
+  // rows RLS would withhold anyway.
+  const isAdmin = profile.role === "admin";
+  const [stranded, activeUsers] = isAdmin
+    ? await Promise.all([
+        fetchStrandedTasks(supabase, profile.orgId),
+        supabase
+          .from("profiles")
+          .select("id, full_name")
+          .eq("org_id", profile.orgId)
+          .eq("is_active", true)
+          .order("full_name"),
+      ])
+    : [[], { data: [] as { id: string; full_name: string }[] }];
+  const users = (activeUsers.data ?? []).map((u) => ({ id: u.id, fullName: u.full_name }));
+
   return (
     <div className="mx-auto flex w-full max-w-xl flex-col gap-4">
       <div className="flex items-start justify-between gap-4">
@@ -138,6 +158,8 @@ export default async function TasksPage({
       </div>
 
       <QuickAddTask />
+
+      {isAdmin ? <StrandedTasks tasks={stranded} users={users} /> : null}
 
       <TaskSection
         title="Overdue"
