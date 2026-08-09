@@ -16,7 +16,7 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 | Production | `gnk-crm.vercel.app` healthy; **auto-deploys every push**. **A cache-restored build can keep an OLD `NEXT_PUBLIC_*` value compiled in — see §2b, it caused a login outage on 2026-08-09.** |
 | Hosted DB | `yjgirvzgoiywdojnpkpd` — **27 migrations**, `non_filename_versions` = 0, chain verifies, **73 events** |
 | Data | `share_links` 2 (1 live, 1 revoked) · `tasks` 0 · `deals` 1 · **all of it operator test data** (§0) |
-| Tests | **468 unit** · **31 RLS** · **173 desktop E2E** (4 skipped) — all three run in CI |
+| Tests | **474 unit** · **31 RLS** · **173 desktop E2E** (4 skipped) — all three run in CI |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
 | Backups | ✅ **`2026-08-08` is the primary** — newest automated set, `verified:true` (55 files, 73 events matching production), taken after the move and so the first written to `D:\dev\TSOPOZIDIS\gnk-backups`. `2026-08-07` is the other verified set; `2026-08-06` is the restore-*proven* one (all 73 event hashes byte-identical to production). Sets: 07-30 · 07-31 (Storage) · 08-04 (superseded) · 08-06 · 08-07 · **08-08**. Nightly at 03:45 (§2; drills §4b/§4c). **All of it is single-machine now — §3.3** |
 
@@ -29,10 +29,13 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 > 1. **Production had a login outage** — the disabled legacy anon key survived
 >    the 08-03 rotation inside a **cache-restored build**. Fixed by setting the
 >    publishable key and redeploying with build cache OFF. **§2b**.
-> 2. **DO NOT enforce the CSP.** Production reports show the served HTML carries
->    **zero nonces** while the header mints one per request, because pages are
->    edge-cached; with `'strict-dynamic'` that blocks **100% of the JavaScript**.
->    Local sweeps cannot see this. **IMPROVEMENTS C1.**
+> 2. **The CSP blocker is FIXED** — `/login`, `/login/verify` and
+>    `/session-clock` were prerendered and so carried no nonce; they are now
+>    `force-dynamic` (26 tags/0 nonces → 22 of 22, matching the header).
+>    `npm run check:static-routes` runs in CI after the build and fails if a
+>    route is prerendered again. **Still not enforceable**: `/offline` is
+>    `force-static` for the PWA and can never carry a nonce, so that is a
+>    decision first. **IMPROVEMENTS C1.**
 >
 > The sentence below said production was healthy on keys, and it was believed
 > over a production error log that disagreed. Treat every "verified" claim here

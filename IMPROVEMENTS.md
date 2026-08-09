@@ -166,7 +166,39 @@ Import exists (`scripts/import/`); export did not. **Why:** accountants, lawyers
 
 ## C. Strategic / architecture
 
-### C1. Content-Security-Policy with nonces — 🛑 **DO NOT ENFORCE. Measured 2026-08-09: enforcing today takes the whole app down.**
+### C1. Content-Security-Policy with nonces — 🟡 **The blocker is FIXED (2026-08-09). One decision left before enforcing.**
+
+> **Fixed the same day it was found.** `/login`, `/login/verify` and
+> `/session-clock` were statically prerendered, so their script tags carried no
+> nonce while the header minted one per request — under `'strict-dynamic'`
+> (which makes browsers ignore `'self'`) that refuses **every** script.
+> `export const dynamic = "force-dynamic"` on those three, which is the idiom 10
+> other pages here already use. Verified against a production build rather than
+> assumed: `/login` went from **26 script tags / 0 nonces** to **22 of 22 nonced,
+> matching the response header exactly**.
+>
+> **Guarded so it cannot come back**, by a check that can actually fire.
+> `scripts/check-static-routes.mjs` runs in CI right after `npm run build` and
+> fails if any route outside a documented allowlist was prerendered. It has to
+> live there: the E2E suite runs against `npm run dev`, where every page is
+> dynamic and nonced no matter what, and unit tests run before the build. A
+> negative control was run — reinstating a static `/login` fails it, removing it
+> passes. (An E2E version was written first and deleted: it could only ever have
+> passed.)
+>
+> **The one decision left is `/offline`.** It is `force-static` on purpose (B8) —
+> a PWA fallback must be precacheable and must not need the server — so it can
+> never carry a per-request nonce. Under enforcement it still renders its "you
+> are offline" message but does not hydrate. Either accept that, or give it a
+> hash-based allowance. `/_not-found` and `/_global-error` are in the same
+> position and matter less.
+>
+> Also unresolved and separate: `frame-src https://vercel.live` is reported on
+> every page — allow it or turn the Vercel toolbar off in production.
+>
+> Step 1 below is therefore **done and it worked**: report-only in production
+> caught a break that every local sweep called clean. What remains is the
+> `/offline` call, then the header flip.
 
 > **The production reports finally arrived, and they say the policy does not
 > hold — the opposite of what the local sweeps concluded.**

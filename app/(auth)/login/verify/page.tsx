@@ -2,6 +2,16 @@ import { getTranslations } from "next-intl/server";
 import { MfaVerifyForm } from "@/components/features/shared/mfa-verify-form";
 
 /**
+ * Dynamic so the CSP nonce can be stamped on this page (C1).
+ *
+ * A prerendered page is rendered at BUILD time, before any request nonce
+ * exists, so its script tags carry none — while proxy.ts still mints a fresh
+ * nonce into the header per request. See lib/services/csp.ts for why that
+ * mismatch blocks EVERY script once the policy is enforced.
+ */
+export const dynamic = "force-dynamic";
+
+/**
  * Second-factor challenge (IMPROVEMENTS C2). Reached only when the session is
  * `aal1` and the account owes a verified factor — `proxy.ts` routes here and
  * bounces users who owe nothing, so this page is never a dead end.

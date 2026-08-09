@@ -3,6 +3,16 @@ import { logout } from "@/lib/actions/auth";
 import { Button } from "@/components/ui/button";
 
 /**
+ * Dynamic so the CSP nonce can be stamped on this page (C1).
+ *
+ * A prerendered page is rendered at BUILD time, before any request nonce
+ * exists, so its script tags carry none — while proxy.ts still mints a fresh
+ * nonce into the header per request. See lib/services/csp.ts for why that
+ * mismatch blocks EVERY script once the policy is enforced.
+ */
+export const dynamic = "force-dynamic";
+
+/**
  * Where a `PGRST303` token lands (lib/supabase/clock-skew.ts).
  *
  * Deliberately OUTSIDE the `(app)` group. That layout builds a Supabase client

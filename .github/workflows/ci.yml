@@ -39,6 +39,15 @@ jobs:
       - name: Build
         run: npm run build
 
+      # A statically prerendered page carries no CSP nonce, so under an
+      # enforced 'strict-dynamic' policy every script on it is refused. This is
+      # only observable in the build output: the E2E suite runs against
+      # `npm run dev`, where every page is dynamic and nonced regardless, and
+      # unit tests run before the build. /login shipped broken this way
+      # (IMPROVEMENTS C1, measured 2026-08-09).
+      - name: Check no nonce-dependent route was prerendered
+        run: npm run check:static-routes
+
   rls:
     runs-on: ubuntu-latest
     steps:
