@@ -37,7 +37,18 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 >    `force-static` for the PWA and can never carry a nonce, so that is a
 >    decision first. **IMPROVEMENTS C1.**
 >
-> 3. ~~**SERVER-SIDE SENTRY IS DARK**~~ **FIXED 2026-08-09 — `SENTRY_DSN` added to Vercel (Production and Preview, non-sensitive so it stays auditable) and redeployed with build cache off. Verified by observation: a synthetic report POSTed to `/api/csp-report` produced a Sentry issue within seconds, on a code path that produced nothing beforehand. The Sentry Vercel integration had provisioned `SENTRY_PUBLIC_KEY`, `SENTRY_PROJECT`, `SENTRY_AUTH_TOKEN` and `NEXT_PUBLIC_SENTRY_DSN` — but NOT the plain `SENTRY_DSN` that `instrumentation.ts` reads, so the server half no-opped from 2026-08-03. Repeat the probe after any Sentry or env change; do not infer delivery from the client DSN being present.** Original finding: The only project
+> 3. ~~**SERVER-SIDE SENTRY IS DARK**~~ **FIXED 2026-08-09 — `SENTRY_DSN` added to Vercel (Production and Preview, non-sensitive so it stays auditable) and redeployed with build cache off. Verified by observation: a synthetic report POSTed to `/api/csp-report` produced a Sentry issue within seconds, on a code path that produced nothing beforehand. The Sentry Vercel integration had provisioned `SENTRY_PUBLIC_KEY`, `SENTRY_PROJECT`, `SENTRY_AUTH_TOKEN` and `NEXT_PUBLIC_SENTRY_DSN` — but NOT the plain `SENTRY_DSN` that `instrumentation.ts` reads, so the server half no-opped from 2026-08-03. Repeat the probe after any Sentry or env change; do not infer delivery from the client DSN being present.**
+>
+>    **Alerting verified the same day, and it was a second gap.** The default rule
+>    fired only on issues Sentry ranked HIGH priority — warning-level events, which
+>    is what `/api/csp-report` emits, would never have qualified — and its own page
+>    read `Last Triggered: Never / Total Triggers 0` since Aug 3. It now also fires
+>    on **any new issue**; a probe took it from 0 to 1 trigger with the notification
+>    recorded in its History. **Still missing: source maps and release tracking**
+>    (`withSentryConfig`) — stack traces arrive minified and issues carry no release,
+>    so an error cannot be tied to the deploy that caused it. See BACKLOG.
+>
+>    Original finding: The only project
 >    still shows Sentry's seeded sample issue and the banner "Configure Sentry to
 >    start viewing real errors". Proven, not guessed: `key-health.ts` ran on
 >    2026-08-09 09:24 (its `console.error` is in the Vercel log) and the
