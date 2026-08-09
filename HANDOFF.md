@@ -195,8 +195,10 @@ nudge → superseded-on-contact, with correct actor attribution throughout
 verifying at every step. Seed rows were deleted afterwards; their events remain,
 which is correct.
 
-**Do not start B4 or B5** — both need an operator decision (§5). **B9 is closed,
-not deferred.**
+**B4 IS NO LONGER "DO NOT START" — its first slice shipped 2026-08-09** (0027,
+the viewing confirmation; §1). What remains of B4 is the two CONTRACT documents,
+and those are blocked on supplied wording, not on code. **B5 still needs an
+operator decision** (§5). **B9 is closed, not deferred.**
 
 **What next is still usage, not code:** a real proposal link sent to a real
 buyer, and the PWA on a phone. Decision-free engineering work is bug-shaped and
@@ -208,15 +210,19 @@ First checks in a new session — all read-only:
 cd "D:/dev/TSOPOZIDIS/gnk-crm" && git log --oneline -3 && git status -sb
 ```
 
-Then via the Supabase connector (`execute_sql`): migrations = 25,
-`non_filename_versions` = 0, chain verifies, `events` = 73, `share_links` = 2,
-`tasks` = 0.
+Then via the Supabase connector (`execute_sql`). **Two of these are invariants
+and must hold whatever else has changed: `non_filename_versions` = 0, and the
+chain verifies.** The counts are a snapshot, so they carry the date they were
+taken — **2026-08-09: migrations 28 · `events` 74 · `share_links` 2 · `tasks` 0 ·
+`deals` 1.** They only ever grow; a *lower* number is the alarm. This line went
+stale once already (it said 25/73 while the header table said 28/74) — if the two
+ever disagree again, re-run the query rather than picking a side.
 
 **Two snippet corrections that read like real failures:**
 `verify_events_chain` takes an argument — `verify_events_chain(p_org uuid)`;
 calling it bare raises `42883 function does not exist`, which looks like a
 missing migration. And `non_filename_versions` must test
-`version !~ '^[0-9]{4}$'` (versions are `0001`…`0024`); the 14-digit timestamp
+`version !~ '^[0-9]{4}$'` (versions are `0001`…`0028`); the 14-digit timestamp
 shape flags every row.
 
 ---
@@ -224,6 +230,33 @@ shape flags every row.
 ## 1. Shipped
 
 Full write-ups in `docs/DECISIONS.md`; migrations in `supabase/migrations/`.
+
+**2026-08-09** — 0027 `viewing_confirmation` · 0028 `org_mfa_status` — **both are
+on hosted, re-verified there 2026-08-09**: enum value present; function present
+with `anon` EXECUTE revoked and `authenticated` granted, which is the §4.3
+default that 0021 missed. **Neither has a `docs/DECISIONS.md` entry — the
+migration headers are the only write-up, and they are unusually complete.**
+
+- **0027 is the FIRST SLICE OF B4** — a viewing confirmation generated from the
+  record, following `evidence_report` (0015): same `documents` table, same
+  private bucket, `viewing_confirmation_generated` carrying `pdf_sha256`. The
+  other two B4 documents are contracts and are deliberately not built. **§5 is
+  the authority on B4, not §0.**
+- **0028** — `Settings → Users` showed Name/Email/Role/Status and nothing about
+  2FA, so an admin could not tell that another admin was password-only. Found the
+  hard way: production had a dormant second admin with no second factor, and only
+  a hand-written query against `auth.mfa_factors` could reveal it (§5). The
+  function is gated on `admin` *inside the body* (a non-admin gets zero rows, not
+  an error) and returns one boolean per profile — never factor detail.
+
+**2026-08-08** — 0026 `T-slip-pdf-hash` — the signed slip PDF, the strongest
+commission-dispute artefact this system makes, had no recorded hash anywhere;
+only the signature PNG did. Now `viewing_slips.pdf_sha256` **and** `pdf_sha256`
+in the hash-chained `viewing_slip_signed` payload — the chained copy is the half
+that matters, since a column alone is as forgeable as the file. **Deliberately
+NOT backfilled**, and hosted still shows 1 slip with a null hash (re-verified
+2026-08-09): hashing today's stored bytes would assert they are the bytes that
+were signed, which nobody can know. A null says "unknown", which is true.
 
 **2026-08-07** — 0025 `T-deal-contact` — **applied to hosted the same day via §3
 and verified** (column present, 0 unbackfilled, 25 migration rows,
