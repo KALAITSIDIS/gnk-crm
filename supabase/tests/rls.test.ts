@@ -1836,4 +1836,50 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(why ?? [], "closing a nudge is evented").toHaveLength(1);
     expect((why![0].payload as { reason: string }).reason).toBe("deal_contacted");
   });
+  it("28. org_mfa_status: admin-only, org-scoped, and never callable by anon", async () => {
+    // 0028 exists because auth.mfa_factors is unreachable from the app, so an
+    // admin could not see that a COLLEAGUE was password-only. It is a security
+    // definer function reaching into the auth schema, which makes its grants
+    // the risky part — a new one is executable by `public` (and therefore
+    // `anon`) unless explicitly revoked, and missing that is what migration
+    // 0021 got wrong.
+
+    // anon must not be able to call it at all.
+    const anonCall = await anonClient().rpc("org_mfa_status");
+    expect(anonCall.error, "anon must be refused execute on org_mfa_status").not.toBeNull();
+
+    // An admin gets one row per profile in their OWN org, and a boolean.
+    // The suite's clients are untyped, so name the shape the RPC promises —
+    // which also pins it: if 0028 ever returned more than this, it stops
+    // compiling here rather than quietly widening what an admin can read.
+    type MfaRow = { profile_id: string; has_verified_factor: boolean };
+    const asAdmin = await adminA.client.rpc("org_mfa_status");
+    expect(asAdmin.error).toBeNull();
+    const rows = (asAdmin.data ?? []) as MfaRow[];
+    expect(rows.length, "admin sees their org's profiles").toBeGreaterThan(0);
+    for (const r of rows) {
+      expect(typeof r.has_verified_factor).toBe("boolean");
+    }
+
+    // Org scoping: nothing from org B leaks in.
+    const { data: orgBProfiles } = await svc
+      .from("profiles")
+      .select("id")
+      .neq("org_id", ORG_A);
+    const foreign = new Set((orgBProfiles ?? []).map((p) => p.id));
+    expect(
+      rows.filter((r) => foreign.has(r.profile_id)),
+      "org_mfa_status must not cross the org boundary",
+    ).toHaveLength(0);
+
+    // A non-admin gets ZERO rows rather than an error — the gate is in the body,
+    // so the check travels with the function instead of living in the caller.
+    const asAgent = await agentA1.client.rpc("org_mfa_status");
+    expect(asAgent.error, "an agent may call it").toBeNull();
+    expect(asAgent.data ?? [], "an agent must learn nothing from it").toHaveLength(0);
+
+    // It answers one BIT and never factor detail: no secrets, ids or names.
+    const keys = new Set(Object.keys(rows[0] ?? {}));
+    expect([...keys].sort()).toEqual(["has_verified_factor", "profile_id"]);
+  });
 });

@@ -2456,6 +2456,13 @@ export type Database = {
         Args: { p_ip_hash: string; p_limit?: number }
         Returns: boolean
       }
+      org_mfa_status: {
+        Args: never
+        Returns: {
+          has_verified_factor: boolean
+          profile_id: string
+        }[]
+      }
       populate_geometry_columns:
         | { Args: { tbl_oid: unknown; use_typmod?: boolean }; Returns: number }
         | { Args: { use_typmod?: boolean }; Returns: string }

@@ -43,6 +43,8 @@ export interface UserRow {
   role: string;
   isActive: boolean;
   isSelf: boolean;
+  /** null = could not be determined (0028 RPC failed) — never render that as "no". */
+  hasTwoFactor: boolean | null;
 }
 
 const initialState: SettingsActionState = {
@@ -217,6 +219,40 @@ function ActiveToggle({ user }: { user: UserRow }) {
   );
 }
 
+/**
+ * Whether this colleague has a verified second factor (0028).
+ *
+ * An admin holds the same reach over client KYC and the evidence chain as any
+ * other admin, so "who is protected" is an admin's business — but only ever as
+ * one bit. The RPC returns no factor detail and neither does this.
+ *
+ * `null` means the lookup FAILED, and is rendered as "—", not as "no". A broken
+ * query that reads as "nobody has 2FA" would be alarming-but-wrong; one that
+ * read as "everybody does" would be the dangerous direction. Neither is honest,
+ * so unknown says unknown.
+ */
+function TwoFactorBadge({ user }: { user: UserRow }) {
+  if (user.hasTwoFactor === null) {
+    return (
+      <span className="text-xs text-text-3" title="Could not read 2FA status">
+        —
+      </span>
+    );
+  }
+  return user.hasTwoFactor ? (
+    <span className="rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success">
+      on
+    </span>
+  ) : (
+    <span
+      className="rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning"
+      title="Password only — this account can be reached with a stolen password alone"
+    >
+      off
+    </span>
+  );
+}
+
 export function UsersPanel({ users }: { users: UserRow[] }) {
   return (
     <div className="flex flex-col gap-3">
@@ -232,6 +268,7 @@ export function UsersPanel({ users }: { users: UserRow[] }) {
               <TableHead>Email</TableHead>
               <TableHead>Role</TableHead>
               <TableHead>Status</TableHead>
+              <TableHead>2FA</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -255,6 +292,9 @@ export function UsersPanel({ users }: { users: UserRow[] }) {
                   >
                     {u.isActive ? "active" : "deactivated"}
                   </span>
+                </TableCell>
+                <TableCell>
+                  <TwoFactorBadge user={u} />
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end">
