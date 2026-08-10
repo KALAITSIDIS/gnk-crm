@@ -541,9 +541,10 @@ Sentry DSNs were "set and verified live"; neither was true. Corrected below.*
   `a6360d1123975cf6b330d2240413cdfa8b1c831c7e2c3ae929a4c5fd251550ca`. **The
   operator will copy it to a USB drive; that had not happened yet when this line
   was written, so every backup is still on one machine.** Verify at the
-  DESTINATION — a checksum taken here proves nothing about what arrived. Two
-  older archives sit beside it and are strict subsets; BACKUP_RESTORE §3.3 has
-  the delete command for after the copy.
+  DESTINATION — a checksum taken here proves nothing about what arrived. **It is
+  the only archive on `D:`** — the 08-07 and 08-09 ones were deleted 2026-08-10
+  after confirming both were strict subsets, so there is no question which file
+  to copy.
 - **B5 map** — tile provider is a spend + ToS call, and adds a CSP origin while
   C1 is mid-staging.
 - **`gerasimos@` has no 2FA** — reviewed 2026-08-09, kept as admin deliberately.

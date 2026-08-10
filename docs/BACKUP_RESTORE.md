@@ -657,18 +657,16 @@ sets**), then ran `sha256sum -c SHA256SUMS` *inside the extracted 2026-08-10 set
 (**55/55 OK, 0 failed**). Integrity holds end to end, not just at the archive
 boundary.
 
-> ### ⚠️ THREE ARCHIVES ARE ON `D:` RIGHT NOW — COPY THE 08-10 ONE
->
-> `2026-08-07` (2.0 MB) and `2026-08-09` (3.4 MB) are still there alongside it.
-> **Both are strict subsets of `2026-08-10` — verified 2026-08-10, 0 entries in
-> either that the new archive lacks** — so deleting them loses nothing, and the
-> rule this file already states is *one archive, one checksum; two of them
-> invites moving the wrong file*. Three is worse. Delete the older two once the
-> current one is off the machine:
->
-> ```bash
-> cd "D:/dev/TSOPOZIDIS" && rm gnk-backups-offsite-2026-08-07.tar.gz* gnk-backups-offsite-2026-08-09.tar.gz*
-> ```
+**It is the ONLY archive on `D:`, which is deliberate.** The `2026-08-07` and
+`2026-08-09` archives were deleted 2026-08-10 after confirming both were strict
+subsets (0 entries in either that `2026-08-10` lacks) and re-verifying the
+survivor's checksum *after* the deletion. One archive, one checksum — more than
+one invites copying the wrong file, and there is no ambiguity about which file to
+put on the drive.
+
+Deleting them cost nothing that is not still on disk: an archive is a
+repackaging of `gnk-backups/`, all eight sets of which are untouched, and
+rebuilding one is the single `tar` command above.
 
 > **STILL ON THIS MACHINE — the off-site gap is OPEN as of 2026-08-10.** The
 > operator's plan is to copy it to a USB drive; **until that happens nothing has
