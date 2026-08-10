@@ -1,4 +1,5 @@
 import { expect, type Page, type ConsoleMessage, type Response } from "@playwright/test";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 /** Local Supabase seed admin (see docs/07_SEED_DATA.sql). */
 export const ADMIN_EMAIL = process.env.E2E_EMAIL ?? "admin@gnk.local";
@@ -125,3 +126,47 @@ export async function login(page: Page, email = ADMIN_EMAIL, password = ADMIN_PA
 
 /** Unique suffix so audit fixtures are always identifiable and never collide. */
 export const runTag = () => `qa-${Date.now().toString(36)}`;
+
+/* ------------------------------------------------------------------ *
+ * Seeding a fixture the UI would need a whole wizard to make.
+ *
+ * This lives here because it was already copied into `nudges.spec.ts` and
+ * `csp.spec.ts`, and `performance.spec.ts` needed a third — the same "fifth
+ * copy of the arithmetic" this repo refused for pagination. Local-only by
+ * construction: `isLocal()` gates every caller, because the service key does
+ * not exist against a deployed base URL.
+ * ------------------------------------------------------------------ */
+
+export const baseUrl = () => process.env.E2E_BASE_URL ?? "http://localhost:3000";
+
+/** Seeding is only possible against the local stack; deployed runs self-skip. */
+export const isLocal = () => /localhost|127\.0\.0\.1/.test(baseUrl());
+
+/**
+ * Local Supabase service key — the standard demo key printed by
+ * `supabase status`. Not a secret, and it only ever reaches 127.0.0.1.
+ */
+export const LOCAL_SERVICE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ??
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU";
+
+export function serviceClient(): SupabaseClient {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL ?? "http://127.0.0.1:54321",
+    LOCAL_SERVICE_KEY,
+    { auth: { autoRefreshToken: false, persistSession: false } },
+  );
+}
+
+/** The profile the local dev app signs in as — its id doubles as an agent id. */
+export async function fixtureProfile(
+  svc: SupabaseClient,
+): Promise<{ id: string; orgId: string }> {
+  const { data: profile } = await svc
+    .from("profiles")
+    .select("id, org_id")
+    .eq("email", ADMIN_EMAIL)
+    .single();
+  expect(profile, `no profile for ${ADMIN_EMAIL} — is the local stack seeded?`).not.toBeNull();
+  return { id: profile!.id, orgId: profile!.org_id };
+}

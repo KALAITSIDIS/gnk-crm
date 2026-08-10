@@ -1,4 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
+import { type SupabaseClient } from "@supabase/supabase-js";
+import { fixtureProfile, isLocal, serviceClient } from "./helpers";
 
 /**
  * Performance measurement (audit brief Phase 4).
@@ -124,7 +126,45 @@ test.describe("page weight and Web Vitals", () => {
   }
 });
 
+/** Marker in `leads.message` so a crashed run is cleaned up by the next one. */
+const PERF_LEAD_TAG = "perf2-paging-fixture";
+
+/**
+ * Enough leads to push `/leads` past `LIST_PAGE_SIZE` (25) so the pager renders
+ * a Next link. `leads` needs only `org_id` — everything else defaults — so this
+ * is one insert rather than a wizard, and `message` carries the cleanup marker
+ * because `leads` has no other free-text column.
+ *
+ * Deliberately NOT `LIST_PAGE_SIZE + 1` computed from the constant: the point is
+ * to exceed one page whatever the seed already holds, so it counts what is there
+ * first. Importing the app constant into a test that is meant to catch the app
+ * changing it would defeat the test.
+ */
+async function seedLeadsPastFirstPage(svc: SupabaseClient): Promise<void> {
+  const { orgId } = await fixtureProfile(svc);
+  const { count } = await svc
+    .from("leads")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", orgId);
+
+  const needed = 26 - (count ?? 0);
+  if (needed <= 0) return;
+
+  const rows = Array.from({ length: needed }, (_, i) => ({
+    org_id: orgId,
+    source: "other" as const,
+    message: `${PERF_LEAD_TAG} ${i}`,
+  }));
+  const { error } = await svc.from("leads").insert(rows);
+  expect(error, `seeding leads: ${error?.message}`).toBeNull();
+}
+
 test.describe("scale safeguards", () => {
+  test.afterAll(async () => {
+    if (!isLocal()) return;
+    await serviceClient().from("leads").delete().like("message", `${PERF_LEAD_TAG}%`);
+  });
+
   test("Properties list paginates rather than rendering every row", async ({ page }) => {
     await page.goto("/properties", { waitUntil: "networkidle" });
     const rowCount = await page.locator("main a[href^='/properties/']").count();
@@ -189,10 +229,23 @@ test.describe("scale safeguards", () => {
 
   test("[PERF-2] paging preserves the active filter", async ({ page }) => {
     await page.goto("/leads?status=all", { waitUntil: "networkidle" });
-    const next = page.getByRole("link", { name: /next/i });
+    let next = page.getByRole("link", { name: /next/i });
+
     if ((await next.count()) === 0) {
-      test.skip(true, "seed has fewer leads than one page — nothing to page through");
+      // A seed database has fewer than LIST_PAGE_SIZE leads, so this skipped —
+      // which meant the ONE test for "filters survive paging" never ran, and a
+      // green suite was not evidence for it. Seed past the page boundary.
+      test.skip(!isLocal(), "fewer leads than one page and seeding needs the local service key");
+      await seedLeadsPastFirstPage(serviceClient());
+      await page.goto("/leads?status=all", { waitUntil: "networkidle" });
+      next = page.getByRole("link", { name: /next/i });
     }
+
+    expect(
+      await next.count(),
+      "no Next link even after seeding past the page size — the pager is not rendering",
+    ).toBeGreaterThan(0);
+
     await next.first().click();
     await page.waitForURL(/page=2/);
     expect(page.url(), "the status filter was dropped when paging").toContain("status=all");

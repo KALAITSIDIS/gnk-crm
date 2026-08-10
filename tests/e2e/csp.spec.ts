@@ -1,18 +1,6 @@
 import { test, expect, request as playwrightRequest, type Page } from "@playwright/test";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { ADMIN_EMAIL, MODULES } from "./helpers";
-
-const baseUrl = () => process.env.E2E_BASE_URL ?? "http://localhost:3000";
-const isLocal = () => /localhost|127\.0\.0\.1/.test(baseUrl());
-
-/**
- * Local-stack service key — the standard demo key printed by `supabase status`.
- * Not a secret, only ever reaches 127.0.0.1, and used exactly as nudges.spec.ts
- * uses it: to seed a fixture the UI would otherwise need a whole wizard to make.
- */
-const LOCAL_SERVICE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY ??
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU";
+import { type SupabaseClient } from "@supabase/supabase-js";
+import { baseUrl, fixtureProfile, isLocal, MODULES, serviceClient } from "./helpers";
 
 /**
  * Markers so a crashed run self-heals on the next one rather than leaking rows.
@@ -25,13 +13,6 @@ const CSP_FIXTURE_REF = "CSP-FIXTURE-";
 const CSP_FIXTURE_MEDIA_DIR = "csp-fixture";
 const CSP_FIXTURE_MEDIA_PREFIX = `${CSP_FIXTURE_MEDIA_DIR}/`;
 
-function serviceClient(): SupabaseClient {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL ?? "http://127.0.0.1:54321",
-    LOCAL_SERVICE_KEY,
-    { auth: { autoRefreshToken: false, persistSession: false } },
-  );
-}
 
 /**
  * Content-Security-Policy — **ENFORCED** since 2026-08-10 (IMPROVEMENTS C1).
@@ -373,20 +354,6 @@ test.describe("Content-Security-Policy (ENFORCED)", () => {
       if (href) return href;
     }
     return null;
-  }
-
-  /**
-   * The profile the local dev app signs in as. A viewing needs `agent_id` as
-   * well as `org_id`, so both come from here rather than re-querying.
-   */
-  async function fixtureProfile(svc: SupabaseClient): Promise<{ id: string; orgId: string }> {
-    const { data: profile } = await svc
-      .from("profiles")
-      .select("id, org_id")
-      .eq("email", ADMIN_EMAIL)
-      .single();
-    expect(profile, `no profile for ${ADMIN_EMAIL} — is the local stack seeded?`).not.toBeNull();
-    return { id: profile!.id, orgId: profile!.org_id };
   }
 
   /** The seeded org the local dev app signs into. */
