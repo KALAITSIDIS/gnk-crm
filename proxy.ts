@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { buildCsp, CSP_REPORT_GROUP, CSP_REPORT_PATH } from "@/lib/services/csp";
+import { CSP_ECHO_PATH } from "@/lib/services/csp-echo";
 
 export default async function proxy(request: NextRequest) {
   // Browsers post CSP violation reports without credentials, so this one path
@@ -40,19 +41,13 @@ export default async function proxy(request: NextRequest) {
     const headers = new Headers(request.headers);
     headers.set("x-nonce", nonce);
     headers.set("Content-Security-Policy", csp);
-    // BOTH names, deliberately. Next reads the nonce off the REQUEST as
-    // `content-security-policy || content-security-policy-report-only`
-    // (app-render.js → getScriptNonceFromHeader), and on Vercel the first one
-    // does not survive: production served /login with 22 script tags and 0
-    // nonces while the response header advertised one, and the RSC payload
-    // carried `"nonce":"$undefined"` on every script — Next had nothing to
-    // read. The same build under `next start` stamps 22 of 22, so the code is
-    // right and the platform drops the override. Setting the report-only name
-    // as well costs nothing when both arrive — the value is identical, and the
-    // first is preferred — and rescues the nonce if only the second does.
-    // Verify with `npm run check:csp-nonce https://gnk-crm.vercel.app/login`:
-    // it exits 1 while this is broken and 0 once the nonce lands.
-    headers.set("Content-Security-Policy-Report-Only", csp);
+    // DO NOT re-add `Content-Security-Policy-Report-Only` here. Next reads the
+    // nonce as `content-security-policy || content-security-policy-report-only`
+    // (app-render.js → getScriptNonceFromHeader), so setting the second name
+    // looks like a free rescue — it was tried in 51e7050, deployed, measured on
+    // production, and changed nothing: still 22 script tags and 0 nonces. The
+    // drop is not keyed to the header NAME. Evidence in IMPROVEMENTS C1;
+    // `/api/csp-echo` is the diagnostic that narrows it further.
     return NextResponse.next({ request: { headers } });
   };
 
@@ -73,6 +68,24 @@ export default async function proxy(request: NextRequest) {
    * Kept exactly as narrow as before: the `/p/` prefix and that one pathname.
    */
   const path = request.nextUrl.pathname;
+
+  /**
+   * TEMPORARY (IMPROVEMENTS C1) — and deliberately NOT folded into the public
+   * branch below, which would have quietly ruined the measurement.
+   *
+   * That branch sets `Content-Security-Policy-Report-Only` on the RESPONSE, and
+   * **a response header set through `NextResponse.next()` comes back round as a
+   * REQUEST header by the time the handler reads it** — measured locally
+   * 2026-08-10 with `withNonce()` no longer setting that name at all and the
+   * route still reporting it present. A diagnostic that reads its own output
+   * answers nothing. This path therefore gets `withNonce()` and nothing else:
+   * every header it sees came from the request-header override or from nowhere.
+   *
+   * No auth gate, for the same reason as `/p/*` — it has to be curl-able with
+   * no session. It is safe to expose; see `lib/services/csp-echo.ts`.
+   */
+  if (path === CSP_ECHO_PATH) return withNonce();
+
   if (path.startsWith("/p/") || path === "/offline") {
     const publicResponse = withNonce();
     publicResponse.headers.set("Content-Security-Policy-Report-Only", csp);
