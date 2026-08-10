@@ -168,6 +168,44 @@ Import exists (`scripts/import/`); export did not. **Why:** accountants, lawyers
 
 ### C1. Content-Security-Policy with nonces — 🔴 **STILL BROKEN IN PRODUCTION (re-measured 2026-08-09, later). The prerender half is fixed; the nonce still never arrives.**
 
+> ### PRIME SUSPECT, 2026-08-10 — `next.config.ts` occupies the header Next reads
+>
+> `/api/csp-echo` (deployment `dpl_u7QkfUVBp6Z6RHZvA9BgFnzjXhfu`, `f0f9f20`) came
+> back from production with something neither hypothesis predicted:
+>
+> | | local (nonce works) | production (nonce broken) |
+> |---|---|---|
+> | `x-nonce` arrived | true | **true** |
+> | `content-security-policy` arrived | true | **true** |
+> | **it carries a `'nonce-…'`** | **true** | **false** |
+>
+> **The override is not dropped at all** — both headers arrive. What arrives under
+> `content-security-policy` is a policy with **no nonce in it**, so
+> `getScriptNonceFromHeader` reads it, finds nothing, and emits `$undefined`.
+>
+> **`next.config.ts` sets `Content-Security-Policy: frame-ancestors 'none'` as a
+> RESPONSE header on `/:path*`** — and a response header set through this path
+> comes back round as a REQUEST header (measured separately while building the
+> diagnostic; see `proxy.ts`). On Vercel that nonce-less value wins the collision
+> under the exact name Next reads. Locally it does not, which is the whole
+> local/production split.
+>
+> **It explains every observation at once**, including why `51e7050` could never
+> have worked: Next prefers `content-security-policy` over the report-only name,
+> and the enforcing name is precisely the one `next.config.ts` occupies.
+>
+> **STILL AN INFERENCE, NOT A MEASUREMENT.** `cspCarriesNonce: false` proves the
+> arriving value is not ours; it does not prove the value is
+> `frame-ancestors 'none'`. One boolean added to `csp-echo` confirms or kills it
+> in a single deploy — **take that measurement before changing anything.**
+>
+> **If it is confirmed, the fix is a decision, not a patch.**
+> `X-Frame-Options: DENY` is already set on the line above, so removing the CSP
+> response header keeps clickjacking covered by a header every current browser
+> honours — but `frame-ancestors` would then live only in the report-only policy,
+> where it does not enforce. That is a real trade to make deliberately, not a
+> tidy-up.
+
 > **HYPOTHESIS TESTED AND DISPROVEN — 2026-08-10, deployment
 > `dpl_6argnu7s…` (`97a41e2`), measured against production, not reasoned about.**
 > `51e7050` set the **report-only header name on the request as well**, on the
