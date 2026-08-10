@@ -207,6 +207,31 @@ credentials and correctly fails otherwise. Do not put production credentials in
 noticing, because only the `rls` job failed while `checks` stayed green. Check the
 Actions API for the SHA after pushing.
 
+**`playwright.config.ts` sets `reuseExistingServer: true`, so a local run can
+test a DIFFERENT BUILD than the one you just compiled.** A `next start` left on
+the port by an earlier run is silently reused — Playwright reports nothing, and
+the only tell is `EADDRINUSE` in the server log you redirected to a file. On
+2026-08-10 this cost three invalid runs: a "31 passed" that was measuring the
+previous build, and worse, a CSP negative control that "passed" because the
+breakage under test was never served. **Verify a served response header that the
+change would alter BEFORE trusting any local result** — that gate is what caught
+it. Two follow-ons: `pkill -f "next start"` does NOT kill the process on Windows
+(use `taskkill //PID <pid> //F`, found via `netstat -ano | grep :PORT`), and a
+port that `netstat` reports free can be re-bound during the ~2 min build, so
+check the log rather than the port. Running on a unique port via `E2E_BASE_URL`
+sidesteps the whole class.
+
+**A `test.skip()` on missing data is a test that reports success by not
+running (2026-08-10).** Four did, and they were skipping in CI on the very run
+that ENFORCED the CSP — the worst possible day. One was actively *unfalsifiable*: `property
+images … satisfy img-src` skipped when `storageHits === 0`, but a CSP that blocks
+the image produces no response event, so breaking `img-src` made it skip rather
+than fail. Proven by negative control, not argued. **Seed the data, then assert
+the seeded thing is actually present** (`storageHits > 0`, the canvas is visible,
+the Next link exists) — otherwise a real break lands back in the same silent
+skip. `csp.spec.ts` and `performance.spec.ts` show the pattern; the suite went
+174/3-skipped to 177/0.
+
 ---
 
 ## 5. Local stack recovery (Windows / Docker)
