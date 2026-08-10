@@ -86,6 +86,50 @@ describe("describeRequestHeaders", () => {
     expect(result.nonceMatches).toBe(true);
   });
 
+  // The confirming measurement: cspCarriesNonce:false says the value is not
+  // ours, only this says whose it is.
+  it("identifies next.config.ts's frame-ancestors policy, spacing and case aside", () => {
+    for (const value of [
+      "frame-ancestors 'none'",
+      "frame-ancestors 'none';",
+      "  Frame-Ancestors   'none' ; ",
+    ]) {
+      const result = describeRequestHeaders(
+        new Headers({ "x-nonce": NONCE, "content-security-policy": value }),
+      );
+      expect(result.cspIsFrameAncestorsOnly, value).toBe(true);
+      expect(result.cspCarriesNonce, value).toBe(false);
+      expect(result.cspDirectives, value).toEqual(["frame-ancestors"]);
+      expect(result.verdict).toContain("COLLISION");
+    }
+  });
+
+  it("does not mistake a full policy that merely mentions frame-ancestors", () => {
+    const result = describeRequestHeaders(
+      new Headers({
+        "x-nonce": NONCE,
+        "content-security-policy": `frame-ancestors 'none'; ${policy(NONCE)}`,
+      }),
+    );
+
+    expect(result.cspIsFrameAncestorsOnly).toBe(false);
+    expect(result.cspCarriesNonce).toBe(true);
+    expect(result.cspDirectives).toEqual(["frame-ancestors", "default-src", "script-src"]);
+  });
+
+  it("returns directive NAMES only — never a value, however odd the policy", () => {
+    const result = describeRequestHeaders(
+      new Headers({
+        "x-nonce": NONCE,
+        "content-security-policy":
+          "script-src 'self' https://secret-internal.example.com 'nonce-abc'",
+      }),
+    );
+
+    expect(result.cspDirectives).toEqual(["script-src"]);
+    expect(JSON.stringify(result)).not.toContain("secret-internal");
+  });
+
   it("never reflects a value back — the result is booleans and a verdict", () => {
     const result = describeRequestHeaders(
       new Headers({

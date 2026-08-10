@@ -44,11 +44,42 @@ export interface CspEchoResult {
   cspCarriesNonce: boolean;
   /** is that nonce the same one `x-nonce` carries? (both must be present) */
   nonceMatches: boolean;
+  /**
+   * Is the arriving policy EXACTLY `next.config.ts`'s `frame-ancestors 'none'`?
+   * This is the confirming measurement: `cspCarriesNonce: false` proves the
+   * value is not ours, but only this proves whose it is.
+   */
+  cspIsFrameAncestorsOnly: boolean;
+  /**
+   * Directive NAMES in the arriving policy — never their values. A bare
+   * `cspIsFrameAncestorsOnly: false` would be a dead end; this says what turned
+   * up instead. Names are structural (`script-src`, `frame-ancestors`) and carry
+   * no secret; the values, which could contain a nonce or an internal origin,
+   * never leave this function.
+   */
+  cspDirectives: string[];
   /** which of the two candidates above the evidence supports */
   verdict: string;
 }
 
 const NONCE_IN_POLICY = /'nonce-([0-9a-f]+)'/;
+/** `frame-ancestors 'none'` in any spacing/casing, with or without a trailing `;`. */
+const FRAME_ANCESTORS_ONLY = /^frame-ancestors\s+'none'\s*;?\s*$/i;
+/** A CSP directive name is letters and dashes. Anything else is not echoed. */
+const DIRECTIVE_NAME = /^[a-z-]{1,40}$/;
+
+/**
+ * Directive names only, deduped and capped. Every segment is validated against
+ * `DIRECTIVE_NAME` before it is returned, so a header carrying something
+ * unexpected cannot turn this into an arbitrary-value echo.
+ */
+function directiveNames(policy: string): string[] {
+  const names = policy
+    .split(";")
+    .map((segment) => segment.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "")
+    .filter((name) => DIRECTIVE_NAME.test(name));
+  return [...new Set(names)].slice(0, 20);
+}
 
 export function describeRequestHeaders(headers: ReadableHeaders): CspEchoResult {
   const xNonce = headers.get("x-nonce");
@@ -68,17 +99,25 @@ export function describeRequestHeaders(headers: ReadableHeaders): CspEchoResult 
     contentSecurityPolicyReportOnly: cspReportOnly !== null,
     cspCarriesNonce: nonceInPolicy !== null,
     nonceMatches: nonceInPolicy !== null && xNonce !== null && nonceInPolicy === xNonce,
-    verdict: verdictFor(xNonce !== null, anyCsp),
+    cspIsFrameAncestorsOnly: policy !== null && FRAME_ANCESTORS_ONLY.test(policy.trim()),
+    cspDirectives: policy === null ? [] : directiveNames(policy),
+    verdict: verdictFor(xNonce !== null, anyCsp, nonceInPolicy !== null),
   };
 }
 
-function verdictFor(xNonce: boolean, anyCsp: boolean): string {
+function verdictFor(xNonce: boolean, anyCsp: boolean, carriesNonce: boolean): string {
+  if (xNonce && anyCsp && carriesNonce) {
+    return (
+      "OVERRIDE INTACT. Both x-nonce and our own CSP reached the handler, nonce and " +
+      "all. Nothing is being dropped or overwritten here."
+    );
+  }
   if (xNonce && anyCsp) {
     return (
-      "OVERRIDE INTACT. Both x-nonce and the CSP header reached the handler, so " +
-      "NextResponse.next({ request: { headers } }) propagates here. If a page route " +
-      "on the same deployment still renders 0 nonces, the drop is downstream of the " +
-      "override — in how the RENDERER is invoked, not in middleware."
+      "COLLISION. A CSP header arrived under the name Next reads, but it is NOT ours " +
+      "— it carries no nonce, so getScriptNonceFromHeader has nothing to read and " +
+      "emits $undefined. Read cspIsFrameAncestorsOnly and cspDirectives to see whose " +
+      "policy won. The override is fine; something is overwriting it."
     );
   }
   if (xNonce && !anyCsp) {
