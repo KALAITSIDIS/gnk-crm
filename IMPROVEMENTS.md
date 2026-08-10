@@ -166,7 +166,35 @@ Import exists (`scripts/import/`); export did not. **Why:** accountants, lawyers
 
 ## C. Strategic / architecture
 
-### C1. Content-Security-Policy with nonces — 🔴 **BROKEN IN PRODUCTION, ROOT-CAUSED 2026-08-10. `next.config.ts`'s own `frame-ancestors 'none'` header is what Next reads instead of the nonce policy. Fix is one line and a security trade — operator's call.**
+### C1. Content-Security-Policy with nonces — 🟢 **THE NONCE WORKS IN PRODUCTION (fixed and verified 2026-08-10, `929055e`). Enforcement is still a separate decision, blocked only by `/offline`.**
+
+> ### ✅ FIXED AND VERIFIED IN PRODUCTION — 2026-08-10, `929055e`
+>
+> Removing the `Content-Security-Policy` key from `next.config.ts` `headers()`
+> freed the header name, and the nonce landed on the first deploy. Measured, not
+> assumed:
+>
+> ```
+> /login                        22 of 22 script tags stamped   check:csp-nonce exit 0
+> /p/<token>  (public, dynamic) 23 of 23 stamped
+> /api/csp-echo                 all 14 directives arrive, cspCarriesNonce true
+> enforcing CSP response header 0 on /login and /offline
+> X-Frame-Options               DENY on both
+> Vercel runtime errors, 1h     none
+> ```
+>
+> Production now returns exactly what local returns, which was never true before.
+>
+> **`/offline` still stamps 0 of 24, and that is CORRECT** — it is `force-static`
+> on purpose for the PWA (B8) and is on `check-static-routes`' allowlist, so it
+> is built before any request nonce exists. **It is now the ONLY thing standing
+> between here and enforcement**, and it is the same accepted trade as before:
+> under enforcement `/offline` renders without hydrating.
+>
+> **What is left for C1, in order:** let the report-only policy collect real
+> traffic through Sentry, decide the `/offline` trade, resolve
+> `frame-src vercel.live`, then flip the header. Promoting it also restores
+> `frame-ancestors` to enforcing, which is what the fix traded away.
 
 > ### ✅ ROOT CAUSE — CONFIRMED BY MEASUREMENT 2026-08-10 (`124329b`)
 >

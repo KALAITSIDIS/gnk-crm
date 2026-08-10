@@ -41,7 +41,7 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 > | area | state |
 > |---|---|
 > | Supabase keys | **BOTH** were the disabled legacy pair. Fixed, and verified by real calls (login + a slip download), not by reading the env. §2b |
-> | CSP | **that row said "nonce blocker fixed" and it was wrong — re-measured later the same day, production serves 22 script tags and 0 nonces.** The prerender half IS fixed; the nonce still never reaches the HTML, and the edge-cache explanation is disproven. Enforcing would refuse every script. `npm run check:csp-nonce <url>` measures it. IMPROVEMENTS C1 owns it |
+> | CSP | **ROOT-CAUSED AND FIXED 2026-08-10** — the nonce now lands in production (`/login` 22 of 22). The cause was ours: a `Content-Security-Policy` key in `next.config.ts` `headers()` occupied the request header Next reads the nonce from, and won on Vercel but not locally. Three rounds had blamed the platform. Still report-only; enforcement is blocked on `/offline` alone. `npm run check:csp-nonce <url>` measures it. IMPROVEMENTS C1 owns it |
 > | Sentry | server `SENTRY_DSN` was missing, so everything reported nowhere. Fixed; delivery **and** alerting proven with probes. Source maps + release tracking still missing — BACKLOG |
 >
 > **The pattern matters more than the three fixes.** Each was an undated
@@ -51,16 +51,19 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 > it.** The rest of §0 was rewritten under that lesson on 2026-08-09; §1 onward
 > still predates it.
 >
-**Nothing is half-APPLIED** (2026-08-09): no failed migration, no half-deployed
-change, no open incident. **"Nothing is BROKEN" no longer belongs on this line:**
-re-measuring the CSP claim later the same day found it false in production
-(§0 table above, IMPROVEMENTS C1). Nothing user-visible is broken — the policy is
-report-only, so it blocks nothing — but the control itself does not work, and
-that is the fourth time a "verified" line here did not survive being re-checked.
-Both long-standing
-*operator* items are closed — the exposed `service_role` key is revoked (§2b),
-and Sentry is wired and confirmed receiving, so C1's report-only CSP finally has
-a durable sink.
+**Nothing is half-APPLIED** (2026-08-10): no failed migration, no half-deployed
+change, no open incident. The CSP control that this line had to disown on
+2026-08-09 was root-caused and fixed on 2026-08-10 and is now measured working in
+production — table above, IMPROVEMENTS C1 owns it. Both long-standing *operator*
+items are closed — the exposed `service_role` key is revoked (§2b), and Sentry is
+wired and confirmed receiving, so C1's report-only CSP has a durable sink.
+
+**The lesson from that one is worth more than the fix.** It was called broken,
+then blamed on the platform three times over, and the answer was a header this
+repo set itself. **What broke the deadlock was measuring what ARRIVED instead of
+what was missing** — every round that reasoned about the absence got it wrong,
+and the one that asked a deployed endpoint what it actually received got it in a
+single deploy.
 
 **That is NOT the same as "nothing is outstanding", which is what this line used
 to claim** — while four other sections of this same file said otherwise. Plenty
@@ -519,16 +522,16 @@ Sentry DSNs were "set and verified live"; neither was true. Corrected below.*
   mandate renewals deliberately NOT built: they are contracts, and inventing
   Cyprus legal text is not an engineering decision. **Blocked on supplied wording,
   not on code** — the pipeline is proven, each is then an afternoon.
-- **C1 CSP** — NOT done, and **broken in production rather than merely
-  unenforced** (re-measured 2026-08-09, later): `/login` serves **22 script tags
-  and 0 nonces**, so enforcing today would refuse all 22. **The line that stood
-  here — "the nonce blocker is fixed and CI-guarded" — was exactly backwards**,
-  and §0 now points at this section for C1, so it mattered. The code is correct
-  (`next start` on the same build stamps 22 of 22); the variable is Vercel, where
-  the `NextResponse.next({ request: { headers } })` override never reaches the
-  renderer. **IMPROVEMENTS C1 owns the evidence**; `npm run check:csp-nonce <url>`
-  measures it and exits 1 on production today. Still open beyond that: `/offline`
-  is `force-static` and can never carry a nonce, plus `frame-src vercel.live`.
+- **C1 CSP** — **the nonce WORKS in production as of 2026-08-10 (`929055e`)**:
+  `/login` 22 of 22, `/p/*` 23 of 23, `check:csp-nonce` exit 0. Root cause was
+  ours, not the platform's — a `Content-Security-Policy` key in `next.config.ts`
+  `headers()` landed on the REQUEST under the name Next reads the nonce from and
+  won on Vercel. **IMPROVEMENTS C1 owns the evidence and the trade** (framing now
+  enforced by `X-Frame-Options: DENY` alone until the policy goes enforcing).
+  **Still NOT enforced**, and enforcement is now blocked on one thing only:
+  `/offline` is `force-static` for the PWA, so it can never carry a nonce and
+  would render without hydrating. That plus `frame-src vercel.live` is what
+  remains.
 
 **Open, needing an operator decision (not engineering):**
 - **Get a backup off this machine.** `gnk-backups-offsite-2026-08-09.tar.gz`
