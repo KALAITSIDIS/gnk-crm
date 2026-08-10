@@ -31,13 +31,17 @@ function serviceClient(): SupabaseClient {
 }
 
 /**
- * Content-Security-Policy, staged report-only (IMPROVEMENTS C1).
+ * Content-Security-Policy — **ENFORCED** since 2026-08-10 (IMPROVEMENTS C1).
  *
  * The policy is assembled and unit-tested in lib/services/csp.ts; what only the
- * running app can prove is whether it actually HOLDS — i.e. whether promoting
- * it from Report-Only to enforced would break a screen. Every violation the
- * browser reports here is something that would be blocked on the day it is
- * enforced, so these tests are the evidence for that decision.
+ * running app can prove is whether it actually HOLDS. These tests were the
+ * evidence for promoting it, and they change meaning now that it has been:
+ * a violation reported here used to be a warning about a future decision, and
+ * is now a screen that is ALREADY broken in production.
+ *
+ * CI runs this against a real production build and `next start`, not `next dev`
+ * — so `'unsafe-eval'` is absent, prerendering is real, and the policy bites.
+ * That is what makes a green run here worth anything.
  */
 
 interface Violation {
@@ -539,21 +543,28 @@ test.describe("Content-Security-Policy (ENFORCED)", () => {
     test.use({ storageState: { cookies: [], origins: [] } });
 
     for (const path of ["/p/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "/offline"]) {
-      test(`${path} carries the report-only policy`, async ({ page }) => {
+      test(`${path} carries the ENFORCED policy`, async ({ page }) => {
         const response = await page.goto(path, { waitUntil: "domcontentloaded" });
         expect(response?.status(), `${path} must be reachable anonymously`).toBe(200);
 
-        const policy = response?.headers()["content-security-policy-report-only"];
+        const policy = response?.headers()["content-security-policy"];
         expect(policy, `${path} is served with no CSP`).toBeTruthy();
         expect(policy).toContain("script-src");
         expect(policy).toContain("object-src 'none'");
-        // Clickjacking is enforced by X-Frame-Options on the public routes too,
-        // and frame-ancestors rides inside the report-only policy. There must be
-        // no enforcing CSP header here either — it would break the nonce exactly
-        // as it did in production (IMPROVEMENTS C1).
+
+        // The public branch of proxy.ts sets the header separately from the
+        // authenticated one, which is exactly how they drifted apart before.
+        // Assert the nonce here too: it is what proves this is the policy
+        // proxy.ts built rather than something else wearing the same name.
+        expect(policy, `${path}: enforcing CSP carries no nonce`).toMatch(/'nonce-[a-f0-9]+'/);
+        expect(
+          response?.headers()["content-security-policy-report-only"],
+          `${path} must not be served BOTH policies`,
+        ).toBeUndefined();
+
+        // Clickjacking is enforced twice on the public routes too.
         expect(response?.headers()["x-frame-options"]).toBe("DENY");
         expect(policy).toContain("frame-ancestors 'none'");
-        expect(response?.headers()["content-security-policy"]).toBeUndefined();
       });
     }
   });
