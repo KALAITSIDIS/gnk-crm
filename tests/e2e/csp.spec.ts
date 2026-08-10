@@ -67,31 +67,47 @@ async function readViolations(page: Page): Promise<Violation[]> {
   return page.evaluate(() => (window as unknown as { __csp: Violation[] }).__csp ?? []);
 }
 
-test.describe("Content-Security-Policy (report-only)", () => {
-  test("the response carries the report-only policy, and framing stays ENFORCED", async ({
-    page,
-  }) => {
+test.describe("Content-Security-Policy (ENFORCED)", () => {
+  test("the response carries the ENFORCING policy, and it is OURS", async ({ page }) => {
     const res = await page.goto("/dashboard", { waitUntil: "domcontentloaded" });
     const headers = res!.headers();
 
-    const reportOnly = headers["content-security-policy-report-only"] ?? "";
-    expect(reportOnly, "report-only policy missing").toContain("script-src");
-    expect(reportOnly).toContain("'strict-dynamic'");
-    expect(reportOnly).toMatch(/'nonce-[a-f0-9]+'/);
+    const policy = headers["content-security-policy"] ?? "";
+    expect(policy, "enforcing policy missing").toContain("script-src");
+    expect(policy).toContain("'strict-dynamic'");
 
-    // Framing stays ENFORCED — but by X-Frame-Options alone, and there must be
-    // NO enforcing Content-Security-Policy response header. One declared in
-    // next.config.ts lands on the REQUEST under the very name Next reads the
-    // nonce from, wins, and stamps 0 of 22 scripts: that was production for four
-    // days (IMPROVEMENTS C1, root-caused 2026-08-10). This is that regression
-    // guard, and the assertion above it is what makes it safe to have no CSP
-    // frame-ancestors.
-    expect(headers["x-frame-options"], "clickjacking guard missing (SEC-1)").toBe("DENY");
+    /**
+     * THE collision guard — and it matters MORE now than it did before.
+     *
+     * It used to assert there was NO enforcing CSP header at all, because a
+     * `Content-Security-Policy` key in `next.config.ts` `headers()` lands on the
+     * REQUEST under the very name Next reads the nonce from, wins on Vercel, and
+     * stamps 0 of 22 scripts. That was production for four days (IMPROVEMENTS
+     * C1, root-caused 2026-08-10).
+     *
+     * There IS an enforcing header now, by design, so "absent" is no longer the
+     * property to check. The property is that the enforcing header is the one
+     * carrying a NONCE — i.e. ours, not a bare `frame-ancestors 'none'` that has
+     * stolen the name. Under report-only that mistake was survivable; under
+     * enforcement the same mistake blocks every script on every page.
+     */
     expect(
-      headers["content-security-policy"],
-      "an ENFORCING CSP header silently breaks the nonce — see next.config.ts",
+      policy,
+      "enforcing CSP carries no nonce — something else has taken the header (see next.config.ts)",
+    ).toMatch(/'nonce-[a-f0-9]+'/);
+
+    // Two policies would double-report and double-block; the flip replaces the
+    // report-only header rather than adding to it.
+    expect(
+      headers["content-security-policy-report-only"],
+      "report-only must be GONE once enforcing — not served alongside",
     ).toBeUndefined();
-    expect(reportOnly, "frame-ancestors must still ship inside the policy").toContain(
+
+    // Framing is now enforced twice over: X-Frame-Options AND the policy's own
+    // frame-ancestors. Both are asserted because they have independently
+    // regressed before.
+    expect(headers["x-frame-options"], "clickjacking guard missing (SEC-1)").toBe("DENY");
+    expect(policy, "frame-ancestors must still ship inside the policy").toContain(
       "frame-ancestors 'none'",
     );
   });
@@ -104,9 +120,11 @@ test.describe("Content-Security-Policy (report-only)", () => {
     // while" cannot be acted on.
     const res = await page.goto("/dashboard", { waitUntil: "domcontentloaded" });
     const headers = res!.headers();
-    expect(headers["content-security-policy-report-only"]).toContain(
-      "report-uri /api/csp-report",
-    );
+    // Still asserted under enforcement: `report-uri`/`report-to` stay in the
+    // policy so a blocked violation is REPORTED as well as blocked. Dropping
+    // them on the flip would have made Sentry go quiet exactly when the policy
+    // started biting.
+    expect(headers["content-security-policy"]).toContain("report-uri /api/csp-report");
     expect(headers["reporting-endpoints"] ?? "").toContain("/api/csp-report");
 
     // Browsers post reports WITHOUT credentials, so the endpoint must be
@@ -129,9 +147,11 @@ test.describe("Content-Security-Policy (report-only)", () => {
 
   test("the policy actually catches a violation the app does not make", async ({ page }) => {
     // Proves the policy has teeth: something it forbids really does raise a
-    // violation, with disposition "report" (i.e. observed, not blocked).
-    // Without this, "zero violations everywhere" could equally mean the policy
-    // is inert.
+    // violation. Under enforcement the disposition is now "enforce" and the
+    // probe image is actually BLOCKED rather than merely observed — the
+    // `securitypolicyviolation` event fires either way, which is what this
+    // reads. Without this, "zero violations everywhere" could equally mean the
+    // policy is inert.
     await collectViolations(page);
     await page.goto("/dashboard", { waitUntil: "networkidle" });
 
@@ -243,8 +263,8 @@ test.describe("Content-Security-Policy (report-only)", () => {
   });
 
   test("a fresh nonce is issued per request — a fixed nonce is no protection", async ({ page }) => {
-    const first = (await page.goto("/dashboard"))!.headers()["content-security-policy-report-only"];
-    const second = (await page.goto("/contacts"))!.headers()["content-security-policy-report-only"];
+    const first = (await page.goto("/dashboard"))!.headers()["content-security-policy"];
+    const second = (await page.goto("/contacts"))!.headers()["content-security-policy"];
     const nonceOf = (csp?: string) => csp?.match(/'nonce-([a-f0-9]+)'/)?.[1];
 
     expect(nonceOf(first)).toBeTruthy();
@@ -256,9 +276,7 @@ test.describe("Content-Security-Policy (report-only)", () => {
     // Without this round-trip, 'strict-dynamic' would block Next's bootstrap
     // the moment the policy is enforced.
     const res = await page.goto("/dashboard", { waitUntil: "domcontentloaded" });
-    const nonce = res!
-      .headers()
-      ["content-security-policy-report-only"].match(/'nonce-([a-f0-9]+)'/)![1];
+    const nonce = res!.headers()["content-security-policy"].match(/'nonce-([a-f0-9]+)'/)![1];
 
     // NB: the browser deliberately blanks the `nonce` CONTENT attribute in the
     // DOM (so injected script cannot read it back out) and exposes the value

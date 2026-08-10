@@ -35,9 +35,11 @@ const nextConfig: NextConfig = {
    * is in IMPROVEMENTS C1 and `docs/ENGINEERING_NOTES.md` §1.
    *
    * The whole policy — `frame-ancestors` included — is built per request in
-   * `proxy.ts` and ships as Report-Only until C1 is promoted. Clickjacking stays
-   * ENFORCED by `X-Frame-Options: DENY` below, which every current browser
-   * honours; that is the trade this removal made, deliberately.
+   * `proxy.ts` and has been **ENFORCED since 2026-08-10** (C1 promoted). So
+   * clickjacking is now covered twice over: by `X-Frame-Options: DENY` below,
+   * and by the policy's own `frame-ancestors 'none'`. Relying on X-Frame-Options
+   * alone was the trade this removal made, and it lasted exactly as long as
+   * report-only did.
    *
    * Moving the same header into middleware does NOT work either: a response
    * header set through `NextResponse.next()` comes back round as a request

@@ -1,6 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { buildCsp, CSP_REPORT_GROUP, CSP_REPORT_PATH } from "@/lib/services/csp";
+import { buildCsp, CSP_HEADER, CSP_REPORT_GROUP, CSP_REPORT_PATH } from "@/lib/services/csp";
 
 export default async function proxy(request: NextRequest) {
   // Browsers post CSP violation reports without credentials, so this one path
@@ -68,9 +68,17 @@ export default async function proxy(request: NextRequest) {
    * Kept exactly as narrow as before: the `/p/` prefix and that one pathname.
    */
   const path = request.nextUrl.pathname;
+  /**
+   * `/offline` is `force-static`, so its script tags carry no nonce and under
+   * enforcement none of them run. That is the one consequence C1 kept flagging
+   * as an open decision, and it was settled by reading the page: it is three
+   * paragraphs of static text with no button, no client component and nothing
+   * to hydrate. It renders identically either way. Do not add interactivity to
+   * that page without moving it off `force-static` first.
+   */
   if (path.startsWith("/p/") || path === "/offline") {
     const publicResponse = withNonce();
-    publicResponse.headers.set("Content-Security-Policy-Report-Only", csp);
+    publicResponse.headers.set(CSP_HEADER, csp);
     publicResponse.headers.set(
       "Reporting-Endpoints",
       `${CSP_REPORT_GROUP}="${CSP_REPORT_PATH}"`,
@@ -145,10 +153,11 @@ export default async function proxy(request: NextRequest) {
     }
   }
 
-  // Report-only: the browser reports what WOULD have been blocked and enforces
-  // nothing. Promoting this to `Content-Security-Policy` is a separate,
-  // deliberate step once the reports are proven clean.
-  supabaseResponse.headers.set("Content-Security-Policy-Report-Only", csp);
+  // ENFORCING (2026-08-10). The reports were proven clean first, which is the
+  // condition this line used to state as a precondition. `report-uri`/`report-to`
+  // stay in the policy, so an enforced violation is still REPORTED as well as
+  // blocked — the Sentry signal does not go quiet just because it now bites.
+  supabaseResponse.headers.set(CSP_HEADER, csp);
   // Pairs with the policy's `report-to` directive for browsers that implement
   // the Reporting API; `report-uri` covers the rest.
   supabaseResponse.headers.set(

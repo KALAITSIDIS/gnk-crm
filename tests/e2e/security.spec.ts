@@ -163,19 +163,19 @@ test.describe("security headers", () => {
     // Findings SEC-1..SEC-4: all four were absent on local AND production
     // before this audit; next.config.ts `headers()` now supplies them.
     expect(headers["x-frame-options"], "clickjacking guard missing (SEC-1)").toBe("DENY");
-    // SEC-1's frame-ancestors moved INTO the report-only policy on 2026-08-10.
-    // It cannot live in next.config.ts: a Content-Security-Policy header
-    // declared there lands on the REQUEST under the name Next reads the nonce
-    // from, and stamped 0 of 22 scripts in production for four days
-    // (IMPROVEMENTS C1). X-Frame-Options above is the enforcing guard now.
+    // SEC-1's frame-ancestors moved INTO the policy on 2026-08-10, which was
+    // ENFORCED later the same day. It still cannot live in next.config.ts: a
+    // Content-Security-Policy header declared there lands on the REQUEST under
+    // the name Next reads the nonce from, and stamped 0 of 22 scripts in
+    // production for four days (IMPROVEMENTS C1). So the enforcing header must
+    // be the one proxy.ts builds — proven by the nonce in it, since only that
+    // one has one.
+    const policy = headers["content-security-policy"] ?? "";
+    expect(policy, "frame-ancestors missing (SEC-1)").toContain("frame-ancestors 'none'");
     expect(
-      headers["content-security-policy"],
-      "an ENFORCING CSP header silently breaks the nonce — see next.config.ts",
-    ).toBeUndefined();
-    expect(
-      headers["content-security-policy-report-only"],
-      "frame-ancestors missing (SEC-1)",
-    ).toContain("frame-ancestors 'none'");
+      policy,
+      "enforcing CSP carries no nonce — next.config.ts has taken the header again",
+    ).toMatch(/'nonce-[a-f0-9]+'/);
     expect(headers["x-content-type-options"], "MIME sniffing guard missing (SEC-2)").toBe(
       "nosniff",
     );

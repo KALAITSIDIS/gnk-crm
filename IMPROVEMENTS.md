@@ -166,7 +166,43 @@ Import exists (`scripts/import/`); export did not. **Why:** accountants, lawyers
 
 ## C. Strategic / architecture
 
-### C1. Content-Security-Policy with nonces — 🟢 **THE NONCE WORKS IN PRODUCTION (fixed and verified 2026-08-10, `929055e`). Enforcement is still a separate decision, blocked only by `/offline`.**
+### C1. Content-Security-Policy with nonces — ✅ **DONE. ENFORCED IN PRODUCTION 2026-08-10.**
+
+> ### ENFORCED — 2026-08-10. `/offline` turned out not to be a blocker.
+>
+> The response header moved from `Content-Security-Policy-Report-Only` to
+> `Content-Security-Policy`, through a single `CSP_HEADER` constant in
+> `lib/services/csp.ts` used by BOTH branches of `proxy.ts` — one constant
+> because this file has already had the bug where the public `/p/` branch and
+> the authenticated branch disagreed about the policy.
+>
+> **`/offline` was the one decision left, and reading the page settled it.** It
+> is `force-static`, so under enforcement none of its scripts run — but it is
+> three paragraphs of static text with no button, no client component and
+> nothing to hydrate. It renders identically either way. The cost carried as an
+> open question for weeks was zero. **Do not add interactivity to that page
+> without moving it off `force-static` first.**
+>
+> **What made this safe, heaviest evidence first:**
+>
+> | evidence | |
+> |---|---|
+> | `csp.spec.ts` sweep | **27/27 clean** against a real production build — 11 modules, 7 deep routes, detail pages, signature canvas |
+> | Zod 4 JIT `eval` | the one real violation report-only ever found, fixed in `zod-jitless.ts` — and it self-recovers regardless |
+> | source audit | no `<iframe>`/`<embed>`/`<object>`, no `eval`/`new Function`/`javascript:`, no workers, no external script/style/font origins (`next/font` self-hosts) |
+> | production report-only | clean since the nonce fix landed; Sentry holds zero unresolved CSP issues |
+>
+> **The reporting directives stay inside the enforced policy on purpose.** A
+> blocked violation is still POSTed to `/api/csp-report` and reaches Sentry, so
+> the signal does not go quiet at the exact moment it starts to matter.
+>
+> **Rollback is one word:** set `CSP_HEADER` back to
+> `"Content-Security-Policy-Report-Only"`. The policy string, the nonce and the
+> reporting endpoints are identical either way.
+
+> **Superseded 2026-08-10 (later) — "enforcement is still a separate decision,
+> blocked only by `/offline`" was true when written, and is now done. Every
+> measurement below still stands.**
 
 > ### ✅ FIXED AND VERIFIED IN PRODUCTION — 2026-08-10, `929055e`
 >
@@ -452,7 +488,10 @@ The per-request nonce is threaded through `proxy.ts` and the full policy ships a
 
 > **Unverified:** that a real browser actually delivers reports to it. The policy demonstrably catches violations (an `img-src` probe is asserted in `csp.spec.ts`) and the endpoint demonstrably accepts and survives them (synthetic POSTs, including hostile input), but **no report reached the server in testing even after a 70-second wait** — headless Chromium over plain `http://localhost` appears not to deliver them. **Confirm in production by looking for `[csp]` in the Vercel runtime logs.** If nothing appears there after real use, delivery is the thing to debug — not the policy.
 
-**Before enforcing (do NOT do this on local evidence alone):**
+**Before enforcing (do NOT do this on local evidence alone):** — ✅ **all three
+done; enforced 2026-08-10, see the top of C1.** Step 1 ran in production and
+caught two separate breaks. Step 3's "one-line change" turned out to be two call
+sites, which is why it is now a single `CSP_HEADER` constant.
 1. Let report-only run in production for a while — real data, real screens, real browsers. **First confirm reports are actually arriving** (see above); an empty log could mean "clean" or "not delivering", and those are very different.
 2. Two things the local sweep still cannot exercise: **PDF generation** (the evidence report renders server-side, and the download is a signed URL) and any screen whose data does not exist locally — `property_media` is empty on a seed database, so the Storage `img-src` result above came from a temporary fixture and the test self-skips without one.
 3. Then flip the response header name from `Content-Security-Policy-Report-Only` to `Content-Security-Policy` in `proxy.ts` — a one-line change, trivially revertible.

@@ -3,8 +3,14 @@
  *
  * Staged as REPORT-ONLY first, per the roadmap: a wrong CSP breaks the app
  * silently in production, and this one governs every screen. Report-only blocks
- * nothing — it only reports — so the policy can be proven against the real app
- * before anyone considers enforcing it.
+ * nothing — it only reports — so the policy could be proven against the real app
+ * before anyone considered enforcing it.
+ *
+ * **ENFORCING since 2026-08-10.** That staging did its job twice over: it caught
+ * three prerendered routes carrying no nonce, and then the `next.config.ts`
+ * header collision that meant production served 22 script tags and 0 nonces.
+ * Both are fixed, and the report-only policy has since run clean — the evidence
+ * for flipping it is in IMPROVEMENTS C1, not in this comment.
  *
  * The origins are derived at runtime, not hardcoded: Supabase is 127.0.0.1 on a
  * developer's machine and a *.supabase.co host in production, and Sentry only
@@ -16,6 +22,22 @@ export const CSP_REPORT_PATH = "/api/csp-report";
 
 /** Reporting-API group name, tying `report-to` to the Reporting-Endpoints header. */
 export const CSP_REPORT_GROUP = "csp-endpoint";
+
+/**
+ * The response header the policy is served under — ENFORCING.
+ *
+ * Defined once and used by both branches of `proxy.ts` on purpose. The two used
+ * to carry the header name as separate literals, and that file has already had
+ * exactly this bug once: the public `/p/` branch returned before the policy was
+ * attached, so the only unauthenticated HTML the app serves was also the only
+ * HTML with no `script-src`. One constant means the authenticated and public
+ * paths cannot drift into different enforcement modes.
+ *
+ * To roll back, set this to `"Content-Security-Policy-Report-Only"`. Nothing
+ * else changes: the policy string, the nonce and the reporting endpoints are
+ * identical either way, so a revert is one word and needs no other edit.
+ */
+export const CSP_HEADER = "Content-Security-Policy";
 
 export interface CspOptions {
   /** per-request nonce; Next stamps this on its own inline bootstrap scripts */

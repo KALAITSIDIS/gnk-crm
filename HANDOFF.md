@@ -577,10 +577,13 @@ Sentry DSNs were "set and verified live"; neither was true. Corrected below.*
 
 ## 6. Known gaps
 
-- **CSP is still Report-Only.** It now has a durable sink (Sentry), so promoting
-  it to enforced is an evidence-backed decision — but it wants real traffic
-  first. Vercel runtime-log retention is ~1h, so grepping stdout later always
-  comes back empty, and **empty must not be read as clean**.
+- ~~**CSP is still Report-Only.**~~ **ENFORCED 2026-08-10**, after the nonce
+  collision was root-caused and fixed. `report-uri`/`report-to` stay in the
+  policy, so a blocked violation is still *reported* — the Sentry signal does
+  not go quiet now that the policy bites. The ~1h Vercel log-retention trap
+  still applies to anyone grepping stdout rather than reading Sentry: **empty
+  must not be read as clean**. Rollback is one word: `CSP_HEADER` in
+  `lib/services/csp.ts`. IMPROVEMENTS C1 owns the evidence.
 - **2FA is enforced at the application layer only.**
 - **B8 does not queue writes.** Offline slip signing was considered and
   rejected: it would put commission evidence in a client-side queue.
