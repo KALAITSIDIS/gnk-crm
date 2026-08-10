@@ -16,7 +16,7 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 | Production | `gnk-crm.vercel.app` healthy; **auto-deploys every push**. **A cache-restored build can keep an OLD `NEXT_PUBLIC_*` value compiled in — see §2b, it caused a login outage on 2026-08-09.** |
 | Hosted DB | `yjgirvzgoiywdojnpkpd` — **28 migrations**, `non_filename_versions` = 0, chain verifies, **74 events** |
 | Data | `share_links` 2 (1 live, 1 revoked) · `tasks` 0 · `deals` 1 · **all of it operator test data** (§0) |
-| Tests | **474 unit** · **32 RLS** · **174 desktop E2E** (3 skipped) — all three run in CI |
+| Tests | **486 unit** · **32 RLS** · **174 desktop E2E** (3 skipped) — all three run in CI. **All three counted by running them, 2026-08-10**; RLS and E2E were already right, unit was 12 behind. Re-running E2E rewrites the 12 tracked `tests/screenshots/*.png` — §7 |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
 | Backups | ✅ **`2026-08-10` is the primary** — newest automated set, `verified:true`, `problems:[]`, 55 files, **events inDump 74 = live 74**, written to `D:\dev\TSOPOZIDIS\gnk-backups`. `2026-08-06` is the restore-*proven* one (all 73 event hashes byte-identical to production). Sets: 07-30 · 07-31 (Storage) · 08-04 (superseded) · 08-06 · 08-07 · 08-08 · 08-09 · **08-10**. Nightly ran 03:46 on 2026-08-10, verified. **STILL SINGLE-MACHINE — a current off-site archive is built and waiting to be copied to USB, §3.3** |
 
@@ -664,9 +664,13 @@ Sentry DSNs were "set and verified live"; neither was true. Corrected below.*
     looked like.** Run the suite right after a `db reset` and they silently
     become pictures of an empty app — `leads-desktop.png` halved, 207 KB → 102 KB
     — which is a downgrade, not a change, and it will ride along in your next
-    `git add -A`. They are report artifacts, not a `toHaveScreenshot` baseline,
-    so nothing fails; just `git checkout HEAD -- tests/screenshots/` unless you
-    deliberately want to refresh them against populated data.
+    `git add -A`. **It goes the other way just as easily**: on 2026-08-10, run
+    against a stack that had been up two days, the same file went 207 KB →
+    525 KB. Bigger is not better here either — both directions are unintended
+    churn in tracked files from a run you did for some other reason. They are
+    report artifacts, not a `toHaveScreenshot` baseline, so nothing fails; just
+    `git checkout HEAD -- tests/screenshots/` unless you deliberately want to
+    refresh them.
   - **Killing a backgrounded `npm run dev` leaves `next dev` alive, and Playwright
     will then reuse the wreckage.** `playwright.config.ts` sets
     `reuseExistingServer: true` against `npm run dev`, so a half-orphaned server
