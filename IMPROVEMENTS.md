@@ -168,6 +168,34 @@ Import exists (`scripts/import/`); export did not. **Why:** accountants, lawyers
 
 ### C1. Content-Security-Policy with nonces — 🔴 **STILL BROKEN IN PRODUCTION (re-measured 2026-08-09, later). The prerender half is fixed; the nonce still never arrives.**
 
+> **HYPOTHESIS TESTED AND DISPROVEN — 2026-08-10, deployment
+> `dpl_6argnu7s…` (`97a41e2`), measured against production, not reasoned about.**
+> `51e7050` set the **report-only header name on the request as well**, on the
+> theory that Next reads `content-security-policy || content-security-policy-
+> report-only` and only the first name was being dropped. It is not the name:
+>
+> ```
+> header advertises  : 'nonce-4b405d35f8b84b6f88daed7a5b3e60ea'
+> script tags        : 22        carrying it: 0        carrying nothing: 22
+> check:csp-nonce    : exit 1
+> ```
+>
+> **What that buys us, exactly as the commit predicted it would:** the drop is
+> not name-specific, so Vercel is not filtering a known security-header name. It
+> is either the request-header override mechanism as a whole, or the value.
+> **The next experiment is the one that separates those two, and it is cheap:**
+> `proxy.ts` already sets `x-nonce` on the same request object in the same call.
+> An echo route that reports which of `x-nonce` / `content-security-policy` /
+> `content-security-policy-report-only` actually arrived answers it in one
+> deploy — if `x-nonce` survives and the CSP names do not, it is name-based
+> filtering after all; if none survive, `NextResponse.next({ request: { headers }
+> })` simply does not work on this platform and the nonce has to travel another
+> way.
+>
+> **`51e7050` is now known-useless and should come out with that next push** —
+> it is harmless (request-side only, identical value, first name wins) but it is
+> dead weight in middleware and reads like a fix.
+
 > **Read this block before the two below it — it corrects both.**
 >
 > Production still serves **22 script tags and 0 nonces** on `/login`. Sentry
