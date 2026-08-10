@@ -519,10 +519,16 @@ Sentry DSNs were "set and verified live"; neither was true. Corrected below.*
   mandate renewals deliberately NOT built: they are contracts, and inventing
   Cyprus legal text is not an engineering decision. **Blocked on supplied wording,
   not on code** — the pipeline is proven, each is then an afternoon.
-- **C1 CSP** — NOT done, and not enforceable today. Report-only. The nonce
-  blocker is fixed and CI-guarded, but `/offline` is `force-static` for the PWA
-  and can never carry a nonce, so enforcing means accepting it renders without
-  hydrating. **That call, plus `frame-src vercel.live`, is what remains.**
+- **C1 CSP** — NOT done, and **broken in production rather than merely
+  unenforced** (re-measured 2026-08-09, later): `/login` serves **22 script tags
+  and 0 nonces**, so enforcing today would refuse all 22. **The line that stood
+  here — "the nonce blocker is fixed and CI-guarded" — was exactly backwards**,
+  and §0 now points at this section for C1, so it mattered. The code is correct
+  (`next start` on the same build stamps 22 of 22); the variable is Vercel, where
+  the `NextResponse.next({ request: { headers } })` override never reaches the
+  renderer. **IMPROVEMENTS C1 owns the evidence**; `npm run check:csp-nonce <url>`
+  measures it and exits 1 on production today. Still open beyond that: `/offline`
+  is `force-static` and can never carry a nonce, plus `frame-src vercel.live`.
 
 **Open, needing an operator decision (not engineering):**
 - **Get a backup off this machine.** `gnk-backups-offsite-2026-08-09.tar.gz`
