@@ -644,27 +644,45 @@ sha256sum -c gnk-backups-offsite-<date>.tar.gz.sha256
 > The current dataset is operator test data (§0), which lowers the stakes *today*
 > and not one day longer than that.
 
-**Current archive — `gnk-backups-offsite-2026-08-07.tar.gz`**, 2.0 MB, **141
-files**, all six sets including the first automated one.
+**CURRENT ARCHIVE — `gnk-backups-offsite-2026-08-10.tar.gz`** (2026-08-10),
+4.17 MB, **390 entries**, all **eight** sets including the 08-10 nightly.
 
 ```
-sha256  b689df4f2e2b280950a0c8aa61613ca8a788cceecfc90c61879008d9258d0b50
+sha256  a6360d1123975cf6b330d2240413cdfa8b1c831c7e2c3ae929a4c5fd251550ca
 ```
 
 Verified twice, because a tar that lists cleanly is not a tar that restores:
-extracted and compared every file against the original (**141/141
-byte-identical**), then ran `sha256sum -c SHA256SUMS` *inside the extracted
-2026-08-07 set* (**55/55**). Integrity holds end to end, not just at the archive
+extracted and `diff -r`'d against the original (**0 differences across all eight
+sets**), then ran `sha256sum -c SHA256SUMS` *inside the extracted 2026-08-10 set*
+(**55/55 OK, 0 failed**). Integrity holds end to end, not just at the archive
 boundary.
 
-The earlier `2026-08-06` archive was deleted 2026-08-07 after confirming it was a
-strict subset (0 entries absent from the new one) and that the new archive's
-checksum still verified. One archive, one checksum — two of them invites moving
-the wrong file.
+> ### ⚠️ THREE ARCHIVES ARE ON `D:` RIGHT NOW — COPY THE 08-10 ONE
+>
+> `2026-08-07` (2.0 MB) and `2026-08-09` (3.4 MB) are still there alongside it.
+> **Both are strict subsets of `2026-08-10` — verified 2026-08-10, 0 entries in
+> either that the new archive lacks** — so deleting them loses nothing, and the
+> rule this file already states is *one archive, one checksum; two of them
+> invites moving the wrong file*. Three is worse. Delete the older two once the
+> current one is off the machine:
+>
+> ```bash
+> cd "D:/dev/TSOPOZIDIS" && rm gnk-backups-offsite-2026-08-07.tar.gz* gnk-backups-offsite-2026-08-09.tar.gz*
+> ```
 
-> **STILL ON THIS MACHINE.** Until it is copied somewhere that is neither this
-> laptop nor the same Supabase account, the off-site gap is open and OneDrive is
-> not a substitute: it syncs, so a deletion or an encryption propagates.
+> **STILL ON THIS MACHINE — the off-site gap is OPEN as of 2026-08-10.** The
+> operator's plan is to copy it to a USB drive; **until that happens nothing has
+> changed**, and no line in this repo should be read as saying otherwise. There
+> was no removable drive attached when the archive was built, and `D:` is a
+> second volume on the same box. OneDrive is not a substitute: it syncs, so a
+> deletion or an encryption propagates.
+>
+> **Verify AT THE DESTINATION, not here** — a checksum computed on the machine
+> you copied from proves nothing about what arrived:
+>
+> ```bash
+> sha256sum -c gnk-backups-offsite-2026-08-10.tar.gz.sha256
+> ```
 
 ---
 

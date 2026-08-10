@@ -18,7 +18,7 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 | Data | `share_links` 2 (1 live, 1 revoked) · `tasks` 0 · `deals` 1 · **all of it operator test data** (§0) |
 | Tests | **474 unit** · **32 RLS** · **174 desktop E2E** (3 skipped) — all three run in CI |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
-| Backups | ✅ **`2026-08-09` is the primary** — newest automated set, `verified:true` (55 files, 73 events matching production at capture time), written to `D:\dev\TSOPOZIDIS\gnk-backups`. `2026-08-07` is the other verified set; `2026-08-06` is the restore-*proven* one (all 73 event hashes byte-identical to production). Sets: 07-30 · 07-31 (Storage) · 08-04 (superseded) · 08-06 · 08-07 · 08-08 · **08-09**. Nightly task last ran 03:45 on 2026-08-09, result 0, 0 missed runs. Nightly at 03:45 (§2; drills §4b/§4c). **All of it is single-machine now — §3.3** |
+| Backups | ✅ **`2026-08-10` is the primary** — newest automated set, `verified:true`, `problems:[]`, 55 files, **events inDump 74 = live 74**, written to `D:\dev\TSOPOZIDIS\gnk-backups`. `2026-08-06` is the restore-*proven* one (all 73 event hashes byte-identical to production). Sets: 07-30 · 07-31 (Storage) · 08-04 (superseded) · 08-06 · 08-07 · 08-08 · 08-09 · **08-10**. Nightly ran 03:46 on 2026-08-10, verified. **STILL SINGLE-MACHINE — a current off-site archive is built and waiting to be copied to USB, §3.3** |
 
 ---
 
@@ -534,11 +534,16 @@ Sentry DSNs were "set and verified live"; neither was true. Corrected below.*
   remains.
 
 **Open, needing an operator decision (not engineering):**
-- **Get a backup off this machine.** `gnk-backups-offsite-2026-08-09.tar.gz`
-  (3.5 MB, all 7 sets) is built and verified at both levels; sha256
-  `79490da63ae834c475109d8dbd5cf10ee48248ca797dc7ecf12baee1461d5ad7`. Verify at
-  the DESTINATION. **Highest-value item on this list — every backup is on one
-  machine.**
+- **Get a backup off this machine — STILL OPEN 2026-08-10, and this is the
+  highest-value item on the list.** A current archive is built and verified at
+  both levels: `gnk-backups-offsite-2026-08-10.tar.gz` (4.17 MB, **all 8 sets**,
+  390 entries), sha256
+  `a6360d1123975cf6b330d2240413cdfa8b1c831c7e2c3ae929a4c5fd251550ca`. **The
+  operator will copy it to a USB drive; that had not happened yet when this line
+  was written, so every backup is still on one machine.** Verify at the
+  DESTINATION — a checksum taken here proves nothing about what arrived. Two
+  older archives sit beside it and are strict subsets; BACKUP_RESTORE §3.3 has
+  the delete command for after the copy.
 - **B5 map** — tile provider is a spend + ToS call, and adds a CSP origin while
   C1 is mid-staging.
 - **`gerasimos@` has no 2FA** — reviewed 2026-08-09, kept as admin deliberately.
