@@ -41,7 +41,7 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 > | area | state |
 > |---|---|
 > | Supabase keys | **BOTH** were the disabled legacy pair. Fixed, and verified by real calls (login + a slip download), not by reading the env. §2b |
-> | CSP | **ROOT-CAUSED AND FIXED 2026-08-10** — the nonce now lands in production (`/login` 22 of 22). The cause was ours: a `Content-Security-Policy` key in `next.config.ts` `headers()` occupied the request header Next reads the nonce from, and won on Vercel but not locally. Three rounds had blamed the platform. Still report-only; enforcement is blocked on `/offline` alone. `npm run check:csp-nonce <url>` measures it. IMPROVEMENTS C1 owns it |
+> | CSP | **ROOT-CAUSED AND FIXED 2026-08-10** — the nonce now lands in production (`/login` 22 of 22). The cause was ours: a `Content-Security-Policy` key in `next.config.ts` `headers()` occupied the request header Next reads the nonce from, and won on Vercel but not locally. Three rounds had blamed the platform. **Then ENFORCED the same day** — `/offline` was not a blocker after all (static text, 0 interactive elements). `npm run check:csp-nonce <url>` measures the nonce; rollback is `CSP_HEADER` in `lib/services/csp.ts`. IMPROVEMENTS C1 owns it |
 > | Sentry | server `SENTRY_DSN` was missing, so everything reported nowhere. Fixed; delivery **and** alerting proven with probes. Source maps + release tracking still missing — BACKLOG |
 >
 > **The pattern matters more than the three fixes.** Each was an undated
