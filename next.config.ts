@@ -31,7 +31,8 @@ const nextConfig: NextConfig = {
    * found no nonce, emitted `$undefined`, and stamped 0 of 22 script tags on
    * every production page. Locally it did not, which is why three rounds of
    * investigation blamed the platform. Measured and confirmed via
-   * `/api/csp-echo`; the evidence is in IMPROVEMENTS C1.
+   * a temporary `/api/csp-echo` route, since removed; the evidence it produced
+   * is in IMPROVEMENTS C1 and `docs/ENGINEERING_NOTES.md` §1.
    *
    * The whole policy — `frame-ancestors` included — is built per request in
    * `proxy.ts` and ships as Report-Only until C1 is promoted. Clickjacking stays

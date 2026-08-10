@@ -13,13 +13,49 @@ and a fixed bug may have been refixed differently since.
 
 ---
 
-## 1. Three bugs that only exist in production
+## 1. Four bugs that only exist in production
 
-All three shipped undetected because local dev is more forgiving than a
+All four shipped undetected because local dev is more forgiving than a
 production build. **Any change to upload, server-action or client/server
 boundary plumbing should be verified against `next build && next start`, not
 `next dev`.** Since 2026-08-04 the `e2e` CI job does exactly that on every push
 — it found the third one on its first run.
+
+**The fourth is worse than the others and worth reading first**, because
+`next build && next start` does NOT catch it: it reproduces only on Vercel, and
+the local run is what makes it look fixed.
+
+**A `Content-Security-Policy` key in `next.config.ts` `headers()` silently
+disables Next's nonce — on Vercel, and not locally** (2026-08-10, `929055e`).
+Next reads the per-request nonce off the REQUEST header of that exact name
+(`app-render.js` → `getScriptNonceFromHeader`). A header declared in
+`next.config.ts` lands under the same name, and **on Vercel it wins**: Next read
+`frame-ancestors 'none'`, found no nonce, emitted `"nonce":"$undefined"` into the
+RSC payload and stamped **0 of 22** script tags on every production page.
+Locally the middleware value wins and everything looks perfect.
+
+*Why it cost four days:* every symptom pointed outward. The policy was
+report-only so nothing broke visibly; the response header correctly advertised a
+nonce; the build output was right; the cache was `MISS`/`no-store`; and
+`next start` on the same build stamped 22 of 22. Three separate rounds concluded
+Vercel was *dropping* a header it was in fact delivering.
+
+*The diagnosis that worked, and the transferable lesson:* **stop asking why
+something is missing and measure what actually ARRIVED.** A temporary route that
+reported which request headers reached the handler answered it in one deploy —
+both headers arrived, and the CSP one simply wasn't ours. Every round that
+reasoned about the absence got it wrong.
+
+*Guard:* three E2E assertions now require that **no enforcing
+`Content-Security-Policy` response header exists**, with the reason in the
+failure message. `npm run check:csp-nonce <url>` measures any deployment and
+exits 1 when the header promises a nonce the scripts do not carry — the check
+that was missing while every local run stayed honest and blind.
+
+*Related trap, same family:* **a response header set through
+`NextResponse.next()` comes back round as a REQUEST header.** So "just set it in
+middleware instead" reproduces the collision, and a diagnostic routed through a
+branch that sets response headers will read its own output.
 
 **Binary uploads must be wrapped in a `Blob`** (2026-07-15, `3a546e2`).
 `@supabase/storage-js` sends a raw Node `Buffer`/`Uint8Array` as a *direct* fetch

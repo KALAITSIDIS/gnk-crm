@@ -195,6 +195,10 @@ Import exists (`scripts/import/`); export did not. **Why:** accountants, lawyers
 > traffic through Sentry, decide the `/offline` trade, resolve
 > `frame-src vercel.live`, then flip the header. Promoting it also restores
 > `frame-ancestors` to enforcing, which is what the fix traded away.
+>
+> **`/api/csp-echo` NO LONGER EXISTS** — it was temporary and was removed once it
+> had answered. The tables below quote what it returned; do not try to curl it.
+> `npm run check:csp-nonce <url>` is the permanent check and needs no deploy.
 
 > ### ✅ ROOT CAUSE — CONFIRMED BY MEASUREMENT 2026-08-10 (`124329b`)
 >
