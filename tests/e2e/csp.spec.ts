@@ -79,10 +79,21 @@ test.describe("Content-Security-Policy (report-only)", () => {
     expect(reportOnly).toContain("'strict-dynamic'");
     expect(reportOnly).toMatch(/'nonce-[a-f0-9]+'/);
 
-    // The enforced header must still forbid framing — staging the big policy
-    // must not quietly drop the clickjacking protection shipped in SEC-1..4.
-    expect(headers["content-security-policy"] ?? "").toContain("frame-ancestors 'none'");
-    expect(headers["x-frame-options"]).toBe("DENY");
+    // Framing stays ENFORCED — but by X-Frame-Options alone, and there must be
+    // NO enforcing Content-Security-Policy response header. One declared in
+    // next.config.ts lands on the REQUEST under the very name Next reads the
+    // nonce from, wins, and stamps 0 of 22 scripts: that was production for four
+    // days (IMPROVEMENTS C1, root-caused 2026-08-10). This is that regression
+    // guard, and the assertion above it is what makes it safe to have no CSP
+    // frame-ancestors.
+    expect(headers["x-frame-options"], "clickjacking guard missing (SEC-1)").toBe("DENY");
+    expect(
+      headers["content-security-policy"],
+      "an ENFORCING CSP header silently breaks the nonce — see next.config.ts",
+    ).toBeUndefined();
+    expect(reportOnly, "frame-ancestors must still ship inside the policy").toContain(
+      "frame-ancestors 'none'",
+    );
   });
 
   test("the policy names a reporting endpoint, and it accepts a report anonymously", async ({
@@ -518,9 +529,13 @@ test.describe("Content-Security-Policy (report-only)", () => {
         expect(policy, `${path} is served with no CSP`).toBeTruthy();
         expect(policy).toContain("script-src");
         expect(policy).toContain("object-src 'none'");
-        // clickjacking protection is enforced separately in next.config.ts and
-        // must survive on the public routes as well
-        expect(response?.headers()["content-security-policy"]).toContain("frame-ancestors 'none'");
+        // Clickjacking is enforced by X-Frame-Options on the public routes too,
+        // and frame-ancestors rides inside the report-only policy. There must be
+        // no enforcing CSP header here either — it would break the nonce exactly
+        // as it did in production (IMPROVEMENTS C1).
+        expect(response?.headers()["x-frame-options"]).toBe("DENY");
+        expect(policy).toContain("frame-ancestors 'none'");
+        expect(response?.headers()["content-security-policy"]).toBeUndefined();
       });
     }
   });

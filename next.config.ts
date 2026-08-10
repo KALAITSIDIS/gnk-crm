@@ -22,11 +22,25 @@ const nextConfig: NextConfig = {
    * both local and production, leaving the CRM framable and its record URLs
    * leaking through the Referer header.
    *
-   * NOT a full Content-Security-Policy: Next's inline bootstrap scripts need a
-   * nonce round-trip through the proxy to lock down script-src, which is a
-   * behavioural change and is tracked separately in IMPROVEMENTS.md. The
-   * frame-ancestors directive below is safe on its own — CSP directives that
-   * are omitted stay unrestricted, so this only forbids framing.
+   * ⚠️ **NEVER ADD A `Content-Security-Policy` KEY HERE.** This block carried
+   * `Content-Security-Policy: frame-ancestors 'none'` from the 2026-07-22 audit
+   * until 2026-08-10, and on Vercel it was silently breaking the nonce for four
+   * days. Next reads the per-request nonce off the REQUEST header of that exact
+   * name (`app-render.js` → `getScriptNonceFromHeader`); a header declared here
+   * lands under the same name and wins, so Next read `frame-ancestors 'none'`,
+   * found no nonce, emitted `$undefined`, and stamped 0 of 22 script tags on
+   * every production page. Locally it did not, which is why three rounds of
+   * investigation blamed the platform. Measured and confirmed via
+   * `/api/csp-echo`; the evidence is in IMPROVEMENTS C1.
+   *
+   * The whole policy — `frame-ancestors` included — is built per request in
+   * `proxy.ts` and ships as Report-Only until C1 is promoted. Clickjacking stays
+   * ENFORCED by `X-Frame-Options: DENY` below, which every current browser
+   * honours; that is the trade this removal made, deliberately.
+   *
+   * Moving the same header into middleware does NOT work either: a response
+   * header set through `NextResponse.next()` comes back round as a request
+   * header and reproduces the collision.
    */
   async headers() {
     return [
@@ -35,9 +49,10 @@ const nextConfig: NextConfig = {
         headers: [
           // Clickjacking: an admin can archive a listing, deactivate a user or
           // erase a contact's personal data in one click. None of those are
-          // undoable, so UI redressing has real consequences here.
+          // undoable, so UI redressing has real consequences here. With the CSP
+          // key gone (see above) this is the ENFORCING clickjacking guard, not a
+          // belt-and-braces duplicate of frame-ancestors.
           { key: "X-Frame-Options", value: "DENY" },
-          { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
           { key: "X-Content-Type-Options", value: "nosniff" },
           // Record UUIDs live in the path (/contacts/<uuid>). Send the origin
           // only, and nothing at all when leaving HTTPS.
