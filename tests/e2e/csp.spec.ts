@@ -375,15 +375,23 @@ test.describe("Content-Security-Policy (ENFORCED)", () => {
     return null;
   }
 
-  /** The seeded org the local dev app signs into. */
-  async function fixtureOrgId(svc: SupabaseClient): Promise<string> {
+  /**
+   * The profile the local dev app signs in as. A viewing needs `agent_id` as
+   * well as `org_id`, so both come from here rather than re-querying.
+   */
+  async function fixtureProfile(svc: SupabaseClient): Promise<{ id: string; orgId: string }> {
     const { data: profile } = await svc
       .from("profiles")
-      .select("org_id")
+      .select("id, org_id")
       .eq("email", ADMIN_EMAIL)
       .single();
     expect(profile, `no profile for ${ADMIN_EMAIL} — is the local stack seeded?`).not.toBeNull();
-    return profile!.org_id;
+    return { id: profile!.id, orgId: profile!.org_id };
+  }
+
+  /** The seeded org the local dev app signs into. */
+  async function fixtureOrgId(svc: SupabaseClient): Promise<string> {
+    return (await fixtureProfile(svc)).orgId;
   }
 
   /** Minimal rows: enough for the detail page to render its client code. */
@@ -476,6 +484,65 @@ test.describe("Content-Security-Policy (ENFORCED)", () => {
   }
 
   /**
+   * A viewing in the CURRENT week, with the property and contact it requires.
+   *
+   * `viewings` has three mandatory foreign keys — property, contact and agent —
+   * so this is the one fixture that cannot be a single insert. `agent_id` is the
+   * signed-in admin so the slip page's `canSign` is true for the reason it would
+   * be in real use, not because admin bypasses it.
+   *
+   * `scheduled_at` is NOW on purpose: `findViewingHref` walks the calendar back
+   * from today, so a viewing dated in the current week is found on the first
+   * iteration. Status stays `scheduled` with no `viewing_slips` row, which is
+   * what makes the sign page render the signature canvas rather than a receipt.
+   */
+  async function seedViewing(svc: SupabaseClient): Promise<string> {
+    const { id: agentId, orgId } = await fixtureProfile(svc);
+    const tag = Date.now().toString(36);
+
+    const { data: property, error: propErr } = await svc
+      .from("properties")
+      .insert({
+        org_id: orgId,
+        reference: `${CSP_FIXTURE_REF}V${tag}`,
+        property_type: "villa",
+        asking_price: 250000,
+      })
+      .select("id")
+      .single();
+    expect(propErr, `seeding a property for the viewing: ${propErr?.message}`).toBeNull();
+
+    const { data: contact, error: contactErr } = await svc
+      .from("contacts")
+      .insert({
+        org_id: orgId,
+        first_name: "CSP",
+        last_name: `Viewing-${tag}`,
+        phone_e164: `+357991${tag.slice(-5)}`,
+        notes: CSP_FIXTURE_TAG,
+      })
+      .select("id")
+      .single();
+    expect(contactErr, `seeding a contact for the viewing: ${contactErr?.message}`).toBeNull();
+
+    const { data: viewing, error: viewingErr } = await svc
+      .from("viewings")
+      .insert({
+        org_id: orgId,
+        property_id: property!.id,
+        contact_id: contact!.id,
+        agent_id: agentId,
+        scheduled_at: new Date().toISOString(),
+        status: "scheduled",
+      })
+      .select("id")
+      .single();
+    expect(viewingErr, `seeding a viewing: ${viewingErr?.message}`).toBeNull();
+
+    return `/viewings/${viewing!.id}`;
+  }
+
+  /**
    * Rows this spec created. Marker-based rather than id-based so a crashed run
    * is cleaned up by the next one. Events stay — append-only by design.
    *
@@ -486,6 +553,21 @@ test.describe("Content-Security-Policy (ENFORCED)", () => {
   test.afterAll(async () => {
     if (!isLocal()) return;
     const svc = serviceClient();
+
+    /**
+     * ORDER MATTERS. `viewings.property_id` and `.contact_id` are plain
+     * references with NO `on delete cascade`, so deleting the property first
+     * fails the foreign key and leaves the whole fixture set behind — which the
+     * next run then trips over. Viewings go first, and by property id rather
+     * than by a marker, because `viewings` has no free-text column to tag.
+     */
+    const { data: props } = await svc
+      .from("properties")
+      .select("id")
+      .like("reference", `${CSP_FIXTURE_REF}%`);
+    const propIds = (props ?? []).map((p) => p.id);
+    if (propIds.length) await svc.from("viewings").delete().in("property_id", propIds);
+
     await svc.from("properties").delete().like("reference", `${CSP_FIXTURE_REF}%`);
     await svc.from("contacts").delete().eq("notes", CSP_FIXTURE_TAG);
 
@@ -532,11 +614,15 @@ test.describe("Content-Security-Policy (ENFORCED)", () => {
 
   test("viewing detail reports no CSP violations", async ({ page }) => {
     await collectViolations(page);
-    const href = await findViewingHref(page);
-    // A clean seed database has no viewings in this org, so skip rather than
-    // assert nothing: a green run here is NOT evidence for this route unless a
-    // viewing exists. (Same self-skip convention as [PERF-2] paging.)
-    test.skip(!href, "no viewing visible to this org — nothing to open");
+    let href = await findViewingHref(page);
+    if (!href) {
+      // A clean seed database has no viewings in this org. This used to skip,
+      // which meant a green run was NOT evidence for this route — and it skipped
+      // in CI on the run that ENFORCED the policy. Seed instead, same trade the
+      // property and contact detail routes above already make.
+      test.skip(!isLocal(), "no viewing and seeding needs the local service key");
+      href = await seedViewing(serviceClient());
+    }
 
     await page.goto(href!, { waitUntil: "networkidle" });
     await page.waitForTimeout(700);
@@ -597,11 +683,19 @@ test.describe("Content-Security-Policy (ENFORCED)", () => {
     // The signature pad draws to <canvas> and exports a data: URL — exactly the
     // sort of thing img-src/worker-src can silently break.
     await collectViolations(page);
-    const href = await findViewingHref(page);
-    test.skip(!href, "no viewing visible to this org — nothing to sign");
+    let href = await findViewingHref(page);
+    if (!href) {
+      test.skip(!isLocal(), "no viewing and seeding needs the local service key");
+      href = await seedViewing(serviceClient());
+    }
 
     await page.goto(`${href}/sign`, { waitUntil: "networkidle" });
     await page.waitForTimeout(700);
+
+    // The canvas is the point: without it this route is an ordinary form and
+    // proves nothing about img-src/worker-src. A seeded viewing is `scheduled`
+    // with no slip, so the pad renders rather than a signed receipt.
+    await expect(page.locator("canvas")).toBeVisible();
 
     const violations = await readViolations(page);
     expect(
