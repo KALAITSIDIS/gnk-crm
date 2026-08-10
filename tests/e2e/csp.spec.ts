@@ -21,6 +21,9 @@ const LOCAL_SERVICE_KEY =
  */
 const CSP_FIXTURE_TAG = "csp-detail-fixture";
 const CSP_FIXTURE_REF = "CSP-FIXTURE-";
+/** Folder in the public `media` bucket holding this spec's uploaded fixtures. */
+const CSP_FIXTURE_MEDIA_DIR = "csp-fixture";
+const CSP_FIXTURE_MEDIA_PREFIX = `${CSP_FIXTURE_MEDIA_DIR}/`;
 
 function serviceClient(): SupabaseClient {
   return createClient(
@@ -421,14 +424,74 @@ test.describe("Content-Security-Policy (ENFORCED)", () => {
   }
 
   /**
+   * A 1x1 PNG. The codec is irrelevant — what is under test is whether the
+   * browser is ALLOWED to fetch `<img>` from the Supabase origin, not whether
+   * it can decode it. Kept inline so the fixture needs no binary in the repo.
+   */
+  const ONE_PIXEL_PNG = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+    "base64",
+  );
+
+  /**
+   * A property whose cover thumbnail is a real object in the public `media`
+   * bucket, so `/properties` renders an `<img>` at the Supabase origin and
+   * `img-src` is actually exercised.
+   *
+   * `path_thumb` is what the list reads (`publicMediaUrl` in
+   * `lib/utils/storage.ts` turns it into
+   * `<SUPABASE_URL>/storage/v1/object/public/media/<path>`), and `is_cover`
+   * is what makes it the one chosen.
+   */
+  async function seedPropertyWithCover(svc: SupabaseClient): Promise<void> {
+    const orgId = await fixtureOrgId(svc);
+    const tag = Date.now().toString(36);
+    const path = `${CSP_FIXTURE_MEDIA_PREFIX}${tag}/thumb.png`;
+
+    const up = await svc.storage
+      .from("media")
+      .upload(path, ONE_PIXEL_PNG, { contentType: "image/png", upsert: true });
+    expect(up.error, `uploading the fixture image: ${up.error?.message}`).toBeNull();
+
+    const { data: property, error: propErr } = await svc
+      .from("properties")
+      .insert({
+        org_id: orgId,
+        reference: `${CSP_FIXTURE_REF}${tag}`,
+        property_type: "villa",
+        asking_price: 250000,
+      })
+      .select("id")
+      .single();
+    expect(propErr, `seeding a property: ${propErr?.message}`).toBeNull();
+
+    const { error: mediaErr } = await svc.from("property_media").insert({
+      org_id: orgId,
+      property_id: property!.id,
+      kind: "photo",
+      path_thumb: path,
+      is_cover: true,
+    });
+    expect(mediaErr, `seeding property_media: ${mediaErr?.message}`).toBeNull();
+  }
+
+  /**
    * Rows this spec created. Marker-based rather than id-based so a crashed run
    * is cleaned up by the next one. Events stay — append-only by design.
+   *
+   * `property_media` rows go with the property (`on delete cascade`), but the
+   * BYTES in the bucket do not — Storage knows nothing about the foreign key,
+   * so an uploaded fixture would accumulate on every run without this.
    */
   test.afterAll(async () => {
     if (!isLocal()) return;
     const svc = serviceClient();
     await svc.from("properties").delete().like("reference", `${CSP_FIXTURE_REF}%`);
     await svc.from("contacts").delete().eq("notes", CSP_FIXTURE_TAG);
+
+    const { data: dirs } = await svc.storage.from("media").list(CSP_FIXTURE_MEDIA_DIR);
+    const stale = (dirs ?? []).map((d) => `${CSP_FIXTURE_MEDIA_DIR}/${d.name}/thumb.png`);
+    if (stale.length) await svc.storage.from("media").remove(stale);
   });
 
   const DETAIL_ROUTES: {
@@ -490,6 +553,12 @@ test.describe("Content-Security-Policy (ENFORCED)", () => {
     // property renditions. Without an actual image request this directive would
     // never be exercised, so assert the request happened before trusting the
     // clean result.
+    //
+    // This used to SKIP on a seed database, because `property_media` is empty
+    // there — so the one directive that exists for Storage was the one the
+    // suite never checked, and it skipped silently in CI on 2026-08-10 while
+    // the policy was being ENFORCED. It now seeds its own cover image, the
+    // same trade the detail routes above already make.
     await collectViolations(page);
     const storageHits: string[] = [];
     page.on("response", (r) => {
@@ -499,10 +568,22 @@ test.describe("Content-Security-Policy (ENFORCED)", () => {
     await page.goto("/properties", { waitUntil: "networkidle" });
     await page.waitForTimeout(700);
 
-    test.skip(
-      storageHits.length === 0,
-      "no property media in this database — img-src from Storage is unexercised",
-    );
+    if (storageHits.length === 0) {
+      test.skip(
+        !isLocal(),
+        "no property media and seeding needs the local service key",
+      );
+      await seedPropertyWithCover(serviceClient());
+      await page.goto("/properties", { waitUntil: "networkidle" });
+      await page.waitForTimeout(700);
+    }
+
+    // The point of the test. A clean violations list means nothing if the
+    // browser never asked Storage for anything.
+    expect(
+      storageHits.length,
+      "no request reached Supabase Storage — img-src was never exercised",
+    ).toBeGreaterThan(0);
 
     const violations = await readViolations(page);
     expect(
