@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { isLocal } from "./helpers";
 
 /**
  * Lead duplicate detection (IMPROVEMENTS B6 / doc 02 §C4). Capturing a lead can
@@ -10,9 +11,9 @@ import { test, expect } from "@playwright/test";
  * A unique phone per run keeps the shared local dev DB from making an older
  * fixture contact collide with this test.
  */
-test.beforeEach(async ({ baseURL }) => {
+test.beforeEach(async () => {
   test.skip(
-    !/localhost|127\.0\.0\.1/.test(baseURL ?? ""),
+    !isLocal(),
     "write flows are local-only — never run against production data",
   );
 });

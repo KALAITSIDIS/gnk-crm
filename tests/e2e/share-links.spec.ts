@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { test, expect } from "@playwright/test";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { type SupabaseClient } from "@supabase/supabase-js";
+import { isLocal, serviceClient } from "./helpers";
 
 /**
  * Buyer proposal links (IMPROVEMENTS B3).
@@ -11,20 +12,12 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
  * assert what actually reaches the DOM, because that is what a buyer sees.
  */
 
-const SERVICE_ROLE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY ??
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU";
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "http://127.0.0.1:54321";
-
 const SECRET_NOTE = "E2E-INTERNAL-NOTE-MUST-NOT-LEAK";
 const OWNER_NET = 111111;
 const MIN_PRICE = 222222;
 const ASKING = 333333;
 
-const svc = (): SupabaseClient =>
-  createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
+const svc = (): SupabaseClient => serviceClient();
 
 const sha = (t: string) => createHash("sha256").update(t).digest("hex");
 
@@ -84,9 +77,9 @@ async function cleanup(admin: SupabaseClient, ids: { linkId?: string; propertyId
 }
 
 test.describe("Buyer proposal links", () => {
-  test.beforeEach(({ baseURL }) => {
+  test.beforeEach(() => {
     test.skip(
-      !/localhost|127\.0\.0\.1/.test(baseURL ?? ""),
+      !isLocal(),
       "seeds properties and links — local only, never production",
     );
   });

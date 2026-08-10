@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { assertNoProblems, runTag, watchForProblems } from "./helpers";
+import { assertNoProblems, isLocal, runTag, watchForProblems } from "./helpers";
 
 /**
  * Critical-path smoke (audit brief Phase 2): the chain a Paphos desk runs
@@ -18,9 +18,9 @@ import { assertNoProblems, runTag, watchForProblems } from "./helpers";
 
 const TAG = runTag();
 
-test.beforeEach(async ({ baseURL }) => {
+test.beforeEach(async () => {
   test.skip(
-    !/localhost|127\.0\.0\.1/.test(baseURL ?? ""),
+    !isLocal(),
     "write flows are local-only — never run against production data",
   );
 });

@@ -1,7 +1,6 @@
 import { test, expect } from "@playwright/test";
-import { createClient } from "@supabase/supabase-js";
 import { totp } from "../../lib/testing/totp";
-import { ADMIN_EMAIL, ADMIN_PASSWORD } from "./helpers";
+import { ADMIN_EMAIL, ADMIN_PASSWORD, isLocal, serviceClient } from "./helpers";
 
 /**
  * Force-remove every factor on the shared local admin.
@@ -17,16 +16,8 @@ import { ADMIN_EMAIL, ADMIN_PASSWORD } from "./helpers";
  * `supabase status`; it is not a secret and only ever reaches 127.0.0.1. This
  * whole spec is skipped unless the target is localhost.
  */
-const LOCAL_SERVICE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY ??
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU";
-
 async function clearAdminFactors(): Promise<void> {
-  const admin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL ?? "http://127.0.0.1:54321",
-    LOCAL_SERVICE_KEY,
-    { auth: { autoRefreshToken: false, persistSession: false } },
-  );
+  const admin = serviceClient();
   const { data: users } = await admin.auth.admin.listUsers();
   const user = users?.users.find((u) => u.email === ADMIN_EMAIL);
   if (!user) return;
@@ -47,9 +38,9 @@ async function clearAdminFactors(): Promise<void> {
  * It restores the account to its original state at the end — a leftover factor
  * would lock every other spec out of the shared local login.
  */
-test.beforeEach(async ({ baseURL }) => {
+test.beforeEach(async () => {
   test.skip(
-    !/localhost|127\.0\.0\.1/.test(baseURL ?? ""),
+    !isLocal(),
     "2FA enrolment mutates the login — local only, never production",
   );
   // self-heal: a previous crashed run must not keep the suite locked out
@@ -57,8 +48,8 @@ test.beforeEach(async ({ baseURL }) => {
 });
 
 // belt and braces — runs even when the test throws mid-flow
-test.afterEach(async ({ baseURL }) => {
-  if (!/localhost|127\.0\.0\.1/.test(baseURL ?? "")) return;
+test.afterEach(async () => {
+  if (!isLocal()) return;
   await clearAdminFactors();
 });
 

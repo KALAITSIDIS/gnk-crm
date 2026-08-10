@@ -1,6 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { ADMIN_EMAIL } from "./helpers";
+import { ADMIN_EMAIL, isLocal, serviceClient } from "./helpers";
 
 /**
  * Admin surface for tasks nobody can see (BACKLOG T-audit-tasks).
@@ -16,20 +15,7 @@ import { ADMIN_EMAIL } from "./helpers";
  * stranded — so it is pinned here rather than left to a reviewer.
  */
 
-const baseUrl = () => process.env.E2E_BASE_URL ?? "http://localhost:3000";
-const isLocal = () => /localhost|127\.0\.0\.1/.test(baseUrl());
-
-const LOCAL_SERVICE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY ??
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU";
-
 const TITLE_PREFIX = "STRANDED-FIXTURE";
-
-function serviceClient(): SupabaseClient {
-  return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "http://127.0.0.1:54321", LOCAL_SERVICE_KEY, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-}
 
 test.describe("Stranded tasks", () => {
   test.skip(!isLocal(), "seeding needs the local service key");
