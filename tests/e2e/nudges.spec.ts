@@ -1,6 +1,12 @@
 import { test, expect } from "@playwright/test";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { ADMIN_EMAIL, assertNoProblems, watchForProblems } from "./helpers";
+import { type SupabaseClient } from "@supabase/supabase-js";
+import {
+  assertNoProblems,
+  fixtureProfile,
+  isLocal,
+  serviceClient,
+  watchForProblems,
+} from "./helpers";
 
 /**
  * Automated follow-up nudges (IMPROVEMENTS B7).
@@ -15,24 +21,15 @@ import { ADMIN_EMAIL, assertNoProblems, watchForProblems } from "./helpers";
  * It also pins the retirement of the old "Viewings awaiting feedback" virtual
  * section, which viewing_feedback nudges replaced.
  *
- * The key below is the standard local-stack demo service key printed by
- * `supabase status`; it is not a secret and only ever reaches 127.0.0.1. The
- * spec is skipped unless the target is localhost, and it removes its own
+ * Seeding uses the shared `serviceClient()` in `./helpers` — the standard
+ * local-stack demo key, not a secret, and it only ever reaches 127.0.0.1. This
+ * spec kept its own copy of that client (and of the localhost check) until
+ * 2026-08-10; `performance.spec.ts` needing a third copy is what finally moved
+ * them. The spec is skipped unless the target is local, and it removes its own
  * fixture afterwards.
  */
-const LOCAL_SERVICE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY ??
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU";
 
 const DEAL_TITLE = "E2E nudge fixture deal";
-
-function serviceClient(): SupabaseClient {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL ?? "http://127.0.0.1:54321",
-    LOCAL_SERVICE_KEY,
-    { auth: { autoRefreshToken: false, persistSession: false } },
-  );
-}
 
 /** Tasks first (they FK the deal), then the deal. Events stay — append-only. */
 async function removeFixture(svc: SupabaseClient): Promise<void> {
@@ -43,26 +40,25 @@ async function removeFixture(svc: SupabaseClient): Promise<void> {
   }
 }
 
-/** Admin profile + the org's first sale stage — the minimum to mint a deal. */
+/**
+ * Admin profile + the org's first sale stage — the minimum to mint a deal.
+ * The profile half is `fixtureProfile` in `./helpers`; only the stage lookup is
+ * specific to this spec, because only a DEAL needs a pipeline stage.
+ */
 async function fixtureContext(svc: SupabaseClient) {
-  const { data: profile } = await svc
-    .from("profiles")
-    .select("id, org_id")
-    .eq("email", ADMIN_EMAIL)
-    .single();
-  expect(profile, `no profile for ${ADMIN_EMAIL} — is the local stack seeded?`).not.toBeNull();
+  const { id: profileId, orgId } = await fixtureProfile(svc);
 
   const { data: stage } = await svc
     .from("deal_stages")
     .select("id")
-    .eq("org_id", profile!.org_id)
+    .eq("org_id", orgId)
     .eq("deal_type", "sale")
     .order("sort_order")
     .limit(1)
     .single();
   expect(stage, "the seeded org has no sale pipeline").not.toBeNull();
 
-  return { profileId: profile!.id, orgId: profile!.org_id, stageId: stage!.id };
+  return { profileId, orgId, stageId: stage!.id };
 }
 
 /** A deal silent for `daysSilent` days, assigned to the signed-in admin. */
@@ -89,16 +85,16 @@ async function seedStaleDeal(svc: SupabaseClient, daysSilent: number) {
 }
 
 test.describe("Follow-up nudges", () => {
-  test.beforeEach(async ({ baseURL }) => {
+  test.beforeEach(async () => {
     test.skip(
-      !/localhost|127\.0\.0\.1/.test(baseURL ?? ""),
+      !isLocal(),
       "seeds a deal and runs the cron job — local only, never production",
     );
     await removeFixture(serviceClient()); // self-heal after a crashed run
   });
 
-  test.afterEach(async ({ baseURL }) => {
-    if (!/localhost|127\.0\.0\.1/.test(baseURL ?? "")) return;
+  test.afterEach(async () => {
+    if (!isLocal()) return;
     await removeFixture(serviceClient());
   });
 
