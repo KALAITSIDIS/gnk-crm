@@ -166,8 +166,42 @@ Import exists (`scripts/import/`); export did not. **Why:** accountants, lawyers
 
 ## C. Strategic / architecture
 
-### C1. Content-Security-Policy with nonces — 🔴 **STILL BROKEN IN PRODUCTION (re-measured 2026-08-09, later). The prerender half is fixed; the nonce still never arrives.**
+### C1. Content-Security-Policy with nonces — 🔴 **BROKEN IN PRODUCTION, ROOT-CAUSED 2026-08-10. `next.config.ts`'s own `frame-ancestors 'none'` header is what Next reads instead of the nonce policy. Fix is one line and a security trade — operator's call.**
 
+> ### ✅ ROOT CAUSE — CONFIRMED BY MEASUREMENT 2026-08-10 (`124329b`)
+>
+> **`next.config.ts` sets `Content-Security-Policy: frame-ancestors 'none'` on
+> `/:path*`, and on Vercel that is the value Next reads the nonce out of.**
+> Production and local, same build, same commit:
+>
+> | `/api/csp-echo` | local | production |
+> |---|---|---|
+> | `cspDirectives` | all **14** of ours (`default-src`, `script-src`, … `report-to`) | **`["frame-ancestors"]`** |
+> | `cspCarriesNonce` | true | **false** |
+> | `cspIsFrameAncestorsOnly` | false | **true** |
+>
+> `getScriptNonceFromHeader` reads `frame-ancestors 'none'`, finds no nonce,
+> emits `$undefined`, and stamps 0 of 22 scripts. Nothing is dropped and nothing
+> is cached — **our policy is overwritten by our own config header.**
+>
+> **The fix is a security trade, so it is the operator's call.** Removing that
+> one line frees the header name and the nonce should land. `X-Frame-Options:
+> DENY` is set immediately above it and is honoured by every current browser, so
+> clickjacking stays covered — but `frame-ancestors` would then be enforced only
+> by `X-Frame-Options` until C1 itself goes enforcing, since the directive in the
+> report-only policy reports without blocking.
+>
+> **Do not "fix" it by moving the same header into middleware.** A response
+> header set through `NextResponse.next()` comes back round as a request header
+> (measured while building the diagnostic), so that reproduces the collision by
+> another route.
+>
+> Worth a line in `docs/ENGINEERING_NOTES.md` once settled: **a
+> `Content-Security-Policy` entry in `next.config.ts` `headers()` silently
+> disables Next's nonce mechanism on Vercel, and not locally.**
+
+> ### Superseded — the suspect above is now confirmed; kept for the reasoning
+>
 > ### PRIME SUSPECT, 2026-08-10 — `next.config.ts` occupies the header Next reads
 >
 > `/api/csp-echo` (deployment `dpl_u7QkfUVBp6Z6RHZvA9BgFnzjXhfu`, `f0f9f20`) came
