@@ -2511,6 +2511,10 @@ signing route compiled.
   1 flaky under a green tick, which is the whole problem in one line. Same move
   as the rest of this entry: the claim was checked instead of read.
 
+  The crash behind that number was chased down and fixed the same day —
+  `T-headless-shell-segv` below, including the two wrong fixes that shipped en
+  route.
+
 Verified by running the full desktop suite against a server started from an
 emptied `.next/dev`: **177 passed, 0 failed, 14.1m** — faster than the 16.6m run
 it replaced, because the compiles moved rather than multiplied.
@@ -2543,3 +2547,94 @@ as *date every claim and re-check rather than re-read*. Corrected in `ddfed85`.
 itself and expects Playwright to reuse it. The same option is what let a stale
 server be adopted silently in §1. Anything that hardens this must keep the reuse
 and check *what* is being reused — dropping the option breaks CI.
+
+## 2026-08-11 · T-headless-shell-segv — two wrong fixes, and the bar that found the right one
+
+**`chrome-headless-shell` was segfaulting in CI, `retries: 1` had been absorbing
+it silently, and `security.spec.ts` took the blame for two days.** Fixed by
+`channel: "chromium"` — a workaround, not a root cause. The interesting part is
+not the fix; it is that two plausible, well-evidenced fixes shipped first and both
+were wrong in the same way.
+
+### How it surfaced
+
+Only because `failOnFlakyTests` was briefly switched on (`T-e2e-cold-server`) and
+turned `main` red on a docs-only push. That option was itself reverted, but it
+produced the first real measurement: `gh run view --log | grep flaky` over recent
+runs turned "CI is green" into a number, and the number was not 100%. The C2 merge
+run hours earlier had the same 2 flaky tests and had been reported green.
+
+### The symptom lied about its location
+
+`browser.newContext: Target page, context or browser has been closed`, reported
+against `security.spec.ts`'s anonymous-visitor loop — ~20 fresh contexts in a row,
+which reads exactly like a resource-exhaustion bug in that loop. It was not.
+chrome-headless-shell died mid-run with `Received signal 11 SEGV_MAPERR
+0000000001b0`, and the *next* test to request a context inherited the failure.
+That test was `security.spec.ts` purely because `pwa` sorts before `security`.
+
+### Two wrong fixes, both shipped
+
+**1. GPU init** (`3761b89`, reverted). The crash is immediately preceded, every
+time, by `drmGetDevices2() has not found any devices` and `InitializeSandbox()
+called with multiple threads in process gpu-process`. A GPU-less runner
+initialising a GPU process, seconds after `<launched>`. `--disable-gpu
+--disable-software-rasterizer` was added for CI, and the app was checked first for
+WebGL (none — the only `getContext` calls are `"2d"`). The flags provably applied:
+present in the launch args, and the GPU warnings stopped. **3 of 5 sampled runs
+still crashed.**
+
+**2. The `/offline` CSP violation burst** (`e24e452`, kept). `/offline` was
+`force-static`, so it carried no per-request nonce, and `'strict-dynamic'` makes
+the browser ignore `'self'` — every script on it refused, ~20 violations at once.
+**In 4 of 4 crashes, all 20 console lines before the signal came from
+`http://localhost:3000/offline`.** Giving the page a nonce took violations to
+**0**. **4 of 5 sampled runs still crashed.**
+
+### What both had in common
+
+**"X appears immediately before the signal in N of N crashes" was read as
+causation, when it only ever showed what sat in the log buffer at the moment of
+death.** Twice. The second time it was 4-for-4 and felt conclusive. A fixed fault
+address inside a vendored binary was the signal that mattered all along:
+identical across every run and pid, which is a deterministic code path in code
+this repo does not control.
+
+### What actually worked was procedural
+
+Treat the next idea as an **experiment with a bar to clear**, on a branch, and
+measure it: `channel: "chromium"` runs full Chromium in new headless mode instead
+of the shell binary Playwright has used for headless launches since 1.49.
+
+|  | runs crashed |
+|---|---|
+| baseline | 3 of 6 |
+| GPU flags | 3 of 5 |
+| `/offline` nonce | 4 of 5 |
+| **`channel: "chromium"`** | **0 of 5**, plus a clean merge run |
+
+Zero flaky in every one — the first time all 177 passed on first attempt.
+
+**The reusable technique:** `gh run rerun` re-runs a commit without a new push, so
+an intermittent failure can be sampled 5 times for the cost of ~30 minutes and no
+production deploys. Before that, every "fix" was being judged on a single run, at
+a base rate where a coin flip looks like success.
+
+**The reusable rule, now in HANDOFF §6: anything that does not come with a sample
+count is not an answer.**
+
+### Two notes on what was kept and what it cost
+
+`e24e452` stays even though its stated reason is dead: a page whose every script
+is refused is a defect regardless of what crashes, nonce coverage is now uniform
+across every route, and it removes ~20 pointless `Sentry.captureMessage` calls per
+view. Reverting would restore a real defect to fix nothing. Its production impact
+was near zero, though — Vercel runtime logs held **2 lines in 24h**, both from
+that afternoon's own smoke check, so nobody was reaching `/offline` to generate
+reports. The per-view cost was real; the view count was the factor not checked
+before implying a flood.
+
+And this is a **workaround**. It establishes that the shell binary crashes and the
+full one does not. Nobody has explained why `chrome-headless-shell` dereferences
+null at `0x1b0`, so a Playwright upgrade could make the line unnecessary or move
+the crash somewhere new. Re-measure; do not assume.
