@@ -1,3 +1,4 @@
+import { withSentryConfig } from "@sentry/nextjs";
 import type { NextConfig } from "next";
 import createNextIntlPlugin from "next-intl/plugin";
 
@@ -72,4 +73,64 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default withNextIntl(nextConfig);
+/**
+ * Sentry build plugin — source maps and release tracking (BACKLOG, 2026-08-11).
+ *
+ * WHY: delivery and alerting were already proven, but the DATA was unusable.
+ * Every production stack arrived minified — the TypeError investigated on
+ * 2026-08-10 read `_next/static/chunks/44sdjkbb-9351.js:6:5336`, which names no
+ * file and no line. This uploads the maps so a frame points at real source.
+ *
+ * Turbopack: `next build` uses Turbopack on Next 16, and this plugin was
+ * webpack-only for a long time. @sentry/nextjs 10.65 ships Turbopack support
+ * (`constructTurbopackConfig`) and uploads via Next 16's
+ * `runAfterProductionCompile` hook, which is why the version matters — do not
+ * downgrade it without re-checking that maps still upload.
+ *
+ * ⚠️ THIS FILE IS THE ONE THAT ATE THE CSP NONCE. A `Content-Security-Policy`
+ * key in `headers()` above landed on the REQUEST and blanked every nonce for
+ * four days (see the warning there). `withSentryConfig` does not add headers,
+ * but it DOES rewrite the build — `csp.spec.ts` and `security.spec.ts` assert
+ * the enforcing policy still carries a nonce, and those are the tests to watch
+ * if this wrapper is ever changed.
+ */
+export default withSentryConfig(withNextIntl(nextConfig), {
+  // org/project/authToken are read from SENTRY_ORG / SENTRY_PROJECT /
+  // SENTRY_AUTH_TOKEN, all three present in Vercel for Production and Preview
+  // (verified 2026-08-11, not assumed — the backlog entry's list was checked
+  // against the dashboard before this was written).
+
+  /**
+   * Upload only when a token exists, decided HERE rather than left to the
+   * plugin's internal skip. CI and every local `npm run build` run without
+   * SENTRY_AUTH_TOKEN, and a build that dies on a missing upload credential
+   * would take the whole pipeline with it. Explicit beats a warning path.
+   */
+  sourcemaps: {
+    disable: !process.env.SENTRY_AUTH_TOKEN,
+    /**
+     * Do NOT ship .map files. They reconstruct the original source, and this
+     * app's client bundles carry the CRM's business logic. Sentry keeps its own
+     * copy; the public one is deleted after upload.
+     */
+    deleteSourcemapsAfterUpload: true,
+  },
+
+  /**
+   * Events ALREADY carry a release name — Sentry auto-detects
+   * VERCEL_GIT_COMMIT_SHA at runtime, which is why issues on 2026-08-10 read
+   * `release 7b9c11c213c7` despite the backlog saying no release was attached.
+   * What was missing is the release OBJECT in Sentry that the maps attach to.
+   * Naming it explicitly keeps the two halves the same string.
+   */
+  release: { name: process.env.VERCEL_GIT_COMMIT_SHA },
+
+  // Client chunks are served from a route the default upload globs miss.
+  widenClientFileUpload: true,
+
+  // Build logs are read when a deploy misbehaves; keep them quiet otherwise.
+  silent: !process.env.CI,
+
+  // A private client CRM does not need to send build analytics to a vendor.
+  telemetry: false,
+});
