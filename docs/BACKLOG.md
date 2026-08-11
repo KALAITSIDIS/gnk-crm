@@ -200,6 +200,24 @@ built without explicit direction.
   `revoke … from public, anon` and a `get_advisors` pass, which is precisely
   what migration 0021 got wrong. Then a "2FA" column and an RLS test that a
   non-admin gets nothing back.
+- **Every RLS policy calls `current_org_id()` once per ROW (measured 2026-08-10).**
+  Found while building C2, in passing — this is pre-existing and has nothing to do
+  with that change. `EXPLAIN (ANALYZE, VERBOSE)` on a 50-row `contacts` select
+  shows `Filter: (contacts.org_id = current_org_id())` attached to the scan node,
+  so the `security definer` lookup against `profiles` runs for every candidate
+  row of every query, on all 26 tables whose policies use it.
+
+  **The fix is one character per call site and is Supabase's own documented
+  pattern**: wrapping a predicate in a scalar subquery lets Postgres hoist it to
+  an `InitPlan` evaluated once per statement. Measured both ways during C2 on the
+  same table: bare → per-row `Filter`, wrapped → `InitPlan 1 -> Result … loops=1`.
+  0029 already writes its own predicate as `(select public.mfa_satisfied())` for
+  exactly this reason.
+
+  Not urgent at current data volumes (the largest table holds tens of rows), and
+  it is a **rewrite of all 86 existing policies**, so it wants its own session,
+  its own RLS-suite run and a before/after `EXPLAIN` on each shape rather than a
+  blind find-and-replace. Worth doing before the desk puts real volume in.
 - ~~**Sentry has no source maps and no release tracking (noticed 2026-08-09).**~~
   **SHIPPED 2026-08-11 (`70e4ceb`) — one acceptance check still open.**
 

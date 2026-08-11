@@ -496,7 +496,52 @@ sites, which is why it is now a single `CSP_HEADER` constant.
 2. Two things the local sweep still cannot exercise: **PDF generation** (the evidence report renders server-side, and the download is a signed URL) and any screen whose data does not exist locally — `property_media` is empty on a seed database, so the Storage `img-src` result above came from a temporary fixture and the test self-skips without one.
 3. Then flip the response header name from `Content-Security-Policy-Report-Only` to `Content-Security-Policy` in `proxy.ts` — a one-line change, trivially revertible.
 
-### C2. Two-factor authentication — ✅ **DONE 2026-07-24** (opt-in; DB-level enforcement outstanding)
+### C2. Two-factor authentication — ✅ **DONE 2026-07-24** (opt-in). DB-level enforcement is **BUILT AND VERIFIED LOCALLY, NOT APPLIED TO HOSTED** — see the box below.
+
+> ### 🟡 DB-level enforcement: migration 0029 exists, production is UNCHANGED
+>
+> **As of 2026-08-10, production still enforces 2FA in the application only.**
+> The work sits on branch `c2-aal2-rls` (8 commits), fully verified against the
+> local stack, and **has never been applied to hosted**. Do not read this section
+> as describing production until someone runs HANDOFF §3 and says so here.
+>
+> Design: `docs/superpowers/specs/2026-08-10-c2-db-2fa-enforcement-design.md`
+> Plan and rollback: `docs/superpowers/plans/2026-08-10-c2-db-2fa-enforcement.md`
+>
+> **What it does.** `0029_require_aal2.sql` adds `public.mfa_satisfied()` — true
+> when the caller holds an `aal2` session **or has no verified factor at all**
+> (the Supabase opt-in template) — and a `require_aal2` restrictive policy on all
+> **29** RLS-enabled tables. A stolen `aal1` JWT hitting PostgREST directly then
+> reads nothing.
+>
+> **A user with no verified factor is untouched, deliberately.** That is the
+> lockout safety net: production has one admin without a factor (BACKLOG,
+> 2026-08-09 — *"C2 must not assume every admin has a factor"*), and he is who
+> gets back in if this misfires.
+>
+> **Verified locally, measured not assumed:**
+>
+> | check | result |
+> |---|---|
+> | RLS suite | **44 passed** — the pre-existing 32 unchanged, 12 new |
+> | the `aal` claim exists | proven: `mfa_satisfied()` is `true` only after a real TOTP challenge |
+> | unfactored user | completely unaffected — reads and writes as before |
+> | `anon` buyer pages | `share-links.spec.ts` 5 passed; `anon` is not a member of `authenticated`, so the policy never evaluates for it |
+> | coverage guard | `rls_aal2_coverage()` returns `[]`, and **verifies the policy's SHAPE**, not just its name |
+> | plan shape | `InitPlan … loops=1` — the predicate is evaluated **once per statement**, not per row |
+>
+> **Two guards were proven by breaking them, not by watching them pass:**
+> weakening the predicate to `status is not null` made only the
+> abandoned-enrolment test fail; replacing one policy with a permissive
+> `using (true)` of the same name made the coverage guard report that table.
+>
+> **Known red, pre-existing and NOT caused by this work:**
+> `tests/e2e/mfa.spec.ts` ("password alone stops working once a factor is
+> enrolled") fails at the enrolment step — the QR dialog never renders.
+> Reproduced on `main` with 0029 absent, so it is not a regression. It matters
+> here because it is the app-layer half of the same feature: **if enrolment is
+> genuinely broken, a user who loses a device cannot re-enrol**, which is exactly
+> the recovery path this design assumed works. Settle it before applying 0029.
 Spec-Essential, deferred pending the client's call — the operator asked for it on 2026-07-24. TOTP via Supabase Auth, **no migration**. Full rationale in DECISIONS `T-2fa`.
 
 **Shipped:** self-service enrolment at **`/security`** (deliberately not `/settings`, which is admin-only — an agent holds the same client PII as an admin), QR plus a copyable secret, a challenge screen at `/login/verify`, and removal behind a confirmation. Enrolment and removal both write `mfa_enrolled` / `mfa_unenrolled` events — turning a second factor *off* is what an audit needs to see. An `aal1` session may not unenrol, or a stolen password-only session could just switch 2FA off.

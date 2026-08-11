@@ -2353,3 +2353,67 @@ only what it asserts; a passing sweep in one environment says nothing about
 another. Each of these was found by exercising the real thing — replaying a
 re-signed session, POSTing a real report, clicking a real download.
 
+## 2026-08-10 · T-aal2-rls — 2FA enforcement moves into the database (IMPROVEMENTS C2)
+
+**Built and verified locally on branch `c2-aal2-rls`; NOT applied to hosted.**
+Production still enforces 2FA in the app only. Design spec and plan live under
+`docs/superpowers/`.
+
+`T-2fa` (2026-07-24) shipped TOTP but named its own gap: enforcement is at the
+application layer, so a stolen `aal1` JWT can bypass the challenge by talking to
+PostgREST directly. Migration `0029_require_aal2.sql` closes it — `mfa_satisfied()`
+plus a `require_aal2` restrictive policy on all 29 RLS-enabled tables.
+
+**Opt-in, not universal — and that is the safety net, not a compromise.** The
+predicate passes anyone with **no verified factor**, so they are untouched. That
+is deliberate: BACKLOG's 2026-08-09 decision kept an admin who has no factor, and
+recorded the consequence — *"C2 must not assume every admin has a factor."* He is
+who gets back in if the policy misfires. `status = 'verified'` and not mere
+presence, because `enroll()` mints an `unverified` factor immediately and counting
+those would lock out anyone who closed the enrolment tab.
+
+**Explicit per-table policies beat gating inside `current_org_id()`.** The helper
+route is ten lines and inherits everywhere, which is genuinely tempting. It was
+rejected for two reasons: `cyprus_config`'s SELECT keys on `auth.uid() IS NOT
+NULL` and would have stayed readable, and the gate would be invisible — reading a
+policy would tell you nothing about 2FA. The cost of being explicit is that a
+future table gets forgotten, which is exactly what 0021 did with grants, so the
+guard below is what makes the explicit choice safe.
+
+**Three things measured rather than assumed, each of which would have sunk it:**
+
+1. **The `aal` claim exists.** The whole design rests on `auth.jwt() ->> 'aal'`
+   being present; if it were not, `coalesce` reads `aal1` and *every enrolled
+   user* is denied everything. Proven against a real TOTP challenge before a
+   single policy was written, and the plan made that a hard stop.
+2. **Gating `profiles` does not deadlock.** Every other policy depends on
+   `current_org_id()`, which reads `profiles` — but it is `security definer` owned
+   by `postgres`, which has `bypassrls`.
+3. **The challenge screen survives.** `/login/verify` is in the `(auth)` group and
+   reads no public table, so denying all 29 does not break the one screen a
+   blocked user needs.
+
+**The predicate is wrapped in a scalar subquery, and that wrapper is
+load-bearing.** Bare, it plans as `Filter: mfa_satisfied()` on the scan node —
+evaluated **once per row**. Wrapped as `(select public.mfa_satisfied())` it plans
+as `InitPlan 1 -> Result … loops=1` — once per statement. Same predicate, same
+semantics; only the evaluation strategy differs. Measured both ways on 50 rows.
+**The same finding applies to `current_org_id()` across all 86 existing policies,
+which is pre-existing and now in BACKLOG.**
+
+**Two guards were proven by breaking them.** A guard nobody has watched fail is
+not a guard. Weakening the predicate to `status is not null` made *only* the
+abandoned-enrolment test fail; replacing one policy with a permissive
+`using (true)` of the same name made the coverage function report that table. The
+second experiment is why `rls_aal2_coverage()` checks the policy's **shape** —
+restrictive, `ALL`, `authenticated`, both clauses — and not merely its name: a
+name-only check would have blessed a policy offering zero protection.
+
+**Known red, pre-existing, and deliberately not fixed here.**
+`tests/e2e/mfa.spec.ts` fails at *enrolment* — the QR dialog never renders — and
+it fails identically on `main` with 0029 absent, so it is not a regression. It is
+tracked separately, and it gates the hosted apply rather than this branch: a
+broken enrolment flow plus database-level lockout means a user who loses a device
+cannot re-enrol, and re-enrolment is precisely the recovery path this design
+assumed works.
+

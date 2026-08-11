@@ -551,10 +551,16 @@ is one word: `CSP_HEADER` in `lib/services/csp.ts`.*
   DB-level enforcement. Decide before that lands.
 
 **Next engineering work, in order:**
-1. **C2 DB-level 2FA enforcement** — the last real security gap. `as restrictive`
-   RLS asserting `aal2` for users WITH a verified factor (the opt-in template).
-   Touches every business table, real lockout risk, wants its own session and a
-   fresh start. 0028 now makes it visible who actually has a factor.
+1. **C2 DB-level 2FA enforcement — BUILT, NOT APPLIED.** Branch `c2-aal2-rls`,
+   8 commits, migration `0029_require_aal2.sql`: `mfa_satisfied()` plus a
+   `require_aal2` restrictive policy on all 29 RLS-enabled tables, opt-in
+   template so an unfactored admin stays the safety net. Verified locally —
+   44 RLS tests, the `aal` claim proven against a real TOTP challenge, the
+   predicate hoisted to once-per-statement. **What remains is the hosted apply
+   (plan Task 7, operator-gated) and one blocker: `tests/e2e/mfa.spec.ts` fails
+   at ENROLMENT on `main` too, so it is pre-existing — but a broken enrolment
+   flow plus DB-level lockout is a bad combination, and it should be settled
+   first.** IMPROVEMENTS C2 owns the evidence; the plan owns the rollback.
 2. ~~**Sentry source maps + release**~~ — **SHIPPED `70e4ceb`.** This line said
    "stacks are currently minified and issues carry no release" after both had
    been fixed. What is left is not a build change but **one observation, and it
@@ -589,7 +595,11 @@ is one word: `CSP_HEADER` in `lib/services/csp.ts`.*
   still applies to anyone grepping stdout rather than reading Sentry: **empty
   must not be read as clean**. Rollback is one word: `CSP_HEADER` in
   `lib/services/csp.ts`. IMPROVEMENTS C1 owns the evidence.
-- **2FA is enforced at the application layer only.**
+- **2FA is enforced at the application layer only** — still true in production on
+  2026-08-10. Migration `0029_require_aal2.sql` closes it at the database level
+  and is **built, reviewed and verified locally on branch `c2-aal2-rls`, but has
+  NOT been applied to hosted.** Nothing changes in production until someone runs
+  §3. IMPROVEMENTS C2 owns the evidence and the blocker.
 - **B8 does not queue writes.** Offline slip signing was considered and
   rejected: it would put commission evidence in a client-side queue.
 - ~~Playwright does not run in CI~~ — **fixed 2026-08-04**, and it caught a real

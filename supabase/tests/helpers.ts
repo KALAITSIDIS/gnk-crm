@@ -29,6 +29,11 @@ export const ORG_B = "bbbbbbbb-0000-0000-0000-000000000001"; // cross-org isolat
 /** The org the dev app runs on. Tests must NEVER write here. */
 export const SEEDED_ORG = "00000000-0000-0000-0000-000000000001";
 
+/** Password every fixture user is created with. Exported so a test can sign the
+ *  SAME user in again on a fresh client — which is how an aal1 session is
+ *  obtained for a user who already has a verified factor. */
+export const TEST_PASSWORD = "test-password-1234";
+
 /**
  * Every pipeline from `0003_seed.sql`, verbatim.
  *
@@ -157,7 +162,7 @@ export async function createTestUser(
   role: "admin" | "agent" | "listing_manager",
   orgId: string,
 ): Promise<TestUser> {
-  const password = "test-password-1234";
+  const password = TEST_PASSWORD;
   const { data: created, error: createErr } = await admin.auth.admin.createUser({
     email,
     password,

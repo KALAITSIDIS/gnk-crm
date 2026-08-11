@@ -606,6 +606,14 @@ trailing statement rolls back everything before it.
 3. The 29 `create policy` statements
 4. `insert into supabase_migrations.schema_migrations (version, name) values ('0029','require_aal2');`
 
+> **⚠️ Step 3 IS NOT REPLAY-SAFE.** Postgres has no `create or replace policy`, so
+> re-running it against a database that already has the policies fails on the
+> FIRST one — verified locally: `policy "require_aal2" for table "areas" already
+> exists`, aborting the batch. If an apply is interrupted part-way, **do not
+> naively re-run it.** Drop what landed first, using the loop in the rollback
+> block below, then re-apply from clean. Steps 1 and 2 are `create or replace`
+> and are safe to repeat.
+
 - [ ] **Step 3: Verify in a FURTHER separate call**
 
 ```sql
