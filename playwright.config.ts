@@ -23,9 +23,69 @@ export default defineConfig({
   workers: 1,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
+  /**
+   * A retry that turns red into green is a result nobody reads.
+   *
+   * On 2026-08-11 four csp.spec.ts tests failed on a cold dev server by
+   * overrunning the 60s test timeout. In CI they would have failed once, passed
+   * on the retry, and been reported as "4 flaky" under a green tick — which is
+   * how that fragility stayed invisible long enough for HANDOFF to record CI as
+   * simply green. The retry itself is worth keeping (the second attempt is
+   * evidence about whether a failure is timing-dependent), but it must not
+   * decide the exit code on its own.
+   */
+  failOnFlakyTests: !!process.env.CI,
   reporter: [["list"], ["html", { outputFolder: "tests/.playwright-report", open: "never" }]],
-  timeout: 60_000,
-  expect: { timeout: 15_000 },
+  /**
+   * Budgets are scaled for a LOCAL run, because a local run means `next dev`,
+   * and `next dev` charges Turbopack's per-route compile cost to whichever test
+   * touches that route first. That cost is tens of seconds, and it lands inside
+   * whatever budget the test is already spending.
+   *
+   * Measured on a cold server (empty `.next/dev`) 2026-08-11: single-navigation
+   * page checks in `csp.spec.ts` took 27–38s, `viewing detail` took 55.3s
+   * against the old 60s ceiling, and four tests doing two cold navigations
+   * overran it outright — reporting `net::ERR_ABORTED; maybe frame was
+   * detached?`, which is the timeout guillotining a navigation mid-flight and
+   * reads convincingly like a routing bug. `mfa.spec.ts` failed the same way
+   * through the *expect* budget instead: the post-login redirect to
+   * `/login/verify` compiles on first touch, so `toHaveURL` saw `/login` for
+   * more than 15s while the submit button sat disabled. Warm, that test passes
+   * in 15.3s. NONE of these were application defects.
+   *
+   * Per-test `test.slow()` was tried first and rejected: it fixes the instances
+   * you have already found, and this failure mode moves — different spec,
+   * different budget, same cause. Scaling both budgets closes the class without
+   * anyone having to enumerate the affected tests.
+   *
+   * The numbers are sized to MEASURED first-compile cost, not guessed. From the
+   * dev server's own log on a cold run (`next dev` reports compile time
+   * separately from application code):
+   *
+   *   GET /login/verify              43s   (next.js 43s, application-code 328ms)
+   *   GET /viewings/<id>/sign        44s
+   *   GET /viewings/<id>          31.2s
+   *   GET /contacts/export        28.8s
+   *
+   * A first pass used 30s for `expect` and `mfa.spec.ts` still failed, because
+   * the redirect it waits for lands on `/login/verify` and the server action's
+   * POST cannot answer until that route finishes compiling. 90s is roughly
+   * double the worst measured compile — deliberately generous, because cold
+   * compile time is NOT stable: the same four tests took 66–78s in one cold run
+   * and 18–55s in the next, on identical code and an identically emptied cache.
+   * Calibrating tightly against an unstable number is how this took three
+   * attempts.
+   *
+   * Deployed targets keep the strict values: they serve a prebuilt app, so
+   * there is no compilation to wait for and slowness there is real.
+   *
+   * The trade, stated plainly: a genuine hang on a local run now takes 180s to
+   * surface instead of 60s. That is the price of not having cold compilation
+   * masquerade as a product bug, and `failOnFlakyTests` above means a slow test
+   * can no longer be quietly retried into green.
+   */
+  timeout: isLocal ? 240_000 : 60_000,
+  expect: { timeout: isLocal ? 90_000 : 15_000 },
 
   use: {
     baseURL,
