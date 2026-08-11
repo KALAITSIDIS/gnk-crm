@@ -604,20 +604,30 @@ is one word: `CSP_HEADER` in `lib/services/csp.ts`.*
   gets in — green in a full cold suite run, so a user who loses their device can
   still re-enrol before DB-level lockout lands. IMPROVEMENTS C2 owns the
   evidence and the blocker.
-- **The E2E suite is flaky in most CI runs, `retries: 1` has been absorbing it
-  silently, and THE CAUSE IS NOT KNOWN (2026-08-11, OPEN).** A green E2E tick is
-  therefore weaker evidence than it looks: `grep -c flaky` a few job logs before
-  believing one.
+- ~~**The E2E suite is flaky in most CI runs and the cause is not known.**~~
+  **FIXED 2026-08-11 by switching CI off `chrome-headless-shell` —
+  `channel: "chromium"` in `playwright.config.ts` (`7f420e5`). Measured 0 of 5
+  sampled runs crashed, 0 flaky, 177 passed every time**, against baselines of
+  3 of 6 before any change, 3 of 5 with the GPU flags, 4 of 5 with `/offline`
+  fixed. That is the first time the whole suite passed on first attempt.
 
-  **What is actually established.** chrome-headless-shell dies with `Received
-  signal 11 SEGV_MAPERR 0000000001b0` — always that identical address, so a
-  deterministic code path, not memory pressure. 0–4 times per run, most runs
-  affected. The browser being gone, the NEXT test to ask for a context fails with
-  `browser.newContext: Target page, context or browser has been closed`, and that
-  is `security.spec.ts` purely because `pwa` sorts before `security`. **Its
-  anonymous-visitor loop is a bystander** — the earliest version of this entry
-  blamed it. Tests pass on the retry every time so far and nothing indicates an
-  app fault.
+  **A workaround, not a root cause.** It establishes that the shell binary
+  crashes and the full one does not; nobody has explained WHY it dereferences
+  null at a fixed address. A Playwright upgrade could make it unnecessary or
+  reintroduce the crash elsewhere — re-measure, do not assume. **`retries: 1` is
+  now absorbing nothing known, so it is a real safety net again rather than a
+  silencer.** The habit still earns its keep: `grep -c flaky` a job log before
+  treating a green tick as a clean run.
+
+  **The history is worth keeping, because two shipped fixes were wrong.**
+  chrome-headless-shell died with `Received signal 11 SEGV_MAPERR 0000000001b0`
+  — always that identical address, so a deterministic code path, not memory
+  pressure. 0–4 times per run, most runs affected. The browser being gone, the
+  NEXT test to ask for a context failed with `browser.newContext: Target page,
+  context or browser has been closed`, and that was `security.spec.ts` purely
+  because `pwa` sorts before `security`. **Its anonymous-visitor loop was a
+  bystander** — the earliest version of this entry blamed it. No app fault was
+  ever indicated, and the retry always passed.
 
   **TWO HYPOTHESES WERE SHIPPED AND BOTH DISPROVED. Read this before forming a
   third.**
@@ -638,11 +648,11 @@ is one word: `CSP_HEADER` in `lib/services/csp.ts`.*
   a vendored binary points upstream, at chrome-headless-shell 1228 (Playwright
   1.61.1), rather than at anything in this repo.
 
-  **The next step should be an experiment, not a fix:** swap the binary —
-  `channel: "chromium"` runs full Chromium in new headless mode instead of the
-  shell — and measure with the same protocol (5 samples via `gh run rerun`, which
-  re-runs a commit without redeploying). Baselines to beat: 3 of 6, then 3 of 5,
-  then 4 of 5. Anything that does not come with a sample count is not an answer.
+  **What finally worked was treating it as an experiment with a bar to clear,**
+  not a third theory: swap the binary and measure. 5 samples via `gh run rerun`
+  (which re-runs a commit without redeploying) — 0 of 5. **Anything that does not
+  come with a sample count is not an answer**; that is the transferable part,
+  because the two wrong fixes each looked convincing and each shipped.
 
   `e24e452` STAYS despite its stated reason being disproved: a page whose every
   script is refused is a defect regardless of what crashes, nonce coverage is now

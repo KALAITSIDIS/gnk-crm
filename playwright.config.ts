@@ -118,13 +118,18 @@ export default defineConfig({
      * controls. `channel: "chromium"` selects the full browser instead, which is
      * also closer to what users actually run.
      *
-     * Two earlier theories were shipped and disproved by measurement — GPU init
-     * (`3761b89`) and the `/offline` CSP violation burst (`e24e452`) — so this
-     * one carries no claim until it has a sample count. Baselines to beat, each
-     * from 5-6 runs sampled with `gh run rerun`: **3 of 6** crashed before any
-     * change, **3 of 5** with the GPU flags, **4 of 5** with `/offline` fixed.
-     * If this does not clear that, revert it: `channel` changes which binary CI
-     * verifies against, and that is not worth carrying for nothing.
+     * IT WORKED, and here is the number: **0 of 5** sampled runs crashed, 0
+     * flaky, 177 passed every time. Baselines it had to beat, each sampled the
+     * same way with `gh run rerun`: **3 of 6** crashed before any change, **3 of
+     * 5** with the GPU flags (`3761b89`), **4 of 5** with `/offline` fixed
+     * (`e24e452`) — both of those theories about our own code, both shipped, both
+     * disproved by measurement, which is what moved suspicion to the binary.
+     *
+     * **This is a workaround, not a root cause.** It establishes that the shell
+     * binary crashes and the full one does not. Nobody has explained WHY
+     * `chrome-headless-shell` dereferences null at that address, so a Playwright
+     * upgrade could make this line unnecessary — or reintroduce the crash under
+     * a different binary. Re-measure before concluding either.
      *
      * Requires the `chromium` build to be installed, not just the shell. CI runs
      * `npx playwright install --with-deps chromium`, which fetches both.
