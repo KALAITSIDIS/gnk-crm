@@ -604,20 +604,40 @@ is one word: `CSP_HEADER` in `lib/services/csp.ts`.*
   gets in — green in a full cold suite run, so a user who loses their device can
   still re-enrol before DB-level lockout lands. IMPROVEMENTS C2 owns the
   evidence and the blocker.
-- **The E2E suite is flaky in CI in MOST runs, and `retries: 1` has been
-  absorbing it silently (measured 2026-08-11: 3 of the day's 5 runs — 0, 0, 2, 2
-  and 1 flaky tests — every one of them reported green except the one that
-  briefly had `failOnFlakyTests` on).** `security.spec.ts`'s
-  anonymous-visitor loop dies in `browser.newContext` with a
-  chrome-headless-shell **`SIGSEGV`** — `Received signal 11 SEGV_MAPERR` in the
-  job log, then `Target page, context or browser has been closed`. Run
-  `31483891162` had 2 flaky and was reported **green**; `31504544194` was
-  identical. Suspected but unproven: ~20 sequential fresh contexts exhausting
-  the runner, despite `--disable-dev-shm-usage`. **Nothing is known to be wrong
-  with the app** — the tests pass on the retry every time so far. `grep -c flaky`
-  a few job logs before assuming a green tick means a clean run. Turning flake
-  into a hard failure was tried the same day and reverted; the reasoning is in
-  `playwright.config.ts` where the option used to be.
+- **The E2E suite is flaky in most CI runs, `retries: 1` has been absorbing it
+  silently, and the trigger is `/offline` having no nonce (2026-08-11, OPEN).**
+  A green E2E tick is therefore weaker evidence than it looks: `grep -c flaky` a
+  few job logs before believing one.
+
+  **The chain, measured — the flaky test is not the cause.** `pwa.spec.ts` opens
+  `/offline`. That page is statically prerendered, so it carries **no
+  per-request nonce**, and under the ENFORCED policy's `'strict-dynamic'` every
+  script on it is blocked — ~20 violations in one burst. chrome-headless-shell
+  then dies: `Received signal 11 SEGV_MAPERR 0000000001b0`, always that same
+  address. The browser is gone, so the NEXT test to ask for a context fails with
+  `browser.newContext: Target page, context or browser has been closed` — and
+  that is `security.spec.ts`, purely because `pwa` sorts before `security`. Its
+  anonymous-visitor loop is a bystander. **In 4 of 4 crashes, all 20 console
+  lines before the `SIGSEGV` came from `http://localhost:3000/offline`** (runs
+  `31483891162`, `31504544194`, `31505752738`, and `31513102430` attempt 3).
+
+  **A GPU cause was hypothesised, shipped and DISPROVED** (`3761b89`, still in
+  `main`). The crash is preceded by `drmGetDevices2() has not found any devices`
+  and a `gpu-process` sandbox warning, so `--disable-gpu
+  --disable-software-rasterizer` was added for CI. The flags demonstrably took
+  effect — they appear in the launch args and the GPU warnings stopped — and the
+  identical crash still happened. Those warnings were neighbours, not the cause.
+  Decide whether to keep flags whose rationale is dead.
+
+  **The fix is in the app, not the harness:** give `/offline` a nonce
+  (`force-dynamic`, the same move `T-prod-day` used for `/login`,
+  `/login/verify` and `/session-clock`) or stop shipping scripts to it. §0
+  records `/offline` as "not a blocker after all (static text, 0 interactive
+  elements)" — true for usability, and this is the cost that came with it.
+  **It also means production `/offline` blocks every one of its own scripts and
+  files a CSP report for each**, so check whether Sentry is receiving a stream of
+  them. Turning flake into a hard failure was tried the same day and reverted;
+  the reasoning is in `playwright.config.ts` where the option used to be.
 - **B8 does not queue writes.** Offline slip signing was considered and
   rejected: it would put commission evidence in a client-side queue.
 - ~~Playwright does not run in CI~~ — **fixed 2026-08-04**, and it caught a real
