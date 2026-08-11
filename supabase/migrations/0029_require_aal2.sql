@@ -41,3 +41,38 @@ comment on function public.mfa_satisfied() is
 
 revoke execute on function public.mfa_satisfied() from public, anon;
 grant execute on function public.mfa_satisfied() to authenticated;
+
+-- Coverage guard. Returns the RLS-enabled tables that do NOT carry
+-- require_aal2, so a test can assert the set is empty. service_role only: it
+-- describes the shape of the security model, which no ordinary session needs.
+create or replace function public.rls_aal2_coverage()
+returns table (missing_table text)
+language sql
+stable
+security definer
+set search_path = public, pg_catalog
+as $$
+  select t.tablename::text
+    from pg_tables t
+    join pg_class c
+      on c.relname = t.tablename
+     and c.relnamespace = 'public'::regnamespace
+   where t.schemaname = 'public'
+     and c.relrowsecurity
+     and not exists (
+           select 1
+             from pg_policies p
+            where p.schemaname = 'public'
+              and p.tablename = t.tablename
+              and p.policyname = 'require_aal2'
+         )
+   order by 1;
+$$;
+
+comment on function public.rls_aal2_coverage() is
+  'RLS-enabled public tables missing the require_aal2 policy. Empty means full '
+  'coverage. Asserted by supabase/tests/mfa-enforcement.test.ts so a new table '
+  'cannot ship ungated. IMPROVEMENTS C2.';
+
+revoke execute on function public.rls_aal2_coverage() from public, anon, authenticated;
+grant execute on function public.rls_aal2_coverage() to service_role;

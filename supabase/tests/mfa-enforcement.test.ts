@@ -123,3 +123,19 @@ describe("mfa_satisfied() — the aal claim", () => {
     expect(error).not.toBeNull();
   });
 });
+
+describe("require_aal2 coverage", () => {
+  // The per-table pattern gets forgotten — migration 0021 is this repo's own
+  // proof (HANDOFF §4.3). This guard is why the explicit approach is safe: a
+  // new RLS table without the policy fails CI instead of shipping ungated.
+  it("every RLS-enabled table in public carries the policy", async () => {
+    const { data, error } = await svc.rpc("rls_aal2_coverage");
+    expect(error).toBeNull();
+    expect(data).toEqual([]);
+  });
+
+  it("is not executable by an ordinary authenticated session", async () => {
+    const { error } = await plain.client.rpc("rls_aal2_coverage");
+    expect(error).not.toBeNull();
+  });
+});
