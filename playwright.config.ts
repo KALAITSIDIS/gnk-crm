@@ -110,35 +110,21 @@ export default defineConfig({
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "off",
-    /**
-     * CI ONLY: keep chrome-headless-shell from starting a GPU process at all.
+    /*
+     * `--disable-gpu --disable-software-rasterizer` was here for CI and is GONE
+     * (added `3761b89`, reverted the same day). Do not re-add it for this reason.
      *
-     * It was segfaulting during GPU init on the runner, which killed the browser
-     * mid-run and failed whichever test asked for the next context — reported as
-     * flakiness in `security.spec.ts`'s anonymous-visitor loop, which is simply
-     * a long run of context creations and was never the cause.
+     * The chrome-headless-shell `SIGSEGV` is preceded in the log by
+     * `drmGetDevices2() has not found any devices` and a `gpu-process` sandbox
+     * warning, so GPU init looked like the cause. It is not. With the flags
+     * applied — confirmed present in the launch args, and the GPU warnings
+     * stopped — the identical crash continued at the identical address, 3 of 5
+     * sampled runs with 6 crashes total, against a 3-of-6 baseline. Adjacent log
+     * lines, not a cause.
      *
-     * The evidence that this is GPU init and not memory pressure: the fault
-     * address is **identical every time** — `Received signal 11 SEGV_MAPERR
-     * 0000000001b0` across runs `31483891162`, `31504544194` and `31505752738`
-     * and five different pids. Exhaustion gives varying addresses; a fixed one is
-     * a deterministic null dereference. And the two lines immediately before it
-     * are always `drmGetDevices2() has not found any devices` and
-     * `InitializeSandbox() called with multiple threads in process gpu-process`.
-     * A GPU-less runner, seconds after `<launched>`.
-     *
-     * Playwright passes `--enable-unsafe-swiftshader` by default so WebGL works
-     * headlessly. **This app has no WebGL** — the only `getContext` calls are
-     * `"2d"` in `components/features/viewings/signature-pad.tsx`, and canvas 2D
-     * rasterises on the CPU — so there is nothing to lose by refusing both the
-     * GPU process and the SwiftShader fallback.
-     *
-     * Local runs are untouched: the crash is Linux-runner-specific, and changing
-     * rasterisation locally would only churn the tracked screenshots.
+     * The real trigger is the CSP violation burst on `/offline`; see
+     * `app/offline/page.tsx` and HANDOFF §6.
      */
-    launchOptions: {
-      args: process.env.CI ? ["--disable-gpu", "--disable-software-rasterizer"] : [],
-    },
     // Cyprus desk: pin the locale/timezone so date assertions are stable.
     locale: "en-GB",
     timezoneId: "Asia/Nicosia",

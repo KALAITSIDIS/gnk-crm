@@ -16,32 +16,44 @@ import {
  */
 describe("findUnexpectedStatic", () => {
   it("flags a prerendered /login — the 2026-08-09 case", () => {
-    expect(findUnexpectedStatic(["login.html", "offline.html"])).toEqual(["login"]);
+    expect(findUnexpectedStatic(["login.html", "index.html"])).toEqual(["login"]);
   });
 
   it("passes the build we actually ship", () => {
     // Exactly what `.next/server/app` holds after the fix.
     expect(
-      findUnexpectedStatic(["_global-error.html", "_not-found.html", "index.html", "offline.html"]),
+      findUnexpectedStatic(["_global-error.html", "_not-found.html", "index.html"]),
     ).toEqual([]);
   });
 
-  it("keeps /offline allowed — force-static is deliberate for the PWA", () => {
-    expect(ALLOWED_STATIC.has("offline")).toBe(true);
-    expect(findUnexpectedStatic(["offline.html"])).toEqual([]);
+  /**
+   * This test previously asserted the OPPOSITE — "keeps /offline allowed,
+   * force-static is deliberate for the PWA" — and existed to stop anyone
+   * reversing that. It is inverted rather than deleted, because the decision was
+   * reversed deliberately on 2026-08-11 and the guard is where that has to bite.
+   *
+   * A static `/offline` carries no nonce, so `'strict-dynamic'` refuses every
+   * script on it: ~20 violations in one burst, which segfaults
+   * chrome-headless-shell in CI and files ~20 CSP reports per view in
+   * production. The reasoning is in `app/offline/page.tsx`, including why the
+   * "must be precacheable" argument does not require static rendering.
+   */
+  it("no longer exempts /offline — it needs a nonce like every other page", () => {
+    expect(ALLOWED_STATIC.has("offline")).toBe(false);
+    expect(findUnexpectedStatic(["offline.html"])).toEqual(["offline"]);
   });
 
   it("catches a NEW page that is accidentally static, not just the known ones", () => {
     // The regression this really guards: someone adds a page, forgets it is
     // static, and nothing else in the repo would notice.
-    expect(findUnexpectedStatic(["offline.html", "pricing.html", "login/verify.html"])).toEqual([
+    expect(findUnexpectedStatic(["index.html", "pricing.html", "login/verify.html"])).toEqual([
       "login/verify",
       "pricing",
     ]);
   });
 
   it("ignores non-HTML build artifacts", () => {
-    expect(findUnexpectedStatic(["offline.html", "page.js", "route.js.nft.json"])).toEqual([]);
+    expect(findUnexpectedStatic(["index.html", "page.js", "route.js.nft.json"])).toEqual([]);
   });
 
   it("returns nothing for an all-dynamic build", () => {
@@ -64,7 +76,7 @@ describe("listPrerenderedHtml", () => {
 
   mkdirSync(join(dir, "settings"), { recursive: true });
   mkdirSync(join(dir, "(app)", "reports"), { recursive: true });
-  writeFileSync(join(dir, "offline.html"), "");
+  writeFileSync(join(dir, "index.html"), "");
   writeFileSync(join(dir, "page.js"), "");
   writeFileSync(join(dir, "settings", "organization.html"), "");
   writeFileSync(join(dir, "(app)", "reports", "commission.html"), "");
@@ -72,7 +84,7 @@ describe("listPrerenderedHtml", () => {
   it("finds NESTED prerendered pages, not just top-level ones", () => {
     expect(listPrerenderedHtml(dir).sort()).toEqual([
       "(app)/reports/commission.html",
-      "offline.html",
+      "index.html",
       "settings/organization.html",
     ]);
   });

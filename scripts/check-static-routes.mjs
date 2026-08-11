@@ -35,15 +35,20 @@ const APP_DIR = ".next/server/app";
  * Routes that are allowed to be static, each for a stated reason. Anything else
  * appearing here is a page that silently lost its nonce.
  *
- *   offline       — force-static ON PURPOSE (B8): a PWA fallback must be
- *                   precacheable and must not need the server, so it can never
- *                   carry a per-request nonce. Consequence, accepted: under
- *                   enforcement it renders but does not hydrate.
  *   _not-found /
  *   _global-error — Next internals; no interactive surface worth a nonce.
  *   index         — `/` only ever redirects (proxy.ts), so its scripts never run.
+ *
+ * `offline` WAS on this list until 2026-08-11, on the stated grounds that a PWA
+ * fallback must be precacheable and must not need the server, accepting that it
+ * "renders but does not hydrate". Removed, because that phrase understates it:
+ * not hydrating means every script on the page is REFUSED, ~20 violations in one
+ * burst, which segfaults chrome-headless-shell in CI and files ~20 CSP reports
+ * per view in production. `app/offline/page.tsx` is now `force-dynamic` and
+ * explains why the precache argument never actually required static rendering.
+ * Do not re-add it without reading that comment.
  */
-export const ALLOWED_STATIC = new Set(["offline", "_not-found", "_global-error", "index"]);
+export const ALLOWED_STATIC = new Set(["_not-found", "_global-error", "index"]);
 
 /**
  * Every prerendered .html under `dir`, as POSIX-relative paths.
