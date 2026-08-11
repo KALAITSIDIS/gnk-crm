@@ -137,5 +137,9 @@ describe("require_aal2 coverage", () => {
   it("is not executable by an ordinary authenticated session", async () => {
     const { error } = await plain.client.rpc("rls_aal2_coverage");
     expect(error).not.toBeNull();
+    // Must fail because it is REVOKED, not because it is missing: a dropped
+    // function would also error, and this assertion would pass while proving
+    // nothing. PostgREST maps a permission failure to 42501.
+    expect(error?.code, `unexpected failure: ${error?.message}`).toBe("42501");
   });
 });
