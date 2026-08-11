@@ -498,12 +498,28 @@ sites, which is why it is now a single `CSP_HEADER` constant.
 
 ### C2. Two-factor authentication — ✅ **DONE 2026-07-24** (opt-in). DB-level enforcement is **BUILT AND VERIFIED LOCALLY, NOT APPLIED TO HOSTED** — see the box below.
 
-> ### 🟡 DB-level enforcement: migration 0029 exists, production is UNCHANGED
+> ### ✅ DB-level enforcement is LIVE — 0029 applied to hosted 2026-08-11
 >
-> **As of 2026-08-10, production still enforces 2FA in the application only.**
-> The work sits on branch `c2-aal2-rls` (8 commits), fully verified against the
-> local stack, and **has never been applied to hosted**. Do not read this section
-> as describing production until someone runs HANDOFF §3 and says so here.
+> **Verified on hosted the day it landed, in a call separate from the apply:**
+> 29 migrations · `non_filename_versions` 0 · **29 `require_aal2` policies, all
+> 29 correctly shaped** (restrictive · ALL · `authenticated` · both clauses) ·
+> `rls_aal2_coverage()` empty · `anon` **cannot** execute the predicate ·
+> `authenticated` cannot introspect coverage · `get_advisors` clean ·
+> chain verifies · 74 events.
+>
+> **Blast radius was read BEFORE applying, not assumed:** 2 admins, exactly one
+> verified factor (`nontari@`), zero on `gerasimos@` — matching the design.
+>
+> **Function bodies matched local once line endings were normalised.** Raw
+> `md5(prosrc)` differed because the local stack applies a CRLF file while the
+> hosted apply carried LF; `md5(replace(prosrc, chr(13), ''))` is identical on
+> both sides. **HANDOFF §3 recommends bare `md5(prosrc)` and it will false-alarm
+> every time from a Windows workstation** — strip `chr(13)` first.
+>
+> **Still open, and it is the operator's:** sign in as the enrolled account, pass
+> the TOTP challenge, load a real page. Everything above is database-level, and
+> **an RLS denial returns zero rows rather than an error — so "no data" and
+> "correctly denied" look identical in the UI.**
 >
 > Design: `docs/superpowers/specs/2026-08-10-c2-db-2fa-enforcement-design.md`
 > Plan and rollback: `docs/superpowers/plans/2026-08-10-c2-db-2fa-enforcement.md`

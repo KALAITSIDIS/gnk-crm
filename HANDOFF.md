@@ -14,7 +14,7 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 | `main` | **in sync with `origin/main` as of 2026-08-11** — that day's E2E-harness and docs work is all pushed, CI green. Verify rather than trust: `git status -sb` and `git log --oneline origin/main..HEAD`. The standing agreement is still **commit, don't push**; each push that day was asked for explicitly. **Not the only branch** — `c2-aal2-rls` survives its own merge, and short-lived `fix/*`/`exp/*` branches come and go; `git branch -vv` is the answer, not this cell. (SHA: `git log --oneline -1` — deliberately not pinned here, it went stale on every commit) |
 | CI | ✅ green — `checks` (typecheck · lint · unit · **build**) + `rls` |
 | Production | `gnk-crm.vercel.app` healthy; **auto-deploys every push**. **A cache-restored build can keep an OLD `NEXT_PUBLIC_*` value compiled in — see §2b, it caused a login outage on 2026-08-09.** |
-| Hosted DB | `yjgirvzgoiywdojnpkpd` — **28 migrations**, `non_filename_versions` = 0, chain verifies, **74 events** |
+| Hosted DB | `yjgirvzgoiywdojnpkpd` — **29 migrations** (0029 applied 2026-08-11), `non_filename_versions` = 0, chain verifies, **74 events**. **DB-level 2FA is LIVE** — `require_aal2` on all 29 RLS tables, IMPROVEMENTS C2 |
 | Data | `share_links` 2 (1 live, 1 revoked) · `tasks` 0 · `deals` 1 · **all of it operator test data** (§0) |
 | Tests | **505 unit** · **44 RLS** (not 32 — that figure was stale; re-counted from CI run `31535628603`, whose `rls` job reports 44 across 3 files. The "12 mandatory tests, doc 04" in the job name is a subset, not the total) · **176 desktop E2E, 0 skipped** — 178 results in total, because the `setup` project now holds two tests: the stale-server guard and the login. Full desktop suite measured from a COLD dev server on 2026-08-11, 0 failed, 0 flaky. All three run in CI. Re-running E2E rewrites the 12 tracked `tests/screenshots/*.png` — §7 |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
@@ -546,21 +546,19 @@ is one word: `CSP_HEADER` in `lib/services/csp.ts`.*
   a line in a report-only policy nobody enforces, it is an edit to a live one
   that blocks what it does not name. Add the origin and verify before the map
   ships, not after.
-- **`gerasimos@` has no 2FA** — reviewed 2026-08-09, kept as admin deliberately.
-  He is also the only other admin, so he is the lockout safety net for C2's
-  DB-level enforcement. Decide before that lands.
+- **`gerasimos@` has no 2FA** — reviewed 2026-08-09, kept as admin deliberately,
+  and **that decision is now load-bearing rather than pending**: C2's DB-level
+  enforcement went live 2026-08-11 and the opt-in template means he is never
+  gated, so he is the account that still gets in if the enrolled admin is locked
+  out. Confirmed on hosted the day it landed: 2 admins, 1 verified factor
+  (`nontari@`), 0 factors on his. **If he ever enrols, the safety net closes** —
+  make sure a second recovery path exists first.
 
 **Next engineering work, in order:**
-1. **C2 DB-level 2FA enforcement — BUILT, NOT APPLIED.** Branch `c2-aal2-rls`,
-   8 commits, migration `0029_require_aal2.sql`: `mfa_satisfied()` plus a
-   `require_aal2` restrictive policy on all 29 RLS-enabled tables, opt-in
-   template so an unfactored admin stays the safety net. Verified locally —
-   44 RLS tests, the `aal` claim proven against a real TOTP challenge, the
-   predicate hoisted to once-per-statement. **What remains is the hosted apply
-   (plan Task 7, operator-gated) and one blocker: `tests/e2e/mfa.spec.ts` fails
-   at ENROLMENT on `main` too, so it is pre-existing — but a broken enrolment
-   flow plus DB-level lockout is a bad combination, and it should be settled
-   first.** IMPROVEMENTS C2 owns the evidence; the plan owns the rollback.
+1. ~~**C2 DB-level 2FA enforcement**~~ — **DONE, APPLIED TO HOSTED 2026-08-11.**
+   Move it to the Done line when this section is next touched. §6 and
+   IMPROVEMENTS C2 own the state and the evidence; the rollback is in
+   `docs/superpowers/plans/`.
 2. ~~**Sentry source maps + release**~~ — **SHIPPED `70e4ceb`.** This line said
    "stacks are currently minified and issues carry no release" after both had
    been fixed. What is left is not a build change but **one observation, and it
@@ -595,15 +593,22 @@ is one word: `CSP_HEADER` in `lib/services/csp.ts`.*
   still applies to anyone grepping stdout rather than reading Sentry: **empty
   must not be read as clean**. Rollback is one word: `CSP_HEADER` in
   `lib/services/csp.ts`. IMPROVEMENTS C1 owns the evidence.
-- **2FA is enforced at the application layer only** — still true in production on
-  **2026-08-11**. Migration `0029_require_aal2.sql` closes it at the database
-  level and is **merged to `main` (`24a41ea`) and applied to LOCAL, but has NOT
-  been applied to hosted.** Nothing changes in production until someone runs §3.
-  The application half is proven end to end as of 2026-08-11: `mfa.spec.ts`
-  enrols a real TOTP factor, signs out and proves the password alone no longer
-  gets in — green in a full cold suite run, so a user who loses their device can
-  still re-enrol before DB-level lockout lands. IMPROVEMENTS C2 owns the
-  evidence and the blocker.
+- ~~**2FA is enforced at the application layer only.**~~ **CLOSED — 0029 APPLIED
+  TO HOSTED 2026-08-11.** `require_aal2` on all 29 RLS tables, so an `aal1`
+  session belonging to a user WITH a verified factor is denied every table: a
+  stolen `aal1` JWT hitting PostgREST directly now reads nothing. **A user with
+  no verified factor is untouched** (the opt-in template) — deliberate, and what
+  keeps an unfactored admin usable as the lockout safety net. Verified on hosted:
+  29 policies all correctly shaped, coverage empty, `anon` cannot execute the
+  predicate, `get_advisors` clean, chain verifies, 74 events. The application
+  half was proven first — `mfa.spec.ts` enrols a real factor and shows the
+  password alone no longer gets in, green in a full cold suite run — so a user
+  who loses a device can still re-enrol. **IMPROVEMENTS C2 owns the evidence;
+  the rollback loop is in `docs/superpowers/plans/`.**
+  **One acceptance check remains and it is the operator's:** sign in as the
+  enrolled account, pass the TOTP challenge, load a real page. Everything
+  verified so far is database-level, and an RLS denial returns zero rows rather
+  than an error — so "no data" and "correctly denied" look identical in the UI.
 - ~~**The E2E suite is flaky in most CI runs and the cause is not known.**~~
   **FIXED 2026-08-11 by switching CI off `chrome-headless-shell` —
   `channel: "chromium"` in `playwright.config.ts` (`7f420e5`). Measured 0 of 5
