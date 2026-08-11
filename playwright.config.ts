@@ -35,11 +35,12 @@ export default defineConfig({
    *
    * Then it turned `main` red on a docs-only push, and the measurement is the
    * argument against it: `security.spec.ts`'s anonymous-visitor loop hits a
-   * chrome-headless-shell **SIGSEGV** on `browser.newContext` in roughly one CI
-   * run in three (`31483891162` had the same 2 flaky tests and was reported
-   * green; `31504544194` was identical and went red). A third of pushes failing
-   * on runner noise teaches everyone to ignore CI, which hides more than a
-   * quiet retry ever did.
+   * chrome-headless-shell **SIGSEGV** on `browser.newContext` in MOST CI runs —
+   * 3 of the 5 on 2026-08-11 (0, 0, 2, 2, 1 flaky). `31483891162` had 2 and was
+   * reported green; `31504544194` was identical and went red only because of
+   * this option; `31505752738`, the revert itself, had 1. Failing most pushes on
+   * runner noise teaches everyone to ignore CI, which hides more than a quiet
+   * retry ever did.
    *
    * `retries: 1` above is doing the job it was added for: absorbing an
    * infrastructure crash. The flake rate is real and tracked in HANDOFF §6 —

@@ -604,8 +604,10 @@ is one word: `CSP_HEADER` in `lib/services/csp.ts`.*
   gets in — green in a full cold suite run, so a user who loses their device can
   still re-enrol before DB-level lockout lands. IMPROVEMENTS C2 owns the
   evidence and the blocker.
-- **The E2E suite is flaky in CI about one run in three, and `retries: 1` has
-  been absorbing it silently (measured 2026-08-11).** `security.spec.ts`'s
+- **The E2E suite is flaky in CI in MOST runs, and `retries: 1` has been
+  absorbing it silently (measured 2026-08-11: 3 of the day's 5 runs — 0, 0, 2, 2
+  and 1 flaky tests — every one of them reported green except the one that
+  briefly had `failOnFlakyTests` on).** `security.spec.ts`'s
   anonymous-visitor loop dies in `browser.newContext` with a
   chrome-headless-shell **`SIGSEGV`** — `Received signal 11 SEGV_MAPERR` in the
   job log, then `Target page, context or browser has been closed`. Run

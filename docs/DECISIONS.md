@@ -2499,16 +2499,17 @@ signing route compiled.
   anonymous-visitor loop hits a chrome-headless-shell `SIGSEGV` inside
   `browser.newContext`, and run `31483891162` — the C2 merge, hours earlier —
   had **the same 2 flaky tests and was reported green**. So the suite is flaky in
-  roughly one CI run in three, `retries: 1` has been absorbing it silently the
-  whole time, and the option would have failed about a third of pushes on runner
-  noise. That teaches people to ignore CI, which hides more than a quiet retry
-  ever did. The rate is now tracked in HANDOFF §6, which is where a fix belongs —
-  not in the exit code.
+  MOST CI runs — 3 of the 5 on 2026-08-11, with 0, 0, 2, 2 and 1 flaky tests —
+  `retries: 1` has been absorbing it silently the whole time, and the option
+  would have failed most pushes on runner noise. That teaches people to ignore
+  CI, which hides more than a quiet retry ever did. The rate is tracked in
+  HANDOFF §6, which is where a fix belongs — not in the exit code.
 
   **What the option did achieve was the measurement.** Two minutes of
   `gh run view --log | grep flaky` over previous runs turned "CI is green" into a
-  number, and the number was not 100%. That is the same move as the rest of this
-  entry: the claim was checked instead of read.
+  number, and the number was not 100%. The revert's own run then came back with
+  1 flaky under a green tick, which is the whole problem in one line. Same move
+  as the rest of this entry: the claim was checked instead of read.
 
 Verified by running the full desktop suite against a server started from an
 emptied `.next/dev`: **177 passed, 0 failed, 14.1m** — faster than the 16.6m run
