@@ -2548,6 +2548,45 @@ itself and expects Playwright to reuse it. The same option is what let a stale
 server be adopted silently in §1. Anything that hardens this must keep the reuse
 and check *what* is being reused — dropping the option breaks CI.
 
+### Guarded 2026-08-11 — `tests/e2e/server-health.ts`
+
+The reuse stays; the suite now checks what it is reusing. First test of the
+`setup` project, ahead of `login()`: fetch `/login`, take the `<script src>`
+values that page asks for itself, request every one, and fail unless all are
+`200` with a JavaScript content-type. Measured on one machine the same day —
+healthy `next start` **16 of 16**, healthy `next dev` **28 of 28**, stale
+`next start` **2 of 16 → `500 text/plain`**. It costs 122–394ms.
+
+**Two things this proving exercise turned up that this entry got wrong.**
+
+**The BUILD_ID signal does not survive being made dev/prod-agnostic.** §1 offers
+"the served HTML contained no path matching `.next/BUILD_ID`" as confirmation. It
+confirmed correctly *that day*, against `next start`. But `next dev` writes no
+`BUILD_ID` at all — dev output lives in `.next/dev`, and the id left in
+`.next/BUILD_ID` belongs to whatever production build ran last. Measured on a
+**healthy** dev server: 0 occurrences in the HTML. A check gating on it would
+have failed every local run. It is reported as a detail line, explicitly
+captioned so nobody promotes it to a criterion. (On `next start` it does appear
+— as `"b":"<id>"` in the flight payload, not as a path.)
+
+**`authenticate as admin` cannot detect this fault, so the guard could not be an
+assertion inside it.** Against the stale server the guard failed in 268ms and the
+auth step then ran anyway and **passed in 18.6s**, warming 27 routes on a server
+whose build did not exist — logging in is a server-action POST plus a redirect,
+and neither needs a hydrated page. `setup.describe.configure({ mode: "serial" })`
+is what makes the failure stop the run rather than sit beside a green tick.
+
+Proven by breaking it, per `T-aal2-rls`: built, started `next start -p 3401`,
+rebuilt underneath it, watched the Turbopack runtime turn into `500 text/plain`,
+and watched the guard abort the run and skip the dependent `desktop` project. The
+rebuild also stranded the healthy `next start` that was still on `:3000` from
+earlier the same evening, which the guard then caught independently — the trap
+re-set itself inside one session, which is how routine it is. A plain rebuild of unchanged sources moved
+only **2 of 61** chunk filenames — but one of them was the runtime, which is
+sufficient: nothing hydrates without it. So the blast radius of a stale server is
+not proportional to how much the build changed. The failing path is held by
+`tests/unit/e2e-server-health.test.ts` so nobody has to stage this again.
+
 ## 2026-08-11 · T-headless-shell-segv — two wrong fixes, and the bar that found the right one
 
 **`chrome-headless-shell` was segfaulting in CI, `retries: 1` had been absorbing

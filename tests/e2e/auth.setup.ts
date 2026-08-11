@@ -1,7 +1,66 @@
 import { test as setup, expect, type Page } from "@playwright/test";
-import { MODULES, fixtureProfile, isLocal, login, serviceClient } from "./helpers";
+import { MODULES, baseUrl, fixtureProfile, isLocal, login, serviceClient } from "./helpers";
+import { assertServingCurrentBuild } from "./server-health";
 
 const AUTH_FILE = "tests/.auth/admin.json";
+
+/**
+ * SERIAL, so a failed precondition skips what follows instead of merely being
+ * recorded next to it.
+ *
+ * Without this, Playwright treats the two setup tests as independent: on the
+ * stale server used to prove the guard (2026-08-11) the guard failed in 268ms and
+ * `authenticate as admin` then ran anyway and **PASSED in 18.6s**, warming 27
+ * routes on a server whose build did not exist. It passed because logging in is a
+ * server-action form POST and a redirect — neither needs a hydrated page. That is
+ * worth knowing on its own: **the auth step cannot detect this fault**, which is
+ * why the guard is a separate test above it rather than an assertion inside it.
+ *
+ * Serial mode re-runs the whole group on retry. That costs 0.3s here (the guard)
+ * and is not a concern; `retries` is only 1, and only in CI.
+ */
+setup.describe.configure({ mode: "serial" });
+
+/**
+ * FIRST, before anything else in the run: is the server on the base URL serving
+ * the build that is on disk?
+ *
+ * `playwright.config.ts` has `reuseExistingServer: true`, and Playwright only
+ * checks that *something* answers the base URL. On 2026-08-11 that something was
+ * a `next start` left from the previous evening's production check, serving
+ * manifests it had cached at boot against a `.next` that had since been rebuilt.
+ * Six of 22 chunks 500'd as `text/plain`, the Turbopack runtime among them, so
+ * nothing hydrated and `mfa.spec.ts` was reported as a broken 2FA enrolment
+ * flow. Enrolment was fine. Mechanism and cost in `docs/DECISIONS.md`
+ * `T-e2e-cold-server`; the check itself is in `server-health.ts`.
+ *
+ * WHY IT LIVES HERE, declared above the auth step. `setup` is already a
+ * dependency of both `desktop` and `mobile`, so a failure here skips all 177
+ * tests instead of letting them produce ~177 misleading results — and Playwright
+ * runs the tests in a file in declaration order under `fullyParallel: false`, so
+ * being first is enough. Before `login()` matters too: on a non-hydrating server
+ * the login submit itself does nothing, and "could not log in" is exactly the
+ * kind of plausible-but-wrong symptom this guard exists to pre-empt. No config
+ * change was needed to place it, which is worth something on a file that changed
+ * four times on 2026-08-11.
+ *
+ * UNLIKE `warmRoutes` BELOW, THIS ONE IS ALLOWED TO FAIL THE RUN. Warm-up is an
+ * optimisation and swallows its errors; this is a correctness precondition. A
+ * suite that cannot say which server it tested has not tested anything.
+ *
+ * Deployed targets are exempt: `isLocal()` is false there, the base URL serves a
+ * prebuilt app nobody is rebuilding underneath, and there is no local `.next` to
+ * compare against. Note that CI is NOT exempt — it is 127.0.0.1 — and that is
+ * deliberate: CI serves `next start`, which is the exact process type that goes
+ * stale, and the guard is written to be dev/prod-agnostic for that reason.
+ */
+setup("server is serving the build on disk", async () => {
+  setup.skip(!isLocal(), "deployed target: no local build to have gone stale");
+  // Seconds warm; the ceiling only matters if a cold `next dev` has to compile
+  // /login first (measured 5.7s warm, and route compiles reach 44s cold).
+  setup.setTimeout(180_000);
+  console.log(await assertServingCurrentBuild(baseUrl()));
+});
 
 /**
  * Compile every route the suite touches, once, before any timed test runs.

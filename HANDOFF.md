@@ -740,10 +740,24 @@ is one word: `CSP_HEADER` in `lib/services/csp.ts`.*
   bisect across two branches that wrongly implicated migration `0029`.
   **Tell:** a click that does nothing, plus `Refused to execute script … MIME
   type ('text/plain')` in the console. **Confirm:** `Get-CimInstance Win32_Process
-  -Filter "ProcessId=<pid on 3000>"` — a command line reading `next start` is it;
-  `.next/BUILD_ID` will also not appear anywhere in the served HTML.
+  -Filter "ProcessId=<pid on 3000>"` — a command line reading `next start` is it.
   **Fix:** kill it, `npm run dev`. Full mechanism in DECISIONS
   `T-e2e-cold-server`.
+  - **GUARDED 2026-08-11 — the suite now refuses to run against one.**
+    `tests/e2e/server-health.ts`, first test of the `setup` project: it requests
+    every `<script src>` that `/login` asks for and aborts unless all come back
+    `200` JavaScript (stale server measured at 2 of 16 → `500 text/plain`,
+    healthy `next start` 16 of 16, healthy `next dev` 28 of 28). It prints the
+    diagnosis and the kill-then-`npm run dev` commands, so you should not have to
+    come back to this bullet. `reuseExistingServer: true` is deliberately KEPT —
+    `ci.yml` depends on it — and the guard checks *what* is being reused instead.
+    Skipped only when `E2E_BASE_URL` is not local.
+  - **Do NOT build a check on `.next/BUILD_ID` appearing in the served HTML.**
+    This bullet used to offer that as a second tell, and it is only true of
+    `next start`: `next dev` writes no `BUILD_ID` (dev output lives in
+    `.next/dev`, and the id on disk belongs to the last production build), so a
+    HEALTHY dev server has 0 occurrences too — measured 2026-08-11. Gating on it
+    would fail every local run. The chunk statuses are the reliable signal.
 - **E2E `setup` spends minutes compiling routes on a cold dev server** — 4.6m
   observed 2026-08-11. It is warming, not hung: a local run is `next dev`, which
   compiles per route on first request (43s for `/login/verify`, and one
