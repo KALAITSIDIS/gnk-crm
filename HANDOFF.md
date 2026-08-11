@@ -11,12 +11,12 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 
 | | |
 |---|---|
-| `main` | clean, in sync with `origin/main`, only branch (SHA: `git log --oneline -1` — deliberately not pinned here, it went stale on every commit) |
+| `main` | clean tree, **ahead of `origin/main` and unpushed** since 2026-08-11 (E2E harness; the standing agreement is commit, don't push). Count it — `git log --oneline origin/main..HEAD` — do not trust a number written here. **No longer the only branch:** `c2-aal2-rls` still exists after being merged, plus a `claude/*` worktree branch from a background task. (SHA: `git log --oneline -1` — deliberately not pinned here, it went stale on every commit) |
 | CI | ✅ green — `checks` (typecheck · lint · unit · **build**) + `rls` |
 | Production | `gnk-crm.vercel.app` healthy; **auto-deploys every push**. **A cache-restored build can keep an OLD `NEXT_PUBLIC_*` value compiled in — see §2b, it caused a login outage on 2026-08-09.** |
 | Hosted DB | `yjgirvzgoiywdojnpkpd` — **28 migrations**, `non_filename_versions` = 0, chain verifies, **74 events** |
 | Data | `share_links` 2 (1 live, 1 revoked) · `tasks` 0 · `deals` 1 · **all of it operator test data** (§0) |
-| Tests | **486 unit** · **32 RLS** · **174 desktop E2E** (3 skipped) — all three run in CI. **All three counted by running them, 2026-08-10**; RLS and E2E were already right, unit was 12 behind. Re-running E2E rewrites the 12 tracked `tests/screenshots/*.png` — §7 |
+| Tests | **486 unit** · **32 RLS** (both counted 2026-08-10, **not re-counted since**) · **176 desktop E2E, 0 skipped** — counted by running the full desktop suite from a COLD dev server on **2026-08-11** (177 results including the `setup` project, 14.1m, 0 failed). All three run in CI. Re-running E2E rewrites the 12 tracked `tests/screenshots/*.png` — §7 |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
 | Backups | ✅ **`2026-08-10` is the primary** — newest automated set, `verified:true`, `problems:[]`, 55 files, **events inDump 74 = live 74**, written to `D:\dev\TSOPOZIDIS\gnk-backups`. `2026-08-06` is the restore-*proven* one (all 73 event hashes byte-identical to production). Sets: 07-30 · 07-31 (Storage) · 08-04 (superseded) · 08-06 · 08-07 · 08-08 · 08-09 · **08-10**. Nightly ran 03:46 on 2026-08-10, verified. **STILL SINGLE-MACHINE — a current off-site archive is built and waiting to be copied to USB, §3.3** |
 
@@ -596,10 +596,14 @@ is one word: `CSP_HEADER` in `lib/services/csp.ts`.*
   must not be read as clean**. Rollback is one word: `CSP_HEADER` in
   `lib/services/csp.ts`. IMPROVEMENTS C1 owns the evidence.
 - **2FA is enforced at the application layer only** — still true in production on
-  2026-08-10. Migration `0029_require_aal2.sql` closes it at the database level
-  and is **built, reviewed and verified locally on branch `c2-aal2-rls`, but has
-  NOT been applied to hosted.** Nothing changes in production until someone runs
-  §3. IMPROVEMENTS C2 owns the evidence and the blocker.
+  **2026-08-11**. Migration `0029_require_aal2.sql` closes it at the database
+  level and is **merged to `main` (`24a41ea`) and applied to LOCAL, but has NOT
+  been applied to hosted.** Nothing changes in production until someone runs §3.
+  The application half is proven end to end as of 2026-08-11: `mfa.spec.ts`
+  enrols a real TOTP factor, signs out and proves the password alone no longer
+  gets in — green in a full cold suite run, so a user who loses their device can
+  still re-enrol before DB-level lockout lands. IMPROVEMENTS C2 owns the
+  evidence and the blocker.
 - **B8 does not queue writes.** Offline slip signing was considered and
   rejected: it would put commission evidence in a client-side queue.
 - ~~Playwright does not run in CI~~ — **fixed 2026-08-04**, and it caught a real
@@ -654,6 +658,29 @@ is one word: `CSP_HEADER` in `lib/services/csp.ts`.*
 
 **Machine**
 - **Do not `rm -rf .next` or build while a dev server is running.**
+- **A leftover `next start` on :3000 makes the whole app non-hydrating, and the
+  E2E suite reuses it without saying so (2026-08-11).** `playwright.config.ts`
+  has `reuseExistingServer: true` and only checks that *something* answers the
+  base URL, so the suite runs against whatever holds the port. A `next start`
+  left from a prod check serves the manifests it cached at boot; a later
+  `npm run build` replaces `.next`, the content-hashed chunk names move, and the
+  old server then 500s (`text/plain`) for exactly the chunks that moved —
+  including the Turbopack runtime. Every page SSRs perfectly and **nothing is
+  interactive**, with no application error anywhere to explain it. Cost an A/B
+  bisect across two branches that wrongly implicated migration `0029`.
+  **Tell:** a click that does nothing, plus `Refused to execute script … MIME
+  type ('text/plain')` in the console. **Confirm:** `Get-CimInstance Win32_Process
+  -Filter "ProcessId=<pid on 3000>"` — a command line reading `next start` is it;
+  `.next/BUILD_ID` will also not appear anywhere in the served HTML.
+  **Fix:** kill it, `npm run dev`.
+- **E2E `setup` spends minutes compiling routes on a cold dev server** — 4.6m
+  observed 2026-08-11. It is warming, not hung: a local run is `next dev`, which
+  compiles per route on first request (43s for `/login/verify`, and one
+  `/properties/<id>` warm-up swung between 21s and 130s across runs). CI builds
+  and serves `next start`, so it never pays this. Why it is done there, and why
+  the local budgets are scaled to match, is commented in
+  `tests/e2e/auth.setup.ts`, `tests/e2e/helpers.ts` (`opTimeout`) and
+  `playwright.config.ts`.
 - **A shell left `cd`'d into a directory locks it on Windows**, so an emptied
   directory may refuse to disappear. `git worktree remove` can fail this way —
   prune, then remove with PowerShell. (This bit the 2026-08-07 move: robocopy
