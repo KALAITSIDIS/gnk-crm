@@ -634,9 +634,20 @@ is one word: `CSP_HEADER` in `lib/services/csp.ts`.*
   `/login/verify` and `/session-clock`) or stop shipping scripts to it. §0
   records `/offline` as "not a blocker after all (static text, 0 interactive
   elements)" — true for usability, and this is the cost that came with it.
-  **It also means production `/offline` blocks every one of its own scripts and
-  files a CSP report for each**, so check whether Sentry is receiving a stream of
-  them. Turning flake into a hard failure was tried the same day and reverted;
+  **Production `/offline` also blocked every one of its own scripts and filed a
+  CSP report for each — but the report VOLUME was almost certainly ~0, not a
+  stream.** Per view the cost is ~20 `Sentry.captureMessage` calls from
+  `app/api/csp-report/route.ts`; the number of views is the missing factor, and
+  Vercel runtime logs for the 24h to 2026-08-11 18:00 hold **2 lines in total**
+  (`/login` and `/`, both from that afternoon's own smoke check). No traffic, so
+  no reports. **Sentry itself is still UNVERIFIED** — `SENTRY_DSN` and
+  `SENTRY_AUTH_TOKEN` exist in `.env.local` as EMPTY keys (the real values live
+  only in Vercel), so it cannot be queried from a dev machine. Whoever has
+  dashboard access can settle it with the search `"[csp]" "/offline"`; the
+  message format is `[csp] <directive> blocked <uri> on <path>`. Note the
+  ~1h Vercel log retention means an empty log query is never evidence of a clean
+  state on its own — the 2-line control count above is what makes it meaningful
+  here. Turning flake into a hard failure was tried the same day and reverted;
   the reasoning is in `playwright.config.ts` where the option used to be.
 - **B8 does not queue writes.** Offline slip signing was considered and
   rejected: it would put commission evidence in a client-side queue.
