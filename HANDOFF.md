@@ -522,16 +522,14 @@ Sentry DSNs were "set and verified live"; neither was true. Corrected below.*
   mandate renewals deliberately NOT built: they are contracts, and inventing
   Cyprus legal text is not an engineering decision. **Blocked on supplied wording,
   not on code** — the pipeline is proven, each is then an afternoon.
-- **C1 CSP** — **the nonce WORKS in production as of 2026-08-10 (`929055e`)**:
-  `/login` 22 of 22, `/p/*` 23 of 23, `check:csp-nonce` exit 0. Root cause was
-  ours, not the platform's — a `Content-Security-Policy` key in `next.config.ts`
-  `headers()` landed on the REQUEST under the name Next reads the nonce from and
-  won on Vercel. **IMPROVEMENTS C1 owns the evidence and the trade** (framing now
-  enforced by `X-Frame-Options: DENY` alone until the policy goes enforcing).
-  **Still NOT enforced**, and enforcement is now blocked on one thing only:
-  `/offline` is `force-static` for the PWA, so it can never carry a nonce and
-  would render without hydrating. That plus `frame-src vercel.live` is what
-  remains.
+- ~~**C1 CSP**~~ — **DONE. ENFORCED in production 2026-08-10.** Move it to the
+  Done line above when this section is next touched; it is listed here only so
+  the correction is visible. The two blockers this bullet named both dissolved:
+  `/offline` renders three paragraphs of static text with **0 interactive
+  elements**, so never hydrating costs nothing, and `frame-src vercel.live` was
+  the Vercel Toolbar *browser extension*, not the deployment — the served HTML
+  has never contained it. Framing is now enforced twice (X-Frame-Options AND the
+  policy's own `frame-ancestors`). **IMPROVEMENTS C1 owns the evidence.**
 
 **Open, needing an operator decision (not engineering):**
 - **Get a backup off this machine — STILL OPEN 2026-08-10, and this is the
