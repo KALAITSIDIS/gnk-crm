@@ -665,14 +665,23 @@ is one word: `CSP_HEADER` in `lib/services/csp.ts`.*
   `app/api/csp-report/route.ts`; the number of views is the missing factor, and
   Vercel runtime logs for the 24h to 2026-08-11 18:00 hold **2 lines in total**
   (`/login` and `/`, both from that afternoon's own smoke check). No traffic, so
-  no reports. **Sentry itself is still UNVERIFIED** — `SENTRY_DSN` and
-  `SENTRY_AUTH_TOKEN` exist in `.env.local` as EMPTY keys (the real values live
-  only in Vercel), so it cannot be queried from a dev machine. Whoever has
-  dashboard access can settle it with the search `"[csp]" "/offline"`; the
-  message format is `[csp] <directive> blocked <uri> on <path>`. Note the
-  ~1h Vercel log retention means an empty log query is never evidence of a clean
-  state on its own — the 2-line control count above is what makes it meaningful
-  here. Turning flake into a hard failure was tried the same day and reverted;
+  no reports. **Sentry confirms it: there are NO `/offline` CSP reports.** The
+  `[csp]` issues that exist name a different path — `[csp] script-src-elem
+  blocked …/chunks/43nlpkxvny-py.js on /settings/organization` and the same on
+  `/login` — i.e. the pre-`force-dynamic` static-prerender bug `T-prod-day` fixed
+  on 2026-08-09, not this one. All resolved, and **zero new violation reports in
+  the ~12h after enforcement went live** (checked 2026-08-11 06:18 in the "Sentry
+  errors review" session; org `gn-kalaitsidis-capital-ltd`, project
+  `4511848276951120`). Two independent lines of evidence agree, which is the only
+  reason to believe it: no traffic in the Vercel logs, and no such issue in
+  Sentry. Second-hand and bounded, though — that was another session's query, and
+  it enumerated recent issues rather than proving a 90-day absence. **Sentry
+  cannot be queried from a dev machine at all:** `SENTRY_DSN` and
+  `SENTRY_AUTH_TOKEN` are present in `.env.local` as EMPTY keys, the real values
+  living only in Vercel. Search `"[csp]" "/offline"` to re-check; the message
+  format is `[csp] <directive> blocked <uri> on <path>`. Note that ~1h Vercel log
+  retention means an empty log query is never evidence of a clean state on its
+  own — the 2-line control count above is what made it meaningful. Turning flake into a hard failure was tried the same day and reverted;
   the reasoning is in `playwright.config.ts` where the option used to be.
 - **B8 does not queue writes.** Offline slip signing was considered and
   rejected: it would put commission evidence in a client-side queue.
