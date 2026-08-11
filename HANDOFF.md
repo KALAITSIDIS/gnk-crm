@@ -514,7 +514,13 @@ the mirror error is just as easy — see the row-counts warning in §0.
 *Rewritten 2026-08-09. The previous version listed C1 as Done and claimed both
 Sentry DSNs were "set and verified live"; neither was true. Corrected below.*
 
-**Done:** A (all) · B1 · B2 · B3 · B6 · B7 · B8 · B10 · B11 · C2 (opt-in) · C6.
+**Done:** A (all) · B1 · B2 · B3 · B6 · B7 · B8 · B10 · B11 · **C1 (enforced
+2026-08-10)** · C2 (opt-in) · C6.
+
+*C1 moved up from "Partly done" on 2026-08-10, as the bullet standing there
+asked. Framing is enforced twice now — `X-Frame-Options` and the policy's own
+`frame-ancestors`. **IMPROVEMENTS C1 owns the evidence and the rollback**, which
+is one word: `CSP_HEADER` in `lib/services/csp.ts`.*
 
 **Partly done:**
 - **B4 documents** — viewing confirmation SHIPPED 2026-08-09 (migration 0027,
@@ -522,14 +528,6 @@ Sentry DSNs were "set and verified live"; neither was true. Corrected below.*
   mandate renewals deliberately NOT built: they are contracts, and inventing
   Cyprus legal text is not an engineering decision. **Blocked on supplied wording,
   not on code** — the pipeline is proven, each is then an afternoon.
-- ~~**C1 CSP**~~ — **DONE. ENFORCED in production 2026-08-10.** Move it to the
-  Done line above when this section is next touched; it is listed here only so
-  the correction is visible. The two blockers this bullet named both dissolved:
-  `/offline` renders three paragraphs of static text with **0 interactive
-  elements**, so never hydrating costs nothing, and `frame-src vercel.live` was
-  the Vercel Toolbar *browser extension*, not the deployment — the served HTML
-  has never contained it. Framing is now enforced twice (X-Frame-Options AND the
-  policy's own `frame-ancestors`). **IMPROVEMENTS C1 owns the evidence.**
 
 **Open, needing an operator decision (not engineering):**
 - **Get a backup off this machine — STILL OPEN 2026-08-10, and this is the
@@ -543,8 +541,11 @@ Sentry DSNs were "set and verified live"; neither was true. Corrected below.*
   the only archive on `D:`** — the 08-07 and 08-09 ones were deleted 2026-08-10
   after confirming both were strict subsets, so there is no question which file
   to copy.
-- **B5 map** — tile provider is a spend + ToS call, and adds a CSP origin while
-  C1 is mid-staging.
+- **B5 map** — tile provider is a spend + ToS call. **The CSP half got harder,
+  not easier, when C1 went enforcing on 2026-08-10**: a tile origin is no longer
+  a line in a report-only policy nobody enforces, it is an edit to a live one
+  that blocks what it does not name. Add the origin and verify before the map
+  ships, not after.
 - **`gerasimos@` has no 2FA** — reviewed 2026-08-09, kept as admin deliberately.
   He is also the only other admin, so he is the lockout safety net for C2's
   DB-level enforcement. Decide before that lands.
@@ -554,10 +555,16 @@ Sentry DSNs were "set and verified live"; neither was true. Corrected below.*
    RLS asserting `aal2` for users WITH a verified factor (the opt-in template).
    Touches every business table, real lockout risk, wants its own session and a
    fresh start. 0028 now makes it visible who actually has a factor.
-2. **Sentry source maps + release** (BACKLOG) — a build change; stacks are
-   currently minified and issues carry no release.
-3. Whatever `docs/BACKLOG.md` holds. Note **stranded tasks is DONE**
-   (2026-08-09, "Needs an owner" on `/tasks`) — the old pointer here was stale.
+2. ~~**Sentry source maps + release**~~ — **SHIPPED `70e4ceb`.** This line said
+   "stacks are currently minified and issues carry no release" after both had
+   been fixed. What is left is not a build change but **one observation, and it
+   cannot be scheduled**: read the top frame of the NEXT genuine client error. A
+   path like `components/features/…` means the maps match the deployed bundles;
+   another `chunks/44sdjkbb-9351.js` means they do not and this reopens. BACKLOG
+   owns it and explains why manufacturing an error was rejected.
+3. Whatever `docs/BACKLOG.md` holds — the remaining CSV exports are the largest
+   decision-free chunk. Note **stranded tasks is DONE** (2026-08-09, "Needs an
+   owner" on `/tasks`) — the old pointer here was stale.
 
 **Standing decisions:**
 - **Build nothing new — stabilise and let the desk use it** (2026-07-29). Still
