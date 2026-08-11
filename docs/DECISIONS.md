@@ -2417,3 +2417,114 @@ broken enrolment flow plus database-level lockout means a user who loses a devic
 cannot re-enrol, and re-enrolment is precisely the recovery path this design
 assumed works.
 
+**RESOLVED 2026-08-11 — see `T-e2e-cold-server`. Enrolment was never broken.**
+The QR dialog never rendered because the page never hydrated, on a server that
+was serving a build that no longer existed on disk.
+
+
+## 2026-08-11 · T-e2e-cold-server — six tests failed and not one of them was broken
+
+**No application code changed.** `tests/e2e/mfa.spec.ts` was red, was reported as
+a broken enrolment flow, and gated the hosted apply of `0029` (`T-aal2-rls`).
+Enrolment was fine. So were the five other tests that failed on the way to
+proving it. Two separate environment faults, neither in the app.
+
+### 1. The suite was testing a server nobody had checked
+
+The process on `:3000` was not a dev server. It was `next start -p 3000`, begun
+the previous evening for a production check and never stopped. `next start`
+caches its build manifests at boot; `.next` was rebuilt the next morning, which
+rewrote the content-hashed chunk filenames. The old server went on emitting HTML
+that referenced chunk names no longer on disk, so **6 of 22 chunks answered `500`
+with `content-type: text/plain` — including the Turbopack runtime.**
+
+Consequence: every page server-rendered perfectly and **nothing hydrated**. A
+click on "Set up two-factor authentication" reached no handler, `enrollment`
+stayed `null`, the QR dialog never appeared. Not specific to `/security` — the
+same five chunks 500'd on `/dashboard`, `/contacts`, `/settings` and `/login`.
+`playwright.config.ts` has `reuseExistingServer: true` and only checks that
+*something* answers the base URL, so the suite adopted it and `npm run dev`
+never started.
+
+**The disproof was inside the bug report's own artefact.** The accessibility
+snapshot in `error-context.md` showed `button "Set up two-factor
+authentication"` — not the `"…"` disabled pending label — and carried no
+`role="alert"` paragraph. So `pending` was false and `error` was null: the
+error branch at `security-panel.tsx:38` had never executed and the server action
+had never been called. The suspected cause was excluded by the file filed with
+the suspicion. Confirmation took one command: the served HTML contained no path
+matching `.next/BUILD_ID`.
+
+### 2. Underneath it, compile-on-demand against fixed budgets
+
+With a real dev server the suite went green except for a class of failure that
+had been masked by the first fault. A local run is `next dev`, which compiles a
+route on first request and charges it to whichever test asks first. From the dev
+server's own log, cold:
+
+```
+GET /login/verify        43s   (next.js: 43s, application-code: 328ms)
+GET /viewings/<id>/sign  44s
+GET /viewings/<id>     31.2s
+GET /contacts/export   28.8s
+```
+
+Six tests across three specs failed on that, every one reading like a product
+defect: `csp.spec.ts` reported `net::ERR_ABORTED; maybe frame was detached?` on
+the second of two cold navigations — the test timeout guillotining a navigation
+mid-flight; `mfa.spec.ts` watched `/login` while the post-login redirect
+compiled; `slip-pdf-hash.spec.ts` gave up waiting for a slip row while the
+signing route compiled.
+
+### What shipped
+
+- **`auth.setup.ts` warms 27 routes** after storing the session, so the compile
+  is paid once outside any timed assertion. It can never fail the run — every
+  request is caught and reported, because a throwing warm-up would take 175
+  tests with it. `page.request`, not `page.goto`: the expensive half is the
+  server-side compile, and a plain GET avoids driving a browser into the
+  `/export` routes. Ids come from the admin's own org where one exists, with an
+  any-org fallback for viewings, which local seed data has none of — that
+  fallback still compiles the route on the way to its 404, and `/sign` going
+  cold is what broke `slip-pdf-hash.spec.ts`.
+- **Scaled local budgets** in `playwright.config.ts` (240s test, 90s expect),
+  because `/login/verify` is reachable only when the session owes a factor and
+  so cannot be warmed.
+- **`opTimeout()` in `helpers.ts`** for the twelve budgets hardcoded inside
+  specs, which no config can reach. `mfa.spec.ts:115` missed by 200ms: a
+  `POST /login/verify` taking 20.2s against a hardcoded 20s.
+- **`failOnFlakyTests` in CI**, so a fail-then-pass can never decide the exit
+  code.
+
+Verified by running the full desktop suite against a server started from an
+emptied `.next/dev`: **177 passed, 0 failed, 14.1m** — faster than the 16.6m run
+it replaced, because the compiles moved rather than multiplied.
+
+### Three lessons, one of them a repeat
+
+**Establish what is answering the port before reading the code.** The reported
+symptom was a component bug; the cause was an OS process. One `Get-CimInstance`
+on the PID holding `:3000` would have ended it before any source file was opened.
+
+**Do not calibrate against a number you have not measured — especially an
+unstable one.** This fix took three attempts because the budgets were guessed.
+The same four tests took 66–78s in one cold run and 18–55s in the next, and a
+single `/properties/<id>` warm-up swung between 21s and 130s, on identical code
+and an identically emptied cache. Every budget here is deliberately generous
+rather than tuned, and the comments say so.
+
+**The `T-prod-day` lesson, repeated in the same shape.** A committed comment
+asserted that these failures had been hiding in CI behind a retry, and that
+HANDOFF's "CI green" was concealing them. CI **builds and serves `next start`**
+(`.github/workflows/ci.yml`), so it never compiles on demand and never had this
+problem. The claim was invented about a system whose config had not been read —
+which is exactly what `T-prod-day` concluded, three days earlier, and wrote down
+as *date every claim and re-check rather than re-read*. Corrected in `ddfed85`.
+`failOnFlakyTests` is still worth having, for a reason that survives being true.
+
+### A constraint worth not tripping over
+
+`ci.yml` **depends** on `reuseExistingServer: true`: it starts `next start`
+itself and expects Playwright to reuse it. The same option is what let a stale
+server be adopted silently in §1. Anything that hardens this must keep the reuse
+and check *what* is being reused — dropping the option breaks CI.

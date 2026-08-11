@@ -672,7 +672,8 @@ is one word: `CSP_HEADER` in `lib/services/csp.ts`.*
   type ('text/plain')` in the console. **Confirm:** `Get-CimInstance Win32_Process
   -Filter "ProcessId=<pid on 3000>"` — a command line reading `next start` is it;
   `.next/BUILD_ID` will also not appear anywhere in the served HTML.
-  **Fix:** kill it, `npm run dev`.
+  **Fix:** kill it, `npm run dev`. Full mechanism in DECISIONS
+  `T-e2e-cold-server`.
 - **E2E `setup` spends minutes compiling routes on a cold dev server** — 4.6m
   observed 2026-08-11. It is warming, not hung: a local run is `next dev`, which
   compiles per route on first request (43s for `/login/verify`, and one
