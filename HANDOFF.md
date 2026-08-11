@@ -604,6 +604,18 @@ is one word: `CSP_HEADER` in `lib/services/csp.ts`.*
   gets in — green in a full cold suite run, so a user who loses their device can
   still re-enrol before DB-level lockout lands. IMPROVEMENTS C2 owns the
   evidence and the blocker.
+- **The E2E suite is flaky in CI about one run in three, and `retries: 1` has
+  been absorbing it silently (measured 2026-08-11).** `security.spec.ts`'s
+  anonymous-visitor loop dies in `browser.newContext` with a
+  chrome-headless-shell **`SIGSEGV`** — `Received signal 11 SEGV_MAPERR` in the
+  job log, then `Target page, context or browser has been closed`. Run
+  `31483891162` had 2 flaky and was reported **green**; `31504544194` was
+  identical. Suspected but unproven: ~20 sequential fresh contexts exhausting
+  the runner, despite `--disable-dev-shm-usage`. **Nothing is known to be wrong
+  with the app** — the tests pass on the retry every time so far. `grep -c flaky`
+  a few job logs before assuming a green tick means a clean run. Turning flake
+  into a hard failure was tried the same day and reverted; the reasoning is in
+  `playwright.config.ts` where the option used to be.
 - **B8 does not queue writes.** Offline slip signing was considered and
   rejected: it would put commission evidence in a client-side queue.
 - ~~Playwright does not run in CI~~ — **fixed 2026-08-04**, and it caught a real

@@ -24,18 +24,27 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   /**
-   * A retry that turns red into green is a result nobody reads. The second
-   * attempt is worth keeping — it is evidence about whether a failure is
-   * timing-dependent — but it must not decide the exit code on its own.
+   * `failOnFlakyTests: !!process.env.CI` WAS HERE AND WAS REVERTED THE SAME DAY
+   * (2026-08-11, `ddfed85` then `1674771`). Do not re-add it without reading
+   * this.
    *
-   * NOT the reason the 2026-08-11 cold-compile failures went unseen in CI. CI
-   * builds and runs `next start` (see .github/workflows/ci.yml), so it never
-   * compiles on demand and never had that problem to hide. An earlier draft of
-   * this comment claimed otherwise; it was wrong, and it was wrong in the exact
-   * way HANDOFF §0 warns about — asserting something about CI without reading
-   * the workflow.
+   * It was added on a false premise — that CI had been hiding the cold-compile
+   * failures behind a retry. CI builds and serves `next start`
+   * (.github/workflows/ci.yml), so it never compiles on demand and never had
+   * that problem to hide.
+   *
+   * Then it turned `main` red on a docs-only push, and the measurement is the
+   * argument against it: `security.spec.ts`'s anonymous-visitor loop hits a
+   * chrome-headless-shell **SIGSEGV** on `browser.newContext` in roughly one CI
+   * run in three (`31483891162` had the same 2 flaky tests and was reported
+   * green; `31504544194` was identical and went red). A third of pushes failing
+   * on runner noise teaches everyone to ignore CI, which hides more than a
+   * quiet retry ever did.
+   *
+   * `retries: 1` above is doing the job it was added for: absorbing an
+   * infrastructure crash. The flake rate is real and tracked in HANDOFF §6 —
+   * the fix belongs there, not in the exit code.
    */
-  failOnFlakyTests: !!process.env.CI,
   reporter: [["list"], ["html", { outputFolder: "tests/.playwright-report", open: "never" }]],
   /**
    * Budgets are scaled for a LOCAL run, because a local run means `next dev`,
