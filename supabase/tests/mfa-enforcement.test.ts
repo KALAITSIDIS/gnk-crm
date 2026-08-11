@@ -34,6 +34,9 @@ async function enrolAndVerify(user: TestUser): Promise<string> {
   });
   if (chErr) throw new Error(`challenge: ${chErr.message}`);
 
+  // Generate the code immediately before verify() to minimise the risk of
+  // straddling a 30-second TOTP step boundary; GoTrue's clock-skew tolerance
+  // covers whatever slack remains, so no retry loop is needed here.
   const { error: verifyErr } = await user.client.auth.mfa.verify({
     factorId: enrolled.id,
     challengeId: ch.id,
@@ -59,17 +62,26 @@ async function signInAal1(email: string): Promise<SupabaseClient> {
 let factored: TestUser; // has a verified factor; its client is aal2
 let factoredAal1: SupabaseClient; // same user, password-only session
 let plain: TestUser; // no factor at all — must stay unaffected
+let halfEnrolled: TestUser; // enrolled but never verified — must NOT be gated
 
 beforeAll(async () => {
   await ensureTestOrg(svc, ORG_A, "Test Org A", "test-org-a");
 
-  [factored, plain] = await Promise.all([
+  [factored, plain, halfEnrolled] = await Promise.all([
     createTestUser(svc, `mfa-on-${run}@test.local`, "agent", ORG_A),
     createTestUser(svc, `mfa-off-${run}@test.local`, "agent", ORG_A),
+    createTestUser(svc, `mfa-half-${run}@test.local`, "agent", ORG_A),
   ]);
 
   await enrolAndVerify(factored);
   factoredAal1 = await signInAal1(factored.email);
+
+  // Deliberately enrol WITHOUT verifying: this is the "closed the enrolment
+  // tab" state the predicate's status='verified' filter exists to protect.
+  const { error: halfErr } = await halfEnrolled.client.auth.mfa.enroll({
+    factorType: "totp",
+  });
+  if (halfErr) throw new Error(`half enroll: ${halfErr.message}`);
 });
 
 describe("mfa_satisfied() — the aal claim", () => {
@@ -92,5 +104,22 @@ describe("mfa_satisfied() — the aal claim", () => {
     const { data, error } = await plain.client.rpc("mfa_satisfied");
     expect(error).toBeNull();
     expect(data).toBe(true);
+  });
+
+  // Regression guard for the predicate's headline trap: if it ever checks
+  // "has any factor" instead of "has a VERIFIED factor", this user gets
+  // locked out of everything and this test is the only thing that notices.
+  it("is true for a user with an UNVERIFIED factor — the abandoned-enrolment trap", async () => {
+    const { data, error } = await halfEnrolled.client.rpc("mfa_satisfied");
+    expect(error).toBeNull();
+    expect(data).toBe(true);
+  });
+
+  // The revoke is the dangerous line (a security definer function is
+  // anon-executable by default — 0021's scar). Without this, dropping it
+  // later would not fail a single test.
+  it("is not callable by the anon role at all", async () => {
+    const { error } = await anonClient().rpc("mfa_satisfied");
+    expect(error).not.toBeNull();
   });
 });
