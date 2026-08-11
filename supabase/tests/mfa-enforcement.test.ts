@@ -143,3 +143,53 @@ describe("require_aal2 coverage", () => {
     expect(error?.code, `unexpected failure: ${error?.message}`).toBe("42501");
   });
 });
+
+describe("require_aal2 behaviour", () => {
+  it("an aal1 session with a verified factor reads nothing", async () => {
+    for (const table of ["contacts", "events", "cyprus_config"]) {
+      const { data, error } = await factoredAal1.from(table).select("*").limit(5);
+      expect(error, `${table} should not error, just return nothing`).toBeNull();
+      expect(data, `${table} leaked rows to an aal1 session`).toEqual([]);
+    }
+  });
+
+  it("an aal1 session with a verified factor cannot write", async () => {
+    const { error } = await factoredAal1
+      .from("contacts")
+      .insert({ org_id: ORG_A, first_name: `blocked-${run}` });
+    expect(error).not.toBeNull();
+  });
+
+  it("the same user at aal2 can read and write", async () => {
+    const { error: insErr } = await factored.client
+      .from("contacts")
+      .insert({ org_id: ORG_A, first_name: `allowed-${run}` });
+    expect(insErr).toBeNull();
+
+    const { data, error } = await factored.client
+      .from("contacts")
+      .select("first_name")
+      .eq("first_name", `allowed-${run}`);
+    expect(error).toBeNull();
+    expect(data).toHaveLength(1);
+  });
+
+  // The most important non-regression in this change: this is the unfactored
+  // admin path, and the reason such an admin remains the lockout safety net.
+  it("a user with NO factor is completely unaffected", async () => {
+    const { error: insErr } = await plain.client
+      .from("contacts")
+      .insert({ org_id: ORG_A, first_name: `plain-${run}` });
+    expect(insErr).toBeNull();
+
+    const { data, error } = await plain.client.from("contacts").select("id").limit(1);
+    expect(error).toBeNull();
+    expect(data?.length).toBeGreaterThan(0);
+  });
+
+  it("service_role still bypasses everything — the cron path", async () => {
+    const { data, error } = await svc.from("events").select("id").limit(1);
+    expect(error).toBeNull();
+    expect(data).not.toBeNull();
+  });
+});
