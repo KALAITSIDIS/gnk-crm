@@ -42,11 +42,14 @@ const APP_DIR = ".next/server/app";
  * `offline` WAS on this list until 2026-08-11, on the stated grounds that a PWA
  * fallback must be precacheable and must not need the server, accepting that it
  * "renders but does not hydrate". Removed, because that phrase understates it:
- * not hydrating means every script on the page is REFUSED, ~20 violations in one
- * burst, which segfaults chrome-headless-shell in CI and files ~20 CSP reports
- * per view in production. `app/offline/page.tsx` is now `force-dynamic` and
- * explains why the precache argument never actually required static rendering.
- * Do not re-add it without reading that comment.
+ * not hydrating means every script on the page is REFUSED — ~20 violations, and
+ * ~20 CSP reports, for anyone who reaches it. `app/offline/page.tsx` is now
+ * `force-dynamic` and explains why the precache argument never actually required
+ * static rendering. Do not re-add it without reading that comment.
+ *
+ * The removal was ALSO expected to stop a chrome-headless-shell `SIGSEGV` in CI.
+ * It did not — see HANDOFF §6. That does not affect this entry: a page whose
+ * scripts are all refused belongs off the allowlist either way.
  */
 export const ALLOWED_STATIC = new Set(["_not-found", "_global-error", "index"]);
 

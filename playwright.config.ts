@@ -122,8 +122,12 @@ export default defineConfig({
      * sampled runs with 6 crashes total, against a 3-of-6 baseline. Adjacent log
      * lines, not a cause.
      *
-     * The real trigger is the CSP violation burst on `/offline`; see
-     * `app/offline/page.tsx` and HANDOFF §6.
+     * A CSP violation burst on `/offline` was then blamed instead, fixed in
+     * `e24e452`, and ALSO disproved: violations went to 0 and 4 of 5 sampled runs
+     * still crashed. **The cause is not known.** See HANDOFF §6 — and note that
+     * both wrong answers came from treating "this appears immediately before the
+     * signal in N of N crashes" as causation, when it only ever showed what was
+     * adjacent in the log buffer.
      */
     // Cyprus desk: pin the locale/timezone so date assertions are stable.
     locale: "en-GB",

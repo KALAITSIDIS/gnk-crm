@@ -15,12 +15,18 @@ export const dynamic = "force-dynamic";
  *
  * What that acceptance actually cost. A static page carries no nonce, and
  * `'strict-dynamic'` makes the browser ignore `'self'`, so EVERY script here was
- * refused — ~20 violations in one burst. That burst segfaults
- * chrome-headless-shell in CI (`SEGV_MAPERR 0000000001b0`; in 4 of 4 crashes,
- * all 20 console lines before the signal came from `/offline`), killing the
- * browser mid-run — which was blamed on `security.spec.ts` for two days, because
- * that spec merely runs next and asks for a context. It also means production
- * files ~20 CSP reports every time anyone reaches this page.
+ * refused — ~20 violations in one burst, and ~20 `Sentry.captureMessage` calls
+ * from `app/api/csp-report/route.ts` for anyone who reached the page.
+ *
+ * ⚠️ This change was made believing that burst caused a chrome-headless-shell
+ * `SIGSEGV` in CI. **It did not** — the violations went to 0 and 4 of 5 sampled
+ * runs still crashed (HANDOFF §6). The correlation was real and useless: all 20
+ * console lines before the signal came from `/offline` in 4 of 4 crashes, which
+ * only showed what was in the log buffer at the time.
+ *
+ * The change still stands on its own: a page whose every script is refused is a
+ * defect regardless of what crashes, nonce coverage is now uniform across every
+ * route, and the pointless CSP reports stop.
  *
  * Being dynamic does not cost the offline guarantee. The worker precaches this
  * URL at install time, while ONLINE, and serves that cached copy — HTML and CSP

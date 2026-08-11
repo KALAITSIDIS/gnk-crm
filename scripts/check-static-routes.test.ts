@@ -33,10 +33,13 @@ describe("findUnexpectedStatic", () => {
    * reversed deliberately on 2026-08-11 and the guard is where that has to bite.
    *
    * A static `/offline` carries no nonce, so `'strict-dynamic'` refuses every
-   * script on it: ~20 violations in one burst, which segfaults
-   * chrome-headless-shell in CI and files ~20 CSP reports per view in
-   * production. The reasoning is in `app/offline/page.tsx`, including why the
-   * "must be precacheable" argument does not require static rendering.
+   * script on it: ~20 violations, and ~20 CSP reports, for anyone who reaches
+   * it. The reasoning is in `app/offline/page.tsx`, including why the "must be
+   * precacheable" argument does not require static rendering.
+   *
+   * The reversal was also expected to stop a chrome-headless-shell `SIGSEGV` in
+   * CI and did not (HANDOFF §6) — irrelevant to this assertion, which is about
+   * nonce coverage, but worth knowing before reading the commit that made it.
    */
   it("no longer exempts /offline — it needs a nonce like every other page", () => {
     expect(ALLOWED_STATIC.has("offline")).toBe(false);

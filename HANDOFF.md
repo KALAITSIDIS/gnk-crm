@@ -605,35 +605,50 @@ is one word: `CSP_HEADER` in `lib/services/csp.ts`.*
   still re-enrol before DB-level lockout lands. IMPROVEMENTS C2 owns the
   evidence and the blocker.
 - **The E2E suite is flaky in most CI runs, `retries: 1` has been absorbing it
-  silently, and the trigger is `/offline` having no nonce (2026-08-11, OPEN).**
-  A green E2E tick is therefore weaker evidence than it looks: `grep -c flaky` a
-  few job logs before believing one.
+  silently, and THE CAUSE IS NOT KNOWN (2026-08-11, OPEN).** A green E2E tick is
+  therefore weaker evidence than it looks: `grep -c flaky` a few job logs before
+  believing one.
 
-  **The chain, measured — the flaky test is not the cause.** `pwa.spec.ts` opens
-  `/offline`. That page is statically prerendered, so it carries **no
-  per-request nonce**, and under the ENFORCED policy's `'strict-dynamic'` every
-  script on it is blocked — ~20 violations in one burst. chrome-headless-shell
-  then dies: `Received signal 11 SEGV_MAPERR 0000000001b0`, always that same
-  address. The browser is gone, so the NEXT test to ask for a context fails with
-  `browser.newContext: Target page, context or browser has been closed` — and
-  that is `security.spec.ts`, purely because `pwa` sorts before `security`. Its
-  anonymous-visitor loop is a bystander. **In 4 of 4 crashes, all 20 console
-  lines before the `SIGSEGV` came from `http://localhost:3000/offline`** (runs
-  `31483891162`, `31504544194`, `31505752738`, and `31513102430` attempt 3).
+  **What is actually established.** chrome-headless-shell dies with `Received
+  signal 11 SEGV_MAPERR 0000000001b0` — always that identical address, so a
+  deterministic code path, not memory pressure. 0–4 times per run, most runs
+  affected. The browser being gone, the NEXT test to ask for a context fails with
+  `browser.newContext: Target page, context or browser has been closed`, and that
+  is `security.spec.ts` purely because `pwa` sorts before `security`. **Its
+  anonymous-visitor loop is a bystander** — the earliest version of this entry
+  blamed it. Tests pass on the retry every time so far and nothing indicates an
+  app fault.
 
-  **A GPU cause was hypothesised, shipped and DISPROVED** (`3761b89`, still in
-  `main`). The crash is preceded by `drmGetDevices2() has not found any devices`
-  and a `gpu-process` sandbox warning, so `--disable-gpu
-  --disable-software-rasterizer` was added for CI. The flags demonstrably took
-  effect — they appear in the launch args and the GPU warnings stopped — and the
-  identical crash still happened. Those warnings were neighbours, not the cause.
-  Decide whether to keep flags whose rationale is dead.
+  **TWO HYPOTHESES WERE SHIPPED AND BOTH DISPROVED. Read this before forming a
+  third.**
+  1. *GPU init* (`3761b89`, since reverted). The crash is preceded by
+     `drmGetDevices2() has not found any devices` and a `gpu-process` sandbox
+     warning, so `--disable-gpu --disable-software-rasterizer` was added for CI.
+     The flags provably applied and the warnings stopped; 3 of 5 sampled runs
+     still crashed.
+  2. *The `/offline` CSP violation burst* (`e24e452`, kept — see below). In 4 of
+     4 crashes, all 20 console lines before the signal came from
+     `http://localhost:3000/offline`, whose scripts were all refused. Giving the
+     page a nonce took violations to **0** — and **4 of 5** sampled runs still
+     crashed.
 
-  **The fix is in the app, not the harness:** give `/offline` a nonce
-  (`force-dynamic`, the same move `T-prod-day` used for `/login`,
-  `/login/verify` and `/session-clock`) or stop shipping scripts to it. §0
-  records `/offline` as "not a blocker after all (static text, 0 interactive
-  elements)" — true for usability, and this is the cost that came with it.
+  **Both wrong answers were reached the same way:** "X appears immediately before
+  the signal in N of N crashes" was read as causation, when it only ever showed
+  what sat in the log buffer at the moment of death. A fixed fault address inside
+  a vendored binary points upstream, at chrome-headless-shell 1228 (Playwright
+  1.61.1), rather than at anything in this repo.
+
+  **The next step should be an experiment, not a fix:** swap the binary —
+  `channel: "chromium"` runs full Chromium in new headless mode instead of the
+  shell — and measure with the same protocol (5 samples via `gh run rerun`, which
+  re-runs a commit without redeploying). Baselines to beat: 3 of 6, then 3 of 5,
+  then 4 of 5. Anything that does not come with a sample count is not an answer.
+
+  `e24e452` STAYS despite its stated reason being disproved: a page whose every
+  script is refused is a defect regardless of what crashes, nonce coverage is now
+  uniform, and the pointless CSP reports stop. §0 records `/offline` as "not a
+  blocker after all (static text, 0 interactive elements)" — true for usability,
+  and this was the cost that came with it.
   **Production `/offline` also blocked every one of its own scripts and filed a
   CSP report for each — but the report VOLUME was almost certainly ~0, not a
   stream.** Per view the cost is ~20 `Sentry.captureMessage` calls from
