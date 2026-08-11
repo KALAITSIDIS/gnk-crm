@@ -50,7 +50,7 @@ returns table (missing_table text)
 language sql
 stable
 security definer
-set search_path = public, pg_catalog
+set search_path = pg_catalog
 as $$
   select t.tablename::text
     from pg_tables t
@@ -65,14 +65,22 @@ as $$
             where p.schemaname = 'public'
               and p.tablename = t.tablename
               and p.policyname = 'require_aal2'
+              and p.permissive = 'RESTRICTIVE'
+              and p.cmd = 'ALL'
+              and p.roles = '{authenticated}'::name[]
+              and p.qual is not null
+              and p.with_check is not null
          )
    order by 1;
 $$;
 
 comment on function public.rls_aal2_coverage() is
-  'RLS-enabled public tables missing the require_aal2 policy. Empty means full '
+  'RLS-enabled public tables missing a require_aal2 policy that actually has '
+  'the right shape (restrictive, ALL, to authenticated, both USING and WITH '
+  'CHECK present) -- not merely a policy of that name. Empty means full '
   'coverage. Asserted by supabase/tests/mfa-enforcement.test.ts so a new table '
-  'cannot ship ungated. IMPROVEMENTS C2.';
+  'cannot ship ungated, and so a weakened policy cannot ship disguised as '
+  'coverage. IMPROVEMENTS C2.';
 
 revoke execute on function public.rls_aal2_coverage() from public, anon, authenticated;
 grant execute on function public.rls_aal2_coverage() to service_role;
