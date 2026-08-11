@@ -1,6 +1,6 @@
 import { test, expect, request as playwrightRequest, type Page } from "@playwright/test";
 import { type SupabaseClient } from "@supabase/supabase-js";
-import { baseUrl, fixtureProfile, isLocal, MODULES, serviceClient } from "./helpers";
+import { baseUrl, fixtureProfile, isLocal, MODULES, opTimeout, serviceClient } from "./helpers";
 
 /**
  * Markers so a crashed run self-heals on the next one rather than leaking rows.
@@ -154,7 +154,7 @@ test.describe("Content-Security-Policy (ENFORCED)", () => {
     });
 
     await expect
-      .poll(async () => (await readViolations(page)).length, { timeout: 10_000 })
+      .poll(async () => (await readViolations(page)).length, { timeout: opTimeout(10_000) })
       .toBeGreaterThan(0);
 
     const [v] = await readViolations(page);

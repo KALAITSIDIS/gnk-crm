@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { type SupabaseClient } from "@supabase/supabase-js";
-import { fixtureProfile, isLocal, serviceClient } from "./helpers";
+import { fixtureProfile, isLocal, opTimeout, serviceClient } from "./helpers";
 
 /**
  * Performance measurement (audit brief Phase 4).
@@ -259,7 +259,7 @@ test.describe("scale safeguards", () => {
     await page.goto("/keys", { waitUntil: "networkidle" });
     await expect(page.getByLabel(/search keys/i)).toBeVisible();
     await page.getByLabel(/search keys/i).fill("zzz-no-such-key-zzz");
-    await page.waitForURL(/q=zzz/, { timeout: 10_000 });
+    await page.waitForURL(/q=zzz/, { timeout: opTimeout(10_000) });
     await expect(page.getByText(/no keys match/i)).toBeVisible();
   });
 

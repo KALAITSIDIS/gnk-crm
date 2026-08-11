@@ -24,15 +24,16 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   /**
-   * A retry that turns red into green is a result nobody reads.
+   * A retry that turns red into green is a result nobody reads. The second
+   * attempt is worth keeping — it is evidence about whether a failure is
+   * timing-dependent — but it must not decide the exit code on its own.
    *
-   * On 2026-08-11 four csp.spec.ts tests failed on a cold dev server by
-   * overrunning the 60s test timeout. In CI they would have failed once, passed
-   * on the retry, and been reported as "4 flaky" under a green tick — which is
-   * how that fragility stayed invisible long enough for HANDOFF to record CI as
-   * simply green. The retry itself is worth keeping (the second attempt is
-   * evidence about whether a failure is timing-dependent), but it must not
-   * decide the exit code on its own.
+   * NOT the reason the 2026-08-11 cold-compile failures went unseen in CI. CI
+   * builds and runs `next start` (see .github/workflows/ci.yml), so it never
+   * compiles on demand and never had that problem to hide. An earlier draft of
+   * this comment claimed otherwise; it was wrong, and it was wrong in the exact
+   * way HANDOFF §0 warns about — asserting something about CI without reading
+   * the workflow.
    */
   failOnFlakyTests: !!process.env.CI,
   reporter: [["list"], ["html", { outputFolder: "tests/.playwright-report", open: "never" }]],
@@ -78,6 +79,12 @@ export default defineConfig({
    *
    * Deployed targets keep the strict values: they serve a prebuilt app, so
    * there is no compilation to wait for and slowness there is real.
+   *
+   * CI matches `isLocal` — it runs against 127.0.0.1 — but it BUILDS and serves
+   * `next start`, so nothing there compiles on demand and these larger budgets
+   * simply never get consumed. The gate is "localhost" because that is what the
+   * config can actually see; the thing it is really guarding against is
+   * `next dev`, which is a local-development concern, not a CI one.
    *
    * The trade, stated plainly: a genuine hang on a local run now takes 180s to
    * surface instead of 60s. That is the price of not having cold compilation

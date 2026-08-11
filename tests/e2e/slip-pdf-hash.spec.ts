@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { type SupabaseClient } from "@supabase/supabase-js";
 import { createHash } from "node:crypto";
-import { ADMIN_EMAIL, isLocal, serviceClient } from "./helpers";
+import { ADMIN_EMAIL, isLocal, opTimeout, serviceClient } from "./helpers";
 
 /**
  * The slip PDF's recorded hash must describe the bytes actually in Storage (0026).
@@ -140,7 +140,7 @@ test.describe("Signed slip PDF hash", () => {
             .eq("viewing_id", viewingId);
           return count ?? 0;
         },
-        { timeout: 30_000, message: "the slip row never appeared — signing failed" },
+        { timeout: opTimeout(30_000), message: "the slip row never appeared — signing failed" },
       )
       .toBe(1);
 

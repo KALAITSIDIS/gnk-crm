@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { assertNoProblems, isLocal, runTag, watchForProblems } from "./helpers";
+import { assertNoProblems, isLocal, opTimeout, runTag, watchForProblems } from "./helpers";
 
 /**
  * Critical-path smoke (audit brief Phase 2): the chain a Paphos desk runs
@@ -46,9 +46,9 @@ test.describe.serial("critical path", () => {
     await dialog.getByLabel(/message \/ request/i).fill(leadMessage);
     await dialog.getByRole("button", { name: /^add lead$/i }).click();
 
-    await expect(dialog).toBeHidden({ timeout: 20_000 });
+    await expect(dialog).toBeHidden({ timeout: opTimeout(20_000) });
     // the inbox must show it without a manual refresh (revalidatePath)
-    await expect(page.getByText(leadMessage)).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(leadMessage)).toBeVisible({ timeout: opTimeout(20_000) });
 
     assertNoProblems(problems, "lead capture");
   });
@@ -117,7 +117,7 @@ test.describe.serial("critical path", () => {
     await form.getByRole("button", { name: /create|save/i }).last().click();
 
     // lands on the detail page with a generated reference
-    await page.waitForURL(/\/properties\/[0-9a-f-]{36}/, { timeout: 30_000 });
+    await page.waitForURL(/\/properties\/[0-9a-f-]{36}/, { timeout: opTimeout(30_000) });
     await expect(page.getByText(propertyTitle).first()).toBeVisible();
     await expect(page.getByText(/GNK-PAF-\d+/).first(), "no reference generated").toBeVisible();
 
@@ -144,7 +144,7 @@ test.describe.serial("critical path", () => {
     await page.getByLabel(/due date/i).fill(due.toISOString().slice(0, 10));
     await page.getByRole("button", { name: /add|create/i }).first().click();
 
-    await expect(page.getByText(title)).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(title)).toBeVisible({ timeout: opTimeout(20_000) });
     assertNoProblems(problems, "task create");
   });
 

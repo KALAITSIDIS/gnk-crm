@@ -1,5 +1,5 @@
 import { test as setup, expect, type Page } from "@playwright/test";
-import { MODULES, isLocal, login, serviceClient } from "./helpers";
+import { MODULES, fixtureProfile, isLocal, login, serviceClient } from "./helpers";
 
 const AUTH_FILE = "tests/.auth/admin.json";
 
@@ -34,6 +34,12 @@ const AUTH_FILE = "tests/.auth/admin.json";
  * is printed instead of thrown. `playwright.config.ts` keeps its scaled local
  * budgets as the backstop.
  *
+ * CI does not need this. It builds and serves `next start`
+ * (.github/workflows/ci.yml), so every route is already compiled and these 27
+ * requests just return quickly. The `isLocal()` gate cannot tell the two apart
+ * — CI is also 127.0.0.1 — so the cost there is a handful of warm GETs, which
+ * is cheaper than teaching the suite to detect a dev server.
+ *
  * `page.request` rather than `page.goto`: the expensive half is the server-side
  * compile (43s of `next.js` against 328ms of application code), which a plain
  * GET triggers just as well — and it avoids driving the browser into the
@@ -66,21 +72,58 @@ async function warmRoutes(page: Page): Promise<void> {
   );
 
   // Dynamic routes need a real id, and they are the slowest ones to compile.
-  // A missing table or an empty one just means that route stays cold — the
-  // specs that need a record seed their own.
+  // Paths whose id is not in the admin's org: they still compile, but the app
+  // answers 404, so the report can say so rather than look like a defect.
+  const compiledVia404 = new Set<string>();
+
   try {
     const svc = serviceClient();
-    const [properties, contacts, viewings] = await Promise.all([
-      svc.from("properties").select("id").limit(1),
-      svc.from("contacts").select("id").limit(1),
-      svc.from("viewings").select("id").limit(1),
+    const { orgId } = await fixtureProfile(svc);
+
+    /**
+     * Prefer a record in the signed-in admin's own org — that renders a real
+     * page, which is unambiguously a compile.
+     *
+     * Fall back to ANY record when the org has none. A 404 still compiles the
+     * route on the way to deciding it is a 404 (measured: 14.6–27.8s of compile
+     * before the 404 came back), and these are the two most expensive routes in
+     * the suite — `/viewings/<id>` at 31.2s and `/viewings/<id>/sign` at 44s.
+     * Warming them imperfectly beats leaving them cold: `/sign` going cold is
+     * what broke `slip-pdf-hash.spec.ts`, whose 30s wait is hardcoded and so
+     * cannot be rescued by the config.
+     *
+     * The fallback is the NORMAL path for viewings against local seed data,
+     * which has none in the admin's org (checked 2026-08-11: 4 properties,
+     * 4 contacts, 0 viewings). Scoping strictly would have regressed the exact
+     * tests this warm-up exists to fix.
+     */
+    const pick = async (table: string): Promise<{ id: string; scoped: boolean } | null> => {
+      const scoped = await svc.from(table).select("id").eq("org_id", orgId).limit(1);
+      const scopedId = scoped.data?.[0]?.id as string | undefined;
+      if (scopedId) return { id: scopedId, scoped: true };
+
+      const anyRow = await svc.from(table).select("id").limit(1);
+      const anyId = anyRow.data?.[0]?.id as string | undefined;
+      return anyId ? { id: anyId, scoped: false } : null;
+    };
+
+    const [property, contact, viewing] = await Promise.all([
+      pick("properties"),
+      pick("contacts"),
+      pick("viewings"),
     ]);
-    const propertyId = properties.data?.[0]?.id;
-    const contactId = contacts.data?.[0]?.id;
-    const viewingId = viewings.data?.[0]?.id;
-    if (propertyId) paths.push(`/properties/${propertyId}`);
-    if (contactId) paths.push(`/contacts/${contactId}`);
-    if (viewingId) paths.push(`/viewings/${viewingId}`, `/viewings/${viewingId}/sign`);
+
+    const add = (path: string, scoped: boolean) => {
+      paths.push(path);
+      if (!scoped) compiledVia404.add(path);
+    };
+
+    if (property) add(`/properties/${property.id}`, property.scoped);
+    if (contact) add(`/contacts/${contact.id}`, contact.scoped);
+    if (viewing) {
+      add(`/viewings/${viewing.id}`, viewing.scoped);
+      add(`/viewings/${viewing.id}/sign`, viewing.scoped);
+    }
   } catch (err) {
     console.log(`[warm-up] could not resolve record ids: ${(err as Error).message}`);
   }
@@ -93,10 +136,15 @@ async function warmRoutes(page: Page): Promise<void> {
       // compile time is not stable run to run.
       const res = await page.request.get(path, { timeout: 180_000, maxRedirects: 5 });
       const seconds = (Date.now() - startedAt) / 1000;
-      if (!res.ok()) {
-        notable.push(`${path} — HTTP ${res.status()} after ${seconds.toFixed(1)}s`);
+      const took = `${seconds.toFixed(1)}s`;
+      if (res.status() === 404 && compiledVia404.has(path)) {
+        // Expected: no such record in this org. The compile still happened,
+        // which is the only thing this function is here for.
+        notable.push(`${path} — ${took} (compiled; 404, no record in admin's org)`);
+      } else if (!res.ok()) {
+        notable.push(`${path} — HTTP ${res.status()} after ${took}`);
       } else if (seconds > 5) {
-        notable.push(`${path} — ${seconds.toFixed(1)}s`);
+        notable.push(`${path} — ${took}`);
       }
     } catch (err) {
       notable.push(`${path} — ${(err as Error).message.split("\n")[0]}`);

@@ -121,7 +121,7 @@ export async function login(page: Page, email = ADMIN_EMAIL, password = ADMIN_PA
   await page.getByLabel(/email/i).fill(email);
   await page.getByLabel(/password/i).fill(password);
   await page.getByRole("button", { name: /log in/i }).click();
-  await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
+  await page.waitForURL(/\/dashboard/, { timeout: opTimeout(30_000) });
 }
 
 /** Unique suffix so audit fixtures are always identifiable and never collide. */
@@ -141,6 +141,24 @@ export const baseUrl = () => process.env.E2E_BASE_URL ?? "http://localhost:3000"
 
 /** Seeding is only possible against the local stack; deployed runs self-skip. */
 export const isLocal = () => /localhost|127\.0\.0\.1/.test(baseUrl());
+
+/**
+ * Scale a hardcoded wait that bounds a real app OPERATION — a redirect landing,
+ * a row appearing — rather than a UI assertion.
+ *
+ * `playwright.config.ts` scales the global test and `expect` budgets for local
+ * runs, and explains why: a local run is `next dev`, which compiles a route on
+ * first request. Budgets written inline here are out of that reach, and on
+ * 2026-08-11 that gap failed `mfa.spec.ts` by 200ms — the post-verification
+ * `POST /login/verify` took 20.2s (next.js 4.9s, application-code 14.8s)
+ * against a hardcoded 20s. Warm-up cannot fix that one: the cost is on the POST
+ * path, not a page compile.
+ *
+ * ×4 keeps the relative intent of each number (a 10s wait stays the short one)
+ * while clearing cold-server work with room to spare. Deployed runs are
+ * unchanged: they serve a prebuilt app, so a slow operation there is real.
+ */
+export const opTimeout = (ms: number) => (isLocal() ? ms * 4 : ms);
 
 /**
  * Local Supabase service key — the standard demo key printed by

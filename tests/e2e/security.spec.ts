@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { MODULES } from "./helpers";
+import { MODULES, opTimeout } from "./helpers";
 
 /**
  * Security regression suite (audit brief Phase 5) — NON-DESTRUCTIVE.
@@ -138,7 +138,7 @@ test.describe("auth surface", () => {
     await page.getByRole("button", { name: /log in/i }).click();
 
     const error = page.getByText(/invalid|incorrect|could not|failed/i).first();
-    await expect(error).toBeVisible({ timeout: 20_000 });
+    await expect(error).toBeVisible({ timeout: opTimeout(20_000) });
     // Must not distinguish "no such user" from "wrong password" (user enumeration).
     await expect(page.getByText(/no such user|user not found|unknown email/i)).toHaveCount(0);
     await expect(page).toHaveURL(/\/login/);

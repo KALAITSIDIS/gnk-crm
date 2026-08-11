@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { type SupabaseClient } from "@supabase/supabase-js";
 import { createHash } from "node:crypto";
-import { ADMIN_EMAIL, isLocal, serviceClient } from "./helpers";
+import { ADMIN_EMAIL, isLocal, opTimeout, serviceClient } from "./helpers";
 
 /**
  * Generated viewing confirmation (IMPROVEMENTS B4, migration 0027).
@@ -118,7 +118,7 @@ test.describe("Viewing confirmation PDF", () => {
             .eq("doc_type", "viewing_confirmation");
           return count ?? 0;
         },
-        { timeout: 30_000, message: "no confirmation document was filed" },
+        { timeout: opTimeout(30_000), message: "no confirmation document was filed" },
       )
       .toBe(1);
 

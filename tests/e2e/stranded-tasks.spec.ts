@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { ADMIN_EMAIL, isLocal, serviceClient } from "./helpers";
+import { ADMIN_EMAIL, isLocal, opTimeout, serviceClient } from "./helpers";
 
 /**
  * Admin surface for tasks nobody can see (BACKLOG T-audit-tasks).
@@ -107,7 +107,7 @@ test.describe("Stranded tasks", () => {
             .single();
           return data?.assignee_id ?? null;
         },
-        { timeout: 20_000, message: "the unassigned task was never reassigned" },
+        { timeout: opTimeout(20_000), message: "the unassigned task was never reassigned" },
       )
       .toBe(adminId);
 

@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { totp } from "../../lib/testing/totp";
-import { ADMIN_EMAIL, ADMIN_PASSWORD, isLocal, serviceClient } from "./helpers";
+import { ADMIN_EMAIL, ADMIN_PASSWORD, isLocal, opTimeout, serviceClient } from "./helpers";
 
 /**
  * Force-remove every factor on the shared local admin.
@@ -112,7 +112,7 @@ test("password alone stops working once a factor is enrolled", async ({ page }) 
   // ---------- the right code gets in ----------
   await page.getByLabel(/6-digit code/i).fill(totp(secret));
   await page.getByRole("button", { name: /^verify$/i }).click();
-  await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 });
+  await expect(page).toHaveURL(/\/dashboard/, { timeout: opTimeout(20_000) });
 
   // ---------- clean up: remove the factor ----------
   await page.goto("/security", { waitUntil: "networkidle" });
