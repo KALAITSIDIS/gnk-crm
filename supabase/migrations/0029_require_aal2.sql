@@ -90,33 +90,41 @@ grant execute on function public.rls_aal2_coverage() to service_role;
 --
 -- Gating `profiles` does NOT deadlock: current_org_id() and current_role_gnk()
 -- read it, but both are security definer owned by postgres, which has bypassrls.
+--
+-- THE `(select ...)` WRAPPER IS LOAD-BEARING, NOT NOISE. Measured 2026-08-10 on
+-- 50 rows: bare `using (public.mfa_satisfied())` plans as `Filter:
+-- mfa_satisfied()` on the scan node and is evaluated ONCE PER ROW. Wrapped, it
+-- plans as `InitPlan 1 -> Result ... loops=1` and is evaluated once per
+-- statement. Same predicate, same semantics; the wrapper is what lets Postgres
+-- hoist it. Removing it silently reintroduces a per-row subquery against
+-- auth.mfa_factors on every query against all 29 tables.
 
-create policy require_aal2 on areas                  as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on chain_checks           as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on contacts               as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on cyprus_config          as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on deal_stages            as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on deals                  as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on districts              as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on documents              as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on events                 as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on key_movements          as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on leads                  as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on mandates               as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on offers                 as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on organizations          as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on payment_plans          as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on price_history          as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on price_list_items       as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on price_lists            as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on profiles               as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on properties             as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on property_keys          as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on property_media         as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on reference_counters     as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on share_link_attempts    as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on share_link_properties  as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on share_links            as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on tasks                  as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on viewing_slips          as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
-create policy require_aal2 on viewings               as restrictive for all to authenticated using (public.mfa_satisfied()) with check (public.mfa_satisfied());
+create policy require_aal2 on areas                  as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on chain_checks           as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on contacts               as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on cyprus_config          as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on deal_stages            as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on deals                  as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on districts              as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on documents              as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on events                 as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on key_movements          as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on leads                  as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on mandates               as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on offers                 as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on organizations          as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on payment_plans          as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on price_history          as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on price_list_items       as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on price_lists            as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on profiles               as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on properties             as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on property_keys          as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on property_media         as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on reference_counters     as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on share_link_attempts    as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on share_link_properties  as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on share_links            as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on tasks                  as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on viewing_slips          as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
+create policy require_aal2 on viewings               as restrictive for all to authenticated using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()));
