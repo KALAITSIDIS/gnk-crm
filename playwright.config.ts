@@ -107,6 +107,29 @@ export default defineConfig({
 
   use: {
     baseURL,
+    /**
+     * EXPERIMENT (2026-08-11), not a fix: run full Chromium in new headless mode
+     * instead of `chrome-headless-shell`.
+     *
+     * Since Playwright 1.49 a headless `chromium` launch uses the separate
+     * `chrome-headless-shell` binary. That binary dies in CI with
+     * `SEGV_MAPERR 0000000001b0` — always the identical address, so a
+     * deterministic path inside vendored code rather than anything this repo
+     * controls. `channel: "chromium"` selects the full browser instead, which is
+     * also closer to what users actually run.
+     *
+     * Two earlier theories were shipped and disproved by measurement — GPU init
+     * (`3761b89`) and the `/offline` CSP violation burst (`e24e452`) — so this
+     * one carries no claim until it has a sample count. Baselines to beat, each
+     * from 5-6 runs sampled with `gh run rerun`: **3 of 6** crashed before any
+     * change, **3 of 5** with the GPU flags, **4 of 5** with `/offline` fixed.
+     * If this does not clear that, revert it: `channel` changes which binary CI
+     * verifies against, and that is not worth carrying for nothing.
+     *
+     * Requires the `chromium` build to be installed, not just the shell. CI runs
+     * `npx playwright install --with-deps chromium`, which fetches both.
+     */
+    channel: "chromium",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "off",
