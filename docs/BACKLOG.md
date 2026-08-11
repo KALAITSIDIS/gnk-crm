@@ -200,6 +200,36 @@ built without explicit direction.
   `revoke … from public, anon` and a `get_advisors` pass, which is precisely
   what migration 0021 got wrong. Then a "2FA" column and an RLS test that a
   non-admin gets nothing back.
+- ~~**Sentry has no source maps and no release tracking (noticed 2026-08-09).**~~
+  **SHIPPED 2026-08-11 (`70e4ceb`) — one acceptance check still open.**
+
+  `next.config.ts` now wraps with `withSentryConfig`. The deploy uploaded **751
+  files in two bundles**, both bound to release `70e4ceb9205d` (Sentry →
+  Settings → Source Maps), and that release is the first carrying a
+  `vercel-production` deploy marker instead of sitting unfinalized.
+
+  **STILL UNVERIFIED, deliberately: that a real stack trace resolves to a
+  filename.** Maps being present does not prove they MATCH the deployed
+  bundles — mismatched paths are the classic silent failure, and no local build
+  can show it. Operator decision 2026-08-11 was to wait for a genuine client
+  error rather than manufacture one. **When the next client error appears, read
+  its top frame.** A path like `components/features/…` means this worked;
+  another `chunks/44sdjkbb-9351.js` means the maps do not match and this
+  reopens.
+
+  Two claims in the original entry below were wrong — both corrected by checking
+  the dashboard rather than reading the note. `SENTRY_ORG` is in Vercel too (not
+  just AUTH_TOKEN and PROJECT), and **releases were already being created and
+  attached**: the Vercel integration did that, which is why 2026-08-10 issues
+  read `release 7b9c11c213c7`. What was missing was source maps and *finalized*
+  releases, not release names.
+
+  Build behaviour proven three ways before shipping — no token (0 maps, exit 0),
+  bad token (**exit 0**, 401s logged, so an expired credential cannot break
+  deploys), upload enabled (60 client maps). `.map` files are deleted after
+  upload *even when the upload fails*, and production still answers 403 for a
+  `.js.map`. Reasoning in the commit; the original entry follows.
+
 - **Sentry has no source maps and no release tracking (noticed 2026-08-09).**
   Delivery is fixed and alerting is proven, but the DATA is poor. `next.config.ts`
   does not wrap with `withSentryConfig`, so stack traces arrive minified — the
