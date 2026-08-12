@@ -154,6 +154,31 @@ shape flags every row.
 
 Full write-ups in `docs/DECISIONS.md`; migrations in `supabase/migrations/`.
 
+**2026-08-11** — 0029 `require_aal2` — **applied to hosted, C2's DB-level 2FA.**
+See §6 and IMPROVEMENTS C2.
+
+**2026-08-11** — 0030 `hoist_rls_helpers` — **IN THE REPO, NOT APPLIED TO
+HOSTED.** Production still evaluates `current_org_id()` / `current_role_gnk()`
+once per ROW; that changes only when someone runs §3. Nothing depends on it, so
+the gap is harmless — but do not read this line as describing production.
+
+24 permissive policies on the 7 paginated list tables now wrap both helpers in
+`(select …)`, which Postgres evaluates once per statement. Counted, not inferred:
+**21 helper calls for a 20-row scan before, 1 after.** 62 permissive policies
+stay bare deliberately.
+
+**Meaning is preserved, proven twice by different methods** — the migration's own
+equivalence check (0 changed on an untouched database, exactly 1 when a policy
+was deliberately weakened), and an independent diff that stripped the wrappers
+back out and compared against the generated rollback script, byte-identical for
+all 24. Two service-role guards, `rls_bare_helper_calls()` and
+`rls_hoisted_policy_count()`, fail CI if a future policy regresses.
+
+**The trap worth carrying:** `pg_policies.qual` is deparsed by `pg_get_expr()`
+against the CALLER's `search_path`, so a `security definer` function with
+`pg_catalog` pinned sees `public.current_org_id()` and an unqualified literal
+silently INVERTS the guard. BACKLOG has the other two.
+
 **2026-08-09** — 0027 `viewing_confirmation` · 0028 `org_mfa_status` — **both are
 on hosted, re-verified there 2026-08-09**: enum value present; function present
 with `anon` EXECUTE revoked and `authenticated` granted, which is the §4.3
@@ -566,9 +591,14 @@ is one word: `CSP_HEADER` in `lib/services/csp.ts`.*
    path like `components/features/…` means the maps match the deployed bundles;
    another `chunks/44sdjkbb-9351.js` means they do not and this reopens. BACKLOG
    owns it and explains why manufacturing an error was rejected.
-3. Whatever `docs/BACKLOG.md` holds — the remaining CSV exports are the largest
-   decision-free chunk. Note **stranded tasks is DONE** (2026-08-09, "Needs an
-   owner" on `/tasks`) — the old pointer here was stale.
+3. **THERE IS NO DECISION-FREE ENGINEERING WORK LEFT.** This line used to point
+   at "the remaining CSV exports"; **all six shipped 2026-07-24** and BACKLOG had
+   said otherwise for 18 days — checked 2026-08-11 by globbing
+   `app/**/export/**/route.ts` before writing any code. What BACKLOG actually
+   holds now: one perf item already built and awaiting a hosted apply (0030),
+   two OPERATOR decisions (mandatory 2FA, nudge thresholds) and three
+   informational notes. Read it, but check whether a thing exists before
+   building it — three entries there described finished work.
 
 **Standing decisions:**
 - **Build nothing new — stabilise and let the desk use it** (2026-07-29). Still
