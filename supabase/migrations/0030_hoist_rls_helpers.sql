@@ -170,6 +170,12 @@ create policy viewings_update on public.viewings
 -- in this same session) and the current read need the public. prefix stripped
 -- FIRST, before the wrapper is stripped, or the comparison sees every
 -- predicate as "changed" and aborts the migration for a spurious reason.
+--
+-- Both sides get the SAME normalisation, deliberately. If only the "after" side
+-- stripped the wrapper, a RE-RUN against an already-hoisted database would
+-- normalise the two sides differently and raise "changed 24 predicate(s)" when
+-- nothing had changed — a false alarm at the worst possible moment, retrying a
+-- hosted apply.
 do $$
 declare
   bad int;
@@ -187,18 +193,22 @@ begin
          'public.current_role_gnk()', 'current_role_gnk()'),
          '( SELECT current_org_id() AS current_org_id)',     'current_org_id()'),
          '( SELECT current_role_gnk() AS current_role_gnk)', 'current_role_gnk()')
-       is distinct from replace(replace(coalesce(b.qual, ''),
+       is distinct from replace(replace(replace(replace(coalesce(b.qual, ''),
          'public.current_org_id()',   'current_org_id()'),
-         'public.current_role_gnk()', 'current_role_gnk()')
+         'public.current_role_gnk()', 'current_role_gnk()'),
+         '( SELECT current_org_id() AS current_org_id)',     'current_org_id()'),
+         '( SELECT current_role_gnk() AS current_role_gnk)', 'current_role_gnk()')
        or
        replace(replace(replace(replace(coalesce(p.with_check, ''),
          'public.current_org_id()',   'current_org_id()'),
          'public.current_role_gnk()', 'current_role_gnk()'),
          '( SELECT current_org_id() AS current_org_id)',     'current_org_id()'),
          '( SELECT current_role_gnk() AS current_role_gnk)', 'current_role_gnk()')
-       is distinct from replace(replace(coalesce(b.with_check, ''),
+       is distinct from replace(replace(replace(replace(coalesce(b.with_check, ''),
          'public.current_org_id()',   'current_org_id()'),
-         'public.current_role_gnk()', 'current_role_gnk()')
+         'public.current_role_gnk()', 'current_role_gnk()'),
+         '( SELECT current_org_id() AS current_org_id)',     'current_org_id()'),
+         '( SELECT current_role_gnk() AS current_role_gnk)', 'current_role_gnk()')
      );
 
   if bad > 0 then
@@ -281,7 +291,12 @@ comment on function public.rls_hoisted_policy_count() is
   'How many policies on the 7 paginated list tables carry a hoisted '
   'current_org_id() call. Expected 24 after migration 0030. Pairs with '
   'rls_bare_helper_calls(): that one proves nothing is bare, this proves the '
-  'policies still exist.';
+  'policies still exist. '
+  'NOTE: this counts hoisted current_org_id() calls ONLY. It is a presence '
+  'check, and it is complete only in combination with rls_bare_helper_calls(), '
+  'which is what catches a bare current_role_gnk(). Safe today because all 24 '
+  'policies reference current_org_id(); if that ever stops being true, this '
+  'function needs widening.';
 
 revoke execute on function public.rls_hoisted_policy_count() from public, anon, authenticated;
 grant execute on function public.rls_hoisted_policy_count() to service_role;

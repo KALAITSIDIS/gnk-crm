@@ -42,12 +42,15 @@ describe("0030 — RLS helpers stay hoisted on the list tables", () => {
     expect(data).toBe(24);
   });
 
-  it("is not executable by an ordinary authenticated session", async () => {
-    const { error } = await plain.client.rpc("rls_bare_helper_calls");
-    expect(error).not.toBeNull();
-    // Must fail because it is REVOKED, not because it is missing: a dropped
-    // function would also error, and this assertion would pass while proving
-    // nothing. PostgREST maps a permission failure to 42501.
-    expect(error?.code, `unexpected failure: ${error?.message}`).toBe("42501");
-  });
+  it.each(["rls_bare_helper_calls", "rls_hoisted_policy_count"])(
+    "%s is not executable by an ordinary authenticated session",
+    async (fn) => {
+      const { error } = await plain.client.rpc(fn);
+      expect(error).not.toBeNull();
+      // Must fail because it is REVOKED, not because it is missing: a dropped
+      // function would also error, and this assertion would pass while proving
+      // nothing. PostgREST maps a permission failure to 42501.
+      expect(error?.code, `unexpected failure: ${error?.message}`).toBe("42501");
+    },
+  );
 });
