@@ -176,6 +176,13 @@ everything on a mismatch is the entire safety property. Verification ran in its
 own call afterwards, as §3 wants. **Verified BEFORE recording the version**, so a
 migration that had not landed could not be recorded as though it had.
 
+**Operator-confirmed in a SIGNED-IN session, 2026-08-11: `/contacts`,
+`/properties` and `/tasks` all render.** This is the check that mattered and the
+one no agent could make — an RLS mistake returns **zero rows, not an error**, so
+a broken policy and a genuinely empty list are indistinguishable from outside.
+Catalog counts and anonymous surfaces cannot tell them apart; a human looking at
+a populated page can.
+
 24 permissive policies on the 7 paginated list tables now wrap both helpers in
 `(select …)`, which Postgres evaluates once per statement. Counted, not inferred:
 **21 helper calls for a 20-row scan before, 1 after.** 62 permissive policies
