@@ -150,9 +150,11 @@ built without explicit direction.
   keys, channels, stage names, user-typed reasons, file names) deliberately
   stay as-stored — only the template text translates.
 
-- **CSV export — remaining lists.** Contacts CSV export shipped 2026-07-23 (IMPROVEMENTS B10). Repeat for properties, leads, deals, viewings, keys, tasks: extract each list's filter parse/apply into `lib/queries/<list>.ts`, add a GET export route reusing it, define columns via `lib/services/csv.ts` `toCsv`. ~0.5 day each.
+- ~~**CSV export — remaining lists.**~~ **ALL SHIPPED 2026-07-24, the day after contacts** — properties (`0e57f5c`), leads (`0e6544d`), deals (`8624e59`), viewings (`bd8bf50`), keys (`04b4d4f`), tasks (`a29a222`, whose message says "completes the rollout"). Seven export routes under `app/(app)/*/export/route.ts`, five extracted `lib/queries/*-list.ts` modules each with a colocated unit test, and seven E2E specs (`tests/e2e/*-export.spec.ts`). Exactly the plan this entry described, executed in full.
+
+  **This entry stayed open for 18 days and sent a session off to rebuild finished work on 2026-08-11.** It was caught by globbing `app/**/export/**/route.ts` before writing anything. **The lesson is the file's, not the reader's:** an entry describing work to do is a claim, and claims here go stale silently. Before starting anything from BACKLOG, check whether it already exists.
 - ~~**Export audit logging (decision needed).**~~ **Resolved 2026-07-23: yes, log exports.** Built in `lib/services/export-audit.ts` (org-level `export`/`exported` event, written before the CSV is returned). Contacts export logs; the remaining lists inherit it via `logListExport`. See DECISIONS `T-export-audit`.
-- **Database-level 2FA enforcement (security, follow-up to C2).** 2FA shipped 2026-07-24 but is enforced only in the app (`login()` + `proxy.ts`). A stolen `aal1` JWT can still reach PostgREST directly and bypass the challenge. Fix: add `as restrictive` RLS policies asserting `auth.jwt()->>'aal' = 'aal2'` for users who have a verified factor — use the "enforce only for users that have opted-in" template from the Supabase MFA guide so non-enrolled users are unaffected. Touches every business table, carries real lockout risk, and needs its own RLS suite coverage (doc 04 guardrail 3), so it is its own piece of work. See DECISIONS `T-2fa`.
+- ~~**Database-level 2FA enforcement (security, follow-up to C2).**~~ **SHIPPED AND APPLIED TO HOSTED 2026-08-11** — migration 0029 `require_aal2`, exactly the opt-in template this entry prescribed, on all 29 RLS-enabled tables. Evidence in IMPROVEMENTS C2, reasoning in DECISIONS `T-aal2-rls`, rollback in `docs/superpowers/plans/2026-08-10-c2-db-2fa-enforcement.md`.
 - **A dormant admin has no second factor** — ~~open~~ **REVIEWED AND KEPT 2026-08-09, operator decision: he needs admin access.** Production has
   two active admins. `nontari@` enrolled TOTP on 2026-08-09 (factor `verified`).
   `gerasimos@` is also a full admin — same reach over client KYC and the
@@ -251,7 +253,8 @@ built without explicit direction.
   upload *even when the upload fails*, and production still answers 403 for a
   `.js.map`. Reasoning in the commit; the original entry follows.
 
-- **Sentry has no source maps and no release tracking (noticed 2026-08-09).**
+- **[HISTORICAL — SUPERSEDED BY THE ENTRY ABOVE, WHICH SHIPPED. Not open work.]**
+  **Sentry has no source maps and no release tracking (noticed 2026-08-09).**
   Delivery is fixed and alerting is proven, but the DATA is poor. `next.config.ts`
   does not wrap with `withSentryConfig`, so stack traces arrive minified — the
   2026-08-03 production error read
