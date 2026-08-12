@@ -3,18 +3,53 @@
 Nice-to-haves and deferred items noticed during the build. Nothing here gets
 built without explicit direction.
 
+> ## ⚠️ AN ENTRY HERE IS A CLAIM, AND CLAIMS GO STALE SILENTLY
+>
+> **Three entries in this file described work that had already shipped.** One had
+> said so for **18 days** and sent a session on 2026-08-11 to rebuild the CSV
+> exports — six routes, five query modules and seven E2E specs that had existed
+> since 2026-07-24. It was caught by a `ls` before any code was written, not by
+> reading. The others: database-level 2FA (shipped that morning) and the
+> Settings → Users 2FA column (shipped two days earlier).
+>
+> **So: RUN THE `VERIFY:` LINE BEFORE YOU START ANYTHING.** Every entry that
+> describes buildable work carries one — a single command whose output settles
+> whether the work exists. If an entry has no `VERIFY:`, treat it as unverified
+> and check by hand before believing it.
+>
+> **When you ADD an entry, add its `VERIFY:` line, and run it first.** A check
+> you have not executed is a guess. Writing these on 2026-08-11, the naive dark
+> mode check (`grep next-themes`) reported a hit — from shadcn's toast
+> boilerplate, not from any dark mode. The command has to distinguish the thing
+> from things that merely mention it.
+>
+> **When you FINISH an entry, strike it through and say what shipped**, with the
+> commit. Do not delete it: a struck-through entry is what stops the next person
+> re-proposing the same work.
+
 - Forgot-password flow on `/login` (doc 05): Supabase `resetPasswordForEmail` +
   reset page + email template. Natural fit with Phase 2 Resend integration.
+  **VERIFY:** `grep -rl resetPasswordForEmail app lib` — any hit means shipped.
+  *(0 files on 2026-08-11.)*
 - Dark mode (doc 06 lists it as backlog).
+  **VERIFY:** `grep -c "dark:" app/globals.css` — 0 means not started.
+  *(0 on 2026-08-11. Do NOT check with `grep next-themes`: `components/ui/sonner.tsx`
+  imports `useTheme` as shadcn boilerplate and reports a false hit.)*
 - Restore `app/(app)/properties/loading.tsx` skeleton once Next.js fixes the
   queued-suspense-reveal hydration bug (see DECISIONS 2026-07-12 · T3.5).
   Re-test: property detail tabs must stay clickable with the file present.
+  **VERIFY:** `ls "app/(app)/properties/loading.tsx"` — exists means restored.
+  *(absent on 2026-08-11.)*
 - Keys i18n: register/movement dialog strings are hardcoded English (Phase 1
   ships English; the transfer/mark_lost/edit/history UI landed in the
   2026-07-20 keys audit, T-audit).
+  **VERIFY:** `grep -rl useTranslations components/features/keys` — 3 of 3
+  components means done. *(0 of 3 on 2026-08-11.)*
 - Settings/users: invite emails, self-service password reset and "reset 2FA"
   (doc 05) — all ride the Phase 2-3 email integration; Phase 1 invites hand
   over a one-time password (DECISIONS 2026-07-14 · T5.4).
+  **VERIFY:** `grep -rl inviteUserByEmail app lib` — any hit means shipped.
+  *(0 files on 2026-08-11.)*
 
 - Audit remaining `z.string().uuid()` usages (leads.ts, units.ts,
   properties.ts required ids) for the Zod 4 strict-RFC-4122 trap: Postgres
@@ -22,6 +57,8 @@ built without explicit direction.
   `11111111-…` fixture ids. `optionalUuid` in deals/properties validators
   already fixed to `z.guid()` (T3.2); the rest only ever see
   `gen_random_uuid()` values today so they are safe in practice.
+  **VERIFY:** `grep -rn 'z\.string()\.uuid()' lib | wc -l` — 0 means the audit
+  is finished. *(4 usages on 2026-08-11.)*
 - ~~Dashboard SQL-side aggregates~~ — **DONE 2026-07-23** (audit PERF-3,
   migration 0018 `admin_dashboard_stats`). The SUMS no longer undercount past
   the caps; proven with a rolled-back 2,100-deal probe (old capped sum was
@@ -206,11 +243,22 @@ built without explicit direction.
   what migration 0021 got wrong. Then a "2FA" column and an RLS test that a
   non-admin gets nothing back.
 - **RLS helper functions are called ONCE PER ROW — counted, 2026-08-11.**
-  **FIXED ON THE 7 LIST TABLES — branch `rls-helper-hoist`, migration 0030,
-  NOT APPLIED TO HOSTED.** Production still evaluates every helper per row; that
-  changes only when someone runs HANDOFF §3. Design and plan under
-  `docs/superpowers/`; the rollback script is
+  **FIXED ON THE 7 LIST TABLES — merged to `main` as migration 0030, NOT APPLIED
+  TO HOSTED.** Production still evaluates every helper per row; that changes only
+  when someone runs HANDOFF §3. Design and plan under `docs/superpowers/`; the
+  rollback script is
   `docs/superpowers/plans/2026-08-11-rls-hoist-rollback.sql`.
+
+  **VERIFY — this entry needs TWO checks, because "built" and "applied" are
+  different states and only the second one changes production:**
+
+  ```
+  in the repo:  ls supabase/migrations/0030_hoist_rls_helpers.sql
+  on hosted:    select count(*) from public.rls_hoisted_policy_count();  -- 24 = applied, error = not
+  ```
+
+  *On 2026-08-11: present in the repo, NOT applied — the function does not exist
+  on hosted.*
 
   What landed locally: 24 permissive policies on `contacts`, `deals`, `events`,
   `leads`, `properties`, `tasks`, `viewings` rewritten with both helpers wrapped
