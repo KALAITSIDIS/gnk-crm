@@ -2,6 +2,32 @@
 
 Implement in `supabase/migrations/0002_rls_policies.sql`. Every row below has an automated test in `supabase/tests` / `npm run test:rls`. Roles: **A** = admin, **AG** = agent, **LM** = listing_manager. All access additionally requires `org_id = current_org_id()` — org isolation is the outer condition on every policy. `anon` has **zero** table access in Phase 1.
 
+> ### ⚠️ THIS MATRIX IS NO LONGER THE WHOLE PICTURE — read this first
+>
+> The table below describes the **permissive** policies from 0002 and its
+> successors. Since 2026-08-11 there is a **second, independent gate** that the
+> matrix does not show, and a row marked ✅ here can still be denied by it.
+>
+> **`require_aal2` — a RESTRICTIVE policy on all 29 RLS-enabled tables
+> (migration 0029).** Restrictive policies AND with the permissive ones, so this
+> can only narrow access. Its predicate is `public.mfa_satisfied()`: true when the
+> caller holds an **`aal2`** session, **or has no verified second factor at all**
+> (the Supabase opt-in template, so users who have not enrolled are unaffected).
+>
+> **What that means for reading this matrix:** a signed-in user who has enrolled
+> TOTP but has only completed the password step sees **nothing on any table**,
+> whatever the rows below say. IMPROVEMENTS C2 owns the evidence.
+>
+> **Also since 2026-08-11 (migration 0030), and NOT a behaviour change:** on the
+> 7 paginated list tables — `contacts`, `deals`, `events`, `leads`, `properties`,
+> `tasks`, `viewings` — the helper calls are written `(select current_org_id())`
+> rather than `current_org_id()`. Same predicate, same meaning; the wrapper makes
+> Postgres evaluate it once per statement instead of once per row. **Do not
+> "tidy" it away.** The other 62 permissive policies are deliberately still bare.
+>
+> Both migrations carry guard functions that fail CI if a future policy regresses:
+> `rls_aal2_coverage()` and `rls_bare_helper_calls()` / `rls_hoisted_policy_count()`.
+
 Legend: ✅ full · 🔒 restricted (condition in Notes) · ❌ denied
 
 | Table | SELECT | INSERT | UPDATE | DELETE | Notes |

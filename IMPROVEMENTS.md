@@ -456,7 +456,7 @@ Import exists (`scripts/import/`); export did not. **Why:** accountants, lawyers
 > different cost. `vercel.live` also needs a decision — allow it in `frame-src`
 > or turn the toolbar off in production.
 
-### C1 (original entry) — 🟡 **STAGED REPORT-ONLY; reporting now VERIFIED end to end (2026-08-03)**
+### C1 (original entry) — ⚪ **HISTORICAL, SUPERSEDED BY THE C1 SECTION ABOVE. Not the current state:** it says "staged report-only", and the policy has been ENFORCED since 2026-08-10. Kept for the reasoning.
 
 > **UPDATE 2026-08-03 — the "Unverified" caveat below is resolved, and checking
 > it found a real bug.** Sentry is wired (`SENTRY_DSN` + `NEXT_PUBLIC_SENTRY_DSN`,
@@ -496,7 +496,7 @@ sites, which is why it is now a single `CSP_HEADER` constant.
 2. Two things the local sweep still cannot exercise: **PDF generation** (the evidence report renders server-side, and the download is a signed URL) and any screen whose data does not exist locally — `property_media` is empty on a seed database, so the Storage `img-src` result above came from a temporary fixture and the test self-skips without one.
 3. Then flip the response header name from `Content-Security-Policy-Report-Only` to `Content-Security-Policy` in `proxy.ts` — a one-line change, trivially revertible.
 
-### C2. Two-factor authentication — ✅ **DONE 2026-07-24** (opt-in). DB-level enforcement is **BUILT AND VERIFIED LOCALLY, NOT APPLIED TO HOSTED** — see the box below.
+### C2. Two-factor authentication — ✅ **DONE.** Opt-in enrolment 2026-07-24; **DB-level enforcement LIVE ON HOSTED since 2026-08-11** (0029), operator-confirmed in a signed-in session.
 
 > ### ✅ DB-level enforcement is LIVE — 0029 applied to hosted 2026-08-11
 >
@@ -516,10 +516,20 @@ sites, which is why it is now a single `CSP_HEADER` constant.
 > both sides. **HANDOFF §3 recommends bare `md5(prosrc)` and it will false-alarm
 > every time from a Windows workstation** — strip `chr(13)` first.
 >
-> **Still open, and it is the operator's:** sign in as the enrolled account, pass
-> the TOTP challenge, load a real page. Everything above is database-level, and
-> **an RLS denial returns zero rows rather than an error — so "no data" and
-> "correctly denied" look identical in the UI.**
+> ~~**Still open, and it is the operator's:** sign in, pass the TOTP challenge,
+> load a real page.~~ **DONE 2026-08-11 — operator signed in and `/contacts`,
+> `/properties` and `/tasks` all render.**
+>
+> That check could not be skipped and no agent could make it. Everything else
+> here is database-level, and **an RLS denial returns zero rows rather than an
+> error — so "no data" and "correctly denied" look identical in the UI.** Only a
+> populated page separates them.
+>
+> **It proves this migration specifically, not just that the app works:** a
+> password-only session belonging to an account WITH a verified factor is denied
+> every one of the 29 tables. Reaching `/contacts` at all therefore requires the
+> TOTP challenge to have been passed and `mfa_satisfied()` to have returned true —
+> which is the whole feature, exercised end to end by a real browser.
 >
 > Design: `docs/superpowers/specs/2026-08-10-c2-db-2fa-enforcement-design.md`
 > Plan and rollback: `docs/superpowers/plans/2026-08-10-c2-db-2fa-enforcement.md`
