@@ -206,6 +206,36 @@ built without explicit direction.
   what migration 0021 got wrong. Then a "2FA" column and an RLS test that a
   non-admin gets nothing back.
 - **RLS helper functions are called ONCE PER ROW — counted, 2026-08-11.**
+  **FIXED ON THE 7 LIST TABLES — branch `rls-helper-hoist`, migration 0030,
+  NOT APPLIED TO HOSTED.** Production still evaluates every helper per row; that
+  changes only when someone runs HANDOFF §3. Design and plan under
+  `docs/superpowers/`; the rollback script is
+  `docs/superpowers/plans/2026-08-11-rls-hoist-rollback.sql`.
+
+  What landed locally: 24 permissive policies on `contacts`, `deals`, `events`,
+  `leads`, `properties`, `tasks`, `viewings` rewritten with both helpers wrapped
+  in `(select …)`. **62 permissive policies remain bare on purpose** (36 on
+  config/staff-bounded tables, 26 read a few rows at a time).
+
+  **Verified, and the meaning-preservation twice over:** the migration's own
+  equivalence check (0 changed on an untouched database, exactly 1 when a policy
+  was deliberately weakened), plus an independent out-of-band diff that stripped
+  the wrappers back out of the migration and compared against the rollback script
+  — byte-identical for all 24. `EXPLAIN` shows `InitPlan … loops=1`; 48 RLS tests
+  pass with the 44 pre-existing unchanged; 115 policies before and after.
+
+  **Three traps found while building it, all worth keeping.** `pg_policies.qual`
+  is deparsed by `pg_get_expr()` against the CALLER's `search_path`, so with
+  `pg_catalog` pinned the call renders `public.current_org_id()` and an
+  unqualified literal silently inverts the guard — the fix normalises the
+  qualification away rather than depending on a path. The equivalence check must
+  normalise BOTH sides identically, or a re-run against an already-hoisted
+  database reports "changed 24 predicates" when nothing changed. And
+  `rls_hoisted_policy_count()` matches `current_org_id()` only, so it is complete
+  only alongside `rls_bare_helper_calls()`.
+
+  Original finding follows.
+
   83 of the 115 policies call `current_org_id()`; 62 call `current_role_gnk()`.
 
   **The measurement, on a purpose-built 20-row probe table:**
