@@ -170,12 +170,15 @@ built without explicit direction.
   admin, which makes him the lockout safety net for C2's DB-level 2FA
   enforcement; that is an argument for keeping him, not against, but it means
   C2 must not assume every admin has a factor.
-- **Settings → Users cannot show who has 2FA — which is why the dormant admin
-  went unnoticed (noticed 2026-08-09).** The table renders Name / Email / Role /
-  Status / Actions. An admin therefore has no way to see that another admin is
-  password-only; it took a query against `auth.mfa_factors` to find it, and
-  nothing in the product would ever have surfaced it. Worth closing because the
-  whole point of C2 is knowing who is protected.
+- ~~**Settings → Users cannot show who has 2FA — which is why the dormant admin
+  went unnoticed (noticed 2026-08-09).**~~ **SHIPPED THE SAME DAY** — migration
+  0028 `org_mfa_status()` plus a `2FA` column in
+  `components/features/settings/users-panel.tsx`, which also renders an explicit
+  "could not read 2FA status" state rather than letting a failed query read as
+  "nobody has 2FA". This entry stayed open in BACKLOG for two days after the work
+  landed; it was found on 2026-08-11 by checking the component instead of reading
+  the note. The write-up below is kept because the reasoning still explains the
+  shape of the solution.
 
   **Not a five-minute job, which is why it is written down rather than done.**
   There is no public admin API for another user's factors in `@supabase/auth-js`

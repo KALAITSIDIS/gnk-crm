@@ -515,7 +515,8 @@ the mirror error is just as easy — see the row-counts warning in §0.
 Sentry DSNs were "set and verified live"; neither was true. Corrected below.*
 
 **Done:** A (all) · B1 · B2 · B3 · B6 · B7 · B8 · B10 · B11 · **C1 (enforced
-2026-08-10)** · C2 (opt-in) · C6.
+2026-08-10)** · **C2 (opt-in enrolment + DB-level enforcement, hosted
+2026-08-11)** · C6.
 
 *C1 moved up from "Partly done" on 2026-08-10, as the bullet standing there
 asked. Framing is enforced twice now — `X-Frame-Options` and the policy's own
@@ -555,10 +556,9 @@ is one word: `CSP_HEADER` in `lib/services/csp.ts`.*
   make sure a second recovery path exists first.
 
 **Next engineering work, in order:**
-1. ~~**C2 DB-level 2FA enforcement**~~ — **DONE, APPLIED TO HOSTED 2026-08-11.**
-   Move it to the Done line when this section is next touched. §6 and
-   IMPROVEMENTS C2 own the state and the evidence; the rollback is in
-   `docs/superpowers/plans/`.
+1. ~~**C2 DB-level 2FA enforcement**~~ — **DONE 2026-08-11, and moved to the Done
+   line above** as the bullet here asked. §6 and IMPROVEMENTS C2 own the state
+   and the evidence; the rollback is in `docs/superpowers/plans/`.
 2. ~~**Sentry source maps + release**~~ — **SHIPPED `70e4ceb`.** This line said
    "stacks are currently minified and issues carry no release" after both had
    been fixed. What is left is not a build change but **one observation, and it
