@@ -7,21 +7,14 @@
  * 20-row scan). A policy written the old way on one of these tables regresses
  * that silently — this test is what notices.
  *
- * Scoped to these 7 tables ON PURPOSE. 62 other permissive policies are
- * deliberately left bare; asserting globally would fail on all of them.
+ * Scoped ON PURPOSE to contacts, deals, events, leads, properties, tasks and
+ * viewings. 62 other permissive policies are deliberately left bare; asserting
+ * globally would fail on all of them. That list lives in the guard functions in
+ * migration 0030 and is NOT duplicated here — a second copy in TypeScript would
+ * enforce nothing and would drift.
  */
 import { beforeAll, describe, expect, it } from "vitest";
 import { ORG_A, createTestUser, ensureTestOrg, serviceClient, type TestUser } from "./helpers";
-
-const HOT_TABLES = [
-  "contacts",
-  "deals",
-  "events",
-  "leads",
-  "properties",
-  "tasks",
-  "viewings",
-];
 
 const svc = serviceClient();
 const run = Date.now().toString(36);
