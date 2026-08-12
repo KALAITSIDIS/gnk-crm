@@ -104,6 +104,24 @@ route, not just the one nearby. `export type` / `export interface` are fine
 
 ## 2. Framework traps
 
+**`pg_policies.qual` is deparsed against the CALLER's `search_path`, so a
+policy-inspecting function can silently invert.** (2026-08-11, migration 0030.)
+`pg_policies.qual`/`with_check` are produced by `pg_get_expr()`, which
+schema-qualifies any object not reachable through the current `search_path`. A
+`security definer` helper that pins `set search_path = pg_catalog` — which is the
+right thing to do, see §4.3 — therefore reads `public.current_org_id()`, while
+the same query run in a normal session reads `current_org_id()`. **A guard that
+text-matches an unqualified literal then matches nothing and reports the exact
+opposite of the truth**: 0030's first guard called all 24 rewritten policies
+un-hoisted while `EXPLAIN` proved the hoist was working.
+
+*Fix:* normalise the qualification away before matching
+(`replace(…, 'public.current_org_id()', 'current_org_id()')`) rather than
+depending on any particular path, and verify the function returns the same answer
+under at least two different `search_path` settings. *Related:* if you compare a
+before/after snapshot, normalise **both** sides identically — normalising only
+one makes a re-run report that everything changed when nothing did.
+
 **Radix `TabsTrigger` ignores `element.click()`.** Dispatch
 `new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 })`.
 Buttons and dialogs respond to `.click()` normally. (2026-07-11)

@@ -2677,3 +2677,67 @@ And this is a **workaround**. It establishes that the shell binary crashes and t
 full one does not. Nobody has explained why `chrome-headless-shell` dereferences
 null at `0x1b0`, so a Playwright upgrade could make the line unnecessary or move
 the crash somewhere new. Re-measure; do not assume.
+
+## 2026-08-11 · T-rls-hoist — the helpers were called once per row, and two instruments said otherwise
+
+**Built and merged as migration 0030; NOT applied to hosted.** Production still
+evaluates the helpers per row. Spec and plan under `docs/superpowers/`.
+
+`current_org_id()` and `current_role_gnk()` are `stable security definer` SQL
+functions. `security definer` blocks inlining, so every reference in an RLS
+predicate is a real call — and a bare call is evaluated **once per row**.
+Wrapping it as `(select current_org_id())` lets Postgres hoist it to an
+`InitPlan` evaluated once per statement. 24 policies on the 7 paginated list
+tables were rewritten; 62 permissive policies were deliberately left bare.
+
+**The number was 21 versus 1** — a probe table scanned at 20 rows, with a
+`stable security definer plpgsql` function of the same shape raising a `NOTICE`
+per invocation.
+
+**Getting that number took three attempts, and the first two both returned a
+confident zero.**
+
+1. `pg_stat_user_functions` reports nothing in this stack. Three explicit calls
+   moved the counter by 0. **A counter that has not been seen moving cannot
+   distinguish "never called" from "not counting".**
+2. The first probe ran as `postgres`. `set local role authenticated` outside a
+   transaction block is a no-op *warning*, not an error, so RLS was bypassed and
+   no policy was evaluated at all — which also reads as zero.
+
+The entry that started this work said "once per ROW (measured)". It was not
+measured; it was inferred from one `EXPLAIN`. **Plan shape does not settle it**:
+the same function appears as an `Index Cond` — evaluated once, as a scan key — in
+one plan and a `Filter` in another. Count calls; do not read shapes.
+
+**Meaning had to be provably unchanged, and one proof was not enough.** Each
+rewrite is a drop-and-recreate of a live security policy, since Postgres has no
+`create or replace policy`. Two independent proofs:
+
+- The migration captures every predicate into a temp table first and, after the
+  rewrite, asserts that normalising the wrapper away reproduces the original text
+  exactly. A migration is one transaction, so a mismatch aborts everything.
+  Falsified rather than assumed: 0 changed on an untouched database, exactly 1
+  when a policy was deliberately weakened.
+- Independently, stripping the wrappers back out of the finished migration and
+  diffing against the generated rollback script — byte-identical for all 24.
+
+The 24 statements were **generated from `pg_policies`, never hand-transcribed**.
+Copying live security predicates by hand is how one quietly changes meaning.
+
+**The trap worth carrying beyond this migration:** `pg_policies.qual` is
+deparsed by `pg_get_expr()` against the **caller's** `search_path`. A
+`security definer` guard with `search_path = pg_catalog` pinned therefore sees
+`public.current_org_id()`, and a literal written unqualified never matches — the
+first version of the guard reported all 24 policies as un-hoisted while the hoist
+was demonstrably working. The fix normalises the qualification away rather than
+depending on any path; it is verified identical under three different
+`search_path` settings.
+
+**A second-order version of the same bug:** the equivalence check must normalise
+*both* sides. With only the "after" side stripped, re-running the migration
+against an already-hoisted database reports "changed 24 predicates" when nothing
+changed — a false alarm arriving exactly when someone retries a hosted apply.
+
+**None of this was urgent.** At tens of rows the saving is microseconds. It is
+groundwork for volume, and it is recorded here mainly because the measurement was
+wrong twice before it was right.
