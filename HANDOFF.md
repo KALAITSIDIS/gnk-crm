@@ -157,10 +157,24 @@ Full write-ups in `docs/DECISIONS.md`; migrations in `supabase/migrations/`.
 **2026-08-11** — 0029 `require_aal2` — **applied to hosted, C2's DB-level 2FA.**
 See §6 and IMPROVEMENTS C2.
 
-**2026-08-11** — 0030 `hoist_rls_helpers` — **IN THE REPO, NOT APPLIED TO
-HOSTED.** Production still evaluates `current_org_id()` / `current_role_gnk()`
-once per ROW; that changes only when someone runs §3. Nothing depends on it, so
-the gap is harmless — but do not read this line as describing production.
+**2026-08-11** — 0030 `hoist_rls_helpers` — **APPLIED TO HOSTED and verified
+there.** 30 migrations, `non_filename_versions` 0, 24 hoisted, 0 bare,
+**115 policies before and after**, the 29 `require_aal2` policies untouched,
+`anon` and `authenticated` both refused on the two new guard functions,
+`get_advisors` naming neither of them, chain verifies, events 74.
+
+**Pre-flight worth copying for any policy migration:** hosted's own 24 bare
+definitions were fingerprinted (`md5` over generated `drop`/`create` pairs) and
+compared against local's hoisted policies un-hoisted back to bare — identical,
+`a96260bd4ceb139244767018f19d1aa9`. That proved before touching anything that the
+committed rollback script was valid for hosted and that the migration would
+produce there exactly what it produced locally.
+
+**Applied as ONE `execute_sql` call, deliberately against §3's usual advice** —
+the self-check reads a temp table captured in the same transaction, and aborting
+everything on a mismatch is the entire safety property. Verification ran in its
+own call afterwards, as §3 wants. **Verified BEFORE recording the version**, so a
+migration that had not landed could not be recorded as though it had.
 
 24 permissive policies on the 7 paginated list tables now wrap both helpers in
 `(select …)`, which Postgres evaluates once per statement. Counted, not inferred:

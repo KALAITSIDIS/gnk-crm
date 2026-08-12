@@ -243,22 +243,24 @@ built without explicit direction.
   what migration 0021 got wrong. Then a "2FA" column and an RLS test that a
   non-admin gets nothing back.
 - **RLS helper functions are called ONCE PER ROW — counted, 2026-08-11.**
-  **FIXED ON THE 7 LIST TABLES — merged to `main` as migration 0030, NOT APPLIED
-  TO HOSTED.** Production still evaluates every helper per row; that changes only
-  when someone runs HANDOFF §3. Design and plan under `docs/superpowers/`; the
-  rollback script is
-  `docs/superpowers/plans/2026-08-11-rls-hoist-rollback.sql`.
+  ~~**FIXED ON THE 7 LIST TABLES**~~ — **DONE AND APPLIED TO HOSTED 2026-08-11**,
+  migration 0030. 24 policies hoisted, 0 bare, 115 policies before and after,
+  `get_advisors` clean. Design and plan under `docs/superpowers/`; rollback is
+  `docs/superpowers/plans/2026-08-11-rls-hoist-rollback.sql`; the reasoning is
+  DECISIONS `T-rls-hoist`.
 
-  **VERIFY — this entry needs TWO checks, because "built" and "applied" are
-  different states and only the second one changes production:**
+  **VERIFY — two checks, because "built" and "applied" are different states:**
 
   ```
   in the repo:  ls supabase/migrations/0030_hoist_rls_helpers.sql
-  on hosted:    select count(*) from public.rls_hoisted_policy_count();  -- 24 = applied, error = not
+  on hosted:    select public.rls_hoisted_policy_count();   -- 24 = applied, error = not
   ```
 
-  *On 2026-08-11: present in the repo, NOT applied — the function does not exist
-  on hosted.*
+  *On 2026-08-11 after the apply: present in the repo, and 24 on hosted.*
+
+  **62 permissive policies remain bare on purpose** — 36 on config/staff-bounded
+  tables, 26 read a few rows at a time. Widening to those is a separate decision,
+  not an oversight.
 
   What landed locally: 24 permissive policies on `contacts`, `deals`, `events`,
   `leads`, `properties`, `tasks`, `viewings` rewritten with both helpers wrapped
