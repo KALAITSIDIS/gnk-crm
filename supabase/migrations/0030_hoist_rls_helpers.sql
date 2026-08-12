@@ -161,6 +161,15 @@ create policy viewings_update on public.viewings
 -- Self-check. Normalising the wrapper away must reproduce the ORIGINAL text
 -- exactly. A migration is one transaction, so a mismatch aborts everything and
 -- nothing half-lands.
+--
+-- The literals below must not depend on the applying session's search_path:
+-- pg_policies.qual/with_check are deparsed by pg_get_expr() against the
+-- CALLER's search_path, so a session without `public` on the path (hosted is
+-- applied through a connector we do not configure) renders the helper calls
+-- schema-qualified as public.current_org_id(). Both _before (captured earlier
+-- in this same session) and the current read need the public. prefix stripped
+-- FIRST, before the wrapper is stripped, or the comparison sees every
+-- predicate as "changed" and aborts the migration for a spurious reason.
 do $$
 declare
   bad int;
@@ -173,15 +182,23 @@ begin
       on b.tablename = p.tablename and b.policyname = p.policyname
    where p.schemaname = 'public'
      and (
-       replace(replace(coalesce(p.qual, ''),
+       replace(replace(replace(replace(coalesce(p.qual, ''),
+         'public.current_org_id()',   'current_org_id()'),
+         'public.current_role_gnk()', 'current_role_gnk()'),
          '( SELECT current_org_id() AS current_org_id)',     'current_org_id()'),
          '( SELECT current_role_gnk() AS current_role_gnk)', 'current_role_gnk()')
-       is distinct from coalesce(b.qual, '')
+       is distinct from replace(replace(coalesce(b.qual, ''),
+         'public.current_org_id()',   'current_org_id()'),
+         'public.current_role_gnk()', 'current_role_gnk()')
        or
-       replace(replace(coalesce(p.with_check, ''),
+       replace(replace(replace(replace(coalesce(p.with_check, ''),
+         'public.current_org_id()',   'current_org_id()'),
+         'public.current_role_gnk()', 'current_role_gnk()'),
          '( SELECT current_org_id() AS current_org_id)',     'current_org_id()'),
          '( SELECT current_role_gnk() AS current_role_gnk)', 'current_role_gnk()')
-       is distinct from coalesce(b.with_check, '')
+       is distinct from replace(replace(coalesce(b.with_check, ''),
+         'public.current_org_id()',   'current_org_id()'),
+         'public.current_role_gnk()', 'current_role_gnk()')
      );
 
   if bad > 0 then
@@ -193,9 +210,78 @@ begin
     from pg_policies
    where schemaname = 'public' and permissive = 'PERMISSIVE'
      and tablename in ('contacts','deals','events','leads','properties','tasks','viewings')
-     and coalesce(qual,'') || coalesce(with_check,'') like '%( SELECT current_org_id()%';
+     and replace(coalesce(qual,'') || coalesce(with_check,''),
+                 'public.current_org_id()', 'current_org_id()')
+         like '%( SELECT current_org_id()%';
 
   if bad <> 24 then
     raise exception '0030 expected 24 hoisted policies, found % — the rewrite did not apply', bad;
   end if;
 end $$;
+
+-- Guard function. Returns any policy on the 7 list tables that still calls a
+-- helper bare. Empty means fully hoisted. service_role only, matching
+-- rls_aal2_coverage() from 0029: it describes the security model's shape, which
+-- no ordinary session needs.
+create or replace function public.rls_bare_helper_calls()
+returns table (tablename text, policyname text)
+language sql
+stable
+security definer
+set search_path = pg_catalog
+as $$
+  select p.tablename::text, p.policyname::text
+    from pg_policies p
+   where p.schemaname = 'public'
+     and p.permissive = 'PERMISSIVE'
+     and p.tablename in ('contacts','deals','events','leads','properties','tasks','viewings')
+     and replace(replace(replace(replace(
+           coalesce(p.qual,'') || coalesce(p.with_check,''),
+           'public.current_org_id()',   'current_org_id()'),
+           'public.current_role_gnk()', 'current_role_gnk()'),
+           '( SELECT current_org_id() AS current_org_id)',     ''),
+           '( SELECT current_role_gnk() AS current_role_gnk)', '')
+         like any (array['%current_org_id()%', '%current_role_gnk()%'])
+   order by 1, 2;
+$$;
+
+comment on function public.rls_bare_helper_calls() is
+  'Policies on the 7 paginated list tables that still call current_org_id() or '
+  'current_role_gnk() outside a (select …) wrapper, i.e. once per row. Empty '
+  'means fully hoisted. Asserted by supabase/tests/rls-hoist.test.ts. '
+  'The public. stripping is load-bearing: pg_policies.qual is deparsed by '
+  'pg_get_expr() against the CALLER search_path, so with pg_catalog pinned the '
+  'call renders as public.current_org_id() and an unqualified literal never '
+  'matches — which silently inverts this guard.';
+
+revoke execute on function public.rls_bare_helper_calls() from public, anon, authenticated;
+grant execute on function public.rls_bare_helper_calls() to service_role;
+
+-- The positive half. "Nothing is bare" is satisfied perfectly by a database
+-- where the 24 policies were dropped and never recreated, so something must
+-- assert they are PRESENT and hoisted.
+create or replace function public.rls_hoisted_policy_count()
+returns integer
+language sql
+stable
+security definer
+set search_path = pg_catalog
+as $$
+  select count(*)::int
+    from pg_policies p
+   where p.schemaname = 'public'
+     and p.permissive = 'PERMISSIVE'
+     and p.tablename in ('contacts','deals','events','leads','properties','tasks','viewings')
+     and replace(coalesce(p.qual,'') || coalesce(p.with_check,''),
+                 'public.current_org_id()', 'current_org_id()')
+         like '%( SELECT current_org_id() AS current_org_id)%';
+$$;
+
+comment on function public.rls_hoisted_policy_count() is
+  'How many policies on the 7 paginated list tables carry a hoisted '
+  'current_org_id() call. Expected 24 after migration 0030. Pairs with '
+  'rls_bare_helper_calls(): that one proves nothing is bare, this proves the '
+  'policies still exist.';
+
+revoke execute on function public.rls_hoisted_policy_count() from public, anon, authenticated;
+grant execute on function public.rls_hoisted_policy_count() to service_role;
