@@ -205,24 +205,40 @@ built without explicit direction.
   `revoke … from public, anon` and a `get_advisors` pass, which is precisely
   what migration 0021 got wrong. Then a "2FA" column and an RLS test that a
   non-admin gets nothing back.
-- **Every RLS policy calls `current_org_id()` once per ROW (measured 2026-08-10).**
-  Found while building C2, in passing — this is pre-existing and has nothing to do
-  with that change. `EXPLAIN (ANALYZE, VERBOSE)` on a 50-row `contacts` select
-  shows `Filter: (contacts.org_id = current_org_id())` attached to the scan node,
-  so the `security definer` lookup against `profiles` runs for every candidate
-  row of every query, on all 26 tables whose policies use it.
+- **RLS helper functions are called ONCE PER ROW — counted, 2026-08-11.**
+  83 of the 115 policies call `current_org_id()`; 62 call `current_role_gnk()`.
 
-  **The fix is one character per call site and is Supabase's own documented
-  pattern**: wrapping a predicate in a scalar subquery lets Postgres hoist it to
-  an `InitPlan` evaluated once per statement. Measured both ways during C2 on the
-  same table: bare → per-row `Filter`, wrapped → `InitPlan 1 -> Result … loops=1`.
-  0029 already writes its own predicate as `(select public.mfa_satisfied())` for
-  exactly this reason.
+  **The measurement, on a purpose-built 20-row probe table:**
 
-  Not urgent at current data volumes (the largest table holds tens of rows), and
-  it is a **rewrite of all 86 existing policies**, so it wants its own session,
-  its own RLS-suite run and a before/after `EXPLAIN` on each shape rather than a
-  blind find-and-replace. Worth doing before the desk puts real volume in.
+  | policy predicate | calls for one 20-row scan |
+  |---|---|
+  | `org_id = probe_fn()` | **21** |
+  | `org_id = (select probe_fn())` | **1** |
+
+  The probe was a `stable security definer plpgsql` function — the same shape as
+  `current_org_id()` — that raised a `NOTICE` per invocation; the notices were
+  counted. It scales with rows, so the cost is linear in result-set size on every
+  query against 26 tables.
+
+  **Two false starts worth recording, because both produced confident wrong
+  readings.** `pg_stat_user_functions` does not track here: three explicit calls
+  moved the counter by 0, so an early "0 calls" reading was the instrument, not
+  the truth — **validate a counter by making it move before trusting a zero.**
+  And `set local role authenticated` outside a transaction block is a no-op
+  warning, so the first probe ran as `postgres`, which bypasses RLS entirely and
+  evaluated no policy at all.
+
+  Plan shape alone does NOT settle this — `current_org_id()` appears as an
+  `Index Cond` in some plans (evaluated once, as a scan key) and a `Filter` in
+  others. An earlier version of this entry read one plan and generalised. Count
+  calls, don't read shapes.
+
+  **The fix** is Supabase's documented `(select …)` wrapper; 0029 already writes
+  its own predicate that way. **Still not urgent** — the largest table holds tens
+  of rows, so 21 calls versus 1 is currently microseconds. It becomes real when
+  the desk puts volume in. Each rewrite is a drop-and-recreate of a live security
+  policy (there is no `create or replace policy`), so it wants its own session
+  with the RLS suite green before and after.
 - ~~**Sentry has no source maps and no release tracking (noticed 2026-08-09).**~~
   **SHIPPED 2026-08-11 (`70e4ceb`) — one acceptance check still open.**
 
