@@ -123,9 +123,15 @@ entry — the map is a second view of the properties list, not a second module, 
 `modules.spec.ts` asserts the sidebar reaches every module without a dead link.
 Switching view must preserve the filters, or the two views appear to disagree.
 
-**Radius draw filters client-side** over the loaded set. PostGIS `ST_DWithin` is
-available if volume ever justifies it; with 2 properties, a server round-trip per
-circle drag is ceremony.
+**Radius draw is DEFERRED, not built.** B5's original wording asks for it and an
+earlier draft of this spec kept it in scope; the implementation plan does not
+include it, and the spec is corrected here rather than leaving the two to
+disagree. With 2 properties resolving to a handful of centroids, a radius filter
+answers a question nobody has, and it is the one genuinely interactive control in
+B5 — draw, drag, resize, clear, reconcile with the URL filters. It is additive
+later: a client-side circle over the already-loaded GeoJSON, with no change to the
+migration, the resolver, the page or the CSP. `ST_DWithin` is there if volume ever
+makes client-side filtering wrong.
 
 ## CSP — the part that will bite
 
