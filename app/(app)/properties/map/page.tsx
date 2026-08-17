@@ -10,6 +10,7 @@ import {
 import { toGeoJson, type MappableProperty } from "@/lib/services/property-map";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
+import { parseLocationPoint } from "@/lib/utils/geo";
 
 type SearchParams = { [key: string]: string | string[] | undefined };
 
@@ -43,12 +44,16 @@ export default async function PropertiesMapPage({
 
   const rows = unwrapRows(await query, "properties");
 
+  // PostgREST serialises geography(point,4326) as EWKB HEX, not GeoJSON — a
+  // hand-rolled GeoJSON reader silently returns null for every row and renders a
+  // permanently empty map. lib/utils/geo.ts already decodes it and is tested;
+  // lib/actions/properties.ts writes through the matching toLocationEWKT().
   const mappable: MappableProperty[] = rows.map((r) => ({
     id: r.id,
     reference: r.reference,
-    location: parsePoint(r.location),
-    areaCentroid: parsePoint(r.areas?.centroid),
-    districtCentroid: parsePoint(r.districts?.centroid),
+    location: parseLocationPoint(r.location),
+    areaCentroid: parseLocationPoint(r.areas?.centroid),
+    districtCentroid: parseLocationPoint(r.districts?.centroid),
   }));
 
   const search = new URLSearchParams(
@@ -71,15 +76,4 @@ export default async function PropertiesMapPage({
       <PropertyMap data={toGeoJson(mappable)} />
     </div>
   );
-}
-
-/** PostGIS points arrive from PostgREST as GeoJSON-shaped objects. Anything of
- *  another shape is treated as absent rather than guessed at. */
-function parsePoint(value: unknown): { lat: number; lng: number } | null {
-  if (!value || typeof value !== "object") return null;
-  const coords = (value as { coordinates?: unknown }).coordinates;
-  if (!Array.isArray(coords) || coords.length < 2) return null;
-  const [lng, lat] = coords;
-  if (typeof lat !== "number" || typeof lng !== "number") return null;
-  return { lat, lng };
 }
