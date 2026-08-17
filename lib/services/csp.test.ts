@@ -59,9 +59,12 @@ describe("buildCsp", () => {
     expect(directive(local, "connect-src")).toContain("ws://127.0.0.1:54321");
   });
 
+  // The OpenFreeMap tile origin is unconditional (B5), so it appears here even
+  // with no Supabase and no Sentry. Kept as an exact match on purpose: this
+  // assertion exists to catch an origin creeping into an ENFORCED policy.
   it("adds the Sentry origin only when a DSN is configured", () => {
     const without = buildCsp(base);
-    expect(directive(without, "connect-src")).toBe("'self'");
+    expect(directive(without, "connect-src")).toBe("'self' https://tiles.openfreemap.org");
 
     const withDsn = buildCsp({
       ...base,
@@ -80,7 +83,15 @@ describe("buildCsp", () => {
 
   it("tolerates a malformed Supabase URL instead of emitting a broken directive", () => {
     const csp = buildCsp({ ...base, supabaseUrl: "://nonsense" });
-    expect(directive(csp, "connect-src")).toBe("'self'");
+    expect(directive(csp, "connect-src")).toBe("'self' https://tiles.openfreemap.org");
     expect(csp).not.toContain("undefined");
+  });
+
+  // The policy is ENFORCED (C1, 2026-08-10). A missing tile origin does not warn
+  // — it renders a blank map in production with nothing in the UI to say why.
+  it("allows the OpenFreeMap tile origin on img-src and connect-src", () => {
+    const csp = buildCsp({ nonce: "n", isDev: false });
+    expect(directive(csp, "img-src")).toContain("https://tiles.openfreemap.org");
+    expect(directive(csp, "connect-src")).toContain("https://tiles.openfreemap.org");
   });
 });

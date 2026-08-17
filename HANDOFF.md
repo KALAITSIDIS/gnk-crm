@@ -154,6 +154,23 @@ shape flags every row.
 
 Full write-ups in `docs/DECISIONS.md`; migrations in `supabase/migrations/`.
 
+**2026-08-11** — 0031 `area_centroids` — **B5 map view. IN THE REPO, NOT APPLIED
+TO HOSTED.** `/properties/map` plots listings over OpenFreeMap tiles, reached by
+a Map/List toggle that carries the filters through the URL.
+
+**The entry that justified this feature was false.** IMPROVEMENTS B5 said
+`properties.location` was "already populated"; **0 of 2 hosted rows had
+coordinates**, so a map keyed on it would have rendered zero pins forever. Hence
+centroids: exact location → area centroid → district centroid → omitted, with
+approximate pins visually distinct. 0031 seeds all 15 (5 districts, 10 areas).
+**FAM is the FREE AREA (Paralimni), not Famagusta town** — operator decision.
+
+**Tiles need no account, key or payment** (OpenFreeMap, commercial use allowed).
+Checked first: MapTiler's free tier forbids commercial use, and Nominatim tells
+geocoding-led commercial apps to self-host. `https://tiles.openfreemap.org` is
+now on `img-src`/`connect-src`; **the CSP is enforced, so deleting that line
+blanks the map in production silently.**
+
 **2026-08-11** — 0029 `require_aal2` — **applied to hosted, C2's DB-level 2FA.**
 See §6 and IMPROVEMENTS C2.
 

@@ -36,18 +36,21 @@ export type Database = {
     Tables: {
       areas: {
         Row: {
+          centroid: unknown
           district_id: string
           id: string
           name: Json
           org_id: string
         }
         Insert: {
+          centroid?: unknown
           district_id: string
           id?: string
           name: Json
           org_id: string
         }
         Update: {
+          centroid?: unknown
           district_id?: string
           id?: string
           name?: Json
@@ -450,6 +453,7 @@ export type Database = {
       }
       districts: {
         Row: {
+          centroid: unknown
           code: string
           id: string
           name: Json
@@ -457,6 +461,7 @@ export type Database = {
           sort_order: number
         }
         Insert: {
+          centroid?: unknown
           code: string
           id?: string
           name: Json
@@ -464,6 +469,7 @@ export type Database = {
           sort_order?: number
         }
         Update: {
+          centroid?: unknown
           code?: string
           id?: string
           name?: Json
@@ -2444,6 +2450,7 @@ export type Database = {
       geomfromewkt: { Args: { "": string }; Returns: unknown }
       gettransactionid: { Args: never; Returns: unknown }
       longtransactionsenabled: { Args: never; Returns: boolean }
+      mfa_satisfied: { Args: never; Returns: boolean }
       move_deal_to_stage: {
         Args: { p_deal_id: string; p_stage_id: string }
         Returns: undefined
@@ -2518,6 +2525,20 @@ export type Database = {
         Returns: undefined
       }
       resolve_share_link: { Args: { p_token_sha256: string }; Returns: Json }
+      rls_aal2_coverage: {
+        Args: never
+        Returns: {
+          missing_table: string
+        }[]
+      }
+      rls_bare_helper_calls: {
+        Args: never
+        Returns: {
+          policyname: string
+          tablename: string
+        }[]
+      }
+      rls_hoisted_policy_count: { Args: never; Returns: number }
       run_chain_checks: { Args: never; Returns: undefined }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }

@@ -81,8 +81,58 @@ engineering.**
 
 Original scope note: viewing forms, reservation agreements, mandate renewals as branded PDFs, prefilled from the property/contact/deal record. **Why:** the `@react-pdf/renderer` pipeline, font embedding (Greek/Cyrillic already solved) and the private `documents` bucket all exist — the evidence report proved the whole stack. This is mostly template work on top of shipped infrastructure. **Depends on:** `lib/services/evidence-pdf.tsx` patterns, `pdf-fonts.ts`.
 
-### B5. Map view for properties — **1 week**
-Plot listings on a map, filter by district/area, draw a radius. **Why:** Paphos buyers think in locations ("walkable to Kato Paphos harbour"), not in list rows. **Depends on:** `location geography(point,4326)` is already populated by `map-location-fields.tsx`, and PostGIS is already enabled — the data is sitting there unused. Needs a map tile provider decision (self-hosted vs. commercial) and a CSP `img-src`/`connect-src` allowance.
+### B5. Map view for properties — ✅ **DONE 2026-08-11** (migration 0031; radius draw deferred)
+
+Properties render on a map at `/properties/map`, reached by a **Map / List toggle**
+on the properties list that carries the active filters through the URL. It is a
+second VIEW of the list, not a new module: it reuses `parsePropertyFilters` and
+`applyPropertyListFilters` from `lib/queries/properties-list.ts`, so the two
+views cannot disagree about what a filter set means.
+
+> ### ⚠️ THIS ENTRY'S ORIGINAL "Depends on" WAS FALSE, AND IT SHAPED THE BUILD
+>
+> It said `location geography(point,4326)` was *"already populated by
+> `map-location-fields.tsx` … the data is sitting there unused."* Checked on
+> hosted 2026-08-11: the column exists and PostGIS is enabled, but **0 of 2
+> properties had coordinates.** The write path works and was simply never used.
+>
+> **A map keyed on `location` alone would have rendered zero pins, permanently.**
+> The claim was believed for months because nobody queried it.
+
+**How a property gets a position:** exact `location` if set → else its **area**
+centroid → else its **district** centroid → else it is omitted. Migration 0031
+adds `centroid` to `districts` and `areas` and seeds all 15 (5 districts, 10
+areas). Exact pins render teal, approximate ones amber, so a centroid is never
+mistaken for a surveyed point.
+
+**`FAM` is centred on the FREE AREA** (Paralimni / Protaras / Ayia Napa), not
+Famagusta town — most of that district is in the north. Operator decision; the
+migration comment says so to stop it being "corrected" later.
+
+**Tiles: OpenFreeMap** — no account, no API key, no rate limit, commercial use
+permitted, attribution rendered automatically by MapLibre. Checked before
+choosing: **MapTiler's free plan explicitly excludes commercial use**, and
+Nominatim's public geocoder requires 1 req/sec with mandatory caching and tells
+commercial geocoding-led applications to self-host. Geocoding street addresses
+was rejected for now on that basis and stays addable later with no rework — it
+would populate the same `location` column.
+
+**CSP:** `https://tiles.openfreemap.org` is allowed on `img-src` and
+`connect-src` in `lib/services/csp.ts`. **The policy is ENFORCED, so removing
+that entry blanks the map in production with no UI error** — `check:csp-nonce`
+cannot catch it. `tests/e2e/property-map.spec.ts` asserts zero CSP violations,
+and seeds its own district-only property to prove the centroid fallback actually
+produces a pin.
+
+**Radius draw is NOT built.** With a handful of listings resolving to shared
+centroids it answers a question nobody has, and it is the one genuinely
+interactive control here. Additive later: a client-side circle over the loaded
+GeoJSON, no change to the migration, resolver, page or CSP. `ST_DWithin` is
+available if volume ever makes client-side filtering wrong.
+
+**Still hand-entered:** exact coordinates. `map-location-fields.tsx` takes a
+lat/lng pair or a pasted Google Maps link, unchanged by this work. Until someone
+uses it, every pin is amber.
 
 ### B6. Duplicate detection on inbound leads — ✅ **DONE 2026-07-24**
 Completed doc 02 §C4 "link/**create** contact (dedup applies)" — the lead form could only *link* an existing contact; now it can create a new enquirer (name + phone/email), and `checkContactDuplicate` fires first. A match blocks the create and surfaces "Looks like <existing> — link them instead?" inline (one-click link), mirroring the contact create flow. **Why:** the same buyer enquires then phones — two records, split history, forked commission trail. Now the second lead links the existing contact instead of forking. Pure decision/name-split helpers in `lib/services/lead-contact.ts` (6 unit tests); `createLead` extended (creates the contact + logs its `created` event `via: lead`, then the lead). Verified end-to-end: two leads, same phone, **one contact** (no fork), both leads linked, chain intact. `tests/e2e/leads-dedup.spec.ts`. **Depends on:** `checkContactDuplicate`, `pg_trgm` (already enabled).
