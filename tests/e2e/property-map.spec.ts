@@ -43,6 +43,11 @@ test("the map actually loads vector tiles, not just a background", async ({ page
   await page.goto("/properties/map", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("property-map")).toBeVisible();
 
+  // MUST match MAP TILES, not any .pbf. Font glyphs are also .pbf and are
+  // fetched on the main thread, so a `.pbf` count passes while the map is blank
+  // — this assertion did exactly that on 2026-08-11 and reported green in CI
+  // against a production map showing nothing. Map tiles come from /planet/ and
+  // are fetched by MapLibre's worker, which is the part that actually fails.
   await expect
     .poll(
       () =>
@@ -50,13 +55,15 @@ test("the map actually loads vector tiles, not just a background", async ({ page
           () =>
             performance
               .getEntriesByType("resource")
-              .filter((e) => e.name.includes(".pbf")).length,
+              .filter((e) => e.name.includes("/planet/") && e.name.includes(".pbf"))
+              .length,
         ),
       {
         timeout: 20_000,
         message:
-          "MapLibre requested zero vector tiles — the map is blank even though " +
-          "the container is visible and nothing was CSP-blocked",
+          "MapLibre requested zero MAP TILES (/planet/*.pbf) — the map is blank " +
+          "even though the container is visible, glyphs loaded and nothing was " +
+          "CSP-blocked",
       },
     )
     .toBeGreaterThan(0);

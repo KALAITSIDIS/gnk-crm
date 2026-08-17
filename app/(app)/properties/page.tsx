@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Building2, Download, Map, Plus } from "lucide-react";
+import { Building2, Download, Plus } from "lucide-react";
 import {
   PropertiesFilters,
   type AreaOption,
@@ -152,7 +152,8 @@ export default async function PropertiesPage({
   })();
 
   const exportHref = `/properties/export${filterQuery}`;
-  const mapHref = `/properties/map${filterQuery}`;
+  // `const mapHref = \`/properties/map${"${filterQuery}"}\`;` goes back here when the
+  // map link is restored — see the comment in the header actions below.
 
   return (
     <div className="flex flex-col gap-4">
@@ -165,12 +166,23 @@ export default async function PropertiesPage({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button asChild variant="outline">
-            <Link href={mapHref}>
-              <Map className="mr-2 size-4" />
-              Map
-            </Link>
-          </Button>
+          {/*
+            MAP LINK HIDDEN 2026-08-11 — the map renders BLANK in production.
+            MapLibre loads its style, sprites and font glyphs and then requests
+            zero map tiles (/planet/*.pbf), silently: no console error, nothing
+            CSP-blocked, a correctly sized canvas and working blob workers.
+            Ruled out by direct measurement: the CSP origin, tile reachability
+            (a .pbf fetches 200 from the page), WebGL, canvas size, resize, and
+            the effect-churn bug that was fixed anyway. Downgrading maplibre-gl
+            6.4.0 -> 5.24.0 changed the symptom (glyphs now load) but not the
+            outcome. Tiles are fetched by MapLibre's WORKER, which is the
+            remaining suspect under this bundler.
+
+            The route and migration 0031 stay — both are harmless. Only the way
+            in is removed, so nobody clicks through to an empty grey rectangle.
+            Restore this block once tests/e2e/property-map.spec.ts passes its
+            /planet/ tile assertion against a real build.
+          */}
           {total > 0 ? (
             <Button asChild variant="outline">
               {/* Plain anchor, not next/link: this is a file download. */}
