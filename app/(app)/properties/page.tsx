@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Building2, Download, Plus } from "lucide-react";
+import { Building2, Download, Map, Plus } from "lucide-react";
 import {
   PropertiesFilters,
   type AreaOption,
@@ -137,9 +137,10 @@ export default async function PropertiesPage({
     return `?${params.toString()}`;
   };
 
-  // Export carries the active filters but not pagination — the whole filtered
-  // set, RLS-scoped to what this user can see.
-  const exportHref = (() => {
+  // Both Export and Map carry the active filters but not pagination — the whole
+  // filtered set, RLS-scoped to what this user can see. ONE source of truth for
+  // which params travel: a second copy would drift from this one.
+  const filterQuery = (() => {
     const params = new URLSearchParams();
     for (const [k, v] of Object.entries(sp)) {
       if (k === "page") continue;
@@ -147,8 +148,11 @@ export default async function PropertiesPage({
       if (val) params.set(k, val);
     }
     const qs = params.toString();
-    return `/properties/export${qs ? `?${qs}` : ""}`;
+    return qs ? `?${qs}` : "";
   })();
+
+  const exportHref = `/properties/export${filterQuery}`;
+  const mapHref = `/properties/map${filterQuery}`;
 
   return (
     <div className="flex flex-col gap-4">
@@ -161,6 +165,12 @@ export default async function PropertiesPage({
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button asChild variant="outline">
+            <Link href={mapHref}>
+              <Map className="mr-2 size-4" />
+              Map
+            </Link>
+          </Button>
           {total > 0 ? (
             <Button asChild variant="outline">
               {/* Plain anchor, not next/link: this is a file download. */}
