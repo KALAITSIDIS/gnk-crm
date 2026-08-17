@@ -154,9 +154,15 @@ shape flags every row.
 
 Full write-ups in `docs/DECISIONS.md`; migrations in `supabase/migrations/`.
 
-**2026-08-11** — 0031 `area_centroids` — **B5 map view. IN THE REPO, NOT APPLIED
-TO HOSTED.** `/properties/map` plots listings over OpenFreeMap tiles, reached by
-a Map/List toggle that carries the filters through the URL.
+**2026-08-11** — 0031 `area_centroids` — **B5 map view. APPLIED TO HOSTED and
+verified there:** 31 migrations, `non_filename_versions` 0, districts **5/5** and
+areas **10/10** seeded, **0 centroids outside Cyprus bounds**, FAM at
+`35.0378, 33.9832` (Paralimni), **both production properties now mappable**,
+115 policies and 24 hoisted unchanged, `get_advisors` identical to before,
+chain verifies, events 74. Verified BEFORE recording the version.
+
+`/properties/map` plots listings over OpenFreeMap tiles, reached by a Map/List
+toggle that carries the filters through the URL.
 
 **The entry that justified this feature was false.** IMPROVEMENTS B5 said
 `properties.location` was "already populated"; **0 of 2 hosted rows had

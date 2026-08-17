@@ -81,7 +81,7 @@ engineering.**
 
 Original scope note: viewing forms, reservation agreements, mandate renewals as branded PDFs, prefilled from the property/contact/deal record. **Why:** the `@react-pdf/renderer` pipeline, font embedding (Greek/Cyrillic already solved) and the private `documents` bucket all exist — the evidence report proved the whole stack. This is mostly template work on top of shipped infrastructure. **Depends on:** `lib/services/evidence-pdf.tsx` patterns, `pdf-fonts.ts`.
 
-### B5. Map view for properties — ✅ **DONE 2026-08-11** (migration 0031; radius draw deferred)
+### B5. Map view for properties — ✅ **DONE AND LIVE 2026-08-11** — migration 0031 applied to hosted; both production properties are mappable. Radius draw deferred.
 
 Properties render on a map at `/properties/map`, reached by a **Map / List toggle**
 on the properties list that carries the active filters through the URL. It is a
