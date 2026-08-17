@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import type { PropertyFeatureCollection } from "@/lib/services/property-map";
+import "maplibre-gl/dist/maplibre-gl.css";
 
 /**
  * MapLibre over OpenFreeMap tiles (IMPROVEMENTS B5).
@@ -12,30 +13,48 @@ import type { PropertyFeatureCollection } from "@/lib/services/property-map";
  * removing that entry blanks this map in production with no UI error.
  *
  * Attribution is required and MapLibre renders it automatically from the style.
+ *
+ * ⚠️ THE MAP IS CREATED ONCE AND NEVER REBUILT ON DATA CHANGE. The first version
+ * of this file put `data` in the effect's dependency array. `data` is a fresh
+ * object from toGeoJson() on every render, so every re-render tore the map down
+ * with map.remove() and started a new one — which shipped to production as a
+ * completely BLANK map on 2026-08-11: the style, TileJSON and sprites loaded,
+ * the attribution control rendered, and not one vector tile was ever requested.
+ * Nothing errored, nothing was CSP-blocked, and the E2E passed because the
+ * container was visible.
+ *
+ * So: create in an effect with NO dependencies, hold the latest data in a ref for
+ * the load handler, and push later changes through setData() on the existing
+ * source. Do not reintroduce `data` as a dependency here.
  */
 function MapImpl({ data }: { data: PropertyFeatureCollection }) {
   const container = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<import("maplibre-gl").Map | null>(null);
+  const readyRef = useRef(false);
+
+  // The load handler runs asynchronously, so it must read the CURRENT data
+  // rather than whatever was captured when the effect first ran. Assigned in an
+  // effect below, never during render.
+  const dataRef = useRef(data);
 
   useEffect(() => {
     if (!container.current) return;
     let cancelled = false;
-    let map: import("maplibre-gl").Map | undefined;
 
     void (async () => {
       const maplibre = await import("maplibre-gl");
-      await import("maplibre-gl/dist/maplibre-gl.css");
       if (cancelled || !container.current) return;
 
-      map = new maplibre.Map({
+      const map = new maplibre.Map({
         container: container.current,
         style: "https://tiles.openfreemap.org/styles/liberty",
         center: [33.0, 34.9], // Cyprus, [lng, lat]
         zoom: 8,
       });
+      mapRef.current = map;
 
       map.on("load", () => {
-        if (!map) return;
-        map.addSource("properties", { type: "geojson", data });
+        map.addSource("properties", { type: "geojson", data: dataRef.current });
         map.addLayer({
           id: "property-pins",
           type: "circle",
@@ -54,13 +73,28 @@ function MapImpl({ data }: { data: PropertyFeatureCollection }) {
             "circle-stroke-color": "#ffffff",
           },
         });
+        readyRef.current = true;
       });
     })();
 
     return () => {
       cancelled = true;
-      map?.remove();
+      readyRef.current = false;
+      mapRef.current?.remove();
+      mapRef.current = null;
     };
+  }, []);
+
+  // New data updates the existing source instead of rebuilding the map. This
+  // also owns dataRef, so the async load handler above always reads the latest.
+  useEffect(() => {
+    dataRef.current = data;
+    const map = mapRef.current;
+    if (!map || !readyRef.current) return;
+    const source = map.getSource("properties");
+    if (source && "setData" in source) {
+      (source as import("maplibre-gl").GeoJSONSource).setData(data);
+    }
   }, [data]);
 
   return (
@@ -84,7 +118,8 @@ function MapImpl({ data }: { data: PropertyFeatureCollection }) {
   );
 }
 
-/** ssr:false keeps ~200 KB of MapLibre out of every other page's bundle. */
+/** ssr:false keeps MapLibre off the server render; the library itself is still
+ *  code-split by the dynamic `import("maplibre-gl")` inside the effect. */
 export const PropertyMap = dynamic(() => Promise.resolve(MapImpl), {
   ssr: false,
   loading: () => (

@@ -28,6 +28,40 @@ async function collectCspViolations(page: import("@playwright/test").Page) {
   });
 }
 
+/**
+ * THIS IS THE ASSERTION THE FIRST VERSION OF THIS FILE WAS MISSING.
+ *
+ * On 2026-08-11 the map shipped to production completely blank, and every test
+ * here passed: the container was visible and no CSP violation fired, both of
+ * which are true of an empty grey rectangle. MapLibre loaded its style, drew the
+ * background layer, and never requested a single vector tile.
+ *
+ * "The element exists" is not "the map works". A map that has requested no tiles
+ * has rendered no map, so that is what gets asserted.
+ */
+test("the map actually loads vector tiles, not just a background", async ({ page }) => {
+  await page.goto("/properties/map", { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("property-map")).toBeVisible();
+
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () =>
+            performance
+              .getEntriesByType("resource")
+              .filter((e) => e.name.includes(".pbf")).length,
+        ),
+      {
+        timeout: 20_000,
+        message:
+          "MapLibre requested zero vector tiles — the map is blank even though " +
+          "the container is visible and nothing was CSP-blocked",
+      },
+    )
+    .toBeGreaterThan(0);
+});
+
 test("the map renders and provokes no CSP violation", async ({ page }) => {
   await collectCspViolations(page);
 
