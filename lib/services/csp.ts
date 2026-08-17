@@ -71,6 +71,12 @@ export function buildCsp({ nonce, isDev, supabaseUrl, sentryDsn }: CspOptions): 
 
   const connect = ["'self'"];
   const img = ["'self'", "data:", "blob:"];
+  // OpenFreeMap serves the style JSON, vector tiles, glyphs and sprites for the
+  // property map (IMPROVEMENTS B5) from this one origin. No account, no key.
+  // `worker-src` already allows blob:, which is what MapLibre's workers need.
+  const TILES = "https://tiles.openfreemap.org";
+  connect.push(TILES);
+  img.push(TILES);
   if (supabase) {
     // REST, Auth and Storage all live on the project origin…
     connect.push(supabase, wsOrigin(supabase)); // …plus Realtime over websockets
