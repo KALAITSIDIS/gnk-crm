@@ -53,6 +53,8 @@ built without explicit direction.
      So the first assertion passed for the wrong reason and the "fixed" one could
      never pass at all. Count tiles with `page.on("request")`.
 
+  **Both traps are written up permanently in `docs/ENGINEERING_NOTES.md` §7.**
+
   The sequence is the point: an assertion that could not fail was replaced with
   one that could not pass, the red CI was then read as proof the feature was
   broken, and a working feature was hidden from users on that basis. Each step

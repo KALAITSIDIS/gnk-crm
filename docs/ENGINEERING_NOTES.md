@@ -194,6 +194,8 @@ logging anything.
 
 ## 4. Testing discipline
 
+> **See also §7, "Instruments that lie".** Before trusting a test's verdict, check the test could report the OTHER answer. On 2026-08-18 the property-map tile assertion was, within eight hours, both a test that could not fail and a test that could not pass — and the second one's red CI was read as proof a working feature was broken.
+
 **A test that only passes on a RERUN is depending on residue.** The RLS suite must
 pass on the FIRST run against a fresh database. CI runs `supabase start` +
 `test:rls` once on an empty DB, so residue-dependent assertions are green locally
@@ -324,3 +326,71 @@ practice:
   ("skipped previously applied commit").
 - Unit-test counts and `tests/screenshots/` churn between runs for reasons that
   are not your change.
+
+---
+
+## 7. Instruments that lie (2026-08-18)
+
+§1 collects bugs that only exist in production. This section is a nastier class:
+**measurements that are wrong only when a machine takes them.** They do not
+error. They return a confident number, and the number is garbage.
+
+They cost a full day on the property map, which was declared broken, had its link
+hidden from users and two of its tests disabled — while working perfectly the
+whole time.
+
+### 7.1 A hidden tab never runs `requestAnimationFrame`
+
+MapLibre requests tiles from inside its rAF render loop and fires `load` from
+there. In a backgrounded tab the loop never runs, so the map:
+
+- requests **zero** tiles, and never fires `load`
+- draws nothing at all — not even layers fed from local GeoJSON
+- reports a correctly sized canvas, working WebGL2, a live worker
+- logs **no error**, and trips **no CSP violation**
+
+That is indistinguishable from a broken map, and it is what every browser
+automation tool produces by default — including checks against production.
+`tabs_select` does not fix it: the pane still is not the OS-foreground window.
+
+**Before believing anything about a canvas, WebGL, animation or a map:**
+
+```js
+document.visibilityState  // "hidden" ⇒ nothing you observe about rendering is evidence
+document.hasFocus()
+```
+
+Playwright pages report `visible`, **headless included**, so a Playwright run is
+valid evidence where a driven browser tab is not.
+
+### 7.2 A worker's fetches never reach the window's resource timeline
+
+`performance.getEntriesByType("resource")` is per-global. Vector tiles are fetched
+by MapLibre's worker, so they appear in the worker's timeline and **never** in the
+window's. Measured on one working page at one moment:
+
+| instrument | tiles seen |
+|---|---|
+| `page.on("request")` (network level) | **9** |
+| `performance.getEntriesByType("resource")` in the page | **0** |
+| any `.pbf` in the window timeline | 11 — all font glyphs, main thread |
+
+An in-page tile count therefore **cannot pass, ever**. Count network activity from
+outside the page: `page.on("request")` in Playwright, or the DevTools/CDP log.
+
+### 7.3 The rule this generalises to
+
+Both failures share a shape, and so did `pg_stat_user_functions` in §4: **a
+measurement that is structurally incapable of observing the thing it is asked
+about, returning a plausible zero.**
+
+A test that cannot fail and a test that cannot pass are the same defect — the
+outcome does not depend on the behaviour under test. The property-map assertion
+was both within eight hours: first counting any `.pbf` (passed on glyphs, would
+have passed with the map blank), then counting `/planet/` tiles in the page
+(could never pass at all, and its red CI was read as proof the feature was
+broken).
+
+**So: prove the instrument can produce BOTH answers before trusting either.**
+Point it at a case known to be working and confirm it says so. That single check
+would have cost minutes and saved the day.

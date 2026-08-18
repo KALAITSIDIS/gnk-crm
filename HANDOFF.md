@@ -11,12 +11,12 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 
 | | |
 |---|---|
-| `main` | **in sync with `origin/main` as of 2026-08-11** — that day's E2E-harness and docs work is all pushed, CI green. Verify rather than trust: `git status -sb` and `git log --oneline origin/main..HEAD`. The standing agreement is still **commit, don't push**; each push that day was asked for explicitly. **Not the only branch** — `c2-aal2-rls` survives its own merge, and short-lived `fix/*`/`exp/*` branches come and go; `git branch -vv` is the answer, not this cell. (SHA: `git log --oneline -1` — deliberately not pinned here, it went stale on every commit) |
+| `main` | **in sync with `origin/main` as of 2026-08-18** — four B5 commits that day, all pushed, CI green (`checks` · `rls` · `e2e`), `origin/main..HEAD` = 0. Verify rather than trust: `git status -sb` and `git log --oneline origin/main..HEAD`. The standing agreement is still **commit, don't push**; each push that day was asked for explicitly. **LOCAL IS NOW ONLY `main`** (2026-08-18): five merged branches were deleted, `fix-map-blank` among them — its message asserted a root cause that turned out to be wrong, and a stale branch is a claim someone will read. Two remote branches remain, `origin/exp/chromium-channel` and `origin/fix/ci-chromium-gpu-segv`. `git branch -vv` and `git branch -r` are the answer, not this cell. (SHA: `git log --oneline -1` — deliberately not pinned here, it went stale on every commit) |
 | CI | ✅ green — `checks` (typecheck · lint · unit · **build**) + `rls` |
 | Production | `gnk-crm.vercel.app` healthy; **auto-deploys every push**. **A cache-restored build can keep an OLD `NEXT_PUBLIC_*` value compiled in — see §2b, it caused a login outage on 2026-08-09.** |
-| Hosted DB | `yjgirvzgoiywdojnpkpd` — **29 migrations** (0029 applied 2026-08-11), `non_filename_versions` = 0, chain verifies, **74 events**. **DB-level 2FA is LIVE** — `require_aal2` on all 29 RLS tables, IMPROVEMENTS C2 |
+| Hosted DB | `yjgirvzgoiywdojnpkpd` — **31 migrations, latest `0031`**, **75 events**, 2 properties (1 with exact coordinates), 5 district + 10 area centroids — all MEASURED 2026-08-18. `non_filename_versions` = 0 and chain-verifies were last checked 2026-08-11 when 0031 was applied, not re-run since. **DB-level 2FA is LIVE** — `require_aal2` on all 29 RLS tables, IMPROVEMENTS C2 |
 | Data | `share_links` 2 (1 live, 1 revoked) · `tasks` 0 · `deals` 1 · **all of it operator test data** (§0) |
-| Tests | **505 unit** · **48 RLS across 4 files** (was 44/3 — migration 0030 added `rls-hoist.test.ts`; re-read from CI run `31568922881` on 2026-08-11. The "12 mandatory tests, doc 04" in the job name is a subset, not the total) · **176 desktop E2E, 0 skipped** — 178 results in total, because the `setup` project now holds two tests: the stale-server guard and the login. Full desktop suite measured from a COLD dev server on 2026-08-11, 0 failed, 0 flaky. All three run in CI. Re-running E2E rewrites the 12 tracked `tests/screenshots/*.png` — §7 |
+| Tests | **518 unit** · **48 RLS across 4 files** (was 44/3 — migration 0030 added `rls-hoist.test.ts`; re-read from CI run `31568922881` on 2026-08-11. The "12 mandatory tests, doc 04" in the job name is a subset, not the total) · **181 desktop E2E, 0 skipped** — 183 results in total, because the `setup` project holds two tests: the stale-server guard and the login. Counts from `--list` on 2026-08-18; the suite last PASSED in CI run `32157440627` that day. Two of those tests spent part of 2026-08-18 marked `test.fixme` against a map that was never broken — see §1. Full desktop suite measured from a COLD dev server on 2026-08-11, 0 failed, 0 flaky. All three run in CI. Re-running E2E rewrites the 12 tracked `tests/screenshots/*.png` — §7 |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
 | Backups | ✅ **`2026-08-10` is the primary** — newest automated set, `verified:true`, `problems:[]`, 55 files, **events inDump 74 = live 74**, written to `D:\dev\TSOPOZIDIS\gnk-backups`. `2026-08-06` is the restore-*proven* one (all 73 event hashes byte-identical to production). Sets: 07-30 · 07-31 (Storage) · 08-04 (superseded) · 08-06 · 08-07 · 08-08 · 08-09 · **08-10**. Nightly ran 03:46 on 2026-08-10, verified. **STILL SINGLE-MACHINE — a current off-site archive is built and waiting to be copied to USB, §3.3** |
 
@@ -153,6 +153,41 @@ shape flags every row.
 ## 1. Shipped
 
 Full write-ups in `docs/DECISIONS.md`; migrations in `supabase/migrations/`.
+
+**2026-08-18** — B5 map, second pass. **No migration; code and docs only.**
+`17d204f` click-through popups, fit-to-results and clustering · `97bd359` the
+correction below · `5ec3d19`, `9e2ddc9` the false alarm. CI green on each.
+
+**Clustering here is correctness, not decoration.** `resolvePosition` falls back
+to the AREA then the DISTRICT centroid, so every property in one area resolves to
+the IDENTICAL coordinate — forty listings drew as one circle. Such a cluster can
+never be split by zooming either, so clicking one checks whether its leaves share
+a coordinate and, when they do, lists them in the popup instead. Pin clicks use
+`queryRenderedFeatures` for the same reason: taking the top feature would open an
+arbitrary property. `boundsOf()` is pure and unit-tested including the degenerate
+single-property box, which needs `maxZoom` or `fitBounds` lands in a garden.
+
+**⚠️ THE FALSE ALARM, KEPT ON PURPOSE.** Earlier that day this map was declared
+broken in production, its link was HIDDEN from users, and two of its tests were
+marked `test.fixme`. **It was working the entire time.** Two instruments lied and
+neither was validated:
+
+1. **A hidden browser tab never runs `requestAnimationFrame`.** MapLibre requests
+   tiles from inside its render loop and fires `load` from there, so a
+   backgrounded tab reproduces every symptom of a dead map — no tiles, no `load`,
+   no pins, no errors, correct canvas. Every check, production included, was made
+   through automation where `document.visibilityState === "hidden"`.
+2. **A worker's fetches never reach the window's resource timeline.** Same working
+   page, same moment: 9 tiles at the network level, **0** via
+   `performance.getEntriesByType`, and 11 `.pbf` glyphs on the main thread — which
+   is what made the original any-`.pbf` assertion pass for the wrong reason.
+
+So an assertion that could not fail was replaced by one that could not pass, the
+resulting red CI was read as proof, and a working feature was withdrawn on that
+basis. Each step followed from the one before. **`docs/ENGINEERING_NOTES.md` §7
+owns the trap; the struck BACKLOG entry keeps the full account.** The one real
+bug found along the way — the map being torn down and rebuilt on every render —
+was genuine, is fixed, and never caused anything blank.
 
 **2026-08-11** — 0031 `area_centroids` — **B5 map view. APPLIED TO HOSTED and
 verified there:** 31 migrations, `non_filename_versions` 0, districts **5/5** and
@@ -583,7 +618,8 @@ the mirror error is just as easy — see the row-counts warning in §0.
 *Rewritten 2026-08-09. The previous version listed C1 as Done and claimed both
 Sentry DSNs were "set and verified live"; neither was true. Corrected below.*
 
-**Done:** A (all) · B1 · B2 · B3 · B6 · B7 · B8 · B10 · B11 · **C1 (enforced
+**Done:** A (all) · B1 · B2 · B3 · **B5 (shipped 2026-08-11, click-through +
+clustering 2026-08-18)** · B6 · B7 · B8 · B10 · B11 · **C1 (enforced
 2026-08-10)** · **C2 (opt-in enrolment + DB-level enforcement, hosted
 2026-08-11)** · C6.
 
@@ -611,11 +647,19 @@ is one word: `CSP_HEADER` in `lib/services/csp.ts`.*
   the only archive on `D:`** — the 08-07 and 08-09 ones were deleted 2026-08-10
   after confirming both were strict subsets, so there is no question which file
   to copy.
-- **B5 map** — tile provider is a spend + ToS call. **The CSP half got harder,
-  not easier, when C1 went enforcing on 2026-08-10**: a tile origin is no longer
-  a line in a report-only policy nobody enforces, it is an edit to a live one
-  that blocks what it does not name. Add the origin and verify before the map
-  ships, not after.
+- ~~**B5 map** — tile provider is a spend + ToS call.~~ **DECIDED AND SHIPPED.**
+  OpenFreeMap: no account, no key, no payment, commercial use allowed. The CSP
+  half was the real risk and it was handled — `https://tiles.openfreemap.org` is
+  on `img-src`/`connect-src`, and an E2E asserts zero violations, because
+  deleting that line blanks the map in production silently.
+
+  **A caution worth more than the decision:** on 2026-08-18 this feature was
+  declared broken, its link hidden from users, and two of its tests disabled —
+  all on measurements taken through a hidden browser tab, where
+  `requestAnimationFrame` never runs and no map can render. It had been working
+  the whole time. `docs/ENGINEERING_NOTES.md` §7 owns that trap; BACKLOG keeps
+  the struck entry as the cautionary tale.
+
 - **`gerasimos@` has no 2FA** — reviewed 2026-08-09, kept as admin deliberately,
   and **that decision is now load-bearing rather than pending**: C2's DB-level
   enforcement went live 2026-08-11 and the opt-in template means he is never
