@@ -27,60 +27,96 @@ built without explicit direction.
 > commit. Do not delete it: a struck-through entry is what stops the next person
 > re-proposing the same work.
 
-- **THE PROPERTY MAP (B5) RENDERS BLANK — SHIPPED, THEN HIDDEN (2026-08-11).**
-  Everything except the tiles works: the style, TileJSON, sprites and font glyphs
-  all load, the canvas is correctly sized (1390x729), WebGL2 is supported, blob
-  workers run, nothing is CSP-blocked and nothing errors in the console. MapLibre
-  requests **zero** map tiles (`/planet/*.pbf`). Ruled out by direct measurement,
-  not by reasoning: the CSP origin is present on `img-src` and `connect-src`; a
-  `.pbf` fetched by hand from the page returns 200/119157 bytes; `resize()`
-  changes nothing; the real effect-churn bug (the map was being torn down and
-  rebuilt on every render) was found and fixed and was NOT the cause. Downgrading
-  `maplibre-gl` 6.4.0 -> 5.24.0 changed the symptom (glyphs began loading) but not
-  the outcome. Remaining suspect, UNPROVEN: MapLibre's worker under Next 16 /
-  Turbopack, which is the thing that actually fetches tiles.
+- ~~**THE PROPERTY MAP (B5) RENDERS BLANK — SHIPPED, THEN HIDDEN.**~~
+  **WITHDRAWN 2026-08-18: THE MAP WAS NEVER BROKEN.** Verified working against
+  the real bundle — 9 `/planet/*.pbf` vector tiles, `load` fired, `loaded: true`,
+  Cyprus drawn with roads and bilingual labels, headless and headed alike. The
+  Map link is restored and both E2E tests are un-fixmed.
 
-  Route `/properties/map` and migration 0031 (district/area centroids) stay —
-  both are harmless. What was removed is the **way in**: the Map link on
-  `/properties` is commented out, so nobody reaches a grey rectangle. Two E2E
-  tests are `test.fixme` — the `/planet/` tile assertion and the link round-trip.
+  **Everything in the original entry below was measured through two broken
+  instruments, and every "ruled out by direct measurement" line it contains is
+  worthless.** Keep it as the cautionary tale it is.
 
-  **The tile assertion is the real lesson here.** The original version counted any
-  `.pbf` request. Font glyphs are also `.pbf`, so it passed in CI, on a build
-  whose map was blank in production. A test that cannot fail is worse than no
-  test: it spends the credibility of a green run on nothing. Do not weaken it
-  back — fix the map.
+  1. **`requestAnimationFrame` does not run in a hidden tab.** MapLibre requests
+     tiles from inside its rAF render loop and fires `load` from there too. Every
+     "blank map" observation was taken through browser automation, where
+     `document.visibilityState === "hidden"` and `document.hasFocus() === false` —
+     including the checks against production. A hidden tab cannot render ANY map,
+     working or not, so those checks could only ever produce the symptom they
+     found. **Check `document.visibilityState` before believing anything about a
+     canvas.**
+  2. **A worker's fetches never appear in the window's resource timeline.**
+     Vector tiles are fetched by MapLibre's worker. Measured on the same working
+     page at the same moment: 9 tiles at the network level, **0** via
+     `performance.getEntriesByType("resource")`, and 11 `.pbf` glyphs (fetched on
+     the main thread) which is what made the ORIGINAL any-`.pbf` assertion pass.
+     So the first assertion passed for the wrong reason and the "fixed" one could
+     never pass at all. Count tiles with `page.on("request")`.
 
-  **RE-VERIFIED IN PRODUCTION 2026-08-18** (gnk-crm.vercel.app on 9e2ddc9, real
-  signed-in browser): still blank. 0 `/planet/*.pbf`, 11 glyph `.pbf`, 15
-  OpenFreeMap requests (style, TileJSON, sprites json+png, glyphs), canvas
-  1390x729, WebGL2 supported, and **not one console message** on a fresh reload.
+  The sequence is the point: an assertion that could not fail was replaced with
+  one that could not pass, the red CI was then read as proof the feature was
+  broken, and a working feature was hidden from users on that basis. Each step
+  was reasonable given the step before, and the whole chain was wrong, because
+  nobody validated the instrument. The real bug fixed along the way was the
+  effect-churn in `map-view.tsx` (the map was torn down and rebuilt on every
+  render) — genuine, worth keeping, and never the cause of anything blank.
 
-  **THE CLUE THAT NARROWS THIS, found on that run: `property-map-empty` is NOT in
-  the DOM**, so `data.features.length > 0` — the resolver and the district-centroid
-  fallback both work. The pins are a `circle` layer fed from LOCAL GeoJSON: they
-  need no tiles and would paint over a blank background. Nothing paints. So this
-  is not "the basemap fails and the pins survive" — `map.on("load")` almost
-  certainly never fires, and the handler that calls addSource/addLayer never runs.
+  The original entry follows.
 
-  That fits the worker hypothesis and sharpens it: `load` waits on sources,
-  sources are fetched by the worker, so a dead worker stalls `load` forever —
-  silently, which is exactly the signature (no error, correct canvas, style and
-  glyphs fine). It also EXONERATES a whole branch: the resolver, the GeoJSON
-  coordinate order, the layer paint properties and the styling are all fine, so
-  do not spend time there.
+  - **THE PROPERTY MAP (B5) RENDERS BLANK — SHIPPED, THEN HIDDEN (2026-08-11).**
+    Everything except the tiles works: the style, TileJSON, sprites and font glyphs
+    all load, the canvas is correctly sized (1390x729), WebGL2 is supported, blob
+    workers run, nothing is CSP-blocked and nothing errors in the console. MapLibre
+    requests **zero** map tiles (`/planet/*.pbf`). Ruled out by direct measurement,
+    not by reasoning: the CSP origin is present on `img-src` and `connect-src`; a
+    `.pbf` fetched by hand from the page returns 200/119157 bytes; `resize()`
+    changes nothing; the real effect-churn bug (the map was being torn down and
+    rebuilt on every render) was found and fixed and was NOT the cause. Downgrading
+    `maplibre-gl` 6.4.0 -> 5.24.0 changed the symptom (glyphs began loading) but not
+    the outcome. Remaining suspect, UNPROVEN: MapLibre's worker under Next 16 /
+    Turbopack, which is the thing that actually fetches tiles.
 
-  Next step if picked up: reproduce in a bare Vite build to isolate whether this
-  is MapLibre or the bundler, since that single fact splits the search space.
-  Instrument `map.on("load")`, `map.on("error")` and `map.on("sourcedata")`
-  FIRST — confirming load never fires (or catching the error it swallows) is
-  cheaper than any further network archaeology.
+    Route `/properties/map` and migration 0031 (district/area centroids) stay —
+    both are harmless. What was removed is the **way in**: the Map link on
+    `/properties` is commented out, so nobody reaches a grey rectangle. Two E2E
+    tests are `test.fixme` — the `/planet/` tile assertion and the link round-trip.
 
-  VERIFY: `grep -c "^test.fixme(" tests/e2e/property-map.spec.ts` — `2` means
-  still broken and parked. `0` means someone fixed it and this entry is stale.
-  (Anchored at `^` and including the paren ON PURPOSE: the unanchored
-  `grep -c "test.fixme"` returns `3`, because a comment in that file explains the
-  markers. That wrong number was written here first and caught by running it.)
+    **The tile assertion is the real lesson here.** The original version counted any
+    `.pbf` request. Font glyphs are also `.pbf`, so it passed in CI, on a build
+    whose map was blank in production. A test that cannot fail is worse than no
+    test: it spends the credibility of a green run on nothing. Do not weaken it
+    back — fix the map.
+
+    **RE-VERIFIED IN PRODUCTION 2026-08-18** (gnk-crm.vercel.app on 9e2ddc9, real
+    signed-in browser): still blank. 0 `/planet/*.pbf`, 11 glyph `.pbf`, 15
+    OpenFreeMap requests (style, TileJSON, sprites json+png, glyphs), canvas
+    1390x729, WebGL2 supported, and **not one console message** on a fresh reload.
+
+    **THE CLUE THAT NARROWS THIS, found on that run: `property-map-empty` is NOT in
+    the DOM**, so `data.features.length > 0` — the resolver and the district-centroid
+    fallback both work. The pins are a `circle` layer fed from LOCAL GeoJSON: they
+    need no tiles and would paint over a blank background. Nothing paints. So this
+    is not "the basemap fails and the pins survive" — `map.on("load")` almost
+    certainly never fires, and the handler that calls addSource/addLayer never runs.
+
+    That fits the worker hypothesis and sharpens it: `load` waits on sources,
+    sources are fetched by the worker, so a dead worker stalls `load` forever —
+    silently, which is exactly the signature (no error, correct canvas, style and
+    glyphs fine). It also EXONERATES a whole branch: the resolver, the GeoJSON
+    coordinate order, the layer paint properties and the styling are all fine, so
+    do not spend time there.
+
+    Next step if picked up: reproduce in a bare Vite build to isolate whether this
+    is MapLibre or the bundler, since that single fact splits the search space.
+    Instrument `map.on("load")`, `map.on("error")` and `map.on("sourcedata")`
+    FIRST — confirming load never fires (or catching the error it swallows) is
+    cheaper than any further network archaeology.
+
+    VERIFY: `grep -c "^test.fixme(" tests/e2e/property-map.spec.ts` — `2` means
+    still broken and parked. `0` means someone fixed it and this entry is stale.
+    (Anchored at `^` and including the paren ON PURPOSE: the unanchored
+    `grep -c "test.fixme"` returns `3`, because a comment in that file explains the
+    markers. That wrong number was written here first and caught by running it.)
 
 - Forgot-password flow on `/login` (doc 05): Supabase `resetPasswordForEmail` +
   reset page + email template. Natural fit with Phase 2 Resend integration.

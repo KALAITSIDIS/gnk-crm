@@ -29,48 +29,52 @@ async function collectCspViolations(page: import("@playwright/test").Page) {
 }
 
 /**
- * THIS IS THE ASSERTION THE FIRST VERSION OF THIS FILE WAS MISSING.
+ * THE TILE ASSERTION — AND THE INSTRUMENT IT HAS TO USE.
  *
- * On 2026-08-11 the map shipped to production completely blank, and every test
- * here passed: the container was visible and no CSP violation fired, both of
- * which are true of an empty grey rectangle. MapLibre loaded its style, drew the
- * background layer, and never requested a single vector tile.
+ * This test has now been wrong twice, in opposite directions, and both times the
+ * instrument was the problem rather than the map.
  *
- * "The element exists" is not "the map works". A map that has requested no tiles
- * has rendered no map, so that is what gets asserted.
+ *  1. It counted ANY `.pbf`. Font glyphs are `.pbf`, so it passed on the strength
+ *     of 11 glyph requests and would have passed with the map completely blank.
+ *  2. It was "fixed" to count `/planet/*.pbf` from
+ *     `performance.getEntriesByType("resource")` INSIDE THE PAGE. That can never
+ *     pass: vector tiles are fetched by MapLibre's WORKER, and a worker's fetches
+ *     never appear in the WINDOW's resource timeline. It then failed CI against a
+ *     perfectly working map, and the Map link was hidden from users because of it.
+ *
+ * Measured on 2026-08-18 against a working map, same page, same moment:
+ *     network level (page.on("request")):        9 tiles
+ *     window performance timeline:               0 tiles
+ *     any .pbf in the window timeline (glyphs):  11
+ *
+ * So the tiles MUST be counted at the network level, where Playwright sees worker
+ * requests too. Do not move this back into page.evaluate().
+ *
+ * (The map also renders nothing at all when the tab is HIDDEN — MapLibre requests
+ * tiles from inside its rAF render loop, and `requestAnimationFrame` does not run
+ * in a background tab. Every "blank map" observation that started this was taken
+ * through automation on a hidden tab, which cannot render any map, working or not.
+ * Playwright pages report `visibilityState: "visible"`, headless included, so this
+ * test is fine — but a manual check through a background tab proves nothing.)
  */
-// test.fixme, NOT skip or delete: the feature is broken, the test is right.
-// Marked 2026-08-18 so `main` stays green while the map stays disabled and
-// its link hidden. RE-ENABLE THIS THE MOMENT THE MAP IS FIXED — if it is
-// quietly deleted instead, the next blank map ships unnoticed exactly as
-// this one did.
-test.fixme("the map actually loads vector tiles, not just a background", async ({ page }) => {
+test("the map actually loads vector tiles, not just a background", async ({ page }) => {
+  // Registered BEFORE goto so no request is missed.
+  const tiles: string[] = [];
+  page.on("request", (r) => {
+    const u = r.url();
+    if (u.includes("/planet/") && u.includes(".pbf")) tiles.push(u);
+  });
+
   await page.goto("/properties/map", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("property-map")).toBeVisible();
 
-  // MUST match MAP TILES, not any .pbf. Font glyphs are also .pbf and are
-  // fetched on the main thread, so a `.pbf` count passes while the map is blank
-  // — this assertion did exactly that on 2026-08-11 and reported green in CI
-  // against a production map showing nothing. Map tiles come from /planet/ and
-  // are fetched by MapLibre's worker, which is the part that actually fails.
   await expect
-    .poll(
-      () =>
-        page.evaluate(
-          () =>
-            performance
-              .getEntriesByType("resource")
-              .filter((e) => e.name.includes("/planet/") && e.name.includes(".pbf"))
-              .length,
-        ),
-      {
-        timeout: 20_000,
-        message:
-          "MapLibre requested zero MAP TILES (/planet/*.pbf) — the map is blank " +
-          "even though the container is visible, glyphs loaded and nothing was " +
-          "CSP-blocked",
-      },
-    )
+    .poll(() => tiles.length, {
+      timeout: 20_000,
+      message:
+        "MapLibre requested zero MAP TILES (/planet/*.pbf) at the network level — " +
+        "the map is blank even though the container is visible",
+    })
     .toBeGreaterThan(0);
 });
 
@@ -148,10 +152,7 @@ test("a property with a district resolves to a pin rather than the empty state",
   }
 });
 
-// Also fixme: this clicks the Map link on /properties, and that link is
-// deliberately HIDDEN while the map is broken. It tests real behaviour and
-// should come back with the link, not be rewritten to dodge it.
-test.fixme("the filters survive the trip from list to map", async ({ page }) => {
+test("the filters survive the trip from list to map", async ({ page }) => {
   await page.goto("/properties", { waitUntil: "domcontentloaded" });
 
   await page.getByRole("link", { name: /^map$/i }).click();

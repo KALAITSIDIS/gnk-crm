@@ -17,11 +17,12 @@ import "maplibre-gl/dist/maplibre-gl.css";
  * ⚠️ THE MAP IS CREATED ONCE AND NEVER REBUILT ON DATA CHANGE. The first version
  * of this file put `data` in the effect's dependency array. `data` is a fresh
  * object from toGeoJson() on every render, so every re-render tore the map down
- * with map.remove() and started a new one — which shipped to production as a
- * completely BLANK map on 2026-08-11: the style, TileJSON and sprites loaded,
- * the attribution control rendered, and not one vector tile was ever requested.
- * Nothing errored, nothing was CSP-blocked, and the E2E passed because the
- * container was visible.
+ * with map.remove() and started a new one. That is wasteful and racy and is
+ * rightly fixed — but it was NOT, as an earlier version of this comment claimed,
+ * the cause of a blank map in production. THERE WAS NO BLANK MAP: that was an
+ * artefact of observing the page through automation on a HIDDEN tab, where
+ * requestAnimationFrame never runs, so MapLibre never renders and never requests
+ * a tile. Verified working 2026-08-18: 9 vector tiles, `load` fired, Cyprus drawn.
  *
  * So: create in an effect with NO dependencies, hold the latest data in a ref for
  * the load handler, and push later changes through setData() on the existing
