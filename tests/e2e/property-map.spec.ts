@@ -40,7 +40,7 @@ async function collectCspViolations(page: import("@playwright/test").Page) {
  * has rendered no map, so that is what gets asserted.
  */
 // test.fixme, NOT skip or delete: the feature is broken, the test is right.
-// Marked 2026-08-11 so `main` stays green while the map stays disabled and
+// Marked 2026-08-18 so `main` stays green while the map stays disabled and
 // its link hidden. RE-ENABLE THIS THE MOMENT THE MAP IS FIXED — if it is
 // quietly deleted instead, the next blank map ships unnoticed exactly as
 // this one did.

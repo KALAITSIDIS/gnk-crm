@@ -51,8 +51,30 @@ built without explicit direction.
   test: it spends the credibility of a green run on nothing. Do not weaken it
   back — fix the map.
 
+  **RE-VERIFIED IN PRODUCTION 2026-08-18** (gnk-crm.vercel.app on 9e2ddc9, real
+  signed-in browser): still blank. 0 `/planet/*.pbf`, 11 glyph `.pbf`, 15
+  OpenFreeMap requests (style, TileJSON, sprites json+png, glyphs), canvas
+  1390x729, WebGL2 supported, and **not one console message** on a fresh reload.
+
+  **THE CLUE THAT NARROWS THIS, found on that run: `property-map-empty` is NOT in
+  the DOM**, so `data.features.length > 0` — the resolver and the district-centroid
+  fallback both work. The pins are a `circle` layer fed from LOCAL GeoJSON: they
+  need no tiles and would paint over a blank background. Nothing paints. So this
+  is not "the basemap fails and the pins survive" — `map.on("load")` almost
+  certainly never fires, and the handler that calls addSource/addLayer never runs.
+
+  That fits the worker hypothesis and sharpens it: `load` waits on sources,
+  sources are fetched by the worker, so a dead worker stalls `load` forever —
+  silently, which is exactly the signature (no error, correct canvas, style and
+  glyphs fine). It also EXONERATES a whole branch: the resolver, the GeoJSON
+  coordinate order, the layer paint properties and the styling are all fine, so
+  do not spend time there.
+
   Next step if picked up: reproduce in a bare Vite build to isolate whether this
   is MapLibre or the bundler, since that single fact splits the search space.
+  Instrument `map.on("load")`, `map.on("error")` and `map.on("sourcedata")`
+  FIRST — confirming load never fires (or catching the error it swallows) is
+  cheaper than any further network archaeology.
 
   VERIFY: `grep -c "^test.fixme(" tests/e2e/property-map.spec.ts` — `2` means
   still broken and parked. `0` means someone fixed it and this entry is stale.
