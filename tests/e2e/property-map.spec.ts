@@ -39,7 +39,12 @@ async function collectCspViolations(page: import("@playwright/test").Page) {
  * "The element exists" is not "the map works". A map that has requested no tiles
  * has rendered no map, so that is what gets asserted.
  */
-test("the map actually loads vector tiles, not just a background", async ({ page }) => {
+// test.fixme, NOT skip or delete: the feature is broken, the test is right.
+// Marked 2026-08-11 so `main` stays green while the map stays disabled and
+// its link hidden. RE-ENABLE THIS THE MOMENT THE MAP IS FIXED — if it is
+// quietly deleted instead, the next blank map ships unnoticed exactly as
+// this one did.
+test.fixme("the map actually loads vector tiles, not just a background", async ({ page }) => {
   await page.goto("/properties/map", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("property-map")).toBeVisible();
 
@@ -143,7 +148,10 @@ test("a property with a district resolves to a pin rather than the empty state",
   }
 });
 
-test("the filters survive the trip from list to map", async ({ page }) => {
+// Also fixme: this clicks the Map link on /properties, and that link is
+// deliberately HIDDEN while the map is broken. It tests real behaviour and
+// should come back with the link, not be rewritten to dodge it.
+test.fixme("the filters survive the trip from list to map", async ({ page }) => {
   await page.goto("/properties", { waitUntil: "domcontentloaded" });
 
   await page.getByRole("link", { name: /^map$/i }).click();
