@@ -124,17 +124,39 @@ built without explicit direction.
   popups, fit-to-results and clustering shipped; these four did not, and are
   listed in the order I would do them.
 
-  - **Price on the pin.** The one number an agent scans a map for. `asking_price`
-    and `rent_price_month` already reach the client on each feature, so this is a
-    symbol layer with a `text-field`, not a data change.
-    VERIFY: `grep -c "property-price-labels" components/features/properties/map-view.tsx` — `0` = not built.
-  - **Map viewport in the URL.** `?lat=&lng=&zoom=` alongside the existing filter
+  - ~~**Price on the pin.**~~ **SHIPPED 2026-08-18.** Not as originally
+    described, though: a label on every pin is destroyed by the stacking, because
+    MapLibre resolves a label collision by HIDING one, so a price drawn over
+    shared-centroid pins shows one arbitrary property out of however many are
+    underneath. The value is on the CLUSTER, which is what you mostly see here —
+    `clusterProperties` aggregates a minimum as the worker clusters, so the badge
+    reads `3 · from €380.000`. Lone pins carry their own price below the marker.
+    Verified on a visible page: correct minimum, and an all-unpriced cluster shows
+    its count with NO price rather than `from €0`.
+
+    **Two traps worth keeping.** `["to-number", x, fallback]` does NOT fall back
+    for null — the spec converts null to 0 successfully — so the first version
+    would have read `from €0` for any cluster holding one unpriced property.
+    Hence the explicit `hasPrice` flag: a style expression has nothing else safe
+    to branch on. And the console warnings this map logs are **not ours**: they
+    were measured identical with our layers removed entirely, come from the
+    OpenFreeMap Liberty style, and vary with zoom rather than with our data.
+
+  - ~~**Map viewport in the URL.**~~ **DECIDED AGAINST 2026-08-18** (operator).
+    Fit-to-results largely obsoleted it: the filters already live in the URL and
+    the map fits to the filtered set, so a link already reproduces a meaningful
+    view — one derived from the data rather than frozen coordinates. Adding
+    `?lat=&lng=&zoom=` would buy little and cost a precedence rule plus a way for
+    a shared link to disagree with what it shows. Revisit only if someone wants to
+    send *this exact view* rather than *these results*. Original entry: `?lat=&lng=&zoom=` alongside the existing filter
     params, so Map↔List stops throwing the view away and a map position can be
     sent to a colleague. Fits the pattern `parsePropertyFilters` already sets.
     VERIFY: `grep -c "moveend" components/features/properties/map-view.tsx` — `0` = not built.
   - **Hover sync between list and map.** Hovering a list row highlights its pin.
     Only worth it once list and map are visible together, which they are not today.
-  - **Draw-a-polygon "search this area".** The genuinely valuable one for real
+  - ~~**Draw-a-polygon "search this area".**~~ **DECLINED 2026-08-18 by the
+    operator** — not wanted, and it was the only L on the shortlist. The technical
+    note is kept because it stays true if that ever changes. Original entry: The genuinely valuable one for real
     estate, and the largest. `properties.location` is already
     `geography(point,4326)`, so the query is `ST_Covers` behind the SAME RLS and
     the SAME filter parser both views share — the work is the drawing UI and

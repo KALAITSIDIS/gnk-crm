@@ -111,6 +111,7 @@ describe("toGeoJson popup payload", () => {
       isRent: false,
       // The PATH, not a URL: this module stays free of env and storage config.
       thumb: "org/prop/a-thumb.webp",
+      hasPrice: true,
     });
   });
 
@@ -149,5 +150,36 @@ describe("boundsOf", () => {
       [32.4, 34.7],
       [33.9, 35.1],
     ]);
+  });
+});
+
+describe("hasPrice", () => {
+  /**
+   * WHY THIS EXISTS AS A SEPARATE FLAG rather than a null check in the map style.
+   *
+   * MapLibre's `["to-number", x, fallback]` does NOT fall back for null — the
+   * spec converts null to 0 successfully, so the fallback never fires. Relying on
+   * it made every cluster containing one unpriced property read "from €0", and
+   * fed a raw null to `number-format`, which warned. An explicit boolean is the
+   * only thing a style expression can branch on safely.
+   */
+  it("is false when there is no price, so the style can branch on it", () => {
+    const fc = toGeoJson([{ ...base, id: "a", location: { lat: 1, lng: 2 } }]);
+    expect(fc.features[0].properties.hasPrice).toBe(false);
+    expect(fc.features[0].properties.price).toBeNull();
+  });
+
+  it("is true for a priced property, including a rental", () => {
+    const fc = toGeoJson([
+      { ...base, id: "a", price: 450000, location: { lat: 1, lng: 2 } },
+      { ...base, id: "b", price: 1500, isRent: true, location: { lat: 3, lng: 4 } },
+    ]);
+    expect(fc.features.map((f) => f.properties.hasPrice)).toEqual([true, true]);
+  });
+
+  // Zero is a price a human typed. It must not be mistaken for "unknown".
+  it("treats a price of 0 as priced, not as missing", () => {
+    const fc = toGeoJson([{ ...base, id: "a", price: 0, location: { lat: 1, lng: 2 } }]);
+    expect(fc.features[0].properties.hasPrice).toBe(true);
   });
 });

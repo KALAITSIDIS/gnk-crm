@@ -5,7 +5,11 @@ import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { formatMoney } from "@/lib/utils/format";
 import { publicMediaUrl } from "@/lib/utils/storage";
-import { boundsOf, type PropertyFeatureCollection } from "@/lib/services/property-map";
+import {
+  boundsOf,
+  PRICE_ABSENT,
+  type PropertyFeatureCollection,
+} from "@/lib/services/property-map";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 /**
@@ -44,6 +48,7 @@ type Feat = {
   reference: string;
   title: string | null;
   price: number | null;
+  hasPrice: boolean;
   isRent: boolean;
   thumb: string | null;
   precision: "exact" | "approximate";
@@ -190,6 +195,17 @@ function MapImpl({ data }: { data: PropertyFeatureCollection }) {
           cluster: true,
           clusterRadius: 45,
           clusterMaxZoom: 14,
+          // Aggregated as the worker clusters. Branches on `hasPrice`, NOT on
+          // `["to-number", …, fallback]`: to-number converts null to 0 rather
+          // than falling back, so that version made any cluster holding one
+          // unpriced property read "from €0" and fed a raw null to number-format.
+          clusterProperties: {
+            // `coalesce` is the operator that actually handles null here.
+            // `["to-number", x, fallback]` does NOT: the spec converts null to 0
+            // successfully, so the fallback never fires and any cluster holding
+            // one unpriced property would read "from €0".
+            minPrice: ["min", ["coalesce", ["get", "price"], PRICE_ABSENT]],
+          },
         });
 
         map.addLayer({
@@ -203,7 +219,21 @@ function MapImpl({ data }: { data: PropertyFeatureCollection }) {
             // a precision it cannot vouch for — which is exactly what the first
             // version did while holding three approximate pins.
             "circle-color": "#334155",
-            "circle-radius": ["step", ["get", "point_count"], 16, 10, 22, 50, 28],
+            // `point_count` is ABSENT on an unclustered pin, so this read is
+            // coalesced rather than bare — `step` needs a number. Defensive, not
+            // a fix for the console warnings this map logs: those were MEASURED
+            // on 2026-08-18 to be identical with these layers removed entirely,
+            // and come from the OpenFreeMap Liberty style. Their count varies
+            // with zoom, not with our data. Do not chase them here.
+            "circle-radius": [
+              "step",
+              ["coalesce", ["get", "point_count"], 0],
+              16,
+              10,
+              22,
+              50,
+              28,
+            ],
             "circle-stroke-width": 2,
             "circle-stroke-color": "#ffffff",
           },
@@ -239,6 +269,79 @@ function MapImpl({ data }: { data: PropertyFeatureCollection }) {
             ],
             "circle-stroke-width": 2,
             "circle-stroke-color": "#ffffff",
+          },
+        });
+
+        // Price is what an agent actually scans a map for — but it belongs
+        // BELOW the marker, not inside it. Labels collide, and MapLibre resolves
+        // a collision by HIDING one, so a price drawn on top of a stacked pin
+        // would show one arbitrary property out of however many are underneath.
+        // The cluster carries "from €X" because clusters are what you mostly see
+        // here: shared centroids mean most properties never draw as lone pins.
+        const priceText = (key: string) => [
+          "concat",
+          "from €",
+          [
+            "number-format",
+            ["coalesce", ["get", key], 0],
+            { locale: "de-DE", "max-fraction-digits": 0 },
+          ],
+        ];
+
+        map.addLayer({
+          id: "property-cluster-price",
+          type: "symbol",
+          source: "properties",
+          // Hidden when NOTHING in the cluster is priced — the aggregate is then
+          // still the sentinel, and "from €1.000.000.000.000" is not a price.
+          filter: [
+            "all",
+            ["has", "point_count"],
+            // `minPrice` exists only on clusters, so coalesce before comparing.
+            ["<", ["coalesce", ["get", "minPrice"], PRICE_ABSENT], PRICE_ABSENT],
+          ],
+          layout: {
+            "text-field": priceText("minPrice") as unknown as import("maplibre-gl").ExpressionSpecification,
+            "text-font": ["Noto Sans Bold"],
+            "text-size": 11,
+            "text-offset": [0, 1.9],
+            "text-anchor": "top",
+            "text-allow-overlap": false,
+          },
+          paint: {
+            "text-color": "#0f172a",
+            // The basemap underneath is busy; without a halo the label is unreadable.
+            "text-halo-color": "#ffffff",
+            "text-halo-width": 1.5,
+          },
+        });
+
+        map.addLayer({
+          id: "property-pin-price",
+          type: "symbol",
+          source: "properties",
+          filter: ["all", ["!", ["has", "point_count"]], ["get", "hasPrice"]],
+          layout: {
+            // The filter already excludes unpriced features; the coalesce keeps
+            // the expression total rather than relying on that.
+            "text-field": [
+              "concat",
+              "€",
+              [
+                "number-format",
+                ["coalesce", ["get", "price"], 0],
+                { locale: "de-DE", "max-fraction-digits": 0 },
+              ],
+            ] as unknown as import("maplibre-gl").ExpressionSpecification,
+            "text-font": ["Noto Sans Bold"],
+            "text-size": 11,
+            "text-offset": [0, 1.2],
+            "text-anchor": "top",
+          },
+          paint: {
+            "text-color": "#0f172a",
+            "text-halo-color": "#ffffff",
+            "text-halo-width": 1.5,
           },
         });
 

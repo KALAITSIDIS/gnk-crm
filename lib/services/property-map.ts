@@ -41,6 +41,10 @@ export type PropertyFeature = {
     precision: Precision;
     title: string | null;
     price: number | null;
+    /** Whether `price` holds a number. MapLibre style expressions cannot test
+     *  for null safely — `["to-number", x, fallback]` converts null to 0 rather
+     *  than falling back — so the branch has to exist in the data. */
+    hasPrice: boolean;
     isRent: boolean;
     thumb: string | null;
   };
@@ -80,6 +84,7 @@ export function toGeoJson(properties: MappableProperty[]): PropertyFeatureCollec
         precision: pos.precision,
         title: p.title,
         price: p.price,
+        hasPrice: p.price !== null,
         isRent: p.isRent,
         thumb: p.thumbPath,
       },
@@ -120,3 +125,19 @@ export function boundsOf(
     [east, north],
   ];
 }
+
+/**
+ * Sentinel for "this property has no price", used when MapLibre aggregates a
+ * minimum price across a cluster.
+ *
+ * WHY A SENTINEL: cluster aggregation runs in the worker over an expression, and
+ * `["min", …]` has no notion of "skip this one". Mapping an absent price to 0
+ * would make every cluster containing one read "from €0"; mapping it to this
+ * value keeps it out of the minimum, and the label layer hides itself when the
+ * aggregate still equals it — i.e. when nothing in the cluster is priced.
+ *
+ * Comfortably above any Cyprus property price, and deliberately not
+ * Number.MAX_SAFE_INTEGER: it has to survive a round trip through the worker's
+ * JSON, and a plainly absurd round number is easier to recognise in a debugger.
+ */
+export const PRICE_ABSENT = 1_000_000_000_000;
