@@ -118,6 +118,32 @@ built without explicit direction.
     `grep -c "test.fixme"` returns `3`, because a comment in that file explains the
     markers. That wrong number was written here first and caught by running it.)
 
+- **Property map, the rest of the shortlist (proposed 2026-08-18).** Click-to-open
+  popups, fit-to-results and clustering shipped; these four did not, and are
+  listed in the order I would do them.
+
+  - **Price on the pin.** The one number an agent scans a map for. `asking_price`
+    and `rent_price_month` already reach the client on each feature, so this is a
+    symbol layer with a `text-field`, not a data change.
+    VERIFY: `grep -c "property-price-labels" components/features/properties/map-view.tsx` — `0` = not built.
+  - **Map viewport in the URL.** `?lat=&lng=&zoom=` alongside the existing filter
+    params, so Map↔List stops throwing the view away and a map position can be
+    sent to a colleague. Fits the pattern `parsePropertyFilters` already sets.
+    VERIFY: `grep -c "moveend" components/features/properties/map-view.tsx` — `0` = not built.
+  - **Hover sync between list and map.** Hovering a list row highlights its pin.
+    Only worth it once list and map are visible together, which they are not today.
+  - **Draw-a-polygon "search this area".** The genuinely valuable one for real
+    estate, and the largest. `properties.location` is already
+    `geography(point,4326)`, so the query is `ST_Covers` behind the SAME RLS and
+    the SAME filter parser both views share — the work is the drawing UI and
+    getting the polygon into the filter object, not the spatial SQL.
+    VERIFY: `ls supabase/migrations | grep -ci area_search` — `0` = not built.
+
+  NOT worth building: a map picker on the property form.
+  `components/features/properties/map-location-fields.tsx` already accepts lat/lng
+  AND resolves a pasted Google Maps link, short links included, which is faster
+  than dragging a pin.
+
 - Forgot-password flow on `/login` (doc 05): Supabase `resetPasswordForEmail` +
   reset page + email template. Natural fit with Phase 2 Resend integration.
   **VERIFY:** `grep -rl resetPasswordForEmail app lib` — any hit means shipped.

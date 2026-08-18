@@ -17,6 +17,15 @@ export type MappableProperty = {
   location: LatLng | null;
   areaCentroid: LatLng | null;
   districtCentroid: LatLng | null;
+  /** Display fields for the popup. The popup is the only way to reach a
+   *  property whose pin is buried under others, so these travel with the pin. */
+  title: string | null;
+  /** Asking price, or the monthly rent when there is no asking price. */
+  price: number | null;
+  isRent: boolean;
+  /** Storage PATH inside the public `media` bucket — not a URL. This module
+   *  stays free of env and storage config so it can be tested without either. */
+  thumbPath: string | null;
 };
 
 export type Precision = "exact" | "approximate";
@@ -26,7 +35,15 @@ export type Position = LatLng & { precision: Precision };
 export type PropertyFeature = {
   type: "Feature";
   geometry: { type: "Point"; coordinates: [number, number] };
-  properties: { id: string; reference: string; precision: Precision };
+  properties: {
+    id: string;
+    reference: string;
+    precision: Precision;
+    title: string | null;
+    price: number | null;
+    isRent: boolean;
+    thumb: string | null;
+  };
 };
 
 export type PropertyFeatureCollection = {
@@ -57,9 +74,49 @@ export function toGeoJson(properties: MappableProperty[]): PropertyFeatureCollec
       // GeoJSON is [lng, lat]. Opposite to how humans say it; getting it
       // backwards is the single most common way to lose a map.
       geometry: { type: "Point", coordinates: [pos.lng, pos.lat] },
-      properties: { id: p.id, reference: p.reference, precision: pos.precision },
+      properties: {
+        id: p.id,
+        reference: p.reference,
+        precision: pos.precision,
+        title: p.title,
+        price: p.price,
+        isRent: p.isRent,
+        thumb: p.thumbPath,
+      },
     });
   }
 
   return { type: "FeatureCollection", features };
+}
+
+/** Bounding box of every placed property as `[[west, south], [east, north]]`,
+ *  or null when there is nothing to fit.
+ *
+ *  WHY: the map used to open hardcoded at Cyprus-wide zoom 8, so a single pin in
+ *  Paphos left the user panning around an empty island looking for it. A single
+ *  property yields a DEGENERATE box (both corners identical) — `fitBounds` copes,
+ *  but only if the caller passes a maxZoom, otherwise it zooms to the tightest
+ *  zoom the projection allows and you land in somebody's garden. */
+export function boundsOf(
+  fc: PropertyFeatureCollection,
+): [[number, number], [number, number]] | null {
+  if (fc.features.length === 0) return null;
+
+  let west = Infinity;
+  let south = Infinity;
+  let east = -Infinity;
+  let north = -Infinity;
+
+  for (const f of fc.features) {
+    const [lng, lat] = f.geometry.coordinates;
+    if (lng < west) west = lng;
+    if (lng > east) east = lng;
+    if (lat < south) south = lat;
+    if (lat > north) north = lat;
+  }
+
+  return [
+    [west, south],
+    [east, north],
+  ];
 }

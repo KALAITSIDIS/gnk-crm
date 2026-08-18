@@ -161,3 +161,60 @@ test("the filters survive the trip from list to map", async ({ page }) => {
   await page.getByRole("link", { name: /^list$/i }).click();
   await expect(page).toHaveURL(/\/properties(\?|$)/);
 });
+
+test("clicking a pin opens a popup that leads to the property", async ({ page }) => {
+  // Seeds and FILTERS TO one property on purpose. With a single feature the map
+  // fitBounds() onto a degenerate box, so the pin lands dead centre of the
+  // canvas and the click below is deterministic rather than a guess at pixels.
+  const admin = serviceClient();
+  const { data: profile } = await admin
+    .from("profiles")
+    .select("id, org_id")
+    .eq("email", "admin@gnk.local")
+    .single();
+
+  const { data: district } = await admin
+    .from("districts")
+    .select("id")
+    .eq("org_id", profile!.org_id)
+    .eq("code", "PAF")
+    .single();
+
+  const reference = `E2E-PIN-${randomBytes(3).toString("hex")}`;
+  const { data: property, error } = await admin
+    .from("properties")
+    .insert({
+      org_id: profile!.org_id,
+      reference,
+      property_type: "villa",
+      visibility: "public",
+      status: "available",
+      district_id: district!.id,
+      asking_price: 450000,
+      title: { en: "E2E pin villa" },
+    })
+    .select("id")
+    .single();
+  expect(error, `seed failed: ${error?.message}`).toBeNull();
+
+  try {
+    await page.goto(`/properties/map?q=${reference}`, { waitUntil: "domcontentloaded" });
+    const canvas = page.getByTestId("property-map");
+    await expect(canvas).toBeVisible();
+
+    // Let the style load and fitBounds settle before aiming at the centre.
+    await page.waitForTimeout(6_000);
+    const box = (await canvas.boundingBox())!;
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+
+    const popup = page.locator(".maplibregl-popup");
+    await expect(popup).toBeVisible({ timeout: 10_000 });
+    await expect(popup).toContainText(reference);
+
+    // The whole point of the popup: it has to actually get you to the property.
+    await popup.getByRole("button", { name: new RegExp(reference) }).click();
+    await expect(page).toHaveURL(new RegExp(`/properties/${property!.id}`));
+  } finally {
+    await admin.from("properties").delete().eq("id", property!.id);
+  }
+});

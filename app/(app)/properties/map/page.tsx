@@ -37,7 +37,11 @@ export default async function PropertiesMapPage({
   const query = applyPropertyListFilters(
     supabase
       .from("properties")
-      .select("id, reference, location, areas(centroid), districts(centroid)"),
+      .select(
+        `id, reference, location, title, asking_price, rent_price_month,
+         areas(centroid), districts(centroid),
+         property_media(path_thumb, is_cover, sort_order)`,
+      ),
     filters,
     excludeIds,
   );
@@ -48,13 +52,35 @@ export default async function PropertiesMapPage({
   // hand-rolled GeoJSON reader silently returns null for every row and renders a
   // permanently empty map. lib/utils/geo.ts already decodes it and is tested;
   // lib/actions/properties.ts writes through the matching toLocationEWKT().
-  const mappable: MappableProperty[] = rows.map((r) => ({
-    id: r.id,
-    reference: r.reference,
-    location: parseLocationPoint(r.location),
-    areaCentroid: parseLocationPoint(r.areas?.centroid),
-    districtCentroid: parseLocationPoint(r.districts?.centroid),
-  }));
+  const mappable: MappableProperty[] = rows.map((r) => {
+    // Same cover rule as the list page: the flagged cover, else the lowest
+    // sort_order. The two views must not disagree about which photo is the one.
+    const media = (r.property_media ?? []) as {
+      path_thumb: string | null;
+      is_cover: boolean;
+      sort_order: number;
+    }[];
+    const cover =
+      media.find((m) => m.is_cover) ??
+      [...media].sort((a, b) => a.sort_order - b.sort_order)[0];
+
+    // Sale price first; a rental with no asking price shows its monthly rent,
+    // flagged so the popup can say so rather than quoting rent as a sale price.
+    const asking = r.asking_price === null ? null : Number(r.asking_price);
+    const rent = r.rent_price_month === null ? null : Number(r.rent_price_month);
+
+    return {
+      id: r.id,
+      reference: r.reference,
+      location: parseLocationPoint(r.location),
+      areaCentroid: parseLocationPoint(r.areas?.centroid),
+      districtCentroid: parseLocationPoint(r.districts?.centroid),
+      title: (r.title as { en?: string } | null)?.en ?? null,
+      price: asking ?? rent,
+      isRent: asking === null && rent !== null,
+      thumbPath: cover?.path_thumb ?? null,
+    };
+  });
 
   const search = new URLSearchParams(
     Object.entries(sp).flatMap(([k, v]) =>
