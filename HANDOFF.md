@@ -154,6 +154,18 @@ shape flags every row.
 
 Full write-ups in `docs/DECISIONS.md`; migrations in `supabase/migrations/`.
 
+**2026-08-18** — `30fdddc` Next 16.2.10 → 16.3.1. **No migration.** Cleared 6
+high-severity CVEs: `sharp <0.35.0` inheriting libvips CVE-2026-33327, -33328,
+-35590, -35591. **Reachable, not theoretical** — `next/image` is used by the
+property list and media tab, so the optimiser runs sharp over agent-uploaded
+photos. The direct `sharp` was already safe at `^0.35.3`; the vulnerable copy was
+NESTED at `node_modules/next/node_modules/sharp@0.34.5` because Next 16.2 pins a
+0.34.x range, which is why the fix was a Next bump. Two more (`fast-uri`, via
+Sentry → webpack → ajv) went with a plain `npm audit fix` — lockfile only.
+**`npm audit` now reports 0, production and full.** Checked beyond the usual
+gates because a Next minor could disturb C1's nonce path: `check:csp-nonce`
+reports **16 of 16** script tags stamped on a real production build.
+
 **2026-08-18** — B5 map, second pass. **No migration; code and docs only.**
 `17d204f` click-through popups, fit-to-results and clustering · `97bd359` the
 correction below · `5ec3d19`, `9e2ddc9` the false alarm. CI green on each.
@@ -505,6 +517,34 @@ to **Supabase Pro** on this plan — a spend decision, not a click (established
 changes, the advisor finding `auth_leaked_password_protection` is **accepted,
 not unnoticed**. Not agent-reachable either: the connector has no auth-config
 tool and the setting is platform config, not database state.
+
+**PostGIS advisor findings — ACCEPTED, not unnoticed (measured 2026-08-18).**
+`get_advisors` reports 21 security lints. Most are structural consequences of
+PostGIS, which the `location`/`centroid` geography columns require, and are not
+cleanly fixable:
+
+| finding | why it is accepted |
+|---|---|
+| `spatial_ref_sys` has no RLS (**ERROR**) | PostGIS system table of EPSG definitions — public reference data, no customer rows. It is extension-owned, so enabling RLS needs an ownership we do not have. |
+| `postgis` and `pg_trgm` live in `public` (WARN) | Moving a schema means dropping and recreating the extension, which would take every geography column and GIST/trigram index with it. Disproportionate. |
+| `SECURITY DEFINER` functions callable by `authenticated` (WARN ×9) | **Intentional.** `current_org_id`, `current_role_gnk` and `mfa_satisfied` are the RLS helpers; 0029 grants EXECUTE to `authenticated` deliberately and revokes it from `anon`, which was verified when it was applied. |
+| `mandates_safe` is a `SECURITY DEFINER` view (**ERROR**) | Pre-existing and deliberate — it is the safe projection. |
+
+**One deserves a second look rather than a shrug: `st_estimatedextent` is
+`SECURITY DEFINER` and executable by `anon`, so it bypasses RLS.** Measured
+directly on hosted as the `anon` role on 2026-08-18:
+`has_function_privilege` = **true**, and the call returns **null** — the planner
+holds no statistics for a 2-row table. **So nothing leaks today, but that is an
+accident of size, not a control.** Once the table grows and autovacuum analyses
+it, the function returns the bounding box of every property coordinate to an
+unauthenticated caller.
+
+Sensitivity is genuinely low — an agency's coverage area is on its own website,
+and this is an aggregate rectangle, not an address or a person. **The fix is one
+line if it is ever wanted** (`revoke execute on function
+public.st_estimatedextent(text,text,text) from anon;` and its two overloads); the
+app never calls it. Not applied unilaterally: production DB changes go through
+§3's apply-and-verify, and this did not warrant waking that up.
 
 **`GNK-PAF-0002`** still wants archiving **via the UI button** so
 `archiveProperty` writes its event.
