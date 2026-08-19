@@ -27,7 +27,13 @@
 -- Statements were GENERATED from pg_policies, not hand-transcribed, so they
 -- cannot differ from what is deployed by a typo.
 
-create temp table _before as
+-- NAMED PER MIGRATION, not `_before`. The Supabase CLI applies every migration
+-- in ONE session, and a temp table lives for the whole session — 0030 creates
+-- `_before` and never drops it, so a second `create temp table _before` fails
+-- with 42P07 "already exists". This migration was written with the bare name
+-- first and CI caught it on a branch. Suffix the migration number, and drop it
+-- at the end, which 0030 does not do.
+create temp table _before_0032 as
 select tablename, policyname, coalesce(qual,'') as qual,
        coalesce(with_check,'') as with_check
 from pg_policies
@@ -118,7 +124,7 @@ declare
   unhoist constant text := '\(\s*SELECT\s+auth\.uid\(\)\s+AS\s+uid\s*\)';
 begin
   select count(*) into drifted
-  from _before b
+  from _before_0032 b
   join pg_policies p
     on p.schemaname = 'public'
    and p.tablename  = b.tablename
@@ -132,7 +138,7 @@ begin
     raise exception '0032 aborted: % policy predicate(s) changed MEANING, not just evaluation strategy', drifted;
   end if;
 
-  select count(*) into total_before from _before;
+  select count(*) into total_before from _before_0032;
   select count(*) into total_after from pg_policies where schemaname = 'public';
   if total_before <> total_after then
     raise exception '0032 aborted: policy count changed from % to %', total_before, total_after;
@@ -149,7 +155,7 @@ begin
   raise notice '0032 ok: 11 hoisted, % policies total, 0 predicates changed meaning', total_after;
 end $$;
 
-drop table _before;
+drop table _before_0032;
 
 -- Coverage helper, mirroring 0030's pair. Zero rows means every policy on the
 -- paginated list tables evaluates auth.uid() once per statement.
