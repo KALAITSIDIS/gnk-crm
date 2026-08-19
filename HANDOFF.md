@@ -14,7 +14,7 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 | `main` | **in sync with `origin/main` as of 2026-08-18** — four B5 commits that day, all pushed, CI green (`checks` · `rls` · `e2e`), `origin/main..HEAD` = 0. Verify rather than trust: `git status -sb` and `git log --oneline origin/main..HEAD`. The standing agreement is still **commit, don't push**; each push that day was asked for explicitly. **LOCAL IS NOW ONLY `main`** (2026-08-18): five merged branches were deleted, `fix-map-blank` among them — its message asserted a root cause that turned out to be wrong, and a stale branch is a claim someone will read. Two remote branches remain, `origin/exp/chromium-channel` and `origin/fix/ci-chromium-gpu-segv`. `git branch -vv` and `git branch -r` are the answer, not this cell. (SHA: `git log --oneline -1` — deliberately not pinned here, it went stale on every commit) |
 | CI | ✅ green — `checks` (typecheck · lint · unit · **build**) + `rls` |
 | Production | `gnk-crm.vercel.app` healthy; **auto-deploys every push**. **A cache-restored build can keep an OLD `NEXT_PUBLIC_*` value compiled in — see §2b, it caused a login outage on 2026-08-09.** |
-| Hosted DB | `yjgirvzgoiywdojnpkpd` — **31 migrations, latest `0031`**, **75 events**, 2 properties (1 with exact coordinates), 5 district + 10 area centroids — all MEASURED 2026-08-18. `non_filename_versions` = 0 and chain-verifies were last checked 2026-08-11 when 0031 was applied, not re-run since. **DB-level 2FA is LIVE** — `require_aal2` on all 29 RLS tables, IMPROVEMENTS C2 |
+| Hosted DB | `yjgirvzgoiywdojnpkpd` — **31 migrations, latest `0031` — `0032` IS IN THE REPO BUT NOT APPLIED**, **75 events**, 2 properties (1 with exact coordinates), 5 district + 10 area centroids — all MEASURED 2026-08-18. `non_filename_versions` = 0 and chain-verifies were last checked 2026-08-11 when 0031 was applied, not re-run since. **DB-level 2FA is LIVE** — `require_aal2` on all 29 RLS tables, IMPROVEMENTS C2 |
 | Data | `share_links` 2 (1 live, 1 revoked) · `tasks` 0 · `deals` 1 · **all of it operator test data** (§0) |
 | Tests | **518 unit** · **48 RLS across 4 files** (was 44/3 — migration 0030 added `rls-hoist.test.ts`; re-read from CI run `31568922881` on 2026-08-11. The "12 mandatory tests, doc 04" in the job name is a subset, not the total) · **181 desktop E2E, 0 skipped** — 183 results in total, because the `setup` project holds two tests: the stale-server guard and the login. Counts from `--list` on 2026-08-18; the suite last PASSED in CI run `32157440627` that day. Two of those tests spent part of 2026-08-18 marked `test.fixme` against a map that was never broken — see §1. Full desktop suite measured from a COLD dev server on 2026-08-11, 0 failed, 0 flaky. All three run in CI. Re-running E2E rewrites the 12 tracked `tests/screenshots/*.png` — §7 |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
@@ -707,6 +707,25 @@ is one word: `CSP_HEADER` in `lib/services/csp.ts`.*
   out. Confirmed on hosted the day it landed: 2 admins, 1 verified factor
   (`nontari@`), 0 factors on his. **If he ever enrols, the safety net closes** —
   make sure a second recovery path exists first.
+
+**Staged, proven, NOT applied — `0032` hoists `auth.uid()` in 11 policies.**
+Found 2026-08-18 by running the PERFORMANCE advisors, which nobody had: 110
+lints, 23 of them `auth_rls_initplan`. 0030 hoisted the custom helpers and never
+touched `auth.uid()`, leaving 11 policies on the paginated list tables paying a
+per-row call in the predicate it had just optimised (`tasks_select`,
+`deals_select`, `events_select` among them). 0030 has NOT regressed —
+`rls_bare_helper_calls()` is 0 and `rls_hoisted_policy_count()` is 24.
+
+Merged to `main` and validated on a branch against a FRESH database (48 RLS, 183
+E2E, 521 unit, 0 flaky). **Hosted is untouched: 31 migrations, `0032` not
+applied.** Applying is a §3 step and the operator's call. Expected after:
+`rls_bare_auth_calls()` returns 0 rows, advisor `auth_rls_initplan` drops 23 → 12
+(the 12 are config tables 0030 excluded on purpose), 115 policies before and
+after, and the migration aborts itself if any predicate changes meaning.
+
+**Be honest about the payoff: with 2 properties nobody will feel this.** It is
+insurance for when the tables hold thousands of rows — the same argument 0030 was
+accepted on.
 
 **Next engineering work, in order:**
 1. ~~**C2 DB-level 2FA enforcement**~~ — **DONE 2026-08-11, and moved to the Done

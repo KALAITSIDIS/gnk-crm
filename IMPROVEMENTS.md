@@ -81,7 +81,7 @@ engineering.**
 
 Original scope note: viewing forms, reservation agreements, mandate renewals as branded PDFs, prefilled from the property/contact/deal record. **Why:** the `@react-pdf/renderer` pipeline, font embedding (Greek/Cyrillic already solved) and the private `documents` bucket all exist — the evidence report proved the whole stack. This is mostly template work on top of shipped infrastructure. **Depends on:** `lib/services/evidence-pdf.tsx` patterns, `pdf-fonts.ts`.
 
-### B5. Map view for properties — ✅ **DONE AND LIVE 2026-08-11** — migration 0031 applied to hosted; both production properties are mappable. Radius draw deferred.
+### B5. Map view for properties — ✅ **DONE AND LIVE.** Migration 0031 applied to hosted 2026-08-11; **second pass 2026-08-18** added click-through, clustering, fit-to-results and price. Radius draw DECLINED by the operator.
 
 Properties render on a map at `/properties/map`, reached by a **Map / List toggle**
 on the properties list that carries the active filters through the URL. It is a
@@ -124,11 +124,46 @@ cannot catch it. `tests/e2e/property-map.spec.ts` asserts zero CSP violations,
 and seeds its own district-only property to prove the centroid fallback actually
 produces a pin.
 
-**Radius draw is NOT built.** With a handful of listings resolving to shared
-centroids it answers a question nobody has, and it is the one genuinely
-interactive control here. Additive later: a client-side circle over the loaded
-GeoJSON, no change to the migration, resolver, page or CSP. `ST_DWithin` is
-available if volume ever makes client-side filtering wrong.
+**Radius / polygon draw — DECLINED by the operator 2026-08-18**, not merely
+deferred. The technical note stands if that ever changes: a client-side circle
+over the loaded GeoJSON needs no change to the migration, resolver, page or CSP,
+and `ST_DWithin` is there if volume ever makes client-side filtering wrong.
+
+#### Second pass, 2026-08-18 (`17d204f`, `e3c0464`)
+
+**Clicking a pin or cluster opens a popup** — reference, title, price, thumbnail,
+and an approximate-location note — and clicking a row opens the property. This is
+not a convenience: with area and district centroids SHARED EXACTLY, several
+properties sit on one coordinate, so taking the top feature would open an
+arbitrary one. Pin clicks collect every feature under the point; cluster clicks
+check whether the leaves share a coordinate and, when they do, list them rather
+than zooming forever — **a cluster of identical points can never be split by
+zoom.**
+
+**The map fits to its results** instead of opening at a hardcoded Cyprus-wide
+zoom 8, with a `maxZoom` because one property gives a degenerate bounding box.
+
+**Clusters carry a minimum price** (`3 · from €380.000`) via `clusterProperties`.
+A label on every pin does not work here — MapLibre resolves a label collision by
+HIDING one, so a price over stacked pins shows one arbitrary property. Lone pins
+carry their own price. An all-unpriced cluster shows its count and no price:
+`["to-number", x, fallback]` does NOT fall back for null (the spec converts null
+to 0), which is why an explicit `hasPrice` flag exists.
+
+**A legend replaced the prose caption** — teal is exact, amber is approximate.
+Clusters are deliberately slate: a cluster can hold both, so painting it teal
+would claim a precision it cannot vouch for.
+
+> ### ⚠️ THIS FEATURE WAS DECLARED BROKEN AND WITHDRAWN WHILE WORKING
+>
+> On 2026-08-18 the map was called blank in production, its link was hidden from
+> users, and two of its tests were disabled. **It had been working the whole
+> time.** Two instruments lied: a hidden browser tab never runs
+> `requestAnimationFrame`, so MapLibre never renders and never requests a tile;
+> and a worker's fetches never reach the window's resource timeline, so an
+> in-page tile count reads 0 on a working map. `docs/ENGINEERING_NOTES.md` §7
+> owns the trap. **Check `document.visibilityState` before believing anything
+> about a canvas.**
 
 **Still hand-entered:** exact coordinates. `map-location-fields.tsx` takes a
 lat/lng pair or a pasted Google Maps link, unchanged by this work. Until someone
