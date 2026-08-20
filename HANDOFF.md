@@ -13,7 +13,7 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 |---|---|
 | `main` | **in sync with `origin/main` as of 2026-08-18** — four B5 commits that day, all pushed, CI green (`checks` · `rls` · `e2e`), `origin/main..HEAD` = 0. Verify rather than trust: `git status -sb` and `git log --oneline origin/main..HEAD`. The standing agreement is still **commit, don't push**; each push that day was asked for explicitly. **LOCAL IS NOW ONLY `main`** (2026-08-18): five merged branches were deleted, `fix-map-blank` among them — its message asserted a root cause that turned out to be wrong, and a stale branch is a claim someone will read. Two remote branches remain, `origin/exp/chromium-channel` and `origin/fix/ci-chromium-gpu-segv`. `git branch -vv` and `git branch -r` are the answer, not this cell. (SHA: `git log --oneline -1` — deliberately not pinned here, it went stale on every commit) |
 | CI | ✅ green — `checks` (typecheck · lint · unit · **build**) + `rls` |
-| Production | `gnk-crm.vercel.app` healthy; **auto-deploys every push**. **A cache-restored build can keep an OLD `NEXT_PUBLIC_*` value compiled in — see §2b, it caused a login outage on 2026-08-09.** |
+| Production | `gnk-crm.vercel.app` healthy; **auto-deploys every push**. **Functions run in `fra1` (Frankfurt), pinned in `vercel.json` 2026-08-18** — same region as Supabase `eu-central-1`. They ran in `iad1` (Washington DC) until then, so every request crossed the Atlantic; co-locating made all routes ~3x faster (ENGINEERING_NOTES §8). **`X-Vercel-Id` reads `<edge>::<function>` — check the SECOND field if latency ever looks structural again.** Verified 2026-08-18 after the Next 16.3.1 + region changes: 9 authenticated routes 200 with expected content, 0 runtime errors and 0 5xx in 6h of production logs. **A cache-restored build can keep an OLD `NEXT_PUBLIC_*` value compiled in — see §2b, it caused a login outage on 2026-08-09.** |
 | Hosted DB | `yjgirvzgoiywdojnpkpd` — **31 migrations, latest `0031` — `0032` IS IN THE REPO BUT NOT APPLIED**, **75 events**, 2 properties (1 with exact coordinates), 5 district + 10 area centroids — all MEASURED 2026-08-18. `non_filename_versions` = 0 and chain-verifies were last checked 2026-08-11 when 0031 was applied, not re-run since. **DB-level 2FA is LIVE** — `require_aal2` on all 29 RLS tables, IMPROVEMENTS C2 |
 | Data | `share_links` 2 (1 live, 1 revoked) · `tasks` 0 · `deals` 1 · **all of it operator test data** (§0) |
 | Tests | **518 unit** · **48 RLS across 4 files** (was 44/3 — migration 0030 added `rls-hoist.test.ts`; re-read from CI run `31568922881` on 2026-08-11. The "12 mandatory tests, doc 04" in the job name is a subset, not the total) · **181 desktop E2E, 0 skipped** — 183 results in total, because the `setup` project holds two tests: the stale-server guard and the login. Counts from `--list` on 2026-08-18; the suite last PASSED in CI run `32157440627` that day. Two of those tests spent part of 2026-08-18 marked `test.fixme` against a map that was never broken — see §1. Full desktop suite measured from a COLD dev server on 2026-08-11, 0 failed, 0 flaky. All three run in CI. Re-running E2E rewrites the 12 tracked `tests/screenshots/*.png` — §7 |
@@ -153,6 +153,27 @@ shape flags every row.
 ## 1. Shipped
 
 Full write-ups in `docs/DECISIONS.md`; migrations in `supabase/migrations/`.
+
+**2026-08-18** — `a787d78`, `2829937` — **A9 closed: the functions were on the
+wrong continent.** No migration. Timed server response on production, warm, 3
+fetches per route: `/login` came back in **1301 ms** while fetching no business
+data at all — as slow as `/dashboard`. That is what proved the floor was a FIXED
+per-request cost rather than query complexity, and no amount of dashboard tuning
+would have touched it.
+
+`X-Vercel-Id: fra1::iad1` — edge in Frankfurt, **function in Washington DC**,
+database in `eu-central-1` Frankfurt, and `proxy.ts` calling `auth.getUser()` on
+every request before any page code. `vercel.json` now pins `fra1`.
+
+After, same method and session: **dashboard 1324 → 387 ms, properties 818 → 258,
+contacts 672 → 247, tasks 1409 → 479, login 1301 → 469. ~3x on every route**, and
+the uniformity is the evidence — a fixed cost removed, not a query improved.
+Relative numbers, not absolutes: both columns include client-to-edge latency.
+
+**NOT fixed: the ~4 s cold start** on the first hit after idle, measured before
+the move and a separate serverless characteristic. **NOT measurable by an agent
+at all: LCP/CLS/INP** — a hidden automation tab never reports LCP (§7), so that
+half of A9 still wants 30 seconds of the operator's DevTools.
 
 **2026-08-18** — `30fdddc` Next 16.2.10 → 16.3.1. **No migration.** Cleared 6
 high-severity CVEs: `sharp <0.35.0` inheriting libvips CVE-2026-33327, -33328,
