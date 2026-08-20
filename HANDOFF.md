@@ -14,7 +14,7 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 | `main` | **in sync with `origin/main` as of 2026-08-20** — four B5 commits that day, all pushed, CI green (`checks` · `rls` · `e2e`), `origin/main..HEAD` = 0. Verify rather than trust: `git status -sb` and `git log --oneline origin/main..HEAD`. The standing agreement is still **commit, don't push**; each push that day was asked for explicitly. **LOCAL IS NOW ONLY `main`** (2026-08-20): five merged branches were deleted, `fix-map-blank` among them — its message asserted a root cause that turned out to be wrong, and a stale branch is a claim someone will read. Two remote branches remain, `origin/exp/chromium-channel` and `origin/fix/ci-chromium-gpu-segv`. `git branch -vv` and `git branch -r` are the answer, not this cell. (SHA: `git log --oneline -1` — deliberately not pinned here, it went stale on every commit) |
 | CI | ✅ green — `checks` (typecheck · lint · unit · **build**) + `rls` |
 | Production | `gnk-crm.vercel.app` healthy; **auto-deploys every push**. **Functions run in `fra1` (Frankfurt), pinned in `vercel.json` 2026-08-20** — same region as Supabase `eu-central-1`. They ran in `iad1` (Washington DC) until then, so every request crossed the Atlantic; co-locating made all routes ~3x faster (ENGINEERING_NOTES §8). **`X-Vercel-Id` reads `<edge>::<function>` — check the SECOND field if latency ever looks structural again.** Verified 2026-08-20 after the Next 16.3.1 + region changes: 9 authenticated routes 200 with expected content, 0 runtime errors and 0 5xx in 6h of production logs. **A cache-restored build can keep an OLD `NEXT_PUBLIC_*` value compiled in — see §2b, it caused a login outage on 2026-08-09.** |
-| Hosted DB | `yjgirvzgoiywdojnpkpd` — **32 migrations, latest `0032` (applied 2026-08-20)**, `non_filename_versions` = 0, **75 events**, 2 properties (1 with exact coordinates), 5 district + 10 area centroids — all MEASURED 2026-08-20. `non_filename_versions` = 0 and chain-verifies were last checked 2026-08-11 when 0031 was applied, not re-run since. **DB-level 2FA is LIVE** — `require_aal2` on all 29 RLS tables, IMPROVEMENTS C2 |
+| Hosted DB | `yjgirvzgoiywdojnpkpd` — **33 migrations, latest `0033` (applied 2026-08-20)**, `non_filename_versions` = 0, **75 events**, 2 properties (1 with exact coordinates), 5 district + 10 area centroids — all MEASURED 2026-08-20. `non_filename_versions` = 0 and chain-verifies were last checked 2026-08-11 when 0031 was applied, not re-run since. **DB-level 2FA is LIVE** — `require_aal2` on all 29 RLS tables, IMPROVEMENTS C2 |
 | Data | `share_links` 2 (1 live, 1 revoked) · `tasks` 0 · `deals` 1 · **all of it operator test data** (§0) |
 | Tests | **518 unit** · **48 RLS across 4 files** (was 44/3 — migration 0030 added `rls-hoist.test.ts`; re-read from CI run `31568922881` on 2026-08-11. The "12 mandatory tests, doc 04" in the job name is a subset, not the total) · **181 desktop E2E, 0 skipped** — 183 results in total, because the `setup` project holds two tests: the stale-server guard and the login. Counts from `--list` on 2026-08-20; the suite last PASSED in CI run `32157440627` that day. Two of those tests spent part of 2026-08-20 marked `test.fixme` against a map that was never broken — see §1. Full desktop suite measured from a COLD dev server on 2026-08-11, 0 failed, 0 flaky. All three run in CI. Re-running E2E rewrites the 12 tracked `tests/screenshots/*.png` — §7 |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
@@ -153,6 +153,36 @@ shape flags every row.
 ## 1. Shipped
 
 Full write-ups in `docs/DECISIONS.md`; migrations in `supabase/migrations/`.
+
+**2026-08-20** — 0033 `short_references` — **APPLIED TO HOSTED and verified
+there.** Property references are now `PAF0001`, not `GNK-PAF-0001`. District
+codes UNCHANGED (PAF/LIM/LAR/NIC/FAM); only the org prefix and hyphens went.
+Operator decision, taken before the first real import precisely because doc 02
+§A6 declares a reference immutable once assigned. Units follow for free —
+`PAF0007-B203` — with no code change, since `lib/actions/units.ts` derives them
+from the parent.
+
+**⚠️ THE FIRST ATTEMPT WAS REFUSED BY PRODUCTION, AND THAT WAS THE SYSTEM
+WORKING.** Trigger `properties_reference_immutable` raises 'property reference is
+immutable once assigned' on any change to the column. §A6 is not just written
+down, it is enforced. The migration now disables that trigger for exactly the one
+UPDATE, re-enables it immediately, and **refuses to finish unless `tgenabled`
+is back to `'O'`** — leaving it off would silently remove a real integrity guard.
+Re-verified by BEHAVIOUR afterwards, not by reading the flag: an attempted
+`update ... set reference = 'HACK9999'` was rejected with the same message.
+
+**CI had passed this migration and could not have caught it.** On a fresh
+database the UPDATE matches zero rows, so the trigger never fires. "Green against
+a fresh DB" proved the migration APPLIES; it said nothing about the data path.
+Worth remembering for any migration whose real work is a backfill.
+
+Verified: refs `PAF0001, PAF0002`; 2 properties; counters `PAF:2` untouched
+(they key on district_code, which did not change); 33 migrations,
+`non_filename_versions` 0; **events 75 and the event-chain md5 byte-identical at
+`b2a169b7bc6b9dceea2c508ae5f3659d`** — the audit log was not rewritten, and the
+two events naming `GNK-PAF-0001/0002` keep that string because it is what the
+reference WAS when they were recorded. Production pages re-read afterwards show
+the new format and zero occurrences of the old one.
 
 **2026-08-20** — 0032 `hoist_auth_uid` — **APPLIED TO HOSTED and verified there.**
 32 migrations, `non_filename_versions` 0, **115 policies before and after**,

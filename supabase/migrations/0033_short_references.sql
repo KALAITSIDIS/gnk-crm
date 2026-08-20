@@ -31,9 +31,25 @@ end $$;
 -- org prefix and the two hyphens, so a unit suffix survives untouched:
 --   GNK-PAF-0001      -> PAF0001
 --   GNK-PAF-0007-B203 -> PAF0007-B203
+--
+-- ⚠️ THE DATABASE ENFORCES §A6, IT DOES NOT MERELY DOCUMENT IT. Trigger
+-- `properties_reference_immutable` raises 'property reference is immutable once
+-- assigned' on any change to the column, and it STOPPED the first attempt at
+-- this migration against production. That guard is correct, and it is precisely
+-- why a scheme change has to happen before real listings exist.
+--
+-- Disabling it for exactly this statement is the one legitimate exception: a
+-- deliberate, reviewed, one-off re-scheme of operator test data. It is
+-- re-enabled immediately, and the check at the bottom REFUSES TO FINISH unless
+-- it is back on — leaving it off would quietly remove a real integrity guard
+-- and nobody would notice until someone edited a live reference.
+alter table public.properties disable trigger properties_reference_immutable;
+
 update public.properties
    set reference = regexp_replace(reference, '^GNK-([A-Z]{3})-', '\1')
  where reference ~ '^GNK-[A-Z]{3}-';
+
+alter table public.properties enable trigger properties_reference_immutable;
 
 -- ⚠️ public.events IS DELIBERATELY NOT TOUCHED. It is hash-chained (prev_hash /
 -- hash) and `verify-events-chain` re-walks it nightly, so rewriting a payload
@@ -47,6 +63,7 @@ declare
   still_old int;
   bad_shape int;
   counters  int;
+  guard_off int;
 begin
   select count(*) into still_old
   from public.properties where reference like 'GNK-%';
@@ -66,5 +83,16 @@ begin
   -- The counters are keyed on district_code, which this migration does NOT
   -- change, so they must be exactly as they were.
   select count(*) into counters from public.reference_counters;
-  raise notice '0033 ok: references shortened, % counter row(s) untouched', counters;
+  -- The guard MUST be back on. tgenabled = 'O' is "enabled, origin"; anything
+  -- else means this migration left production less protected than it found it.
+  select count(*) into guard_off
+  from pg_trigger
+  where tgrelid = 'public.properties'::regclass
+    and tgname  = 'properties_reference_immutable'
+    and tgenabled <> 'O';
+  if guard_off <> 0 then
+    raise exception '0033 aborted: properties_reference_immutable was NOT re-enabled';
+  end if;
+
+  raise notice '0033 ok: references shortened, % counter row(s) untouched, guard back on', counters;
 end $$;
