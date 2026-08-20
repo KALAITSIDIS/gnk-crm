@@ -28,7 +28,7 @@ built without explicit direction.
 > re-proposing the same work.
 
 - ~~**THE PROPERTY MAP (B5) RENDERS BLANK — SHIPPED, THEN HIDDEN.**~~
-  **WITHDRAWN 2026-08-18: THE MAP WAS NEVER BROKEN.** Verified working against
+  **WITHDRAWN 2026-08-20: THE MAP WAS NEVER BROKEN.** Verified working against
   the real bundle — 9 `/planet/*.pbf` vector tiles, `load` fired, `loaded: true`,
   Cyprus drawn with roads and bilingual labels, headless and headed alike. The
   Map link is restored and both E2E tests are un-fixmed.
@@ -89,7 +89,7 @@ built without explicit direction.
     test: it spends the credibility of a green run on nothing. Do not weaken it
     back — fix the map.
 
-    **RE-VERIFIED IN PRODUCTION 2026-08-18** (gnk-crm.vercel.app on 9e2ddc9, real
+    **RE-VERIFIED IN PRODUCTION 2026-08-20** (gnk-crm.vercel.app on 9e2ddc9, real
     signed-in browser): still blank. 0 `/planet/*.pbf`, 11 glyph `.pbf`, 15
     OpenFreeMap requests (style, TileJSON, sprites json+png, glyphs), canvas
     1390x729, WebGL2 supported, and **not one console message** on a fresh reload.
@@ -120,11 +120,11 @@ built without explicit direction.
     `grep -c "test.fixme"` returns `3`, because a comment in that file explains the
     markers. That wrong number was written here first and caught by running it.)
 
-- **Property map, the rest of the shortlist (proposed 2026-08-18).** Click-to-open
+- **Property map, the rest of the shortlist (proposed 2026-08-20).** Click-to-open
   popups, fit-to-results and clustering shipped; these four did not, and are
   listed in the order I would do them.
 
-  - ~~**Price on the pin.**~~ **SHIPPED 2026-08-18.** Not as originally
+  - ~~**Price on the pin.**~~ **SHIPPED 2026-08-20.** Not as originally
     described, though: a label on every pin is destroyed by the stacking, because
     MapLibre resolves a label collision by HIDING one, so a price drawn over
     shared-centroid pins shows one arbitrary property out of however many are
@@ -142,7 +142,7 @@ built without explicit direction.
     were measured identical with our layers removed entirely, come from the
     OpenFreeMap Liberty style, and vary with zoom rather than with our data.
 
-  - ~~**Map viewport in the URL.**~~ **DECIDED AGAINST 2026-08-18** (operator).
+  - ~~**Map viewport in the URL.**~~ **DECIDED AGAINST 2026-08-20** (operator).
     Fit-to-results largely obsoleted it: the filters already live in the URL and
     the map fits to the filtered set, so a link already reproduces a meaningful
     view — one derived from the data rather than frozen coordinates. Adding
@@ -154,7 +154,7 @@ built without explicit direction.
     VERIFY: `grep -c "moveend" components/features/properties/map-view.tsx` — `0` = not built.
   - **Hover sync between list and map.** Hovering a list row highlights its pin.
     Only worth it once list and map are visible together, which they are not today.
-  - ~~**Draw-a-polygon "search this area".**~~ **DECLINED 2026-08-18 by the
+  - ~~**Draw-a-polygon "search this area".**~~ **DECLINED 2026-08-20 by the
     operator** — not wanted, and it was the only L on the shortlist. The technical
     note is kept because it stays true if that ever changes. Original entry: The genuinely valuable one for real
     estate, and the largest. `properties.location` is already

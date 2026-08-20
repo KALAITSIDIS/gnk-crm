@@ -29,7 +29,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
  * the cause of a blank map in production. THERE WAS NO BLANK MAP: that was an
  * artefact of observing the page through automation on a HIDDEN tab, where
  * requestAnimationFrame never runs, so MapLibre never renders and never requests
- * a tile. Verified working 2026-08-18: 9 vector tiles, `load` fired, Cyprus drawn.
+ * a tile. Verified working 2026-08-20: 9 vector tiles, `load` fired, Cyprus drawn.
  *
  * So: create in an effect with NO dependencies, hold the latest data in a ref for
  * the load handler, and push later changes through setData() on the existing
@@ -222,7 +222,7 @@ function MapImpl({ data }: { data: PropertyFeatureCollection }) {
             // `point_count` is ABSENT on an unclustered pin, so this read is
             // coalesced rather than bare — `step` needs a number. Defensive, not
             // a fix for the console warnings this map logs: those were MEASURED
-            // on 2026-08-18 to be identical with these layers removed entirely,
+            // on 2026-08-20 to be identical with these layers removed entirely,
             // and come from the OpenFreeMap Liberty style. Their count varies
             // with zoom, not with our data. Do not chase them here.
             "circle-radius": [

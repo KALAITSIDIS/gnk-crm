@@ -22,7 +22,7 @@ are marked **[BACKLOG]** so this file does not silently fork the roadmap.
 | A7 | ~~`data-stage-id` + list semantics on kanban columns (UX-3)~~ | ✅ **Done 2026-07-23.** Columns are labelled `<section>`s with `<h3>` headings and `<ul>/<li>` deal lists; drag-and-drop verified intact by a full keyboard move. | — | ships with the branch |
 | A8 | ~~Isolate the RLS suite's database (TEST-1)~~ | ✅ **Done 2026-07-23.** The suite runs in its own seeded fixture org; a full run now leaves the seeded org byte-identical. Surfaced a new finding, **TEST-2** (`run_chain_checks` is callable by no role) — see TEST_REPORT.md. | — | ships with the branch |
 | A11 | ~~Decide TEST-2: should `run_chain_checks()` be callable on demand?~~ | ✅ **Done 2026-07-23** (migration 0019). Settled on evidence: 0016 enumerated `anon, authenticated` as its targets, so losing `service_role` was the same collateral 0010 fixed for 0007. `service_role` restored; anon/authenticated stay revoked because the RPC walks every event in the org. | — | ✅ hosted apply confirmed 2026-07-23 |
-| A9 | ~~Run Lighthouse once on live `/dashboard`~~ | ✅ **DONE 2026-08-18, and it found a real one.** Not via Lighthouse: Core Web Vitals cannot be read through browser automation, because a hidden tab never reports LCP (ENGINEERING_NOTES §7). Timed server response instead, warm, 3 fetches per route. **`/login` was as slow as `/dashboard` (1301 ms) despite fetching no data** — so the floor was a fixed per-request cost, not query complexity. `X-Vercel-Id: fra1::iad1` showed the functions executing in **Washington DC** while Supabase runs in **Frankfurt**, and `proxy.ts` calls `auth.getUser()` on every request, so every page crossed the Atlantic before doing anything. `vercel.json` pins `fra1`. After: **~3x faster on all five routes** (dashboard 1324→387 ms). ENGINEERING_NOTES §8. **Still open: LCP/CLS/INP need a visible browser — a 30-second DevTools Lighthouse run by the operator.** | done | — |
+| A9 | ~~Run Lighthouse once on live `/dashboard`~~ | ✅ **DONE 2026-08-20, and it found a real one.** Not via Lighthouse: Core Web Vitals cannot be read through browser automation, because a hidden tab never reports LCP (ENGINEERING_NOTES §7). Timed server response instead, warm, 3 fetches per route. **`/login` was as slow as `/dashboard` (1301 ms) despite fetching no data** — so the floor was a fixed per-request cost, not query complexity. `X-Vercel-Id: fra1::iad1` showed the functions executing in **Washington DC** while Supabase runs in **Frankfurt**, and `proxy.ts` calls `auth.getUser()` on every request, so every page crossed the Atlantic before doing anything. `vercel.json` pins `fra1`. After: **~3x faster on all five routes** (dashboard 1324→387 ms). ENGINEERING_NOTES §8. **Still open: LCP/CLS/INP need a visible browser — a 30-second DevTools Lighthouse run by the operator.** | done | — |
 | A10 | **Turn on Supabase leaked-password protection** | ⚠️ **NOT a toggle — corrected 2026-08-04.** Gated to **Supabase Pro** on this plan, so it is a spend decision, not 5 minutes. Until the plan changes the standing `auth_leaked_password_protection` advisor finding is **accepted, not unnoticed**. Not agent-reachable either (no auth-config tool on the connector; platform config, not DB state). | plan upgrade | operator |
 
 **Suggested first push:** A2 + A3. Deploying the branch closes the headline correctness bug and the security-header gap in one go; moving `shadcn` to devDependencies slims the deploy and drops 3 of 7 vulnerabilities. Under an hour of work.
@@ -81,7 +81,7 @@ engineering.**
 
 Original scope note: viewing forms, reservation agreements, mandate renewals as branded PDFs, prefilled from the property/contact/deal record. **Why:** the `@react-pdf/renderer` pipeline, font embedding (Greek/Cyrillic already solved) and the private `documents` bucket all exist — the evidence report proved the whole stack. This is mostly template work on top of shipped infrastructure. **Depends on:** `lib/services/evidence-pdf.tsx` patterns, `pdf-fonts.ts`.
 
-### B5. Map view for properties — ✅ **DONE AND LIVE.** Migration 0031 applied to hosted 2026-08-11; **second pass 2026-08-18** added click-through, clustering, fit-to-results and price. Radius draw DECLINED by the operator.
+### B5. Map view for properties — ✅ **DONE AND LIVE.** Migration 0031 applied to hosted 2026-08-11; **second pass 2026-08-20** added click-through, clustering, fit-to-results and price. Radius draw DECLINED by the operator.
 
 Properties render on a map at `/properties/map`, reached by a **Map / List toggle**
 on the properties list that carries the active filters through the URL. It is a
@@ -124,12 +124,12 @@ cannot catch it. `tests/e2e/property-map.spec.ts` asserts zero CSP violations,
 and seeds its own district-only property to prove the centroid fallback actually
 produces a pin.
 
-**Radius / polygon draw — DECLINED by the operator 2026-08-18**, not merely
+**Radius / polygon draw — DECLINED by the operator 2026-08-20**, not merely
 deferred. The technical note stands if that ever changes: a client-side circle
 over the loaded GeoJSON needs no change to the migration, resolver, page or CSP,
 and `ST_DWithin` is there if volume ever makes client-side filtering wrong.
 
-#### Second pass, 2026-08-18 (`17d204f`, `e3c0464`)
+#### Second pass, 2026-08-20 (`17d204f`, `e3c0464`)
 
 **Clicking a pin or cluster opens a popup** — reference, title, price, thumbnail,
 and an approximate-location note — and clicking a row opens the property. This is
@@ -156,7 +156,7 @@ would claim a precision it cannot vouch for.
 
 > ### ⚠️ THIS FEATURE WAS DECLARED BROKEN AND WITHDRAWN WHILE WORKING
 >
-> On 2026-08-18 the map was called blank in production, its link was hidden from
+> On 2026-08-20 the map was called blank in production, its link was hidden from
 > users, and two of its tests were disabled. **It had been working the whole
 > time.** Two instruments lied: a hidden browser tab never runs
 > `requestAnimationFrame`, so MapLibre never renders and never requests a tile;

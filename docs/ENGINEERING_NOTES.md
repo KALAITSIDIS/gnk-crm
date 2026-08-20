@@ -194,7 +194,7 @@ logging anything.
 
 ## 4. Testing discipline
 
-> **See also §7, "Instruments that lie".** Before trusting a test's verdict, check the test could report the OTHER answer. On 2026-08-18 the property-map tile assertion was, within eight hours, both a test that could not fail and a test that could not pass — and the second one's red CI was read as proof a working feature was broken.
+> **See also §7, "Instruments that lie".** Before trusting a test's verdict, check the test could report the OTHER answer. On 2026-08-20 the property-map tile assertion was, within eight hours, both a test that could not fail and a test that could not pass — and the second one's red CI was read as proof a working feature was broken.
 
 **A test that only passes on a RERUN is depending on residue.** The RLS suite must
 pass on the FIRST run against a fresh database. CI runs `supabase start` +
@@ -329,7 +329,7 @@ practice:
 
 ---
 
-## 7. Instruments that lie (2026-08-18)
+## 7. Instruments that lie (2026-08-20)
 
 §1 collects bugs that only exist in production. This section is a nastier class:
 **measurements that are wrong only when a machine takes them.** They do not
@@ -397,7 +397,7 @@ would have cost minutes and saved the day.
 
 ---
 
-## 8. The functions ran in Virginia while the database sat in Frankfurt (2026-08-18)
+## 8. The functions ran in Virginia while the database sat in Frankfurt (2026-08-20)
 
 Roadmap item A9 asked for a performance baseline on live `/dashboard`. The
 baseline turned out to have a single dominant cause, and it was not query
@@ -437,7 +437,7 @@ sequential calls, each paying the same round trip.
 same city as the database. Cold starts (~4s first hit, measured) are a separate
 serverless characteristic and are NOT addressed by this.
 
-**MEASURED AFTER, same method, same machine, same session (2026-08-18).**
+**MEASURED AFTER, same method, same machine, same session (2026-08-20).**
 `X-Vercel-Id` became `fra1::fra1` once the deploy landed:
 
 | route | before (median) | after (median) | change |
@@ -457,3 +457,36 @@ Cyprus, so they include client-to-edge latency in both columns.
 invites you to optimise the dashboard's queries. Measuring the CHEAPEST page in
 the app is what proved the cost was structural — no amount of query tuning would
 have moved it, because `/login` has no queries to tune.
+
+
+---
+
+## 9. Verify the date before writing it into a dated claim (2026-08-20)
+
+Every document in this repo insists that claims carry a date and that dated
+claims be re-checked rather than believed. On 2026-08-20 an agent wrote **32
+dated claims across HANDOFF, IMPROVEMENTS, BACKLOG, this file, a migration header
+and a test comment — all stamped 2026-08-18.** The date was never checked; it was
+carried forward from context and assumed.
+
+It was caught only incidentally, by noticing a cron run timestamped `2026-08-20
+03:30` while checking something unrelated.
+
+**The failure is the same shape as §7, one level up.** There, an instrument was
+trusted without asking whether it could observe the thing. Here, a fact was
+asserted without asking whether it had been checked — and it was a fact available
+for the cost of one query.
+
+**Authoritative sources, in order:**
+
+```sql
+select now();          -- the database, if you are already connected
+```
+
+The environment's stated date otherwise. **Never infer today's date from
+timestamps in a conversation, a summary, or a nearby file** — those record when
+something happened, not when you are.
+
+The wrong dates are corrected in the working tree. **Commit messages from that
+day still say 2026-08-18 and are left alone:** rewriting pushed history to fix a
+date is a worse trade than a footnote, and this section is the footnote.

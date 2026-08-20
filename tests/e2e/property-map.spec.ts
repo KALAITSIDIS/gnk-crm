@@ -42,7 +42,7 @@ async function collectCspViolations(page: import("@playwright/test").Page) {
  *     never appear in the WINDOW's resource timeline. It then failed CI against a
  *     perfectly working map, and the Map link was hidden from users because of it.
  *
- * Measured on 2026-08-18 against a working map, same page, same moment:
+ * Measured on 2026-08-20 against a working map, same page, same moment:
  *     network level (page.on("request")):        9 tiles
  *     window performance timeline:               0 tiles
  *     any .pbf in the window timeline (glyphs):  11

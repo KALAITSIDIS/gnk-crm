@@ -9,7 +9,7 @@
 -- on every scan, so 0030's stated goal is only half met on exactly the tables it
 -- set out to fix.
 --
--- MEASURED ON HOSTED 2026-08-18, not inferred. Supabase's own advisor reports
+-- MEASURED ON HOSTED 2026-08-20, not inferred. Supabase's own advisor reports
 -- `auth_rls_initplan` for 23 policies; `select count(*) from
 -- rls_bare_helper_calls()` returns 0 and `rls_hoisted_policy_count()` returns 24,
 -- so 0030 itself has NOT regressed - these are a disjoint set it never covered.

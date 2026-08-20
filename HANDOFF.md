@@ -11,12 +11,12 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 
 | | |
 |---|---|
-| `main` | **in sync with `origin/main` as of 2026-08-18** — four B5 commits that day, all pushed, CI green (`checks` · `rls` · `e2e`), `origin/main..HEAD` = 0. Verify rather than trust: `git status -sb` and `git log --oneline origin/main..HEAD`. The standing agreement is still **commit, don't push**; each push that day was asked for explicitly. **LOCAL IS NOW ONLY `main`** (2026-08-18): five merged branches were deleted, `fix-map-blank` among them — its message asserted a root cause that turned out to be wrong, and a stale branch is a claim someone will read. Two remote branches remain, `origin/exp/chromium-channel` and `origin/fix/ci-chromium-gpu-segv`. `git branch -vv` and `git branch -r` are the answer, not this cell. (SHA: `git log --oneline -1` — deliberately not pinned here, it went stale on every commit) |
+| `main` | **in sync with `origin/main` as of 2026-08-20** — four B5 commits that day, all pushed, CI green (`checks` · `rls` · `e2e`), `origin/main..HEAD` = 0. Verify rather than trust: `git status -sb` and `git log --oneline origin/main..HEAD`. The standing agreement is still **commit, don't push**; each push that day was asked for explicitly. **LOCAL IS NOW ONLY `main`** (2026-08-20): five merged branches were deleted, `fix-map-blank` among them — its message asserted a root cause that turned out to be wrong, and a stale branch is a claim someone will read. Two remote branches remain, `origin/exp/chromium-channel` and `origin/fix/ci-chromium-gpu-segv`. `git branch -vv` and `git branch -r` are the answer, not this cell. (SHA: `git log --oneline -1` — deliberately not pinned here, it went stale on every commit) |
 | CI | ✅ green — `checks` (typecheck · lint · unit · **build**) + `rls` |
-| Production | `gnk-crm.vercel.app` healthy; **auto-deploys every push**. **Functions run in `fra1` (Frankfurt), pinned in `vercel.json` 2026-08-18** — same region as Supabase `eu-central-1`. They ran in `iad1` (Washington DC) until then, so every request crossed the Atlantic; co-locating made all routes ~3x faster (ENGINEERING_NOTES §8). **`X-Vercel-Id` reads `<edge>::<function>` — check the SECOND field if latency ever looks structural again.** Verified 2026-08-18 after the Next 16.3.1 + region changes: 9 authenticated routes 200 with expected content, 0 runtime errors and 0 5xx in 6h of production logs. **A cache-restored build can keep an OLD `NEXT_PUBLIC_*` value compiled in — see §2b, it caused a login outage on 2026-08-09.** |
-| Hosted DB | `yjgirvzgoiywdojnpkpd` — **32 migrations, latest `0032` (applied 2026-08-18)**, `non_filename_versions` = 0, **75 events**, 2 properties (1 with exact coordinates), 5 district + 10 area centroids — all MEASURED 2026-08-18. `non_filename_versions` = 0 and chain-verifies were last checked 2026-08-11 when 0031 was applied, not re-run since. **DB-level 2FA is LIVE** — `require_aal2` on all 29 RLS tables, IMPROVEMENTS C2 |
+| Production | `gnk-crm.vercel.app` healthy; **auto-deploys every push**. **Functions run in `fra1` (Frankfurt), pinned in `vercel.json` 2026-08-20** — same region as Supabase `eu-central-1`. They ran in `iad1` (Washington DC) until then, so every request crossed the Atlantic; co-locating made all routes ~3x faster (ENGINEERING_NOTES §8). **`X-Vercel-Id` reads `<edge>::<function>` — check the SECOND field if latency ever looks structural again.** Verified 2026-08-20 after the Next 16.3.1 + region changes: 9 authenticated routes 200 with expected content, 0 runtime errors and 0 5xx in 6h of production logs. **A cache-restored build can keep an OLD `NEXT_PUBLIC_*` value compiled in — see §2b, it caused a login outage on 2026-08-09.** |
+| Hosted DB | `yjgirvzgoiywdojnpkpd` — **32 migrations, latest `0032` (applied 2026-08-20)**, `non_filename_versions` = 0, **75 events**, 2 properties (1 with exact coordinates), 5 district + 10 area centroids — all MEASURED 2026-08-20. `non_filename_versions` = 0 and chain-verifies were last checked 2026-08-11 when 0031 was applied, not re-run since. **DB-level 2FA is LIVE** — `require_aal2` on all 29 RLS tables, IMPROVEMENTS C2 |
 | Data | `share_links` 2 (1 live, 1 revoked) · `tasks` 0 · `deals` 1 · **all of it operator test data** (§0) |
-| Tests | **518 unit** · **48 RLS across 4 files** (was 44/3 — migration 0030 added `rls-hoist.test.ts`; re-read from CI run `31568922881` on 2026-08-11. The "12 mandatory tests, doc 04" in the job name is a subset, not the total) · **181 desktop E2E, 0 skipped** — 183 results in total, because the `setup` project holds two tests: the stale-server guard and the login. Counts from `--list` on 2026-08-18; the suite last PASSED in CI run `32157440627` that day. Two of those tests spent part of 2026-08-18 marked `test.fixme` against a map that was never broken — see §1. Full desktop suite measured from a COLD dev server on 2026-08-11, 0 failed, 0 flaky. All three run in CI. Re-running E2E rewrites the 12 tracked `tests/screenshots/*.png` — §7 |
+| Tests | **518 unit** · **48 RLS across 4 files** (was 44/3 — migration 0030 added `rls-hoist.test.ts`; re-read from CI run `31568922881` on 2026-08-11. The "12 mandatory tests, doc 04" in the job name is a subset, not the total) · **181 desktop E2E, 0 skipped** — 183 results in total, because the `setup` project holds two tests: the stale-server guard and the login. Counts from `--list` on 2026-08-20; the suite last PASSED in CI run `32157440627` that day. Two of those tests spent part of 2026-08-20 marked `test.fixme` against a map that was never broken — see §1. Full desktop suite measured from a COLD dev server on 2026-08-11, 0 failed, 0 flaky. All three run in CI. Re-running E2E rewrites the 12 tracked `tests/screenshots/*.png` — §7 |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
 | Backups | ✅ **`2026-08-10` is the primary** — newest automated set, `verified:true`, `problems:[]`, 55 files, **events inDump 74 = live 74**, written to `D:\dev\TSOPOZIDIS\gnk-backups`. `2026-08-06` is the restore-*proven* one (all 73 event hashes byte-identical to production). Sets: 07-30 · 07-31 (Storage) · 08-04 (superseded) · 08-06 · 08-07 · 08-08 · 08-09 · **08-10**. Nightly ran 03:46 on 2026-08-10, verified. **STILL SINGLE-MACHINE — a current off-site archive is built and waiting to be copied to USB, §3.3** |
 
@@ -154,7 +154,7 @@ shape flags every row.
 
 Full write-ups in `docs/DECISIONS.md`; migrations in `supabase/migrations/`.
 
-**2026-08-18** — 0032 `hoist_auth_uid` — **APPLIED TO HOSTED and verified there.**
+**2026-08-20** — 0032 `hoist_auth_uid` — **APPLIED TO HOSTED and verified there.**
 32 migrations, `non_filename_versions` 0, **115 policies before and after**,
 `rls_bare_auth_calls()` **0**, 11 policies with a hoisted `auth.uid()`, 0030
 untouched (0 bare helpers / 24 hoisted), events **75** unchanged. Verified BEFORE
@@ -187,7 +187,7 @@ change (dashboard 64kb, properties 91kb, contacts 75kb, tasks 57kb, viewings
 **Nobody will feel this at 2 properties.** It is insurance for thousands of rows,
 on the same reasoning 0030 was accepted under.
 
-**2026-08-18** — `a787d78`, `2829937` — **A9 closed: the functions were on the
+**2026-08-20** — `a787d78`, `2829937` — **A9 closed: the functions were on the
 wrong continent.** No migration. Timed server response on production, warm, 3
 fetches per route: `/login` came back in **1301 ms** while fetching no business
 data at all — as slow as `/dashboard`. That is what proved the floor was a FIXED
@@ -208,7 +208,7 @@ the move and a separate serverless characteristic. **NOT measurable by an agent
 at all: LCP/CLS/INP** — a hidden automation tab never reports LCP (§7), so that
 half of A9 still wants 30 seconds of the operator's DevTools.
 
-**2026-08-18** — `30fdddc` Next 16.2.10 → 16.3.1. **No migration.** Cleared 6
+**2026-08-20** — `30fdddc` Next 16.2.10 → 16.3.1. **No migration.** Cleared 6
 high-severity CVEs: `sharp <0.35.0` inheriting libvips CVE-2026-33327, -33328,
 -35590, -35591. **Reachable, not theoretical** — `next/image` is used by the
 property list and media tab, so the optimiser runs sharp over agent-uploaded
@@ -220,7 +220,7 @@ Sentry → webpack → ajv) went with a plain `npm audit fix` — lockfile only.
 gates because a Next minor could disturb C1's nonce path: `check:csp-nonce`
 reports **16 of 16** script tags stamped on a real production build.
 
-**2026-08-18** — B5 map, second pass. **No migration; code and docs only.**
+**2026-08-20** — B5 map, second pass. **No migration; code and docs only.**
 `17d204f` click-through popups, fit-to-results and clustering · `97bd359` the
 correction below · `5ec3d19`, `9e2ddc9` the false alarm. CI green on each.
 
@@ -572,7 +572,7 @@ changes, the advisor finding `auth_leaked_password_protection` is **accepted,
 not unnoticed**. Not agent-reachable either: the connector has no auth-config
 tool and the setting is platform config, not database state.
 
-**PostGIS advisor findings — ACCEPTED, not unnoticed (measured 2026-08-18).**
+**PostGIS advisor findings — ACCEPTED, not unnoticed (measured 2026-08-20).**
 `get_advisors` reports 21 security lints. Most are structural consequences of
 PostGIS, which the `location`/`centroid` geography columns require, and are not
 cleanly fixable:
@@ -586,7 +586,7 @@ cleanly fixable:
 
 **One deserves a second look rather than a shrug: `st_estimatedextent` is
 `SECURITY DEFINER` and executable by `anon`, so it bypasses RLS.** Measured
-directly on hosted as the `anon` role on 2026-08-18:
+directly on hosted as the `anon` role on 2026-08-20:
 `has_function_privilege` = **true**, and the call returns **null** — the planner
 holds no statistics for a 2-row table. **So nothing leaks today, but that is an
 accident of size, not a control.** Once the table grows and autovacuum analyses
@@ -713,7 +713,7 @@ the mirror error is just as easy — see the row-counts warning in §0.
 Sentry DSNs were "set and verified live"; neither was true. Corrected below.*
 
 **Done:** A (all) · B1 · B2 · B3 · **B5 (shipped 2026-08-11, click-through +
-clustering 2026-08-18)** · B6 · B7 · B8 · B10 · B11 · **C1 (enforced
+clustering 2026-08-20)** · B6 · B7 · B8 · B10 · B11 · **C1 (enforced
 2026-08-10)** · **C2 (opt-in enrolment + DB-level enforcement, hosted
 2026-08-11)** · C6.
 
@@ -747,7 +747,7 @@ is one word: `CSP_HEADER` in `lib/services/csp.ts`.*
   on `img-src`/`connect-src`, and an E2E asserts zero violations, because
   deleting that line blanks the map in production silently.
 
-  **A caution worth more than the decision:** on 2026-08-18 this feature was
+  **A caution worth more than the decision:** on 2026-08-20 this feature was
   declared broken, its link hidden from users, and two of its tests disabled —
   all on measurements taken through a hidden browser tab, where
   `requestAnimationFrame` never runs and no map can render. It had been working
@@ -762,7 +762,7 @@ is one word: `CSP_HEADER` in `lib/services/csp.ts`.*
   (`nontari@`), 0 factors on his. **If he ever enrols, the safety net closes** —
   make sure a second recovery path exists first.
 
-~~**Staged, proven, NOT applied — `0032`.**~~ **APPLIED TO HOSTED 2026-08-18**
+~~**Staged, proven, NOT applied — `0032`.**~~ **APPLIED TO HOSTED 2026-08-20**
 via §3. See §1 for the evidence; `rls_bare_auth_calls()` returns 0 rows and the
 advisor's `auth_rls_initplan` fell 23 → 12, the remaining 12 being the config
 tables 0030 excluded on purpose.
