@@ -394,3 +394,50 @@ broken).
 **So: prove the instrument can produce BOTH answers before trusting either.**
 Point it at a case known to be working and confirm it says so. That single check
 would have cost minutes and saved the day.
+
+---
+
+## 8. The functions ran in Virginia while the database sat in Frankfurt (2026-08-18)
+
+Roadmap item A9 asked for a performance baseline on live `/dashboard`. The
+baseline turned out to have a single dominant cause, and it was not query
+complexity.
+
+**Measured on production, warm, three fetches per route:**
+
+| route | ms |
+|---|---|
+| `/properties` | 608 – 830 |
+| `/contacts` | 628 – 694 |
+| `/dashboard` | 1052 – 1324 |
+| `/tasks` | 1105 – 1426 |
+| **`/login`** | **1255 – 1441** |
+
+**`/login` is the tell.** It renders a form and fetches no business data, and it
+is as slow as the dashboard. So the floor is not what a page queries — it is a
+fixed cost every request pays.
+
+**The cause, from one header:**
+
+```
+X-Vercel-Id: fra1::iad1::…
+              ^edge  ^function
+```
+
+The request reaches Vercel's edge in Frankfurt and is then executed in **iad1
+(Washington DC)**, while Supabase runs in **eu-central-1 (Frankfurt)**. Every
+Supabase call therefore crosses the Atlantic and comes back.
+
+And every request makes at least one, before any page code runs: `proxy.ts` calls
+`supabase.auth.getUser()` in middleware on **every** request — which is correct
+for auth, and is exactly why `/login` pays too. Pages then make several more
+sequential calls, each paying the same round trip.
+
+**Fix: `vercel.json` pins `"regions": ["fra1"]`,** putting the function in the
+same city as the database. Cold starts (~4s first hit, measured) are a separate
+serverless characteristic and are NOT addressed by this.
+
+**The lesson worth keeping is the diagnostic, not the config.** A slow dashboard
+invites you to optimise the dashboard's queries. Measuring the CHEAPEST page in
+the app is what proved the cost was structural — no amount of query tuning would
+have moved it, because `/login` has no queries to tune.
