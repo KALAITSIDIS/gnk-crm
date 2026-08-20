@@ -7,7 +7,7 @@ const base: KeyExportRow = {
   description: "Front door + gate",
   status: "checked_out",
   current_holder_name: "Nino Charalambous",
-  properties: { reference: "GNK-PAF-0001" },
+  properties: { reference: "PAF0001" },
 };
 
 const line = (csv: string, i = 1) => csv.replace(/^﻿/, "").split("\r\n")[i];
@@ -21,7 +21,7 @@ describe("keyCsvColumns", () => {
 
   it("writes the key with its property and holder", () => {
     const csv = toCsv(keyCsvColumns(), [base]);
-    expect(line(csv)).toBe("534543534,GNK-PAF-0001,Front door + gate,checked_out,Nino Charalambous");
+    expect(line(csv)).toBe("534543534,PAF0001,Front door + gate,checked_out,Nino Charalambous");
   });
 
   it("leaves holder and property blank for an in-office key with no property", () => {

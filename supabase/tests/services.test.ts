@@ -53,12 +53,12 @@ describe("logEvent (T0.7)", () => {
 });
 
 describe("generateReference (T0.7)", () => {
-  it("returns sequential GNK-<district>-#### references", async () => {
+  it("returns sequential <district>#### references", async () => {
     const first = await generateReference(agent.client, ORG_A, "PAF");
     const second = await generateReference(agent.client, ORG_A, "PAF");
 
-    expect(first).toMatch(/^GNK-PAF-\d{4}$/);
-    expect(second).toMatch(/^GNK-PAF-\d{4}$/);
+    expect(first).toMatch(/^PAF\d{4}$/);
+    expect(second).toMatch(/^PAF\d{4}$/);
     const n1 = parseInt(first.slice(-4), 10);
     const n2 = parseInt(second.slice(-4), 10);
     expect(n2).toBe(n1 + 1);
@@ -67,7 +67,7 @@ describe("generateReference (T0.7)", () => {
   it("keeps independent sequences per district", async () => {
     const paf = await generateReference(agent.client, ORG_A, "PAF");
     const lim = await generateReference(agent.client, ORG_A, "LIM");
-    expect(paf.startsWith("GNK-PAF-")).toBe(true);
-    expect(lim.startsWith("GNK-LIM-")).toBe(true);
+    expect(paf).toMatch(/^PAF\d{4}$/);
+    expect(lim).toMatch(/^LIM\d{4}$/);
   });
 });

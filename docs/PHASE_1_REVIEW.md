@@ -17,7 +17,7 @@ All 38 playbook tasks (T0.1 → T5.7), one commit each, on `main`:
   (migrations 0001–0006), RLS policies + `mandates_safe`, seed, the 12+ RLS
   test harness, core services (events hash-chain, reference, phone).
 - **Sprint 1 — Properties (M1)** — list (filters/fuzzy/table+card/pagination),
-  create wizard + immutable `GNK-XXX-####` references, detail tabs with evented
+  create wizard + immutable `XXX####` references, detail tabs with evented
   saves, media pipeline (EXIF strip → WebP renditions → watermark), quality
   score + publish gate, project→units matrix + price lists + payment plans,
   price history via DB trigger.

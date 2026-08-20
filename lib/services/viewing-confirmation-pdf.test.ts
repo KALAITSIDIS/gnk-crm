@@ -32,7 +32,7 @@ const fixture: ViewingConfirmationData = {
   agentEmail: "agent@gnk.local",
   agentPhone: "+35799123456",
   attendeeName: "Дмитрий Иванов",
-  propertyRef: "GNK-PAF-0001",
+  propertyRef: "PAF0001",
   propertyAddress: "Κάτω Πάφος, Πάφος",
   viewingWhen: "20 Jul 2026, 12:00",
   durationLabel: "30 minutes",
@@ -53,7 +53,7 @@ describe("renderViewingConfirmationPdf", () => {
     // buyer turns up to the wrong place, or not at all.
     const text = flat(extractPdfText(await renderViewingConfirmationPdf(fixture)));
     expect(text).toContain("GN Kalaitsidis Capital");
-    expect(text).toContain("GNK-PAF-0001");
+    expect(text).toContain("PAF0001");
     expect(text).toContain("20 Jul 2026, 12:00");
     expect(text).toContain("30 minutes");
     expect(text).toContain("agent@gnk.local");
@@ -89,7 +89,7 @@ describe("renderViewingConfirmationPdf", () => {
     expect(text).not.toContain("Address");
     expect(text).not.toContain("Contact");
     // the rest of the sheet is unaffected
-    expect(text).toContain("GNK-PAF-0001");
+    expect(text).toContain("PAF0001");
   });
 
   it("states plainly that it is not a reservation", async () => {

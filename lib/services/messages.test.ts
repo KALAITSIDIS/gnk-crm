@@ -54,7 +54,7 @@ const SAMPLE_PARAMS = {
   stars: "★★★",
   note: "a note",
   retention: "2031-07-21",
-  ref: "GNK-PAF-0001",
+  ref: "PAF0001",
   file: "photo.jpg",
   score: 40,
   threshold: 60,

@@ -3,7 +3,7 @@ import { toCsv } from "./csv";
 import { propertyCsvColumns, type PropertyExportRow } from "./property-export";
 
 const base: PropertyExportRow = {
-  reference: "GNK-PAF-0001",
+  reference: "PAF0001",
   property_type: "villa",
   transaction_type: "sale",
   status: "available",

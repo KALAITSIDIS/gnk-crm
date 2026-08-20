@@ -9,7 +9,7 @@ const base: TaskExportRow = {
   done_at: null,
   kind: null,
   created_at: "2026-07-20T09:00:00Z",
-  properties: { reference: "GNK-PAF-0001" },
+  properties: { reference: "PAF0001" },
 };
 
 const line = (csv: string, i = 1) => csv.replace(/^﻿/, "").split("\r\n")[i];
@@ -26,7 +26,7 @@ describe("taskCsvColumns", () => {
     const row = line(csv);
     expect(row).toContain("Call back Savvides re offer");
     expect(row).toContain("open");
-    expect(row).toContain("GNK-PAF-0001");
+    expect(row).toContain("PAF0001");
   });
 
   it("marks a done task, and names the rule behind a system-generated one", () => {

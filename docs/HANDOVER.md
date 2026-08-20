@@ -101,7 +101,7 @@ class of surprise a drill exists to find, and now check number one in
 Deliverable: a timed, actually-executed restore into a scratch project, plus a
 written RPO/RTO. Proposed RPO 24h / RTO 4h awaits operator sign-off.
 
-### 2.3 Archive property `GNK-PAF-0002` · 1 click
+### 2.3 Archive property `PAF0002` · 1 click
 The smoke-test listing, currently `draft`/`private`. Open it and press
 **Archive**. I could not: the browser renderer wedged on the property *detail*
 route specifically (server-side healthy, zero runtime errors — a tooling
@@ -125,7 +125,7 @@ Created 2026-07-23 running `docs/RELEASE_CHECKLIST.md` §5. **None of it can be
 deleted** — `events` is append-only and RLS denies DELETE on business tables.
 All of it is labelled "SMOKE TEST".
 
-- property `GNK-PAF-0002` — "SMOKE TEST 2026-07-23 — release checklist, not a real listing"
+- property `PAF0002` — "SMOKE TEST 2026-07-23 — release checklist, not a real listing"
 - contact "SMOKE TEST Release Checklist 2026-07-23"
 - one viewing (23 Jul 17:00 Cyprus) and its **signed slip** + PNG/PDF in storage
 - 4 events

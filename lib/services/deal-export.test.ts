@@ -16,7 +16,7 @@ const base: DealExportRow = {
   created_at: "2026-07-01T09:00:00Z",
   agent_id: "a1",
   deal_stages: { name: "Negotiation" },
-  properties: { reference: "GNK-PAF-0001" },
+  properties: { reference: "PAF0001" },
   buyer: { display_name: "Δημήτρης Σαββίδης" },
   seller: { display_name: "GN Kalaitsidis Capital" },
 };
@@ -34,7 +34,7 @@ describe("dealCsvColumns", () => {
     const csv = toCsv(dealCsvColumns(AGENTS), [base]);
     expect(csv).toContain("Negotiation");
     expect(csv).toContain("Δημήτρης Σαββίδης");
-    expect(csv).toContain("GNK-PAF-0001");
+    expect(csv).toContain("PAF0001");
     expect(csv).toContain("750000.00");
     expect(csv).not.toContain("€");
     expect(csv).toContain("Nino Charalambous");

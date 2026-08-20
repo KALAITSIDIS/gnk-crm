@@ -48,7 +48,7 @@ export async function createUnit(
     return { error: "Units can only be added to a project", savedAt: null };
   }
 
-  // Unit reference per doc 02 §A6: parent ref + unit number (GNK-PAF-0007-B203)
+  // Unit reference per doc 02 §A6: parent ref + unit number (PAF0007-B203)
   const unitLabel = [input.block, input.unit_number].filter(Boolean).join("");
   const reference = `${project.reference}-${unitLabel}`;
 

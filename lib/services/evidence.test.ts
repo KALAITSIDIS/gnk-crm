@@ -43,7 +43,7 @@ describe("sortChronological", () => {
 
 describe("reportContentHash", () => {
   const rows = [
-    row("2026-07-10T09:00:00Z", "Created", { propertyRef: "GNK-PAF-0001", actorName: "G. K." }),
+    row("2026-07-10T09:00:00Z", "Created", { propertyRef: "PAF0001", actorName: "G. K." }),
     row("2026-07-11T10:00:00Z", "Stage New → Qualified"),
   ];
 

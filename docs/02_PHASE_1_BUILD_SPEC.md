@@ -13,7 +13,7 @@ Functional specification for everything Phase 1 ships. Read with docs 03 (schema
 | A3 | Org model | Single organization row seeded (`GN Kalaitsidis Capital`). All tables carry `org_id`; helper `current_org_id()` resolves from `profiles`. |
 | A4 | Roles Phase 1 | `admin`, `agent`, `listing_manager`. Portal roles exist in the enum but are unused until Phase 4. |
 | A5 | UI language | Interface in **English** for Phase 1 (internal team). i18n scaffolding (next-intl, `messages/en|el|ru.json`) present from day one. All content fields (titles, descriptions) are jsonb `{en, el, ru}`. |
-| A6 | Reference numbers | `GNK-{DISTRICT_CODE}-{4-digit seq}` per district (e.g. `GNK-PAF-0001`); units append `-U{n}` or unit number (`GNK-PAF-0007-B203`). Generated server-side on property creation, immutable afterwards. |
+| A6 | Reference numbers | `{DISTRICT_CODE}{4-digit seq}` per district (e.g. `PAF0001`); units append `-U{n}` or unit number (`PAF0007-B203`). Generated server-side on property creation, immutable afterwards. **CHANGED 2026-08-20 by operator decision: the `GNK-` prefix and the hyphens were dropped (`GNK-PAF-0001` became `PAF0001`), while the district codes stayed PAF/LIM/LAR/NIC/FAM. Done before the first real import precisely because this row says immutable — migration 0033.** |
 | A7 | Media processing | In Next.js server actions with Sharp (no separate service): strip EXIF → renditions thumb 400px / card 800px / full 1600px WebP → optional watermark on `full` when property visibility ∈ {public, partner} → upload renditions to `media` bucket, original to `documents` bucket (private). |
 | A8 | Quality Score | Computed in app code on every property save; stored in `properties.quality_score`. Weights in §C1. Publishing to visibility `public` blocked below 70 unless admin override (logged as event). |
 | A9 | Search | `pg_trgm` ILIKE-based fuzzy search on properties (reference, title, address) and contacts (name, phone, email). PostGIS for map/radius later; store coordinates now. |
@@ -55,7 +55,7 @@ Quality Score weights (total 100): cover photo 10, ≥6 photos 15, title EN 5, p
 
 Price changes: editing `asking_price` writes `price_history` + event automatically (DB trigger).
 
-**Accept:** create standalone property → reference auto `GNK-PAF-XXXX`; create project + 3 units → matrix renders, unit status change writes event; upload 3 photos → EXIF gone (verify with exiftool/sharp metadata), 3 renditions exist, cover selectable; score updates live and blocks public publish < 70; price edit produces history row + event.
+**Accept:** create standalone property → reference auto `PAFXXXX`; create project + 3 units → matrix renders, unit status change writes event; upload 3 photos → EXIF gone (verify with exiftool/sharp metadata), 3 renditions exist, cover selectable; score updates live and blocks public publish < 70; price edit produces history row + event.
 
 ### C2 — M2 Mandates & Keys
 

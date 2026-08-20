@@ -133,7 +133,7 @@ export function CreatePropertyWizard({
             <p className="rounded-lg bg-surface-2 px-3 py-2 text-sm text-text-2">
               Reference will be assigned on creation:{" "}
               <span className="font-mono font-medium text-text-1">
-                GNK-{district.code}-####
+                {district.code}####
               </span>{" "}
               (immutable)
             </p>
