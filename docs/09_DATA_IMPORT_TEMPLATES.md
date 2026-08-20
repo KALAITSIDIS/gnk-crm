@@ -30,7 +30,7 @@ Export current data (Excel, phone contacts, WhatsApp notes) into these two CSVs.
 
 | Column | Required | Format / values | Notes |
 |---|---|---|---|
-| reference | no | existing ref if any | If empty, generated as GNK-XXX-#### |
+| reference | no | existing ref if any | If empty, generated as XXX#### |
 | kind | no | standalone/project/unit | default standalone; units require parent_reference |
 | parent_reference | ◐ | ref of project | required when kind=unit |
 | property_type | yes | apartment/villa/townhouse/house/land/shop/office/building/hotel/warehouse/mixed_use/other | |

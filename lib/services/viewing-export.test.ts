@@ -7,7 +7,7 @@ const base: ViewingExportRow = {
   status: "completed",
   duration_min: 30,
   route_date: "2026-07-23",
-  properties: { reference: "GNK-PAF-0001" },
+  properties: { reference: "PAF0001" },
   contacts: { display_name: "Δημήτρης Σαββίδης" },
   agent: { full_name: "Nino Charalambous" },
   viewing_slips: [{ signer_name: "Δημήτρης Σαββίδης", signed_at: "2026-07-23T14:22:00Z" }],
@@ -24,7 +24,7 @@ describe("viewingCsvColumns", () => {
 
   it("surfaces the signed slip's signer for commission evidence", () => {
     const csv = toCsv(viewingCsvColumns(), [base]);
-    expect(csv).toContain("GNK-PAF-0001");
+    expect(csv).toContain("PAF0001");
     expect(csv).toContain("Nino Charalambous");
     expect(csv).toContain("Δημήτρης Σαββίδης");
   });

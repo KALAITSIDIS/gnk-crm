@@ -14,7 +14,7 @@ const base: LeadExportRow = {
   lost_reason: null,
   assigned_agent_id: "a1",
   contacts: { display_name: "Δημήτρης Σαββίδης", phone_e164: "+35799123456" },
-  properties: { reference: "GNK-PAF-0001" },
+  properties: { reference: "PAF0001" },
 };
 
 const line = (csv: string, i = 1) => csv.replace(/^﻿/, "").split("\r\n")[i];
@@ -30,7 +30,7 @@ describe("leadCsvColumns", () => {
     const csv = toCsv(leadCsvColumns(AGENTS), [base]);
     expect(csv).toContain("Δημήτρης Σαββίδης");
     expect(csv).toContain("'+357"); // formatted phone, formula-guarded leading +
-    expect(csv).toContain("GNK-PAF-0001");
+    expect(csv).toContain("PAF0001");
     expect(csv).toContain("Nino Charalambous");
   });
 

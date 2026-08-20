@@ -119,7 +119,7 @@ test.describe.serial("critical path", () => {
     // lands on the detail page with a generated reference
     await page.waitForURL(/\/properties\/[0-9a-f-]{36}/, { timeout: opTimeout(30_000) });
     await expect(page.getByText(propertyTitle).first()).toBeVisible();
-    await expect(page.getByText(/GNK-PAF-\d+/).first(), "no reference generated").toBeVisible();
+    await expect(page.getByText(/PAF\d+/).first(), "no reference generated").toBeVisible();
 
     assertNoProblems(problems, "property create");
   });

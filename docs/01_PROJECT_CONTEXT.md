@@ -51,7 +51,7 @@
 | **Email + calendar sync** | Viewings to calendar; correspondence logging. Basic and missing from v1. | 2–3 |
 | **EXIF stripping + optional watermarking** in the media pipeline | Photo GPS metadata can expose an off-market owner's address — a real GDPR and confidentiality issue. Strip on upload, watermark on public renditions. | 1 |
 | **Aftercare & lifecycle automation** | Completion anniversaries, annual "your property's market value" updates to past buyers → resales, rental-management leads, referrals at near-zero cost. v1's journey ended at "future resale opportunity" but nothing implemented it. | 3–4 |
-| **Phase 0: data migration & numbering** | Audit current data (Excel, phone contacts, WhatsApp threads), import tooling, and a reference numbering scheme (e.g., `GNK-PAF-0001`) defined **before** Phase 1 build starts. | 0 |
+| **Phase 0: data migration & numbering** | Audit current data (Excel, phone contacts, WhatsApp threads), import tooling, and a reference numbering scheme (e.g., `PAF0001`) defined **before** Phase 1 build starts. | 0 |
 | **PostGIS + pg_trgm** | Geo queries (sea distance, radius/amenity search) and fuzzy full-text search on properties/contacts. | 0–1 |
 | **`org_id` column on every table** | Makes Stage 4 SaaS a migration instead of a rewrite. Costs nothing now. Nothing else about SaaS may influence v1 design. | 0 |
 | **RLS policy test suite** | Supabase row-level security is easy to get subtly wrong; a mistake here means Owner A sees Owner B's offers. Automated tests per role. | 1 |
@@ -184,7 +184,7 @@ Rules:
 
 ### 6.3 Reference numbering (defined in Phase 0)
 
-Pattern: `GNK-{DISTRICT}-{SEQ}` (e.g., `GNK-PAF-0001`, `GNK-LIM-0042`); units: `GNK-PAF-0007-B203`. Immutable once assigned; used on website, documents, and in conversation.
+Pattern: `{DISTRICT}{SEQ}` (e.g., `PAF0001`, `LIM0042`); units: `PAF0007-B203`. Immutable once assigned; used on website, documents, and in conversation.
 
 ### 6.4 Cyprus-specific property fields
 

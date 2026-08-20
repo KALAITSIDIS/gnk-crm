@@ -112,7 +112,7 @@ begin
   on conflict (org_id, district_code)
        do update set last_value = reference_counters.last_value + 1
   returning last_value into v;
-  return format('GNK-%s-%s', p_district_code, lpad(v::text, 4, '0'));
+  return format('%s%s', p_district_code, lpad(v::text, 4, '0'));
 end $$;
 
 -- ---------- contacts ----------

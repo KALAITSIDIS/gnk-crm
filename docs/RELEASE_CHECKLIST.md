@@ -66,7 +66,7 @@ paths from the T5.7 acceptance:
 
 1. **Login** — email + password → lands on the dashboard.
 2. **Create property** — Properties → New → wizard → reference auto-generates
-   (`GNK-<DISTRICT>-####`); the property opens; an event is logged (Activity tab).
+   (`<DISTRICT>####`); the property opens; an event is logged (Activity tab).
 3. **Sign slip** — create a viewing (Viewings → New), open it → Sign slip →
    draw + confirm → the slip PDF downloads and the row shows "signed".
 
