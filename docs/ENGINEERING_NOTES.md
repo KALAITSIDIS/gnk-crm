@@ -437,6 +437,22 @@ sequential calls, each paying the same round trip.
 same city as the database. Cold starts (~4s first hit, measured) are a separate
 serverless characteristic and are NOT addressed by this.
 
+**MEASURED AFTER, same method, same machine, same session (2026-08-18).**
+`X-Vercel-Id` became `fra1::fra1` once the deploy landed:
+
+| route | before (median) | after (median) | change |
+|---|---|---|---|
+| `/dashboard` | 1324 ms | **387 ms** | −71% |
+| `/properties` | 818 ms | **258 ms** | −68% |
+| `/contacts` | 672 ms | **247 ms** | −63% |
+| `/tasks` | 1409 ms | **479 ms** | −66% |
+| `/login` | 1301 ms | **469 ms** | −64% |
+
+**Roughly 3x on every route, and the uniformity is the point** — a fixed cost
+removed from every request, not a query that got faster. Read these as
+same-session relative numbers, not absolutes: they are timed from a browser in
+Cyprus, so they include client-to-edge latency in both columns.
+
 **The lesson worth keeping is the diagnostic, not the config.** A slow dashboard
 invites you to optimise the dashboard's queries. Measuring the CHEAPEST page in
 the app is what proved the cost was structural — no amount of query tuning would
