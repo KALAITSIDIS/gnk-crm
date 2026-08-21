@@ -87,7 +87,18 @@ decision (HANDOFF §5) does not cover it.
   **VERIFY:** `grep -rn "developer_contact_id" app components lib/actions | grep -v merge-contacts`
   — any hit means shipped. *(0 on 2026-08-21.)*
 
-- **3. Units flood the properties list.**
+- ~~**3. Units flood the properties list.**~~ **SHIPPED 2026-08-21** — a `kind`
+  filter in `propertyFiltersSchema` plus `resolvePropertyKindScope`, applied in
+  `applyPropertyListFilters`, so the list, the CSV export AND the map inherit it
+  from one place. **Units are hidden by default and the select SAYS SO** — it
+  reads "Standalone & projects", not "All kinds", because a default that
+  silently removes rows is a trap and one the user can see is a choice. An
+  explicit `kind=unit` wins, same escape hatch as the retired scope: a filter
+  that returns nothing when you pick it is a broken filter. Measured against a
+  project with 5 real units — default list 3 rows, `?kind=unit` 5 rows, and the
+  CSV agrees with both. The original entry follows.
+
+  - **3. Units flood the properties list.**
   `propertyFiltersSchema` (`lib/validators/properties.ts:132`) has no `kind`
   field, so units, phases, projects and standalone listings share one list,
   ordered `created_at desc`, 25 per page. One 60-unit project buries two and a
@@ -209,7 +220,13 @@ decision (HANDOFF §5) does not cover it.
   different units do share a building.
   **VERIFY:** `grep -rci "duplicate" lib/actions/properties.ts` — *(0 on 2026-08-21.)*
 
-- **14. The CSV export omits every relationship.**
+- **14. The CSV export omits every relationship.** **PARTLY DONE 2026-08-21 —
+  `Kind` shipped with finding 3**, because a list that hides units by default
+  owes its export a column saying which it holds. **Still missing: owner,
+  developer, assigned agent, coordinates, deed and permit status** — that is the
+  bulk of this entry and it is still open. Do not strike it.
+
+  - **14. The CSV export omits every relationship (original entry).**
   Seventeen columns (`lib/services/property-export.ts:52-72`), none of which say
   who owns it, who built it, who is responsible for it, whether it is a unit or a
   project, or where it is. An export that cannot be grouped by developer is not

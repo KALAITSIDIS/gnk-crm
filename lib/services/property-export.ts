@@ -12,13 +12,14 @@ import { type CsvColumn } from "./csv";
 
 /** SELECT columns excluding the dynamic mandate embed the route appends. */
 export const PROPERTY_EXPORT_BASE_SELECT =
-  "reference, property_type, transaction_type, status, visibility, title, address, bedrooms, bathrooms, covered_area_sqm, plot_area_sqm, asking_price, rent_price_month, quality_score, districts(name), areas(name)";
+  "reference, kind, property_type, transaction_type, status, visibility, title, address, bedrooms, bathrooms, covered_area_sqm, plot_area_sqm, asking_price, rent_price_month, quality_score, districts(name), areas(name)";
 
 type Multilang = { en?: string } | null;
 type MandateEmbedRow = { type: string; status: string };
 
 export interface PropertyExportRow {
   reference: string | null;
+  kind: string | null;
   property_type: string | null;
   transaction_type: string | null;
   status: string | null;
@@ -52,6 +53,8 @@ function mandateState(mandates: MandateEmbedRow[] | null): string {
 export function propertyCsvColumns(): CsvColumn<PropertyExportRow>[] {
   return [
     { header: "Reference", value: (p) => p.reference },
+    // the list hides units by default, so the CSV has to say which it holds
+    { header: "Kind", value: (p) => p.kind },
     { header: "Type", value: (p) => p.property_type },
     { header: "Transaction", value: (p) => p.transaction_type },
     { header: "Status", value: (p) => p.status },

@@ -3,6 +3,7 @@ import {
   partiesSectionSchema,
   propertyFiltersSchema,
   resolvePartyUpdates,
+  resolvePropertyKindScope,
   resolvePropertyScope,
   resolveRestoreUpdates,
 } from "./properties";
@@ -155,5 +156,22 @@ describe("resolvePartyUpdates", () => {
       { kind: "phase" },
     );
     expect(updates.developer_contact_id).toBe(DEV);
+  });
+});
+
+describe("resolvePropertyKindScope", () => {
+  it("hides units by default — a 60-unit project must not bury the list", () => {
+    expect(resolvePropertyKindScope({})).toBe("exclude-units");
+    expect(resolvePropertyKindScope({ kind: undefined })).toBe("exclude-units");
+  });
+
+  it("an explicit kind=unit wins — a filter that returns nothing is broken", () => {
+    expect(resolvePropertyKindScope({ kind: "unit" })).toBe("none");
+  });
+
+  it("any explicit kind stops the default filtering, then narrows on its own", () => {
+    expect(resolvePropertyKindScope({ kind: "standalone" })).toBe("none");
+    expect(resolvePropertyKindScope({ kind: "project" })).toBe("none");
+    expect(resolvePropertyKindScope({ kind: "phase" })).toBe("none");
   });
 });

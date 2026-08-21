@@ -159,3 +159,67 @@ test.describe("property parties", () => {
     await admin.from("properties").delete().eq("id", propertyId);
   });
 });
+
+/**
+ * The kind filter (BACKLOG audit finding 3).
+ *
+ * Units are inventory inside a project, not listings, and one 60-unit project is
+ * two and a half pages of the default 25-row list. They are hidden unless asked
+ * for — and the escape hatch matters as much as the default, because a filter
+ * that returns nothing when you pick it is a broken filter.
+ *
+ * The list, the CSV export and the map all share applyPropertyListFilters, so
+ * this rule reaches all three from one place. The export is asserted here
+ * because it is the surface where a silently-missing row is hardest to notice.
+ */
+test.describe("property kind filter", () => {
+  test("units are hidden by default and reachable by asking", async ({ page }) => {
+    const admin = svc();
+    const { orgId } = await fixtureProfile(admin);
+
+    const projectId = await seedProperty(admin, orgId, "project");
+    const { data: project } = await admin
+      .from("properties")
+      .select("reference, district_id")
+      .eq("id", projectId)
+      .single();
+
+    const unitRefs = ["U1", "U2", "U3"].map((u) => `${project!.reference}-${u}`);
+    await admin.from("properties").insert(
+      unitRefs.map((reference) => ({
+        org_id: orgId,
+        reference,
+        kind: "unit" as const,
+        parent_id: projectId,
+        property_type: "apartment" as const,
+        status: "available" as const,
+        district_id: project!.district_id,
+      })),
+    );
+
+    const refsIn = async (qs: string) =>
+      page.evaluate(async (q) => {
+        const r = await fetch(`/properties/export${q}`, { credentials: "same-origin" });
+        const lines = (await r.text()).trim().split("\n");
+        return lines.slice(1).map((l) => l.split(",")[0]);
+      }, qs);
+
+    await page.goto("/properties");
+
+    // The default must not carry the units, or a real project drowns the list.
+    const shown = await refsIn("");
+    expect(shown).toContain(project!.reference);
+    for (const ref of unitRefs) expect(shown).not.toContain(ref);
+
+    // …and asking for them must actually produce them.
+    const units = await refsIn("?kind=unit");
+    for (const ref of unitRefs) expect(units).toContain(ref);
+    expect(units).not.toContain(project!.reference);
+
+    // The default option says what it does rather than hiding it.
+    await expect(page.getByText("Standalone & projects")).toBeVisible();
+
+    await admin.from("properties").delete().eq("parent_id", projectId);
+    await admin.from("properties").delete().eq("id", projectId);
+  });
+});

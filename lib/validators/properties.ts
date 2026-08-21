@@ -39,6 +39,10 @@ export const VISIBILITY_LEVELS = [
 
 export const MANDATE_FILTERS = ["active", "expired", "none"] as const;
 
+/** Hierarchy level. Declared HERE, above propertyFiltersSchema: the schema
+ *  reads it at module-evaluation time, so a later `const` is a TDZ crash. */
+export const PROPERTY_KINDS = ["standalone", "project", "phase", "unit"] as const;
+
 /** Properties are never deleted (doc 04: properties DELETE ❌). The retire path
  *  is status `withdrawn` and/or visibility `archived` — either one alone means
  *  the listing is off the working list. */
@@ -144,6 +148,7 @@ export const propertyFiltersSchema = z.object({
   price_min: optionalNumber,
   price_max: optionalNumber,
   mandate: optionalEnum(MANDATE_FILTERS),
+  kind: optionalEnum(PROPERTY_KINDS),
   scope: z
     .string()
     .optional()
@@ -167,9 +172,33 @@ export type PropertyFilters = z.infer<typeof propertyFiltersSchema>;
 
 export const PROPERTIES_PAGE_SIZE = 25;
 
-/* ---------- parties: who owns it, who built it, who works it ---------- */
+export type PropertyKindMode = "exclude-units" | "none";
 
-export const PROPERTY_KINDS = ["standalone", "project", "phase", "unit"] as const;
+/**
+ * How the list should treat UNITS (BACKLOG audit finding 3).
+ *
+ * A unit is inventory inside a project, not a listing in its own right. One
+ * 60-unit project is two and a half pages of the default 25-row list, so
+ * showing units by default buries every standalone listing the desk actually
+ * works — and does the same to the CSV export and the map, which share this
+ * module.
+ *
+ * Units are therefore hidden unless asked for, and reached through their
+ * project's units matrix. Exactly the shape of `resolvePropertyScope` above,
+ * including its escape hatch: an explicit `kind=unit` wins over the default,
+ * because a filter that returns nothing when you pick it is a broken filter.
+ *
+ * The default is VISIBLE IN THE UI — the select reads "Standalone & projects",
+ * not "All kinds". A default that silently removes rows is a trap; one the user
+ * can see and change is a choice.
+ */
+export function resolvePropertyKindScope(filters: {
+  kind?: (typeof PROPERTY_KINDS)[number];
+}): PropertyKindMode {
+  return filters.kind === undefined ? "exclude-units" : "none";
+}
+
+/* ---------- parties: who owns it, who built it, who works it ---------- */
 
 /** Kinds that can carry a developer. A standalone listing belongs to a private
  *  owner by definition — the field is not rendered for it (see below). */
