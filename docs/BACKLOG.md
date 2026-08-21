@@ -360,7 +360,34 @@ decision (HANDOFF §5) does not cover it.
   "choose the developer" only works if the picker knows what a developer is.
   **VERIFY:** `grep -c "contact_types" lib/actions/entity-search.ts` — *(0 on 2026-08-21.)*
 
-- **13. No duplicate guard when creating a property.**
+- ~~**13. No duplicate guard when creating a property.**~~ **SHIPPED 2026-08-21**
+  — a live check on the create wizard: same district, same address once
+  punctuation and street-type words are set aside.
+
+  **IT WARNS AND DOES NOT BLOCK**, which is the whole point. Two genuinely
+  different units share a building, and a guard that refuses them is a guard
+  people learn to work around. The banner links the existing reference and the
+  submit button stays enabled.
+
+  **Normalised equality, deliberately NOT trigram similarity.** A similarity
+  threshold is a number nobody can defend later ("why 0.6?"), and near-misses on
+  a street name would flag neighbours as duplicates. "Same address once
+  punctuation and street-type words are set aside" is explainable in one
+  sentence. The house number is kept and is usually the whole signal — dropping
+  it would make every address on a street match every other one, and an E2E pins
+  that a different number does NOT warn.
+
+  Scoped to one district (two identical addresses in different towns are
+  different places) and bounded at 500 candidate rows, because `address` is
+  unindexed by design and a bound that can be stated beats one that cannot.
+
+  Coordinates were not used: the create wizard collects an address and a
+  district, not a pin, so a 30 m radius check would have nothing to compare on
+  the one screen where it matters.
+  **VERIFY:** `grep -c "checkPropertyDuplicate" lib/actions/properties.ts` — 0
+  means reverted. The original entry follows.
+
+  - **13. No duplicate guard when creating a property (original).**
   Contacts block duplicates live on `phone_e164` and warn on email. Properties
   have no equivalent, so the same villa entered twice yields two references, two
   mandates and two photo sets — and both burn a `reference_counters` value that

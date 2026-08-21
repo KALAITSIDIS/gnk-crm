@@ -1,8 +1,14 @@
 "use client";
 
-import { useActionState, useState } from "react";
-import { ArrowLeft, ArrowRight } from "lucide-react";
-import { createProperty, type PropertyActionState } from "@/lib/actions/properties";
+import { useActionState, useEffect, useRef, useState } from "react";
+import { AlertTriangle, ArrowLeft, ArrowRight } from "lucide-react";
+import Link from "next/link";
+import {
+  checkPropertyDuplicate,
+  createProperty,
+  type PropertyActionState,
+} from "@/lib/actions/properties";
+import type { PropertyDuplicateMatch } from "@/lib/services/property-duplicate";
 import { CREATABLE_KINDS, PROPERTY_TYPES, TRANSACTION_TYPES } from "@/lib/validators/properties";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,6 +43,32 @@ export function CreatePropertyWizard({
   const [propertyType, setPropertyType] = useState<string>("");
   const [transaction, setTransaction] = useState<string>("sale");
   const [districtId, setDistrictId] = useState<string>("");
+  const [address, setAddress] = useState<string>("");
+  // The result is stored WITH the address it was for, so a slow answer for an
+  // old address cannot be shown against a new one — and so the effect never
+  // has to clear state synchronously, which cascades renders.
+  const [found, setFound] = useState<{
+    forAddress: string;
+    match: PropertyDuplicateMatch | null;
+  } | null>(null);
+  const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Live duplicate check (audit finding 13). It WARNS — the submit button stays
+  // enabled, because two genuinely different units share a building and a guard
+  // that refuses them is a guard people learn to work around.
+  useEffect(() => {
+    if (debounce.current) clearTimeout(debounce.current);
+    if (!districtId || address.trim().length < 3) return;
+    const forAddress = address;
+    debounce.current = setTimeout(async () => {
+      setFound({ forAddress, match: await checkPropertyDuplicate(districtId, forAddress) });
+    }, 400);
+    return () => {
+      if (debounce.current) clearTimeout(debounce.current);
+    };
+  }, [districtId, address]);
+
+  const duplicate = found && found.forAddress === address ? found.match : null;
 
   const district = districts.find((d) => d.id === districtId);
   const districtAreas = areas.filter((a) => a.districtId === districtId);
@@ -171,7 +203,13 @@ export function CreatePropertyWizard({
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="address">Address</Label>
-              <Input id="address" name="address" placeholder="Street, number, locality" />
+              <Input
+                id="address"
+                name="address"
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                placeholder="Street, number, locality"
+              />
             </div>
 
             {showAsking ? (
@@ -220,6 +258,23 @@ export function CreatePropertyWizard({
               <Input id="internal_notes" name="internal_notes" placeholder="Not shown anywhere public" />
             </div>
           </div>
+
+          {duplicate ? (
+            <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 px-3 py-2 text-sm">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
+              <p className="text-text-2">
+                <Link
+                  href={`/properties/${duplicate.id}`}
+                  className="font-mono font-medium text-brand-700 hover:underline"
+                >
+                  {duplicate.reference}
+                </Link>{" "}
+                is already at this address — {duplicate.label}
+                {duplicate.status === "withdrawn" ? " (withdrawn)" : ""}. Open it instead of
+                creating a second record, unless this really is a different property.
+              </p>
+            </div>
+          ) : null}
 
           {state.error ? (
             <p role="alert" className="text-sm text-danger">

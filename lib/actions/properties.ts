@@ -9,6 +9,7 @@ import { generateReference } from "@/lib/services/reference";
 import { createClient } from "@/lib/supabase/server";
 import { changedValue } from "@/lib/utils/diff";
 import { createPropertySchema } from "@/lib/validators/properties";
+import type { PropertyDuplicateMatch } from "@/lib/services/property-duplicate";
 
 export type PropertyActionState = { error: string | null };
 
@@ -16,6 +17,46 @@ export type UpdateSectionState = {
   error: string | null;
   savedAt: number | null;
 };
+
+/**
+ * Is there already a property at this address in this district?
+ * (BACKLOG audit finding 13.)
+ *
+ * WARNS, NEVER BLOCKS — the caller shows a link and leaves the decision alone.
+ * Two genuinely different units share a building, and a guard that refuses them
+ * is a guard people learn to work around.
+ *
+ * District-scoped, so the candidate set stays small and two identical addresses
+ * in different towns are correctly treated as different places. Bounded at 500
+ * rows: the address column is unindexed by design (BACKLOG notes it as fine at
+ * internal scale), and a bound that can be stated beats one that cannot.
+ */
+export async function checkPropertyDuplicate(
+  districtId: string,
+  address: string,
+): Promise<PropertyDuplicateMatch | null> {
+  if (!districtId || address.trim().length < 3) return null;
+
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("properties")
+    .select("id, reference, address, title, status")
+    .eq("district_id", districtId)
+    .not("address", "is", null)
+    .limit(500);
+
+  const { findAddressMatch } = await import("@/lib/services/property-duplicate");
+  return findAddressMatch(
+    (data ?? []).map((p) => ({
+      id: p.id,
+      reference: p.reference,
+      address: p.address,
+      title: p.title as { en?: string } | null,
+      status: p.status,
+    })),
+    address,
+  );
+}
 
 export async function createProperty(
   _prev: PropertyActionState,
