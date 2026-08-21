@@ -12,6 +12,10 @@ import {
 } from "@/components/features/properties/units-matrix";
 import { GenerateUnitsForm } from "@/components/features/properties/generate-units-form";
 import { InheritanceDrift } from "@/components/features/properties/inheritance-drift";
+import {
+  PhasesSection,
+  type PhaseRow,
+} from "@/components/features/properties/phases-section";
 import { comparePriceLists, summariseVersion } from "@/lib/services/price-list";
 import {
   computeInheritanceDrift,
@@ -52,7 +56,7 @@ export default async function ProjectUnitsPage({
   const profile = await getCurrentProfile(supabase);
   const canManage = profile.role === "admin" || profile.role === "listing_manager";
 
-  const [unitsRes, priceListsRes, plansRes] = await Promise.all([
+  const [unitsRes, priceListsRes, plansRes, phasesRes] = await Promise.all([
     supabase
       .from("properties")
       .select(UNIT_ROW_SELECT)
@@ -74,10 +78,27 @@ export default async function ProjectUnitsPage({
       .select("id, name, installments")
       .eq("project_id", id)
       .order("created_at"),
+    // audit finding 11 — a project's phases, each with its own unit count
+    supabase
+      .from("properties")
+      .select("id, reference, title, status, delivery_date, units:properties!parent_id(count)")
+      .eq("parent_id", id)
+      .eq("kind", "phase")
+      .order("reference"),
   ]);
   const unitRows = unwrapRows(unitsRes, "units");
   const priceListRows = unwrapRows(priceListsRes, "price lists");
   const planRows = unwrapRows(plansRes, "payment plans");
+  const phaseRows = unwrapRows(phasesRes, "phases");
+
+  const phases: PhaseRow[] = (phaseRows ?? []).map((ph) => ({
+    id: ph.id,
+    reference: ph.reference,
+    title: (ph.title as { en?: string } | null)?.en ?? null,
+    status: ph.status,
+    delivery_date: ph.delivery_date,
+    unitCount: (ph.units as { count: number }[] | null)?.[0]?.count ?? 0,
+  }));
 
   const units: UnitRow[] = (unitRows ?? []).map((u) => ({
     ...u,
@@ -151,6 +172,15 @@ export default async function ProjectUnitsPage({
         drift={computeInheritanceDrift(project, unitRows ?? [])}
         canManage={canManage}
       />
+
+      {project.kind === "project" ? (
+        <PhasesSection
+          projectId={id}
+          projectReference={project.reference}
+          phases={phases}
+          canManage={canManage}
+        />
+      ) : null}
 
       <UnitsMatrix units={units} canManage={canManage} />
       {canManage ? (

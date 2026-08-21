@@ -38,15 +38,18 @@ export const INHERITED_UNIT_FIELDS = [
 export type InheritedUnitField = (typeof INHERITED_UNIT_FIELDS)[number];
 
 /**
- * The same columns as a LITERAL select string, plus the four `createUnit` needs
- * for itself. It has to be a literal: Supabase infers the row type from the
+ * The same columns as a LITERAL select string, plus the five a child creator
+ * needs for itself. `property_type` is in that second group, NOT in
+ * INHERITED_UNIT_FIELDS: a unit picks its own type, but a phase takes the
+ * project's (a phase of an apartment project is apartments), so the creator
+ * reads it without it being drift-tracked. It has to be a literal: Supabase infers the row type from the
  * string, and a runtime `.join()` collapses it to `GenericStringError` — the
  * same reason `mandateEmbed` returns a literal union rather than `string`.
  *
  * A literal can drift from the array above, so a test asserts it does not.
  */
 export const UNIT_PARENT_SELECT =
-  "id, org_id, kind, reference, transaction_type, district_id, area_id, address, postal_code, location, sea_distance_m, amenities_notes, currency, vat_status, energy_class, features, title_deed_status, permit_status, construction_status, delivery_date, developer_contact_id, owner_contact_id, assigned_agent_id";
+  "id, org_id, kind, reference, property_type, transaction_type, district_id, area_id, address, postal_code, location, sea_distance_m, amenities_notes, currency, vat_status, energy_class, features, title_deed_status, permit_status, construction_status, delivery_date, developer_contact_id, owner_contact_id, assigned_agent_id";
 
 /**
  * The unit-side select for the drift check: what the matrix renders, plus every

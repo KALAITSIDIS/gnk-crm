@@ -111,14 +111,23 @@ describe("UNIT_PARENT_SELECT", () => {
     }
   });
 
-  it("also carries the four columns createUnit needs for itself", () => {
-    for (const own of ["id", "org_id", "kind", "reference"]) {
+  it("also carries the columns a child creator needs for itself", () => {
+    // property_type is here rather than in INHERITED_UNIT_FIELDS: a unit picks
+    // its own, a phase takes the project's, neither is drift-tracked
+    for (const own of ["id", "org_id", "kind", "reference", "property_type"]) {
       expect(columns).toContain(own);
     }
   });
 
   it("selects nothing it does not use", () => {
-    const allowed = new Set<string>([...INHERITED_UNIT_FIELDS, "id", "org_id", "kind", "reference"]);
+    const allowed = new Set<string>([
+      ...INHERITED_UNIT_FIELDS,
+      "id",
+      "org_id",
+      "kind",
+      "reference",
+      "property_type",
+    ]);
     for (const c of columns) expect(allowed.has(c), `${c} is selected but unused`).toBe(true);
   });
 });

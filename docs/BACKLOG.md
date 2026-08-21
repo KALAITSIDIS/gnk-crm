@@ -333,7 +333,34 @@ decision (HANDOFF §5) does not cover it.
   **VERIFY:** `grep -rn "delivery_date\|construction_status" app components lib/actions`
   — *(0 on 2026-08-21.)*
 
-- **11. `phase` is a kind that cannot be created.**
+- ~~**11. `phase` is a kind that cannot be created.**~~ **SHIPPED 2026-08-21 —
+  BUILT, not deleted.** Operator confirmed the desk does sell in phases, so the
+  three read paths were always right and it was the way in that was missing.
+
+  **No migration.** `phase` has been in the enum with a `phase_has_parent`
+  constraint since `0001`, and `createUnit` already accepted a phase as parent —
+  the schema described this hierarchy from day one.
+
+  A phase is created from its project's units page and gets its own units page,
+  because the matrix, the generator and the price lists all key off `parent_id`
+  and work unchanged. The reference composes without touching that code:
+  `PAF0002-P1`, and a unit under it lands at `PAF0002-P1-A101`.
+
+  **The delivery date is the point.** A phase inherits from its project exactly
+  as a unit does, `inherited_fields` included — except an entered delivery date
+  is the phase's OWN and is severed on creation, so a project-side sync cannot
+  overwrite it. Staged handover is why phases exist. Measured: project 2028-03-31,
+  phase 2029-09-30, and the eight units generated under the phase all took
+  **2029-09-30 from the phase**, not 2028 from the grandparent.
+
+  **A phase cannot contain a phase** — one level, per doc 01 §C1. Nesting would
+  make the reference unbounded (`PAF0002-P1-P2-B203`) and leave the units matrix
+  with no single place to live. Refused in the action and the section is not
+  rendered on a phase's own page.
+  **VERIFY:** `grep -c "createPhase" lib/actions/units.ts` — 0 means reverted.
+  The original entry follows.
+
+  - **11. `phase` is a kind that cannot be created (original).**
   The enum has four kinds. `CREATABLE_KINDS` offers two
   (`lib/validators/properties.ts:174`) and `createUnit` hardcodes the third, so
   nothing can produce a `phase` — yet three read paths branch on it

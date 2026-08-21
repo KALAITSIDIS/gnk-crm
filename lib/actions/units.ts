@@ -327,6 +327,127 @@ export async function generateProjectUnits(
   return { error: null, savedAt: Date.now() };
 }
 
+const createPhaseSchema = z.object({
+  project_id: z.guid("Missing project"),
+  code: z
+    .string()
+    .trim()
+    .min(1, "Phase code is required")
+    .max(6, "Keep the phase code short — it goes into every unit reference")
+    .regex(/^[A-Za-z0-9]+$/, "Phase code: letters and numbers only"),
+  name: z.preprocess(emptyToUndefined, z.string().max(120).optional()),
+  delivery_date: z.preprocess(
+    emptyToUndefined,
+    z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Delivery date must be YYYY-MM-DD")
+      .optional(),
+  ),
+});
+
+/**
+ * Create a phase under a project (BACKLOG audit finding 11).
+ *
+ * `phase` has been in the property_kind enum since 0001, with a
+ * `phase_has_parent` constraint, and three read paths branching on it — and
+ * NOTHING could create one. Units already accept a phase as their parent, so
+ * this is the missing middle of a hierarchy the schema always described.
+ *
+ * A PHASE IS A CHILD OF A PROJECT AND NOTHING ELSE. Doc 01 §C1 describes
+ * project → phase → unit, one level; phases inside phases would make the
+ * reference unbounded (`PAF0002-P1-P2-B203`) and give the units matrix no
+ * single place to live.
+ *
+ * The reference composes: a phase is `PAF0002-P1`, and `createUnit` already
+ * builds a unit reference from its parent's, so a unit under it lands at
+ * `PAF0002-P1-B203` with no change to that code.
+ *
+ * It inherits from its project exactly as a unit does, `inherited_fields`
+ * included — so the drift panel keeps a phase in step with its project, and
+ * editing the phase's delivery date severs just that field. That last part is
+ * the point of phases: phase 1 hands over a year before phase 2.
+ */
+export async function createPhase(
+  _prev: UnitActionState,
+  formData: FormData,
+): Promise<UnitActionState> {
+  const parsed = createPhaseSchema.safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input", savedAt: null };
+  }
+  const input = parsed.data;
+
+  const supabase = await createClient();
+  const profile = await getCurrentProfile(supabase);
+
+  const { data: project } = await supabase
+    .from("properties")
+    .select(UNIT_PARENT_SELECT)
+    .eq("id", input.project_id)
+    .maybeSingle();
+  if (!project) return { error: "Project not found", savedAt: null };
+  if (project.kind === "phase") {
+    return { error: "A phase cannot contain another phase.", savedAt: null };
+  }
+  if (project.kind !== "project") {
+    return { error: "Phases can only be added to a project", savedAt: null };
+  }
+
+  const reference = `${project.reference}-${input.code.toUpperCase()}`;
+
+  const { data: created, error: insertErr } = await supabase
+    .from("properties")
+    .insert({
+      org_id: project.org_id,
+      reference,
+      kind: "phase" as const,
+      parent_id: project.id,
+      property_type: project.property_type,
+      ...resolveInheritedUnitFields(project),
+      inherited_fields: [...INHERITED_UNIT_FIELDS],
+      // a phase usually hands over on its own date — that is what phases ARE —
+      // so an entered one is the phase's own and does not follow the project
+      ...(input.delivery_date
+        ? {
+            delivery_date: input.delivery_date,
+            inherited_fields: INHERITED_UNIT_FIELDS.filter((f) => f !== "delivery_date"),
+          }
+        : {}),
+      title: input.name ? { en: input.name } : {},
+      status: "available" as const,
+      created_by: profile.id,
+    })
+    .select("id")
+    .single();
+  if (insertErr) {
+    return {
+      error:
+        insertErr.code === "23505"
+          ? `${reference} already exists`
+          : insertErr.message,
+      savedAt: null,
+    };
+  }
+
+  await logEvent(supabase, {
+    orgId: project.org_id,
+    actorId: profile.id,
+    entityType: "property",
+    entityId: created.id,
+    eventType: "created",
+    payload: {
+      reference,
+      kind: "phase",
+      parent: project.reference,
+      inherited: inheritedFieldsWithValues(project),
+    },
+  });
+
+  revalidatePath(`/properties/${project.id}/units`);
+  revalidatePath("/properties");
+  return { error: null, savedAt: Date.now() };
+}
+
 export async function createPriceListVersion(
   _prev: UnitActionState,
   formData: FormData,
