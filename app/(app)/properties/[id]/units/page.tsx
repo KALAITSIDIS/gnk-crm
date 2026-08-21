@@ -10,6 +10,7 @@ import {
   type PriceListRow,
   type UnitRow,
 } from "@/components/features/properties/units-matrix";
+import { GenerateUnitsForm } from "@/components/features/properties/generate-units-form";
 import { Button } from "@/components/ui/button";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -107,7 +108,12 @@ export default async function ProjectUnitsPage({
       </div>
 
       <UnitsMatrix units={units} canManage={canManage} />
-      {canManage ? <AddUnitForm projectId={id} /> : null}
+      {canManage ? (
+        <div className="grid gap-4 xl:grid-cols-2">
+          <GenerateUnitsForm projectId={id} projectReference={project.reference} />
+          <AddUnitForm projectId={id} />
+        </div>
+      ) : null}
       <div className="grid gap-4 lg:grid-cols-2">
         <PriceListsSection projectId={id} priceLists={priceLists} canManage={canManage} />
         <PaymentPlansSection projectId={id} plans={plans} canManage={canManage} />

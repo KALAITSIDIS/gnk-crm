@@ -281,9 +281,29 @@ explicit direction.
   right shape for a number somebody has to stand behind. Resolution order:
   unit ← project ← party ← office. **Every prefill stays editable; a default is a
   suggestion, not a lock.**
-- **Bulk unit generator, M.** "Block A, floors 1–5, units 01–04, 2-bed, 85 m²,
-  €250k base +€5k per floor" creates twenty units with correct references in one
-  submit. The single biggest reason a developer project is painful to enter today.
+- ~~**Bulk unit generator, M.**~~ **SHIPPED 2026-08-21.** `GenerateUnitsForm` on
+  the units page: block, floor range, units per floor, shared layout, base price
+  and a per-floor increment. Units inherit through the SAME
+  `resolveInheritedUnitFields` a hand-added one uses — a second inheritance path
+  that drifted would be worse than no generator.
+
+  **The live preview is the feature, not decoration.** It shares `generateUnits`
+  with the action, so what it shows is literally what gets written: exact count,
+  first and last reference, price range. A generator that writes sixty rows on a
+  guess is worse than typing them, because sixty plausible-looking wrong rows
+  have to be found by hand.
+
+  **ALL OR NOTHING on collision**, checked before writing rather than caught as a
+  23505 — a partial block is the worst outcome, since you cannot tell by looking
+  which half landed and the obvious retry collides with it. The error names the
+  clashes. Ceiling of 200 per run so a floor-range typo cannot insert thousands.
+
+  **One event per unit, in ONE statement** via the new `logEvents`. That the hash
+  chain survives a multi-row insert was MEASURED before the code was written, not
+  assumed: a 3-row probe gave `prev_hash[n] = hash[n-1]` throughout with the chain
+  still verifying. Proven again end to end at 60 units.
+
+  **VERIFY:** `grep -c "generateProjectUnits" lib/actions/units.ts` — 0 means gone.
 - **Unit type templates, M.** Define type A1 once (2 bed, 85 m², 20 m² veranda,
   €/m² rate) and stamp it onto any unit; price computes from area. Real projects
   repeat four or five layouts across every floor.

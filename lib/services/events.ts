@@ -41,18 +41,42 @@ export interface LogEventParams {
 
 type Client = SupabaseClient<Database>;
 
+const eventRow = (params: LogEventParams) => ({
+  org_id: params.orgId,
+  actor_id: params.actorId ?? null,
+  entity_type: params.entityType,
+  entity_id: params.entityId ?? null,
+  event_type: params.eventType,
+  payload: params.payload ?? {},
+});
+
 /** Write one event row. Throws on failure — mutations must not silently lose their event. */
 export async function logEvent(supabase: Client, params: LogEventParams): Promise<void> {
-  const { error } = await supabase.from("events").insert({
-    org_id: params.orgId,
-    actor_id: params.actorId ?? null,
-    entity_type: params.entityType,
-    entity_id: params.entityId ?? null,
-    event_type: params.eventType,
-    payload: params.payload ?? {},
-  });
+  const { error } = await supabase.from("events").insert(eventRow(params));
   if (error) {
     throw new Error(`logEvent failed (${params.entityType}.${params.eventType}): ${error.message}`);
+  }
+}
+
+/**
+ * Write many event rows in ONE statement, for a bulk mutation that creates many
+ * entities at once (unit generation). Sixty sequential logEvent calls is sixty
+ * round trips, and a failure halfway leaves entities without their events.
+ *
+ * THE HASH CHAIN SURVIVES A MULTI-ROW INSERT, and that is not obvious enough to
+ * assume — `trg_events_hash` reads the latest row to build `prev_hash`, so it
+ * only works if each row is visible to the next row's trigger. Postgres fires
+ * BEFORE ROW triggers per tuple as the executor walks them, so it is. Measured
+ * on the local stack before this function was written: a 3-row insert produced
+ * prev_hash[n] = hash[n-1] throughout and `verify_events_chain` stayed true.
+ *
+ * Order is preserved, so the events read in the order the entities were made.
+ */
+export async function logEvents(supabase: Client, events: LogEventParams[]): Promise<void> {
+  if (events.length === 0) return;
+  const { error } = await supabase.from("events").insert(events.map(eventRow));
+  if (error) {
+    throw new Error(`logEvents failed (${events.length} rows): ${error.message}`);
   }
 }
 

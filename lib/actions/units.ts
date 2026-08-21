@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getCurrentProfile } from "@/lib/services/auth";
-import { logEvent } from "@/lib/services/events";
+import { logEvent, logEvents } from "@/lib/services/events";
 import { createClient } from "@/lib/supabase/server";
 import {
   emptyToUndefined,
@@ -15,6 +15,13 @@ import {
   resolveInheritedUnitFields,
   UNIT_PARENT_SELECT,
 } from "@/lib/services/unit-inheritance";
+import {
+  generateUnits,
+  generatedCount,
+  MAX_FLOOR,
+  MAX_GENERATED_UNITS,
+  MAX_PER_FLOOR,
+} from "@/lib/services/unit-generator";
 
 export type UnitActionState = { error: string | null; savedAt: number | null };
 
@@ -154,6 +161,165 @@ export async function updateUnitStatus(
   if (unit.parent_id) revalidatePath(`/properties/${unit.parent_id}/units`);
   revalidatePath("/properties");
   return { error: null };
+}
+
+const generateUnitsSchema = z
+  .object({
+    project_id: z.guid("Missing project"),
+    block: z.preprocess(emptyToUndefined, z.string().max(20).optional()),
+    floor_from: z.coerce.number().int().min(0).max(MAX_FLOOR),
+    floor_to: z.coerce.number().int().min(0).max(MAX_FLOOR),
+    per_floor: z.coerce.number().int().min(1).max(MAX_PER_FLOOR),
+    start_index: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).max(MAX_PER_FLOOR).optional()),
+    property_type: z.enum(PROPERTY_TYPES),
+    bedrooms: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).optional()),
+    bathrooms: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).optional()),
+    covered_area_sqm: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
+    base_price: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
+    price_per_floor: z.preprocess(emptyToUndefined, z.coerce.number().min(0).optional()),
+  })
+  .refine((d) => d.floor_to >= d.floor_from, {
+    message: "Top floor must not be below the bottom floor",
+    path: ["floor_to"],
+  })
+  .refine(
+    (d) =>
+      generatedCount({ floorFrom: d.floor_from, floorTo: d.floor_to, perFloor: d.per_floor }) <=
+      MAX_GENERATED_UNITS,
+    {
+      message: `That would create more than ${MAX_GENERATED_UNITS} units — narrow the floor range`,
+      path: ["floor_to"],
+    },
+  );
+
+/**
+ * Create a whole block in one submit (BACKLOG proposal, follow-on to finding 5).
+ *
+ * A 60-unit project was 60 trips through the Add-unit dialog, which is the main
+ * reason developer inventory does not get entered. A block is regular by
+ * construction, so the desk describes the pattern once.
+ *
+ * ALL OR NOTHING ON COLLISION. If any generated reference already exists the
+ * whole run is refused, naming the clashes. A partial generation is the worst
+ * outcome: you cannot tell by looking which half of a block landed, and the
+ * obvious retry then collides with the half that did. Adding floor 6 to an
+ * existing block is `floor_from: 6, floor_to: 6`, which is both correct and
+ * obvious — whereas a "skip what exists" rule would silently absorb a typo in
+ * the floor range and leave nothing to notice.
+ *
+ * Units inherit exactly what a single created unit inherits, via the same
+ * resolveInheritedUnitFields — a second inheritance rule that could drift from
+ * the first would be worse than none.
+ */
+export async function generateProjectUnits(
+  _prev: UnitActionState,
+  formData: FormData,
+): Promise<UnitActionState> {
+  const parsed = generateUnitsSchema.safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input", savedAt: null };
+  }
+  const input = parsed.data;
+
+  const supabase = await createClient();
+  const profile = await getCurrentProfile(supabase);
+
+  const { data: project } = await supabase
+    .from("properties")
+    .select(UNIT_PARENT_SELECT)
+    .eq("id", input.project_id)
+    .maybeSingle();
+  if (!project) return { error: "Project not found", savedAt: null };
+  if (project.kind !== "project" && project.kind !== "phase") {
+    return { error: "Units can only be added to a project", savedAt: null };
+  }
+
+  const generated = generateUnits({
+    block: input.block ?? null,
+    floorFrom: input.floor_from,
+    floorTo: input.floor_to,
+    perFloor: input.per_floor,
+    startIndex: input.start_index,
+    bedrooms: input.bedrooms ?? null,
+    bathrooms: input.bathrooms ?? null,
+    coveredAreaSqm: input.covered_area_sqm ?? null,
+    basePrice: input.base_price ?? null,
+    pricePerFloor: input.price_per_floor ?? null,
+  });
+  if (generated.length === 0) return { error: "That range produces no units", savedAt: null };
+
+  const references = generated.map((u) => `${project.reference}-${u.label}`);
+
+  // Check before writing rather than relying on the unique violation: a 23505
+  // names one reference, and the desk needs to know the shape of the clash.
+  const { data: clashing } = await supabase
+    .from("properties")
+    .select("reference")
+    .in("reference", references);
+  if (clashing && clashing.length > 0) {
+    const names = clashing.map((c) => c.reference).sort();
+    const shown = names.slice(0, 5).join(", ");
+    return {
+      error:
+        names.length === 1
+          ? `${shown} already exists — nothing was created.`
+          : `${names.length} of these already exist (${shown}${names.length > 5 ? ", …" : ""}) — nothing was created.`,
+      savedAt: null,
+    };
+  }
+
+  const inherited = resolveInheritedUnitFields(project);
+  const { data: created, error: insertErr } = await supabase
+    .from("properties")
+    .insert(
+      generated.map((u, i) => ({
+        org_id: project.org_id,
+        reference: references[i],
+        kind: "unit" as const,
+        parent_id: project.id,
+        property_type: input.property_type,
+        ...inherited,
+        unit_number: u.unit_number,
+        block: u.block,
+        floor_number: u.floor_number,
+        bedrooms: u.bedrooms,
+        bathrooms: u.bathrooms,
+        covered_area_sqm: u.covered_area_sqm,
+        asking_price: u.asking_price,
+        status: "available" as const,
+        created_by: profile.id,
+      })),
+    )
+    .select("id, reference");
+  if (insertErr) return { error: insertErr.message, savedAt: null };
+  if (!created || created.length === 0) {
+    return { error: "Nothing was created — only admins and listing managers manage units.", savedAt: null };
+  }
+
+  // One event per unit, in ONE statement. Each unit is its own entity and owes
+  // its own `created` row; the chain survives a multi-row insert (see logEvents).
+  const inheritedNames = inheritedFieldsWithValues(project);
+  await logEvents(
+    supabase,
+    created.map((row) => ({
+      orgId: project.org_id,
+      actorId: profile.id,
+      entityType: "property" as const,
+      entityId: row.id,
+      eventType: "created",
+      payload: {
+        reference: row.reference,
+        kind: "unit",
+        parent: project.reference,
+        inherited: inheritedNames,
+        generated: true,
+      },
+    })),
+  );
+
+  revalidatePath(`/properties/${project.id}/units`);
+  revalidatePath("/properties");
+  return { error: null, savedAt: Date.now() };
 }
 
 export async function createPriceListVersion(
