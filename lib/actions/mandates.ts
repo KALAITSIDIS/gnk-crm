@@ -64,6 +64,49 @@ async function supersedeRenewalTasks(
   }
 }
 
+/**
+ * Keep `properties.owner_contact_id` agreeing with the mandate that names an
+ * owner (BACKLOG audit finding 2, the forward half of migration 0034).
+ *
+ * ONLY FILLS A BLANK. A property whose owner was set by hand on the Parties
+ * panel is the stronger statement and is never overwritten here — otherwise
+ * editing a mandate would silently reassign the property, and the two fields
+ * would fight every time somebody touched either one.
+ *
+ * Without this the backfill is a one-off and the drift returns with the next
+ * mandate anyone creates.
+ */
+async function syncPropertyOwner(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  propertyId: string,
+  ownerContactId: string | null,
+  actor: { id: string; orgId: string },
+) {
+  if (!ownerContactId) return;
+
+  const { data: rows } = await supabase
+    .from("properties")
+    .update({ owner_contact_id: ownerContactId })
+    .eq("id", propertyId)
+    .is("owner_contact_id", null)
+    .select("id");
+  if (!rows || rows.length === 0) return; // already had an owner, or RLS said no
+
+  await logEvent(supabase, {
+    orgId: actor.orgId,
+    actorId: actor.id,
+    entityType: "property",
+    entityId: propertyId,
+    eventType: "updated",
+    payload: {
+      section: "parties",
+      source: "mandate_owner_sync",
+      changed: { owner_contact_id: { from: null, to: ownerContactId } },
+    },
+  });
+  revalidatePath(`/properties/${propertyId}`);
+}
+
 function changedValue(prev: unknown, next: unknown): boolean {
   const norm = (v: unknown) => {
     if (v === undefined || v === null || v === "") return null;
@@ -142,6 +185,10 @@ export async function saveMandate(
         "expiry_changed",
       );
     }
+    await syncPropertyOwner(supabase, current.property_id, d.owner_contact_id ?? null, {
+      id: profile.id,
+      orgId: profile.orgId,
+    });
     await recomputeScores(supabase, current.property_id);
     revalidatePath(`/properties/${current.property_id}`);
     return { error: null, savedAt: Date.now() };
@@ -173,6 +220,10 @@ export async function saveMandate(
     entityId: created.id,
     eventType: "created",
     payload: { property_id: d.property_id, type: d.type },
+  });
+  await syncPropertyOwner(supabase, d.property_id, d.owner_contact_id ?? null, {
+    id: profile.id,
+    orgId: profile.orgId,
   });
   await recomputeScores(supabase, d.property_id);
   revalidatePath(`/properties/${d.property_id}`);
