@@ -40,7 +40,16 @@ either. And **finding 1 is a defect, not a nice-to-have**: it locks agents out
 of properties they are supposed to work, and the standing "build nothing new"
 decision (HANDOFF §5) does not cover it.
 
-- **1. A property can never be assigned to an agent — DEFECT.**
+- ~~**1. A property can never be assigned to an agent — DEFECT.**~~ **SHIPPED
+  2026-08-21 (`cf15794`)** — a Parties panel on the property Overview, admin +
+  listing manager only. **Proven against the local stack, not reasoned about:**
+  an agent got the read-only fieldset on an unassigned property, could edit and
+  save once assigned (event attributed to her), and a forced submit of the
+  parties section as that agent was refused server-side with nothing written and
+  no phantom event. E2E in `tests/e2e/property-parties.spec.ts`.
+  The original entry follows.
+
+  - **1. A property can never be assigned to an agent — DEFECT.**
   `assigned_agent_id` is written in exactly one place, `lib/actions/properties.ts:67`,
   and only when the creator is an *agent* (self-assign, because the insert policy
   demands it). Nothing else in the app ever sets it: no picker, no bulk action,
@@ -56,7 +65,16 @@ decision (HANDOFF §5) does not cover it.
   **VERIFY:** `grep -rn "assigned_agent" components/features/properties` — any
   write means shipped. *(0 hits on 2026-08-21; one read at `app/(app)/properties/[id]/page.tsx:136`.)*
 
-- **2. Owner and developer are unreachable from the UI.**
+- ~~**2. Owner and developer are unreachable from the UI.**~~ **SHIPPED
+  2026-08-21 (`cf15794` + `cf962fb`)** — both columns are written by the Parties
+  panel; migration `0034` backfills `owner_contact_id` from each property's
+  newest ACTIVE mandate; `saveMandate` keeps them in step going forward but only
+  ever fills a BLANK, so a hand-set owner is never overwritten. `0034` writes one
+  system event per row changed and `verify_events_chain()` still returns true
+  after it. **Applied to LOCAL only — hosted is still on 0033** and would
+  backfill exactly 1 property (measured 2026-08-21). The original entry follows.
+
+  - **2. Owner and developer are unreachable from the UI.**
   `properties.owner_contact_id` is written only by `scripts/import/properties.mts:213`.
   `properties.developer_contact_id` is written by nothing — its only hit outside
   the generated types is `lib/actions/merge-contacts.ts:128` repointing a column
@@ -166,7 +184,13 @@ decision (HANDOFF §5) does not cover it.
   **VERIFY:** `grep -rn '"phase"' lib/validators lib/actions` — a creatable kind
   means shipped. *(only the `createUnit` guard on 2026-08-21.)*
 
-- **12. Every contact picker searches every contact — ENABLER.**
+- ~~**12. Every contact picker searches every contact — ENABLER.**~~ **SHIPPED
+  2026-08-21 (`cf15794`)** — `searchEntities` takes an optional `contactTypes`.
+  It uses `overlaps`, NOT `contains`: `contact_types` is an array on both sides
+  and a contact tagged `{owner,buyer}` must still match an Owner picker. Every
+  existing caller is unchanged. The original entry follows.
+
+  - **12. Every contact picker searches every contact — ENABLER.**
   `searchEntities("contact", …)` (`lib/actions/entity-search.ts:23-36`) has no
   type filter, so the "Owner contact" picker on a mandate offers buyers, lawyers
   and bankers. The query already exists one file away —
