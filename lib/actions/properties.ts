@@ -229,6 +229,39 @@ export async function updatePropertySection(
       short_description: strip(parsed.data.short_description),
       public_description: strip(parsed.data.public_description),
     };
+  } else if (section === "parties") {
+    // Admin + listing manager only, enforced HERE and not left to RLS. The
+    // properties UPDATE policy also admits the ASSIGNED AGENT, and its
+    // with-check tests org_id alone — so an agent could hand their own property
+    // to someone else and lock themselves out of it. Hiding the control would
+    // not be a guard; this is (same reasoning as archiveProperty below).
+    if (profile.role !== "admin" && profile.role !== "listing_manager") {
+      return {
+        error: "Only admins and listing managers can change who a property belongs to.",
+        savedAt: null,
+      };
+    }
+    const { partiesSectionSchema, resolvePartyUpdates } = await import(
+      "@/lib/validators/properties"
+    );
+    const parsed = partiesSectionSchema.safeParse(raw);
+    if (!parsed.success) {
+      return { error: parsed.error.issues[0]?.message ?? "Invalid input", savedAt: null };
+    }
+    // An agent id that isn't an active member grants edit rights to nobody and
+    // fails the FK with an opaque message — check it while we can still explain.
+    if (parsed.data.assigned_agent_id) {
+      const { data: agent } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("id", parsed.data.assigned_agent_id)
+        .eq("is_active", true)
+        .maybeSingle();
+      if (!agent) {
+        return { error: "That agent is not an active member of this office.", savedAt: null };
+      }
+    }
+    updates = resolvePartyUpdates(parsed.data, { kind: current.kind });
   } else {
     return { error: `Unknown section: ${section}`, savedAt: null };
   }

@@ -7,6 +7,7 @@ import {
   MarketingForm,
 } from "@/components/features/properties/detail-forms";
 import { ArchivePropertyButton } from "@/components/features/properties/archive-button";
+import { PartiesForm } from "@/components/features/properties/parties-form";
 import { MediaTab } from "@/components/features/properties/media-tab";
 import { DocumentsTab } from "@/components/features/properties/documents-tab";
 import {
@@ -181,13 +182,22 @@ export default async function PropertyDetailPage({
       ? "expired"
       : "none";
 
-  // owner labels for the mandate panel
-  const ownerIds = [...new Set(mandateRows.map((m) => m.owner_contact_id).filter(Boolean))];
-  const { data: ownerRows } = ownerIds.length
+  // Contact labels for the mandate panel AND the Parties panel — one fetch, so
+  // a mandate owner who is also the property owner is read once.
+  const contactIds = [
+    ...new Set(
+      [
+        ...mandateRows.map((m) => m.owner_contact_id),
+        p.owner_contact_id,
+        p.developer_contact_id,
+      ].filter(Boolean),
+    ),
+  ];
+  const { data: ownerRows } = contactIds.length
     ? await supabase
         .from("contacts")
         .select("id, display_name, phone_e164")
-        .in("id", ownerIds as string[])
+        .in("id", contactIds as string[])
     : { data: [] };
   const ownerById = new Map(
     (ownerRows ?? []).map((c) => [
@@ -195,6 +205,24 @@ export default async function PropertyDetailPage({
       { id: c.id, label: c.display_name ?? "Unnamed", sublabel: c.phone_e164 },
     ]),
   );
+
+  // The assigned agent is a profile, not a contact — and it may be an INACTIVE
+  // one, so this query must not filter on is_active or the panel would render
+  // empty while the column still points somewhere.
+  const { data: agentRow } = p.assigned_agent_id
+    ? await supabase
+        .from("profiles")
+        .select("id, full_name, role, is_active")
+        .eq("id", p.assigned_agent_id)
+        .maybeSingle()
+    : { data: null };
+  const assignedAgent = agentRow
+    ? {
+        id: agentRow.id,
+        label: agentRow.full_name,
+        sublabel: agentRow.is_active ? agentRow.role : `${agentRow.role} · inactive`,
+      }
+    : null;
   const mandatePanelRows: MandateRow[] = mandateRows.map((m) => ({
     id: m.id!,
     type: m.type as MandateRow["type"],
@@ -378,9 +406,24 @@ export default async function PropertyDetailPage({
               )}
             </div>
 
-            <p className="mt-4 text-xs text-text-3">
-              Mandate & key panels (T4.5/T4.6) land here as their tasks ship.
-            </p>
+            <div className="mt-6 border-t border-border/60 pt-4">
+              <h3 className="text-sm font-semibold text-text-1">Parties</h3>
+              <p className="mb-3 mt-1 text-xs text-text-3">
+                Who owns it, who built it, and who is responsible for it.
+              </p>
+              <PartiesForm
+                propertyId={p.id}
+                kind={p.kind}
+                owner={p.owner_contact_id ? (ownerById.get(p.owner_contact_id) ?? null) : null}
+                developer={
+                  p.developer_contact_id
+                    ? (ownerById.get(p.developer_contact_id) ?? null)
+                    : null
+                }
+                agent={assignedAgent}
+                readOnly={!isAdminOrLM}
+              />
+            </div>
           </div>
         </TabsContent>
 

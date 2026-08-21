@@ -14,19 +14,35 @@ export interface EntityOption {
  * Async search backing EntityPicker (doc 06): contacts by name/phone/email,
  * properties by reference/title, agents by name, deals by title (RLS keeps
  * agents to their own deals). Org scoping via RLS.
+ *
+ * `contactTypes` narrows a contact search to rows tagged with ANY of the given
+ * `contact_types` (BACKLOG audit finding 12) — so an Owner picker stops offering
+ * lawyers and bankers. Same predicate the contacts list already uses
+ * (`lib/queries/contacts-list.ts`), widened from one type to several because a
+ * seller and an owner are the same person to this desk. Passing nothing keeps
+ * the old behaviour, which is what every existing caller wants.
  */
-export async function searchEntities(kind: EntityKind, query: string): Promise<EntityOption[]> {
+export async function searchEntities(
+  kind: EntityKind,
+  query: string,
+  contactTypes?: readonly string[],
+): Promise<EntityOption[]> {
   const supabase = await createClient();
   const q = query.trim().replace(/[%,()]/g, " ").trim();
   if (q.length < 2) return [];
 
   if (kind === "contact") {
-    const { data } = await supabase
+    let contacts = supabase
       .from("contacts")
-      .select("id, display_name, phone_e164, email")
+      .select("id, display_name, phone_e164, email, contact_types")
       .eq("is_archived", false)
-      .or(`display_name.ilike.%${q}%,phone_e164.ilike.%${q}%,email.ilike.%${q}%`)
-      .limit(8);
+      .or(`display_name.ilike.%${q}%,phone_e164.ilike.%${q}%,email.ilike.%${q}%`);
+    // `overlaps`, not `contains`: contact_types is an array on both sides here
+    // and a contact tagged {owner,buyer} must match an Owner picker.
+    if (contactTypes && contactTypes.length > 0) {
+      contacts = contacts.overlaps("contact_types", contactTypes as string[]);
+    }
+    const { data } = await contacts.limit(8);
     return (data ?? []).map((c) => ({
       id: c.id,
       label: c.display_name ?? "Unnamed",

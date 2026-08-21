@@ -167,6 +167,64 @@ export type PropertyFilters = z.infer<typeof propertyFiltersSchema>;
 
 export const PROPERTIES_PAGE_SIZE = 25;
 
+/* ---------- parties: who owns it, who built it, who works it ---------- */
+
+export const PROPERTY_KINDS = ["standalone", "project", "phase", "unit"] as const;
+
+/** Kinds that can carry a developer. A standalone listing belongs to a private
+ *  owner by definition — the field is not rendered for it (see below). */
+export const DEVELOPER_KINDS = ["project", "phase", "unit"] as const;
+
+/**
+ * Parties section (BACKLOG audit findings 1 + 2). All three links are optional:
+ * a draft listing legitimately has none, and the EntityPicker posts "" when it
+ * is cleared, which `optionalUuid` turns into undefined → null on save.
+ *
+ * `assigned_agent_id` is NOT just another link. `properties_update` and
+ * `property_media_insert` (0002) admit an agent only when it equals their own
+ * id, so writing this column grants and revokes edit rights. That is why the
+ * action limits the whole section to admin + listing manager: the UPDATE
+ * with-check only tests `org_id`, so RLS would happily let an agent reassign
+ * their own property to somebody else and lock themselves out of it.
+ */
+export const partiesSectionSchema = z.object({
+  owner_contact_id: optionalUuid,
+  developer_contact_id: optionalUuid,
+  assigned_agent_id: optionalUuid,
+});
+
+export type PartiesSectionInput = z.infer<typeof partiesSectionSchema>;
+
+export interface PartyUpdates {
+  owner_contact_id: string | null;
+  assigned_agent_id: string | null;
+  developer_contact_id?: string | null;
+}
+
+/**
+ * Which party columns a save should write.
+ *
+ * The developer field is only rendered for project/phase/unit, so for a
+ * standalone listing it arrives ABSENT — and absent parses to undefined, which
+ * would otherwise be written as null and silently clear a value the form never
+ * showed. Same trap as the land panel in `updatePropertySection`, handled the
+ * same way: a column the form did not render is a column the save does not
+ * touch.
+ */
+export function resolvePartyUpdates(
+  parsed: PartiesSectionInput,
+  current: { kind: (typeof PROPERTY_KINDS)[number] },
+): PartyUpdates {
+  const updates: PartyUpdates = {
+    owner_contact_id: parsed.owner_contact_id ?? null,
+    assigned_agent_id: parsed.assigned_agent_id ?? null,
+  };
+  if ((DEVELOPER_KINDS as readonly string[]).includes(current.kind)) {
+    updates.developer_contact_id = parsed.developer_contact_id ?? null;
+  }
+  return updates;
+}
+
 /**
  * Create wizard (T1.2). Units/phases are created from their project's units
  * page (T1.6), not here — the wizard offers standalone and project.
