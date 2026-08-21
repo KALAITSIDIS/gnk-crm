@@ -583,8 +583,20 @@ explicit direction.
   never happened. **A latent wrong answer stayed invisible until something
   depended on it.**
   **VERIFY:** `grep -c "locationChanged" lib/utils/geo.ts` — 0 means reverted.
-- **HOSTED GRANTS ON `mandates_safe` ARE WIDER THAN THE REPO ASKS FOR — SECURITY,
-  found 2026-08-21 while applying 0036.** Measured, not inferred:
+- ~~**HOSTED GRANTS ON `mandates_safe` ARE WIDER THAN THE REPO ASKS FOR — SECURITY.**~~
+  **FIXED 2026-08-21, migration `0037`, applied to hosted the same day.** Hosted
+  and local ACLs are now byte-identical:
+  `{postgres=arwdDxtm, service_role=arwdDxtm, authenticated=r}`. Measured after:
+  `anon` can neither read nor insert, `authenticated` can read and not insert.
+  The RLS suite (48) and the mandate E2E both passed against the reduced grants
+  before it went to production, so listing managers still read the view.
+
+  `service_role` deliberately untouched — 0022 owns that question. The other two
+  views in `public` (`geography_columns`, `geometry_columns`) carry the same
+  broad grants and are deliberately left alone: they arrive with PostGIS and are
+  not this project's to manage. The original entry follows.
+
+  - **HOSTED GRANTS ON `mandates_safe` (original entry).** Measured, not inferred:
 
   | | `anon` | `authenticated` |
   |---|---|---|
