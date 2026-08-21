@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useActionState, useEffect, useRef, useState, useTransition } from "react";
-import { Plus } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus } from "lucide-react";
 import { toast } from "sonner";
 import {
   createPaymentPlan,
@@ -31,7 +31,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatArea, formatMoney } from "@/lib/utils/format";
+import { cn } from "@/lib/utils";
 import { PROPERTY_STATUSES, PROPERTY_TYPES } from "@/lib/validators/properties";
+import type { PriceListComparison } from "@/lib/services/price-list";
 
 const initialState: UnitActionState = { error: null, savedAt: null };
 
@@ -224,6 +226,111 @@ export interface PriceListRow {
   effective_date: string;
   notes: string | null;
   itemCount: number;
+  /** audit finding 4: the prices, and how they moved since the version before */
+  comparison: PriceListComparison;
+  summary: string;
+}
+
+/** "+€313.000" / "−€200.000" — the sign outside the symbol, because
+ *  formatMoney(-200000) renders "€-200.000", which reads like a typo. */
+function signed(n: number): string {
+  return `${n > 0 ? "+" : "−"}${formatMoney(Math.abs(n))}`;
+}
+
+/**
+ * One version, expandable to the prices it actually holds (audit finding 4).
+ *
+ * The snapshot has always been written and never read back — the UI could say
+ * "v3 covers 40 units" and could not show one price in it. A row here answers
+ * "what did we quote in March" and, next to it, what moved since the version
+ * before, which is the question that usually follows.
+ *
+ * Collapsed by default: a project with six versions of sixty units is 360 rows
+ * nobody asked for on page load.
+ */
+function PriceListVersion({ priceList }: { priceList: PriceListRow }) {
+  const [open, setOpen] = useState(false);
+  const c = priceList.comparison;
+
+  return (
+    <li className="py-2">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 text-left hover:text-brand-700"
+      >
+        {open ? (
+          <ChevronDown className="size-4 shrink-0 text-text-3" />
+        ) : (
+          <ChevronRight className="size-4 shrink-0 text-text-3" />
+        )}
+        <span className="font-medium text-text-1">v{priceList.version}</span>
+        <span className="text-text-2">{priceList.effective_date}</span>
+        <span className="text-xs text-text-3">{priceList.summary}</span>
+        <span className="ml-auto flex items-center gap-2 tabular-nums">
+          <span className="font-medium text-text-1">{formatMoney(c.total)}</span>
+          {c.totalDelta !== null && c.totalDelta !== 0 ? (
+            <span className={c.totalDelta > 0 ? "text-success text-xs" : "text-danger text-xs"}>
+              {signed(c.totalDelta)}
+            </span>
+          ) : null}
+        </span>
+      </button>
+
+      {priceList.notes ? (
+        <p className="ml-6 mt-1 text-xs text-text-3">{priceList.notes}</p>
+      ) : null}
+
+      {open ? (
+        <div className="ml-6 mt-2 overflow-x-auto">
+          {c.droppedCount > 0 ? (
+            <p className="mb-2 text-xs text-warning">
+              {c.droppedCount} unit{c.droppedCount === 1 ? " was" : "s were"} in the previous
+              version and not this one — the totals cover different inventory.
+            </p>
+          ) : null}
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Unit</TableHead>
+                <TableHead className="text-right">Price</TableHead>
+                <TableHead className="text-right">Was</TableHead>
+                <TableHead className="text-right">Change</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {c.rows.map((r) => (
+                <TableRow key={r.unit_id} className="h-9">
+                  <TableCell className="font-medium">{r.label}</TableCell>
+                  <TableCell className="text-right tabular-nums">{formatMoney(r.price)}</TableCell>
+                  <TableCell className="text-right tabular-nums text-text-3">
+                    {r.previousPrice === null ? (r.isNew ? "new" : "—") : formatMoney(r.previousPrice)}
+                  </TableCell>
+                  <TableCell
+                    className={cn(
+                      "text-right tabular-nums",
+                      r.delta === null || r.delta === 0
+                        ? "text-text-3"
+                        : r.delta > 0
+                          ? "text-success"
+                          : "text-danger",
+                    )}
+                  >
+                    {r.delta === null
+                      ? "—"
+                      : r.delta === 0
+                        ? "0"
+                        : `${signed(r.delta)}${r.deltaPct !== null ? ` (${(r.deltaPct * 100).toFixed(1)}%)` : ""}`}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      ) : null}
+    </li>
+  );
 }
 
 export function PriceListsSection({
@@ -248,12 +355,7 @@ export function PriceListsSection({
       ) : (
         <ul className="divide-y divide-border text-sm">
           {priceLists.map((pl) => (
-            <li key={pl.id} className="flex items-center justify-between py-2">
-              <span className="font-medium text-text-1">v{pl.version}</span>
-              <span className="text-text-2">{pl.effective_date}</span>
-              <span className="text-text-2">{pl.itemCount} units</span>
-              <span className="max-w-48 truncate text-text-3">{pl.notes ?? ""}</span>
-            </li>
+            <PriceListVersion key={pl.id} priceList={pl} />
           ))}
         </ul>
       )}

@@ -12,6 +12,7 @@ import {
 } from "@/components/features/properties/units-matrix";
 import { GenerateUnitsForm } from "@/components/features/properties/generate-units-form";
 import { InheritanceDrift } from "@/components/features/properties/inheritance-drift";
+import { comparePriceLists, summariseVersion } from "@/lib/services/price-list";
 import {
   computeInheritanceDrift,
   UNIT_PARENT_SELECT,
@@ -21,6 +22,12 @@ import { Button } from "@/components/ui/button";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
+
+interface PriceListItemRow {
+  unit_id: string;
+  list_price: number | string;
+  properties: { reference: string; unit_number: string | null; block: string | null } | null;
+}
 
 export default async function ProjectUnitsPage({
   params,
@@ -55,7 +62,11 @@ export default async function ProjectUnitsPage({
       .order("unit_number"),
     supabase
       .from("price_lists")
-      .select("id, version, effective_date, notes, price_list_items(unit_id)")
+      // audit finding 4: the PRICES, not just a count of them. list_price was
+      // written by every snapshot since 0001 and selected by nothing.
+      .select(
+        "id, version, effective_date, notes, price_list_items(unit_id, list_price, properties(reference, unit_number, block))",
+      )
       .eq("project_id", id)
       .order("version", { ascending: false }),
     supabase
@@ -74,13 +85,36 @@ export default async function ProjectUnitsPage({
     asking_price: u.asking_price === null ? null : Number(u.asking_price),
   }));
 
-  const priceLists: PriceListRow[] = (priceListRows ?? []).map((pl) => ({
+  // Versions come back newest-first, so each one's predecessor is the NEXT
+  // element — that is what it gets compared against.
+  const rawLists = (priceListRows ?? []).map((pl) => ({
     id: pl.id,
     version: pl.version,
     effective_date: pl.effective_date,
     notes: pl.notes,
-    itemCount: (pl.price_list_items ?? []).length,
+    items: ((pl.price_list_items ?? []) as PriceListItemRow[]).map((it) => ({
+      unit_id: it.unit_id,
+      list_price: it.list_price,
+      unit_label:
+        [it.properties?.block, it.properties?.unit_number].filter(Boolean).join("") ||
+        it.properties?.reference ||
+        null,
+      reference: it.properties?.reference ?? null,
+    })),
   }));
+
+  const priceLists: PriceListRow[] = rawLists.map((pl, i) => {
+    const comparison = comparePriceLists(pl.items, rawLists[i + 1]?.items ?? null);
+    return {
+      id: pl.id,
+      version: pl.version,
+      effective_date: pl.effective_date,
+      notes: pl.notes,
+      itemCount: pl.items.length,
+      comparison,
+      summary: summariseVersion(comparison),
+    };
+  });
 
   const plans: PaymentPlanRow[] = (planRows ?? []).map((p) => ({
     id: p.id,

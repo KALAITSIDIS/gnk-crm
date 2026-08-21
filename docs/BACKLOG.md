@@ -108,7 +108,29 @@ decision (HANDOFF §5) does not cover it.
   **VERIFY:** `grep -c "kind:" lib/validators/properties.ts` — `1` = only the
   create schema has it, so the filter is missing. *(1 on 2026-08-21.)*
 
-- **4. Versioned price lists are write-only.**
+- ~~**4. Versioned price lists are write-only.**~~ **SHIPPED 2026-08-21** — a
+  version expands to the prices it holds, with the delta against the version
+  before it. `list_price` had been written by every snapshot since `0001` and
+  selected by nothing.
+
+  The collapsed row already answers the two questions worth asking — "66 units ·
+  61 repriced · €19.058.000 · +€313.000" — and expanding gives Unit / Price /
+  Was / Change per unit.
+
+  **A first version gets null deltas, not zeroes.** A fabricated 0 reads as "we
+  held the price", which is a different statement from "there was no previous
+  price". **Dropped units are COUNTED and called out**, because a unit in the old
+  version and not the new one means the two totals no longer cover the same
+  inventory and are not comparable. Collapsed by default: six versions of sixty
+  units is 360 rows nobody asked for on page load.
+
+  **Still open, and the other half of the original entry: APPLYING an uplift.**
+  Reading a version is done; minting the next one by applying a % or fixed
+  change to a selection is not — today you edit unit prices and snapshot.
+  **VERIFY:** `grep -rn "list_price" app components lib/services` — 0 hits means
+  the read half was reverted. The original entry follows.
+
+  - **4. Versioned price lists are write-only (original).**
   `createPriceListVersion` snapshots every unit price into
   `price_list_items.list_price` (`lib/actions/units.ts:200`). **That column is
   never selected again.** `app/(app)/properties/[id]/units/page.tsx:52` reads
