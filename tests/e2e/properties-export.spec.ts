@@ -20,7 +20,7 @@ test.describe("Properties CSV export", () => {
     const body = await res.text();
     expect(body.charCodeAt(0)).toBe(0xfeff); // UTF-8 BOM
     expect(body.replace(/^﻿/, "")).toMatch(
-      /^Reference,Kind,Type,Transaction,Status,Visibility,Title,District,Area,Address,Bedrooms,Bathrooms,Covered m²,Plot m²,Asking price,Rent\/month,Mandate,Quality\r\n/,
+      /^Reference,Kind,Type,Transaction,Status,Visibility,Title,District,Area,Address,Bedrooms,Bathrooms,Covered m²,Plot m²,Asking price,Rent\/month,Mandate,Owner,Developer,Agent,Title deed,Permit,Latitude,Longitude,Quality\r\n/,
     );
   });
 

@@ -23,6 +23,7 @@ import {
   MAX_GENERATED_UNITS,
   MAX_PER_FLOOR,
 } from "@/lib/services/unit-generator";
+import { inScope, previewUplift, type UpliftMode } from "@/lib/services/price-uplift";
 
 export type UnitActionState = { error: string | null; savedAt: number | null };
 
@@ -516,6 +517,150 @@ export async function createPriceListVersion(
   });
 
   revalidatePath(`/properties/${projectId}/units`);
+  return { error: null, savedAt: Date.now() };
+}
+
+const upliftSchema = z.object({
+  project_id: z.guid("Missing project"),
+  block: z.preprocess(emptyToUndefined, z.string().max(20).optional()),
+  mode: z.enum(["percent", "fixed"]),
+  amount: z.coerce.number().refine((n) => n !== 0, "Enter a change other than zero"),
+  notes: z.preprocess(emptyToUndefined, z.string().max(200).optional()),
+});
+
+/**
+ * Raise or cut a block's prices and mint the price-list version that records it
+ * (BACKLOG audit finding 4, the other half).
+ *
+ * Reading a version shipped earlier; minting the next one still meant editing
+ * sixty unit prices by hand and then snapshotting. "Raise the C block by 3% from
+ * 1 September" is one sentence and is now one action.
+ *
+ * IT CHANGES THE UNITS AND THEN SNAPSHOTS, in that order and in one go. The
+ * asking price IS the current price, so a version that recorded new numbers
+ * while the units still held the old ones would be a lie in the record — and
+ * the snapshot exists precisely to be quoted from later.
+ *
+ * Each unit keeps its own trail: the 0005 trigger writes a `price_history` row
+ * per unit automatically, and a `price_changed` event per unit is written here.
+ * A single project-level "repriced 60 units" row would leave sixty timelines
+ * with an unexplained number.
+ *
+ * Unpriced units are skipped, never treated as zero — see `upliftPrice`.
+ */
+export async function applyPriceUplift(
+  _prev: UnitActionState,
+  formData: FormData,
+): Promise<UnitActionState> {
+  const parsed = upliftSchema.safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input", savedAt: null };
+  }
+  const input = parsed.data;
+
+  const supabase = await createClient();
+  const profile = await getCurrentProfile(supabase);
+
+  const { data: project } = await supabase
+    .from("properties")
+    .select("id, org_id, kind, reference")
+    .eq("id", input.project_id)
+    .maybeSingle();
+  if (!project) return { error: "Project not found", savedAt: null };
+  if (project.kind !== "project" && project.kind !== "phase") {
+    return { error: "Prices are managed on a project", savedAt: null };
+  }
+
+  const { data: units } = await supabase
+    .from("properties")
+    .select("id, reference, block, asking_price")
+    .eq("parent_id", input.project_id)
+    .eq("kind", "unit");
+
+  const targets = inScope(
+    (units ?? []).map((u) => ({
+      id: u.id,
+      reference: u.reference,
+      block: u.block,
+      asking_price: u.asking_price,
+    })),
+    input.block ?? null,
+  );
+  if (targets.length === 0) {
+    return { error: "No units in that scope", savedAt: null };
+  }
+
+  const preview = previewUplift(targets, {
+    mode: input.mode as UpliftMode,
+    amount: input.amount,
+  });
+  if (preview.rows.length === 0) {
+    return {
+      error:
+        preview.skipped === targets.length
+          ? "None of those units has a price to change."
+          : "That change rounds to nothing — no price would move.",
+      savedAt: null,
+    };
+  }
+
+  // One update per unit: the prices differ per row, and the 0005 trigger has to
+  // see each old→new pair to write its price_history entry.
+  for (const row of preview.rows) {
+    const { error } = await supabase
+      .from("properties")
+      .update({ asking_price: row.to })
+      .eq("id", row.id);
+    if (error) return { error: error.message, savedAt: null };
+  }
+
+  await logEvents(
+    supabase,
+    preview.rows.map((row) => ({
+      orgId: project.org_id,
+      actorId: profile.id,
+      entityType: "property" as const,
+      entityId: row.id,
+      eventType: "price_changed",
+      payload: {
+        source: "bulk_uplift",
+        from: row.from,
+        to: row.to,
+        mode: input.mode,
+        amount: input.amount,
+        scope: input.block ?? "all units",
+        project: project.reference,
+      },
+    })),
+  );
+
+  // …then record it as a version, so the change is quotable later
+  const label =
+    input.mode === "percent"
+      ? `${input.amount > 0 ? "+" : ""}${input.amount}%`
+      : `${input.amount > 0 ? "+" : ""}${input.amount}`;
+  const scope = input.block ? `block ${input.block}` : "all units";
+  const snapshot = new FormData();
+  snapshot.set("project_id", input.project_id);
+  snapshot.set(
+    "notes",
+    input.notes ?? `${label} on ${scope} (${preview.rows.length} units)`,
+  );
+  const versioned = await createPriceListVersion(
+    { error: null, savedAt: null },
+    snapshot,
+  );
+  if (versioned.error) {
+    // the prices ARE changed at this point; say so rather than implying a
+    // rollback that did not happen
+    return {
+      error: `Prices updated, but the version was not created: ${versioned.error}`,
+      savedAt: null,
+    };
+  }
+
+  revalidatePath(`/properties/${input.project_id}/units`);
+  revalidatePath("/properties");
   return { error: null, savedAt: Date.now() };
 }
 

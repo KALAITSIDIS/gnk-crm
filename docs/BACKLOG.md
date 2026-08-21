@@ -108,8 +108,8 @@ decision (HANDOFF §5) does not cover it.
   **VERIFY:** `grep -c "kind:" lib/validators/properties.ts` — `1` = only the
   create schema has it, so the filter is missing. *(1 on 2026-08-21.)*
 
-- ~~**4. Versioned price lists are write-only.**~~ **SHIPPED 2026-08-21** — a
-  version expands to the prices it holds, with the delta against the version
+- ~~**4. Versioned price lists are write-only.**~~ **DONE 2026-08-21, both
+  halves.** A version expands to the prices it holds, with the delta against the version
   before it. `list_price` had been written by every snapshot since `0001` and
   selected by nothing.
 
@@ -424,11 +424,19 @@ decision (HANDOFF §5) does not cover it.
   different units do share a building.
   **VERIFY:** `grep -rci "duplicate" lib/actions/properties.ts` — *(0 on 2026-08-21.)*
 
-- **14. The CSV export omits every relationship.** **PARTLY DONE 2026-08-21 —
-  `Kind` shipped with finding 3**, because a list that hides units by default
-  owes its export a column saying which it holds. **Still missing: owner,
-  developer, assigned agent, coordinates, deed and permit status** — that is the
-  bulk of this entry and it is still open. Do not strike it.
+- ~~**14. The CSV export omits every relationship.**~~ **DONE 2026-08-21.**
+  `Kind` shipped with finding 3; owner, developer, assigned agent, title-deed
+  status, permit status and coordinates followed.
+
+  **Latitude and Longitude are two columns, not one string.** A "34.77, 32.42"
+  cell makes somebody parse it back out before they can plot anything, and a
+  spreadsheet is the whole reason this export exists. A property with no point
+  gets two EMPTY cells — a 0 would put it in the Gulf of Guinea.
+
+  Measured against real rows: a phase exported as
+  `…,Andreas Georgiou,Leptos Estates,Maria Christodoulou,pending,full,…`.
+  **VERIFY:** `grep -c "Developer" lib/services/property-export.ts` — 0 means
+  reverted.
 
   - **14. The CSV export omits every relationship (original entry).**
   Seventeen columns (`lib/services/property-export.ts:52-72`), none of which say

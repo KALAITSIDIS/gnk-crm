@@ -17,6 +17,7 @@ import {
   type PhaseRow,
 } from "@/components/features/properties/phases-section";
 import { comparePriceLists, summariseVersion } from "@/lib/services/price-list";
+import { PriceUpliftForm } from "@/components/features/properties/price-uplift-form";
 import {
   computeInheritanceDrift,
   UNIT_PARENT_SELECT,
@@ -189,6 +190,19 @@ export default async function ProjectUnitsPage({
           <AddUnitForm projectId={id} />
         </div>
       ) : null}
+      {canManage ? (
+        <PriceUpliftForm
+          projectId={id}
+          units={units.map((u) => ({
+            id: u.id,
+            reference: u.reference,
+            block: u.block,
+            asking_price: u.asking_price,
+          }))}
+          nextVersion={(priceLists[0]?.version ?? 0) + 1}
+        />
+      ) : null}
+
       <div className="grid gap-4 lg:grid-cols-2">
         <PriceListsSection projectId={id} priceLists={priceLists} canManage={canManage} />
         <PaymentPlansSection projectId={id} plans={plans} canManage={canManage} />

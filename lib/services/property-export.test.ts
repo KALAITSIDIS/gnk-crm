@@ -18,6 +18,12 @@ const base: PropertyExportRow = {
   asking_price: "750000.00",
   rent_price_month: null,
   quality_score: 82,
+  title_deed_status: "separate",
+  permit_status: "full",
+  location: null,
+  owner: { display_name: "Andreas Georgiou" },
+  developer: null,
+  agent: { full_name: "Maria Christodoulou" },
   districts: { name: { en: "Paphos" } },
   areas: { name: { en: "Kato Paphos" } },
   mandates: [{ type: "exclusive", status: "active" }],
@@ -29,7 +35,7 @@ describe("propertyCsvColumns", () => {
   it("names every exported column in the header", () => {
     const header = line(toCsv(propertyCsvColumns(), []), 0);
     expect(header).toBe(
-      "Reference,Kind,Type,Transaction,Status,Visibility,Title,District,Area,Address,Bedrooms,Bathrooms,Covered m²,Plot m²,Asking price,Rent/month,Mandate,Quality",
+      "Reference,Kind,Type,Transaction,Status,Visibility,Title,District,Area,Address,Bedrooms,Bathrooms,Covered m²,Plot m²,Asking price,Rent/month,Mandate,Owner,Developer,Agent,Title deed,Permit,Latitude,Longitude,Quality",
     );
   });
 
@@ -68,5 +74,34 @@ describe("propertyCsvColumns", () => {
     expect(row).toContain("Paphos");
     // rent (null) and bedrooms (null) render as empty cells, not 0
     expect(row).toContain(",Kato Paphos,12 Poseidonos Ave,,"); // area,address,bedrooms(empty)
+  });
+});
+
+describe("propertyCsvColumns — relationships (audit finding 14)", () => {
+  const value = (header: string, row = base) =>
+    propertyCsvColumns().find((c) => c.header === header)!.value(row);
+
+  it("carries the parties an export gets grouped by", () => {
+    expect(value("Owner")).toBe("Andreas Georgiou");
+    expect(value("Agent")).toBe("Maria Christodoulou");
+    expect(value("Developer")).toBe(""); // absent, not "null"
+  });
+
+  it("carries the legal status the desk chases", () => {
+    expect(value("Title deed")).toBe("separate");
+    expect(value("Permit")).toBe("full");
+  });
+
+  it("splits coordinates into two columns a spreadsheet can plot", () => {
+    // one "34.77, 32.42" string would make somebody parse it back out
+    const withPoint = { ...base, location: "0101000020E6100000D0D556EC2FCA4040D0D556EC2FCA4140" };
+    expect(value("Latitude", withPoint)).not.toBe("");
+    expect(value("Longitude", withPoint)).not.toBe("");
+  });
+
+  it("leaves both coordinate cells empty when there is no point", () => {
+    // an empty cell is "unknown"; a 0 would be a place in the Gulf of Guinea
+    expect(value("Latitude")).toBe("");
+    expect(value("Longitude")).toBe("");
   });
 });

@@ -1,4 +1,5 @@
 import { type CsvColumn } from "./csv";
+import { parseLocationPoint } from "@/lib/utils/geo";
 
 /**
  * Column mapping for the properties CSV export (IMPROVEMENTS B10). Pure and
@@ -12,7 +13,7 @@ import { type CsvColumn } from "./csv";
 
 /** SELECT columns excluding the dynamic mandate embed the route appends. */
 export const PROPERTY_EXPORT_BASE_SELECT =
-  "reference, kind, property_type, transaction_type, status, visibility, title, address, bedrooms, bathrooms, covered_area_sqm, plot_area_sqm, asking_price, rent_price_month, quality_score, districts(name), areas(name)";
+  "reference, kind, property_type, transaction_type, status, visibility, title, address, bedrooms, bathrooms, covered_area_sqm, plot_area_sqm, asking_price, rent_price_month, quality_score, title_deed_status, permit_status, location, districts(name), areas(name), owner:contacts!owner_contact_id(display_name), developer:contacts!developer_contact_id(display_name), agent:profiles!assigned_agent_id(full_name)";
 
 type Multilang = { en?: string } | null;
 type MandateEmbedRow = { type: string; status: string };
@@ -33,13 +34,26 @@ export interface PropertyExportRow {
   asking_price: number | string | null;
   rent_price_month: number | string | null;
   quality_score: number | null;
+  title_deed_status: string | null;
+  permit_status: string | null;
+  /** PostGIS point, EWKB hex from the API — decoded for the CSV */
+  location: unknown;
   districts: { name?: Multilang } | null;
   areas: { name?: Multilang } | null;
+  owner: { display_name: string | null } | null;
+  developer: { display_name: string | null } | null;
+  agent: { full_name: string | null } | null;
   mandates: MandateEmbedRow[] | null;
 }
 
 const en = (m: Multilang | undefined): string => (m?.en ?? "").trim();
 const num = (v: number | string | null): string => (v === null || v === "" ? "" : String(v));
+
+/** One half of the map point, or "" when the property has no coordinates. */
+function coord(location: unknown, part: "lat" | "lng"): string {
+  const point = parseLocationPoint(location);
+  return point === null ? "" : String(point[part]);
+}
 
 /** Mandate badge state, same rule as the list page: active wins, else expired, else none. */
 function mandateState(mandates: MandateEmbedRow[] | null): string {
@@ -70,6 +84,16 @@ export function propertyCsvColumns(): CsvColumn<PropertyExportRow>[] {
     { header: "Asking price", value: (p) => num(p.asking_price) },
     { header: "Rent/month", value: (p) => num(p.rent_price_month) },
     { header: "Mandate", value: (p) => mandateState(p.mandates) },
+    // audit finding 14: an export that cannot be grouped by developer, or sent
+    // to the agent who owns the listing, is not much use in either conversation
+    { header: "Owner", value: (p) => p.owner?.display_name ?? "" },
+    { header: "Developer", value: (p) => p.developer?.display_name ?? "" },
+    { header: "Agent", value: (p) => p.agent?.full_name ?? "" },
+    { header: "Title deed", value: (p) => p.title_deed_status },
+    { header: "Permit", value: (p) => p.permit_status },
+    // split, so a spreadsheet can plot them without anyone parsing a string
+    { header: "Latitude", value: (p) => coord(p.location, "lat") },
+    { header: "Longitude", value: (p) => coord(p.location, "lng") },
     { header: "Quality", value: (p) => (p.quality_score === null ? "" : String(p.quality_score)) },
   ];
 }
