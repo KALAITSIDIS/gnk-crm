@@ -27,6 +27,237 @@ built without explicit direction.
 > commit. Do not delete it: a struck-through entry is what stops the next person
 > re-proposing the same work.
 
+## Properties module audit — 2026-08-21
+
+Fifteen findings from a full read of M1 (properties, mandates, units, media,
+export) against the code, not against this file. **Ranked by cost to the desk.**
+Every VERIFY line below was RUN before it was written down.
+
+Two things are worth saying before the list. **The schema already models what
+the desk needs and the application does not use it** — `owner_contact_id` and
+`developer_contact_id` have existed since `0001` and no screen writes or reads
+either. And **finding 1 is a defect, not a nice-to-have**: it locks agents out
+of properties they are supposed to work, and the standing "build nothing new"
+decision (HANDOFF §5) does not cover it.
+
+- **1. A property can never be assigned to an agent — DEFECT.**
+  `assigned_agent_id` is written in exactly one place, `lib/actions/properties.ts:67`,
+  and only when the creator is an *agent* (self-assign, because the insert policy
+  demands it). Nothing else in the app ever sets it: no picker, no bulk action,
+  no import column. That column is load-bearing for RLS —
+  `0002_rls_policies.sql:164` (properties_update) and `:173` (property_media_insert)
+  both admit an agent only when `assigned_agent_id = auth.uid()`. **So every
+  property created by an admin or a listing manager is permanently uneditable by
+  every agent, and no agent can add a photo to it.** The save even returns
+  "Nothing was saved — this property isn't assigned to you", an error whose cure
+  does not exist in the product. Fix: an assignment control (admin + LM only —
+  an agent must not be able to hand their own property away and lock themselves
+  out, since the UPDATE with-check only tests `org_id`).
+  **VERIFY:** `grep -rn "assigned_agent" components/features/properties` — any
+  write means shipped. *(0 hits on 2026-08-21; one read at `app/(app)/properties/[id]/page.tsx:136`.)*
+
+- **2. Owner and developer are unreachable from the UI.**
+  `properties.owner_contact_id` is written only by `scripts/import/properties.mts:213`.
+  `properties.developer_contact_id` is written by nothing — its only hit outside
+  the generated types is `lib/actions/merge-contacts.ts:128` repointing a column
+  no screen fills. Neither is displayed on the detail page, the list, the map or
+  the export. The only owner the app knows is `mandates.owner_contact_id`, so a
+  property with no mandate has no owner anywhere, and "everything this developer
+  has" is unanswerable. Fix: a Parties section on the detail page, both columns
+  in the create wizard, and a backfill of `owner_contact_id` from the active
+  mandate's owner where null.
+  **VERIFY:** `grep -rn "developer_contact_id" app components lib/actions | grep -v merge-contacts`
+  — any hit means shipped. *(0 on 2026-08-21.)*
+
+- **3. Units flood the properties list.**
+  `propertyFiltersSchema` (`lib/validators/properties.ts:132`) has no `kind`
+  field, so units, phases, projects and standalone listings share one list,
+  ordered `created_at desc`, 25 per page. One 60-unit project buries two and a
+  half pages of real listings, and does the same to the CSV export and the map.
+  Fix is one enum in the schema, one `Select` in the filter bar, and a default
+  scope of standalone + project so units are reached through their project.
+  **VERIFY:** `grep -c "kind:" lib/validators/properties.ts` — `1` = only the
+  create schema has it, so the filter is missing. *(1 on 2026-08-21.)*
+
+- **4. Versioned price lists are write-only.**
+  `createPriceListVersion` snapshots every unit price into
+  `price_list_items.list_price` (`lib/actions/units.ts:200`). **That column is
+  never selected again.** `app/(app)/properties/[id]/units/page.tsx:52` reads
+  `price_list_items(unit_id)` purely for a count, so the UI can say version 3
+  covers 40 units and cannot show one price in it. A snapshot nobody can read is
+  storage, not a record — and "what did we quote in March" is the entire point of
+  versioning for a developer. Fix: read a version, diff it against the previous
+  one per unit, and apply a % or fixed uplift to a selection to mint the next.
+  **VERIFY:** `grep -rn "list_price" app components` — 0 hits means still
+  write-only. *(0 on 2026-08-21.)*
+
+- **5. A unit inherits five fields from its project; everything else is retyped.**
+  `createUnit` copies `transaction_type`, `district_id`, `area_id`, `address`,
+  `postal_code` (`lib/actions/units.ts:63-68`). Not copied, and therefore blank
+  on every unit forever unless typed 60 times: developer, owner, VAT status,
+  currency, title-deed status, permit status, energy class, delivery date,
+  construction status, features, amenities, coordinates, assigned agent,
+  visibility, description. Doc 02 §C1 says units inherit "unless overridden";
+  the implementation inherits five columns and has no override concept.
+  Fix: widen the inherited set, and record which columns are still project-derived
+  in a `properties.inherited_fields text[]` so a later project edit can offer
+  "update the N units that still inherit this" without touching the ones somebody
+  deliberately changed.
+  **VERIFY:** `grep -c "project\." lib/actions/units.ts` — `16` on 2026-08-21
+  (5 inherited columns plus the guard and event reads). A larger number means it was widened.
+
+- **6. Mandates can only be retyped, never renewed.**
+  `MANDATE_TRANSITIONS` (`lib/validators/mandates.ts:10-15`) is a dead end:
+  `expired: []`, `terminated: []`. Renewing means a blank dialog and re-entering
+  owner, type, commission, reminder days and notes, and the new row carries no
+  link to the one it replaces. For a business whose commission evidence is a hash
+  chain, an unlinked mandate history is a real loss. Fix: `renewed_from_id` plus
+  a Renew action that copies the terms forward and shifts the dates by the same
+  duration.
+  **VERIFY:** `grep -rl "renewed_from" supabase/migrations lib` — any hit means
+  shipped. *(none on 2026-08-21.)*
+
+- **7. Nothing stops two active exclusive mandates on one property.**
+  `saveMandate` inserts at `lib/actions/mandates.ts:151` with no pre-check, and
+  every reader ("active wins the badge") just takes the first active row it
+  finds. Two exclusives with different commission rates can coexist and the UI
+  will show one of them arbitrarily. Fix: a partial unique index — one active
+  mandate per property — so it is a database guarantee rather than a convention.
+  It protects the number the business gets paid on.
+  **VERIFY:** `grep -rn "unique.*mandates\|mandates.*unique" supabase/migrations`
+  — *(0 on 2026-08-21.)*
+
+- **8. An active mandate can have no owner.**
+  `owner_contact_id` is `optionalUuid` in `saveMandateSchema`
+  (`lib/validators/mandates.ts:48`) and `setMandateStatus` does not check it.
+  A mandate is a contract with a person; one that names nobody is worth 10 points
+  on the quality score and nothing in a dispute. Fix: require it on the
+  `draft → active` transition, not at insert, so a half-entered draft still saves.
+  **VERIFY:** `grep -n "owner_contact_id" lib/actions/mandates.ts` — a check
+  inside `setMandateStatus` means shipped. *(only the two writes on 2026-08-21.)*
+
+- **9. A contact record never shows its properties.**
+  `app/(app)/contacts/[id]/page.tsx` has six tabs (Profile · Preferences · KYC ·
+  Activity · Deals · Documents, lines 236-245) and queries `properties` in none
+  of them. Open a developer and you get their phone number, not their inventory.
+  This is the other half of finding 2 — once the two party columns are filled it
+  is a single query and one tab.
+  **VERIFY:** `grep -c 'from("properties")' "app/(app)/contacts/[id]/page.tsx"` —
+  *(0 on 2026-08-21.)*
+
+- **10. Three project columns are dead in the UI.**
+  `construction_status` and `delivery_date` have zero references anywhere outside
+  the schema and `database.types.ts`. `currency` is read once
+  (`app/(app)/share-links/page.tsx:33`) and written by nothing, so every listing
+  is silently EUR. Delivery date is the most-asked question about an off-plan
+  unit and it is already a column.
+  **VERIFY:** `grep -rn "delivery_date\|construction_status" app components lib/actions`
+  — *(0 on 2026-08-21.)*
+
+- **11. `phase` is a kind that cannot be created.**
+  The enum has four kinds. `CREATABLE_KINDS` offers two
+  (`lib/validators/properties.ts:174`) and `createUnit` hardcodes the third, so
+  nothing can produce a `phase` — yet three read paths branch on it
+  (`properties/[id]/page.tsx:293`, `units/page.tsx:33`, `units.ts:47`). Either
+  build phase creation (a large project genuinely sells in phases, with separate
+  price lists and delivery dates) or delete the branches. **A code path nobody can
+  reach is a claim, and claims here go stale silently** — same rule as this file's
+  own header.
+  **VERIFY:** `grep -rn '"phase"' lib/validators lib/actions` — a creatable kind
+  means shipped. *(only the `createUnit` guard on 2026-08-21.)*
+
+- **12. Every contact picker searches every contact — ENABLER.**
+  `searchEntities("contact", …)` (`lib/actions/entity-search.ts:23-36`) has no
+  type filter, so the "Owner contact" picker on a mandate offers buyers, lawyers
+  and bankers. The query already exists one file away —
+  `lib/queries/contacts-list.ts:78` filters with `.contains("contact_types", [type])`.
+  Small alone, but it is the prerequisite for the party model in finding 2:
+  "choose the developer" only works if the picker knows what a developer is.
+  **VERIFY:** `grep -c "contact_types" lib/actions/entity-search.ts` — *(0 on 2026-08-21.)*
+
+- **13. No duplicate guard when creating a property.**
+  Contacts block duplicates live on `phone_e164` and warn on email. Properties
+  have no equivalent, so the same villa entered twice yields two references, two
+  mandates and two photo sets — and both burn a `reference_counters` value that
+  can never be reissued. The indexes for the check already exist:
+  `properties_location_gix` (GiST on the point) makes "within 30 m" cheap and
+  `properties_ref_trgm` covers fuzzy matching. Warn, never block: two genuinely
+  different units do share a building.
+  **VERIFY:** `grep -rci "duplicate" lib/actions/properties.ts` — *(0 on 2026-08-21.)*
+
+- **14. The CSV export omits every relationship.**
+  Seventeen columns (`lib/services/property-export.ts:52-72`), none of which say
+  who owns it, who built it, who is responsible for it, whether it is a unit or a
+  project, or where it is. An export that cannot be grouped by developer is not
+  much use in a developer conversation. Add: kind, owner, developer, assigned
+  agent, coordinates, deed + permit status.
+  **VERIFY:** `grep -c "Owner\|Developer\|Kind" lib/services/property-export.ts` —
+  *(0 on 2026-08-21.)*
+
+- **15. The quality score never asks who is responsible.**
+  Eleven weighted items (`lib/services/quality-score.ts:49-89`) covering photos,
+  copy, price, area, coordinates and legal status. None covers an assigned agent
+  or a linked owner — reasonably, since neither is currently fillable. Once 1 and
+  2 land they are the obvious additions, and the score is the mechanism that
+  actually gets the desk to fill them in. **Do not do this before 1 and 2** — a
+  score item for a field with no input is a permanent deduction.
+  **VERIFY:** `grep -c "agent\|owner" lib/services/quality-score.ts` — *(0 on 2026-08-21.)*
+
+### Proposals that came out of the same read
+
+Not defects — features the audit argued for, all following one rule: **the
+system already knows something, so stop asking a person for it.** Sizes are
+relative (S = an afternoon, M = a few days). Nothing here gets built without
+explicit direction.
+
+- **Party defaults, S→M.** A developer's standard commission, mandate type and
+  duration, usual VAT treatment, district, boilerplate and payment plan, stored
+  on the contact as `party_defaults jsonb` (the same pattern the row already uses
+  for `preferences`, `kyc`, `banking_readiness`), with an office-level fallback in
+  `cyprus_config` — which already carries `verified_at` and `source_note`, the
+  right shape for a number somebody has to stand behind. Resolution order:
+  unit ← project ← party ← office. **Every prefill stays editable; a default is a
+  suggestion, not a lock.**
+- **Bulk unit generator, M.** "Block A, floors 1–5, units 01–04, 2-bed, 85 m²,
+  €250k base +€5k per floor" creates twenty units with correct references in one
+  submit. The single biggest reason a developer project is painful to enter today.
+- **Unit type templates, M.** Define type A1 once (2 bed, 85 m², 20 m² veranda,
+  €/m² rate) and stamp it onto any unit; price computes from area. Real projects
+  repeat four or five layouts across every floor.
+- **Create similar, S.** Duplicate any property as a starting point, minus the
+  reference and the unit-specific fields.
+- **Area centroid as a coordinate fallback, S.** Migration 0031 already ships
+  district and area centroids and the map already falls back to them. Offer the
+  same on save, flagged as approximate, so a listing reaches the map today and
+  earns exact coordinates later.
+- **VAT treatment derived, not remembered, M — NEEDS AN OPERATOR DECISION.**
+  Reduced-rate eligibility follows from covered area, price and buyer status; the
+  calculators exist and `cyprus_config` is built to hold verified thresholds.
+  Suggest the status and show the rule that produced it. **The thresholds must
+  come from the operator — a CRM must not invent tax law**, which is the same
+  reason B4's reservation agreements are parked (HANDOFF §5).
+- **Owner net ↔ asking ↔ commission, shown, S.** All three are already columns.
+  Show the arithmetic so an agent negotiating knows the floor. Admin + assigned
+  agent only, matching how `mandates_safe` masks commission.
+- **Quality-score worklist, S.** `computeQualityScore` already returns a
+  `missing` array per property and it is thrown away after rendering one ring.
+  Aggregate it across the list — "19 missing deed status, 12 missing coordinates"
+  — so one category can be cleared in a sitting.
+- **Portfolio tab on a contact, S.** Finding 9, from the other side.
+- **Project availability share link, M.** `share_links` already mints, opens and
+  revokes with full evidence. Point the same machinery at a project and a
+  developer or partner agent gets a live availability matrix instead of
+  yesterday's PDF.
+- **Construction progress + delivery date, S.** Finding 10, made useful: a
+  milestone % and an expected delivery on the project header, which is also the
+  raw material for the M13 developer dashboard.
+- **Sales velocity per project, M.** Units sold per month and absorption rate,
+  computed from `status_changed` events already being written and read by nothing
+  but the timeline. No new data collection at all.
+- **Keys follow the mandate, S.** Terminating or expiring a mandate should prompt
+  to recall keys still checked out on that property. Both sides are evented;
+  nothing connects them.
+
 - ~~**THE PROPERTY MAP (B5) RENDERS BLANK — SHIPPED, THEN HIDDEN.**~~
   **WITHDRAWN 2026-08-20: THE MAP WAS NEVER BROKEN.** Verified working against
   the real bundle — 9 `/planet/*.pbf` vector tiles, `load` fired, `loaded: true`,
