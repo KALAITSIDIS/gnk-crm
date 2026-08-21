@@ -560,6 +560,43 @@ explicit direction.
   never happened. **A latent wrong answer stayed invisible until something
   depended on it.**
   **VERIFY:** `grep -c "locationChanged" lib/utils/geo.ts` — 0 means reverted.
+- **HOSTED GRANTS ON `mandates_safe` ARE WIDER THAN THE REPO ASKS FOR — SECURITY,
+  found 2026-08-21 while applying 0036.** Measured, not inferred:
+
+  | | `anon` | `authenticated` |
+  |---|---|---|
+  | hosted | `arwdDxtm` | `arwdDxtm` |
+  | local | `Dxtm` (no select) | `rDxtm` (select only) |
+
+  `0002` grants **`select` to `authenticated` and nothing else**, and no migration
+  revokes anything on this view — so hosted picked the rest up from Supabase's
+  default privileges on `public`, and local (correctly) did not. Hosted has been
+  the outlier since the view was created.
+
+  **Why the write bits matter here specifically.** `information_schema.views`
+  reports `is_updatable = YES` and `is_insertable_into = YES` — it is a simple
+  view over one table, so Postgres makes it auto-updatable. Its owner is
+  `postgres`, which **has `rolbypassrls`**, and it is not `security_invoker`. So a
+  write routed through the view is performed as the owner and **does not go
+  through `mandates` RLS**, which is otherwise the only thing stopping a
+  non-admin creating mandates or setting `commission_pct`. An INSERT is the live
+  path: an auto-updatable view without `WITH CHECK OPTION` does not apply its own
+  WHERE clause to inserts. UPDATE/DELETE are bounded by that WHERE, which for
+  `anon` matches nothing.
+
+  **NOT EXPLOITED — this was established from catalogue facts only.** No write
+  was attempted against production.
+
+  **Not caused by 0036**, which uses `create or replace view` and preserves the
+  ACL: `relacl` was captured before and after and is byte-identical.
+
+  The fix is a revoke bringing hosted in line with what 0002 already says, and it
+  cannot break the app — every mandate write goes through the base table as
+  admin, and no code reads this view as `anon`. It is still a production
+  permission change, so it wants an explicit yes rather than being folded into a
+  feature migration.
+  **VERIFY:** compare `relacl` for `mandates_safe` on hosted against local; the
+  entry is closed when `anon` has no `arwd` and `authenticated` has `r` only.
 - Forgot-password flow on `/login` (doc 05): Supabase `resetPasswordForEmail` +
   reset page + email template. Natural fit with Phase 2 Resend integration.
   **VERIFY:** `grep -rl resetPasswordForEmail app lib` — any hit means shipped.
