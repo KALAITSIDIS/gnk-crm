@@ -11,6 +11,12 @@ import {
   type UnitRow,
 } from "@/components/features/properties/units-matrix";
 import { GenerateUnitsForm } from "@/components/features/properties/generate-units-form";
+import { InheritanceDrift } from "@/components/features/properties/inheritance-drift";
+import {
+  computeInheritanceDrift,
+  UNIT_PARENT_SELECT,
+  UNIT_ROW_SELECT,
+} from "@/lib/services/unit-inheritance";
 import { Button } from "@/components/ui/button";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -24,9 +30,10 @@ export default async function ProjectUnitsPage({
   const { id } = await params;
   const supabase = await createClient();
 
+  // the full inheritable set, because the drift panel compares every one of them
   const { data: project, error: projectErr } = await supabase
     .from("properties")
-    .select("id, reference, kind, title")
+    .select(`${UNIT_PARENT_SELECT}, title`)
     .eq("id", id)
     .maybeSingle();
   if (projectErr) throw new Error(`Project query failed: ${projectErr.message}`);
@@ -41,9 +48,7 @@ export default async function ProjectUnitsPage({
   const [unitsRes, priceListsRes, plansRes] = await Promise.all([
     supabase
       .from("properties")
-      .select(
-        "id, reference, unit_number, block, property_type, bedrooms, covered_area_sqm, asking_price, status, floor_number",
-      )
+      .select(UNIT_ROW_SELECT)
       .eq("parent_id", id)
       .eq("kind", "unit")
       .order("block")
@@ -106,6 +111,12 @@ export default async function ProjectUnitsPage({
             .join("")}
         </p>
       </div>
+
+      <InheritanceDrift
+        projectId={id}
+        drift={computeInheritanceDrift(project, unitRows ?? [])}
+        canManage={canManage}
+      />
 
       <UnitsMatrix units={units} canManage={canManage} />
       {canManage ? (

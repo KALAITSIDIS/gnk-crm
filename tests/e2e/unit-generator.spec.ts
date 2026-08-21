@@ -186,3 +186,77 @@ test.describe("bulk unit generation", () => {
     await admin.from("properties").delete().eq("id", project.id);
   });
 });
+
+/**
+ * Inheritance drift and sync (BACKLOG audit finding 5, the drift half).
+ *
+ * Copy-on-create means a project edit does not reach units that already exist.
+ * `inherited_fields` is what separates "nobody has touched this" from "somebody
+ * set it deliberately", and the ONE thing that must never regress is that a
+ * sync leaves the deliberate values alone. A sync that overwrites a per-unit
+ * price or handover date is worse than no sync at all.
+ */
+test.describe("inheritance drift", () => {
+  test("syncs the units that still inherit and spares the one that does not", async ({
+    page,
+  }) => {
+    const admin = svc();
+    const { orgId } = await fixtureProfile(admin);
+    const project = await seedProject(admin, orgId);
+
+    await page.goto(`/properties/${project.id}/units`);
+    await generate(page, {
+      "gen-block": "D",
+      "gen-floor-from": "1",
+      "gen-floor-to": "2",
+      "gen-per-floor": "2",
+    });
+    await expect(page.getByText("Units generated")).toBeVisible();
+
+    const { data: units } = await admin
+      .from("properties")
+      .select("id, reference")
+      .eq("parent_id", project.id)
+      .order("reference");
+    expect(units).toHaveLength(4);
+
+    // One unit is given its own VAT and opts out, exactly as a UI edit would.
+    const opinionated = units![0];
+    await admin
+      .from("properties")
+      .update({ vat_status: "resale_no_vat", inherited_fields: ["delivery_date"] })
+      .eq("id", opinionated.id);
+
+    // The project moves on.
+    await admin
+      .from("properties")
+      .update({ vat_status: "reduced_rate_eligible" })
+      .eq("id", project.id);
+
+    await page.reload();
+
+    // The panel counts 3, not 4 — the opinionated unit is invisible by design.
+    const panel = page.getByText("Units are behind this project");
+    await expect(panel).toBeVisible();
+    await page.getByRole("button", { name: "Update 3" }).click();
+    await expect(page.getByText("3 units updated")).toBeVisible();
+
+    const { data: after } = await admin
+      .from("properties")
+      .select("id, vat_status")
+      .eq("parent_id", project.id);
+
+    const opinion = after!.find((u) => u.id === opinionated.id);
+    expect(opinion!.vat_status).toBe("resale_no_vat"); // untouched
+    for (const u of after!.filter((u) => u.id !== opinionated.id)) {
+      expect(u.vat_status).toBe("reduced_rate_eligible");
+    }
+
+    // and the chain survives the bulk sync events
+    const { data: chain } = await admin.rpc("verify_events_chain", { p_org: orgId });
+    expect(chain).toBe(true);
+
+    await admin.from("properties").delete().eq("parent_id", project.id);
+    await admin.from("properties").delete().eq("id", project.id);
+  });
+});

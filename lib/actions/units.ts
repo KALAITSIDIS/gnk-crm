@@ -11,6 +11,7 @@ import {
   PROPERTY_TYPES,
 } from "@/lib/validators/properties";
 import {
+  INHERITED_UNIT_FIELDS,
   inheritedFieldsWithValues,
   resolveInheritedUnitFields,
   UNIT_PARENT_SELECT,
@@ -78,6 +79,9 @@ export async function createUnit(
       // `public` project would otherwise mint already-published units with no
       // photos, price or description, straight past the quality gate.
       ...resolveInheritedUnitFields(project),
+      // every inherited column starts as the project's opinion; editing one on
+      // the unit removes it from this list and the unit stops following (0035)
+      inherited_fields: [...INHERITED_UNIT_FIELDS],
       unit_number: input.unit_number,
       block: input.block ?? null,
       bedrooms: input.bedrooms ?? null,
@@ -279,6 +283,7 @@ export async function generateProjectUnits(
         parent_id: project.id,
         property_type: input.property_type,
         ...inherited,
+        inherited_fields: [...INHERITED_UNIT_FIELDS],
         unit_number: u.unit_number,
         block: u.block,
         floor_number: u.floor_number,

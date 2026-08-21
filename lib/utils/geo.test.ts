@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isGoogleMapsShortLink,
+  locationChanged,
   parseLocationPoint,
   parseMapsCoords,
   toLocationEWKT,
@@ -138,5 +139,34 @@ describe("isGoogleMapsShortLink", () => {
     expect(isGoogleMapsShortLink("hello world")).toBe(false);
     expect(isGoogleMapsShortLink("34.772, 32.4297")).toBe(false);
     expect(isGoogleMapsShortLink("")).toBe(false);
+  });
+});
+
+describe("locationChanged", () => {
+  const point = { lat: 34.7754, lng: 32.4245 };
+
+  it("reports NO change when there were no coordinates and none were entered", () => {
+    // The regression this exists for: the original inline check treated both-null
+    // as a change, so every save of a coordinate-less property wrote a location
+    // update and put a false entry in the event's changed-field diff.
+    expect(locationChanged(null, null)).toBe(false);
+  });
+
+  it("reports a change when coordinates are added or cleared", () => {
+    expect(locationChanged(null, point)).toBe(true);
+    expect(locationChanged(point, null)).toBe(true);
+  });
+
+  it("reports no change for the same point", () => {
+    expect(locationChanged(point, { ...point })).toBe(false);
+  });
+
+  it("reports a change when the point actually moves", () => {
+    expect(locationChanged(point, { lat: 34.78, lng: 32.4245 })).toBe(true);
+    expect(locationChanged(point, { lat: 34.7754, lng: 32.43 })).toBe(true);
+  });
+
+  it("ignores float noise below ~11cm", () => {
+    expect(locationChanged(point, { lat: 34.77540000001, lng: 32.42450000001 })).toBe(false);
   });
 });

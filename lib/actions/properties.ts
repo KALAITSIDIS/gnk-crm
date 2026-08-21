@@ -177,19 +177,15 @@ export async function updatePropertySection(
 
     // location is a PostGIS point: DB returns EWKB hex, we write EWKT. Compare
     // decoded coords (rounded) so an unchanged point is not re-written every save.
-    const { parseLocationPoint, toLocationEWKT } = await import("@/lib/utils/geo");
+    const { locationChanged, parseLocationPoint, toLocationEWKT } = await import(
+      "@/lib/utils/geo"
+    );
     const prevPoint = parseLocationPoint((current as { location?: unknown }).location);
     const nextPoint =
       d.latitude !== undefined && d.longitude !== undefined
         ? { lat: d.latitude, lng: d.longitude }
         : null;
-    const r6 = (n: number) => Math.round(n * 1e6) / 1e6;
-    const samePoint =
-      prevPoint !== null &&
-      nextPoint !== null &&
-      r6(prevPoint.lat) === r6(nextPoint.lat) &&
-      r6(prevPoint.lng) === r6(nextPoint.lng);
-    if ((prevPoint === null) !== (nextPoint === null) || !samePoint) {
+    if (locationChanged(prevPoint, nextPoint)) {
       updates.location = nextPoint ? toLocationEWKT(nextPoint.lat, nextPoint.lng) : null;
       locationChange = { from: prevPoint, to: nextPoint };
     }
@@ -342,6 +338,19 @@ export async function updatePropertySection(
   if (locationChange) changed.location = locationChange;
   if (Object.keys(changed).length === 0) {
     return { error: null, savedAt: Date.now() }; // nothing to write, still "saved"
+  }
+
+  // A unit that has just had an inherited column edited now has an opinion of
+  // its own, so that column stops following its project (0035). Only CHANGED
+  // fields count: the details form posts twenty-odd columns on every save, and
+  // dropping everything it touched would sever a unit's whole inheritance the
+  // first time anybody opened the tab and pressed Save.
+  if (current.kind === "unit") {
+    const { fieldsClaimedByEdit } = await import("@/lib/services/unit-inheritance");
+    const stillInherited = fieldsClaimedByEdit(current.inherited_fields, Object.keys(changed));
+    if (stillInherited.length !== (current.inherited_fields ?? []).length) {
+      updates.inherited_fields = stillInherited;
+    }
   }
 
   // RLS filters a forbidden update to 0 rows without an error — the returned

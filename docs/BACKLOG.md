@@ -120,8 +120,8 @@ decision (HANDOFF §5) does not cover it.
   **VERIFY:** `grep -rn "list_price" app components` — 0 hits means still
   write-only. *(0 on 2026-08-21.)*
 
-- **5. A unit inherits five fields from its project.** **HALF DONE 2026-08-21 —
-  the widening shipped, the `inherited_fields` machinery did NOT. Do not strike.**
+- ~~**5. A unit inherits five fields from its project.**~~ **DONE 2026-08-21 —
+  both halves.**
   `createUnit` now copies **19** columns via `resolveInheritedUnitFields`
   (`lib/services/unit-inheritance.ts`), including the developer, owner, agent,
   VAT, deed and permit status, energy class, delivery date, construction status,
@@ -134,13 +134,32 @@ decision (HANDOFF §5) does not cover it.
   other publish goes through. Proven in the app, not assumed: project flipped to
   `public`, new unit came out `private` with score 0.
 
-  **Still open: the drift half.** Copy-on-create means changing the project's VAT
-  status next month leaves 40 units on the old one, silently. That needs
-  `properties.inherited_fields text[]` recording which columns are still
-  project-derived, an edit dropping a column out of it, and a project-side
-  "update the N units that still inherit this".
-  **VERIFY:** `grep -rl "inherited_fields" supabase/migrations lib` — any hit
-  means the drift half shipped. *(none on 2026-08-21.)* The original entry follows.
+  **The drift half shipped too.** Migration `0035` adds
+  `properties.inherited_fields text[]`; a unit edit removes the changed column
+  from it (only CHANGED ones — the details form posts twenty-odd columns per
+  save, so dropping everything it touched would sever a unit's whole inheritance
+  the first time anyone pressed Save); and the units page carries a panel
+  computed fresh on every render — no stored "pending sync" state to go stale —
+  offering ONE BUTTON PER FIELD. "Sync everything" reads as one decision but is
+  several, and the one nobody meant to make is the one that hurts.
+
+  Measured on a 67-unit block: the panel read "Vat status — 66 units behind",
+  correctly invisible for the one unit given its own value; the sync updated
+  exactly those 66, left the 67th alone, wrote 66 events and the chain verified.
+
+  **The backfill needed three attempts and the reason is worth keeping.** The
+  first rule was "inherited if the value equals the parent's" — which left every
+  unit created by the old five-column `createUnit` permanently opted out, since
+  their columns are blank where the parent has values. Blank means nobody had an
+  opinion, not that somebody chose "unknown". Widening it to null caught most of
+  them; the last miss was that `vat_status`, `title_deed_status` and
+  `permit_status` are NOT NULL and say "nobody has said" with a literal
+  `'unknown'`, and `features` with an empty array. `currency` ('EUR') and
+  `transaction_type` ('sale') are deliberately NOT in that group — those
+  defaults are real answers.
+
+  **VERIFY:** `grep -rl "inherited_fields" supabase/migrations lib` — no hit
+  means it was reverted. The original entry follows.
 
   - **5. A unit inherits five fields from its project; everything else is retyped (original).**
   `createUnit` copies `transaction_type`, `district_id`, `area_id`, `address`,
@@ -490,6 +509,17 @@ explicit direction.
   other auth decisions (mandatory 2FA) rather than with engineering work.
   **VERIFY:** `get_advisors` type `security` — the `auth_leaked_password_protection`
   lint disappears once enabled. *(present 2026-08-21.)*
+- ~~**A save with no coordinates recorded a `location` change every time.**~~
+  **FIXED 2026-08-21** (`locationChanged` in `lib/utils/geo.ts`). The inline
+  check computed `samePoint` as "both non-null and equal" and treated
+  `!samePoint` as changed, so both-null read as a change: every save of a
+  coordinate-less property wrote a needless `location` update AND put a false
+  entry in the event's changed-field diff — in an app whose whole point is that
+  the diff is trustworthy. It went unnoticed until unit inheritance started
+  READING that diff and began severing `location` inheritance for a change that
+  never happened. **A latent wrong answer stayed invisible until something
+  depended on it.**
+  **VERIFY:** `grep -c "locationChanged" lib/utils/geo.ts` — 0 means reverted.
 - Forgot-password flow on `/login` (doc 05): Supabase `resetPasswordForEmail` +
   reset page + email template. Natural fit with Phase 2 Resend integration.
   **VERIFY:** `grep -rl resetPasswordForEmail app lib` — any hit means shipped.

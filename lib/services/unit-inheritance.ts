@@ -49,6 +49,16 @@ export const UNIT_PARENT_SELECT =
   "id, org_id, kind, reference, transaction_type, district_id, area_id, address, postal_code, location, sea_distance_m, amenities_notes, currency, vat_status, energy_class, features, title_deed_status, permit_status, construction_status, delivery_date, developer_contact_id, owner_contact_id, assigned_agent_id";
 
 /**
+ * The unit-side select for the drift check: what the matrix renders, plus every
+ * inheritable column and `inherited_fields` so a project and its units can be
+ * compared. A LITERAL for the same reason as UNIT_PARENT_SELECT — a built
+ * string collapses the inferred row type to GenericStringError — and pinned by
+ * the same test.
+ */
+export const UNIT_ROW_SELECT =
+  "id, reference, unit_number, block, property_type, bedrooms, covered_area_sqm, asking_price, status, floor_number, inherited_fields, transaction_type, district_id, area_id, address, postal_code, location, sea_distance_m, amenities_notes, currency, vat_status, energy_class, features, title_deed_status, permit_status, construction_status, delivery_date, developer_contact_id, owner_contact_id, assigned_agent_id";
+
+/**
  * Columns a unit must NOT inherit, with the reason, because "why is this
  * missing" is the question a future reader will have.
  *
@@ -101,5 +111,72 @@ export function resolveInheritedUnitFields(
 export function inheritedFieldsWithValues(project: ProjectRow): InheritedUnitField[] {
   return INHERITED_UNIT_FIELDS.filter(
     (f) => project[f] !== null && project[f] !== undefined,
+  );
+}
+
+/* ---------- drift: where a project and its units disagree ---------- */
+
+export interface FieldDrift {
+  field: InheritedUnitField;
+  /** Units still inheriting this field whose value differs from the project's. */
+  count: number;
+}
+
+/** Row shape the drift check needs from each unit. */
+export type UnitRowForDrift = ProjectRow & { inherited_fields?: string[] | null };
+
+/**
+ * Compare values the way the database would, not the way JavaScript would.
+ * `features` is a text[], so `["a","b"] !== ["a","b"]` by reference; and null
+ * vs undefined must read as the same "no value".
+ */
+function sameValue(a: unknown, b: unknown): boolean {
+  if (a === null || a === undefined) return b === null || b === undefined;
+  if (b === null || b === undefined) return false;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((v, i) => v === b[i]);
+  }
+  return a === b;
+}
+
+/**
+ * Which project fields have drifted away from the units that still inherit them.
+ *
+ * This is what turns copy-on-create from a trap into a workflow: change the
+ * project's VAT status and the units page can say, truthfully, "58 units still
+ * inherit this and disagree" — leaving alone the 2 somebody set deliberately,
+ * because editing a field removes it from that unit's `inherited_fields`.
+ *
+ * A unit that does NOT list the field is invisible here by design. That is the
+ * whole point: it has an opinion, and a sync must not overwrite it.
+ */
+export function computeInheritanceDrift(
+  project: ProjectRow,
+  units: UnitRowForDrift[],
+): FieldDrift[] {
+  const drift: FieldDrift[] = [];
+  for (const field of INHERITED_UNIT_FIELDS) {
+    const count = units.filter(
+      (u) => (u.inherited_fields ?? []).includes(field) && !sameValue(u[field], project[field]),
+    ).length;
+    if (count > 0) drift.push({ field, count });
+  }
+  return drift;
+}
+
+/**
+ * Which inherited fields a unit edit has just claimed as its own.
+ *
+ * Only fields that ACTUALLY CHANGED count. The details form posts twenty-odd
+ * columns on every save, so dropping everything it touched would opt a unit out
+ * of inheritance the first time anybody opened the tab and pressed Save.
+ */
+export function fieldsClaimedByEdit(
+  currentInherited: string[] | null | undefined,
+  changedFields: string[],
+): string[] {
+  const claimed = new Set(changedFields);
+  return (currentInherited ?? []).filter(
+    (f) => !claimed.has(f),
   );
 }

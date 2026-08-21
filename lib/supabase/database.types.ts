@@ -1183,6 +1183,7 @@ export type Database = {
           floor_number: number | null
           has_storage: boolean | null
           id: string
+          inherited_fields: string[]
           internal_notes: string | null
           kind: Database["public"]["Enums"]["property_kind"]
           location: unknown
@@ -1252,6 +1253,7 @@ export type Database = {
           floor_number?: number | null
           has_storage?: boolean | null
           id?: string
+          inherited_fields?: string[]
           internal_notes?: string | null
           kind?: Database["public"]["Enums"]["property_kind"]
           location?: unknown
@@ -1321,6 +1323,7 @@ export type Database = {
           floor_number?: number | null
           has_storage?: boolean | null
           id?: string
+          inherited_fields?: string[]
           internal_notes?: string | null
           kind?: Database["public"]["Enums"]["property_kind"]
           location?: unknown
@@ -2529,6 +2532,13 @@ export type Database = {
         Args: never
         Returns: {
           missing_table: string
+        }[]
+      }
+      rls_bare_auth_calls: {
+        Args: never
+        Returns: {
+          policyname: string
+          tablename: string
         }[]
       }
       rls_bare_helper_calls: {
