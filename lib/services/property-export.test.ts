@@ -4,6 +4,7 @@ import { propertyCsvColumns, type PropertyExportRow } from "./property-export";
 
 const base: PropertyExportRow = {
   reference: "PAF0001",
+  kind: "standalone",
   property_type: "villa",
   transaction_type: "sale",
   status: "available",
@@ -28,7 +29,7 @@ describe("propertyCsvColumns", () => {
   it("names every exported column in the header", () => {
     const header = line(toCsv(propertyCsvColumns(), []), 0);
     expect(header).toBe(
-      "Reference,Type,Transaction,Status,Visibility,Title,District,Area,Address,Bedrooms,Bathrooms,Covered m²,Plot m²,Asking price,Rent/month,Mandate,Quality",
+      "Reference,Kind,Type,Transaction,Status,Visibility,Title,District,Area,Address,Bedrooms,Bathrooms,Covered m²,Plot m²,Asking price,Rent/month,Mandate,Quality",
     );
   });
 

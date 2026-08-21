@@ -39,6 +39,10 @@ export const VISIBILITY_LEVELS = [
 
 export const MANDATE_FILTERS = ["active", "expired", "none"] as const;
 
+/** Hierarchy level. Declared HERE, above propertyFiltersSchema: the schema
+ *  reads it at module-evaluation time, so a later `const` is a TDZ crash. */
+export const PROPERTY_KINDS = ["standalone", "project", "phase", "unit"] as const;
+
 /** Properties are never deleted (doc 04: properties DELETE ❌). The retire path
  *  is status `withdrawn` and/or visibility `archived` — either one alone means
  *  the listing is off the working list. */
@@ -144,6 +148,7 @@ export const propertyFiltersSchema = z.object({
   price_min: optionalNumber,
   price_max: optionalNumber,
   mandate: optionalEnum(MANDATE_FILTERS),
+  kind: optionalEnum(PROPERTY_KINDS),
   scope: z
     .string()
     .optional()
@@ -166,6 +171,88 @@ export const propertyFiltersSchema = z.object({
 export type PropertyFilters = z.infer<typeof propertyFiltersSchema>;
 
 export const PROPERTIES_PAGE_SIZE = 25;
+
+export type PropertyKindMode = "exclude-units" | "none";
+
+/**
+ * How the list should treat UNITS (BACKLOG audit finding 3).
+ *
+ * A unit is inventory inside a project, not a listing in its own right. One
+ * 60-unit project is two and a half pages of the default 25-row list, so
+ * showing units by default buries every standalone listing the desk actually
+ * works — and does the same to the CSV export and the map, which share this
+ * module.
+ *
+ * Units are therefore hidden unless asked for, and reached through their
+ * project's units matrix. Exactly the shape of `resolvePropertyScope` above,
+ * including its escape hatch: an explicit `kind=unit` wins over the default,
+ * because a filter that returns nothing when you pick it is a broken filter.
+ *
+ * The default is VISIBLE IN THE UI — the select reads "Standalone & projects",
+ * not "All kinds". A default that silently removes rows is a trap; one the user
+ * can see and change is a choice.
+ */
+export function resolvePropertyKindScope(filters: {
+  kind?: (typeof PROPERTY_KINDS)[number];
+}): PropertyKindMode {
+  return filters.kind === undefined ? "exclude-units" : "none";
+}
+
+/* ---------- parties: who owns it, who built it, who works it ---------- */
+
+/** Kinds that can carry a developer. A standalone listing belongs to a private
+ *  owner by definition — the field is not rendered for it (see below). */
+export const DEVELOPER_KINDS = ["project", "phase", "unit"] as const;
+
+/**
+ * Parties section (BACKLOG audit findings 1 + 2). All three links are optional:
+ * a draft listing legitimately has none, and the EntityPicker posts "" when it
+ * is cleared, which `optionalUuid` turns into undefined → null on save.
+ *
+ * `assigned_agent_id` is NOT just another link. `properties_update` and
+ * `property_media_insert` (0002) admit an agent only when it equals their own
+ * id, so writing this column grants and revokes edit rights. That is why the
+ * action limits the whole section to admin + listing manager: the UPDATE
+ * with-check only tests `org_id`, so RLS would happily let an agent reassign
+ * their own property to somebody else and lock themselves out of it.
+ */
+export const partiesSectionSchema = z.object({
+  owner_contact_id: optionalUuid,
+  developer_contact_id: optionalUuid,
+  assigned_agent_id: optionalUuid,
+});
+
+export type PartiesSectionInput = z.infer<typeof partiesSectionSchema>;
+
+export interface PartyUpdates {
+  owner_contact_id: string | null;
+  assigned_agent_id: string | null;
+  developer_contact_id?: string | null;
+}
+
+/**
+ * Which party columns a save should write.
+ *
+ * The developer field is only rendered for project/phase/unit, so for a
+ * standalone listing it arrives ABSENT — and absent parses to undefined, which
+ * would otherwise be written as null and silently clear a value the form never
+ * showed. Same trap as the land panel in `updatePropertySection`, handled the
+ * same way: a column the form did not render is a column the save does not
+ * touch.
+ */
+export function resolvePartyUpdates(
+  parsed: PartiesSectionInput,
+  current: { kind: (typeof PROPERTY_KINDS)[number] },
+): PartyUpdates {
+  const updates: PartyUpdates = {
+    owner_contact_id: parsed.owner_contact_id ?? null,
+    assigned_agent_id: parsed.assigned_agent_id ?? null,
+  };
+  if ((DEVELOPER_KINDS as readonly string[]).includes(current.kind)) {
+    updates.developer_contact_id = parsed.developer_contact_id ?? null;
+  }
+  return updates;
+}
 
 /**
  * Create wizard (T1.2). Units/phases are created from their project's units
@@ -211,6 +298,25 @@ export const VAT_STATUSES = [
   "unknown",
 ] as const;
 export const ENERGY_CLASSES = ["A", "B+", "B", "C", "D", "E", "F", "G", "none"] as const;
+
+/**
+ * Where an off-plan build has got to (BACKLOG audit finding 10).
+ *
+ * The column is `text`, not an enum, and rows created by the CSV importer or by
+ * hand may hold anything. The form therefore offers this list AND keeps whatever
+ * is already stored as an extra option — silently rewriting somebody's value to
+ * the nearest listed one would be worse than an untidy dropdown.
+ */
+export const CONSTRUCTION_STATUSES = [
+  "planning",
+  "permit_applied",
+  "permit_granted",
+  "under_construction",
+  "structure_complete",
+  "finishing",
+  "completed",
+  "delivered",
+] as const;
 
 const optNumber = z.preprocess(
   emptyToUndefined,
@@ -276,6 +382,17 @@ export const detailsSectionSchema = z.object({
       .transform((v) => (v === "none" ? undefined : v)),
   ),
   features: z.array(z.string()).default([]),
+  // audit finding 10: both columns existed since 0001 and no screen wrote them.
+  // construction_status is free text in the schema, so it is validated as text
+  // rather than an enum — see CONSTRUCTION_STATUSES for why.
+  construction_status: optText(40),
+  delivery_date: z.preprocess(
+    emptyToUndefined,
+    z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Delivery date must be YYYY-MM-DD")
+      .optional(),
+  ),
   internal_notes: optText(5000),
   // land panel (only meaningful when property_type = land)
   planning_zone_code: optText(20),

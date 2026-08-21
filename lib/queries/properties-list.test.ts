@@ -63,10 +63,16 @@ describe("mandateEmbed", () => {
 describe("applyPropertyListFilters", () => {
   const methods = (calls: { method: string; args: unknown[] }[]) => calls.map((c) => c.method);
 
+  /** neq calls that belong to the RETIRED scope, not to any other predicate.
+   *  Filtering by column rather than counting every neq keeps these tests about
+   *  the retired scope — the kind scope also emits one (see its own tests). */
+  const retiredNeqs = (calls: { method: string; args: unknown[] }[]) =>
+    calls.filter((c) => c.method === "neq" && (c.args[0] === "status" || c.args[0] === "visibility"));
+
   it("default active scope excludes retired status AND visibility", () => {
     const { spy, calls } = spyBuilder();
     applyPropertyListFilters(spy as never, base(), []);
-    const neqs = calls.filter((c) => c.method === "neq");
+    const neqs = retiredNeqs(calls);
     expect(neqs).toHaveLength(2);
     expect(neqs.map((c) => c.args[0])).toEqual(["status", "visibility"]);
   });
@@ -74,7 +80,7 @@ describe("applyPropertyListFilters", () => {
   it("archived scope ORs the two retired markers instead of excluding them", () => {
     const { spy, calls } = spyBuilder();
     applyPropertyListFilters(spy as never, base({ scope: "archived" }), []);
-    expect(methods(calls)).not.toContain("neq");
+    expect(retiredNeqs(calls)).toHaveLength(0);
     const or = calls.find((c) => c.method === "or");
     expect(or?.args[0]).toContain("status.eq.withdrawn");
     expect(or?.args[0]).toContain("visibility.eq.archived");
@@ -83,7 +89,7 @@ describe("applyPropertyListFilters", () => {
   it("an explicit retired status filter suppresses scope predicates (would otherwise be empty)", () => {
     const { spy, calls } = spyBuilder();
     applyPropertyListFilters(spy as never, base({ status: "withdrawn" }), []);
-    expect(methods(calls)).not.toContain("neq");
+    expect(retiredNeqs(calls)).toHaveLength(0);
     // no scope OR either — resolvePropertyScope returned "none"
     expect(calls.filter((c) => c.method === "or")).toHaveLength(0);
     expect(calls.find((c) => c.method === "eq" && c.args[0] === "status")?.args[1]).toBe("withdrawn");
@@ -123,5 +129,37 @@ describe("applyPropertyListFilters", () => {
     applyPropertyListFilters(spy as never, base({ transaction: "sale" }), []);
     const inCall = calls.find((c) => c.method === "in" && c.args[0] === "transaction_type");
     expect(inCall?.args[1]).toEqual(["sale", "sale_or_rent"]);
+  });
+});
+
+describe("applyPropertyListFilters — kind scope (audit finding 3)", () => {
+  const kindCalls = (calls: { method: string; args: unknown[] }[]) =>
+    calls.filter((c) => c.args[0] === "kind");
+
+  it("excludes units by default, so a project cannot bury the list", () => {
+    const { spy, calls } = spyBuilder();
+    applyPropertyListFilters(spy as never, base(), []);
+    const k = kindCalls(calls);
+    expect(k).toHaveLength(1);
+    expect(k[0].method).toBe("neq");
+    expect(k[0].args[1]).toBe("unit");
+  });
+
+  it("an explicit kind=unit selects units instead of excluding them", () => {
+    const { spy, calls } = spyBuilder();
+    applyPropertyListFilters(spy as never, base({ kind: "unit" }), []);
+    const k = kindCalls(calls);
+    expect(k).toHaveLength(1);
+    expect(k[0].method).toBe("eq");
+    expect(k[0].args[1]).toBe("unit");
+  });
+
+  it("an explicit non-unit kind narrows without also excluding units twice", () => {
+    const { spy, calls } = spyBuilder();
+    applyPropertyListFilters(spy as never, base({ kind: "project" }), []);
+    const k = kindCalls(calls);
+    expect(k).toHaveLength(1);
+    expect(k[0].method).toBe("eq");
+    expect(k[0].args[1]).toBe("project");
   });
 });

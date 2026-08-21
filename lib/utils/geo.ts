@@ -122,3 +122,25 @@ export function isGoogleMapsShortLink(input: string): boolean {
     return false;
   }
 }
+
+/**
+ * Did the map point actually change between a saved value and a submitted one?
+ *
+ * Both null must read as UNCHANGED. The original inline check computed
+ * `samePoint` as "both non-null and equal", then treated `!samePoint` as
+ * changed — so a property with no coordinates, saved without entering any,
+ * recorded a `location` change on EVERY save. That wrote a needless update and
+ * put a false entry in the event's changed-field diff, which is exactly the
+ * evidence this app is built to keep honest. It surfaced when unit inheritance
+ * started reading that diff: a save with no coordinates was severing a unit's
+ * `location` inheritance for a change that never happened.
+ *
+ * Coordinates are compared rounded to 6 decimals — ~11cm, far finer than any
+ * listing needs, and enough that float noise does not read as a move.
+ */
+export function locationChanged(prev: LatLng | null, next: LatLng | null): boolean {
+  if (prev === null && next === null) return false;
+  if (prev === null || next === null) return true;
+  const r6 = (n: number) => Math.round(n * 1e6) / 1e6;
+  return r6(prev.lat) !== r6(next.lat) || r6(prev.lng) !== r6(next.lng);
+}

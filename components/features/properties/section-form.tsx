@@ -16,12 +16,16 @@ export function SectionForm({
   propertyId,
   section,
   readOnly = false,
+  readOnlyNote,
   children,
 }: {
   propertyId: string;
-  section: "details" | "legal" | "marketing";
+  section: "details" | "legal" | "marketing" | "parties";
   /** true when the viewer's role can't update this property (RLS would no-op) */
   readOnly?: boolean;
+  /** Why it is read-only, when assignment isn't the reason (e.g. the parties
+   *  section, which is admin + listing manager regardless of assignment). */
+  readOnlyNote?: string;
   children: React.ReactNode;
 }) {
   const [state, formAction, pending] = useActionState(updatePropertySection, initialState);
@@ -51,8 +55,8 @@ export function SectionForm({
       ) : null}
       {readOnly ? (
         <p className="text-xs text-text-3">
-          Read-only — this property isn&apos;t assigned to you. Admins and listing managers can
-          edit any property.
+          {readOnlyNote ??
+            "Read-only — this property isn't assigned to you. Admins and listing managers can edit any property."}
         </p>
       ) : (
         <div>

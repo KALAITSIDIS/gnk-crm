@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/select";
 import {
   MANDATE_FILTERS,
+  PROPERTY_KINDS,
   PROPERTY_SCOPES,
   PROPERTY_STATUSES,
   PROPERTY_TYPES,
@@ -90,6 +91,7 @@ export function PropertiesFilters({
     "price_min",
     "price_max",
     "mandate",
+    "kind",
     "scope",
   ].some((k) => searchParams.has(k));
 
@@ -200,6 +202,27 @@ export function PropertiesFilters({
             {VISIBILITY_LEVELS.map((v) => (
               <SelectItem key={v} value={v}>
                 {labelize(v)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        {/* Units are hidden unless asked for (audit finding 3) — one 60-unit
+            project is 2.5 pages of the default list. The default option SAYS SO
+            rather than reading "All kinds": a default that silently removes rows
+            is a trap, one the user can see and change is a choice. */}
+        <Select
+          value={searchParams.get("kind") ?? ALL}
+          onValueChange={(v) => setParams({ kind: v })}
+        >
+          <SelectTrigger className={selectClass}>
+            <SelectValue placeholder="Kind" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL}>Standalone &amp; projects</SelectItem>
+            {PROPERTY_KINDS.map((k) => (
+              <SelectItem key={k} value={k}>
+                {k === "unit" ? "Units only" : labelize(k)}
               </SelectItem>
             ))}
           </SelectContent>

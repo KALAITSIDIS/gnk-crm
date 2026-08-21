@@ -51,7 +51,9 @@ Rules: server components by default; mutations via server actions only; every ac
 
 Hierarchy via `parent_id` + `kind`: `standalone` (default), `project` → `phase` (optional) → `unit`. Units inherit district/area/address from parent unless overridden. Project detail page shows a **units matrix** (unit no · type · beds · area · list price · status) with inline status change.
 
-Quality Score weights (total 100): cover photo 10, ≥6 photos 15, title EN 5, public description EN ≥300 chars 10, price 10, covered/plot area 10, bedrooms+bathrooms (non-land) 5, exact location coords 10, title-deed status set 10, permit status set 5, mandate active 10. Land: bedrooms weight moves to planning-zone+density fields.
+Quality Score weights (total 100): cover photo 5, ≥6 photos 10, title EN 5, public description EN ≥300 chars 10, price 10, covered/plot area 10, bedrooms+bathrooms (non-land) 5, exact location coords 10, title-deed status set 10, permit status set 5, mandate active 10, **agent assigned 5, owner or developer linked 5**. Land: bedrooms weight moves to planning-zone+density fields.
+
+**Rebalanced 2026-08-21** (BACKLOG audit finding 15). The two responsibility items were added and paid for out of imagery, which carried 25 of the 100 points across two items that overlap almost completely — a listing cannot have six photos without a cover. Imagery now carries 15, still joint-largest; nothing about price, location or legal status was weakened. The items were deliberately not added earlier: `assigned_agent_id` and the party columns had no way in until findings 1 and 2 shipped, and a score item for a field nobody can fill is a permanent deduction rather than a prompt. **Changing a weight makes every stored `quality_score` stale — `npm run recompute:scores` exists for that, and `--dry-run` first.**
 
 Price changes: editing `asking_price` writes `price_history` + event automatically (DB trigger).
 

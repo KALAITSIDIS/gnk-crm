@@ -18,6 +18,8 @@ export function EntityPicker({
   label,
   initial = null,
   placeholder = "Search…",
+  contactTypes,
+  hint,
   onChange,
 }: {
   name: string;
@@ -25,6 +27,10 @@ export function EntityPicker({
   label: string;
   initial?: EntityOption | null;
   placeholder?: string;
+  /** Narrows a `contact` search to these contact_types (audit finding 12). */
+  contactTypes?: readonly string[];
+  /** Small line under the field — say what the search is narrowed to. */
+  hint?: string;
   /** Fires when the selection changes (choose or clear) — for dependent UI. */
   onChange?: (option: EntityOption | null) => void;
 }) {
@@ -44,7 +50,7 @@ export function EntityPicker({
     setOpen(true);
     if (debounce.current) clearTimeout(debounce.current);
     debounce.current = setTimeout(async () => {
-      setOptions(await searchEntities(kind, value));
+      setOptions(await searchEntities(kind, value, contactTypes));
     }, 300);
   };
 
@@ -123,6 +129,7 @@ export function EntityPicker({
           ) : null}
         </div>
       )}
+      {hint ? <p className="text-xs text-text-3">{hint}</p> : null}
     </div>
   );
 }

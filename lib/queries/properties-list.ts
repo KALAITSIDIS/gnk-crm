@@ -3,6 +3,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import { unwrapRows } from "@/lib/supabase/unwrap";
 import {
   propertyFiltersSchema,
+  resolvePropertyKindScope,
   resolvePropertyScope,
   type PropertyFilters,
   RETIRED_PROPERTY_STATUS,
@@ -40,6 +41,7 @@ export function parsePropertyFilters(sp: PropertySearchParams): PropertyFilters 
     price_min: first(sp.price_min),
     price_max: first(sp.price_max),
     mandate: first(sp.mandate),
+    kind: first(sp.kind),
     scope: first(sp.scope),
     view: first(sp.view),
     page: first(sp.page),
@@ -111,6 +113,15 @@ export function applyPropertyListFilters<Q extends PropertyFilterBuilder<Q>>(
   if (filters.district) q = q.eq("district_id", filters.district as never);
   if (filters.area) q = q.eq("area_id", filters.area as never);
   if (filters.type) q = q.eq("property_type", filters.type as never);
+
+  // Units are inventory inside a project, not listings — hidden unless asked
+  // for, so one 60-unit project cannot bury the list, the export and the map
+  // (all three share this function). An explicit kind wins, same escape hatch
+  // as the retired scope below.
+  if (filters.kind) q = q.eq("kind", filters.kind as never);
+  else if (resolvePropertyKindScope(filters) === "exclude-units") {
+    q = q.neq("kind", "unit" as never);
+  }
 
   // sale_or_rent listings ARE for sale and ARE for rent — both filters match them
   if (filters.transaction === "sale") {

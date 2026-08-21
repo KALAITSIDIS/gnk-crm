@@ -27,6 +27,469 @@ built without explicit direction.
 > commit. Do not delete it: a struck-through entry is what stops the next person
 > re-proposing the same work.
 
+## Properties module audit — 2026-08-21
+
+Fifteen findings from a full read of M1 (properties, mandates, units, media,
+export) against the code, not against this file. **Ranked by cost to the desk.**
+Every VERIFY line below was RUN before it was written down.
+
+Two things are worth saying before the list. **The schema already models what
+the desk needs and the application does not use it** — `owner_contact_id` and
+`developer_contact_id` have existed since `0001` and no screen writes or reads
+either. And **finding 1 is a defect, not a nice-to-have**: it locks agents out
+of properties they are supposed to work, and the standing "build nothing new"
+decision (HANDOFF §5) does not cover it.
+
+- ~~**1. A property can never be assigned to an agent — DEFECT.**~~ **SHIPPED
+  2026-08-21 (`cf15794`)** — a Parties panel on the property Overview, admin +
+  listing manager only. **Proven against the local stack, not reasoned about:**
+  an agent got the read-only fieldset on an unassigned property, could edit and
+  save once assigned (event attributed to her), and a forced submit of the
+  parties section as that agent was refused server-side with nothing written and
+  no phantom event. E2E in `tests/e2e/property-parties.spec.ts`.
+  The original entry follows.
+
+  - **1. A property can never be assigned to an agent — DEFECT.**
+  `assigned_agent_id` is written in exactly one place, `lib/actions/properties.ts:67`,
+  and only when the creator is an *agent* (self-assign, because the insert policy
+  demands it). Nothing else in the app ever sets it: no picker, no bulk action,
+  no import column. That column is load-bearing for RLS —
+  `0002_rls_policies.sql:164` (properties_update) and `:173` (property_media_insert)
+  both admit an agent only when `assigned_agent_id = auth.uid()`. **So every
+  property created by an admin or a listing manager is permanently uneditable by
+  every agent, and no agent can add a photo to it.** The save even returns
+  "Nothing was saved — this property isn't assigned to you", an error whose cure
+  does not exist in the product. Fix: an assignment control (admin + LM only —
+  an agent must not be able to hand their own property away and lock themselves
+  out, since the UPDATE with-check only tests `org_id`).
+  **VERIFY:** `grep -rn "assigned_agent" components/features/properties` — any
+  write means shipped. *(0 hits on 2026-08-21; one read at `app/(app)/properties/[id]/page.tsx:136`.)*
+
+- ~~**2. Owner and developer are unreachable from the UI.**~~ **SHIPPED
+  2026-08-21 (`cf15794` + `cf962fb`)** — both columns are written by the Parties
+  panel; migration `0034` backfills `owner_contact_id` from each property's
+  newest ACTIVE mandate; `saveMandate` keeps them in step going forward but only
+  ever fills a BLANK, so a hand-set owner is never overwritten. `0034` writes one
+  system event per row changed and `verify_events_chain()` still returns true
+  after it. **Applied to LOCAL only — hosted is still on 0033** and would
+  backfill exactly 1 property (measured 2026-08-21). The original entry follows.
+
+  - **2. Owner and developer are unreachable from the UI.**
+  `properties.owner_contact_id` is written only by `scripts/import/properties.mts:213`.
+  `properties.developer_contact_id` is written by nothing — its only hit outside
+  the generated types is `lib/actions/merge-contacts.ts:128` repointing a column
+  no screen fills. Neither is displayed on the detail page, the list, the map or
+  the export. The only owner the app knows is `mandates.owner_contact_id`, so a
+  property with no mandate has no owner anywhere, and "everything this developer
+  has" is unanswerable. Fix: a Parties section on the detail page, both columns
+  in the create wizard, and a backfill of `owner_contact_id` from the active
+  mandate's owner where null.
+  **VERIFY:** `grep -rn "developer_contact_id" app components lib/actions | grep -v merge-contacts`
+  — any hit means shipped. *(0 on 2026-08-21.)*
+
+- ~~**3. Units flood the properties list.**~~ **SHIPPED 2026-08-21** — a `kind`
+  filter in `propertyFiltersSchema` plus `resolvePropertyKindScope`, applied in
+  `applyPropertyListFilters`, so the list, the CSV export AND the map inherit it
+  from one place. **Units are hidden by default and the select SAYS SO** — it
+  reads "Standalone & projects", not "All kinds", because a default that
+  silently removes rows is a trap and one the user can see is a choice. An
+  explicit `kind=unit` wins, same escape hatch as the retired scope: a filter
+  that returns nothing when you pick it is a broken filter. Measured against a
+  project with 5 real units — default list 3 rows, `?kind=unit` 5 rows, and the
+  CSV agrees with both. The original entry follows.
+
+  - **3. Units flood the properties list.**
+  `propertyFiltersSchema` (`lib/validators/properties.ts:132`) has no `kind`
+  field, so units, phases, projects and standalone listings share one list,
+  ordered `created_at desc`, 25 per page. One 60-unit project buries two and a
+  half pages of real listings, and does the same to the CSV export and the map.
+  Fix is one enum in the schema, one `Select` in the filter bar, and a default
+  scope of standalone + project so units are reached through their project.
+  **VERIFY:** `grep -c "kind:" lib/validators/properties.ts` — `1` = only the
+  create schema has it, so the filter is missing. *(1 on 2026-08-21.)*
+
+- ~~**4. Versioned price lists are write-only.**~~ **SHIPPED 2026-08-21** — a
+  version expands to the prices it holds, with the delta against the version
+  before it. `list_price` had been written by every snapshot since `0001` and
+  selected by nothing.
+
+  The collapsed row already answers the two questions worth asking — "66 units ·
+  61 repriced · €19.058.000 · +€313.000" — and expanding gives Unit / Price /
+  Was / Change per unit.
+
+  **A first version gets null deltas, not zeroes.** A fabricated 0 reads as "we
+  held the price", which is a different statement from "there was no previous
+  price". **Dropped units are COUNTED and called out**, because a unit in the old
+  version and not the new one means the two totals no longer cover the same
+  inventory and are not comparable. Collapsed by default: six versions of sixty
+  units is 360 rows nobody asked for on page load.
+
+  **Still open, and the other half of the original entry: APPLYING an uplift.**
+  Reading a version is done; minting the next one by applying a % or fixed
+  change to a selection is not — today you edit unit prices and snapshot.
+  **VERIFY:** `grep -rn "list_price" app components lib/services` — 0 hits means
+  the read half was reverted. The original entry follows.
+
+  - **4. Versioned price lists are write-only (original).**
+  `createPriceListVersion` snapshots every unit price into
+  `price_list_items.list_price` (`lib/actions/units.ts:200`). **That column is
+  never selected again.** `app/(app)/properties/[id]/units/page.tsx:52` reads
+  `price_list_items(unit_id)` purely for a count, so the UI can say version 3
+  covers 40 units and cannot show one price in it. A snapshot nobody can read is
+  storage, not a record — and "what did we quote in March" is the entire point of
+  versioning for a developer. Fix: read a version, diff it against the previous
+  one per unit, and apply a % or fixed uplift to a selection to mint the next.
+  **VERIFY:** `grep -rn "list_price" app components` — 0 hits means still
+  write-only. *(0 on 2026-08-21.)*
+
+- ~~**5. A unit inherits five fields from its project.**~~ **DONE 2026-08-21 —
+  both halves.**
+  `createUnit` now copies **19** columns via `resolveInheritedUnitFields`
+  (`lib/services/unit-inheritance.ts`), including the developer, owner, agent,
+  VAT, deed and permit status, energy class, delivery date, construction status,
+  coordinates, features and amenities. The `created` event lists what was
+  inherited, so "where did this come from" has an answer in the timeline.
+
+  **`visibility` is deliberately NOT inherited and that is the load-bearing
+  part.** A `public` project would otherwise mint already-published units with
+  no photos, no price and no description — straight past the quality gate every
+  other publish goes through. Proven in the app, not assumed: project flipped to
+  `public`, new unit came out `private` with score 0.
+
+  **The drift half shipped too.** Migration `0035` adds
+  `properties.inherited_fields text[]`; a unit edit removes the changed column
+  from it (only CHANGED ones — the details form posts twenty-odd columns per
+  save, so dropping everything it touched would sever a unit's whole inheritance
+  the first time anyone pressed Save); and the units page carries a panel
+  computed fresh on every render — no stored "pending sync" state to go stale —
+  offering ONE BUTTON PER FIELD. "Sync everything" reads as one decision but is
+  several, and the one nobody meant to make is the one that hurts.
+
+  Measured on a 67-unit block: the panel read "Vat status — 66 units behind",
+  correctly invisible for the one unit given its own value; the sync updated
+  exactly those 66, left the 67th alone, wrote 66 events and the chain verified.
+
+  **The backfill needed three attempts and the reason is worth keeping.** The
+  first rule was "inherited if the value equals the parent's" — which left every
+  unit created by the old five-column `createUnit` permanently opted out, since
+  their columns are blank where the parent has values. Blank means nobody had an
+  opinion, not that somebody chose "unknown". Widening it to null caught most of
+  them; the last miss was that `vat_status`, `title_deed_status` and
+  `permit_status` are NOT NULL and say "nobody has said" with a literal
+  `'unknown'`, and `features` with an empty array. `currency` ('EUR') and
+  `transaction_type` ('sale') are deliberately NOT in that group — those
+  defaults are real answers.
+
+  **VERIFY:** `grep -rl "inherited_fields" supabase/migrations lib` — no hit
+  means it was reverted. The original entry follows.
+
+  - **5. A unit inherits five fields from its project; everything else is retyped (original).**
+  `createUnit` copies `transaction_type`, `district_id`, `area_id`, `address`,
+  `postal_code` (`lib/actions/units.ts:63-68`). Not copied, and therefore blank
+  on every unit forever unless typed 60 times: developer, owner, VAT status,
+  currency, title-deed status, permit status, energy class, delivery date,
+  construction status, features, amenities, coordinates, assigned agent,
+  visibility, description. Doc 02 §C1 says units inherit "unless overridden";
+  the implementation inherits five columns and has no override concept.
+  Fix: widen the inherited set, and record which columns are still project-derived
+  in a `properties.inherited_fields text[]` so a later project edit can offer
+  "update the N units that still inherit this" without touching the ones somebody
+  deliberately changed.
+  **VERIFY:** `grep -c "project\." lib/actions/units.ts` — `16` on 2026-08-21
+  (5 inherited columns plus the guard and event reads). A larger number means it was widened.
+
+- ~~**6. Mandates can only be retyped, never renewed.**~~ **SHIPPED 2026-08-21**
+  — migration `0036` adds `mandates.renewed_from_id`, and a Renew button copies
+  the owner, type, commission, reminder and notes forward with the dates shifted
+  by the SAME NUMBER OF DAYS. Days, not calendar months, on purpose: "six
+  months" is not a fixed length and month arithmetic has its own judgement calls
+  (Jan 31 plus one month). The successor **starts when the old one ends**, so an
+  early renewal never overlaps — unless the old one already lapsed, in which case
+  it starts today, because back-dating a contract over a gap nobody was under
+  mandate for would be inventing history.
+
+  **The successor is a DRAFT, never active**, so activating it is a separate
+  deliberate step and finding 7's index forces the predecessor to be terminated
+  first. That sequence is now enforced rather than described. The signed document
+  is deliberately not copied — a renewal is a new agreement and needs its own
+  signature; pointing at the old PDF would make the evidence chain assert
+  something false. Both cards show the chain: "Renews an earlier mandate" and
+  "Replaced by …", and a mandate already renewed loses its Renew button.
+  The original entry follows.
+
+  - **6. Mandates can only be retyped, never renewed (original).**
+  `MANDATE_TRANSITIONS` (`lib/validators/mandates.ts:10-15`) is a dead end:
+  `expired: []`, `terminated: []`. Renewing means a blank dialog and re-entering
+  owner, type, commission, reminder days and notes, and the new row carries no
+  link to the one it replaces. For a business whose commission evidence is a hash
+  chain, an unlinked mandate history is a real loss. Fix: `renewed_from_id` plus
+  a Renew action that copies the terms forward and shifts the dates by the same
+  duration.
+  **VERIFY:** `grep -rl "renewed_from" supabase/migrations lib` — any hit means
+  shipped. *(none on 2026-08-21.)*
+
+- ~~**7. Nothing stops two active exclusive mandates on one property.**~~
+  **SHIPPED 2026-08-21** — `mandates_one_active_per_property`, a PARTIAL unique
+  index (`where status = 'active'`) so history and renewal chains are untouched.
+  A database guarantee rather than a convention, because this is the number the
+  business gets paid on. `setMandateStatus` turns the 23505 into a sentence that
+  says what to do: "This property already has an active mandate. Terminate it
+  first." The migration CHECKS FOR EXISTING VIOLATIONS BEFORE creating the index,
+  so a pre-existing conflict names the property instead of failing as a bare
+  index-build error — and it refuses to choose which of the two is real.
+
+  **`mandates_safe` had to be replaced too**, since it lists its columns
+  explicitly and every read path goes through it. Grants and masking were
+  captured before and compared after — byte-identical `relacl` — and the
+  migration's own check refuses to finish if `authenticated` lost SELECT.
+  The original entry follows.
+
+  - **7. Nothing stops two active exclusive mandates on one property (original).**
+  `saveMandate` inserts at `lib/actions/mandates.ts:151` with no pre-check, and
+  every reader ("active wins the badge") just takes the first active row it
+  finds. Two exclusives with different commission rates can coexist and the UI
+  will show one of them arbitrarily. Fix: a partial unique index — one active
+  mandate per property — so it is a database guarantee rather than a convention.
+  It protects the number the business gets paid on.
+  **VERIFY:** `grep -rn "unique.*mandates\|mandates.*unique" supabase/migrations`
+  — *(0 on 2026-08-21.)*
+
+- ~~**8. An active mandate can have no owner.**~~ **SHIPPED 2026-08-21** —
+  checked on the `draft → active` transition rather than at insert, so a
+  half-entered draft can still be saved and finished later. "Add the owner
+  contact before activating this mandate." The original entry follows.
+
+  - **8. An active mandate can have no owner (original).**
+  `owner_contact_id` is `optionalUuid` in `saveMandateSchema`
+  (`lib/validators/mandates.ts:48`) and `setMandateStatus` does not check it.
+  A mandate is a contract with a person; one that names nobody is worth 10 points
+  on the quality score and nothing in a dispute. Fix: require it on the
+  `draft → active` transition, not at insert, so a half-entered draft still saves.
+  **VERIFY:** `grep -n "owner_contact_id" lib/actions/mandates.ts` — a check
+  inside `setMandateStatus` means shipped. *(only the two writes on 2026-08-21.)*
+
+- ~~**9. A contact record never shows its properties.**~~ **SHIPPED 2026-08-21**
+  — a Properties tab on the contact page, one query on both party columns.
+  It only became possible once finding 2 filled them.
+
+  **Units are rolled up into their project, never listed** — the same call the
+  properties list makes by default. A developer with a 60-unit block gets ONE
+  row plus "62 units · 62 available", because sixty rows would bury the three
+  things the reader opened the page for. A unit whose project is NOT in the
+  portfolio (sold on, owner changed) stands on its own instead of vanishing.
+
+  Owner and developer are not exclusive — a developer owns everything it has not
+  sold — so a property where the contact is both reads "Owns & Built" and is
+  counted once.
+
+  **It caught a real gap in its own right.** Leptos showed 62 units against a
+  67-unit project: the missing 5 were the ones created before the inheritance
+  widening, which never got a `developer_contact_id`. All 5 still listed it as
+  inherited, so finding 5's drift panel offered "Developer contact — 5 units
+  behind", and after one click the tab read 67 units and €18.745.000. The two
+  features check each other.
+  **VERIFY:** `grep -c 'from("properties")' "app/(app)/contacts/[id]/page.tsx"` —
+  0 means reverted. The original entry follows.
+
+  - **9. A contact record never shows its properties (original).**
+  `app/(app)/contacts/[id]/page.tsx` has six tabs (Profile · Preferences · KYC ·
+  Activity · Deals · Documents, lines 236-245) and queries `properties` in none
+  of them. Open a developer and you get their phone number, not their inventory.
+  This is the other half of finding 2 — once the two party columns are filled it
+  is a single query and one tab.
+  **VERIFY:** `grep -c 'from("properties")' "app/(app)/contacts/[id]/page.tsx"` —
+  *(0 on 2026-08-21.)*
+
+- ~~**10. Three project columns are dead in the UI.**~~ **TWO SHIPPED, ONE
+  DECIDED AGAINST, 2026-08-21.**
+
+  `construction_status` and `delivery_date` are now a "Build & handover" section
+  on the Details tab and a fact on the Overview — delivery date being the first
+  question anybody asks about an off-plan unit. Both are in
+  `INHERITED_UNIT_FIELDS`, so a project's units get them and the drift panel
+  keeps them in step.
+
+  `construction_status` is `text` in the schema, not an enum, and older rows may
+  hold anything. The select offers a standard list AND KEEPS WHATEVER IS ALREADY
+  STORED as an extra "(as recorded)" option — dropping it would show a different
+  status than the record holds, and the next save would write that difference.
+  Verified against a real free-text value.
+
+  **`currency` was deliberately NOT made editable.** Making the column writable
+  without currency-aware formatting would be worse than leaving it: `formatMoney`
+  and the evidence-report formatter both hardcode EUR, so a property in GBP would
+  display and PRINT as euros — a wrong number on a commission document. This desk
+  is Cyprus and EUR-only; the column is vestigial. If multi-currency is ever
+  wanted it is a formatting project, not a form field.
+  **VERIFY:** `grep -rn "delivery_date" components/features/properties` — 0 means
+  reverted. The original entry follows.
+
+  - **10. Three project columns are dead in the UI (original).**
+  `construction_status` and `delivery_date` have zero references anywhere outside
+  the schema and `database.types.ts`. `currency` is read once
+  (`app/(app)/share-links/page.tsx:33`) and written by nothing, so every listing
+  is silently EUR. Delivery date is the most-asked question about an off-plan
+  unit and it is already a column.
+  **VERIFY:** `grep -rn "delivery_date\|construction_status" app components lib/actions`
+  — *(0 on 2026-08-21.)*
+
+- **11. `phase` is a kind that cannot be created.**
+  The enum has four kinds. `CREATABLE_KINDS` offers two
+  (`lib/validators/properties.ts:174`) and `createUnit` hardcodes the third, so
+  nothing can produce a `phase` — yet three read paths branch on it
+  (`properties/[id]/page.tsx:293`, `units/page.tsx:33`, `units.ts:47`). Either
+  build phase creation (a large project genuinely sells in phases, with separate
+  price lists and delivery dates) or delete the branches. **A code path nobody can
+  reach is a claim, and claims here go stale silently** — same rule as this file's
+  own header.
+  **VERIFY:** `grep -rn '"phase"' lib/validators lib/actions` — a creatable kind
+  means shipped. *(only the `createUnit` guard on 2026-08-21.)*
+
+- ~~**12. Every contact picker searches every contact — ENABLER.**~~ **SHIPPED
+  2026-08-21 (`cf15794`)** — `searchEntities` takes an optional `contactTypes`.
+  It uses `overlaps`, NOT `contains`: `contact_types` is an array on both sides
+  and a contact tagged `{owner,buyer}` must still match an Owner picker. Every
+  existing caller is unchanged. The original entry follows.
+
+  - **12. Every contact picker searches every contact — ENABLER.**
+  `searchEntities("contact", …)` (`lib/actions/entity-search.ts:23-36`) has no
+  type filter, so the "Owner contact" picker on a mandate offers buyers, lawyers
+  and bankers. The query already exists one file away —
+  `lib/queries/contacts-list.ts:78` filters with `.contains("contact_types", [type])`.
+  Small alone, but it is the prerequisite for the party model in finding 2:
+  "choose the developer" only works if the picker knows what a developer is.
+  **VERIFY:** `grep -c "contact_types" lib/actions/entity-search.ts` — *(0 on 2026-08-21.)*
+
+- **13. No duplicate guard when creating a property.**
+  Contacts block duplicates live on `phone_e164` and warn on email. Properties
+  have no equivalent, so the same villa entered twice yields two references, two
+  mandates and two photo sets — and both burn a `reference_counters` value that
+  can never be reissued. The indexes for the check already exist:
+  `properties_location_gix` (GiST on the point) makes "within 30 m" cheap and
+  `properties_ref_trgm` covers fuzzy matching. Warn, never block: two genuinely
+  different units do share a building.
+  **VERIFY:** `grep -rci "duplicate" lib/actions/properties.ts` — *(0 on 2026-08-21.)*
+
+- **14. The CSV export omits every relationship.** **PARTLY DONE 2026-08-21 —
+  `Kind` shipped with finding 3**, because a list that hides units by default
+  owes its export a column saying which it holds. **Still missing: owner,
+  developer, assigned agent, coordinates, deed and permit status** — that is the
+  bulk of this entry and it is still open. Do not strike it.
+
+  - **14. The CSV export omits every relationship (original entry).**
+  Seventeen columns (`lib/services/property-export.ts:52-72`), none of which say
+  who owns it, who built it, who is responsible for it, whether it is a unit or a
+  project, or where it is. An export that cannot be grouped by developer is not
+  much use in a developer conversation. Add: kind, owner, developer, assigned
+  agent, coordinates, deed + permit status.
+  **VERIFY:** `grep -c "Owner\|Developer\|Kind" lib/services/property-export.ts` —
+  *(0 on 2026-08-21.)*
+
+- ~~**15. The quality score never asks who is responsible.**~~ **SHIPPED
+  2026-08-21** — "Agent assigned" 5 and "Owner or developer linked" 5, added only
+  now because both fields were unfillable until findings 1 and 2 shipped, and a
+  score item for a field nobody can fill is a permanent deduction rather than a
+  prompt.
+
+  **PAID FOR, not added on top.** Cover photo 10→5 and ≥6 photos 15→10 funded
+  them: imagery carried 25 of 100 across two items that overlap almost completely
+  (no six photos without a cover), and still carries 15, joint-largest. Nothing
+  about price, location or legal status was weakened. A test now asserts the
+  weights total exactly 100 in both the land and non-land shapes — adding an item
+  without paying for it inflates every score and quietly weakens the publish gate.
+  Doc 02 §C1 updated in the same commit.
+
+  **Changing a weight makes every stored score stale**, because the detail page
+  computes fresh while the list and CSV read the column. `npm run
+  recompute:scores` (with `--dry-run`) exists for that and was run: 106 rows,
+  re-run a clean no-op.
+  **VERIFY:** `grep -c "hasAssignedAgent" lib/services/quality-score.ts` — 0
+  means reverted. The original entry follows.
+
+  - **15. The quality score never asks who is responsible (original).**
+  Eleven weighted items (`lib/services/quality-score.ts:49-89`) covering photos,
+  copy, price, area, coordinates and legal status. None covers an assigned agent
+  or a linked owner — reasonably, since neither is currently fillable. Once 1 and
+  2 land they are the obvious additions, and the score is the mechanism that
+  actually gets the desk to fill them in. **Do not do this before 1 and 2** — a
+  score item for a field with no input is a permanent deduction.
+  **VERIFY:** `grep -c "agent\|owner" lib/services/quality-score.ts` — *(0 on 2026-08-21.)*
+
+### Proposals that came out of the same read
+
+Not defects — features the audit argued for, all following one rule: **the
+system already knows something, so stop asking a person for it.** Sizes are
+relative (S = an afternoon, M = a few days). Nothing here gets built without
+explicit direction.
+
+- **Party defaults, S→M.** A developer's standard commission, mandate type and
+  duration, usual VAT treatment, district, boilerplate and payment plan, stored
+  on the contact as `party_defaults jsonb` (the same pattern the row already uses
+  for `preferences`, `kyc`, `banking_readiness`), with an office-level fallback in
+  `cyprus_config` — which already carries `verified_at` and `source_note`, the
+  right shape for a number somebody has to stand behind. Resolution order:
+  unit ← project ← party ← office. **Every prefill stays editable; a default is a
+  suggestion, not a lock.**
+- ~~**Bulk unit generator, M.**~~ **SHIPPED 2026-08-21.** `GenerateUnitsForm` on
+  the units page: block, floor range, units per floor, shared layout, base price
+  and a per-floor increment. Units inherit through the SAME
+  `resolveInheritedUnitFields` a hand-added one uses — a second inheritance path
+  that drifted would be worse than no generator.
+
+  **The live preview is the feature, not decoration.** It shares `generateUnits`
+  with the action, so what it shows is literally what gets written: exact count,
+  first and last reference, price range. A generator that writes sixty rows on a
+  guess is worse than typing them, because sixty plausible-looking wrong rows
+  have to be found by hand.
+
+  **ALL OR NOTHING on collision**, checked before writing rather than caught as a
+  23505 — a partial block is the worst outcome, since you cannot tell by looking
+  which half landed and the obvious retry collides with it. The error names the
+  clashes. Ceiling of 200 per run so a floor-range typo cannot insert thousands.
+
+  **One event per unit, in ONE statement** via the new `logEvents`. That the hash
+  chain survives a multi-row insert was MEASURED before the code was written, not
+  assumed: a 3-row probe gave `prev_hash[n] = hash[n-1]` throughout with the chain
+  still verifying. Proven again end to end at 60 units.
+
+  **VERIFY:** `grep -c "generateProjectUnits" lib/actions/units.ts` — 0 means gone.
+- **Unit type templates, M.** Define type A1 once (2 bed, 85 m², 20 m² veranda,
+  €/m² rate) and stamp it onto any unit; price computes from area. Real projects
+  repeat four or five layouts across every floor.
+- **Create similar, S.** Duplicate any property as a starting point, minus the
+  reference and the unit-specific fields.
+- **Area centroid as a coordinate fallback, S.** Migration 0031 already ships
+  district and area centroids and the map already falls back to them. Offer the
+  same on save, flagged as approximate, so a listing reaches the map today and
+  earns exact coordinates later.
+- **VAT treatment derived, not remembered, M — NEEDS AN OPERATOR DECISION.**
+  Reduced-rate eligibility follows from covered area, price and buyer status; the
+  calculators exist and `cyprus_config` is built to hold verified thresholds.
+  Suggest the status and show the rule that produced it. **The thresholds must
+  come from the operator — a CRM must not invent tax law**, which is the same
+  reason B4's reservation agreements are parked (HANDOFF §5).
+- **Owner net ↔ asking ↔ commission, shown, S.** All three are already columns.
+  Show the arithmetic so an agent negotiating knows the floor. Admin + assigned
+  agent only, matching how `mandates_safe` masks commission.
+- **Quality-score worklist, S.** `computeQualityScore` already returns a
+  `missing` array per property and it is thrown away after rendering one ring.
+  Aggregate it across the list — "19 missing deed status, 12 missing coordinates"
+  — so one category can be cleared in a sitting.
+- **Portfolio tab on a contact, S.** Finding 9, from the other side.
+- **Project availability share link, M.** `share_links` already mints, opens and
+  revokes with full evidence. Point the same machinery at a project and a
+  developer or partner agent gets a live availability matrix instead of
+  yesterday's PDF.
+- **Construction progress + delivery date, S.** Finding 10, made useful: a
+  milestone % and an expected delivery on the project header, which is also the
+  raw material for the M13 developer dashboard.
+- **Sales velocity per project, M.** Units sold per month and absorption rate,
+  computed from `status_changed` events already being written and read by nothing
+  but the timeline. No new data collection at all.
+- **Keys follow the mandate, S.** Terminating or expiring a mandate should prompt
+  to recall keys still checked out on that property. Both sides are evented;
+  nothing connects them.
+
 - ~~**THE PROPERTY MAP (B5) RENDERS BLANK — SHIPPED, THEN HIDDEN.**~~
   **WITHDRAWN 2026-08-20: THE MAP WAS NEVER BROKEN.** Verified working against
   the real bundle — 9 `/planet/*.pbf` vector tiles, `load` fired, `loaded: true`,
@@ -168,6 +631,85 @@ built without explicit direction.
   AND resolves a pasted Google Maps link, short links included, which is faster
   than dragging a pin.
 
+- **Leaked-password protection is disabled (operator decision).** Surfaced by
+  the `get_advisors` run after applying 0034 to hosted on 2026-08-21, not by a
+  code read. Supabase Auth can check new passwords against HaveIBeenPwned;
+  it is off. One toggle in the dashboard, no code, no migration — but it is an
+  auth-policy change for real users, so it is the operator's call. Sits with the
+  other auth decisions (mandatory 2FA) rather than with engineering work.
+  **VERIFY:** `get_advisors` type `security` — the `auth_leaked_password_protection`
+  lint disappears once enabled. *(present 2026-08-21.)*
+- ~~**A save with no coordinates recorded a `location` change every time.**~~
+  **FIXED 2026-08-21** (`locationChanged` in `lib/utils/geo.ts`). The inline
+  check computed `samePoint` as "both non-null and equal" and treated
+  `!samePoint` as changed, so both-null read as a change: every save of a
+  coordinate-less property wrote a needless `location` update AND put a false
+  entry in the event's changed-field diff — in an app whose whole point is that
+  the diff is trustworthy. It went unnoticed until unit inheritance started
+  READING that diff and began severing `location` inheritance for a change that
+  never happened. **A latent wrong answer stayed invisible until something
+  depended on it.**
+  **VERIFY:** `grep -c "locationChanged" lib/utils/geo.ts` — 0 means reverted.
+- ~~**HOSTED GRANTS ON `mandates_safe` ARE WIDER THAN THE REPO ASKS FOR — SECURITY.**~~
+  **FIXED 2026-08-21, migration `0037`, applied to hosted the same day.** Hosted
+  and local ACLs are now byte-identical:
+  `{postgres=arwdDxtm, service_role=arwdDxtm, authenticated=r}`. Measured after:
+  `anon` can neither read nor insert, `authenticated` can read and not insert.
+  The RLS suite (48) and the mandate E2E both passed against the reduced grants
+  before it went to production, so listing managers still read the view.
+
+  `service_role` deliberately untouched — 0022 owns that question. The other two
+  views in `public` (`geography_columns`, `geometry_columns`) carry the same
+  broad grants and are deliberately left alone: they arrive with PostGIS and are
+  not this project's to manage. The original entry follows.
+
+  - **HOSTED GRANTS ON `mandates_safe` (original entry).** Measured, not inferred:
+
+  | | `anon` | `authenticated` |
+  |---|---|---|
+  | hosted | `arwdDxtm` | `arwdDxtm` |
+  | local | `Dxtm` (no select) | `rDxtm` (select only) |
+
+  `0002` grants **`select` to `authenticated` and nothing else**, and no migration
+  revokes anything on this view — so hosted picked the rest up from Supabase's
+  default privileges on `public`, and local (correctly) did not. Hosted has been
+  the outlier since the view was created.
+
+  **Why the write bits matter here specifically.** `information_schema.views`
+  reports `is_updatable = YES` and `is_insertable_into = YES` — it is a simple
+  view over one table, so Postgres makes it auto-updatable. Its owner is
+  `postgres`, which **has `rolbypassrls`**, and it is not `security_invoker`. So a
+  write routed through the view is performed as the owner and **does not go
+  through `mandates` RLS**, which is otherwise the only thing stopping a
+  non-admin creating mandates or setting `commission_pct`. An INSERT is the live
+  path: an auto-updatable view without `WITH CHECK OPTION` does not apply its own
+  WHERE clause to inserts. UPDATE/DELETE are bounded by that WHERE, which for
+  `anon` matches nothing.
+
+  **NOT EXPLOITED — this was established from catalogue facts only.** No write
+  was attempted against production.
+
+  **Not caused by 0036**, which uses `create or replace view` and preserves the
+  ACL: `relacl` was captured before and after and is byte-identical.
+
+  The fix is a revoke bringing hosted in line with what 0002 already says, and it
+  cannot break the app — every mandate write goes through the base table as
+  admin, and no code reads this view as `anon`. It is still a production
+  permission change, so it wants an explicit yes rather than being folded into a
+  feature migration.
+  **VERIFY:** compare `relacl` for `mandates_safe` on hosted against local; the
+  entry is closed when `anon` has no `arwd` and `authenticated` has `r` only.
+- **`recomputeQualityScore` reads mandates from a table that depends on WHO IS
+  CALLING — noted 2026-08-21, handled, worth remembering.** The app reads
+  `mandates_safe`, because listing managers have no base-table SELECT and reading
+  `mandates` scored their saves 10 points low. A script running as `service_role`
+  reads NOTHING through that view — its WHERE tests `current_org_id()` and
+  `current_role_gnk()`, both null outside a user session — so it scores every
+  mandated property 10 points low instead. Opposite blindness, same symptom.
+  There is no single source correct for both, so `mandateSource` is now an
+  explicit option and the caller says which. **Caught by dry-running the
+  recompute script before letting it write.** Any future job that scores
+  properties outside a user session must pass `mandateSource: "base"`.
 - Forgot-password flow on `/login` (doc 05): Supabase `resetPasswordForEmail` +
   reset page + email template. Natural fit with Phase 2 Resend integration.
   **VERIFY:** `grep -rl resetPasswordForEmail app lib` — any hit means shipped.

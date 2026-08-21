@@ -13,6 +13,7 @@ import {
   saveMandateSchema,
   type MandateStatus,
 } from "@/lib/validators/mandates";
+import { canRenew, resolveRenewalDates, toIsoDate } from "@/lib/services/mandate-renewal";
 
 export type MandateActionState = { error: string | null; savedAt: number | null };
 
@@ -62,6 +63,49 @@ async function supersedeRenewalTasks(
     revalidatePath("/tasks");
     revalidatePath("/dashboard");
   }
+}
+
+/**
+ * Keep `properties.owner_contact_id` agreeing with the mandate that names an
+ * owner (BACKLOG audit finding 2, the forward half of migration 0034).
+ *
+ * ONLY FILLS A BLANK. A property whose owner was set by hand on the Parties
+ * panel is the stronger statement and is never overwritten here — otherwise
+ * editing a mandate would silently reassign the property, and the two fields
+ * would fight every time somebody touched either one.
+ *
+ * Without this the backfill is a one-off and the drift returns with the next
+ * mandate anyone creates.
+ */
+async function syncPropertyOwner(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  propertyId: string,
+  ownerContactId: string | null,
+  actor: { id: string; orgId: string },
+) {
+  if (!ownerContactId) return;
+
+  const { data: rows } = await supabase
+    .from("properties")
+    .update({ owner_contact_id: ownerContactId })
+    .eq("id", propertyId)
+    .is("owner_contact_id", null)
+    .select("id");
+  if (!rows || rows.length === 0) return; // already had an owner, or RLS said no
+
+  await logEvent(supabase, {
+    orgId: actor.orgId,
+    actorId: actor.id,
+    entityType: "property",
+    entityId: propertyId,
+    eventType: "updated",
+    payload: {
+      section: "parties",
+      source: "mandate_owner_sync",
+      changed: { owner_contact_id: { from: null, to: ownerContactId } },
+    },
+  });
+  revalidatePath(`/properties/${propertyId}`);
 }
 
 function changedValue(prev: unknown, next: unknown): boolean {
@@ -142,6 +186,10 @@ export async function saveMandate(
         "expiry_changed",
       );
     }
+    await syncPropertyOwner(supabase, current.property_id, d.owner_contact_id ?? null, {
+      id: profile.id,
+      orgId: profile.orgId,
+    });
     await recomputeScores(supabase, current.property_id);
     revalidatePath(`/properties/${current.property_id}`);
     return { error: null, savedAt: Date.now() };
@@ -174,8 +222,106 @@ export async function saveMandate(
     eventType: "created",
     payload: { property_id: d.property_id, type: d.type },
   });
+  await syncPropertyOwner(supabase, d.property_id, d.owner_contact_id ?? null, {
+    id: profile.id,
+    orgId: profile.orgId,
+  });
   await recomputeScores(supabase, d.property_id);
   revalidatePath(`/properties/${d.property_id}`);
+  return { error: null, savedAt: Date.now() };
+}
+
+/**
+ * Create the successor to a mandate, carrying its terms forward
+ * (BACKLOG audit finding 6).
+ *
+ * Renewing used to mean a blank dialog and retyping the owner, type, commission,
+ * reminder and notes — and the new row carried no link to the one it replaced,
+ * so "were we on an exclusive in March" was an exercise in reading dates and
+ * guessing. `renewed_from_id` (0036) makes the chain a fact.
+ *
+ * THE SUCCESSOR IS A DRAFT, never active. Activating it is a separate, deliberate
+ * step, and the one-active-per-property index forces the old one to be
+ * terminated first — so the sequence the business actually follows is enforced
+ * by the database rather than described in a comment.
+ *
+ * The signed document is deliberately NOT copied. A renewal is a new agreement
+ * and needs its own signature; pointing at the old PDF would make the evidence
+ * chain assert something false.
+ */
+export async function renewMandate(mandateId: string): Promise<MandateActionState> {
+  const supabase = await createClient();
+  const profile = await getCurrentProfile(supabase);
+  if (profile.role !== "admin") {
+    return { error: "Only admins manage mandates.", savedAt: null };
+  }
+
+  const { data: previous } = await supabase
+    .from("mandates")
+    .select("*")
+    .eq("id", mandateId)
+    .maybeSingle();
+  if (!previous) return { error: "Mandate not found", savedAt: null };
+
+  if (!canRenew(previous.status)) {
+    return {
+      error:
+        previous.status === "terminated"
+          ? "A terminated mandate cannot be renewed — that relationship ended. Create a new mandate instead."
+          : `A ${previous.status} mandate has nothing to renew yet.`,
+      savedAt: null,
+    };
+  }
+
+  // One draft successor at a time, or Renew clicked twice quietly makes two.
+  const { data: existing } = await supabase
+    .from("mandates")
+    .select("id")
+    .eq("renewed_from_id", mandateId)
+    .limit(1);
+  if (existing && existing.length > 0) {
+    return { error: "This mandate has already been renewed.", savedAt: null };
+  }
+
+  const dates = resolveRenewalDates(previous, toIsoDate(new Date()));
+
+  const { data: created, error } = await supabase
+    .from("mandates")
+    .insert({
+      org_id: previous.org_id,
+      property_id: previous.property_id,
+      renewed_from_id: previous.id,
+      type: previous.type,
+      status: "draft" as const,
+      owner_contact_id: previous.owner_contact_id,
+      commission_pct: previous.commission_pct,
+      commission_notes: previous.commission_notes,
+      renewal_reminder_days: previous.renewal_reminder_days,
+      notes: previous.notes,
+      start_date: dates.start_date,
+      expiry_date: dates.expiry_date,
+      created_by: profile.id,
+    })
+    .select("id")
+    .single();
+  if (error) return { error: error.message, savedAt: null };
+
+  await logEvent(supabase, {
+    orgId: previous.org_id,
+    actorId: profile.id,
+    entityType: "mandate",
+    entityId: created.id,
+    eventType: "renewed",
+    payload: {
+      renewed_from: previous.id,
+      property_id: previous.property_id,
+      type: previous.type,
+      previous_window: { start: previous.start_date, expiry: previous.expiry_date },
+      new_window: { start: dates.start_date, expiry: dates.expiry_date },
+    },
+  });
+
+  revalidatePath(`/properties/${previous.property_id}`);
   return { error: null, savedAt: Date.now() };
 }
 
@@ -190,7 +336,7 @@ export async function setMandateStatus(
 
   const { data: m } = await supabase
     .from("mandates")
-    .select("id, org_id, property_id, status")
+    .select("id, org_id, property_id, status, owner_contact_id")
     .eq("id", mandateId)
     .maybeSingle();
   if (!m) return { error: "Mandate not found" };
@@ -200,8 +346,26 @@ export async function setMandateStatus(
     return { error: `Cannot move a ${m.status} mandate to ${next}.` };
   }
 
+  // BACKLOG audit finding 8: a mandate is a contract with a person, and one
+  // that names nobody is worth 10 points on the quality score and nothing in a
+  // dispute. Checked on ACTIVATION rather than at insert, so a half-entered
+  // draft can still be saved and finished later.
+  if (next === "active" && !m.owner_contact_id) {
+    return { error: "Add the owner contact before activating this mandate." };
+  }
+
   const { error } = await supabase.from("mandates").update({ status: next }).eq("id", mandateId);
-  if (error) return { error: error.message };
+  if (error) {
+    // 23505 here is the one-active-mandate-per-property index from 0036. The
+    // raw message names an index, which tells the desk nothing about what to do.
+    if (error.code === "23505") {
+      return {
+        error:
+          "This property already has an active mandate. Terminate it first — only one can be live at a time.",
+      };
+    }
+    return { error: error.message };
+  }
 
   await logEvent(supabase, {
     orgId: m.org_id,

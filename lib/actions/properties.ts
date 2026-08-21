@@ -157,6 +157,8 @@ export async function updatePropertySection(
       year_built: d.year_built ?? null,
       energy_class: d.energy_class ?? null,
       features: d.features,
+      construction_status: d.construction_status ?? null,
+      delivery_date: d.delivery_date ?? null,
       internal_notes: d.internal_notes ?? null,
     };
     // the land panel isn't rendered for non-land properties, so its absent
@@ -177,19 +179,15 @@ export async function updatePropertySection(
 
     // location is a PostGIS point: DB returns EWKB hex, we write EWKT. Compare
     // decoded coords (rounded) so an unchanged point is not re-written every save.
-    const { parseLocationPoint, toLocationEWKT } = await import("@/lib/utils/geo");
+    const { locationChanged, parseLocationPoint, toLocationEWKT } = await import(
+      "@/lib/utils/geo"
+    );
     const prevPoint = parseLocationPoint((current as { location?: unknown }).location);
     const nextPoint =
       d.latitude !== undefined && d.longitude !== undefined
         ? { lat: d.latitude, lng: d.longitude }
         : null;
-    const r6 = (n: number) => Math.round(n * 1e6) / 1e6;
-    const samePoint =
-      prevPoint !== null &&
-      nextPoint !== null &&
-      r6(prevPoint.lat) === r6(nextPoint.lat) &&
-      r6(prevPoint.lng) === r6(nextPoint.lng);
-    if ((prevPoint === null) !== (nextPoint === null) || !samePoint) {
+    if (locationChanged(prevPoint, nextPoint)) {
       updates.location = nextPoint ? toLocationEWKT(nextPoint.lat, nextPoint.lng) : null;
       locationChange = { from: prevPoint, to: nextPoint };
     }
@@ -229,6 +227,39 @@ export async function updatePropertySection(
       short_description: strip(parsed.data.short_description),
       public_description: strip(parsed.data.public_description),
     };
+  } else if (section === "parties") {
+    // Admin + listing manager only, enforced HERE and not left to RLS. The
+    // properties UPDATE policy also admits the ASSIGNED AGENT, and its
+    // with-check tests org_id alone — so an agent could hand their own property
+    // to someone else and lock themselves out of it. Hiding the control would
+    // not be a guard; this is (same reasoning as archiveProperty below).
+    if (profile.role !== "admin" && profile.role !== "listing_manager") {
+      return {
+        error: "Only admins and listing managers can change who a property belongs to.",
+        savedAt: null,
+      };
+    }
+    const { partiesSectionSchema, resolvePartyUpdates } = await import(
+      "@/lib/validators/properties"
+    );
+    const parsed = partiesSectionSchema.safeParse(raw);
+    if (!parsed.success) {
+      return { error: parsed.error.issues[0]?.message ?? "Invalid input", savedAt: null };
+    }
+    // An agent id that isn't an active member grants edit rights to nobody and
+    // fails the FK with an opaque message — check it while we can still explain.
+    if (parsed.data.assigned_agent_id) {
+      const { data: agent } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("id", parsed.data.assigned_agent_id)
+        .eq("is_active", true)
+        .maybeSingle();
+      if (!agent) {
+        return { error: "That agent is not an active member of this office.", savedAt: null };
+      }
+    }
+    updates = resolvePartyUpdates(parsed.data, { kind: current.kind });
   } else {
     return { error: `Unknown section: ${section}`, savedAt: null };
   }
@@ -272,6 +303,11 @@ export async function updatePropertySection(
       titleDeedSet: merged.title_deed_status !== "unknown",
       permitSet: merged.permit_status !== "unknown",
       mandateActive: (activeMandates ?? []).length > 0,
+      // from `merged`, like every other input here: a parties save in the same
+      // submit must count toward the gate it is trying to clear
+      hasAssignedAgent: merged.assigned_agent_id != null,
+      hasOwnerOrDeveloper:
+        merged.owner_contact_id != null || merged.developer_contact_id != null,
     });
     const score = result.score;
     if (score < PUBLISH_THRESHOLD) {
@@ -309,6 +345,19 @@ export async function updatePropertySection(
   if (locationChange) changed.location = locationChange;
   if (Object.keys(changed).length === 0) {
     return { error: null, savedAt: Date.now() }; // nothing to write, still "saved"
+  }
+
+  // A unit that has just had an inherited column edited now has an opinion of
+  // its own, so that column stops following its project (0035). Only CHANGED
+  // fields count: the details form posts twenty-odd columns on every save, and
+  // dropping everything it touched would sever a unit's whole inheritance the
+  // first time anybody opened the tab and pressed Save.
+  if (current.kind === "unit") {
+    const { fieldsClaimedByEdit } = await import("@/lib/services/unit-inheritance");
+    const stillInherited = fieldsClaimedByEdit(current.inherited_fields, Object.keys(changed));
+    if (stillInherited.length !== (current.inherited_fields ?? []).length) {
+      updates.inherited_fields = stillInherited;
+    }
   }
 
   // RLS filters a forbidden update to 0 rows without an error — the returned

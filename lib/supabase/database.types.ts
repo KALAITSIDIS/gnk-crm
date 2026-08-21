@@ -754,6 +754,7 @@ export type Database = {
           owner_contact_id: string | null
           property_id: string
           renewal_reminder_days: number
+          renewed_from_id: string | null
           signed_document_id: string | null
           start_date: string
           status: Database["public"]["Enums"]["mandate_status"]
@@ -772,6 +773,7 @@ export type Database = {
           owner_contact_id?: string | null
           property_id: string
           renewal_reminder_days?: number
+          renewed_from_id?: string | null
           signed_document_id?: string | null
           start_date?: string
           status?: Database["public"]["Enums"]["mandate_status"]
@@ -790,6 +792,7 @@ export type Database = {
           owner_contact_id?: string | null
           property_id?: string
           renewal_reminder_days?: number
+          renewed_from_id?: string | null
           signed_document_id?: string | null
           start_date?: string
           status?: Database["public"]["Enums"]["mandate_status"]
@@ -823,6 +826,20 @@ export type Database = {
             columns: ["property_id"]
             isOneToOne: false
             referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "mandates_renewed_from_id_fkey"
+            columns: ["renewed_from_id"]
+            isOneToOne: false
+            referencedRelation: "mandates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "mandates_renewed_from_id_fkey"
+            columns: ["renewed_from_id"]
+            isOneToOne: false
+            referencedRelation: "mandates_safe"
             referencedColumns: ["id"]
           },
           {
@@ -1183,6 +1200,7 @@ export type Database = {
           floor_number: number | null
           has_storage: boolean | null
           id: string
+          inherited_fields: string[]
           internal_notes: string | null
           kind: Database["public"]["Enums"]["property_kind"]
           location: unknown
@@ -1252,6 +1270,7 @@ export type Database = {
           floor_number?: number | null
           has_storage?: boolean | null
           id?: string
+          inherited_fields?: string[]
           internal_notes?: string | null
           kind?: Database["public"]["Enums"]["property_kind"]
           location?: unknown
@@ -1321,6 +1340,7 @@ export type Database = {
           floor_number?: number | null
           has_storage?: boolean | null
           id?: string
+          inherited_fields?: string[]
           internal_notes?: string | null
           kind?: Database["public"]["Enums"]["property_kind"]
           location?: unknown
@@ -2090,6 +2110,7 @@ export type Database = {
           owner_contact_id: string | null
           property_id: string | null
           renewal_reminder_days: number | null
+          renewed_from_id: string | null
           signed_document_id: string | null
           start_date: string | null
           status: Database["public"]["Enums"]["mandate_status"] | null
@@ -2108,6 +2129,7 @@ export type Database = {
           owner_contact_id?: string | null
           property_id?: string | null
           renewal_reminder_days?: number | null
+          renewed_from_id?: string | null
           signed_document_id?: string | null
           start_date?: string | null
           status?: Database["public"]["Enums"]["mandate_status"] | null
@@ -2126,6 +2148,7 @@ export type Database = {
           owner_contact_id?: string | null
           property_id?: string | null
           renewal_reminder_days?: number | null
+          renewed_from_id?: string | null
           signed_document_id?: string | null
           start_date?: string | null
           status?: Database["public"]["Enums"]["mandate_status"] | null
@@ -2159,6 +2182,20 @@ export type Database = {
             columns: ["property_id"]
             isOneToOne: false
             referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "mandates_renewed_from_id_fkey"
+            columns: ["renewed_from_id"]
+            isOneToOne: false
+            referencedRelation: "mandates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "mandates_renewed_from_id_fkey"
+            columns: ["renewed_from_id"]
+            isOneToOne: false
+            referencedRelation: "mandates_safe"
             referencedColumns: ["id"]
           },
           {
@@ -2529,6 +2566,13 @@ export type Database = {
         Args: never
         Returns: {
           missing_table: string
+        }[]
+      }
+      rls_bare_auth_calls: {
+        Args: never
+        Returns: {
+          policyname: string
+          tablename: string
         }[]
       }
       rls_bare_helper_calls: {
