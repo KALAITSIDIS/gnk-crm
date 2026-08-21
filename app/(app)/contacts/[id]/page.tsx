@@ -16,6 +16,8 @@ import { MergeDialog } from "@/components/features/contacts/merge-dialog";
 import { ChatLinks } from "@/components/features/shared/chat-links";
 import { EventTimeline } from "@/components/features/shared/event-timeline";
 import { StatusBadge } from "@/components/features/shared/status-badge";
+import { PortfolioTab } from "@/components/features/contacts/portfolio-tab";
+import { buildPortfolio, PORTFOLIO_SELECT } from "@/lib/services/contact-portfolio";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { Button } from "@/components/ui/button";
 import {
@@ -53,12 +55,24 @@ export default async function ContactDetailPage({
   const { id } = await params;
   const supabase = await createClient();
 
-  const [{ data: c }, { data: areaRows }, { data: mergedRows }, { data: profileRows }] =
+  const [
+    { data: c },
+    { data: areaRows },
+    { data: mergedRows },
+    { data: profileRows },
+    { data: portfolioRows },
+  ] =
     await Promise.all([
       supabase.from("contacts").select("*").eq("id", id).maybeSingle(),
       supabase.from("areas").select("id, name"),
       supabase.from("contacts").select("id, display_name").eq("merged_into_id", id),
       supabase.from("profiles").select("id, full_name, is_active, role").order("full_name"),
+      // audit finding 9: what this contact owns or built. One query, both party
+      // columns — a developer is usually both on the units it has not sold.
+      supabase
+        .from("properties")
+        .select(PORTFOLIO_SELECT)
+        .or(`owner_contact_id.eq.${id},developer_contact_id.eq.${id}`),
     ]);
   if (!c) notFound();
 
@@ -154,6 +168,8 @@ export default async function ContactDetailPage({
   const kycPct = kycCompletion((c.kyc ?? {}) as KycState);
   const bankPct = bankingCompletion((c.banking_readiness ?? {}) as BankingReadinessState);
 
+  const portfolio = buildPortfolio(portfolioRows ?? [], id);
+
   return (
     <div className="flex flex-col gap-4">
       <div>
@@ -240,6 +256,7 @@ export default async function ContactDetailPage({
             KYC & Banking ({kycPct}% / {bankPct}%)
           </TabsTrigger>
           <TabsTrigger value="activity">Activity</TabsTrigger>
+          <TabsTrigger value="portfolio">Properties ({portfolio.propertyCount})</TabsTrigger>
           <TabsTrigger value="deals">Deals ({(dealRows ?? []).length})</TabsTrigger>
           <TabsTrigger value="documents">Documents ({documents.length})</TabsTrigger>
         </TabsList>
@@ -284,6 +301,10 @@ export default async function ContactDetailPage({
               </p>
             ) : null}
           </div>
+        </TabsContent>
+
+        <TabsContent value="portfolio" className="mt-4">
+          <PortfolioTab portfolio={portfolio} />
         </TabsContent>
 
         <TabsContent value="deals" className="mt-4">

@@ -246,7 +246,30 @@ decision (HANDOFF §5) does not cover it.
   **VERIFY:** `grep -n "owner_contact_id" lib/actions/mandates.ts` — a check
   inside `setMandateStatus` means shipped. *(only the two writes on 2026-08-21.)*
 
-- **9. A contact record never shows its properties.**
+- ~~**9. A contact record never shows its properties.**~~ **SHIPPED 2026-08-21**
+  — a Properties tab on the contact page, one query on both party columns.
+  It only became possible once finding 2 filled them.
+
+  **Units are rolled up into their project, never listed** — the same call the
+  properties list makes by default. A developer with a 60-unit block gets ONE
+  row plus "62 units · 62 available", because sixty rows would bury the three
+  things the reader opened the page for. A unit whose project is NOT in the
+  portfolio (sold on, owner changed) stands on its own instead of vanishing.
+
+  Owner and developer are not exclusive — a developer owns everything it has not
+  sold — so a property where the contact is both reads "Owns & Built" and is
+  counted once.
+
+  **It caught a real gap in its own right.** Leptos showed 62 units against a
+  67-unit project: the missing 5 were the ones created before the inheritance
+  widening, which never got a `developer_contact_id`. All 5 still listed it as
+  inherited, so finding 5's drift panel offered "Developer contact — 5 units
+  behind", and after one click the tab read 67 units and €18.745.000. The two
+  features check each other.
+  **VERIFY:** `grep -c 'from("properties")' "app/(app)/contacts/[id]/page.tsx"` —
+  0 means reverted. The original entry follows.
+
+  - **9. A contact record never shows its properties (original).**
   `app/(app)/contacts/[id]/page.tsx` has six tabs (Profile · Preferences · KYC ·
   Activity · Deals · Documents, lines 236-245) and queries `properties` in none
   of them. Open a developer and you get their phone number, not their inventory.
