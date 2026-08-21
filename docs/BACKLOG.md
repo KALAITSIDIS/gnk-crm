@@ -120,7 +120,29 @@ decision (HANDOFF §5) does not cover it.
   **VERIFY:** `grep -rn "list_price" app components` — 0 hits means still
   write-only. *(0 on 2026-08-21.)*
 
-- **5. A unit inherits five fields from its project; everything else is retyped.**
+- **5. A unit inherits five fields from its project.** **HALF DONE 2026-08-21 —
+  the widening shipped, the `inherited_fields` machinery did NOT. Do not strike.**
+  `createUnit` now copies **19** columns via `resolveInheritedUnitFields`
+  (`lib/services/unit-inheritance.ts`), including the developer, owner, agent,
+  VAT, deed and permit status, energy class, delivery date, construction status,
+  coordinates, features and amenities. The `created` event lists what was
+  inherited, so "where did this come from" has an answer in the timeline.
+
+  **`visibility` is deliberately NOT inherited and that is the load-bearing
+  part.** A `public` project would otherwise mint already-published units with
+  no photos, no price and no description — straight past the quality gate every
+  other publish goes through. Proven in the app, not assumed: project flipped to
+  `public`, new unit came out `private` with score 0.
+
+  **Still open: the drift half.** Copy-on-create means changing the project's VAT
+  status next month leaves 40 units on the old one, silently. That needs
+  `properties.inherited_fields text[]` recording which columns are still
+  project-derived, an edit dropping a column out of it, and a project-side
+  "update the N units that still inherit this".
+  **VERIFY:** `grep -rl "inherited_fields" supabase/migrations lib` — any hit
+  means the drift half shipped. *(none on 2026-08-21.)* The original entry follows.
+
+  - **5. A unit inherits five fields from its project; everything else is retyped (original).**
   `createUnit` copies `transaction_type`, `district_id`, `area_id`, `address`,
   `postal_code` (`lib/actions/units.ts:63-68`). Not copied, and therefore blank
   on every unit forever unless typed 60 times: developer, owner, VAT status,
@@ -440,6 +462,14 @@ explicit direction.
   AND resolves a pasted Google Maps link, short links included, which is faster
   than dragging a pin.
 
+- **Leaked-password protection is disabled (operator decision).** Surfaced by
+  the `get_advisors` run after applying 0034 to hosted on 2026-08-21, not by a
+  code read. Supabase Auth can check new passwords against HaveIBeenPwned;
+  it is off. One toggle in the dashboard, no code, no migration — but it is an
+  auth-policy change for real users, so it is the operator's call. Sits with the
+  other auth decisions (mandatory 2FA) rather than with engineering work.
+  **VERIFY:** `get_advisors` type `security` — the `auth_leaked_password_protection`
+  lint disappears once enabled. *(present 2026-08-21.)*
 - Forgot-password flow on `/login` (doc 05): Supabase `resetPasswordForEmail` +
   reset page + email template. Natural fit with Phase 2 Resend integration.
   **VERIFY:** `grep -rl resetPasswordForEmail app lib` — any hit means shipped.

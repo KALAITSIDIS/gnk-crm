@@ -10,6 +10,11 @@ import {
   PROPERTY_STATUSES,
   PROPERTY_TYPES,
 } from "@/lib/validators/properties";
+import {
+  inheritedFieldsWithValues,
+  resolveInheritedUnitFields,
+  UNIT_PARENT_SELECT,
+} from "@/lib/services/unit-inheritance";
 
 export type UnitActionState = { error: string | null; savedAt: number | null };
 
@@ -38,9 +43,11 @@ export async function createUnit(
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
 
+  // Every column a unit inherits, plus the four this action needs for itself.
+  // Driven off INHERITED_UNIT_FIELDS so the select and the insert cannot drift.
   const { data: project } = await supabase
     .from("properties")
-    .select("id, org_id, kind, reference, district_id, area_id, address, postal_code, transaction_type")
+    .select(UNIT_PARENT_SELECT)
     .eq("id", input.project_id)
     .maybeSingle();
   if (!project) return { error: "Project not found", savedAt: null };
@@ -60,12 +67,10 @@ export async function createUnit(
       kind: "unit",
       parent_id: project.id,
       property_type: input.property_type,
-      transaction_type: project.transaction_type,
-      // units inherit location from the parent (doc 02 §C1)
-      district_id: project.district_id,
-      area_id: project.area_id,
-      address: project.address,
-      postal_code: project.postal_code,
+      // doc 02 §C1: a unit inherits its project's truths. NOT visibility — a
+      // `public` project would otherwise mint already-published units with no
+      // photos, price or description, straight past the quality gate.
+      ...resolveInheritedUnitFields(project),
       unit_number: input.unit_number,
       block: input.block ?? null,
       bedrooms: input.bedrooms ?? null,
@@ -91,7 +96,14 @@ export async function createUnit(
     entityType: "property",
     entityId: created.id,
     eventType: "created",
-    payload: { reference, kind: "unit", parent: project.reference },
+    payload: {
+      reference,
+      kind: "unit",
+      parent: project.reference,
+      // what the unit took from its project, so a later "where did this come
+      // from" has an answer in the timeline rather than a guess
+      inherited: inheritedFieldsWithValues(project),
+    },
   });
 
   revalidatePath(`/properties/${project.id}/units`);
