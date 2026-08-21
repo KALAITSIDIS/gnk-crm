@@ -4,6 +4,7 @@ import { useActionState, useEffect, useRef, useState, useTransition } from "reac
 import { FileText, Pencil, Plus, RefreshCw, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { EntityPicker } from "@/components/features/shared/entity-picker";
+import { getPartyDefaults } from "@/lib/actions/party-defaults";
 import { getDocumentDownloadUrl } from "@/lib/actions/documents";
 import {
   renewMandate,
@@ -77,6 +78,50 @@ function MandateDialog({
   const [state, formAction, pending] = useActionState(saveMandate, initialState);
   const lastToasted = useRef<number | null>(null);
 
+  /**
+   * Choosing the owner fills the terms (migration 0038) — the operator's
+   * original ask, at the point it is felt most.
+   *
+   * ONLY ON A NEW MANDATE. Prefilling an EDIT would overwrite the terms of an
+   * agreement that already exists, which is the opposite of helpful: the
+   * mandate on screen is what was signed, not what this owner usually signs.
+   */
+  const [applied, setApplied] = useState<{
+    name: string | null;
+    source: Record<string, "party" | "office">;
+  } | null>(null);
+  const [terms, setTerms] = useState<{
+    commission_pct?: number;
+    mandate_type?: string;
+    renewal_reminder_days?: number;
+    expiry_date?: string;
+  }>({});
+
+  const onOwnerChange = async (option: EntityOption | null) => {
+    if (mandate) return; // never re-write a signed agreement
+    if (!option) {
+      setApplied(null);
+      setTerms({});
+      return;
+    }
+    const { defaults, source, partyName } = await getPartyDefaults(option.id);
+    const start = new Date();
+    const expiry = defaults.mandate_months
+      ? new Date(
+          new Date(start).setMonth(start.getMonth() + defaults.mandate_months),
+        )
+          .toISOString()
+          .slice(0, 10)
+      : undefined;
+    setTerms({
+      commission_pct: defaults.commission_pct,
+      mandate_type: defaults.mandate_type,
+      renewal_reminder_days: defaults.renewal_reminder_days,
+      expiry_date: expiry,
+    });
+    setApplied(Object.keys(source).length > 0 ? { name: partyName, source } : null);
+  };
+
   useEffect(() => {
     if (state.savedAt && state.savedAt !== lastToasted.current) {
       lastToasted.current = state.savedAt;
@@ -98,7 +143,11 @@ function MandateDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="mandate-type">Type</Label>
-              <Select name="type" defaultValue={mandate?.type ?? "open"}>
+              <Select
+                key={`type-${terms.mandate_type ?? "none"}`}
+                name="type"
+                defaultValue={mandate?.type ?? terms.mandate_type ?? "open"}
+              >
                 <SelectTrigger id="mandate-type">
                   <SelectValue />
                 </SelectTrigger>
@@ -120,7 +169,8 @@ function MandateDialog({
                 step="0.1"
                 min="0"
                 max="100"
-                defaultValue={mandate?.commission_pct ?? ""}
+                key={`comm-${terms.commission_pct ?? "none"}`}
+                defaultValue={mandate?.commission_pct ?? terms.commission_pct ?? ""}
               />
             </div>
           </div>
@@ -131,7 +181,19 @@ function MandateDialog({
             label="Owner contact"
             initial={mandate?.owner ?? null}
             placeholder="Search owner…"
+            contactTypes={["owner", "seller", "landlord", "developer"]}
+            onChange={onOwnerChange}
           />
+
+          {applied ? (
+            <p className="-mt-1 text-xs text-text-3">
+              Terms filled from{" "}
+              {Object.values(applied.source).includes("party")
+                ? `${applied.name ?? "this contact"}'s standard terms`
+                : "the office standard"}
+              . Every field is editable.
+            </p>
+          ) : null}
 
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5">
@@ -149,7 +211,8 @@ function MandateDialog({
                 id="m-expiry"
                 name="expiry_date"
                 type="date"
-                defaultValue={mandate?.expiry_date ?? ""}
+                key={`exp-${terms.expiry_date ?? "none"}`}
+                defaultValue={mandate?.expiry_date ?? terms.expiry_date ?? ""}
               />
             </div>
           </div>
@@ -162,7 +225,8 @@ function MandateDialog({
               type="number"
               min="1"
               max="365"
-              defaultValue={mandate?.renewal_reminder_days ?? 30}
+              key={`rem-${terms.renewal_reminder_days ?? "none"}`}
+              defaultValue={mandate?.renewal_reminder_days ?? terms.renewal_reminder_days ?? 30}
             />
           </div>
 

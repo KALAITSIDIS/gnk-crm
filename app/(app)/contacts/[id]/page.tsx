@@ -17,6 +17,9 @@ import { ChatLinks } from "@/components/features/shared/chat-links";
 import { EventTimeline } from "@/components/features/shared/event-timeline";
 import { StatusBadge } from "@/components/features/shared/status-badge";
 import { PortfolioTab } from "@/components/features/contacts/portfolio-tab";
+import { PartyDefaultsForm } from "@/components/features/contacts/party-defaults-form";
+import { getPartyDefaults } from "@/lib/actions/party-defaults";
+import { isPartyContact, partyDefaultsSchema } from "@/lib/validators/party-defaults";
 import { buildPortfolio, PORTFOLIO_SELECT } from "@/lib/services/contact-portfolio";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { Button } from "@/components/ui/button";
@@ -168,6 +171,16 @@ export default async function ContactDetailPage({
   const kycPct = kycCompletion((c.kyc ?? {}) as KycState);
   const bankPct = bankingCompletion((c.banking_readiness ?? {}) as BankingReadinessState);
 
+  // Standard terms (0038) — only for contacts who HAVE terms. A buyer has no
+  // commission rate and no usual VAT treatment; the tab would suggest otherwise.
+  const isParty = isPartyContact(c.contact_types);
+  const storedDefaults = isParty
+    ? (partyDefaultsSchema.safeParse(c.party_defaults ?? {}).data ?? {})
+    : {};
+  // resolved with NO contact, which yields the office layer alone — the form
+  // shows it as the placeholder under each blank field
+  const officeDefaults = isParty ? (await getPartyDefaults(null)).defaults : {};
+
   const portfolio = buildPortfolio(portfolioRows ?? [], id);
 
   return (
@@ -257,6 +270,9 @@ export default async function ContactDetailPage({
           </TabsTrigger>
           <TabsTrigger value="activity">Activity</TabsTrigger>
           <TabsTrigger value="portfolio">Properties ({portfolio.propertyCount})</TabsTrigger>
+          {isParty ? (
+            <TabsTrigger value="terms">Standard terms</TabsTrigger>
+          ) : null}
           <TabsTrigger value="deals">Deals ({(dealRows ?? []).length})</TabsTrigger>
           <TabsTrigger value="documents">Documents ({documents.length})</TabsTrigger>
         </TabsList>
@@ -302,6 +318,20 @@ export default async function ContactDetailPage({
             ) : null}
           </div>
         </TabsContent>
+
+        {isParty ? (
+          <TabsContent value="terms" className="mt-4">
+            <div className="max-w-4xl rounded-[10px] border border-border bg-surface p-6">
+              <PartyDefaultsForm
+                contactId={id}
+                contactName={c.display_name ?? "this contact"}
+                stored={storedDefaults}
+                office={officeDefaults}
+                readOnly={profile.role !== "admin" && profile.role !== "listing_manager"}
+              />
+            </div>
+          </TabsContent>
+        ) : null}
 
         <TabsContent value="portfolio" className="mt-4">
           <PortfolioTab portfolio={portfolio} />

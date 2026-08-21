@@ -127,6 +127,7 @@ export type Database = {
           nationality: string | null
           notes: string | null
           org_id: string
+          party_defaults: Json
           phone_e164: string | null
           phone_raw: string | null
           preferences: Json
@@ -166,6 +167,7 @@ export type Database = {
           nationality?: string | null
           notes?: string | null
           org_id: string
+          party_defaults?: Json
           phone_e164?: string | null
           phone_raw?: string | null
           preferences?: Json
@@ -205,6 +207,7 @@ export type Database = {
           nationality?: string | null
           notes?: string | null
           org_id?: string
+          party_defaults?: Json
           phone_e164?: string | null
           phone_raw?: string | null
           preferences?: Json

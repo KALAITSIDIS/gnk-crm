@@ -484,7 +484,41 @@ system already knows something, so stop asking a person for it.** Sizes are
 relative (S = an afternoon, M = a few days). Nothing here gets built without
 explicit direction.
 
-- **Party defaults, S→M.** A developer's standard commission, mandate type and
+- ~~**Party defaults, S→M.**~~ **SHIPPED 2026-08-21, migration `0038`** — the
+  operator's opening request for this whole audit, and the last piece of it.
+
+  `contacts.party_defaults jsonb` (the pattern the row already uses for
+  `preferences`, `kyc`, `banking_readiness`) holds what a developer or owner
+  always works on: commission, mandate type and length, reminder days, VAT,
+  deed and permit status. The office fallback lives in `cyprus_config` under
+  `default_mandate_terms`, which already carries `verified_at` and
+  `source_note` — the right shape for "our standard is 3%", a number somebody
+  has to stand behind. Resolution is party over office, most specific wins.
+
+  **A STORED ZERO IS A REAL ANSWER.** Some referral arrangements genuinely are
+  0%, so only `undefined` falls through — treating 0 as "no opinion" would
+  quietly bill the office's 3% on a form somebody signs. Absent fields are
+  stored ABSENT rather than null, or every field would pin itself to blank.
+
+  **Each prefilled value says where it came from.** A number that does not
+  explain itself is one people distrust and retype, which would defeat the
+  point: "Terms filled from Leptos Estates's standard terms. Every field is
+  editable."
+
+  **Never on an EDIT.** The mandate on screen is what was signed, not what this
+  owner usually signs — pinned by an E2E.
+
+  Measured: a developer with 2.5% / exclusive / 12 months prefilled a new
+  mandate at 2.5%, exclusive, expiry twelve months out, and reminder 30 days
+  **from the office**, because they had no opinion on it.
+
+  Still to come, and deliberately not built here: the CREATE WIZARD half. The
+  wizard has no party picker yet, so VAT/deed/permit/district defaults have
+  nowhere to land — that is a wizard change, not a defaults change.
+  **VERIFY:** `grep -c "party_defaults" lib/actions/party-defaults.ts` — 0 means
+  reverted. The original entry follows.
+
+  - **Party defaults (original entry).** A developer's standard commission, mandate type and
   duration, usual VAT treatment, district, boilerplate and payment plan, stored
   on the contact as `party_defaults jsonb` (the same pattern the row already uses
   for `preferences`, `kyc`, `banking_readiness`), with an office-level fallback in
