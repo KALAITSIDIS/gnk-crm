@@ -1,16 +1,18 @@
 "use client";
 
 import { useActionState, useEffect, useRef, useState, useTransition } from "react";
-import { FileText, Pencil, Plus, Upload } from "lucide-react";
+import { FileText, Pencil, Plus, RefreshCw, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { EntityPicker } from "@/components/features/shared/entity-picker";
 import { getDocumentDownloadUrl } from "@/lib/actions/documents";
 import {
+  renewMandate,
   saveMandate,
   setMandateStatus,
   uploadMandateDocument,
   type MandateActionState,
 } from "@/lib/actions/mandates";
+import { canRenew } from "@/lib/services/mandate-renewal";
 import type { EntityOption } from "@/lib/actions/entity-search";
 import { Button } from "@/components/ui/button";
 import {
@@ -46,6 +48,10 @@ export interface MandateRow {
   notes: string | null;
   signed_document_id: string | null;
   owner: EntityOption | null;
+  /** set when this mandate replaces another (0036) */
+  renewed_from_id: string | null;
+  /** reference of the mandate that replaced this one, if any */
+  renewed_by_label: string | null;
 }
 
 const STATUS_TONES: Record<MandateStatus, string> = {
@@ -253,6 +259,13 @@ function MandateCard({
       else toast.success(done);
     });
 
+  const renew = () =>
+    start(async () => {
+      const { error } = await renewMandate(m.id);
+      if (error) toast.error(error);
+      else toast.success("Renewal drafted — review the dates, then activate it");
+    });
+
   const openDocument = async () => {
     if (!m.signed_document_id) return;
     setDocBusy(true);
@@ -299,6 +312,13 @@ function MandateCard({
         </div>
       </dl>
 
+      {m.renewed_from_id || m.renewed_by_label ? (
+        <p className="text-xs text-text-3">
+          {m.renewed_from_id ? "Renews an earlier mandate" : null}
+          {m.renewed_from_id && m.renewed_by_label ? " · " : null}
+          {m.renewed_by_label ? `Replaced by ${m.renewed_by_label}` : null}
+        </p>
+      ) : null}
       {m.commission_notes ? (
         <p className="text-xs text-text-3">Commission: {m.commission_notes}</p>
       ) : null}
@@ -329,6 +349,11 @@ function MandateCard({
                 onClick={() => changeStatus("terminated", "Mandate terminated")}
               >
                 Terminate
+              </Button>
+            ) : null}
+            {canRenew(m.status) && !m.renewed_by_label ? (
+              <Button size="sm" variant="outline" disabled={pending} onClick={renew}>
+                <RefreshCw className="size-4" /> Renew
               </Button>
             ) : null}
             <Button size="sm" variant="ghost" onClick={() => setEditOpen(true)}>

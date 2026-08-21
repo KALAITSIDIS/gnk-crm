@@ -176,7 +176,26 @@ decision (HANDOFF §5) does not cover it.
   **VERIFY:** `grep -c "project\." lib/actions/units.ts` — `16` on 2026-08-21
   (5 inherited columns plus the guard and event reads). A larger number means it was widened.
 
-- **6. Mandates can only be retyped, never renewed.**
+- ~~**6. Mandates can only be retyped, never renewed.**~~ **SHIPPED 2026-08-21**
+  — migration `0036` adds `mandates.renewed_from_id`, and a Renew button copies
+  the owner, type, commission, reminder and notes forward with the dates shifted
+  by the SAME NUMBER OF DAYS. Days, not calendar months, on purpose: "six
+  months" is not a fixed length and month arithmetic has its own judgement calls
+  (Jan 31 plus one month). The successor **starts when the old one ends**, so an
+  early renewal never overlaps — unless the old one already lapsed, in which case
+  it starts today, because back-dating a contract over a gap nobody was under
+  mandate for would be inventing history.
+
+  **The successor is a DRAFT, never active**, so activating it is a separate
+  deliberate step and finding 7's index forces the predecessor to be terminated
+  first. That sequence is now enforced rather than described. The signed document
+  is deliberately not copied — a renewal is a new agreement and needs its own
+  signature; pointing at the old PDF would make the evidence chain assert
+  something false. Both cards show the chain: "Renews an earlier mandate" and
+  "Replaced by …", and a mandate already renewed loses its Renew button.
+  The original entry follows.
+
+  - **6. Mandates can only be retyped, never renewed (original).**
   `MANDATE_TRANSITIONS` (`lib/validators/mandates.ts:10-15`) is a dead end:
   `expired: []`, `terminated: []`. Renewing means a blank dialog and re-entering
   owner, type, commission, reminder days and notes, and the new row carries no
@@ -187,7 +206,23 @@ decision (HANDOFF §5) does not cover it.
   **VERIFY:** `grep -rl "renewed_from" supabase/migrations lib` — any hit means
   shipped. *(none on 2026-08-21.)*
 
-- **7. Nothing stops two active exclusive mandates on one property.**
+- ~~**7. Nothing stops two active exclusive mandates on one property.**~~
+  **SHIPPED 2026-08-21** — `mandates_one_active_per_property`, a PARTIAL unique
+  index (`where status = 'active'`) so history and renewal chains are untouched.
+  A database guarantee rather than a convention, because this is the number the
+  business gets paid on. `setMandateStatus` turns the 23505 into a sentence that
+  says what to do: "This property already has an active mandate. Terminate it
+  first." The migration CHECKS FOR EXISTING VIOLATIONS BEFORE creating the index,
+  so a pre-existing conflict names the property instead of failing as a bare
+  index-build error — and it refuses to choose which of the two is real.
+
+  **`mandates_safe` had to be replaced too**, since it lists its columns
+  explicitly and every read path goes through it. Grants and masking were
+  captured before and compared after — byte-identical `relacl` — and the
+  migration's own check refuses to finish if `authenticated` lost SELECT.
+  The original entry follows.
+
+  - **7. Nothing stops two active exclusive mandates on one property (original).**
   `saveMandate` inserts at `lib/actions/mandates.ts:151` with no pre-check, and
   every reader ("active wins the badge") just takes the first active row it
   finds. Two exclusives with different commission rates can coexist and the UI
@@ -197,7 +232,12 @@ decision (HANDOFF §5) does not cover it.
   **VERIFY:** `grep -rn "unique.*mandates\|mandates.*unique" supabase/migrations`
   — *(0 on 2026-08-21.)*
 
-- **8. An active mandate can have no owner.**
+- ~~**8. An active mandate can have no owner.**~~ **SHIPPED 2026-08-21** —
+  checked on the `draft → active` transition rather than at insert, so a
+  half-entered draft can still be saved and finished later. "Add the owner
+  contact before activating this mandate." The original entry follows.
+
+  - **8. An active mandate can have no owner (original).**
   `owner_contact_id` is `optionalUuid` in `saveMandateSchema`
   (`lib/validators/mandates.ts:48`) and `setMandateStatus` does not check it.
   A mandate is a contract with a person; one that names nobody is worth 10 points

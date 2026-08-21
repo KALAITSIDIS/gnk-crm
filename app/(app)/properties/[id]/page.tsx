@@ -33,7 +33,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
-import { formatArea, formatDateTime, formatMoney } from "@/lib/utils/format";
+import { formatArea, formatDate, formatDateTime, formatMoney } from "@/lib/utils/format";
 
 export default async function PropertyDetailPage({
   params,
@@ -223,6 +223,14 @@ export default async function PropertyDetailPage({
         sublabel: agentRow.is_active ? agentRow.role : `${agentRow.role} · inactive`,
       }
     : null;
+  // Which mandates have been superseded, keyed by the one they replaced.
+  const renewedBy = new Map<string, string>();
+  for (const m of mandateRows) {
+    if (m.renewed_from_id) {
+      renewedBy.set(m.renewed_from_id, `the ${m.type} mandate of ${formatDate(m.start_date!)}`);
+    }
+  }
+
   const mandatePanelRows: MandateRow[] = mandateRows.map((m) => ({
     id: m.id!,
     type: m.type as MandateRow["type"],
@@ -235,6 +243,10 @@ export default async function PropertyDetailPage({
     notes: m.notes,
     signed_document_id: m.signed_document_id,
     owner: m.owner_contact_id ? (ownerById.get(m.owner_contact_id) ?? null) : null,
+    renewed_from_id: m.renewed_from_id ?? null,
+    // the successor, if one exists — so a superseded mandate says so on its own
+    // card rather than leaving the reader to compare dates across three of them
+    renewed_by_label: renewedBy.get(m.id!) ?? null,
   }));
 
   const documents = (documentRows ?? []).map((d) => ({
