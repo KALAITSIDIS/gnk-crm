@@ -299,6 +299,25 @@ export const VAT_STATUSES = [
 ] as const;
 export const ENERGY_CLASSES = ["A", "B+", "B", "C", "D", "E", "F", "G", "none"] as const;
 
+/**
+ * Where an off-plan build has got to (BACKLOG audit finding 10).
+ *
+ * The column is `text`, not an enum, and rows created by the CSV importer or by
+ * hand may hold anything. The form therefore offers this list AND keeps whatever
+ * is already stored as an extra option — silently rewriting somebody's value to
+ * the nearest listed one would be worse than an untidy dropdown.
+ */
+export const CONSTRUCTION_STATUSES = [
+  "planning",
+  "permit_applied",
+  "permit_granted",
+  "under_construction",
+  "structure_complete",
+  "finishing",
+  "completed",
+  "delivered",
+] as const;
+
 const optNumber = z.preprocess(
   emptyToUndefined,
   z.coerce.number().min(0, "Must be ≥ 0").optional(),
@@ -363,6 +382,17 @@ export const detailsSectionSchema = z.object({
       .transform((v) => (v === "none" ? undefined : v)),
   ),
   features: z.array(z.string()).default([]),
+  // audit finding 10: both columns existed since 0001 and no screen wrote them.
+  // construction_status is free text in the schema, so it is validated as text
+  // rather than an enum — see CONSTRUCTION_STATUSES for why.
+  construction_status: optText(40),
+  delivery_date: z.preprocess(
+    emptyToUndefined,
+    z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Delivery date must be YYYY-MM-DD")
+      .optional(),
+  ),
   internal_notes: optText(5000),
   // land panel (only meaningful when property_type = land)
   planning_zone_code: optText(20),

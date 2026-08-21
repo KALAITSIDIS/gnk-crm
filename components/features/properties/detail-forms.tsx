@@ -17,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { PROPERTY_FEATURES } from "@/lib/constants/features";
 import {
   AREA_NONE,
+  CONSTRUCTION_STATUSES,
   ENERGY_CLASSES,
   PERMIT_STATUSES,
   PROPERTY_STATUSES,
@@ -120,6 +121,28 @@ export interface PropertyDetailData {
   [key: string]: any;
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
+
+/**
+ * Construction-status options, plus whatever is already stored.
+ *
+ * The column is free `text` — the CSV importer and older rows may hold anything
+ * — so a value outside the list is kept as its own option. Dropping it would
+ * make the select show a different status than the record holds, and the next
+ * save would silently write that different status.
+ */
+function constructionOptions(current: string | null) {
+  const options = [
+    { value: "", label: "—" },
+    ...CONSTRUCTION_STATUSES.map((c) => ({
+      value: c,
+      label: c.replace(/_/g, " ").replace(/^\w/, (ch) => ch.toUpperCase()),
+    })),
+  ];
+  if (current && !options.some((o) => o.value === current)) {
+    options.push({ value: current, label: `${current} (as recorded)` });
+  }
+  return options;
+}
 
 export function DetailsForm({
   property,
@@ -253,6 +276,28 @@ export function DetailsForm({
             defaultChecked={property.has_storage === true}
           />
           <Label htmlFor="has_storage">Storage room</Label>
+        </div>
+      </div>
+
+      {/* audit finding 10: both columns have existed since 0001 and no screen
+          wrote them. Delivery date is the most-asked question about an off-plan
+          unit, and both are inherited by a project's units. */}
+      <SectionTitle>Build &amp; handover</SectionTitle>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <SelectField
+          name="construction_status"
+          label="Construction status"
+          options={constructionOptions(property.construction_status)}
+          defaultValue={property.construction_status ?? ""}
+        />
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="delivery_date">Expected delivery</Label>
+          <Input
+            id="delivery_date"
+            name="delivery_date"
+            type="date"
+            defaultValue={property.delivery_date ?? ""}
+          />
         </div>
       </div>
 

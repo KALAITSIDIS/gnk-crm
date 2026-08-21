@@ -157,6 +157,8 @@ export async function updatePropertySection(
       year_built: d.year_built ?? null,
       energy_class: d.energy_class ?? null,
       features: d.features,
+      construction_status: d.construction_status ?? null,
+      delivery_date: d.delivery_date ?? null,
       internal_notes: d.internal_notes ?? null,
     };
     // the land panel isn't rendered for non-land properties, so its absent
@@ -301,6 +303,11 @@ export async function updatePropertySection(
       titleDeedSet: merged.title_deed_status !== "unknown",
       permitSet: merged.permit_status !== "unknown",
       mandateActive: (activeMandates ?? []).length > 0,
+      // from `merged`, like every other input here: a parties save in the same
+      // submit must count toward the gate it is trying to clear
+      hasAssignedAgent: merged.assigned_agent_id != null,
+      hasOwnerOrDeveloper:
+        merged.owner_contact_id != null || merged.developer_contact_id != null,
     });
     const score = result.score;
     if (score < PUBLISH_THRESHOLD) {

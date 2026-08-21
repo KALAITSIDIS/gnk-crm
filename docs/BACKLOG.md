@@ -300,7 +300,31 @@ decision (HANDOFF §5) does not cover it.
   **VERIFY:** `grep -c 'from("properties")' "app/(app)/contacts/[id]/page.tsx"` —
   *(0 on 2026-08-21.)*
 
-- **10. Three project columns are dead in the UI.**
+- ~~**10. Three project columns are dead in the UI.**~~ **TWO SHIPPED, ONE
+  DECIDED AGAINST, 2026-08-21.**
+
+  `construction_status` and `delivery_date` are now a "Build & handover" section
+  on the Details tab and a fact on the Overview — delivery date being the first
+  question anybody asks about an off-plan unit. Both are in
+  `INHERITED_UNIT_FIELDS`, so a project's units get them and the drift panel
+  keeps them in step.
+
+  `construction_status` is `text` in the schema, not an enum, and older rows may
+  hold anything. The select offers a standard list AND KEEPS WHATEVER IS ALREADY
+  STORED as an extra "(as recorded)" option — dropping it would show a different
+  status than the record holds, and the next save would write that difference.
+  Verified against a real free-text value.
+
+  **`currency` was deliberately NOT made editable.** Making the column writable
+  without currency-aware formatting would be worse than leaving it: `formatMoney`
+  and the evidence-report formatter both hardcode EUR, so a property in GBP would
+  display and PRINT as euros — a wrong number on a commission document. This desk
+  is Cyprus and EUR-only; the column is vestigial. If multi-currency is ever
+  wanted it is a formatting project, not a form field.
+  **VERIFY:** `grep -rn "delivery_date" components/features/properties` — 0 means
+  reverted. The original entry follows.
+
+  - **10. Three project columns are dead in the UI (original).**
   `construction_status` and `delivery_date` have zero references anywhere outside
   the schema and `database.types.ts`. `currency` is read once
   (`app/(app)/share-links/page.tsx:33`) and written by nothing, so every listing
@@ -361,7 +385,28 @@ decision (HANDOFF §5) does not cover it.
   **VERIFY:** `grep -c "Owner\|Developer\|Kind" lib/services/property-export.ts` —
   *(0 on 2026-08-21.)*
 
-- **15. The quality score never asks who is responsible.**
+- ~~**15. The quality score never asks who is responsible.**~~ **SHIPPED
+  2026-08-21** — "Agent assigned" 5 and "Owner or developer linked" 5, added only
+  now because both fields were unfillable until findings 1 and 2 shipped, and a
+  score item for a field nobody can fill is a permanent deduction rather than a
+  prompt.
+
+  **PAID FOR, not added on top.** Cover photo 10→5 and ≥6 photos 15→10 funded
+  them: imagery carried 25 of 100 across two items that overlap almost completely
+  (no six photos without a cover), and still carries 15, joint-largest. Nothing
+  about price, location or legal status was weakened. A test now asserts the
+  weights total exactly 100 in both the land and non-land shapes — adding an item
+  without paying for it inflates every score and quietly weakens the publish gate.
+  Doc 02 §C1 updated in the same commit.
+
+  **Changing a weight makes every stored score stale**, because the detail page
+  computes fresh while the list and CSV read the column. `npm run
+  recompute:scores` (with `--dry-run`) exists for that and was run: 106 rows,
+  re-run a clean no-op.
+  **VERIFY:** `grep -c "hasAssignedAgent" lib/services/quality-score.ts` — 0
+  means reverted. The original entry follows.
+
+  - **15. The quality score never asks who is responsible (original).**
   Eleven weighted items (`lib/services/quality-score.ts:49-89`) covering photos,
   copy, price, area, coordinates and legal status. None covers an assigned agent
   or a linked owner — reasonably, since neither is currently fillable. Once 1 and
@@ -654,6 +699,17 @@ explicit direction.
   feature migration.
   **VERIFY:** compare `relacl` for `mandates_safe` on hosted against local; the
   entry is closed when `anon` has no `arwd` and `authenticated` has `r` only.
+- **`recomputeQualityScore` reads mandates from a table that depends on WHO IS
+  CALLING — noted 2026-08-21, handled, worth remembering.** The app reads
+  `mandates_safe`, because listing managers have no base-table SELECT and reading
+  `mandates` scored their saves 10 points low. A script running as `service_role`
+  reads NOTHING through that view — its WHERE tests `current_org_id()` and
+  `current_role_gnk()`, both null outside a user session — so it scores every
+  mandated property 10 points low instead. Opposite blindness, same symptom.
+  There is no single source correct for both, so `mandateSource` is now an
+  explicit option and the caller says which. **Caught by dry-running the
+  recompute script before letting it write.** Any future job that scores
+  properties outside a user session must pass `mandateSource: "base"`.
 - Forgot-password flow on `/login` (doc 05): Supabase `resetPasswordForEmail` +
   reset page + email template. Natural fit with Phase 2 Resend integration.
   **VERIFY:** `grep -rl resetPasswordForEmail app lib` — any hit means shipped.

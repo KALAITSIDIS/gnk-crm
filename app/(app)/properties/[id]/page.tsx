@@ -154,6 +154,8 @@ export default async function PropertyDetailPage({
     titleDeedSet: p.title_deed_status !== "unknown",
     permitSet: p.permit_status !== "unknown",
     mandateActive: mandateRows.some((m) => m.status === "active"),
+    hasAssignedAgent: p.assigned_agent_id !== null,
+    hasOwnerOrDeveloper: p.owner_contact_id !== null || p.developer_contact_id !== null,
   });
 
   const changerIds = [...new Set((priceRows ?? []).map((r) => r.changed_by).filter(Boolean))];
@@ -302,6 +304,20 @@ export default async function PropertyDetailPage({
             )
             .join(" · "),
     ],
+    // audit finding 10 — the question every off-plan buyer asks first
+    ...(p.delivery_date || p.construction_status
+      ? ([
+          [
+            "Build & handover",
+            [
+              p.construction_status?.replace(/_/g, " "),
+              p.delivery_date ? `delivery ${formatDate(p.delivery_date)}` : null,
+            ]
+              .filter(Boolean)
+              .join(" · "),
+          ],
+        ] as [string, string][])
+      : []),
     ["Created", formatDateTime(p.created_at)],
     ["Updated", formatDateTime(p.updated_at)],
   ];
