@@ -10,6 +10,7 @@ import {
   type PriceListRow,
   type UnitRow,
 } from "@/components/features/properties/units-matrix";
+import { AvailabilityShare } from "@/components/features/properties/availability-share";
 import { GenerateUnitsForm } from "@/components/features/properties/generate-units-form";
 import { InheritanceDrift } from "@/components/features/properties/inheritance-drift";
 import {
@@ -196,6 +197,19 @@ export default async function ProjectUnitsPage({
       ) : null}
 
       <UnitsMatrix units={units} canManage={canManage} />
+
+      <AvailabilityShare
+        projectId={id}
+        projectReference={project.reference}
+        isPhase={project.kind === "phase"}
+        priceLists={priceLists.map((pl) => ({
+          id: pl.id,
+          version: pl.version,
+          effectiveDate: pl.effective_date,
+        }))}
+        unitCount={units.length}
+        hasPhases={phases.length > 0}
+      />
       {canManage ? (
         <div className="grid gap-4 xl:grid-cols-2">
           <GenerateUnitsForm projectId={id} projectReference={project.reference} />

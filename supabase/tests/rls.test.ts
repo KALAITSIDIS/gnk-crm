@@ -1882,4 +1882,326 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     const keys = new Set(Object.keys(rows[0] ?? {}));
     expect([...keys].sort()).toEqual(["has_verified_factor", "profile_id"]);
   });
+  it("29. availability share links: status IS exposed, only for that kind, and a phased project's units are found", async () => {
+    // The companion to test 25. 25 pins the PROPOSAL boundary; this pins the
+    // AVAILABILITY one and — the point of having both — proves the widening is
+    // scoped to the new kind rather than global, by resolving a proposal over
+    // the very same project and finding `status` still absent from it.
+    const anon = anonClient();
+    const { createHash, randomBytes } = await import("node:crypto");
+    const mint = () => randomBytes(32).toString("base64url");
+    const sha = (t: string) => createHash("sha256").update(t).digest("hex");
+    const ref = (suffix: string) => `AVL-${run}-${suffix}`;
+
+    // --- a PHASED project: units hang off the phase, not the project ---------
+    const { data: project, error: projErr } = await svc
+      .from("properties")
+      .insert({
+        org_id: ORG_A,
+        reference: ref("PROJ"),
+        kind: "project",
+        property_type: "apartment",
+        visibility: "private", // units are minted private on purpose (0035)
+        title: { en: "Test development" },
+        delivery_date: "2028-03-31",
+        construction_status: "under construction",
+        internal_notes: "NEVER-LEAK-PROJECT",
+        owner_net_price: 111111,
+        min_acceptable_price: 222222,
+      })
+      .select("id")
+      .single();
+    expect(projErr).toBeNull();
+
+    const { data: phase, error: phaseErr } = await svc
+      .from("properties")
+      .insert({
+        org_id: ORG_A,
+        reference: ref("PROJ-P1"),
+        kind: "phase",
+        parent_id: project!.id,
+        property_type: "apartment",
+        title: { en: "Phase 1" },
+        delivery_date: "2029-09-30", // a phase's OWN date, severed from the project
+        status: "available",
+      })
+      .select("id")
+      .single();
+    expect(phaseErr).toBeNull();
+
+    const mkUnit = async (
+      suffix: string,
+      parent: string,
+      over: Record<string, unknown> = {},
+    ) => {
+      const { data, error } = await svc
+        .from("properties")
+        .insert({
+          org_id: ORG_A,
+          reference: ref(suffix),
+          kind: "unit",
+          parent_id: parent,
+          property_type: "apartment",
+          status: "available",
+          unit_number: suffix.slice(-3),
+          block: "A",
+          bedrooms: 2,
+          covered_area_sqm: 85,
+          asking_price: 255000,
+          ...over,
+        })
+        .select("id")
+        .single();
+      expect(error, `unit ${suffix}`).toBeNull();
+      return data!.id;
+    };
+
+    const direct = await mkUnit("U001", project!.id, { asking_price: 300000 });
+    await mkUnit("P1-U101", phase!.id, {
+      internal_notes: "NEVER-LEAK-UNIT",
+      owner_net_price: 333333,
+      min_acceptable_price: 444333,
+    });
+    const soldInPhase = await mkUnit("P1-U102", phase!.id, { status: "sold" });
+    await mkUnit("P1-U103", phase!.id, { visibility: "archived" });
+    await mkUnit("P1-U104", phase!.id, { status: "draft" });
+    // no asking price yet: "on application" in live mode, NOT a price-list
+    // shortfall. The distinction is the whole meaning of `unpriced_count`.
+    await mkUnit("P1-U105", phase!.id, { asking_price: null });
+
+    const mkLink = async (extra: Record<string, unknown>, propertyId: string) => {
+      const token = mint();
+      const { data, error } = await svc
+        .from("share_links")
+        .insert({
+          org_id: ORG_A,
+          token_sha256: sha(token),
+          expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+          created_by: adminA.id,
+          ...extra,
+        })
+        .select("id")
+        .single();
+      expect(error).toBeNull();
+      await svc
+        .from("share_link_properties")
+        .insert({ share_link_id: data!.id, property_id: propertyId, sort_order: 0 });
+      return { token, id: data!.id };
+    };
+
+    // --- the project link: descendants, not children -------------------------
+    const live = await mkLink({ kind: "availability" }, project!.id);
+    const res = await anon.rpc("resolve_share_link", { p_token_sha256: sha(live.token) });
+    expect(res.error).toBeNull();
+    const payload = res.data as Record<string, unknown>;
+    expect(payload, "a live availability token must resolve for anon").not.toBeNull();
+    expect(payload.kind, "the availability payload carries the discriminator").toBe(
+      "availability",
+    );
+
+    type PayloadUnit = Record<string, unknown> & { reference: string; status: string };
+    const units = payload.units as PayloadUnit[];
+
+    // THE TRAP: a naive `parent_id = project` query returns NOTHING here,
+    // because every unit but one hangs off the phase.
+    expect(
+      units.map((u) => u.reference).sort(),
+      "units under a PHASE must appear on a link naming the project",
+    ).toEqual([ref("P1-U101"), ref("P1-U102"), ref("P1-U105"), ref("U001")].sort());
+    expect(payload.unit_count).toBe(4);
+    expect(payload.available_count, "sold is shown but is not available").toBe(3);
+
+    // archived drops out one by one, exactly as a proposal's properties do;
+    // draft is not inventory and never appears
+    const shown = new Set(units.map((u) => u.reference));
+    expect(shown.has(ref("P1-U103")), "an archived unit must drop out").toBe(false);
+    expect(shown.has(ref("P1-U104")), "a draft unit is not inventory").toBe(false);
+
+    // --- THE WIDENING: status is here, and it is real ------------------------
+    expect(units.find((u) => u.reference === ref("P1-U102"))!.status).toBe("sold");
+    expect(units.find((u) => u.reference === ref("U001"))!.status).toBe("available");
+
+    // --- each unit is tagged with its phase, and the phase carries its OWN date
+    expect(units.find((u) => u.reference === ref("U001"))!.phase_reference).toBeNull();
+    expect(units.find((u) => u.reference === ref("P1-U101"))!.phase_reference).toBe(
+      ref("PROJ-P1"),
+    );
+    const phases = payload.phases as { reference: string; delivery_date: string }[];
+    expect(phases).toHaveLength(1);
+    expect(phases[0].delivery_date, "the phase's date, not the project's").toBe("2029-09-30");
+    expect((payload.project as { delivery_date: string }).delivery_date).toBe("2028-03-31");
+
+    // --- and nothing forbidden came with it ----------------------------------
+    const asText = JSON.stringify(payload);
+    for (const secret of [
+      "NEVER-LEAK-PROJECT",
+      "NEVER-LEAK-UNIT",
+      "111111",
+      "222222",
+      "333333",
+      "444333",
+    ]) {
+      expect(asText, `${secret} must never reach a public payload`).not.toContain(secret);
+    }
+    // visibility does NOT move with status — it is the desk's channel strategy
+    expect(Object.keys(payload)).not.toContain("visibility");
+    for (const u of units) expect(Object.keys(u)).not.toContain("visibility");
+
+    // --- THE SCOPING PROOF: same project, proposal kind, no status -----------
+    const asProposal = await mkLink({}, project!.id); // kind defaults to 'proposal'
+    const propRes = await anon.rpc("resolve_share_link", {
+      p_token_sha256: sha(asProposal.token),
+    });
+    expect(propRes.error).toBeNull();
+    const propPayload = propRes.data as Record<string, unknown>;
+    expect(propPayload.kind, "a proposal payload carries no discriminator").toBeUndefined();
+    const propProperties = propPayload.properties as Record<string, unknown>[];
+    expect(propProperties).toHaveLength(1);
+    expect(
+      Object.keys(propProperties[0]),
+      "the proposal allowlist must NOT have gained status when availability did",
+    ).not.toContain("status");
+    expect(JSON.stringify(propPayload)).not.toContain("NEVER-LEAK-PROJECT");
+
+    // --- a link naming the PHASE shows only that phase's units ---------------
+    const phaseLink = await mkLink({ kind: "availability" }, phase!.id);
+    const phaseRes = await anon.rpc("resolve_share_link", {
+      p_token_sha256: sha(phaseLink.token),
+    });
+    const phasePayload = phaseRes.data as Record<string, unknown>;
+    expect(
+      (phasePayload.units as PayloadUnit[]).map((u) => u.reference).sort(),
+      "a phase link is the scoping control — it shows its own units and no others",
+    ).toEqual([ref("P1-U101"), ref("P1-U102"), ref("P1-U105")].sort());
+    expect((phasePayload.project as { kind: string }).kind).toBe("phase");
+
+    // --- prices: live by default --------------------------------------------
+    expect(payload.price_source).toBe("live");
+    expect(payload.price_list).toBeNull();
+    expect(units.find((u) => u.reference === ref("U001"))!.price).toBe(300000);
+    // REGRESSION: this shipped as 1 and put "not in that price list" on a page
+    // with no price list. A unit with no asking price is "on application", not
+    // a shortfall — `unpriced_count` only ever answers for a PINNED version.
+    expect(units.find((u) => u.reference === ref("P1-U105"))!.price).toBeNull();
+    expect(payload.unpriced_count, "live mode has no shortfall to report").toBe(0);
+
+    // --- prices: PINNED means pinned, with no fallback -----------------------
+    const { data: priceList, error: plErr } = await svc
+      .from("price_lists")
+      .insert({
+        org_id: ORG_A,
+        project_id: project!.id,
+        version: 1,
+        effective_date: "2026-08-01",
+      })
+      .select("id")
+      .single();
+    expect(plErr).toBeNull();
+    // `direct` and `soldInPhase` are quoted; P1-U101 is deliberately absent
+    expect(
+      (
+        await svc.from("price_list_items").insert([
+          { price_list_id: priceList!.id, unit_id: direct, list_price: 290000 },
+          { price_list_id: priceList!.id, unit_id: soldInPhase, list_price: 240000 },
+        ])
+      ).error,
+    ).toBeNull();
+
+    // the desk repricing this morning must NOT change what was quoted
+    expect(
+      (await svc.from("properties").update({ asking_price: 999999 }).eq("id", direct)).error,
+    ).toBeNull();
+
+    const pinned = await mkLink(
+      { kind: "availability", price_list_id: priceList!.id },
+      project!.id,
+    );
+    const pinnedRes = await anon.rpc("resolve_share_link", {
+      p_token_sha256: sha(pinned.token),
+    });
+    const pinnedPayload = pinnedRes.data as Record<string, unknown>;
+    const pinnedUnits = pinnedPayload.units as PayloadUnit[];
+
+    expect(pinnedPayload.price_source).toBe("price_list");
+    expect((pinnedPayload.price_list as { version: number }).version).toBe(1);
+    expect(
+      pinnedUnits.find((u) => u.reference === ref("U001"))!.price,
+      "the quoted number, not whatever the desk changed this morning",
+    ).toBe(290000);
+    expect(JSON.stringify(pinnedPayload), "the live price must not leak in").not.toContain(
+      "999999",
+    );
+    expect(
+      pinnedUnits.find((u) => u.reference === ref("P1-U101"))!.price,
+      "a unit the version does not list shows NO price rather than a live one",
+    ).toBeNull();
+    expect(pinnedPayload.unpriced_count, "and the shortfall is stated").toBe(2);
+
+    // --- the pinned version cannot be deleted out from under a live link ----
+    const del = await svc.from("price_lists").delete().eq("id", priceList!.id);
+    expect(del.error, "on delete restrict protects what was quoted").not.toBeNull();
+
+    // --- dead availability tokens are as indistinguishable as dead proposals -
+    const revoked = await mkLink(
+      { kind: "availability", revoked_at: new Date().toISOString() },
+      project!.id,
+    );
+    const expired = await mkLink(
+      { kind: "availability", expires_at: new Date(Date.now() - 86_400_000).toISOString() },
+      project!.id,
+    );
+    for (const [label, token] of [
+      ["revoked", revoked.token],
+      ["expired", expired.token],
+      ["unknown", mint()],
+    ] as const) {
+      const dead = await anon.rpc("resolve_share_link", { p_token_sha256: sha(token) });
+      expect(dead.error, `${label}: must not error`).toBeNull();
+      expect(dead.data, `${label} availability token must resolve to null`).toBeNull();
+    }
+
+    // --- the throttle carries over unchanged: exact count, ONE event a day --
+    await anon.rpc("resolve_share_link", { p_token_sha256: sha(live.token) });
+    await anon.rpc("resolve_share_link", { p_token_sha256: sha(live.token) });
+    const { data: after } = await svc
+      .from("share_links")
+      .select("view_count")
+      .eq("id", live.id)
+      .single();
+    expect(after!.view_count, "every open is counted exactly").toBe(3);
+
+    const { count: openedEvents } = await svc
+      .from("events")
+      .select("id", { count: "exact", head: true })
+      .eq("entity_type", "share_link")
+      .eq("entity_id", live.id)
+      .eq("event_type", "opened");
+    expect(openedEvents, "throttled to one opened event per Cyprus day").toBe(1);
+
+    // and that event records what they were shown, which is the evidence
+    const { data: openEvent } = await svc
+      .from("events")
+      .select("payload")
+      .eq("entity_id", live.id)
+      .eq("event_type", "opened")
+      .single();
+    const openPayload = openEvent!.payload as {
+      kind: string;
+      unit_count: number;
+      available_count: number;
+    };
+    expect(openPayload.kind).toBe("availability");
+    expect(openPayload.unit_count).toBe(4);
+    expect(openPayload.available_count).toBe(3);
+
+    // --- anon still cannot reach the tables, only the RPC --------------------
+    expect(
+      (await anon.from("share_links").select("id").eq("id", live.id)).data ?? [],
+      "anon must not read share_links",
+    ).toHaveLength(0);
+
+    const { data: chainOk } = await svc.rpc("verify_events_chain", { p_org: ORG_A });
+    expect(chainOk, "availability events keep the hash chain intact").toBe(true);
+  });
+
 });

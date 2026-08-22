@@ -1677,6 +1677,7 @@ export type Database = {
           locale: string
           message: string | null
           org_id: string
+          price_list_id: string | null
           revoked_at: string | null
           revoked_by: string | null
           title: string | null
@@ -1695,6 +1696,7 @@ export type Database = {
           locale?: string
           message?: string | null
           org_id: string
+          price_list_id?: string | null
           revoked_at?: string | null
           revoked_by?: string | null
           title?: string | null
@@ -1713,6 +1715,7 @@ export type Database = {
           locale?: string
           message?: string | null
           org_id?: string
+          price_list_id?: string | null
           revoked_at?: string | null
           revoked_by?: string | null
           title?: string | null
@@ -1739,6 +1742,13 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "share_links_price_list_id_fkey"
+            columns: ["price_list_id"]
+            isOneToOne: false
+            referencedRelation: "price_lists"
             referencedColumns: ["id"]
           },
           {

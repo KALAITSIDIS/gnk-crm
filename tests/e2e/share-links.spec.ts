@@ -148,7 +148,7 @@ test.describe("Buyer proposal links", () => {
 
   test("an agent can mint a link and revoke it", async ({ page }) => {
     await page.goto("/share-links", { waitUntil: "networkidle" });
-    await expect(page.getByRole("heading", { name: "Proposals" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Share links" })).toBeVisible();
     // The manager is reachable and lists links; minting is exercised end-to-end
     // by the RLS suite (test 25) against the same RPC this page calls.
     await expect(page.getByRole("button", { name: "New proposal" })).toBeVisible();

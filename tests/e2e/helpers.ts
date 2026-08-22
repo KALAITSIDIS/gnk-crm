@@ -15,7 +15,7 @@ export const MODULES = [
   { name: "Viewings", path: "/viewings", heading: "Viewings" },
   { name: "Tasks", path: "/tasks", heading: "Tasks" },
   { name: "Keys", path: "/keys", heading: "Keys" },
-  { name: "Proposals", path: "/share-links", heading: "Proposals" },
+  { name: "Share links", path: "/share-links", heading: "Share links" },
   { name: "Reports", path: "/reports", heading: "Reports" },
   { name: "Calculators", path: "/calculators", heading: "Calculators" },
   { name: "Settings", path: "/settings", heading: "Settings" },

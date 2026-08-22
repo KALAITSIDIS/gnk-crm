@@ -613,10 +613,60 @@ explicit direction.
   Aggregate it across the list — "19 missing deed status, 12 missing coordinates"
   — so one category can be cleared in a sitting.
 - **Portfolio tab on a contact, S.** Finding 9, from the other side.
-- **Project availability share link, M.** `share_links` already mints, opens and
-  revokes with full evidence. Point the same machinery at a project and a
-  developer or partner agent gets a live availability matrix instead of
-  yesterday's PDF.
+- ~~**Project availability share link, M.**~~ **SHIPPED 2026-08-22 (`92958e9`)**
+  — migration `0041`, a second `kind` on 0023's machinery. **No new table:**
+  `share_link_properties` already joins a link to the one property it names, so
+  the revoke-before-grant rule above had nothing to bite on, which the migration
+  says out loud rather than leaving as a silent omission.
+
+  **The exposure boundary moved, deliberately and only for the new kind.**
+  `status` is exposed — "40 available · 12 sold" IS the product — and 0023's
+  proposal allowlist still does not carry it. RLS test **29** resolves BOTH
+  kinds over the SAME project and asserts status present on one and absent on
+  the other, which is the only way to prove the widening is scoped rather than
+  global. Test 25 was not edited: the availability branch early-returns above
+  0023's code, so the proposal payload and its pinned key set are untouched.
+  `visibility` did NOT move with `status` — status is market truth about a unit,
+  visibility is the desk's channel strategy.
+
+  **A phased project's units hang off the PHASE**, so the resolver walks
+  descendants rather than children; a naive `parent_id` query renders an empty
+  matrix for exactly the projects big enough to need one. Recursive, not
+  depth-2, because "a phase cannot contain a phase" is enforced in `createPhase`
+  and NOT in the database. A link may name a phase, which is the scoping
+  control. Units are grouped by phase because a phase's delivery date is its own.
+
+  **A link may pin a `price_list` version**, and pinned means pinned: a unit the
+  version omits shows no price rather than a live one, with the shortfall stated
+  on the page. `on delete restrict` stops a quoted version being deleted under a
+  live link.
+
+  **Measured, not reasoned about:** minted through the real UI on a 75-unit
+  phased project, opened anonymously (both phases present, the phase's 2029 date
+  distinct from the project's 2028), revoked, and re-opened to the neutral page —
+  with `created`, `opened` and `revoked` events and `verify_events_chain` true
+  after each. Reading that rendered page is what caught `unpriced_count`
+  reporting a price-list shortfall on a page that had no price list; the
+  regression assertion in test 29 was confirmed to FAIL against the pre-fix
+  resolver before being kept.
+  **Applied to hosted 2026-08-22** in the §3 sequence, via `execute_sql` and not
+  `apply_migration` — the latter stamps a timestamp-shaped version and would
+  break the `non_filename_versions` = 0 invariant. `get_advisors` after: **no new
+  SECURITY finding** (`resolve_share_link` was already the pinned 0028 exception),
+  and **one new PERFORMANCE finding, knowingly accepted** —
+  `share_links_price_list_id_fkey` has no covering index, which is the 64th
+  instance of `unindexed_foreign_keys` on this project and the fourth on
+  `share_links` alone (`contact_id`, `created_by`, `revoked_by` are the others).
+  Indexing one while three siblings stay bare would be noise; the FK is walked
+  only when a `price_lists` row is deleted, which nothing in the app does. **The
+  whole 63-finding class is what wants a decision, not this one row.**
+  **VERIFY:** `grep -c "createAvailabilityLink" lib/actions/share-links.ts` — 0
+  means reverted. *(1 on 2026-08-22.)* The original entry follows.
+
+  - **Project availability share link, M (original).** `share_links` already
+  mints, opens and revokes with full evidence. Point the same machinery at a
+  project and a developer or partner agent gets a live availability matrix
+  instead of yesterday's PDF.
 - **Construction progress + delivery date, S.** Finding 10, made useful: a
   milestone % and an expected delivery on the project header, which is also the
   raw material for the M13 developer dashboard.

@@ -20,8 +20,11 @@ export default async function ShareLinksPage() {
     // RLS scopes both to the caller's org.
     supabase
       .from("share_links")
+      // `kind` and the joined reference are 0041: the list now holds two kinds
+      // that expose different fields, and an availability link is identified by
+      // the project it names rather than by a count.
       .select(
-        "id, title, locale, expires_at, revoked_at, view_count, last_opened_at, created_at, contact_id, share_link_properties(property_id), contacts(display_name)",
+        "id, kind, title, locale, expires_at, revoked_at, view_count, last_opened_at, created_at, contact_id, share_link_properties(property_id, properties(reference)), contacts(display_name)",
       )
       .order("created_at", { ascending: false })
       .limit(100),
@@ -42,18 +45,29 @@ export default async function ShareLinksPage() {
 
   return (
     <ShareLinksClient
-      links={links.map((l) => ({
-        id: l.id,
-        title: l.title,
-        locale: l.locale,
-        expiresAt: l.expires_at,
-        revokedAt: l.revoked_at,
-        viewCount: l.view_count,
-        lastOpenedAt: l.last_opened_at,
-        propertyCount: (l.share_link_properties as { property_id: string }[] | null)?.length ?? 0,
-        contactName:
-          (l.contacts as { display_name: string | null } | null)?.display_name ?? null,
-      }))}
+      links={links.map((l) => {
+        const joined = (l.share_link_properties ?? []) as {
+          property_id: string;
+          properties: { reference: string } | null;
+        }[];
+        return {
+          id: l.id,
+          kind: l.kind,
+          title: l.title,
+          locale: l.locale,
+          expiresAt: l.expires_at,
+          revokedAt: l.revoked_at,
+          viewCount: l.view_count,
+          lastOpenedAt: l.last_opened_at,
+          propertyCount: joined.length,
+          // An availability link names exactly one property (0041), so the
+          // first row IS the project. A proposal has no single target.
+          targetReference:
+            l.kind === "availability" ? (joined[0]?.properties?.reference ?? null) : null,
+          contactName:
+            (l.contacts as { display_name: string | null } | null)?.display_name ?? null,
+        };
+      })}
       properties={properties.map((p) => ({
         id: p.id,
         reference: p.reference,
