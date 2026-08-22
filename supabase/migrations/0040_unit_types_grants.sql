@@ -20,8 +20,11 @@
 -- older tables are clean because 0001/0002 predate this project's current
 -- default privileges — not because granting is enough.
 --
--- **A new table needs an explicit REVOKE before its GRANT.** That is the rule;
--- this migration is the correction for the one table that missed it.
+-- **A new table needs an explicit REVOKE before its GRANT.** That is the rule,
+-- and it was NOT new: `0023` documents this exact trap in its own preamble,
+-- having hit it on its own apply. 0039 simply did not follow it. The lesson
+-- worth carrying is not the trap but where the rule was kept — a migration
+-- comment nobody reads before writing the NEXT migration. It is in BACKLOG now.
 --
 -- HOW EXPOSED WAS IT? Less than 0037's case, and the difference is worth
 -- stating rather than glossing. `unit_types` is a TABLE with RLS enabled, so

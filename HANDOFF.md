@@ -22,6 +22,64 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 
 ---
 
+## 0a. NEXT UP — project availability share link (2026-08-22)
+
+**Nothing is half-built. This is a fresh piece of work, researched but not
+started.** The properties audit that ran 2026-08-21/22 is finished — all fifteen
+findings struck, plus the bulk generator, phase creation, party defaults, unit
+type templates, two defects found while building and one production security
+fix. `main` is green, deployed, and hosted is at `0040`.
+
+**The goal.** Today a developer or partner agent gets yesterday's availability
+as a PDF. `share_links` already mints, opens, throttles and revokes a tokenised
+page with full evidence — point that machinery at a PROJECT and they get a live
+unit matrix instead.
+
+**Read `supabase/migrations/0023_share_links.sql` end to end before writing any
+of it.** It is the best-documented migration in the repo and it already answers
+most of the design questions.
+
+What exists and needs no rebuilding:
+
+| piece | where | note |
+|---|---|---|
+| token minting, sha256-only storage | `lib/services/share-links-token.ts` | the token is NEVER stored |
+| resolver + exposure allowlist | `resolve_share_link()` in 0023 | explicit `jsonb_build_object`, no `select *` |
+| public page | `app/p/[token]` | renders a proposal today |
+| throttled open event | 0023 | ONE `opened` event per link per Cyprus day, counter still exact |
+| failed-lookup counter | `share_link_attempts` | anti-scanning, not anti-brute-force |
+| staff UI | `/share-links` | mint · open · revoke |
+| exposure test | RLS test 25, `supabase/tests/rls.test.ts:1485` | anon reads nothing, only allowlisted fields |
+
+**The four decisions the work turns on:**
+
+1. **`kind` is `check (kind = 'proposal')`** — measured on hosted today. It needs
+   widening to `in ('proposal','availability')`. That is the only schema change
+   the feature strictly needs: `share_link_properties` already joins a link to
+   properties, and an availability link points at exactly one (the project).
+2. **THE EXPOSURE BOUNDARY MOVES, and that is the whole design question.** The
+   proposal allowlist deliberately omits `status` and `visibility`. An
+   availability matrix exists to show `status` — "40 available · 12 sold" IS the
+   product. Widening it is correct here and must be deliberate, scoped to the
+   new kind, and covered by its own RLS test alongside 25. Still forbidden, for
+   both kinds: `internal_notes`, `owner_net_price`, `min_acceptable_price`,
+   commission, and any owner/developer contact.
+3. **Units, not properties.** The link names a project; the resolver walks
+   `parent_id` for its units. Decide whether a PHASE's units are included when
+   the link names the parent project — they hang off the phase, not the project,
+   so a naive `parent_id` query returns nothing for a phased project. That is a
+   real trap given phases shipped yesterday.
+4. **A price list is the honest source for quoted prices.** Units carry today's
+   `asking_price`; a version records what was quoted. Consider letting the link
+   name a `price_list_id` so a developer sees the numbers they were actually
+   sent, not whatever the desk changed this morning.
+
+**Follow the grant rule.** Any new table needs `revoke ... from anon,
+authenticated` BEFORE its grant, and `require_aal2` if it has RLS. 0023 §79-87
+and BACKLOG both explain why; 0039 ignored it and 0040 had to correct it.
+
+---
+
 ## 0. START HERE
 
 > **THIS SECTION POINTS. IT DOES NOT RESTATE.** Roadmap state belongs to §5,

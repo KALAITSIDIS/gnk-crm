@@ -847,8 +847,20 @@ explicit direction.
   explicit option and the caller says which. **Caught by dry-running the
   recompute script before letting it write.** Any future job that scores
   properties outside a user session must pass `mandateSource: "base"`.
-- **A NEW TABLE NEEDS AN EXPLICIT `REVOKE` BEFORE ITS `GRANT` — learned the hard
-  way on 0039, corrected by 0040.** Supabase sets default privileges on `public`
+- **A NEW TABLE NEEDS AN EXPLICIT `REVOKE` BEFORE ITS `GRANT`. This rule was
+  ALREADY WRITTEN DOWN and I did not follow it — 0039 broke it, 0040 corrected
+  it.** `0023` documents the whole trap in its own comments, having hit it on its
+  own apply in 2026-08: *"Hosted Supabase applies default privileges that hand
+  `anon` and `authenticated` full DML on every new table in `public`; the local
+  stack does not. So a migration that only GRANTs produces two different
+  databases."* It even records the same mitigating detail — RLS still denied anon
+  every row, so nothing was exposed.
+
+  **The failure is therefore not the discovery, it is that the rule lived only in
+  a migration comment nobody reads before writing a NEW migration.** That is why
+  it is here now, in the file the header tells you to check before starting
+  anything. Knowledge in a 2026-08 migration's preamble is not knowledge the next
+  table gets for free. Supabase sets default privileges on `public`
   that fire at `CREATE TABLE`, and `grant` is ADDITIVE. So a migration that only
   grants ends up with the platform's grants PLUS its own:
 
