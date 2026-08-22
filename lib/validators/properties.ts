@@ -262,8 +262,23 @@ export const CREATABLE_KINDS = ["standalone", "project"] as const;
 
 export const emptyToUndefined = (v: unknown) => (v === "" || v === null ? undefined : v);
 
+/**
+ * Where a listing comes from (migration 0038's create-wizard half).
+ *
+ * The operator's framing, and the one the desk actually thinks in: a property
+ * is either a private owner's, or a developer's. It decides which party column
+ * gets written and which contacts the picker offers — and, through the party's
+ * standard terms, what the rest of the record starts as.
+ */
+export const LISTING_SOURCES = ["owner", "developer"] as const;
+export type ListingSource = (typeof LISTING_SOURCES)[number];
+
 export const createPropertySchema = z.object({
   kind: z.enum(CREATABLE_KINDS),
+  source: z.enum(LISTING_SOURCES).optional(),
+  // whichever the source names; the action ignores the one it did not ask for
+  owner_contact_id: optionalUuid,
+  developer_contact_id: optionalUuid,
   property_type: z.enum(PROPERTY_TYPES),
   transaction_type: z.enum(TRANSACTION_TYPES).default("sale"),
   district_id: z.string().uuid("Pick a district"),

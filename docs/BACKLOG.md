@@ -512,9 +512,20 @@ explicit direction.
   mandate at 2.5%, exclusive, expiry twelve months out, and reminder 30 days
   **from the office**, because they had no opinion on it.
 
-  Still to come, and deliberately not built here: the CREATE WIZARD half. The
-  wizard has no party picker yet, so VAT/deed/permit/district defaults have
-  nowhere to land — that is a wizard change, not a defaults change.
+  **The create-wizard half shipped 2026-08-22.** Step 1 opens with "Where is it
+  from? — a private owner / a developer", which chooses the party picker, the
+  party column that gets written, and the default kind. Picking the party sets
+  the district from their terms (only if the user has not already chosen one —
+  an explicit answer outranks a usual one) and states what else will be applied:
+  "From Wizardev: VAT New vat · deed pending. Applied on create and editable
+  afterwards."
+
+  **The terms are RE-RESOLVED SERVER-SIDE before the write.** The wizard's copy
+  is for the human; a form can post anything, and these set a VAT treatment and
+  a legal status on a record the desk quotes from. **Only the party the SOURCE
+  names is honoured** — a form posting both would otherwise attach a developer
+  to a private owner's villa. The `created` event lists which defaults were
+  applied, so the timeline explains values nobody typed.
   **VERIFY:** `grep -c "party_defaults" lib/actions/party-defaults.ts` — 0 means
   reverted. The original entry follows.
 

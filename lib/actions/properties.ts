@@ -85,6 +85,41 @@ export async function createProperty(
   // so abandoned wizards never burn sequence numbers (DECISIONS.md, T1.2).
   const reference = await generateReference(supabase, profile.orgId, district.code);
 
+  /**
+   * The party's standard terms, RE-RESOLVED HERE (migration 0038).
+   *
+   * The wizard shows the same values before submit, but they are recomputed
+   * server-side rather than accepted from the form: a client can post anything,
+   * and these set a VAT treatment and a legal status on a record the desk will
+   * quote from. The form's copy is for the human; this one is the one written.
+   *
+   * Only the party the SOURCE names is honoured. A form that posted both would
+   * otherwise attach a developer to a private owner's villa.
+   */
+  const ownerId = input.source === "owner" ? (input.owner_contact_id ?? null) : null;
+  const developerId = input.source === "developer" ? (input.developer_contact_id ?? null) : null;
+  const partyId = ownerId ?? developerId;
+
+  // typed from the generated Insert, not as loose strings: partyDefaultsSchema
+  // already validates these against the same enums, and widening to `string`
+  // here would throw that guarantee away at the last step
+  type PropertyInsert = Database["public"]["Tables"]["properties"]["Insert"];
+  let partyTerms: Pick<
+    PropertyInsert,
+    "vat_status" | "title_deed_status" | "permit_status"
+  > = {};
+  if (partyId) {
+    const { getPartyDefaults } = await import("@/lib/actions/party-defaults");
+    const { defaults } = await getPartyDefaults(partyId);
+    partyTerms = {
+      ...(defaults.vat_status ? { vat_status: defaults.vat_status } : {}),
+      ...(defaults.title_deed_status
+        ? { title_deed_status: defaults.title_deed_status }
+        : {}),
+      ...(defaults.permit_status ? { permit_status: defaults.permit_status } : {}),
+    };
+  }
+
   const { data: created, error: insertErr } = await supabase
     .from("properties")
     .insert({
@@ -104,6 +139,10 @@ export async function createProperty(
       covered_area_sqm: input.covered_area_sqm ?? null,
       plot_area_sqm: input.plot_area_sqm ?? null,
       internal_notes: input.internal_notes ?? null,
+      owner_contact_id: ownerId,
+      developer_contact_id: developerId,
+      // the party's standard terms; absent keys leave the column's own default
+      ...partyTerms,
       // agents are auto-assigned to themselves (RLS with-check enforces it)
       assigned_agent_id: profile.role === "agent" ? profile.id : null,
       created_by: profile.id,
@@ -124,6 +163,15 @@ export async function createProperty(
       reference,
       kind: input.kind,
       property_type: input.property_type,
+      // what was written from the party's standard terms, so the timeline
+      // explains values nobody typed
+      ...(partyId
+        ? {
+            source: input.source,
+            party: partyId,
+            applied_defaults: Object.keys(partyTerms),
+          }
+        : {}),
     },
   });
 
