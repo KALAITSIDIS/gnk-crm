@@ -14,69 +14,48 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 | `main` | **in sync with `origin/main` as of 2026-08-21** — the properties-audit branch was merged (`7abb600`, `--no-ff`, 15 commits) and PUSHED, CI green on main (`checks` · `rls` · `e2e`), production redeployed and READY from that commit with 0 runtime errors in the 2h after. The branch was deleted local and remote once merged, per the standing rule that a stale branch is a claim someone will read. **The standing agreement is still commit, don't push** — this push and this merge were both asked for explicitly. `git branch -vv` and `git branch -r` are the answer, not this cell. |
 | CI | ✅ green — `checks` (typecheck · lint · unit · **build**) + `rls` |
 | Production | `gnk-crm.vercel.app` healthy; **auto-deploys every push**. **Functions run in `fra1` (Frankfurt), pinned in `vercel.json` 2026-08-20** — same region as Supabase `eu-central-1`. They ran in `iad1` (Washington DC) until then, so every request crossed the Atlantic; co-locating made all routes ~3x faster (ENGINEERING_NOTES §8). **`X-Vercel-Id` reads `<edge>::<function>` — check the SECOND field if latency ever looks structural again.** Verified 2026-08-20 after the Next 16.3.1 + region changes: 9 authenticated routes 200 with expected content, 0 runtime errors and 0 5xx in 6h of production logs. **A cache-restored build can keep an OLD `NEXT_PUBLIC_*` value compiled in — see §2b, it caused a login outage on 2026-08-09.** |
-| Hosted DB | `yjgirvzgoiywdojnpkpd` — **40 migrations, latest `0040` (applied 2026-08-22)**, `non_filename_versions` = **0**, **79 events**, 3 properties, 1 mandate, 2 contacts, **30 RLS tables** — MEASURED 2026-08-22 in calls separate from the ones that applied. **`verify_events_chain` checked BEFORE and AFTER every apply**, true both sides. `rls_aal2_coverage()` returns **0** — 0039's new table got `require_aal2` explicitly, because a table created after 0029 does NOT inherit it. **`anon` can INSERT on 0 of 30 RLS tables** — 0039 accidentally gave it `arwd` (Supabase's default privileges fire at CREATE TABLE and `grant` is additive), 0040 took it back and made the ACL byte-identical to `price_lists`; see BACKLOG for the rule this produced. **0037 closed a real privilege-escalation path** on `mandates_safe`. **`cyprus_config.default_mandate_terms` (0038) is a PLACEHOLDER** — 3% / open / 6 months, `verified_at` NULL; it prefills every new mandate, so the operator should set the desk's real terms. **DB-level 2FA is LIVE** — `require_aal2` on all 30 RLS tables |
+| Hosted DB | `yjgirvzgoiywdojnpkpd` — **40 migrations, latest `0040` (applied 2026-08-22)**. **LOCAL IS AT `0041` AND HOSTED IS NOT — 0041 is applied and verified locally only, and has never been run against hosted (2026-08-22).**, `non_filename_versions` = **0**, **79 events**, 3 properties, 1 mandate, 2 contacts, **30 RLS tables** — MEASURED 2026-08-22 in calls separate from the ones that applied. **`verify_events_chain` checked BEFORE and AFTER every apply**, true both sides. `rls_aal2_coverage()` returns **0** — 0039's new table got `require_aal2` explicitly, because a table created after 0029 does NOT inherit it. **`anon` can INSERT on 0 of 30 RLS tables** — 0039 accidentally gave it `arwd` (Supabase's default privileges fire at CREATE TABLE and `grant` is additive), 0040 took it back and made the ACL byte-identical to `price_lists`; see BACKLOG for the rule this produced. **0037 closed a real privilege-escalation path** on `mandates_safe`. **`cyprus_config.default_mandate_terms` (0038) is a PLACEHOLDER** — 3% / open / 6 months, `verified_at` NULL; it prefills every new mandate, so the operator should set the desk's real terms. **DB-level 2FA is LIVE** — `require_aal2` on all 30 RLS tables |
 | Data | `share_links` 2 (1 live, 1 revoked) · `tasks` 0 · `deals` 1 · **all of it operator test data** (§0) |
-| Tests | **518 unit** · **48 RLS across 4 files** (was 44/3 — migration 0030 added `rls-hoist.test.ts`; re-read from CI run `31568922881` on 2026-08-11. The "12 mandatory tests, doc 04" in the job name is a subset, not the total) · **181 desktop E2E, 0 skipped** — 183 results in total, because the `setup` project holds two tests: the stale-server guard and the login. Counts from `--list` on 2026-08-20; the suite last PASSED in CI run `32157440627` that day. Two of those tests spent part of 2026-08-20 marked `test.fixme` against a map that was never broken — see §1. Full desktop suite measured from a COLD dev server on 2026-08-11, 0 failed, 0 flaky. All three run in CI. Re-running E2E rewrites the 12 tracked `tests/screenshots/*.png` — §7 |
+| Tests | **691 unit** · **49 RLS across 4 files** · **204 desktop E2E** — all three MEASURED 2026-08-22 (`npm run test`, `npm run test:rls`, `playwright test --project=desktop --list` which reports 206 because the `setup` project's two tests come with it). The previous line said 518 / 48 / 181 and was dated 2026-08-11 and 2026-08-20; the unit count had drifted by 173 across work that never updated it, which is why these carry the command that produced them. Migration 0041 added RLS test 29 and `tests/e2e/availability-share.spec.ts` (3 tests). The full desktop suite was NOT re-run for 0041 — only the new spec was, so the 12 tracked `tests/screenshots/*.png` are untouched (§7). All three suites run in CI |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
 | Backups | ✅ **`2026-08-10` is the primary** — newest automated set, `verified:true`, `problems:[]`, 55 files, **events inDump 74 = live 74**, written to `D:\dev\TSOPOZIDIS\gnk-backups`. `2026-08-06` is the restore-*proven* one (all 73 event hashes byte-identical to production). Sets: 07-30 · 07-31 (Storage) · 08-04 (superseded) · 08-06 · 08-07 · 08-08 · 08-09 · **08-10**. Nightly ran 03:46 on 2026-08-10, verified. **STILL SINGLE-MACHINE — a current off-site archive is built and waiting to be copied to USB, §3.3** |
 
 ---
 
-## 0a. NEXT UP — project availability share link (2026-08-22)
+## 0a. NEXT UP — nothing is queued (2026-08-22)
 
-**Nothing is half-built. This is a fresh piece of work, researched but not
-started.** The properties audit that ran 2026-08-21/22 is finished — all fifteen
-findings struck, plus the bulk generator, phase creation, party defaults, unit
-type templates, two defects found while building and one production security
-fix. `main` is green, deployed, and hosted is at `0040`.
+**The project availability share link is BUILT.** This section held its brief;
+what shipped is struck through in `docs/BACKLOG.md` with a VERIFY line, and the
+design lives in `supabase/migrations/0041_availability_share_links.sql`, which
+is written to be read the way 0023 is. **This section does not restate it** —
+that is the bug §0 keeps having.
 
-**The goal.** Today a developer or partner agent gets yesterday's availability
-as a PDF. `share_links` already mints, opens, throttles and revokes a tokenised
-page with full evidence — point that machinery at a PROJECT and they get a live
-unit matrix instead.
+State, measured 2026-08-22: local is at `0041`, **hosted is still at `0040`** and
+0041 has NOT been applied there. `main` is unchanged; the work is committed
+locally and not pushed, per the standing agreement.
 
-**Read `supabase/migrations/0023_share_links.sql` end to end before writing any
-of it.** It is the best-documented migration in the repo and it already answers
-most of the design questions.
+What a session picking this up needs to know, and nothing more:
 
-What exists and needs no rebuilding:
+| | |
+|---|---|
+| the four decisions §0a used to list | all four made and written up in 0041's preamble and in BACKLOG's struck entry |
+| the exposure boundary | widened to carry `status`, **for `kind = 'availability'` only**. RLS test **29** proves the scoping by resolving both kinds over one project. Test 25 is untouched and still pins the proposal boundary |
+| the phase trap | closed — the resolver walks descendants, recursively, because the one-level rule is enforced in `createPhase` and not in the database |
+| what is NOT done | 0041 on hosted; a real availability link sent to a real developer |
 
-| piece | where | note |
-|---|---|---|
-| token minting, sha256-only storage | `lib/services/share-links-token.ts` | the token is NEVER stored |
-| resolver + exposure allowlist | `resolve_share_link()` in 0023 | explicit `jsonb_build_object`, no `select *` |
-| public page | `app/p/[token]` | renders a proposal today |
-| throttled open event | 0023 | ONE `opened` event per link per Cyprus day, counter still exact |
-| failed-lookup counter | `share_link_attempts` | anti-scanning, not anti-brute-force |
-| staff UI | `/share-links` | mint · open · revoke |
-| exposure test | RLS test 25, `supabase/tests/rls.test.ts:1485` | anon reads nothing, only allowlisted fields |
+**One thing worth carrying rather than looking up.** 0041's assertion block greps
+the compiled function body for forbidden column names, and on the first apply it
+rejected the migration because a COMMENT inside the function used one of those
+words in prose. That is the guard working: a substring match on `prosrc` cannot
+tell documentation from SQL, which is exactly why it cannot be argued past. Keep
+the forbidden list in the file header, never inside the function.
 
-**The four decisions the work turns on:**
-
-1. **`kind` is `check (kind = 'proposal')`** — measured on hosted today. It needs
-   widening to `in ('proposal','availability')`. That is the only schema change
-   the feature strictly needs: `share_link_properties` already joins a link to
-   properties, and an availability link points at exactly one (the project).
-2. **THE EXPOSURE BOUNDARY MOVES, and that is the whole design question.** The
-   proposal allowlist deliberately omits `status` and `visibility`. An
-   availability matrix exists to show `status` — "40 available · 12 sold" IS the
-   product. Widening it is correct here and must be deliberate, scoped to the
-   new kind, and covered by its own RLS test alongside 25. Still forbidden, for
-   both kinds: `internal_notes`, `owner_net_price`, `min_acceptable_price`,
-   commission, and any owner/developer contact.
-3. **Units, not properties.** The link names a project; the resolver walks
-   `parent_id` for its units. Decide whether a PHASE's units are included when
-   the link names the parent project — they hang off the phase, not the project,
-   so a naive `parent_id` query returns nothing for a phased project. That is a
-   real trap given phases shipped yesterday.
-4. **A price list is the honest source for quoted prices.** Units carry today's
-   `asking_price`; a version records what was quoted. Consider letting the link
-   name a `price_list_id` so a developer sees the numbers they were actually
-   sent, not whatever the desk changed this morning.
-
-**Follow the grant rule.** Any new table needs `revoke ... from anon,
-authenticated` BEFORE its grant, and `require_aal2` if it has RLS. 0023 §79-87
-and BACKLOG both explain why; 0039 ignored it and 0040 had to correct it.
+**And the defect that only the rendered page could find.** `unpriced_count` was
+counting units with no asking price in LIVE mode, so a page with no price list
+carried a sentence about one. Every test passed; the number was wrong on screen.
+It was caught by reading a real 75-unit project's page, and the regression
+assertion was confirmed to FAIL against the pre-fix resolver before being kept —
+because a test that cannot fail spends a green run on nothing (§4).
 
 ---
 
