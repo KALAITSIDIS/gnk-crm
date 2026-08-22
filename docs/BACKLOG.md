@@ -847,6 +847,33 @@ explicit direction.
   explicit option and the caller says which. **Caught by dry-running the
   recompute script before letting it write.** Any future job that scores
   properties outside a user session must pass `mandateSource: "base"`.
+- **A NEW TABLE NEEDS AN EXPLICIT `REVOKE` BEFORE ITS `GRANT` — learned the hard
+  way on 0039, corrected by 0040.** Supabase sets default privileges on `public`
+  that fire at `CREATE TABLE`, and `grant` is ADDITIVE. So a migration that only
+  grants ends up with the platform's grants PLUS its own:
+
+  | | 0039 intended | 0039 actually got |
+  |---|---|---|
+  | hosted | `authenticated=arwd` | `anon=arwdDxtm`, `authenticated=arwdDxtm` |
+  | local | `authenticated=arwd` | `anon=Dxtm`, `authenticated=arwdDxtm` |
+
+  Every older table is clean (`price_lists` and `payment_plans` read
+  `{postgres, service_role, authenticated=arwd}`) because 0001/0002 predate the
+  current default privileges — **not** because granting is sufficient.
+
+  It was caught by reading `relacl` after applying, not by any test: the app
+  worked perfectly either way, because `unit_types` is a TABLE with RLS, so
+  anon's grant was still filtered by policies testing `org_id =
+  current_org_id()`. That is why this is defence-in-depth restored rather than a
+  hole closed — unlike 0037, where the grant on a SECURITY DEFINER view WAS the
+  whole control.
+
+  **Rule for the next table: `revoke all ... from anon, authenticated` first,
+  then grant exactly what is wanted, then assert the resulting `relacl` matches
+  a table you trust.** 0040 does all three and is the template.
+  **VERIFY:** every RLS table should give anon nothing —
+  `select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r' and c.relrowsecurity and has_table_privilege('anon', c.oid, 'INSERT')`
+  returns 0 (measured 2026-08-22, hosted).
 - Forgot-password flow on `/login` (doc 05): Supabase `resetPasswordForEmail` +
   reset page + email template. Natural fit with Phase 2 Resend integration.
   **VERIFY:** `grep -rl resetPasswordForEmail app lib` — any hit means shipped.
