@@ -18,6 +18,9 @@ import {
 } from "@/components/features/properties/phases-section";
 import { comparePriceLists, summariseVersion } from "@/lib/services/price-list";
 import { PriceUpliftForm } from "@/components/features/properties/price-uplift-form";
+import { UnitTypesSection } from "@/components/features/properties/unit-types-section";
+import { blocksOf } from "@/lib/services/price-uplift";
+import type { UnitType } from "@/lib/services/unit-type";
 import {
   computeInheritanceDrift,
   UNIT_PARENT_SELECT,
@@ -57,7 +60,7 @@ export default async function ProjectUnitsPage({
   const profile = await getCurrentProfile(supabase);
   const canManage = profile.role === "admin" || profile.role === "listing_manager";
 
-  const [unitsRes, priceListsRes, plansRes, phasesRes] = await Promise.all([
+  const [unitsRes, priceListsRes, plansRes, phasesRes, typesRes] = await Promise.all([
     supabase
       .from("properties")
       .select(UNIT_ROW_SELECT)
@@ -86,11 +89,20 @@ export default async function ProjectUnitsPage({
       .eq("parent_id", id)
       .eq("kind", "phase")
       .order("reference"),
+    // 0039 — the layouts this project repeats
+    supabase
+      .from("unit_types")
+      .select(
+        "id, code, name, bedrooms, bathrooms, covered_area_sqm, veranda_sqm, price_per_sqm",
+      )
+      .eq("project_id", id)
+      .order("code"),
   ]);
   const unitRows = unwrapRows(unitsRes, "units");
   const priceListRows = unwrapRows(priceListsRes, "price lists");
   const planRows = unwrapRows(plansRes, "payment plans");
   const phaseRows = unwrapRows(phasesRes, "phases");
+  const unitTypes = (unwrapRows(typesRes, "unit types") ?? []) as UnitType[];
 
   const phases: PhaseRow[] = (phaseRows ?? []).map((ph) => ({
     id: ph.id,
@@ -190,6 +202,21 @@ export default async function ProjectUnitsPage({
           <AddUnitForm projectId={id} />
         </div>
       ) : null}
+      <UnitTypesSection
+        projectId={id}
+        types={unitTypes}
+        blocks={blocksOf(
+          units.map((u) => ({
+            id: u.id,
+            reference: u.reference,
+            block: u.block,
+            asking_price: u.asking_price,
+          })),
+        )}
+        unitCount={units.length}
+        canManage={canManage}
+      />
+
       {canManage ? (
         <PriceUpliftForm
           projectId={id}

@@ -24,6 +24,7 @@ import {
   MAX_PER_FLOOR,
 } from "@/lib/services/unit-generator";
 import { inScope, previewUplift, type UpliftMode } from "@/lib/services/price-uplift";
+import { stampOf, type UnitType } from "@/lib/services/unit-type";
 
 export type UnitActionState = { error: string | null; savedAt: number | null };
 
@@ -660,6 +661,182 @@ export async function applyPriceUplift(
   }
 
   revalidatePath(`/properties/${input.project_id}/units`);
+  revalidatePath("/properties");
+  return { error: null, savedAt: Date.now() };
+}
+
+const unitTypeSchema = z.object({
+  project_id: z.guid("Missing project"),
+  code: z
+    .string()
+    .trim()
+    .min(1, "Type code is required")
+    .max(10, "Keep the type code short")
+    .regex(/^[A-Za-z0-9-]+$/, "Type code: letters, numbers and hyphens only"),
+  name: z.preprocess(emptyToUndefined, z.string().max(80).optional()),
+  bedrooms: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).max(20).optional()),
+  bathrooms: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).max(20).optional()),
+  covered_area_sqm: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
+  veranda_sqm: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
+  price_per_sqm: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
+});
+
+/**
+ * Define a layout once (migration 0039).
+ *
+ * Scoped to the project: layout codes are a project's own vocabulary, and every
+ * developer has an "A1" that is not the same flat.
+ */
+export async function createUnitType(
+  _prev: UnitActionState,
+  formData: FormData,
+): Promise<UnitActionState> {
+  const parsed = unitTypeSchema.safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input", savedAt: null };
+  }
+  const input = parsed.data;
+
+  const supabase = await createClient();
+  const profile = await getCurrentProfile(supabase);
+
+  const { data: project } = await supabase
+    .from("properties")
+    .select("id, org_id, kind, reference")
+    .eq("id", input.project_id)
+    .maybeSingle();
+  if (!project) return { error: "Project not found", savedAt: null };
+  if (project.kind !== "project" && project.kind !== "phase") {
+    return { error: "Unit types belong to a project", savedAt: null };
+  }
+
+  const { data: created, error } = await supabase
+    .from("unit_types")
+    .insert({
+      org_id: project.org_id,
+      project_id: project.id,
+      code: input.code.toUpperCase(),
+      name: input.name ?? null,
+      bedrooms: input.bedrooms ?? null,
+      bathrooms: input.bathrooms ?? null,
+      covered_area_sqm: input.covered_area_sqm ?? null,
+      veranda_sqm: input.veranda_sqm ?? null,
+      price_per_sqm: input.price_per_sqm ?? null,
+      created_by: profile.id,
+    })
+    .select("id")
+    .single();
+  if (error) {
+    return {
+      error:
+        error.code === "23505"
+          ? `Type ${input.code.toUpperCase()} already exists on this project`
+          : error.message,
+      savedAt: null,
+    };
+  }
+
+  await logEvent(supabase, {
+    orgId: project.org_id,
+    actorId: profile.id,
+    entityType: "property",
+    entityId: project.id,
+    eventType: "unit_type_created",
+    payload: { code: input.code.toUpperCase(), unit_type_id: created.id },
+  });
+
+  revalidatePath(`/properties/${project.id}/units`);
+  return { error: null, savedAt: Date.now() };
+}
+
+/**
+ * Stamp a layout onto the units in a scope (migration 0039).
+ *
+ * A STAMP, NOT A LINK. It copies the type's values now; the unit is not bound
+ * to the type afterwards, so a later edit to either one does not chase the
+ * other. That is deliberate — two units of one layout legitimately diverge, and
+ * beds/area/price are in DELIBERATELY_NOT_INHERITED for exactly that reason.
+ *
+ * One update per unit, because a price change has to pass the 0005 trigger
+ * old→new pair by pair for its price_history row.
+ */
+export async function applyUnitType(
+  _prev: UnitActionState,
+  formData: FormData,
+): Promise<UnitActionState> {
+  const projectId = formData.get("project_id");
+  const typeId = formData.get("unit_type_id");
+  const blockRaw = formData.get("block");
+  if (typeof projectId !== "string" || typeof typeId !== "string") {
+    return { error: "Missing project or type", savedAt: null };
+  }
+  const block = typeof blockRaw === "string" && blockRaw !== "" ? blockRaw : null;
+
+  const supabase = await createClient();
+  const profile = await getCurrentProfile(supabase);
+
+  const { data: type } = await supabase
+    .from("unit_types")
+    .select("id, code, name, bedrooms, bathrooms, covered_area_sqm, veranda_sqm, price_per_sqm")
+    .eq("id", typeId)
+    .eq("project_id", projectId)
+    .maybeSingle();
+  if (!type) return { error: "Type not found on this project", savedAt: null };
+
+  let query = supabase
+    .from("properties")
+    .select("id, reference, asking_price")
+    .eq("parent_id", projectId)
+    .eq("kind", "unit");
+  if (block) query = query.eq("block", block);
+  const { data: units } = await query;
+
+  if (!units || units.length === 0) return { error: "No units in that scope", savedAt: null };
+
+  const { data: project } = await supabase
+    .from("properties")
+    .select("org_id, reference")
+    .eq("id", projectId)
+    .single();
+
+  const applied: { id: string; reference: string }[] = [];
+  for (const u of units) {
+    const stamp = stampOf(type as UnitType, u.asking_price);
+    const { data: rows, error } = await supabase
+      .from("properties")
+      .update(stamp)
+      .eq("id", u.id)
+      .select("id");
+    if (error) return { error: error.message, savedAt: null };
+    if (rows && rows.length > 0) applied.push({ id: u.id, reference: u.reference });
+  }
+
+  if (applied.length === 0) {
+    return {
+      error: "Nothing was changed — only admins and listing managers manage units.",
+      savedAt: null,
+    };
+  }
+
+  await logEvents(
+    supabase,
+    applied.map((u) => ({
+      orgId: project!.org_id,
+      actorId: profile.id,
+      entityType: "property" as const,
+      entityId: u.id,
+      eventType: "updated",
+      payload: {
+        section: "unit_type",
+        source: "type_applied",
+        unit_type: type.code,
+        scope: block ?? "all units",
+        project: project!.reference,
+      },
+    })),
+  );
+
+  revalidatePath(`/properties/${projectId}/units`);
   revalidatePath("/properties");
   return { error: null, savedAt: Date.now() };
 }

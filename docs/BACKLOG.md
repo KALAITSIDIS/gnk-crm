@@ -560,9 +560,39 @@ explicit direction.
   still verifying. Proven again end to end at 60 units.
 
   **VERIFY:** `grep -c "generateProjectUnits" lib/actions/units.ts` — 0 means gone.
-- **Unit type templates, M.** Define type A1 once (2 bed, 85 m², 20 m² veranda,
-  €/m² rate) and stamp it onto any unit; price computes from area. Real projects
-  repeat four or five layouts across every floor.
+- ~~**Unit type templates, M.**~~ **SHIPPED 2026-08-22, migration `0039`.** A
+  `unit_types` table scoped to a project — layout codes are a project's own
+  vocabulary and every developer has an "A1" that is not the same flat. Define
+  beds, baths, covered area, veranda and a €/m² rate once, then stamp it onto
+  all units or one block.
+
+  **A STAMP, NOT A LINK.** Applying copies the values; the unit is not bound to
+  the type afterwards and there is deliberately no drift panel for types. Beds,
+  area and price are in `DELIBERATELY_NOT_INHERITED` for the same reason: two
+  units of one layout legitimately diverge — one gets a bigger veranda, one is
+  repriced for a view.
+
+  **A stamp, not a MERGE either.** A field the type leaves blank is written as
+  null: stamping A1 should make a unit an A1, not an A1 still carrying the
+  previous layout's bathroom count. The one exception is price — a type with no
+  €/m² rate leaves an existing price ALONE, because a layout template says what
+  the flat IS, not what it is worth today, and wiping a price nobody asked to
+  change would be destructive. Both pinned by E2E.
+
+  **Price is covered area × rate. Veranda is recorded and NOT priced** — half
+  rate, quarter, or not at all is a commercial decision that varies by project,
+  and inventing a convention would put a wrong number on a quote. Rounded to the
+  same €100 the bulk uplift uses.
+
+  **The new table got `require_aal2`** (0029's restrictive policy) rather than
+  becoming the one gap in 2FA enforcement — a table created after that migration
+  does not inherit it. The migration asserts `rls_aal2_coverage()` is still empty
+  before it will finish.
+
+  Measured: type A1 (2 bed, 85 m², €3000/m²) stamped onto block A set bathrooms
+  from NULL to 1, veranda from NULL to 20, price to €255.000, wrote 5 events and
+  5 price_history rows, and left block C's 60 units untouched.
+  **VERIFY:** `grep -c "applyUnitType" lib/actions/units.ts` — 0 means reverted.
 - **Create similar, S.** Duplicate any property as a starting point, minus the
   reference and the unit-specific fields.
 - **Area centroid as a coordinate fallback, S.** Migration 0031 already ships

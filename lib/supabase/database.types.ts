@@ -1892,6 +1892,73 @@ export type Database = {
           },
         ]
       }
+      unit_types: {
+        Row: {
+          bathrooms: number | null
+          bedrooms: number | null
+          code: string
+          covered_area_sqm: number | null
+          created_at: string
+          created_by: string | null
+          id: string
+          name: string | null
+          org_id: string
+          price_per_sqm: number | null
+          project_id: string
+          veranda_sqm: number | null
+        }
+        Insert: {
+          bathrooms?: number | null
+          bedrooms?: number | null
+          code: string
+          covered_area_sqm?: number | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          name?: string | null
+          org_id: string
+          price_per_sqm?: number | null
+          project_id: string
+          veranda_sqm?: number | null
+        }
+        Update: {
+          bathrooms?: number | null
+          bedrooms?: number | null
+          code?: string
+          covered_area_sqm?: number | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          name?: string | null
+          org_id?: string
+          price_per_sqm?: number | null
+          project_id?: string
+          veranda_sqm?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "unit_types_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "unit_types_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "unit_types_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       viewing_slips: {
         Row: {
           created_by: string | null
