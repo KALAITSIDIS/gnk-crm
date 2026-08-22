@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import { headers } from "next/headers";
+import { Availability as AvailabilityView } from "@/components/features/share-links/availability";
 import { Proposal as ProposalView } from "@/components/features/share-links/proposal";
-import { isWellFormedShareToken, type Proposal } from "@/lib/services/share-links";
+import {
+  isAvailability,
+  isWellFormedShareToken,
+  type ResolvedShareLink,
+} from "@/lib/services/share-links";
 import { hashShareToken } from "@/lib/services/share-links-token";
 import { createPublicClient } from "@/lib/supabase/public";
 
@@ -52,7 +57,11 @@ export async function generateMetadata() {
   // Never leak the buyer's name, the agency's client list, or which properties
   // are in the proposal into a link preview or a search index.
   return {
-    title: "Property proposal",
+    // Deliberately says less than it could. Metadata is produced WITHOUT
+    // resolving the token, so it cannot name the kind even if it wanted to —
+    // and "Property proposal" became a half-wrong title the day 0041 added a
+    // second kind. A neutral one is both accurate and quieter.
+    title: "Property information",
     robots: { index: false, follow: false },
   };
 }
@@ -92,5 +101,14 @@ export default async function ProposalPage({
     return <Unavailable />;
   }
 
-  return <ProposalView proposal={data as unknown as Proposal} />;
+  // One RPC serves both kinds (0041), so the dispatch happens here rather than
+  // in the token: the page cannot know which kind it holds until the resolver
+  // says so. Only the availability payload carries `kind`, which is what let
+  // the proposal boundary — and the test pinning it — stay untouched.
+  const resolved = data as unknown as ResolvedShareLink;
+  return isAvailability(resolved) ? (
+    <AvailabilityView availability={resolved} />
+  ) : (
+    <ProposalView proposal={resolved} />
+  );
 }
