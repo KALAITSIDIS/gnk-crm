@@ -649,6 +649,17 @@ explicit direction.
   reporting a price-list shortfall on a page that had no price list; the
   regression assertion in test 29 was confirmed to FAIL against the pre-fix
   resolver before being kept.
+  **Applied to hosted 2026-08-22** in the §3 sequence, via `execute_sql` and not
+  `apply_migration` — the latter stamps a timestamp-shaped version and would
+  break the `non_filename_versions` = 0 invariant. `get_advisors` after: **no new
+  SECURITY finding** (`resolve_share_link` was already the pinned 0028 exception),
+  and **one new PERFORMANCE finding, knowingly accepted** —
+  `share_links_price_list_id_fkey` has no covering index, which is the 64th
+  instance of `unindexed_foreign_keys` on this project and the fourth on
+  `share_links` alone (`contact_id`, `created_by`, `revoked_by` are the others).
+  Indexing one while three siblings stay bare would be noise; the FK is walked
+  only when a `price_lists` row is deleted, which nothing in the app does. **The
+  whole 63-finding class is what wants a decision, not this one row.**
   **VERIFY:** `grep -c "createAvailabilityLink" lib/actions/share-links.ts` — 0
   means reverted. *(1 on 2026-08-22.)* The original entry follows.
 
