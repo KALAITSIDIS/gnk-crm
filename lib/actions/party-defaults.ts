@@ -76,9 +76,18 @@ export async function getPartyDefaults(contactId: string | null): Promise<{
 /**
  * Save a party's standard terms.
  *
- * Admin + listing manager, matching who manages mandates and listings — these
- * values prefill a commission rate, and a commission rate is not an agent's to
- * set for the office.
+ * ADMIN ONLY, and that is dictated by RLS rather than chosen here. `contacts`
+ * has exactly two UPDATE policies (0002): admin, and an agent for their own
+ * contacts. There is NO listing-manager policy — so admitting one here would
+ * pass this check, then have RLS filter the update to zero rows and return
+ * "nothing was saved" on a form that looked editable. That is precisely the
+ * shape of audit finding 1, and not worth repeating.
+ *
+ * An agent is excluded deliberately even though RLS would let them edit a
+ * contact they own: these values prefill a COMMISSION RATE for the office, and
+ * that is not an agent's to set. Widening it to listing managers means adding a
+ * contacts UPDATE policy, which is a doc 04 matrix change and an operator
+ * decision — not something to slip into a feature.
  *
  * Absent fields are stored as ABSENT, not as null: the resolver treats
  * undefined as "no opinion" and lets the office fallback through, so writing
@@ -100,11 +109,8 @@ export async function savePartyDefaults(
 
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
-  if (profile.role !== "admin" && profile.role !== "listing_manager") {
-    return {
-      error: "Only admins and listing managers set standard terms.",
-      savedAt: null,
-    };
+  if (profile.role !== "admin") {
+    return { error: "Only admins set standard terms.", savedAt: null };
   }
 
   const { data: current } = await supabase

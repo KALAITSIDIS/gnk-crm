@@ -327,7 +327,9 @@ export default async function ContactDetailPage({
                 contactName={c.display_name ?? "this contact"}
                 stored={storedDefaults}
                 office={officeDefaults}
-                readOnly={profile.role !== "admin" && profile.role !== "listing_manager"}
+                // admin only — `contacts` has no listing-manager UPDATE policy (0002), so
+                // anyone else would get a form that looks editable and always fails
+                readOnly={profile.role !== "admin"}
               />
             </div>
           </TabsContent>

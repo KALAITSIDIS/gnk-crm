@@ -209,8 +209,7 @@ export function PartyDefaultsForm({
 
       {readOnly ? (
         <p className="text-xs text-text-3">
-          Read-only — standard terms set a commission rate for the office, so admins and listing
-          managers own them.
+          Read-only — standard terms set a commission rate for the office, so admins own them.
         </p>
       ) : (
         <div>
