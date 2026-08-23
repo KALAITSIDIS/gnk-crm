@@ -644,31 +644,40 @@ sha256sum -c gnk-backups-offsite-<date>.tar.gz.sha256
 > The current dataset is operator test data (§0), which lowers the stakes *today*
 > and not one day longer than that.
 
-**CURRENT ARCHIVE — `gnk-backups-offsite-2026-08-10.tar.gz`** (2026-08-10),
-4.17 MB, **390 entries**, all **eight** sets including the 08-10 nightly.
+**CURRENT ARCHIVE — `gnk-backups-offsite-2026-08-23.tar.gz`** (2026-08-23),
+11.5 MB, **1100 entries**, all **eighteen** sets including that morning's
+nightly.
 
 ```
-sha256  a6360d1123975cf6b330d2240413cdfa8b1c831c7e2c3ae929a4c5fd251550ca
+sha256  9919ffb3a619c200c87b8787deccb50303f7c2c4d5fdd33b3add62051008c078
 ```
 
 Verified twice, because a tar that lists cleanly is not a tar that restores:
-extracted and `diff -r`'d against the original (**0 differences across all eight
-sets**), then ran `sha256sum -c SHA256SUMS` *inside the extracted 2026-08-10 set*
-(**55/55 OK, 0 failed**). Integrity holds end to end, not just at the archive
-boundary.
+extracted and `diff -r`'d against the original (**0 differences across all
+eighteen sets**), then ran `sha256sum -c SHA256SUMS` *inside the extracted
+2026-08-23 set* (**55/55 OK, 0 failed**). Integrity holds end to end, not just at
+the archive boundary. The set inside carries `verified: true`, `problems: []` and
+`events inDump 105 = live 105`, matching hosted as measured that day.
 
-**It is the ONLY archive on `D:`, which is deliberate.** The `2026-08-07` and
-`2026-08-09` archives were deleted 2026-08-10 after confirming both were strict
-subsets (0 entries in either that `2026-08-10` lacks) and re-verifying the
-survivor's checksum *after* the deletion. One archive, one checksum — more than
+**It is the ONLY archive on `D:`, which is deliberate.** The `2026-08-10` archive
+was deleted 2026-08-23 the same way its two predecessors were: confirm it is a
+strict subset (**0 entries in it that `2026-08-23` lacks**), delete, then
+re-verify the survivor's checksum *after* the deletion — which is the step that
+catches a delete that took the wrong file. One archive, one checksum: more than
 one invites copying the wrong file, and there is no ambiguity about which file to
 put on the drive.
+
+**Why it was rebuilt.** The 08-10 archive sat unfulfilled for thirteen days, so
+it had fallen behind thirteen nightlies, migrations `0035`–`0041` and the whole
+properties audit. **An off-site archive nobody has copied yet still ages** — the
+gap it leaves grows every night the nightly runs, and the archive is the thing
+that has to be re-made, not just re-copied.
 
 Deleting them cost nothing that is not still on disk: an archive is a
 repackaging of `gnk-backups/`, all eight sets of which are untouched, and
 rebuilding one is the single `tar` command above.
 
-> **STILL ON THIS MACHINE — the off-site gap is OPEN as of 2026-08-10.** The
+> **STILL ON THIS MACHINE — the off-site gap is OPEN as of 2026-08-23.** The
 > operator's plan is to copy it to a USB drive; **until that happens nothing has
 > changed**, and no line in this repo should be read as saying otherwise. There
 > was no removable drive attached when the archive was built, and `D:` is a
@@ -679,7 +688,7 @@ rebuilding one is the single `tar` command above.
 > you copied from proves nothing about what arrived:
 >
 > ```bash
-> sha256sum -c gnk-backups-offsite-2026-08-10.tar.gz.sha256
+> sha256sum -c gnk-backups-offsite-2026-08-23.tar.gz.sha256
 > ```
 
 ---

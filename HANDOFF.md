@@ -18,7 +18,7 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 | Data | **MEASURED 2026-08-23 on hosted, AFTER the fixture was deleted: 3 properties (PAF0001 · PAF0002 standalone, PAF0003 project) · 0 price lists · 2 share_links, both proposals, 0 availability · 105 events · chain true.** `PAF0004` "Kissonerga Bay Residences" was created 2026-08-22 to prove the availability link and **deleted 2026-08-23 at the operator's request** — 19 properties, its price list and both its share links went with it. **Its 22 events REMAIN and that is correct**, the same as the B3/B7 seed rows in §0: production holds events whose row is gone, and nobody should "fix" it. **`reference_counters` for PAF is at 4, so the next Paphos listing is PAF0005 — the PAF0004 gap is deliberate, a reference is never reused.** **It is REBUILDABLE: `scripts/demo/availability-project.sql` builds it and `-teardown.sql` removes it, both runnable on local or hosted unchanged (every id is looked up by natural key). The build refuses to make a second one; the teardown explains the three constraints that make delete order non-optional.** All of it operator test data (§0) |
 | Tests | **691 unit** · **49 RLS across 4 files** · **204 desktop E2E** — all three MEASURED 2026-08-22 (`npm run test`, `npm run test:rls`, `playwright test --project=desktop --list` which reports 206 because the `setup` project's two tests come with it). The previous line said 518 / 48 / 181 and was dated 2026-08-11 and 2026-08-20; the unit count had drifted by 173 across work that never updated it, which is why these carry the command that produced them. Migration 0041 added RLS test 29 and `tests/e2e/availability-share.spec.ts` (3 tests). The full desktop suite was NOT re-run for 0041 — only the new spec was, so the 12 tracked `tests/screenshots/*.png` are untouched (§7). All three suites run in CI |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
-| Backups | ✅ **`2026-08-10` is the primary** — newest automated set, `verified:true`, `problems:[]`, 55 files, **events inDump 74 = live 74**, written to `D:\dev\TSOPOZIDIS\gnk-backups`. `2026-08-06` is the restore-*proven* one (all 73 event hashes byte-identical to production). Sets: 07-30 · 07-31 (Storage) · 08-04 (superseded) · 08-06 · 08-07 · 08-08 · 08-09 · **08-10**. Nightly ran 03:46 on 2026-08-10, verified. **STILL SINGLE-MACHINE — a current off-site archive is built and waiting to be copied to USB, §3.3** |
+| Backups | ✅ **`2026-08-23` is the primary** — newest automated set, `verified:true`, `problems:[]`, 55 files, **events inDump 105 = live 105**, in `D:\dev\TSOPOZIDIS\gnk-backups`. `2026-08-06` is the restore-*proven* one (all 73 event hashes byte-identical to production). **18 sets, nightly running unbroken since 08-06** — measured 2026-08-23, the 03:46 run that morning was green. **STILL SINGLE-MACHINE. A fresh off-site archive `gnk-backups-offsite-2026-08-23.tar.gz` is built and verified twice and is waiting to be copied to USB, §3.3** — the 08-10 one it replaces was never copied either, which is the point: an uncopied archive ages, so this closes nothing until it moves off the box |
 
 ---
 
@@ -801,9 +801,12 @@ is one word: `CSP_HEADER` in `lib/services/csp.ts`.*
 **Open, needing an operator decision (not engineering):**
 - **Get a backup off this machine — STILL OPEN 2026-08-10, and this is the
   highest-value item on the list.** A current archive is built and verified at
-  both levels: `gnk-backups-offsite-2026-08-10.tar.gz` (4.17 MB, **all 8 sets**,
-  390 entries), sha256
-  `a6360d1123975cf6b330d2240413cdfa8b1c831c7e2c3ae929a4c5fd251550ca`. **The
+  both levels: **`gnk-backups-offsite-2026-08-23.tar.gz` (11.5 MB, all 18 sets,
+  1100 entries), sha256
+  `9919ffb3a619c200c87b8787deccb50303f7c2c4d5fdd33b3add62051008c078`** — rebuilt
+  2026-08-23 because the 08-10 one had fallen thirteen nightlies and six
+  migrations behind, and the 08-10 archive was then deleted after confirming it
+  was a strict subset. **An uncopied archive still ages.** **The
   operator will copy it to a USB drive; that had not happened yet when this line
   was written, so every backup is still on one machine.** Verify at the
   DESTINATION — a checksum taken here proves nothing about what arrived. **It is
