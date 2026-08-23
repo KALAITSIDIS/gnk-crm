@@ -11,62 +11,60 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 
 | | |
 |---|---|
-| `main` | **in sync with `origin/main` as of 2026-08-23** — **`feat/buyer-requirements` merged (`0f0e379`, `--no-ff`, 8 commits) and PUSHED: Phase B, buyer requirements + bidirectional matching, migration 0043.** CI green on `0f0e379` for that SHA (`checks` · `e2e` · `rls`), and green on the branch head `827c406` first. Production READY from `0f0e379`, `/login` 200, `/contacts` and `/properties` 307, 0 runtime errors in a live 1h window. **0043 was applied to hosted BEFORE the merge** — the Matching buyers tab queries the new table and would have thrown against a 0042 database. Branch deleted local and remote. Earlier the same day, `fix/report-phase-a` merged (`b15066c`, `--no-ff`, 4 commits: T-A1 · T-A2 · T-A3 + the plan) and PUSHED. **CI green on `b15066c` for that SHA — `checks` · `e2e` · `rls`** — and green on the branch head `b9bc0dd` first, which is why main never risked going red: `ci.yml` is `on: push:` with no branch filter, so a branch push is a free rehearsal. Production READY from `b15066c` (`/login` 200, `/dashboard` 307, 0 runtime errors in a live 2h window). **THE "COMMIT, DON'T PUSH" AGREEMENT IS SUPERSEDED** — on 2026-08-23 the operator asked why work was left unpushed and said to navigate and decide rather than park it. Treat push-and-deploy as expected unless told otherwise. `fix/report-phase-a` was **deleted local and remote** once merged, per the standing rule that a stale branch is a claim someone will read. Phase A of `IMPROVEMENTS_EXECUTION.md` shipped; **Phases B and C are specified and NOT started.** `git branch -vv` and `git branch -r` are the answer, not this cell. |
+| `main` | **in sync with `origin/main` as of 2026-08-24** — **`feat/reservations` merged (`22246ad`, `--no-ff`): Phase C, reservations, migration 0044.** CI green on `22246ad` for that SHA (`checks` · `e2e` · `rls`), green on the branch head `ea79780` first; production READY, 0 runtime errors. Branch deleted local and remote. **ALL THREE PHASES OF `IMPROVEMENTS_EXECUTION.md` ARE NOW SHIPPED AND PROVEN ON PRODUCTION.** Earlier on 2026-08-23, `feat/buyer-requirements` merged (`0f0e379`, `--no-ff`, 8 commits) and PUSHED: Phase B, buyer requirements + bidirectional matching, migration 0043.** CI green on `0f0e379` for that SHA (`checks` · `e2e` · `rls`), and green on the branch head `827c406` first. Production READY from `0f0e379`, `/login` 200, `/contacts` and `/properties` 307, 0 runtime errors in a live 1h window. **0043 was applied to hosted BEFORE the merge** — the Matching buyers tab queries the new table and would have thrown against a 0042 database. Branch deleted local and remote. Earlier the same day, `fix/report-phase-a` merged (`b15066c`, `--no-ff`, 4 commits: T-A1 · T-A2 · T-A3 + the plan) and PUSHED. **CI green on `b15066c` for that SHA — `checks` · `e2e` · `rls`** — and green on the branch head `b9bc0dd` first, which is why main never risked going red: `ci.yml` is `on: push:` with no branch filter, so a branch push is a free rehearsal. Production READY from `b15066c` (`/login` 200, `/dashboard` 307, 0 runtime errors in a live 2h window). **THE "COMMIT, DON'T PUSH" AGREEMENT IS SUPERSEDED** — on 2026-08-23 the operator asked why work was left unpushed and said to navigate and decide rather than park it. Treat push-and-deploy as expected unless told otherwise. `fix/report-phase-a` was **deleted local and remote** once merged, per the standing rule that a stale branch is a claim someone will read. Phase A of `IMPROVEMENTS_EXECUTION.md` shipped; **Phases B and C are specified and NOT started.** `git branch -vv` and `git branch -r` are the answer, not this cell. |
 | CI | ✅ green — `checks` (typecheck · lint · unit · **build**) + `rls` |
 | Production | `gnk-crm.vercel.app` healthy; **auto-deploys every push**. **Functions run in `fra1` (Frankfurt), pinned in `vercel.json` 2026-08-20** — same region as Supabase `eu-central-1`. They ran in `iad1` (Washington DC) until then, so every request crossed the Atlantic; co-locating made all routes ~3x faster (ENGINEERING_NOTES §8). **`X-Vercel-Id` reads `<edge>::<function>` — check the SECOND field if latency ever looks structural again.** Verified 2026-08-20 after the Next 16.3.1 + region changes: 9 authenticated routes 200 with expected content, 0 runtime errors and 0 5xx in 6h of production logs. **A cache-restored build can keep an OLD `NEXT_PUBLIC_*` value compiled in — see §2b, it caused a login outage on 2026-08-09.** |
-| Hosted DB | `yjgirvzgoiywdojnpkpd` — **43 migrations, latest `0043` (applied 2026-08-23, local and hosted both)** — 0043 adds `buyer_requirements`; its `relacl` is byte-identical to `price_lists`, 5 policies incl. `require_aal2`, 5 indexes, `rls_aal2_coverage()` = 0, `anon` INSERT on **0 of 31** RLS tables, and the security advisor list is UNCHANGED (the new table does not appear in it). Chain true before and after; 105 events untouched by the apply. Applied through `execute_sql` in separate calls and NOT `apply_migration`, which stamps a timestamp-shaped version and would have broken the `non_filename_versions` = 0 invariant. **`md5(prosrc)` of `resolve_share_link` is now `529134eb…` on BOTH sides** — before 0041 hosted's copy was 3864 chars to the file's 4280 because it carried NO `--` comments (0023 reached hosted through a comment-stripping path); strip the comments and the two matched exactly, so the drift was never functional, and 0041 closed it. A bare md5 comparison would have looked alarming and meant nothing, `non_filename_versions` = **0**, **79 events**, 3 properties, 1 mandate, 2 contacts, **30 RLS tables** — MEASURED 2026-08-22 in calls separate from the ones that applied. **`verify_events_chain` checked BEFORE and AFTER every apply**, true both sides. `rls_aal2_coverage()` returns **0** — 0039's new table got `require_aal2` explicitly, because a table created after 0029 does NOT inherit it. **`anon` can INSERT on 0 of 30 RLS tables** — 0039 accidentally gave it `arwd` (Supabase's default privileges fire at CREATE TABLE and `grant` is additive), 0040 took it back and made the ACL byte-identical to `price_lists`; see BACKLOG for the rule this produced. **0037 closed a real privilege-escalation path** on `mandates_safe`. **`cyprus_config.default_mandate_terms` (0038) is a PLACEHOLDER** — 3% / open / 6 months, `verified_at` NULL; it prefills every new mandate, so the operator should set the desk's real terms. **DB-level 2FA is LIVE** — `require_aal2` on all 30 RLS tables |
+| Hosted DB | `yjgirvzgoiywdojnpkpd` — **44 migrations, latest `0044` (applied 2026-08-24, local and hosted both)** — 0044 adds `reservations`, `relacl` byte-identical to `price_lists`, 5 policies incl. `require_aal2`, the partial unique index `reservations_one_live_per_property`, and a fourth cron job `expire-reservations @ 03:45`. **The security advisor caught a REAL hole on the apply**: `expire_reservations()` was callable by `anon` over PostgREST because a new function carries a PUBLIC `=X` grant — anyone unauthenticated could have force-expired every live hold in every org. Fixed in T-C4; its ACL now matches `create_followup_nudges` exactly and the advisor list is back to its pre-Phase-C contents. **This is why §3 ends with `get_advisors`.** Chain true before and after; 110 events untouched by the apply — 0043 adds `buyer_requirements`; its `relacl` is byte-identical to `price_lists`, 5 policies incl. `require_aal2`, 5 indexes, `rls_aal2_coverage()` = 0, `anon` INSERT on **0 of 31** RLS tables, and the security advisor list is UNCHANGED (the new table does not appear in it). Chain true before and after; 105 events untouched by the apply. Applied through `execute_sql` in separate calls and NOT `apply_migration`, which stamps a timestamp-shaped version and would have broken the `non_filename_versions` = 0 invariant. **`md5(prosrc)` of `resolve_share_link` is now `529134eb…` on BOTH sides** — before 0041 hosted's copy was 3864 chars to the file's 4280 because it carried NO `--` comments (0023 reached hosted through a comment-stripping path); strip the comments and the two matched exactly, so the drift was never functional, and 0041 closed it. A bare md5 comparison would have looked alarming and meant nothing, `non_filename_versions` = **0**, **79 events**, 3 properties, 1 mandate, 2 contacts, **30 RLS tables** — MEASURED 2026-08-22 in calls separate from the ones that applied. **`verify_events_chain` checked BEFORE and AFTER every apply**, true both sides. `rls_aal2_coverage()` returns **0** — 0039's new table got `require_aal2` explicitly, because a table created after 0029 does NOT inherit it. **`anon` can INSERT on 0 of 30 RLS tables** — 0039 accidentally gave it `arwd` (Supabase's default privileges fire at CREATE TABLE and `grant` is additive), 0040 took it back and made the ACL byte-identical to `price_lists`; see BACKLOG for the rule this produced. **0037 closed a real privilege-escalation path** on `mandates_safe`. **`cyprus_config.default_mandate_terms` (0038) is a PLACEHOLDER** — 3% / open / 6 months, `verified_at` NULL; it prefills every new mandate, so the operator should set the desk's real terms. **DB-level 2FA is LIVE** — `require_aal2` on all 30 RLS tables |
 | Data | **RE-MEASURED 2026-08-23 after the Phase B production test matrix: 3 properties (PAF0001 villa + **PAF0002 now `available`/`private`** standalone, PAF0003 project still draft) · **2 matchable properties** · 0 price lists · 2 share_links · **3 buyer_requirements across 2 contacts** · **110 events** · chain true.** **All agent-created test data, and all of it evented** (`created` ×1, `requirement_added` ×3, `updated` ×1) — nothing was written by raw SQL. `PAF0002` was enriched through the real Details form (bathrooms, sea distance 300 m, `new_vat`, 5 features) and moved `draft`→`available`, `archived`→`private`, deliberately contrasting with PAF0001 so searches can discriminate; its `quality_score` recomputed to 30, which is below the 70 publish gate and therefore correctly still not `public`. The second contact is `TEST BUYER Anna K (matching demo)`. **All of it is removable** — see §0a for what it proved. The previous line read 106 events, 1 requirement, 1 matchable property. |
-| Tests | **743 unit** · **50 RLS across 4 files** · **204 desktop E2E** — **unit and RLS MEASURED 2026-08-23 after Phase B** (`npm run test` → 743 across 68 files, +44 over Phase A: 19 matching-engine, 17 validator and 8 match-reason tests; `npm run test:rls` → **50**, RLS test 30 included, passing on a FIRST run against a fresh DB, and CI's `rls` job proves the fresh-database run independently). **The 204 desktop E2E figure is still the 2026-08-22 measurement and was NOT re-counted today** — Phase A added no spec, and CI’s `e2e` job passed on `b15066c`, but that is not the same as re-running `playwright test --project=desktop --list` (which reports 206 because the `setup` project’s two tests come with it). The previous line said 518 / 48 / 181 and was dated 2026-08-11 and 2026-08-20; the unit count had drifted by 173 across work that never updated it, which is why these carry the command that produced them. Migration 0041 added RLS test 29 and `tests/e2e/availability-share.spec.ts` (3 tests). The full desktop suite was NOT re-run for 0041 — only the new spec was, so the 12 tracked `tests/screenshots/*.png` are untouched (§7). All three suites run in CI |
+| Tests | **752 unit** · **51 RLS across 4 files** · **204 desktop E2E** — **unit and RLS MEASURED 2026-08-23 after Phase B** (`npm run test` → 752 across 69 files, +53 over Phase A; `npm run test:rls` → **51**, RLS tests 30 and 31 included, passing on a FIRST run against a fresh DB, and CI's `rls` job proves the fresh-database run independently). **The 204 desktop E2E figure is still the 2026-08-22 measurement and was NOT re-counted today** — Phase A added no spec, and CI’s `e2e` job passed on `b15066c`, but that is not the same as re-running `playwright test --project=desktop --list` (which reports 206 because the `setup` project’s two tests come with it). The previous line said 518 / 48 / 181 and was dated 2026-08-11 and 2026-08-20; the unit count had drifted by 173 across work that never updated it, which is why these carry the command that produced them. Migration 0041 added RLS test 29 and `tests/e2e/availability-share.spec.ts` (3 tests). The full desktop suite was NOT re-run for 0041 — only the new spec was, so the 12 tracked `tests/screenshots/*.png` are untouched (§7). All three suites run in CI |
 | Cron | `expire-mandates 03:00` · `followup-nudges 03:15` · `verify-events-chain 03:30` |
 | Backups | ✅ **`2026-08-23` is the primary** — newest automated set, `verified:true`, `problems:[]`, 55 files, **events inDump 105 = live 105**, in `D:\dev\TSOPOZIDIS\gnk-backups`. `2026-08-06` is the restore-*proven* one (all 73 event hashes byte-identical to production). **18 sets, nightly running unbroken since 08-06** — measured 2026-08-23, the 03:46 run that morning was green. **STILL SINGLE-MACHINE. A fresh off-site archive `gnk-backups-offsite-2026-08-23.tar.gz` is built and verified twice and is waiting to be copied to USB, §3.3** — the 08-10 one it replaces was never copied either, which is the point: an uncopied archive ages, so this closes nothing until it moves off the box |
 
 ---
 
-## 0a. NEXT UP — Phase C of `IMPROVEMENTS_EXECUTION.md` (2026-08-23)
+## 0a. NEXT UP — nothing is queued (2026-08-24)
 
-**Read `IMPROVEMENTS_EXECUTION.md`, not this section.** It holds the plan; this
-section points at it and does not restate it — that is the bug §0 keeps having.
+**All three phases of `IMPROVEMENTS_EXECUTION.md` are shipped, deployed and
+proven on production.** That file holds the plan and the per-phase banners;
+this section points at it and does not restate it.
 
 | | |
 |---|---|
-| shipped | **Phase A** (`b15066c`) and **Phase B** (`0f0e379`). Phase B = `buyer_requirements` (**0043**), RLS test 30, the matching engine, and both match views. Local and hosted both at 0043. **PROVEN ON PRODUCTION, not merely deployed** — same standard as the B3/B7 and PAF0004 proofs: a real search was created through the real form on MARIOS ANDREOU, and both directions rendered **82** with the same two misses (*1000 m from the sea, wants under 500 m* · *No private pool*). The score was **hand-computed as 82 BEFORE submitting** (applicable 95, earned 77.5). PAF0002 and PAF0003 are `draft` and were correctly excluded — "Showing 1 of 1". Chain true after, events 105 → 106 |
-| queued | **Phase C only** — reservations (**0044**): a partial unique index for one-live-per-property, and a pg_cron expiry at 03:45 following the 0012/0020 idiom |
-| the caveat that has not changed | Phase C is **NEW SCOPE** on a system **no client has used** — production still holds only operator test data (§0), and `buyer_requirements` there is empty. The plan's advice to run one real week first still stands; the operator has directed the build regardless, which is their call and is recorded rather than re-argued |
-| what Phase B does NOT do | no price-drop campaign, no new-listing alert, no saved-search notification. All BACKLOG lines. It ships the data model, the rules, and the two views that read them |
+| Phase A | `b15066c` — share-link event kinds, median/p90 first response (**0042**) |
+| Phase B | `0f0e379` — `buyer_requirements` (**0043**), matching engine, both match views |
+| Phase C | `22246ad` — `reservations` (**0044**), one-live-per-property, nightly expiry |
+| state | local and hosted both at **0044**; 752 unit · 51 RLS; CI green for each merge SHA |
 
-**The Phase B production test matrix (2026-08-23) — every score predicted before it was read.**
+**What is left is in `docs/BACKLOG.md`**, split into three items that need an
+operator decision (replacing the "top agents by activity" vanity metric,
+syncing `properties.status` with a live hold, dropping `contacts.preferences`)
+and five that are decision-free once someone asks — price-drop campaigns and
+new-listing alerts being cheap now the matching engine exists.
 
-| search | buyer | expected | got |
-|---|---|---|---|
-| Paphos villa, sea view, separate deed | MARIOS ANDREOU | PAF0001 at **82** | 82 ✓ |
-| Beach apartment under 300k | MARIOS ANDREOU | PAF0002 at **100** | 100 ✓, and rendered its HITS rather than going silent |
-| Walk to the beach, pool, under 400k | Anna K | PAF0002 at **50**, PAF0001 BLOCKED | 50 ✓, PAF0001 absent ✓ |
-| PAF0002 → buyers | — | two buyers ranked 100 then 50 | ✓ |
+**The standing recommendation, unchanged and still not taken:** run one real
+week on the system. Production holds **2 buyers, 3 saved searches, 2 matchable
+listings and 1 live hold, all agent-created test data**. Every weight in
+`MATCH_WEIGHTS` is tunable and nothing is stored, but only a real desk
+disagreeing with a ranking will say which way to tune them.
 
-Four hard filters proved themselves on production rather than in a unit test:
-**status** (PAF0003 is draft and never appears), **property_type** (a villa is
-absent from an apartment search), **title deed** (PAF0002's `unknown` deed
-excludes it from a deed-required search), and the **budget tolerance** —
-PAF0001 at €450.000 is correctly absent from a €400.000 search, whose ceiling
-with the 10% tolerance is €440.000.
+**Three lessons these phases produced, worth more than the features.**
 
-**Two things worth carrying rather than looking up.**
-
-**The deploy order is now a rule, not a preference.** Both phases contained a
-change that would have broken production if code had landed before schema —
-Phase A would have painted `NaNh NaNm` on the dashboard, Phase B would have
-thrown on the Matching buyers tab. **Apply the migration to hosted BEFORE
-merging to main.** And push the feature branch first: `ci.yml` is `on: push:`
-with no branch filter, so a branch push is a free CI rehearsal that keeps `main`
-from ever going red.
-
-**The plan's own DDL was wrong twice and both are left visible in it.** Task 3
-asserted `array_length()` on `rls_aal2_coverage()`, which returns
-`TABLE(missing_table text)` — a set — and would have aborted the migration; and
-it named `PROPERTY_FEATURE_KEYS`, which does not exist (`FEATURE_KEYS` does, and
-it is narrowly typed). Both were caught by READING the target before writing,
-which is what the plan's own "re-specify against the real file" instruction is
-for. **Expect Phase C's DDL to need the same treatment.**
+1. **The deploy order is a RULE.** Each phase contained a change that would have
+   broken production had code landed before schema — A would have painted
+   `NaNh NaNm` on the dashboard, B and C would have thrown on a new tab. Push
+   the branch first (`ci.yml` is `on: push:` with no branch filter, so it is a
+   free CI rehearsal that keeps `main` off red), **then apply the migration to
+   hosted, then merge.**
+2. **`get_advisors` is not a formality.** On 0044's apply it found
+   `expire_reservations()` callable by `anon` over PostgREST — a new function
+   carries a PUBLIC `=X` grant, and every older cron function is clean only
+   because 0007 locked them down. **Every future function needs the same
+   revoke.**
+3. **The plan's own DDL was wrong three times** and each error is left visible
+   in it: `array_length()` on a set-returning function, a `PROPERTY_FEATURE_KEYS`
+   export that does not exist, and a hardcoded `+03:00` that is an hour wrong
+   every Cyprus winter. All three were caught by READING the target before
+   writing. That instruction is load-bearing, not ceremony.
 
 ## 0a-prev. The project availability share link (2026-08-22)
 
