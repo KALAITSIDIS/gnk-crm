@@ -512,6 +512,39 @@ verify in a *further* separate call, diff `md5(prosrc)` against local, then run
 
 # PHASE B — buyer requirements and matching
 
+> ## ✅ PHASE B SHIPPED — 2026-08-23, branch `feat/buyer-requirements`
+>
+> | | |
+> |---|---|
+> | Task 3 | `8647bde` T-B1 — `buyer_requirements` table, migration **0043** |
+> | Task 4 | `3afc906` T-B2 — RLS test **30** |
+> | Task 5 | `2d6adf9` T-B3 — validators, actions, events (3 locales) |
+> | Task 7 | `1edabbb` T-B5 — the matching engine |
+> | Task 8a | `a3df6bd` T-B6a — candidate queries, both directions |
+> | Task 6 | `a7ea10f` T-B4 — saved searches on the contact page |
+> | Tasks 8b/9 | `3a6a4c7` T-B6/B7 — both match views |
+> | Verified | `npm run test` **743 passed** (+44 over Phase A) · `npm run test:rls` **50 passed, first run** · typecheck and lint clean · **both directions read on the rendered page against a hand-computed prediction** |
+>
+> **Three corrections to this plan, made during the build and left visible
+> rather than back-edited.**
+>
+> 1. **Task 3's DDL was wrong.** It asserted `array_length()` on
+>    `rls_aal2_coverage()`, which returns `TABLE(missing_table text)` — a SET.
+>    The migration would have aborted. Caught by reading
+>    `pg_get_function_result` before writing the file, not by applying it.
+> 2. **`PROPERTY_FEATURE_KEYS` does not exist.** The real export is
+>    `FEATURE_KEYS`, and it is narrowly typed, so membership tests need a widen.
+> 3. **The plan said to read the target files first, and that was right.**
+>    `ActionSectionForm`, the `SELECT_NONE` sentinel and the Radix
+>    checkbox/hidden-input pairing were all discovered by reading, and inventing
+>    code for them would have been wrong in three separate ways.
+>
+> **A tooling limit worth carrying:** Radix checkboxes cannot be driven by
+> synthetic events from the browser tooling — same family as the documented
+> TabsTrigger and dnd-kit limitations. The array write path is covered by
+> validator unit tests and the read path was proven by setting columns directly
+> and reading the rendered summary.
+
 **Stop and re-read before starting.** Phase A is correctness. This is new scope,
 and it is the largest thing in the plan. It is justified by *cheap now, expensive
 later*: restructuring criteria with two contacts in the database is a migration;
@@ -535,7 +568,7 @@ exist. It costs a little CPU per page and saves a backfill script forever.
 **Files:**
 - Create: `supabase/migrations/0043_buyer_requirements.sql`
 
-- [ ] **Step 1: Re-read the grant trap before writing a line of DDL**
+- [x] **Step 1: Re-read the grant trap before writing a line of DDL**
 
 ```bash
 sed -n '1,40p' supabase/migrations/0040_unit_types_grants.sql
@@ -551,7 +584,7 @@ Also: 0029 put `require_aal2` on every RLS table, and **a table created after
 0029 does not inherit it.** `rls_aal2_coverage()` exists to catch the omission
 and an RLS test asserts it returns empty.
 
-- [ ] **Step 2: Write the migration**
+- [x] **Step 2: Write the migration**
 
 Create `supabase/migrations/0043_buyer_requirements.sql`:
 
@@ -683,7 +716,7 @@ begin
 end $$;
 ```
 
-- [ ] **Step 3: Apply locally, verify separately**
+- [x] **Step 3: Apply locally, verify separately**
 
 ```bash
 npx supabase migration up
@@ -695,13 +728,13 @@ npx supabase db query "select tablename, count(*) from pg_policies where tablena
 
 Expected: `buyer_requirements | 5`.
 
-- [ ] **Step 4: Regenerate types**
+- [x] **Step 4: Regenerate types**
 
 ```bash
 npm run db:types
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add supabase/migrations/0043_buyer_requirements.sql lib/supabase/database.types.ts
@@ -718,7 +751,7 @@ without updated tests is incomplete.
 **Files:**
 - Modify: `supabase/tests/rls.test.ts`
 
-- [ ] **Step 1: Write test 30**
+- [x] **Step 1: Write test 30**
 
 Follow the shape of the existing numbered tests. Assert, at minimum:
 
@@ -733,7 +766,7 @@ Follow the shape of the existing numbered tests. Assert, at minimum:
 permission regression for months precisely by ignoring an action's returned
 error.
 
-- [ ] **Step 2: Run the RLS suite against a fresh database**
+- [x] **Step 2: Run the RLS suite against a fresh database**
 
 ```bash
 npm run test:rls
@@ -743,7 +776,7 @@ It must pass on the **first** run against a fresh DB. **A test that only passes
 on a rerun is depending on residue** — that is a standing rule in
 `tests/README.md`, not a preference.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add supabase/tests/rls.test.ts
@@ -758,7 +791,7 @@ git commit -m "T-B2: RLS test 30 — buyer_requirements org isolation and delete
 - Create: `lib/validators/buyer-requirements.ts`
 - Create: `lib/actions/buyer-requirements.ts`
 
-- [ ] **Step 1: Read two existing pairs first**
+- [x] **Step 1: Read two existing pairs first**
 
 ```bash
 sed -n '1,80p' lib/validators/contacts.ts
@@ -769,7 +802,7 @@ Match their idiom exactly: a zod schema parsed from `FormData`, an action
 returning `{ error: string | null; savedAt: number | null }`, `getCurrentProfile`
 for org scoping, `logEvent` before `revalidatePath`.
 
-- [ ] **Step 2: Write the validator**
+- [x] **Step 2: Write the validator**
 
 `lib/validators/buyer-requirements.ts` — a `saveBuyerRequirementSchema` covering
 every column from Task 3, with:
@@ -780,7 +813,7 @@ every column from Task 3, with:
   field arrives as `""`, and `Number("")` is `0` — a silent budget of zero);
 - arrays parsed from repeated form keys.
 
-- [ ] **Step 3: Write the actions**
+- [x] **Step 3: Write the actions**
 
 `lib/actions/buyer-requirements.ts` exporting `saveBuyerRequirement`,
 `archiveBuyerRequirement` (sets `is_active = false`; **not** a delete), and
@@ -791,10 +824,10 @@ contact's id — the requirement belongs to the buyer's timeline, and `ENTITY_TY
 in `lib/services/events.ts` has no `buyer_requirement` member. Event types:
 `requirement_added`, `requirement_updated`, `requirement_archived`.
 
-- [ ] **Step 4: Add the three event strings to `lib/services/events.ts` and all
+- [x] **Step 4: Add the three event strings to `lib/services/events.ts` and all
       three locale files**, following Task 1's pattern.
 
-- [ ] **Step 5: Unit-test the validator**
+- [x] **Step 5: Unit-test the validator**
 
 Create `lib/validators/buyer-requirements.test.ts`. Cover at least: the empty
 string → null coercion for each optional numeric, the two ordering refinements,
@@ -804,7 +837,7 @@ and array parsing from repeated keys.
 npm run test -- lib/validators/buyer-requirements.test.ts
 ```
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 ```bash
 npm run typecheck && npm run lint && npm run test
@@ -820,28 +853,28 @@ git commit -m "T-B3: buyer requirement validators, actions and events"
 - Create: `components/features/contacts/requirements-card.tsx`
 - Modify: `app/(app)/contacts/[id]/page.tsx`
 
-- [ ] **Step 1: Build the card** — list the contact's active requirements, each
+- [x] **Step 1: Build the card** — list the contact's active requirements, each
       with an inline edit form and an archive control; an "Add requirement"
       form; archived ones behind a disclosure. Read
       `components/features/deals/offers.tsx` first and match its structure —
       it is the closest existing multi-row card with per-row actions.
 
-- [ ] **Step 2: Show the legacy blob during transition.** If
+- [x] **Step 2: Show the legacy blob during transition.** If
       `contacts.preferences` is non-empty and the contact has no requirement
       rows, render it read-only with a "Convert to requirement" button that
       prefills the add form. `preferences` is not dropped until Task 13's
       BACKLOG line is actioned, and a silently ignored blob is data loss the
       desk will not notice.
 
-- [ ] **Step 3: Label every Select trigger.** A11Y-1 found 40 orphaned labels
+- [x] **Step 3: Label every Select trigger.** A11Y-1 found 40 orphaned labels
       across 15 files; `tests/e2e/accessibility.spec.ts` guards it and will fail
       the build otherwise.
 
-- [ ] **Step 4: Verify in the browser**, including a mid-form Radix
+- [x] **Step 4: Verify in the browser**, including a mid-form Radix
       interaction — `docs/ENGINEERING_NOTES.md` documents Radix mousedown traps
       that only appear in a real browser.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 npm run typecheck && npm run lint && npm run test
@@ -890,7 +923,7 @@ excluded from both numerator and denominator.
 *Always return the misses.* The report is right that an unexplained score is
 useless, and it is consistent with guardrail 6's spirit.
 
-- [ ] **Step 1: Write the types and the failing tests first**
+- [x] **Step 1: Write the types and the failing tests first**
 
 ```ts
 export interface MatchVerdict {
@@ -933,28 +966,28 @@ Write `matching.test.ts` covering, at minimum:
   2–3;
 - null-heavy inputs never throwing.
 
-- [ ] **Step 2: Run them and confirm they fail**
+- [x] **Step 2: Run them and confirm they fail**
 
 ```bash
 npm run test -- lib/services/matching.test.ts
 ```
 
-- [ ] **Step 3: Implement `matching.ts`** with `BUDGET_TOLERANCE_PCT` and the
+- [x] **Step 3: Implement `matching.ts`** with `BUDGET_TOLERANCE_PCT` and the
       weight table as exported constants, each carrying a one-line comment on
       why that weight. Because the score is never stored, changing a weight is
       safe — say so in the header so nobody adds a recompute script.
 
-- [ ] **Step 4: Run to green, then the full suite**
+- [x] **Step 4: Run to green, then the full suite**
 
 ```bash
 npm run test -- lib/services/matching.test.ts && npm run test
 ```
 
-- [ ] **Step 5: Record the decision in `docs/DECISIONS.md`** — the hard/soft
+- [x] **Step 5: Record the decision in `docs/DECISIONS.md`** — the hard/soft
       split, the 10% tolerance and its boundary, the weights, and the choice not
       to store the score.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add lib/services/matching.ts lib/services/matching.test.ts docs/DECISIONS.md
@@ -970,26 +1003,26 @@ git commit -m "T-B5: matching engine — hard filters, weighted soft score, name
 - Create: `components/features/contacts/matches-card.tsx`
 - Modify: `app/(app)/contacts/[id]/page.tsx`
 
-- [ ] **Step 1: Write the candidate query.** Push every hard filter that SQL can
+- [x] **Step 1: Write the candidate query.** Push every hard filter that SQL can
       express into the query — transaction type, status, district via `&&`,
       bedrooms, the budget ceiling plus tolerance — then score the survivors in
       TypeScript. Fetching the whole property table and filtering in memory is
       the PERF-3 mistake (0018) repeated.
 
-- [ ] **Step 2: Cap and disclose.** Take the top 20 by score. If more candidates
+- [x] **Step 2: Cap and disclose.** Take the top 20 by score. If more candidates
       were eligible, **say so on screen** — B1's lesson is that a silently
       truncated list is indistinguishable from a complete one.
 
-- [ ] **Step 3: Render**, one row per property: score, cover thumbnail,
+- [x] **Step 3: Render**, one row per property: score, cover thumbnail,
       reference, price, and the misses as plain-language chips ("€12,000 over
       budget", "no separate title deed"). One requirement at a time, selectable
       when the contact has several.
 
-- [ ] **Step 4: Respect RLS.** The query runs under the caller's client, so an
+- [x] **Step 4: Respect RLS.** The query runs under the caller's client, so an
       agent sees only properties they may already open. **Confirm this with a
       restricted user in the browser**, not by reading the code.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 npm run typecheck && npm run lint && npm run test
@@ -1006,16 +1039,16 @@ git commit -m "T-B6: matching properties on the contact page"
 - Modify: `app/(app)/properties/[id]/page.tsx`
 - Modify: `lib/queries/matches.ts`
 
-- [ ] **Step 1: Add the reverse query** to `lib/queries/matches.ts` — active
+- [x] **Step 1: Add the reverse query** to `lib/queries/matches.ts` — active
       requirements whose arrays contain this property's district and whose band
       admits its price, scored with the **same** `matching.ts` functions. Two
       scoring implementations would drift within a month.
 
-- [ ] **Step 2: Render** buyer name, score, requirement label, misses, and the
+- [x] **Step 2: Render** buyer name, score, requirement label, misses, and the
       assigned agent — so a listing manager can see whose buyer it is before
       picking up the phone.
 
-- [ ] **Step 3: One E2E test.** Add to `tests/e2e/` : seed a property and a
+- [x] **Step 3: One E2E test.** Add to `tests/e2e/` : seed a property and a
       matching requirement, open the property, assert the buyer appears with a
       score; change the price above tolerance, assert they drop off.
 
@@ -1023,7 +1056,7 @@ git commit -m "T-B6: matching properties on the contact page"
 npx playwright test tests/e2e/matching.spec.ts --project=setup --project=desktop
 ```
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```bash
 npm run typecheck && npm run lint && npm run test
