@@ -32,6 +32,10 @@ import { StatusBadge } from "@/components/features/shared/status-badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MatchingBuyersCard } from "@/components/features/properties/matching-buyers-card";
+import {
+  ReservationCard,
+  type ReservationRow,
+} from "@/components/features/properties/reservation-card";
 import type { MatchCandidate } from "@/lib/services/matching";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
@@ -83,7 +87,8 @@ export default async function PropertyDetailPage({
   const keyRows = unwrapRows(keysRes, "property keys");
 
   const keyIds = keyRows.map((k) => k.id);
-  const [priceRes, eventsRes, keyEventsRes, viewingsRes, documentsRes] = await Promise.all([
+  const [priceRes, eventsRes, keyEventsRes, viewingsRes, documentsRes, reservationsRes] =
+    await Promise.all([
     supabase
       .from("price_history")
       .select("id, old_price, new_price, changed_at, changed_by")
@@ -122,6 +127,16 @@ export default async function PropertyDetailPage({
       .eq("entity_type", "property")
       .eq("entity_id", id)
       .order("created_at", { ascending: false }),
+    // 0044. Newest first; the card splits the one live hold from history,
+    // and history is kept because an expired hold is evidence the property
+    // WAS held. The contact join is left-side so an erased buyer (0017)
+    // does not hide the hold itself.
+    supabase
+      .from("reservations")
+      .select("id, status, amount, held_from, expires_at, released_at, release_reason, notes, contact_id, contacts(display_name)")
+      .eq("property_id", id)
+      .order("held_from", { ascending: false })
+      .limit(50),
   ]);
   const priceRows = unwrapRows(priceRes, "price history");
   const propertyEventRows = unwrapRows(eventsRes, "events");
@@ -137,6 +152,23 @@ export default async function PropertyDetailPage({
   // mirrors properties_update RLS — forms render read-only when a save would no-op
   const canEditProperty =
     isAdminOrLM || (profile.role === "agent" && p.assigned_agent_id === profile.id);
+
+  const reservations: ReservationRow[] = (reservationsRes.data ?? []).map((r) => {
+    const joined = r.contacts as { display_name: string } | { display_name: string }[] | null;
+    const contact = Array.isArray(joined) ? (joined[0] ?? null) : joined;
+    return {
+      id: r.id,
+      status: r.status as ReservationRow["status"],
+      amount: r.amount === null ? null : Number(r.amount),
+      held_from: r.held_from,
+      expires_at: r.expires_at,
+      released_at: r.released_at,
+      release_reason: r.release_reason,
+      notes: r.notes,
+      contact_id: r.contact_id,
+      contact_name: contact?.display_name ?? null,
+    };
+  });
 
   const isLand = p.property_type === "land";
   const media = mediaRows ?? [];
@@ -375,6 +407,7 @@ export default async function PropertyDetailPage({
           <TabsTrigger value="media">Media ({(mediaRows ?? []).length})</TabsTrigger>
           <TabsTrigger value="mandate">Mandate &amp; Keys</TabsTrigger>
           <TabsTrigger value="documents">Documents ({documents.length})</TabsTrigger>
+          <TabsTrigger value="reservation">Reservation</TabsTrigger>
           <TabsTrigger value="buyers">Matching buyers</TabsTrigger>
           <TabsTrigger value="activity">Activity</TabsTrigger>
         </TabsList>
@@ -455,6 +488,25 @@ export default async function PropertyDetailPage({
                 readOnly={!isAdminOrLM}
               />
             </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="reservation" className="mt-4">
+          <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-6">
+            <div className="mb-4">
+              <h2 className="text-sm font-semibold text-text-1">Reservation</h2>
+              <p className="text-sm text-text-2">
+                At most one live hold at a time — the database enforces it, so this property cannot
+                be promised to two buyers at once. A hold lapses on its own overnight.
+              </p>
+            </div>
+            <ReservationCard
+              propertyId={p.id}
+              reservations={reservations}
+              canReserve={canEditProperty}
+              readOnlyHint="Read-only — you don't have permission to change this property's holds."
+              isContainer={p.kind === "project" || p.kind === "phase"}
+            />
           </div>
         </TabsContent>
 

@@ -2331,4 +2331,154 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(bandErr!.message).toMatch(/budget_band_ordered/);
   });
 
+  it("31. reservations: one live hold per property, org-scoped, and expiry is idempotent", async () => {
+    // 0044. The partial unique index is the invariant this test exists for —
+    // an action can be raced, an index cannot, so the index is what must be
+    // proven rather than the action that respects it.
+    const ref = (suffix: string) => `RES-${run}-${suffix}`;
+
+    const { data: prop } = await svc
+      .from("properties")
+      .insert({
+        org_id: ORG_A,
+        reference: ref("PROP"),
+        kind: "standalone",
+        property_type: "apartment",
+        status: "available",
+        title: { en: "Reservation fixture" },
+      })
+      .select("id")
+      .single();
+
+    const inSevenDays = new Date(Date.now() + 7 * 864e5).toISOString();
+
+    // --- an agent may take a hold in their own org --------------------------
+    const { data: first, error: firstErr } = await agentA1.client
+      .from("reservations")
+      .insert({
+        org_id: ORG_A,
+        property_id: prop!.id,
+        contact_id: contactA,
+        status: "held",
+        amount: 5000,
+        expires_at: inSevenDays,
+      })
+      .select("id")
+      .single();
+    expect(firstErr, "an agent may take a hold").toBeNull();
+
+    // --- THE INVARIANT: a second LIVE hold on the same property is refused ---
+    const { error: secondErr } = await agentA2.client.from("reservations").insert({
+      org_id: ORG_A,
+      property_id: prop!.id,
+      status: "held",
+      expires_at: inSevenDays,
+    });
+    expect(secondErr, "a second live hold must be refused").not.toBeNull();
+    expect(secondErr!.message).toMatch(/reservations_one_live_per_property/);
+
+    // --- and it is PARTIAL: releasing the first frees the property ----------
+    // A plain unique index would forbid a property from ever being reserved
+    // twice in its life. That is not the rule, and this is what says so.
+    await agentA1.client
+      .from("reservations")
+      .update({ status: "released", released_at: new Date().toISOString() })
+      .eq("id", first!.id);
+
+    const { data: second, error: reReserveErr } = await agentA1.client
+      .from("reservations")
+      .insert({
+        org_id: ORG_A,
+        property_id: prop!.id,
+        status: "held",
+        expires_at: new Date(Date.now() - 864e5).toISOString(), // already lapsed
+        held_from: new Date(Date.now() - 9 * 864e5).toISOString(),
+      })
+      .select("id")
+      .single();
+    expect(reReserveErr, "a released hold frees the property for a new one").toBeNull();
+
+    // --- the window constraint is a real backstop ---------------------------
+    const { error: windowErr } = await agentA1.client.from("reservations").insert({
+      org_id: ORG_B, // wrong org too, but the CHECK fires first
+      property_id: prop!.id,
+      status: "held",
+      held_from: inSevenDays,
+      expires_at: new Date(Date.now() - 864e5).toISOString(),
+    });
+    expect(windowErr, "a hold expiring before it starts must be refused").not.toBeNull();
+
+    // --- cross-org isolation ------------------------------------------------
+    const { data: bSees } = await agentB.client
+      .from("reservations")
+      .select("id")
+      .eq("id", first!.id);
+    expect(bSees ?? [], "org B must not see org A's reservation").toHaveLength(0);
+
+    // --- DELETE is gated to admin / listing manager -------------------------
+    const { count: agentDeleted } = await agentA1.client
+      .from("reservations")
+      .delete({ count: "exact" })
+      .eq("id", first!.id);
+    expect(agentDeleted ?? 0, "an agent must not delete a reservation").toBe(0);
+
+    const { error: lmDeleteErr, count: lmDeleted } = await lmA.client
+      .from("reservations")
+      .delete({ count: "exact" })
+      .eq("id", first!.id);
+    expect(lmDeleteErr, "a listing manager may delete").toBeNull();
+    expect(lmDeleted ?? 0).toBe(1);
+
+    // --- the nightly sweep: expires the lapsed hold and writes its event ----
+    const eventsBefore = await svc
+      .from("events")
+      .select("id", { count: "exact", head: true })
+      .eq("entity_type", "property")
+      .eq("entity_id", prop!.id)
+      .eq("event_type", "reservation_expired");
+
+    await svc.rpc("expire_reservations");
+
+    const { data: afterFirst } = await svc
+      .from("reservations")
+      .select("status, released_at, release_reason")
+      .eq("id", second!.id)
+      .single();
+    expect(afterFirst!.status, "a lapsed hold is expired by the sweep").toBe("expired");
+    expect(afterFirst!.released_at, "and stamped").not.toBeNull();
+
+    const eventsAfterFirst = await svc
+      .from("events")
+      .select("id", { count: "exact", head: true })
+      .eq("entity_type", "property")
+      .eq("entity_id", prop!.id)
+      .eq("event_type", "reservation_expired");
+    expect(
+      (eventsAfterFirst.count ?? 0) - (eventsBefore.count ?? 0),
+      "the sweep writes exactly one event per expired hold",
+    ).toBe(1);
+
+    // IDEMPOTENCE: the second run of a night must change nothing. 0006's bug
+    // was a reminder that fired once forever; 0012 and 0020 fixed the shape.
+    await svc.rpc("expire_reservations");
+    const eventsAfterSecond = await svc
+      .from("events")
+      .select("id", { count: "exact", head: true })
+      .eq("entity_type", "property")
+      .eq("entity_id", prop!.id)
+      .eq("event_type", "reservation_expired");
+    expect(
+      eventsAfterSecond.count ?? 0,
+      "a second sweep in the same night is a no-op",
+    ).toBe(eventsAfterFirst.count ?? 0);
+
+    // --- anon reaches nothing ------------------------------------------------
+    const anon = anonClient();
+    const { data: anonSees } = await anon.from("reservations").select("id");
+    expect(anonSees ?? [], "anon must not read reservations").toHaveLength(0);
+
+    const { data: chainOk } = await svc.rpc("verify_events_chain", { p_org: ORG_A });
+    expect(chainOk, "reservation events keep the hash chain intact").toBe(true);
+  });
+
 });

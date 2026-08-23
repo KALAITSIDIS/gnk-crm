@@ -1722,6 +1722,109 @@ export type Database = {
           },
         ]
       }
+      reservations: {
+        Row: {
+          amount: number | null
+          contact_id: string | null
+          created_at: string
+          created_by: string | null
+          currency: string
+          deal_id: string | null
+          expires_at: string
+          held_from: string
+          id: string
+          notes: string | null
+          offer_id: string | null
+          org_id: string
+          property_id: string
+          release_reason: string | null
+          released_at: string | null
+          status: Database["public"]["Enums"]["reservation_status"]
+          updated_at: string
+        }
+        Insert: {
+          amount?: number | null
+          contact_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          deal_id?: string | null
+          expires_at: string
+          held_from?: string
+          id?: string
+          notes?: string | null
+          offer_id?: string | null
+          org_id: string
+          property_id: string
+          release_reason?: string | null
+          released_at?: string | null
+          status?: Database["public"]["Enums"]["reservation_status"]
+          updated_at?: string
+        }
+        Update: {
+          amount?: number | null
+          contact_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          deal_id?: string | null
+          expires_at?: string
+          held_from?: string
+          id?: string
+          notes?: string | null
+          offer_id?: string | null
+          org_id?: string
+          property_id?: string
+          release_reason?: string | null
+          released_at?: string | null
+          status?: Database["public"]["Enums"]["reservation_status"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reservations_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reservations_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reservations_deal_id_fkey"
+            columns: ["deal_id"]
+            isOneToOne: false
+            referencedRelation: "deals"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reservations_offer_id_fkey"
+            columns: ["offer_id"]
+            isOneToOne: false
+            referencedRelation: "offers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reservations_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reservations_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       share_link_attempts: {
         Row: {
           attempts: number
@@ -2576,6 +2679,7 @@ export type Database = {
       enablelongtransactions: { Args: never; Returns: string }
       equals: { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
       expire_mandates: { Args: never; Returns: undefined }
+      expire_reservations: { Args: never; Returns: undefined }
       geometry: { Args: { "": string }; Returns: unknown }
       geometry_above: {
         Args: { geom1: unknown; geom2: unknown }
@@ -3460,6 +3564,12 @@ export type Database = {
         | "holiday"
         | "local_family"
         | "other"
+      reservation_status:
+        | "held"
+        | "confirmed"
+        | "expired"
+        | "released"
+        | "converted"
       temperature: "hot" | "warm" | "cold" | "inactive" | "vip"
       title_deed_status: "separate" | "pending" | "shared" | "none" | "unknown"
       transaction_type: "sale" | "rent" | "sale_or_rent"
@@ -3719,6 +3829,13 @@ export const Constants = {
         "holiday",
         "local_family",
         "other",
+      ],
+      reservation_status: [
+        "held",
+        "confirmed",
+        "expired",
+        "released",
+        "converted",
       ],
       temperature: ["hot", "warm", "cold", "inactive", "vip"],
       title_deed_status: ["separate", "pending", "shared", "none", "unknown"],
