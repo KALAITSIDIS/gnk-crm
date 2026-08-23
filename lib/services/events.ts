@@ -277,6 +277,26 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
     return title ? t("documentDeletedTitle", { title }) : t("documentDeleted");
   },
   renewal_task_created: (_p, t) => t("renewalTaskCreated"),
+  // 0044 reservations. Written against the PROPERTY, like the nightly sweep:
+  // a hold is a fact about the property, which is where a dispute looks.
+  reservation_created: (p, t) => {
+    const amount = asMoney(p.amount);
+    return amount ? t("reservationCreatedAmount", { amount }) : t("reservationCreated");
+  },
+  reservation_extended: (_p, t) => t("reservationExtended"),
+  reservation_status_changed: (p, t) => {
+    const from = asText(p.from);
+    const to = asText(p.to);
+    const reason = asText(p.reason);
+    if (from && to) {
+      return reason
+        ? t("reservationStatusReason", { from, to, reason })
+        : t("reservationStatus", { from, to });
+    }
+    return t("reservationUpdated");
+  },
+  // actor-null: written by the nightly expire_reservations() sweep, not a user
+  reservation_expired: (_p, t) => t("reservationExpired"),
   // 0043 buyer requirements. Written against the CONTACT, not the requirement:
   // ENTITY_TYPES has no `buyer_requirement` member, and the buyer's timeline is
   // where "they started looking for a bigger plot" actually belongs.
