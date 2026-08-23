@@ -30,10 +30,13 @@
         "openPipeline": "Открытая воронка",
         "wonThisMonth": "Выиграно в этом месяце",
         "newLeads7d": "Новые лиды (7 дн)",
-        "avgFirstResponse": "Среднее время первого ответа (7 дн)"
+        "avgFirstResponse": "Среднее время первого ответа (7 дн)",
+        "responseMedian": "Медиана первого ответа (7 дн)",
+        "responseP90": "90-й процентиль (7 дн)"
       },
       "deals": "{count, plural, one {# сделка} few {# сделки} many {# сделок} other {# сделки}}",
       "answered": "{count} с ответом",
+      "responseUnanswered": "{count} без ответа",
       "events": "{count, plural, one {# событие} few {# события} many {# событий} other {# события}}",
       "system": "система",
       "cards": {
@@ -249,6 +252,7 @@
     "documentDeleted": "Документ удалён",
     "documentDeletedTitle": "Документ удалён — {title}",
     "renewalTaskCreated": "Создано напоминание о продлении",
+    "shareLinkAvailabilityOpened": "Ссылка на наличие открыта — доступно {available} из {total, plural, one {# объекта} few {# объектов} many {# объектов} other {# объектов}}",
     "shareLinkOpened": "Ссылка на подборку открыта — {count, plural, one {# объект} few {# объекта} many {# объектов} other {# объекта}}",
     "shareLinkRevoked": "Ссылка на подборку отозвана после {count, plural, one {# просмотра} few {# просмотров} many {# просмотров} other {# просмотров}}",
     "followupNoContact": "Создано напоминание — нет контакта уже {days, plural, one {# день} few {# дня} many {# дней} other {# дня}}",

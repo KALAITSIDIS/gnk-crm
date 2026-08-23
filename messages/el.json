@@ -30,10 +30,13 @@
         "openPipeline": "Ανοιχτή ροή συναλλαγών",
         "wonThisMonth": "Κερδισμένες αυτόν τον μήνα",
         "newLeads7d": "Νέοι ενδιαφερόμενοι (7ημ)",
-        "avgFirstResponse": "Μέση πρώτη απόκριση (7ημ)"
+        "avgFirstResponse": "Μέση πρώτη απόκριση (7ημ)",
+        "responseMedian": "Διάμεσος πρώτης απόκρισης (7ημ)",
+        "responseP90": "90ό εκατοστημόριο (7ημ)"
       },
       "deals": "{count, plural, one {# συναλλαγή} other {# συναλλαγές}}",
       "answered": "{count} απαντήθηκαν",
+      "responseUnanswered": "{count} χωρίς απάντηση",
       "events": "{count, plural, one {# συμβάν} other {# συμβάντα}}",
       "system": "σύστημα",
       "cards": {
@@ -249,6 +252,7 @@
     "documentDeleted": "Διαγράφηκε έγγραφο",
     "documentDeletedTitle": "Διαγράφηκε έγγραφο — {title}",
     "renewalTaskCreated": "Δημιουργήθηκε υπενθύμιση ανανέωσης",
+    "shareLinkAvailabilityOpened": "Άνοιγμα συνδέσμου διαθεσιμότητας — {available} από {total, plural, one {# μονάδα} other {# μονάδες}} διαθέσιμες",
     "shareLinkOpened": "Άνοιγμα συνδέσμου πρότασης — {count, plural, one {# ακίνητο} other {# ακίνητα}}",
     "shareLinkRevoked": "Ο σύνδεσμος πρότασης ανακλήθηκε μετά από {count, plural, one {# προβολή} other {# προβολές}}",
     "followupNoContact": "Δημιουργήθηκε εργασία παρακολούθησης — καμία επικοινωνία για {days, plural, one {# ημέρα} other {# ημέρες}}",

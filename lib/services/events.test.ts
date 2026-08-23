@@ -127,6 +127,45 @@ describe("describeEvent registry (T3.5) — English parity", () => {
     ).toBe("Commission evidence report generated (4 events, chain FAILED)");
   });
 
+  // Two share-link kinds share the `opened` event type. Neither had a test
+  // before 2026-08-23, which is how the availability line went out reading
+  // "Proposal link opened — 0 properties" for a link that was working.
+  it("renders an availability link's open by units, not by properties (0041)", () => {
+    // 0041 writes kind/unit_count/available_count and NO property_count.
+    expect(
+      describeEvent(
+        ev(
+          "opened",
+          { kind: "availability", locale: "en", unit_count: 19, available_count: 7 },
+          "share_link",
+        ),
+        t,
+      ),
+    ).toBe("Availability link opened — 7 of 19 units available");
+    // singular unit, and zero available is a real state worth reading
+    expect(
+      describeEvent(
+        ev(
+          "opened",
+          { kind: "availability", locale: "en", unit_count: 1, available_count: 0 },
+          "share_link",
+        ),
+        t,
+      ),
+    ).toBe("Availability link opened — 0 of 1 unit available");
+  });
+
+  it("leaves the proposal open line untouched (0023)", () => {
+    // A proposal payload (0023) has no `kind`, so absence must route to the
+    // proposal string — the regression guard for the branch above.
+    expect(describeEvent(ev("opened", { locale: "en", property_count: 3 }, "share_link"), t)).toBe(
+      "Proposal link opened — 3 properties",
+    );
+    expect(describeEvent(ev("opened", { locale: "en", property_count: 1 }, "share_link"), t)).toBe(
+      "Proposal link opened — 1 property",
+    );
+  });
+
   it("renders the day-route line with pluralized stops", () => {
     expect(describeEvent(ev("route_updated", { stops: 1, route_date: "2026-07-20" }, "viewing"), t)).toBe(
       "Day route updated — 1 stop (2026-07-20)",
