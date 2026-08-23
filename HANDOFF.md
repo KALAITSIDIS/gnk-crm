@@ -663,11 +663,45 @@ it, the function returns the bounding box of every property coordinate to an
 unauthenticated caller.
 
 Sensitivity is genuinely low — an agency's coverage area is on its own website,
-and this is an aggregate rectangle, not an address or a person. **The fix is one
-line if it is ever wanted** (`revoke execute on function
-public.st_estimatedextent(text,text,text) from anon;` and its two overloads); the
-app never calls it. Not applied unilaterally: production DB changes go through
-§3's apply-and-verify, and this did not warrant waking that up.
+and this is an aggregate rectangle, not an address or a person. The app never
+calls it: `grep -rn st_estimatedextent app lib components scripts tests` is
+empty, so there is no code path to break.
+
+> **THE "ONE LINE FIX" THIS ENTRY USED TO PROMISE DOES NOT EXIST. Attempted
+> 2026-08-23 and measured at every step; all three paths are closed to us.**
+>
+> This said the fix was `revoke execute … from anon` and its two overloads. It
+> is wrong twice over, and the second way is the dangerous one.
+>
+> 1. **Naming roles cannot remove a PUBLIC grant.** The ACL is
+>    `{=X/supabase_admin, supabase_admin=X, postgres=X, anon=X, authenticated=X,
+>    service_role=X}` — the leading `=X` is PUBLIC, so `anon` holds EXECUTE
+>    twice. 0007 already knew this; every line of it reads
+>    `from public, anon, authenticated`. Ours had drifted from that.
+> 2. **Even the correct statement is a silent no-op, because we do not own the
+>    function.** `st_estimatedextent` is owned by `supabase_admin`; the connector,
+>    the CLI and the dashboard SQL editor all run as `postgres`, which is **not a
+>    superuser and not a member of `supabase_admin`** (both measured). Postgres
+>    answers a revoke you are not entitled to make with a WARNING and then
+>    reports success:
+>
+>    ```
+>    WARNING:  no privileges could be revoked for "st_estimatedextent"
+>    REVOKE
+>    ```
+>
+>    **In the dashboard editor that renders as "Success. No rows returned."** Run
+>    it, believe it, and the advisor keeps flagging a hole you think you closed.
+> 3. `set role supabase_admin` → `permission denied to set role`.
+>    `alter function … owner to postgres` → `must be owner of function`.
+>
+> **So it is not deferred, it is UNAVAILABLE** — it needs Supabase platform
+> support or a superuser, neither of which the operator or an agent has. What
+> caught it was an assertion that tested the PRIVILEGE (`has_function_privilege`)
+> rather than the statement's exit status; a migration checking only that the
+> revoke "ran" would have shipped green and changed nothing. **If PostGIS is ever
+> upgraded the ACL is rebuilt anyway, so even a successful revoke would need
+> re-applying.**
 
 **`GNK-PAF-0002`** still wants archiving **via the UI button** so
 `archiveProperty` writes its event.
