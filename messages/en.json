@@ -249,6 +249,7 @@
     "documentDeleted": "Document deleted",
     "documentDeletedTitle": "Document deleted — {title}",
     "renewalTaskCreated": "Renewal reminder task created",
+    "shareLinkAvailabilityOpened": "Availability link opened — {available} of {total, plural, one {# unit} other {# units}} available",
     "shareLinkOpened": "Proposal link opened — {count, plural, one {# property} other {# properties}}",
     "shareLinkRevoked": "Proposal link revoked after {count, plural, one {# view} other {# views}}",
     "followupNoContact": "Follow-up task created — no contact for {days, plural, one {# day} other {# days}}",

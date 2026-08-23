@@ -59,6 +59,10 @@ const SAMPLE_PARAMS = {
   score: 40,
   threshold: 60,
   list: "contacts",
+  // availability share links (0041) — `total` drives a plural, so it must be a
+  // number or the plural arm never resolves
+  available: 7,
+  total: 19,
 };
 
 describe("locale message files", () => {

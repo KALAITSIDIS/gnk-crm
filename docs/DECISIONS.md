@@ -2741,3 +2741,40 @@ changed — a false alarm arriving exactly when someone retries a hosted apply.
 **None of this was urgent.** At tens of rows the saving is microseconds. It is
 groundwork for volume, and it is recorded here mainly because the measurement was
 wrong twice before it was right.
+
+---
+
+## T-A1 — one event type, two share-link kinds (2026-08-23)
+
+`share_link.opened` is written by two different resolvers. 0023's proposal branch
+writes `property_count`; 0041's availability branch writes `kind: 'availability'`
+with `unit_count`/`available_count` and deliberately **no** `property_count`. The
+renderer in `lib/services/events.ts` assumed one kind and formatted every open
+with the proposal sentence, so `Number(p.property_count) || 0` fell through to
+zero and a working availability link logged **"Proposal link opened — 0
+properties"**.
+
+**A correct feature reported as broken** — and it worked exactly as designed on
+a reader. An outside review of the app read that line, concluded empty proposals
+could be created, and recommended blocking them. They cannot be: `createProposal`
+deletes the link outright if the property insert fails ("a proposal with no
+properties is not a proposal"). The recommended fix would have changed nothing
+and left the real defect in place.
+
+Fixed by branching on `payload.kind`, the same shape `followup_task_created` and
+`stages_updated` already use. `revoked` needs no branch — `revokeShareLink` is
+shared by both kinds and always writes `views_at_revocation`.
+
+**Rejected: writing `property_count: 0` into the availability payload** so the
+old string would render. That stores a misleading number in an append-only log
+to fix a display bug, and `events` has no UPDATE to take it back.
+
+**Neither share-link kind had a renderer test before this.** That is how it
+shipped. Both are covered now, and the proposal assertion is the regression guard
+for the branch — it was confirmed passing *before* the fix, so it is pinning
+existing behaviour rather than describing the new code.
+
+`SAMPLE_PARAMS` in `lib/services/messages.test.ts` needed `available`/`total`
+added: that test interpolates every leaf key in all three locales and fails on a
+leftover brace, so a new placeholder is not optional there. `total` must be a
+number or the plural arm never resolves.

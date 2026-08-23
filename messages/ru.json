@@ -249,6 +249,7 @@
     "documentDeleted": "Документ удалён",
     "documentDeletedTitle": "Документ удалён — {title}",
     "renewalTaskCreated": "Создано напоминание о продлении",
+    "shareLinkAvailabilityOpened": "Ссылка на наличие открыта — доступно {available} из {total, plural, one {# объекта} few {# объектов} many {# объектов} other {# объектов}}",
     "shareLinkOpened": "Ссылка на подборку открыта — {count, plural, one {# объект} few {# объекта} many {# объектов} other {# объекта}}",
     "shareLinkRevoked": "Ссылка на подборку отозвана после {count, plural, one {# просмотра} few {# просмотров} many {# просмотров} other {# просмотров}}",
     "followupNoContact": "Создано напоминание — нет контакта уже {days, plural, one {# день} few {# дня} many {# дней} other {# дня}}",

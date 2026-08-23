@@ -249,6 +249,7 @@
     "documentDeleted": "Διαγράφηκε έγγραφο",
     "documentDeletedTitle": "Διαγράφηκε έγγραφο — {title}",
     "renewalTaskCreated": "Δημιουργήθηκε υπενθύμιση ανανέωσης",
+    "shareLinkAvailabilityOpened": "Άνοιγμα συνδέσμου διαθεσιμότητας — {available} από {total, plural, one {# μονάδα} other {# μονάδες}} διαθέσιμες",
     "shareLinkOpened": "Άνοιγμα συνδέσμου πρότασης — {count, plural, one {# ακίνητο} other {# ακίνητα}}",
     "shareLinkRevoked": "Ο σύνδεσμος πρότασης ανακλήθηκε μετά από {count, plural, one {# προβολή} other {# προβολές}}",
     "followupNoContact": "Δημιουργήθηκε εργασία παρακολούθησης — καμία επικοινωνία για {days, plural, one {# ημέρα} other {# ημέρες}}",

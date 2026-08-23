@@ -280,10 +280,26 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
   // B3 buyer proposal links. `opened` is actor-null — the opener is a buyer,
   // not a user — and is throttled to one per link per Cyprus day (0023), so a
   // timeline shows the days a proposal was read, not every refresh.
+  //
+  // TWO KINDS SHARE THIS EVENT TYPE. 0041's availability branch writes
+  // `kind: 'availability'` with unit_count/available_count and deliberately no
+  // property_count; a proposal (0023) writes property_count and no kind.
+  // Reading property_count unconditionally made a WORKING availability link log
+  // "Proposal link opened — 0 properties" — a correct feature reported as
+  // broken, which is exactly how an outside review read it. Branch on `kind`,
+  // the way followup_task_created below already does.
   opened: (p, t) => {
+    if (asText(p.kind) === "availability") {
+      return t("shareLinkAvailabilityOpened", {
+        available: Number(p.available_count) || 0,
+        total: Number(p.unit_count) || 0,
+      });
+    }
     const count = Number(p.property_count) || 0;
     return t("shareLinkOpened", { count });
   },
+  // Shared by BOTH kinds: revokeShareLink always writes views_at_revocation,
+  // so this one needs no branch.
   revoked: (p, t) => {
     const views = Number(p.views_at_revocation) || 0;
     return t("shareLinkRevoked", { count: views });
