@@ -4,7 +4,7 @@ import { Card, CardEmpty } from "@/components/features/dashboard/card";
 import { EventTimeline } from "@/components/features/shared/event-timeline";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
-import { formatDate, formatMoney } from "@/lib/utils/format";
+import { formatDate, formatMoney, formatResponseMinutes } from "@/lib/utils/format";
 import { zonedParts, zonedWallClockToUtc } from "@/lib/utils/tz";
 
 /**
@@ -43,8 +43,13 @@ interface DashboardStats {
     // numbers are computed over the same row set. `answered` is NOT so
     // filtered — it answers "did the desk reply?", which a clock anomaly does
     // not change.
-    p50_response_min: number | null;
-    p90_response_min: number | null;
+    //
+    // OPTIONAL, and that is the honest type rather than a defensive one: this
+    // component can be deployed before 0042 reaches hosted, because Vercel
+    // deploys on push while migrations are applied by hand (HANDOFF §7). A
+    // pre-0042 function returns neither key.
+    p50_response_min?: number | null;
+    p90_response_min?: number | null;
   };
   lead_sources30: { source: string; count: number }[];
   property_statuses: { status: string; count: number }[];
@@ -154,20 +159,15 @@ export async function AdminDashboard() {
   const wonValue = Number(stats.won_month.total);
 
   // first_response_at - received_at over ANSWERED leads of the last 7 days,
-  // computed in SQL — null when nothing has been answered yet. Shared by all
-  // three tiles so a mean and a median can never be formatted differently.
-  const responseLabel = (min: number | null) =>
-    min === null
-      ? "—"
-      : min < 60
-        ? `${Math.round(min)}m`
-        : `${Math.floor(min / 60)}h ${Math.round(min % 60)}m`;
-  const asMin = (v: number | null) => (v === null ? null : Number(v));
-
+  // computed in SQL — null when nothing has been answered yet. One shared
+  // formatter so a mean and a median can never be formatted differently, and
+  // so a MISSING key renders "—" rather than "NaNh NaNm": this code can deploy
+  // before 0042 reaches hosted, because Vercel deploys on push while
+  // migrations are applied by hand. See formatResponseMinutes.
   const answeredCount = Number(stats.leads7.answered);
-  const avgResponseLabel = responseLabel(asMin(stats.leads7.avg_response_min));
-  const p50ResponseLabel = responseLabel(asMin(stats.leads7.p50_response_min));
-  const p90ResponseLabel = responseLabel(asMin(stats.leads7.p90_response_min));
+  const avgResponseLabel = formatResponseMinutes(stats.leads7.avg_response_min);
+  const p50ResponseLabel = formatResponseMinutes(stats.leads7.p50_response_min);
+  const p90ResponseLabel = formatResponseMinutes(stats.leads7.p90_response_min);
   // A lead nobody answered is in NO percentile. Showing p50/p90 without this
   // count next to them flatters the desk exactly when it least deserves it.
   const unansweredCount = leads7Count - answeredCount;
