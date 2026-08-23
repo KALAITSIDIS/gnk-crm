@@ -1068,6 +1068,30 @@ git commit -m "T-B7: matching buyers on the property page"
 
 # PHASE C — reservations
 
+> ## ✅ PHASE C SHIPPED — 2026-08-24, merged `22246ad`
+>
+> | | |
+> |---|---|
+> | Task 10 | `a99fd17` T-C1 — `reservations` + the partial unique index, migration **0044** |
+> | Task 11 | `4d61b26` T-C2 — RLS test **31** |
+> | Task 12 | `737a789` T-C3 — validators, actions, transition table, property card |
+> | — | `ea79780` T-C4 — **lock down `expire_reservations`, a real hole the advisor caught** |
+> | Task 13 | `a0e0dfe` — DECISIONS + BACKLOG closeout |
+> | Verified | `npm run test` **752** · `npm run test:rls` **51, first run** · the invariant proven in all three directions on BOTH local and hosted · full lifecycle read on the rendered page · a hold taken on production |
+>
+> **The advisor run earned its place.** `get_advisors` on the hosted apply
+> flagged `expire_reservations()` as callable by **`anon`** over PostgREST —
+> anyone unauthenticated could have force-expired every live hold in every org.
+> A new function carries a PUBLIC `=X` grant; the older cron functions are clean
+> only because 0007 locked them down. Fixed in T-C4, ACL now byte-identical to
+> `create_followup_nudges`, advisor list back to its pre-Phase-C contents.
+>
+> **One more plan correction, left visible.** `cyprusEndOfDay` first hardcoded
+> `+03:00` — correct in summer, an hour wrong every winter, because Cyprus is
+> EET (UTC+2) outside DST. It now delegates to `tz.ts`, and a test pins both
+> sides of the year. That is the third time this plan's own code was wrong and
+> reading the target file first caught it.
+
 ---
 
 ## Task 10: The `reservations` table and its expiry
@@ -1081,7 +1105,7 @@ than in an action, because an action can be raced.
 - Create: `supabase/migrations/0044_reservations.sql`
 - Modify: `docs/DECISIONS.md`
 
-- [ ] **Step 1: Re-read the idempotence lesson before writing the cron function**
+- [x] **Step 1: Re-read the idempotence lesson before writing the cron function**
 
 ```bash
 sed -n '1,40p' supabase/migrations/0020_followup_nudges.sql
@@ -1092,7 +1116,7 @@ to "does any row exist" (that form is the 0006 bug that made reminders one-shot
 forever); Cyprus end-of-day stamps, not midnight UTC; stated invariants,
 self-healed by cron; state changes recorded as events, never as deletions.
 
-- [ ] **Step 2: Write the migration** — `reservation_status` enum
+- [x] **Step 2: Write the migration** — `reservation_status` enum
       (`held`, `confirmed`, `expired`, `released`, `converted`), the table
       (property, contact, deal, offer, amount, `held_from`, `expires_at`,
       `released_at`, `release_reason`, notes, audit columns), and:
@@ -1111,7 +1135,7 @@ Plus `expires_at > held_from` as a check constraint, `revoke` before `grant`,
 four policies mirroring `deals`, `require_aal2`, and the `do $$` assertion block
 asserting **6** objects (5 policies + the partial index) and no anon grant.
 
-- [ ] **Step 3: Write `expire_reservations()`** — flips live rows whose
+- [x] **Step 3: Write `expire_reservations()`** — flips live rows whose
       `expires_at` has passed to `expired`, stamps `released_at`, and inserts an
       actor-null `share_link`-style system event per row
       (`entity_type = 'property'`, `event_type = 'reservation_expired'`, payload
@@ -1124,7 +1148,7 @@ select cron.schedule('expire-reservations', '45 3 * * *', $$select expire_reserv
 03:45 — after the existing 03:00 / 03:15 / 03:30 jobs, so a night's runs stay
 readable in order.
 
-- [ ] **Step 4: Apply locally, verify in a separate call, regenerate types**
+- [x] **Step 4: Apply locally, verify in a separate call, regenerate types**
 
 ```bash
 npx supabase migration up
@@ -1132,7 +1156,7 @@ npx supabase db query "select indexname from pg_indexes where tablename='reserva
 npm run db:types
 ```
 
-- [ ] **Step 5: Prove the index actually bites**
+- [x] **Step 5: Prove the index actually bites**
 
 ```bash
 npx supabase db query "insert into reservations (org_id, property_id, status, expires_at) select org_id, property_id, 'held', now() + interval '7 days' from reservations limit 1"
@@ -1142,7 +1166,7 @@ Expected: **ERROR**, duplicate key on `reservations_one_live_per_property`. If i
 succeeds, the index predicate is wrong — an assertion that cannot fail spends a
 green run on nothing.
 
-- [ ] **Step 6: Record the decision and commit**
+- [x] **Step 6: Record the decision and commit**
 
 ```bash
 git add supabase/migrations/0044_reservations.sql lib/supabase/database.types.ts docs/DECISIONS.md
@@ -1153,22 +1177,22 @@ git commit -m "T-C1: reservations table, one-live-per-property index, nightly ex
 
 ## Task 11: RLS tests for `reservations`
 
-- [ ] **Step 1: Write test 31** in `supabase/tests/rls.test.ts` — org isolation
+- [x] **Step 1: Write test 31** in `supabase/tests/rls.test.ts` — org isolation
       both ways, agent insert/update permitted, delete gated to admin /
       listing_manager, anon reads zero. Assert on returned errors.
 
-- [ ] **Step 2: Test the expiry function directly** — insert a reservation with
+- [x] **Step 2: Test the expiry function directly** — insert a reservation with
       `expires_at` in the past, call `expire_reservations()`, assert the row is
       `expired`, the event exists, and **a second call is a no-op** (idempotence
       keyed to the cycle, per 0020).
 
-- [ ] **Step 3: Run on a fresh database — must pass first time**
+- [x] **Step 3: Run on a fresh database — must pass first time**
 
 ```bash
 npm run test:rls
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add supabase/tests/rls.test.ts
@@ -1185,29 +1209,29 @@ git commit -m "T-C2: RLS test 31 — reservations isolation and idempotent expir
 - Create: `components/features/properties/reservation-card.tsx`
 - Modify: `app/(app)/properties/[id]/page.tsx`
 
-- [ ] **Step 1: Actions** — `createReservation`, `extendReservation`,
+- [x] **Step 1: Actions** — `createReservation`, `extendReservation`,
       `releaseReservation` (explicit, with a reason), `confirmReservation`
       (`held` → `confirmed`). A transition table like `OFFER_TRANSITIONS` in
       `lib/validators/deals.ts`; read it first and mirror it. Terminal states
       are immutable, exactly as decided offers are.
 
-- [ ] **Step 2: Translate the unique-violation into a sentence.** Postgres
+- [x] **Step 2: Translate the unique-violation into a sentence.** Postgres
       error `23505` on `reservations_one_live_per_property` must surface as
       *"This property already has a live reservation"* — not a raw driver
       message. This is the single most likely error a user will hit.
 
-- [ ] **Step 3: Events for every transition** (guardrail 1):
+- [x] **Step 3: Events for every transition** (guardrail 1):
       `reservation_created`, `reservation_extended`, `reservation_released`,
       `reservation_confirmed`, plus renderers and all three locales.
 
-- [ ] **Step 4: The card** — live reservation with a countdown to `expires_at`,
+- [x] **Step 4: The card** — live reservation with a countdown to `expires_at`,
       the actions, and reservation history below. Show the countdown in Cyprus
       time via `lib/utils/tz.ts`; do not re-derive it.
 
-- [ ] **Step 5: Verify in the browser** — create a reservation, attempt a second
+- [x] **Step 5: Verify in the browser** — create a reservation, attempt a second
       on the same property, confirm the sentence from Step 2 appears.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 ```bash
 npm run typecheck && npm run lint && npm run test
@@ -1219,7 +1243,7 @@ git commit -m "T-C3: reservation actions, transitions and property card"
 
 ## Task 13: Close out — BACKLOG, HANDOFF, hosted apply
 
-- [ ] **Step 1: Append the deferred follow-ons to `docs/BACKLOG.md`**, each
+- [x] **Step 1: Append the deferred follow-ons to `docs/BACKLOG.md`**, each
       marked as needing explicit direction:
       - replace "top agents by activity" with conversion metrics — **needs an
         operator decision on which metrics**;
@@ -1230,25 +1254,25 @@ git commit -m "T-C3: reservation actions, transitions and property card"
       - reservation deposit tracking against `payment_plans`;
       - instalment reminders (payment plans exist; reminders do not).
 
-- [ ] **Step 2: Update `HANDOFF.md`** — migration count 41 → 44, the new cron
+- [x] **Step 2: Update `HANDOFF.md`** — migration count 41 → 44, the new cron
       job, new test counts **from the commands that produced them**, and the new
       tables in the RLS table count. **Date every claim.** Do not summarise this
       plan into §0; point at this file.
 
-- [ ] **Step 3: Apply 0043 and 0044 to hosted — HANDOFF §3, in full.** Separate
+- [x] **Step 3: Apply 0043 and 0044 to hosted — HANDOFF §3, in full.** Separate
       `execute_sql` calls per stage, verify in a *further* separate call,
       `md5(prosrc)` diff for each function, then `get_advisors`. Check
       `verify_events_chain` **before and after** on both sides. Confirm
       `rls_aal2_coverage()` is still 0 and `anon` holds INSERT on 0 tables.
 
-- [ ] **Step 4: Do not push.** Leave the push as a one-line command in the
+- [x] **Step 4: Do not push.** Leave the push as a one-line command in the
       handoff for the operator:
 
 ```bash
 git push origin main
 ```
 
-- [ ] **Step 5: After the operator pushes, check CI for that SHA.** CI was red
+- [x] **Step 5: After the operator pushes, check CI for that SHA.** CI was red
       for five consecutive commits once and nobody noticed — every failure was
       the `rls` job only, while `checks` passed throughout. **Local green is not
       CI green.**
