@@ -171,6 +171,29 @@ test.describe("Project availability links", () => {
         expect(html).toContain("Available");
         await expect(page.getByText("1 available")).toBeVisible();
 
+        // THE COLUMN THAT MUST SURVIVE A NARROW SCREEN. This spec runs under
+        // both the `desktop` (1280) and `mobile` (390) projects, so this one
+        // assertion covers both. The first draft pushed `status` entirely
+        // off-screen at 375px behind the table's horizontal scroll — the single
+        // field the page exists to show — and clipped the price to "295.".
+        const statusFits = await page.evaluate(() => {
+          const table = document.querySelector("main table")!;
+          const box = table.parentElement!;
+          const headers = [...table.querySelectorAll("thead th")];
+          const status = headers[headers.length - 1];
+          return {
+            statusRight: status.getBoundingClientRect().right,
+            boxRight: box.getBoundingClientRect().right,
+            pageOverflows:
+              document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          };
+        });
+        expect(
+          statusFits.statusRight,
+          "the status column must be visible without scrolling the table sideways",
+        ).toBeLessThanOrEqual(statusFits.boxRight + 1);
+        expect(statusFits.pageOverflows, "the page must never scroll sideways").toBe(false);
+
         // and the boundary that did NOT move
         expect(html, "internal_notes must never reach a public page").not.toContain(
           SECRET_NOTE,

@@ -171,6 +171,23 @@ function unitLabel(unit: AvailabilityUnit): string {
   return composed || unit.reference;
 }
 
+/**
+ * Beds and area as one short line, for the narrow layout where those columns
+ * are dropped. Returns null when there is nothing to say, so the row does not
+ * grow a blank line — a unit with neither recorded is not unusual early on.
+ *
+ * The labels are lowercased from the column headings rather than given their
+ * own COPY keys: "beds"/"υπνοδ."/"спален" all read correctly that way, and a
+ * fourth set of strings to keep in step is a cost with no benefit.
+ */
+function compactFacts(unit: AvailabilityUnit, t: (typeof COPY)[keyof typeof COPY]): string | null {
+  const parts = [
+    unit.bedrooms !== null ? `${unit.bedrooms} ${t.beds.toLowerCase()}` : null,
+    unit.covered_area_sqm !== null ? `${unit.covered_area_sqm} m²` : null,
+  ].filter((v): v is string => Boolean(v));
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
 function UnitsTable({
   units,
   currency,
@@ -183,10 +200,16 @@ function UnitsTable({
   const t = COPY[locale];
 
   return (
-    /* The matrix is wider than a phone. It scrolls inside its own box rather
-       than making the whole page scroll sideways. */
+    /* The matrix is wider than a phone, so it scrolls inside its own box rather
+       than making the whole page scroll sideways.
+       BUT SCROLLING MUST NOT HIDE THE POINT. At 375px the first draft pushed
+       `status` entirely off-screen — the one field this page exists to show —
+       and clipped the price to "295.". So below `sm` the table drops to Unit ·
+       Price · Status and carries beds and area INTO the unit cell, where they
+       cost no width. The min-width only applies from `sm` up, where there are
+       seven columns to keep from squashing. */
     <div className="overflow-x-auto rounded-[10px] border border-border bg-surface">
-      <table className="w-full min-w-[34rem] border-collapse text-sm">
+      <table className="w-full border-collapse text-sm sm:min-w-[34rem]">
         <thead>
           <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-text-3">
             <th scope="col" className="px-3 py-2 font-medium">
@@ -198,7 +221,7 @@ function UnitsTable({
             <th scope="col" className="hidden px-3 py-2 text-right font-medium sm:table-cell">
               {t.baths}
             </th>
-            <th scope="col" className="px-3 py-2 text-right font-medium">
+            <th scope="col" className="hidden px-3 py-2 text-right font-medium sm:table-cell">
               {t.area}
             </th>
             <th scope="col" className="hidden px-3 py-2 text-right font-medium sm:table-cell">
@@ -220,6 +243,13 @@ function UnitsTable({
                 <td className="px-3 py-2">
                   <span className="font-medium text-text-1">{unitLabel(unit)}</span>
                   <span className="block font-mono text-xs text-text-3">{unit.reference}</span>
+                  {/* What the dropped columns would have said, folded in below
+                      `sm` so the narrow layout loses no information. */}
+                  {compactFacts(unit, t) ? (
+                    <span className="block text-xs text-text-2 sm:hidden">
+                      {compactFacts(unit, t)}
+                    </span>
+                  ) : null}
                 </td>
                 <td className="hidden px-3 py-2 text-right text-text-2 sm:table-cell">
                   {unit.bedrooms ?? "—"}
@@ -227,7 +257,7 @@ function UnitsTable({
                 <td className="hidden px-3 py-2 text-right text-text-2 sm:table-cell">
                   {unit.bathrooms ?? "—"}
                 </td>
-                <td className="whitespace-nowrap px-3 py-2 text-right text-text-2">
+                <td className="hidden whitespace-nowrap px-3 py-2 text-right text-text-2 sm:table-cell">
                   {unit.covered_area_sqm !== null ? `${unit.covered_area_sqm} m²` : "—"}
                   {unit.veranda_sqm ? (
                     <span className="block text-xs text-text-3">+{unit.veranda_sqm} m²</span>
