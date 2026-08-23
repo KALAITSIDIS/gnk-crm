@@ -30,10 +30,13 @@
         "openPipeline": "Ανοιχτή ροή συναλλαγών",
         "wonThisMonth": "Κερδισμένες αυτόν τον μήνα",
         "newLeads7d": "Νέοι ενδιαφερόμενοι (7ημ)",
-        "avgFirstResponse": "Μέση πρώτη απόκριση (7ημ)"
+        "avgFirstResponse": "Μέση πρώτη απόκριση (7ημ)",
+        "responseMedian": "Διάμεσος πρώτης απόκρισης (7ημ)",
+        "responseP90": "90ό εκατοστημόριο (7ημ)"
       },
       "deals": "{count, plural, one {# συναλλαγή} other {# συναλλαγές}}",
       "answered": "{count} απαντήθηκαν",
+      "responseUnanswered": "{count} χωρίς απάντηση",
       "events": "{count, plural, one {# συμβάν} other {# συμβάντα}}",
       "system": "σύστημα",
       "cards": {

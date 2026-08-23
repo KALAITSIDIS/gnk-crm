@@ -30,10 +30,13 @@
         "openPipeline": "Открытая воронка",
         "wonThisMonth": "Выиграно в этом месяце",
         "newLeads7d": "Новые лиды (7 дн)",
-        "avgFirstResponse": "Среднее время первого ответа (7 дн)"
+        "avgFirstResponse": "Среднее время первого ответа (7 дн)",
+        "responseMedian": "Медиана первого ответа (7 дн)",
+        "responseP90": "90-й процентиль (7 дн)"
       },
       "deals": "{count, plural, one {# сделка} few {# сделки} many {# сделок} other {# сделки}}",
       "answered": "{count} с ответом",
+      "responseUnanswered": "{count} без ответа",
       "events": "{count, plural, one {# событие} few {# события} many {# событий} other {# события}}",
       "system": "система",
       "cards": {

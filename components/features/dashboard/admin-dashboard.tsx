@@ -34,7 +34,18 @@ interface DashboardStats {
   open_pipeline: { total: number; count: number };
   won_month: { total: number; count: number };
   stages: { stage_id: string; total: number; count: number }[];
-  leads7: { total: number; answered: number; avg_response_min: number | null };
+  leads7: {
+    total: number;
+    answered: number;
+    avg_response_min: number | null;
+    // 0042. All three durations exclude rows where first_response_at <
+    // received_at (a corrected clock or a backdated import), so the three
+    // numbers are computed over the same row set. `answered` is NOT so
+    // filtered — it answers "did the desk reply?", which a clock anomaly does
+    // not change.
+    p50_response_min: number | null;
+    p90_response_min: number | null;
+  };
   lead_sources30: { source: string; count: number }[];
   property_statuses: { status: string; count: number }[];
   top_actors30: { actor_id: string; count: number }[];
@@ -142,17 +153,24 @@ export async function AdminDashboard() {
   const openPipeline = Number(stats.open_pipeline.total);
   const wonValue = Number(stats.won_month.total);
 
-  // avg(first_response_at - received_at) over ANSWERED leads of the last 7 days,
-  // computed in SQL — null when nothing has been answered yet
-  const avgResponseMin =
-    stats.leads7.avg_response_min === null ? null : Number(stats.leads7.avg_response_min);
-  const answeredCount = Number(stats.leads7.answered);
-  const avgResponseLabel =
-    avgResponseMin === null
+  // first_response_at - received_at over ANSWERED leads of the last 7 days,
+  // computed in SQL — null when nothing has been answered yet. Shared by all
+  // three tiles so a mean and a median can never be formatted differently.
+  const responseLabel = (min: number | null) =>
+    min === null
       ? "—"
-      : avgResponseMin < 60
-        ? `${Math.round(avgResponseMin)}m`
-        : `${Math.floor(avgResponseMin / 60)}h ${Math.round(avgResponseMin % 60)}m`;
+      : min < 60
+        ? `${Math.round(min)}m`
+        : `${Math.floor(min / 60)}h ${Math.round(min % 60)}m`;
+  const asMin = (v: number | null) => (v === null ? null : Number(v));
+
+  const answeredCount = Number(stats.leads7.answered);
+  const avgResponseLabel = responseLabel(asMin(stats.leads7.avg_response_min));
+  const p50ResponseLabel = responseLabel(asMin(stats.leads7.p50_response_min));
+  const p90ResponseLabel = responseLabel(asMin(stats.leads7.p90_response_min));
+  // A lead nobody answered is in NO percentile. Showing p50/p90 without this
+  // count next to them flatters the desk exactly when it least deserves it.
+  const unansweredCount = leads7Count - answeredCount;
 
   // pipeline € by stage (open deals only), ordered by deal type then stage
   // order; stages with deals but no expected value still show (as €0 · N)
@@ -233,7 +251,10 @@ export async function AdminDashboard() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      {/* Three columns, not four: the three response figures then land on one
+          row together, which is the only way a mean 3x its own median is
+          visible at a glance rather than something you have to go looking for. */}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <Kpi
           label={t("kpi.openPipeline")}
           value={formatMoney(openPipeline)}
@@ -249,6 +270,16 @@ export async function AdminDashboard() {
           label={t("kpi.avgFirstResponse")}
           value={avgResponseLabel}
           sub={t("answered", { count: answeredCount })}
+        />
+        <Kpi label={t("kpi.responseMedian")} value={p50ResponseLabel} />
+        <Kpi
+          label={t("kpi.responseP90")}
+          value={p90ResponseLabel}
+          // only when there ARE unanswered leads — "0 never answered" on every
+          // screen is noise that trains people to stop reading the line
+          sub={
+            unansweredCount > 0 ? t("responseUnanswered", { count: unansweredCount }) : undefined
+          }
         />
       </div>
 

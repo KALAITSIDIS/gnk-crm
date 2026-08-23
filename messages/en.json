@@ -30,10 +30,13 @@
         "openPipeline": "Open pipeline",
         "wonThisMonth": "Won this month",
         "newLeads7d": "New leads (7d)",
-        "avgFirstResponse": "Avg first response (7d)"
+        "avgFirstResponse": "Avg first response (7d)",
+        "responseMedian": "Median first response (7d)",
+        "responseP90": "90th percentile (7d)"
       },
       "deals": "{count, plural, one {# deal} other {# deals}}",
       "answered": "{count} answered",
+      "responseUnanswered": "{count} never answered",
       "events": "{count, plural, one {# event} other {# events}}",
       "system": "system",
       "cards": {

@@ -2778,3 +2778,53 @@ existing behaviour rather than describing the new code.
 added: that test interpolates every leaf key in all three locales and fails on a
 leftover brace, so a new placeholder is not optional there. `total` must be a
 number or the plural arm never resolves.
+
+---
+
+## T-A2 — median and p90 first response (2026-08-23, migration 0042)
+
+The admin dashboard reported the MEAN first-response time only. Raised by the
+2026-08-23 outside review, correctly: a mean hides the tail that matters.
+Measured on a local probe — ten leads answered in 1–9 minutes plus one at ten
+hours renders as **mean 1h 5m, median 6m**. The old tile said 1h 5m and there
+was nothing on screen to say that nine of the ten were answered inside ten
+minutes.
+
+**Extended `admin_dashboard_stats` rather than adding a function.** The
+execution plan proposed a standalone `lead_response_percentiles`; that was wrong
+and was changed during the build. 0018 exists to collapse round trips (9 → 4),
+and the `leads_7` CTE is already sitting on the rows the percentiles need — a
+second function would have bought a fifth round trip for nothing.
+
+**One behaviour change, deliberate:** all three duration figures now exclude
+rows where `first_response_at < received_at`. That interval means a corrected
+clock or a backdated import, not an answer before the question. It was already
+meaningless in the mean; it just had nothing to be inconsistent with. Leaving
+the guard off the mean would have put three numbers side by side computed over
+different row sets. The migration's assertion block raises a NOTICE with the
+affected row count so the change is observed rather than assumed — **0 rows on
+local at apply time**, so no displayed number moved.
+
+`answered` is deliberately NOT filtered that way: it answers "did the desk
+reply?", which a clock anomaly does not change.
+
+**The never-answered count is on the p90 tile**, and only when it is above zero.
+A lead nobody answered appears in no percentile, so percentiles shown without it
+flatter the desk exactly when it least deserves it — and "0 never answered" on
+every screen is noise that trains people to stop reading the line.
+
+The KPI grid went 4 columns to 3 so the three response figures share one row.
+A mean three times its own median has to be visible at a glance or nobody looks.
+
+**Verified on the rendered page, not only in tests** — the 0041 lesson. Doing so
+caught that the first seeding attempt had written to the RLS **fixture** org
+(`aaaaaaaa-…`), not the admin's (`00000000-…-0001`): the dashboard correctly
+showed zeros because the aggregate is SECURITY INVOKER and RLS scoped it out.
+The fixture rows were restored to exactly as found and `npm run test:rls` passes
+49/49 on a first run against them, per A8's byte-identical rule.
+
+**NOT done here, deliberately:** replacing "top agents by activity". The review
+is right that it is a vanity metric, but choosing its replacement is an operator
+decision, so it is a BACKLOG line and the aggregate carries a note pointing at
+it. Dashboard filters by agent/office/period are refused by guardrail 6 and are
+not going to BACKLOG at all.
