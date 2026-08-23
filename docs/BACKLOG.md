@@ -1485,3 +1485,48 @@ explicit direction.
   existing slip stays unhashable, so the change wants a decision about whether to
   backfill from the current bytes (which asserts they are the right bytes) or
   leave it null.
+
+---
+
+## Follow-ons from the 2026-08-23 outside report (Phases A–C shipped)
+
+**Nothing here gets built without explicit direction.** Phases A, B and C of
+`IMPROVEMENTS_EXECUTION.md` are done and deployed; these are the threads they
+deliberately left hanging, and each says why it needs a decision rather than a
+developer.
+
+### Needs an operator decision
+
+- **Replace "top agents by activity" on the admin dashboard.** The review is
+  right that it is a vanity metric — clicks are not conversion — and 0042 left
+  a note saying so in the aggregate. Replacing it means choosing what goes in
+  its place: lead-to-viewing, viewing-to-offer, win rate, commission, or some
+  mix. That is a desk decision, not a code one. (Dashboard *filters* by
+  agent/office/period are a different matter: refused by guardrail 6, and not
+  going here.)
+
+- **Sync `properties.status` with a live reservation.** 0044 deliberately does
+  not: auto-flipping a listing to `reserved` on hold and back on expiry couples
+  two entities through a cron job, and the revert is where that class of bug
+  lives. If the desk wants it, the shape is a trigger on `reservations` plus a
+  documented rule for what happens when the listing status was changed by hand
+  in the meantime — which is the part that needs deciding.
+
+- **Drop `contacts.preferences`.** 0043 kept the column and the Preferences tab
+  still shows the old blob read-only while a contact has no saved searches. It
+  can go once the conversion has been reviewed against real data — but only
+  after someone confirms nothing in it was lost.
+
+### Decision-free once someone asks for them
+
+- **Price-drop campaign.** On a price change, find the buyers whose saved
+  search now matches. Cheap now that `matchProperty` exists — this was the
+  outside report's own automation example, and it is one query plus a task.
+- **New-listing alert**, same shape in the other direction.
+- **Reservation deposits against `payment_plans`.** `reservations.amount` is a
+  single figure today; a project sale has a schedule, and `payment_plans` has
+  held the installments since 0001 with nothing reading them.
+- **Instalment reminders.** Payment plans exist; reminders do not. Same cron
+  idiom as 0012/0020/0044.
+- **Reservation expiry warning.** The nightly sweep closes a lapsed hold but
+  nobody is told beforehand. A task at T-2 days, following the nudge pattern.

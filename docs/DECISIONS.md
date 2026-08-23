@@ -2924,3 +2924,53 @@ which is what proves the engine is shared rather than duplicated.
 **What Phase B does NOT do**, so nobody assumes it: no price-drop campaign, no
 new-listing alert, no saved-search notification. Those are BACKLOG lines. This
 ships the data model, the rules and the two views that read them.
+
+---
+
+## T-C — Phase C: reservations (2026-08-23, migration 0044)
+
+**The invariant lives in the database, and that is the whole design.** At most
+one LIVE hold per property, via a partial unique index on `property_id where
+status in ('held','confirmed')`. Not in the action: two agents reserving the
+same unit in the same second both read "no live hold" and both write one. An
+action can be raced; an index cannot.
+
+It is **partial** on purpose. A plain unique index would forbid a property from
+ever being reserved twice in its life, which is not the rule — the rule is one
+live hold at a time. Proved in all three directions on a rolled-back probe and
+again in RLS test 31: a first hold inserts, a second live hold is refused by
+constraint name, and after a release a new hold IS allowed.
+
+**Expiry is idempotent by construction, not by a guard.** The nightly sweep
+matches only rows still live AND past their expiry, so the second run of a
+night matches nothing. That is 0006's one-shot bug avoided rather than
+re-fixed, and it needs no maintenance.
+
+**Nothing is deleted.** An expired hold keeps its row: "this was held and
+lapsed" is exactly what a commission dispute needs later, and it is the same
+reasoning that makes `events` append-only. `property_id` is `ON DELETE
+RESTRICT` for that reason; `contact_id` is `SET NULL` so a GDPR erasure (0017)
+does not destroy the record that the property was held.
+
+**The property's own `status` is deliberately NOT synced.** Auto-flipping a
+listing to `reserved` on hold and back on expiry couples two entities through a
+cron job, and the revert is where that class of bug lives. The desk sets the
+listing status; this table records the hold. BACKLOG carries the sync as an
+operator decision rather than an assumption.
+
+**Cyprus end-of-day, delegated not re-derived.** `cyprusEndOfDay` calls
+`zonedWallClockToUtc` from `tz.ts`. The first version hardcoded `+03:00`, which
+is correct in summer and an hour wrong every winter — Cyprus is EET (UTC+2)
+outside DST, so a hold "until 15 January" would have lapsed at 22:59 local. A
+test now pins both sides of the year. HANDOFF's rule that this boundary has
+exactly one home earned itself again.
+
+**Terminal states are enforced server-side**, not only by hiding buttons: a
+form can post any target, and reopening a hold would have to dodge the unique
+index on a property that may have been re-reserved meanwhile. The transition
+update is also conditional on the status that was read, so a concurrent
+transition loses rather than both appearing to succeed.
+
+**The unique violation gets a sentence**, not a driver message — it is the most
+likely error a user will hit, and "release or confirm the existing one first"
+is the actual answer.
