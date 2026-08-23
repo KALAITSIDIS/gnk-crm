@@ -2873,3 +2873,54 @@ database — a whole transaction type silently returning nothing. Pinned by a te
 `scripts/recompute-scores.mts` whenever a weight moves. Computing on read costs
 a little CPU per page and removes that failure mode permanently, so the weights
 in `MATCH_WEIGHTS` can be tuned freely.
+
+---
+
+## T-B — Phase B: buyer requirements and matching (2026-08-23)
+
+Migration **0043**. The full reasoning for the rules is in `T-B5` above; this
+records the surrounding decisions.
+
+**Events are written against the CONTACT, not the requirement.** `ENTITY_TYPES`
+has no `buyer_requirement` member, and adding one would put a requirement's
+history on a timeline nobody opens. "They started looking for a bigger plot"
+belongs on the buyer's timeline.
+
+**DELETE is narrower than UPDATE.** Archiving (`is_active = false`) is the
+normal retirement and any agent may do it; a hard delete destroys the record
+that a buyer ever wanted this, so it stays with admin and listing manager. The
+action detects a denied delete by ROW COUNT, because RLS filters it to zero rows
+rather than erroring — a null error would otherwise report success while nothing
+happened, which is the shape of audit finding 1.
+
+**An unknown feature key is dropped at validation.** The property side only ever
+holds keys from `features.ts`, so an unknown key on a requirement is a criterion
+that can never be satisfied and would silently lower the score forever.
+
+**`contacts.preferences` is retained and shown, labelled as unused.** The
+column is deliberately not dropped by 0043, and the Preferences tab renders the
+old blob read-only while a contact has no requirement rows. A silently ignored
+blob is data loss nobody notices. Dropping the column is a BACKLOG line and
+needs the conversion reviewed against real data first.
+
+**Hard filters are pushed into SQL, the score is computed in TypeScript**, and
+the engine re-checks every row SQL let through — the pre-filter is deliberately
+coarser (`.in()` on a nullable column, a null-tolerant budget clause). Fetching
+everything and scoring in memory is the PERF-3 mistake; capping at the page size
+in SQL would rank 20 arbitrary rows instead of the best 20, so the cap is 400
+and `capped` is surfaced in the UI.
+
+**The PostgREST `or()` array clause was proven against a running database**, not
+assumed: a requirement scoped to the district returns, one with an empty array
+(no opinion) returns, one scoped to a different district does not. Getting it
+wrong would have silently dropped every unconstrained buyer from property-side
+matching — a failure with no error and no empty state.
+
+**Verified end to end with the verdict predicted first.** A seeded search against
+PAF0001 was hand-computed to score 69 (applicable 80, earned 55); both pages then
+rendered 69 with exactly the two predicted misses, and identically on each side,
+which is what proves the engine is shared rather than duplicated.
+
+**What Phase B does NOT do**, so nobody assumes it: no price-drop campaign, no
+new-listing alert, no saved-search notification. Those are BACKLOG lines. This
+ships the data model, the rules and the two views that read them.
