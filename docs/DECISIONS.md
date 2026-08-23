@@ -2828,3 +2828,48 @@ is right that it is a vanity metric, but choosing its replacement is an operator
 decision, so it is a BACKLOG line and the aggregate carries a note pointing at
 it. Dashboard filters by agent/office/period are refused by guardrail 6 and are
 not going to BACKLOG at all.
+
+---
+
+## T-B5 — the matching rules (2026-08-23)
+
+Phase B of `IMPROVEMENTS_EXECUTION.md`. `lib/services/matching.ts` is pure —
+no Supabase, no next-intl — so the rules are exhaustively testable without a
+database, and so both directions (buyer→properties, property→buyers) share one
+implementation instead of drifting into two.
+
+**Hard vs soft is the whole design.** A hard filter disqualifies and is
+reserved for what a buyer would refuse outright: wrong transaction type, wrong
+property type, wrong district, off-market status, a bedroom band miss, no
+separate title deed when one was demanded, or a price past the tolerance.
+Everything else is soft — it costs score and is NAMED.
+
+**The budget tolerance is 10%, and the boundary is inclusive.** Zero tolerance
+was rejected: a €5.000 overshoot on €300.000 is a negotiation, and a matcher
+that silently drops it is worse than none, because the desk never learns the
+property existed. Inside the tolerance the candidate is eligible *and* carries
+a `budget` miss stating the overage. **The float boundary was probed, not
+assumed** — across 390 budgets from €50k to €2M there is no value where an
+exactly-10%-over price is wrongly blocked.
+
+**Score normalises over APPLICABLE weight, not total.** A requirement stating
+only a transaction type scores 100, because vagueness in the buyer is not a
+defect in the property. A criterion the requirement leaves null is excluded
+from both numerator and denominator.
+
+**`reserved` and `under_offer` still match.** A Cyprus chain falls through often
+enough that hiding them costs real options. They rank below `available` through
+the `availableNow` weight — a ranking problem solved by ranking, not filtering.
+
+**An unpriced property is not rejected**, it loses the budget-comfort points and
+returns a `price_unknown` miss. 0041's availability demo ships an unpriced unit
+on purpose; excluding them from every budgeted search would hide live inventory.
+
+**A rental requirement prices off `rent_price_month`.** Reading `asking_price`
+would compare €250.000 against a €1.500 budget and reject every rental in the
+database — a whole transaction type silently returning nothing. Pinned by a test.
+
+**No score column, and do not add one.** `quality_score` is stored and needs
+`scripts/recompute-scores.mts` whenever a weight moves. Computing on read costs
+a little CPU per page and removes that failure mode permanently, so the weights
+in `MATCH_WEIGHTS` can be tuned freely.
