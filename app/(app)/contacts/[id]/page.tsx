@@ -17,6 +17,10 @@ import { ChatLinks } from "@/components/features/shared/chat-links";
 import { EventTimeline } from "@/components/features/shared/event-timeline";
 import { StatusBadge } from "@/components/features/shared/status-badge";
 import { PortfolioTab } from "@/components/features/contacts/portfolio-tab";
+import {
+  RequirementsCard,
+  type RequirementRow,
+} from "@/components/features/contacts/requirements-card";
 import { PartyDefaultsForm } from "@/components/features/contacts/party-defaults-form";
 import { getPartyDefaults } from "@/lib/actions/party-defaults";
 import { isPartyContact, partyDefaultsSchema } from "@/lib/validators/party-defaults";
@@ -64,6 +68,8 @@ export default async function ContactDetailPage({
     { data: mergedRows },
     { data: profileRows },
     { data: portfolioRows },
+    { data: districtRows },
+    { data: requirementRows },
   ] =
     await Promise.all([
       supabase.from("contacts").select("*").eq("id", id).maybeSingle(),
@@ -76,6 +82,14 @@ export default async function ContactDetailPage({
         .from("properties")
         .select(PORTFOLIO_SELECT)
         .or(`owner_contact_id.eq.${id},developer_contact_id.eq.${id}`),
+      supabase.from("districts").select("id, name").order("sort_order"),
+      // 0043 saved searches, newest first; archived ones come too and the card
+      // splits them, so retiring a search never hides that it existed
+      supabase
+        .from("buyer_requirements")
+        .select("*")
+        .eq("contact_id", id)
+        .order("created_at", { ascending: false }),
     ]);
   if (!c) notFound();
 
@@ -130,6 +144,11 @@ export default async function ContactDetailPage({
     id: a.id,
     name: (a.name as { en?: string })?.en ?? "—",
   }));
+  const districtOptions = (districtRows ?? []).map((d) => ({
+    id: d.id,
+    name: (d.name as { en?: string })?.en ?? "—",
+  }));
+  const requirements = (requirementRows ?? []) as unknown as RequirementRow[];
 
   const profileName = new Map((profileRows ?? []).map((p) => [p.id, p.full_name]));
   // reassignment select: active agents, plus the current holder even if deactivated
@@ -289,13 +308,44 @@ export default async function ContactDetailPage({
         </TabsContent>
 
         <TabsContent value="preferences" className="mt-4">
-          <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-6">
-            <PreferencesForm
-              contact={c}
-              areaOptions={areaOptions}
-              readOnly={!canEdit}
-              readOnlyHint={readOnlyHint}
-            />
+          <div className="flex max-w-4xl flex-col gap-6">
+            {/* 0043 saved searches come FIRST: these are what matching reads.
+                The legacy blob below is kept visible until the conversion has
+                been reviewed on real data (its column is deliberately not
+                dropped), but it drives nothing. */}
+            <section className="rounded-[10px] border border-border bg-surface p-6">
+              <div className="mb-4">
+                <h2 className="text-sm font-semibold text-text-1">Saved searches</h2>
+                <p className="text-sm text-text-2">
+                  What this buyer is looking for. Several are fine — each one is matched against
+                  listings on its own.
+                </p>
+              </div>
+              <RequirementsCard
+                contactId={c.id}
+                requirements={requirements}
+                districts={districtOptions}
+                areas={areaOptions}
+                readOnly={!canEdit}
+                readOnlyHint={readOnlyHint}
+                legacyPreferences={c.preferences as Record<string, unknown> | null}
+              />
+            </section>
+
+            <section className="rounded-[10px] border border-border bg-surface p-6">
+              <div className="mb-4">
+                <h2 className="text-sm font-semibold text-text-1">Older preferences</h2>
+                <p className="text-sm text-text-2">
+                  Kept from before saved searches existed. Not used for matching.
+                </p>
+              </div>
+              <PreferencesForm
+                contact={c}
+                areaOptions={areaOptions}
+                readOnly={!canEdit}
+                readOnlyHint={readOnlyHint}
+              />
+            </section>
           </div>
         </TabsContent>
 
