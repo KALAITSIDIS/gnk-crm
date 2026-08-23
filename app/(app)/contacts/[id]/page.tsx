@@ -21,6 +21,10 @@ import {
   RequirementsCard,
   type RequirementRow,
 } from "@/components/features/contacts/requirements-card";
+import {
+  MatchesCard,
+  type RequirementForMatching,
+} from "@/components/features/contacts/matches-card";
 import { PartyDefaultsForm } from "@/components/features/contacts/party-defaults-form";
 import { getPartyDefaults } from "@/lib/actions/party-defaults";
 import { isPartyContact, partyDefaultsSchema } from "@/lib/validators/party-defaults";
@@ -330,6 +334,16 @@ export default async function ContactDetailPage({
                 readOnlyHint={readOnlyHint}
                 legacyPreferences={c.preferences as Record<string, unknown> | null}
               />
+            </section>
+
+            <section className="rounded-[10px] border border-border bg-surface p-6">
+              <div className="mb-4">
+                <h2 className="text-sm font-semibold text-text-1">Matching listings</h2>
+                <p className="text-sm text-text-2">
+                  Scored against each saved search. Every score shows what it missed.
+                </p>
+              </div>
+              <MatchesCard requirements={requirements as unknown as RequirementForMatching[]} />
             </section>
 
             <section className="rounded-[10px] border border-border bg-surface p-6">
