@@ -2204,4 +2204,131 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(chainOk, "availability events keep the hash chain intact").toBe(true);
   });
 
+  it("30. buyer_requirements: org-scoped, any agent may write, only admin/LM may delete", async () => {
+    // 0043. Policies mirror `contacts` (0002) because a requirement is CRM
+    // knowledge about a buyer — with ONE narrowing: DELETE is admin/listing
+    // manager only, because `is_active = false` is the normal way to retire a
+    // search and a hard delete destroys the record that a buyer ever wanted it.
+    //
+    // EVERY ASSERTION BELOW CHECKS THE RETURNED ERROR, not just the row count.
+    // TEST-2 hid a permission regression for months by ignoring one: an action
+    // that is denied and an action that matched zero rows look identical if you
+    // only count rows.
+    const label = (suffix: string) => `REQ-${run}-${suffix}`;
+
+    // --- a requirement in org A, and one in org B for the isolation check ----
+    const { data: reqA, error: reqAErr } = await agentA1.client
+      .from("buyer_requirements")
+      .insert({
+        org_id: ORG_A,
+        contact_id: contactA,
+        label: label("A"),
+        transaction_type: "sale",
+        budget_min: 200000,
+        budget_max: 300000,
+        bedrooms_min: 2,
+      })
+      .select("id")
+      .single();
+    expect(reqAErr, "an agent may record a requirement in their own org").toBeNull();
+    expect(reqA).not.toBeNull();
+
+    // org B needs its own contact — contact_id has an FK and org B cannot see
+    // contactA, so reusing it would fail on the FK rather than on RLS and the
+    // test would pass for the wrong reason.
+    const { data: contactB } = await svc
+      .from("contacts")
+      .insert({ org_id: ORG_B, first_name: "Cross", last_name: label("B") })
+      .select("id")
+      .single();
+    const { data: reqB } = await svc
+      .from("buyer_requirements")
+      .insert({ org_id: ORG_B, contact_id: contactB!.id, label: label("B") })
+      .select("id")
+      .single();
+
+    // --- cross-org isolation, both directions -------------------------------
+    const { data: aSees } = await agentA1.client
+      .from("buyer_requirements")
+      .select("id, label");
+    expect(
+      (aSees ?? []).map((r) => r.id),
+      "org A must not see org B's requirement",
+    ).not.toContain(reqB!.id);
+    expect((aSees ?? []).map((r) => r.id), "org A sees its own").toContain(reqA!.id);
+
+    const { data: bSees } = await agentB.client
+      .from("buyer_requirements")
+      .select("id")
+      .eq("id", reqA!.id);
+    expect(bSees ?? [], "org B must not see org A's requirement").toHaveLength(0);
+
+    // --- an agent cannot forge a row into another org -----------------------
+    const { error: forgeErr } = await agentA1.client
+      .from("buyer_requirements")
+      .insert({ org_id: ORG_B, contact_id: contactB!.id, label: label("FORGE") });
+    expect(forgeErr, "WITH CHECK must reject an insert aimed at another org").not.toBeNull();
+
+    // --- a second agent in the same org may edit it -------------------------
+    // Deliberately agentA2, not agentA1: `contacts` narrows UPDATE to the
+    // assigned agent, and this table does NOT. If that ever changes, this
+    // assertion is what says so.
+    const { data: updated, error: updateErr } = await agentA2.client
+      .from("buyer_requirements")
+      .update({ budget_max: 350000 })
+      .eq("id", reqA!.id)
+      .select("id");
+    expect(updateErr, "any agent in the org may edit a requirement").toBeNull();
+    expect(updated ?? [], "the update reached a row").toHaveLength(1);
+
+    // --- archiving is the normal retirement path, open to any agent ---------
+    const { error: archiveErr } = await agentA2.client
+      .from("buyer_requirements")
+      .update({ is_active: false })
+      .eq("id", reqA!.id);
+    expect(archiveErr, "an agent may archive a requirement").toBeNull();
+
+    // --- but DELETE is gated ------------------------------------------------
+    const { error: agentDeleteErr, count: agentDeleted } = await agentA1.client
+      .from("buyer_requirements")
+      .delete({ count: "exact" })
+      .eq("id", reqA!.id);
+    // RLS filters a denied DELETE to zero rows rather than erroring, so the
+    // COUNT is the assertion that bites here; the row must still be there.
+    expect(agentDeleted ?? 0, "an agent must not delete a requirement").toBe(0);
+    expect(agentDeleteErr).toBeNull();
+    const { data: stillThere } = await svc
+      .from("buyer_requirements")
+      .select("id")
+      .eq("id", reqA!.id);
+    expect(stillThere ?? [], "the row survives an agent's delete attempt").toHaveLength(1);
+
+    const { error: lmDeleteErr, count: lmDeleted } = await lmA.client
+      .from("buyer_requirements")
+      .delete({ count: "exact" })
+      .eq("id", reqA!.id);
+    expect(lmDeleteErr, "a listing manager may delete").toBeNull();
+    expect(lmDeleted ?? 0, "the listing manager's delete reached the row").toBe(1);
+
+    // --- anon reaches nothing ------------------------------------------------
+    const anon = anonClient();
+    const { data: anonSees } = await anon.from("buyer_requirements").select("id");
+    expect(anonSees ?? [], "anon must not read buyer_requirements").toHaveLength(0);
+    const { error: anonInsertErr } = await anon
+      .from("buyer_requirements")
+      .insert({ org_id: ORG_A, contact_id: contactA, label: label("ANON") });
+    expect(anonInsertErr, "anon must not insert a requirement").not.toBeNull();
+
+    // --- the CHECK constraints are a real backstop, not decoration ----------
+    const { error: bandErr } = await agentA1.client.from("buyer_requirements").insert({
+      org_id: ORG_A,
+      contact_id: contactA,
+      label: label("BAND"),
+      budget_min: 400000,
+      budget_max: 300000,
+    });
+    expect(bandErr, "a budget floor above its ceiling must be rejected").not.toBeNull();
+    expect(bandErr!.message).toMatch(/budget_band_ordered/);
+  });
+
 });
