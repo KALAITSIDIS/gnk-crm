@@ -152,6 +152,21 @@ $$;
 -- verify-events-chain (03:30), so a night's runs stay readable in order.
 select cron.schedule('expire-reservations', '45 3 * * *', $$select expire_reservations()$$);
 
+-- LOCK DOWN EXECUTE. A newly created function carries a PUBLIC `=X` grant, so
+-- without this it is callable over PostgREST at /rest/v1/rpc/expire_reservations
+-- — by `anon`. Anyone unauthenticated could then force-expire every live hold
+-- in every org. **The security advisor caught exactly this on the hosted apply**,
+-- which is why HANDOFF §3 ends with `get_advisors` and why skipping it caused
+-- 0021.
+--
+-- 0007's rule applies: naming roles cannot remove a PUBLIC grant, so `public`
+-- must be revoked explicitly — and doing so also strips service_role's implicit
+-- grant (0010 learned that), hence the re-grant. service_role is kept because
+-- RLS test 31 calls this function; the resulting ACL is byte-identical to
+-- `create_followup_nudges` and `run_chain_checks`.
+revoke execute on function public.expire_reservations() from public, anon, authenticated;
+grant  execute on function public.expire_reservations() to service_role;
+
 do $$
 declare
   policies  int;
@@ -198,6 +213,17 @@ begin
 
   if not exists (select 1 from cron.job where jobname = 'expire-reservations') then
     raise exception '0044 aborted: expire-reservations cron job was not scheduled';
+  end if;
+
+  -- The advisor finding this migration shipped with on its first hosted apply.
+  -- Asserted rather than trusted, because a `revoke` that silently no-ops is
+  -- exactly the failure 0042's predecessor hit (see DECISIONS, st_estimatedextent).
+  if has_function_privilege('anon', 'public.expire_reservations()', 'execute')
+     or has_function_privilege('authenticated', 'public.expire_reservations()', 'execute') then
+    raise exception '0044 aborted: expire_reservations is callable over PostgREST';
+  end if;
+  if not has_function_privilege('service_role', 'public.expire_reservations()', 'execute') then
+    raise exception '0044 aborted: service_role lost EXECUTE on expire_reservations (RLS test 31 calls it)';
   end if;
 end $$;
 
