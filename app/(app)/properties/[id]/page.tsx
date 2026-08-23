@@ -31,6 +31,8 @@ import { MandateBadge, type MandateBadgeState } from "@/components/features/shar
 import { StatusBadge } from "@/components/features/shared/status-badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { MatchingBuyersCard } from "@/components/features/properties/matching-buyers-card";
+import type { MatchCandidate } from "@/lib/services/matching";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
 import { formatArea, formatDate, formatDateTime, formatMoney } from "@/lib/utils/format";
@@ -373,6 +375,7 @@ export default async function PropertyDetailPage({
           <TabsTrigger value="media">Media ({(mediaRows ?? []).length})</TabsTrigger>
           <TabsTrigger value="mandate">Mandate &amp; Keys</TabsTrigger>
           <TabsTrigger value="documents">Documents ({documents.length})</TabsTrigger>
+          <TabsTrigger value="buyers">Matching buyers</TabsTrigger>
           <TabsTrigger value="activity">Activity</TabsTrigger>
         </TabsList>
 
@@ -452,6 +455,28 @@ export default async function PropertyDetailPage({
                 readOnly={!isAdminOrLM}
               />
             </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="buyers" className="mt-4">
+          <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-6">
+            <div className="mb-4">
+              <h2 className="text-sm font-semibold text-text-1">Buyers looking for this</h2>
+              <p className="text-sm text-text-2">
+                Saved searches this listing fits, scored by the same rules as the buyer side. Every
+                score shows what it missed.
+              </p>
+            </div>
+            {/* A project or a phase is a container nobody buys, so it has no
+                buyers of its own — its UNITS do. Matching one would put a
+                buyer against a thing that has no price. */}
+            {p.kind === "project" || p.kind === "phase" ? (
+              <p className="text-sm text-text-2">
+                A {p.kind} is not matched directly — open one of its units instead.
+              </p>
+            ) : (
+              <MatchingBuyersCard property={p as unknown as MatchCandidate} />
+            )}
           </div>
         </TabsContent>
 

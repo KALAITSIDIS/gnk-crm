@@ -63,6 +63,8 @@ const SAMPLE_PARAMS = {
   // number or the plural arm never resolves
   available: 7,
   total: 19,
+  // buyer requirements (0043)
+  label: "Sea view 2-bed",
 };
 
 describe("locale message files", () => {

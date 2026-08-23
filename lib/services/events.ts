@@ -277,6 +277,29 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
     return title ? t("documentDeletedTitle", { title }) : t("documentDeleted");
   },
   renewal_task_created: (_p, t) => t("renewalTaskCreated"),
+  // 0043 buyer requirements. Written against the CONTACT, not the requirement:
+  // ENTITY_TYPES has no `buyer_requirement` member, and the buyer's timeline is
+  // where "they started looking for a bigger plot" actually belongs.
+  requirement_added: (p, t) => {
+    const label = asText(p.label);
+    return label ? t("requirementAddedLabel", { label }) : t("requirementAdded");
+  },
+  requirement_updated: (p, t) => {
+    const label = asText(p.label);
+    return label ? t("requirementUpdatedLabel", { label }) : t("requirementUpdated");
+  },
+  requirement_archived: (p, t) => {
+    const label = asText(p.label);
+    return label ? t("requirementArchivedLabel", { label }) : t("requirementArchived");
+  },
+  requirement_restored: (p, t) => {
+    const label = asText(p.label);
+    return label ? t("requirementRestoredLabel", { label }) : t("requirementRestored");
+  },
+  requirement_deleted: (p, t) => {
+    const label = asText(p.label);
+    return label ? t("requirementDeletedLabel", { label }) : t("requirementDeleted");
+  },
   // B3 buyer proposal links. `opened` is actor-null — the opener is a buyer,
   // not a user — and is throttled to one per link per Cyprus day (0023), so a
   // timeline shows the days a proposal was read, not every refresh.

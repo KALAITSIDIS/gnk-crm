@@ -73,6 +73,115 @@ export type Database = {
           },
         ]
       }
+      buyer_requirements: {
+        Row: {
+          area_ids: string[]
+          bathrooms_min: number | null
+          bedrooms_max: number | null
+          bedrooms_min: number | null
+          budget_max: number | null
+          budget_min: number | null
+          contact_id: string
+          covered_area_min_sqm: number | null
+          created_at: string
+          created_by: string | null
+          currency: string
+          delivery_by: string | null
+          district_ids: string[]
+          features_required: string[]
+          id: string
+          is_active: boolean
+          label: string | null
+          max_sea_distance_m: number | null
+          notes: string | null
+          org_id: string
+          plot_area_min_sqm: number | null
+          property_types: Database["public"]["Enums"]["property_type"][]
+          title_deed_required: boolean
+          transaction_type: Database["public"]["Enums"]["transaction_type"]
+          updated_at: string
+          vat_preference: Database["public"]["Enums"]["vat_status"] | null
+        }
+        Insert: {
+          area_ids?: string[]
+          bathrooms_min?: number | null
+          bedrooms_max?: number | null
+          bedrooms_min?: number | null
+          budget_max?: number | null
+          budget_min?: number | null
+          contact_id: string
+          covered_area_min_sqm?: number | null
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          delivery_by?: string | null
+          district_ids?: string[]
+          features_required?: string[]
+          id?: string
+          is_active?: boolean
+          label?: string | null
+          max_sea_distance_m?: number | null
+          notes?: string | null
+          org_id: string
+          plot_area_min_sqm?: number | null
+          property_types?: Database["public"]["Enums"]["property_type"][]
+          title_deed_required?: boolean
+          transaction_type?: Database["public"]["Enums"]["transaction_type"]
+          updated_at?: string
+          vat_preference?: Database["public"]["Enums"]["vat_status"] | null
+        }
+        Update: {
+          area_ids?: string[]
+          bathrooms_min?: number | null
+          bedrooms_max?: number | null
+          bedrooms_min?: number | null
+          budget_max?: number | null
+          budget_min?: number | null
+          contact_id?: string
+          covered_area_min_sqm?: number | null
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          delivery_by?: string | null
+          district_ids?: string[]
+          features_required?: string[]
+          id?: string
+          is_active?: boolean
+          label?: string | null
+          max_sea_distance_m?: number | null
+          notes?: string | null
+          org_id?: string
+          plot_area_min_sqm?: number | null
+          property_types?: Database["public"]["Enums"]["property_type"][]
+          title_deed_required?: boolean
+          transaction_type?: Database["public"]["Enums"]["transaction_type"]
+          updated_at?: string
+          vat_preference?: Database["public"]["Enums"]["vat_status"] | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "buyer_requirements_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "buyer_requirements_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "buyer_requirements_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       chain_checks: {
         Row: {
           checked_at: string
