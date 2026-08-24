@@ -233,3 +233,107 @@ describe("describeEvent registry (T3.5) — English parity", () => {
     expect(describeEvent(ev("stage_changed", [1, 2]), t)).toBe("Stage");
   });
 });
+
+describe("instalment reminders (0051) — the sign of `days` picks the string", () => {
+  // remind_due_installments() writes a SIGNED `days`: negative means the line is
+  // already overdue. The renderer splits on the sign, so the message always
+  // states a positive number of days and never says "due in -10 days".
+  it("renders a line still coming due", () => {
+    expect(
+      describeEvent(
+        ev("installment_due_soon", { label: "Deposit", days: 3 }, "property"),
+        t,
+      ),
+    ).toBe("Instalment due in 3 days — Deposit");
+    expect(
+      describeEvent(
+        ev("installment_due_soon", { label: "Deposit", days: 1 }, "property"),
+        t,
+      ),
+    ).toBe("Instalment due in 1 day — Deposit");
+  });
+
+  it("says `today` rather than `in 0 days`", () => {
+    expect(
+      describeEvent(
+        ev("installment_due_soon", { label: "Contract", days: 0 }, "property"),
+        t,
+      ),
+    ).toBe("Instalment due today — Contract");
+  });
+
+  it("flips to overdue on a negative day count, stated positively", () => {
+    expect(
+      describeEvent(
+        ev("installment_due_soon", { label: "Stage 2", days: -10 }, "property"),
+        t,
+      ),
+    ).toBe("Instalment overdue by 10 days — Stage 2");
+    expect(
+      describeEvent(
+        ev("installment_due_soon", { label: "Stage 2", days: -1 }, "property"),
+        t,
+      ),
+    ).toBe("Instalment overdue by 1 day — Stage 2");
+  });
+
+  it("survives a payload with no usable day count", () => {
+    // `numeric`/`date` arithmetic reaching the client as something unparseable
+    // must not render "in NaN days" — the bug formatResponseMinutes was written
+    // for, in a different corner of the same problem.
+    expect(
+      describeEvent(
+        ev("installment_due_soon", { label: "Deposit", days: null }, "property"),
+        t,
+      ),
+    ).toBe("Instalment due today — Deposit");
+    expect(String(describeEvent(ev("installment_due_soon", {}, "property"), t))).not.toMatch(
+      /NaN/,
+    );
+  });
+
+  it("disambiguates a superseded reason that 0047 and 0051 SHARE", () => {
+    // `reservation_no_longer_live` is written by BOTH sweeps. Without the kind,
+    // an instalment chase closed by a released sale would read as a hold-expiry
+    // warning — same string, wrong sentence.
+    expect(
+      describeEvent(
+        ev(
+          "superseded",
+          { kind: "installment_due", reason: "reservation_no_longer_live" },
+          "task",
+        ),
+        t,
+      ),
+    ).toBe("Instalment reminder closed — the reservation is no longer active");
+    expect(
+      describeEvent(
+        ev(
+          "superseded",
+          { kind: "reservation_expiring", reason: "reservation_no_longer_live" },
+          "task",
+        ),
+        t,
+      ),
+    ).toBe("Reservation reminder closed — the hold is no longer live");
+  });
+
+  it("renders the two reasons unique to the instalment sweep", () => {
+    expect(
+      describeEvent(
+        ev("superseded", { kind: "installment_due", reason: "installment_paid" }, "task"),
+        t,
+      ),
+    ).toBe("Instalment reminder closed — the payment was recorded");
+    expect(
+      describeEvent(
+        ev(
+          "superseded",
+          { kind: "installment_due", reason: "installment_rescheduled" },
+          "task",
+        ),
+        t,
+      ),
+    ).toBe("Instalment reminder closed — the due date changed");
+  });
+});
