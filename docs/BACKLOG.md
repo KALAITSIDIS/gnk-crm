@@ -1541,14 +1541,14 @@ developer.
 
 ### New, from building the above
 
-- **A `task_kinds` lookup table instead of widening `tasks_kind_chk`.**
-  0045, 0046, 0047 and 0048 each exist largely to add one string to that CHECK,
-  and the next rule will need a fifth. The constraint EARNS ITS KEEP — 0045
-  exists because it rejected a typo'd kind loudly rather than writing an orphan
-  row no sweep would match — so the replacement must keep that: a `task_kinds`
-  table plus an FK on `tasks.kind` gives the same refusal while making a new
-  rule a data insert. Not done inline because refactoring a working security
-  control deserves its own change.
+- ~~**A `task_kinds` lookup table instead of widening `tasks_kind_chk`.**~~
+  ✅ **DONE 2026-08-24** (`9070d23`, migration 0049). **This line overstated the
+  case and the migration says so**: adding a kind still needs a migration,
+  because a kind with no sweep behind it is an orphan nobody writes. The real
+  win is that it is now a one-line INSERT rather than a constraint rewrite, and
+  an INSERT cannot silently drop the kinds already there. The FK refuses an
+  unknown kind exactly as loudly as the CHECK did, proven in the migration and
+  again in RLS test 33.
 
 - **CI: `e2e` can fail to start Supabase with "port 54322 address already in
   use".** Seen once on 2026-08-24 (`b490c2e`) minutes after identical content
