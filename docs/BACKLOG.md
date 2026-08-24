@@ -1558,11 +1558,22 @@ developer.
   this looks like transient Docker networking rather than a real collision. If
   it becomes frequent, the cheap fix is a retry around `supabase start`. Written
   down so a recurrence costs minutes rather than an afternoon.
-- **Reservation deposits against `payment_plans`.** `reservations.amount` is a
-  single figure today; a project sale has a schedule, and `payment_plans` has
-  held the installments since 0001 with nothing reading them.
-- **Instalment reminders.** Payment plans exist; reminders do not. Same cron
-  idiom as 0012/0020/0044.
+- ~~**Reservation deposits against `payment_plans`.**~~ ✅ **DONE 2026-08-24**
+  (`264786a`, migration 0050). **This line said `payment_plans` had "nothing
+  reading them", which was wrong** — the units page lists them. The gap was
+  downstream: nothing linked a reservation to a plan or applied one to a price.
+  A hold now carries a FROZEN schedule (amounts fixed at apply time, so a later
+  reprice cannot move what a buyer was quoted), with per-line paid state.
+
+  **A plan's `due` is FREE TEXT, not a date** — so a plan can never drive a
+  clock, and `reservation_installments.due_date` is agreed per reservation.
+  That is the input instalment reminders need.
+- **Instalment reminders.** Now unblocked: 0050 gives each line a nullable
+  `due_date` and a `paid_at`, and the partial index
+  `reservation_installments_due_idx` is built for exactly the sweep this needs
+  (unpaid, dated). Same cron idiom as 0012/0020/0044/0047, and the FIRST new
+  task kind that is a one-line insert into `task_kinds` rather than a
+  constraint rewrite.
 - ~~**Reservation expiry warning.**~~ ✅ **DONE 2026-08-24** (`604738b`,
   migration 0047). Warns 2 days out, self-heals on extend/release, and runs at
   03:50 so it supersedes the stale warning of anything the 03:45 expiry closed.
