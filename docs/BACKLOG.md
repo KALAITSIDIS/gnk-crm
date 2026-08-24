@@ -1568,12 +1568,30 @@ developer.
   **A plan's `due` is FREE TEXT, not a date** — so a plan can never drive a
   clock, and `reservation_installments.due_date` is agreed per reservation.
   That is the input instalment reminders need.
-- **Instalment reminders.** Now unblocked: 0050 gives each line a nullable
-  `due_date` and a `paid_at`, and the partial index
-  `reservation_installments_due_idx` is built for exactly the sweep this needs
-  (unpaid, dated). Same cron idiom as 0012/0020/0044/0047, and the FIRST new
-  task kind that is a one-line insert into `task_kinds` rather than a
-  constraint rewrite.
+- ~~**Instalment reminders.**~~ ✅ **DONE 2026-08-24** (migration 0051).
+  `remind-due-installments` at 03:55, behind the two reservation sweeps so a
+  hold that lapsed overnight is already `expired` and its reminders supersede
+  in the same pass. It was indeed the first kind added by a one-line INSERT
+  into `task_kinds`, which is what 0049 was for.
+
+  **IT DIVERGES FROM 0047 ON PURPOSE, and this is the part worth remembering.**
+  0047 warns on `LIVE_RESERVATION_STATUSES` (held + confirmed). This sweep also
+  chases `converted` — the TERMINAL state meaning the sale went ahead, which is
+  where a Cyprus buyer on a 10/30/60 plan sits for almost the entire life of
+  their schedule. Reusing the "live" definition would have stopped chasing every
+  instalment at the exact moment the money began to matter: a sweep that runs
+  nightly, reports nothing, and is broken. RLS test 35 pins it with a comment
+  saying so, because "tidying" this to match 0047 is the obvious wrong edit.
+
+  Overdue lines are in scope with **no floor on age**. 0047 can look only
+  forward because the 03:45 expiry sweep handles everything behind it; nothing
+  plays that role here, so an unpaid line just sits. Ignoring old ones would
+  mean the sweep goes quietest about the money most at risk.
+
+  **A note for the next migration that writes a `superseded` event:**
+  `reservation_no_longer_live` is now emitted by TWO sweeps, so the renderer in
+  `lib/services/events.ts` disambiguates on `kind`. A third reuse of a reason
+  string needs the same treatment, or the wrong sentence renders.
 - ~~**Reservation expiry warning.**~~ ✅ **DONE 2026-08-24** (`604738b`,
   migration 0047). Warns 2 days out, self-heals on extend/release, and runs at
   03:50 so it supersedes the stale warning of anything the 03:45 expiry closed.

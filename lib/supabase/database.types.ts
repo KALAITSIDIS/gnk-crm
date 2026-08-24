@@ -2110,6 +2110,7 @@ export type Database = {
           done_at: string | null
           due_at: string | null
           id: string
+          installment_id: string | null
           is_done: boolean
           kind: string | null
           mandate_id: string | null
@@ -2128,6 +2129,7 @@ export type Database = {
           done_at?: string | null
           due_at?: string | null
           id?: string
+          installment_id?: string | null
           is_done?: boolean
           kind?: string | null
           mandate_id?: string | null
@@ -2146,6 +2148,7 @@ export type Database = {
           done_at?: string | null
           due_at?: string | null
           id?: string
+          installment_id?: string | null
           is_done?: boolean
           kind?: string | null
           mandate_id?: string | null
@@ -2182,6 +2185,13 @@ export type Database = {
             columns: ["deal_id"]
             isOneToOne: false
             referencedRelation: "deals"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_installment_id_fkey"
+            columns: ["installment_id"]
+            isOneToOne: false
+            referencedRelation: "reservation_installments"
             referencedColumns: ["id"]
           },
           {
@@ -2971,6 +2981,7 @@ export type Database = {
         }
         Returns: undefined
       }
+      remind_due_installments: { Args: { p_org?: string }; Returns: undefined }
       reorder_stage: {
         Args: { p_direction: string; p_stage_id: string }
         Returns: undefined

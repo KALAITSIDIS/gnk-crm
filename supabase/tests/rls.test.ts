@@ -2579,7 +2579,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       .from("task_kinds")
       .select("kind");
     expect(readErr, "an agent may read the vocabulary").toBeNull();
-    expect((kinds ?? []).length, "all seven kinds are visible").toBe(7);
+    expect((kinds ?? []).length, "all eight kinds are visible").toBe(8);
 
     // The vocabulary is the system's: adding a kind is a code change, so not
     // even an admin edits it from the app.
@@ -2622,6 +2622,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       "new_listing_match",
       "reservation_expiring",
       "bulk_price_drop_match",
+      "installment_due",
     ];
     expect((kinds ?? []).map((k) => k.kind).sort()).toEqual([...shipped].sort());
 
@@ -2752,6 +2753,170 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     const anonClient2 = anonClient();
     const { data: anonLines } = await anonClient2.from("reservation_installments").select("id");
     expect(anonLines ?? [], "anon must not read schedules").toHaveLength(0);
+  });
+
+
+  it("35. instalment reminders: chase converted sales and overdue lines, self-heal, and anon cannot run it", async () => {
+    // 0051. The migration's own mint/idempotence probe is SKIPPED on a database
+    // with no chaseable instalment — which is exactly what CI applies
+    // migrations to — so this is where the sweep is covered unconditionally.
+    //
+    // THE ASSERTION THAT MATTERS MOST is the `converted` one. 0047 warns on
+    // LIVE_RESERVATION_STATUSES (held + confirmed); reusing that definition here
+    // would stop chasing money the moment a sale is signed, which is when a
+    // Cyprus buyer spends almost the whole payment plan. If someone ever
+    // "tidies" this sweep to match 0047, that expectation is what fails.
+    const cyprusDay = (offset: number) =>
+      new Date(Date.now() + offset * 864e5).toISOString().slice(0, 10);
+
+    const mkProperty = async (suffix: string) => {
+      const { data } = await svc
+        .from("properties")
+        .insert({
+          org_id: ORG_A,
+          reference: `DUE-${run}-${suffix}`,
+          kind: "standalone",
+          property_type: "apartment",
+          status: "available",
+          title: { en: `Instalment reminder fixture ${suffix}` },
+        })
+        .select("id")
+        .single();
+      return data!.id as string;
+    };
+
+    const mkReservation = async (propertyId: string, status: string) => {
+      const { data } = await svc
+        .from("reservations")
+        .insert({
+          org_id: ORG_A,
+          property_id: propertyId,
+          contact_id: contactA,
+          status,
+          expires_at: new Date(Date.now() + 90 * 864e5).toISOString(),
+        })
+        .select("id")
+        .single();
+      return data!.id as string;
+    };
+
+    const mkLine = async (
+      reservationId: string,
+      sortOrder: number,
+      label: string,
+      dueDate: string | null,
+    ) => {
+      const { data, error } = await svc
+        .from("reservation_installments")
+        .insert({
+          org_id: ORG_A,
+          reservation_id: reservationId,
+          sort_order: sortOrder,
+          label,
+          amount: 50000,
+          due_date: dueDate,
+        })
+        .select("id")
+        .single();
+      expect(error, `line ${label} must insert`).toBeNull();
+      return data!.id as string;
+    };
+
+    const countFor = async (installmentId: string, done: boolean) => {
+      const { count } = await svc
+        .from("tasks")
+        .select("id", { count: "exact", head: true })
+        .eq("installment_id", installmentId)
+        .eq("kind", "installment_due")
+        .eq("is_done", done);
+      return count ?? 0;
+    };
+    const openFor = (id: string) => countFor(id, false);
+    const closedFor = (id: string) => countFor(id, true);
+
+    const heldProp = await mkProperty("held");
+    const convProp = await mkProperty("conv");
+    const goneProp = await mkProperty("gone");
+
+    const heldRes = await mkReservation(heldProp, "held");
+    // `converted` is TERMINAL and means the sale went ahead — the state a buyer
+    // paying 10/30/60 across two years of construction sits in throughout.
+    const convRes = await mkReservation(convProp, "converted");
+    const goneRes = await mkReservation(goneProp, "released");
+
+    const dueSoon = await mkLine(heldRes, 0, "Deposit", cyprusDay(3));
+    const dueFar = await mkLine(heldRes, 1, "Contract", cyprusDay(30));
+    const overdue = await mkLine(convRes, 0, "Stage 2", cyprusDay(-10));
+    const onDeadHold = await mkLine(goneRes, 0, "Deposit", cyprusDay(3));
+    const undated = await mkLine(heldRes, 2, "Handover", null);
+
+    await svc.rpc("remind_due_installments", { p_org: ORG_A });
+
+    expect(await openFor(dueSoon), "a line due inside the window is chased").toBe(1);
+    expect(await openFor(dueFar), "a line 30 days out is not chased yet").toBe(0);
+    expect(
+      await openFor(overdue),
+      "an OVERDUE line on a CONVERTED sale is chased — reusing LIVE_RESERVATION_STATUSES here would silently stop chasing signed sales",
+    ).toBe(1);
+    expect(await openFor(onDeadHold), "a released hold is not chased").toBe(0);
+    expect(await openFor(undated), "a line with no agreed date cannot be chased").toBe(0);
+
+    // idempotent: a second run the same night adds nothing
+    await svc.rpc("remind_due_installments", { p_org: ORG_A });
+    expect(await openFor(dueSoon), "a second sweep is a no-op").toBe(1);
+    expect(await openFor(overdue), "a second sweep is a no-op for overdue too").toBe(1);
+
+    // the reminder falls due exactly when the money does, and is assigned — a
+    // null assignee is invisible on every surface, which the three-arm fallback
+    // exists to prevent
+    const { data: task } = await svc
+      .from("tasks")
+      .select("assignee_id, property_id, reservation_id, due_at, title")
+      .eq("installment_id", dueSoon)
+      .single();
+    expect(task!.assignee_id, "the reminder must have an assignee").not.toBeNull();
+    expect(task!.property_id).toBe(heldProp);
+    expect(task!.reservation_id).toBe(heldRes);
+    expect(task!.title).toContain("Deposit");
+
+    // --- self-heal: paying closes the chase, never deletes it ---------------
+    await svc
+      .from("reservation_installments")
+      .update({ paid_at: new Date().toISOString(), paid_amount: 50000 })
+      .eq("id", dueSoon);
+    await svc.rpc("remind_due_installments", { p_org: ORG_A });
+    expect(await openFor(dueSoon), "a paid line stops being chased").toBe(0);
+    expect(await closedFor(dueSoon), "closed, never deleted — history keeps its shape").toBe(1);
+
+    // --- re-agreeing the date supersedes the old cycle and arms a new one ---
+    await svc
+      .from("reservation_installments")
+      .update({ due_date: cyprusDay(5) })
+      .eq("id", overdue);
+    await svc.rpc("remind_due_installments", { p_org: ORG_A });
+    expect(await closedFor(overdue), "the old cycle's reminder is closed").toBe(1);
+    expect(await openFor(overdue), "the new date arms a fresh reminder").toBe(1);
+
+    // --- the sale falls through: chasing must stop --------------------------
+    await svc
+      .from("reservations")
+      .update({ status: "released", released_at: new Date().toISOString() })
+      .eq("id", convRes);
+    await svc.rpc("remind_due_installments", { p_org: ORG_A });
+    expect(await openFor(overdue), "a released sale is no longer chased").toBe(0);
+
+    // --- the T-C4 lesson, asserted rather than assumed -----------------------
+    const anon = anonClient();
+    const { error: anonErr } = await anon.rpc("remind_due_installments", { p_org: ORG_A });
+    expect(anonErr, "anon must not be able to run the sweep").not.toBeNull();
+
+    const { error: agentErr } = await agentA1.client.rpc("remind_due_installments", {
+      p_org: ORG_A,
+    });
+    expect(agentErr, "a signed-in agent must not be able to run it either").not.toBeNull();
+
+    const { data: chainOk } = await svc.rpc("verify_events_chain", { p_org: ORG_A });
+    expect(chainOk, "reminder events keep the hash chain intact").toBe(true);
   });
 
 });

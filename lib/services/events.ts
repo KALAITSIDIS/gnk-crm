@@ -313,6 +313,17 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
     const label = asText(p.label);
     return label ? t("installmentUnpaidLabel", { label }) : t("installmentUnpaid");
   },
+  // 0051's nightly chase, actor-null: written by remind_due_installments().
+  // `days` is SIGNED — negative means the line is already overdue — so the sign
+  // picks the string and the message always states a positive number of days.
+  installment_due_soon: (p, t) => {
+    const label = asText(p.label) ?? "";
+    const days = Number(p.days);
+    if (!Number.isFinite(days)) return t("installmentDueSoon", { days: 0, label });
+    return days < 0
+      ? t("installmentOverdue", { days: Math.abs(days), label })
+      : t("installmentDueSoon", { days, label });
+  },
   // 0044 reservations. Written against the PROPERTY, like the nightly sweep:
   // a hold is a fact about the property, which is where a dispute looks.
   reservation_created: (p, t) => {
@@ -401,7 +412,16 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
     if (reason === "feedback_logged_or_viewing_reopened") return t("supersededFeedbackLogged");
     // 0047's two reasons: the hold moved, or it stopped being live at all
     if (reason === "reservation_extended") return t("supersededReservationExtended");
-    if (reason === "reservation_no_longer_live") return t("supersededReservationClosed");
+    // 0051's three reasons share `reservation_no_longer_live` with 0047, so the
+    // KIND has to disambiguate: the same reason string closes a hold-expiry
+    // warning and an instalment chase, and they read differently to an agent.
+    if (reason === "installment_paid") return t("supersededInstallmentPaid");
+    if (reason === "installment_rescheduled") return t("supersededInstallmentRescheduled");
+    if (reason === "reservation_no_longer_live") {
+      return asText(p.kind) === "installment_due"
+        ? t("supersededInstallmentClosed")
+        : t("supersededReservationClosed");
+    }
     if (p.mandate_id) return t("supersededMandate");
     return t("superseded");
   },
