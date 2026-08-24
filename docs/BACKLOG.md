@@ -1527,10 +1527,13 @@ developer.
   STRING, so `Number.isFinite` on it is false and it must be coerced; and a
   discarded error makes a whole feature vanish silently — both swallow sites now
   log to Sentry.
-- **New-listing alert**, same shape in the other direction: when a property
-  first becomes `available`, or is priced for the first time. `isAlertableDrop`
-  deliberately excludes the unpriced→priced case precisely because it belongs
-  here rather than in the drop path.
+- ~~**New-listing alert.**~~ ✅ **DONE 2026-08-24** (`ae0a6a2`, migration 0046).
+  Triggers on a STATUS transition into `MATCHABLE_STATUSES`, which correctly
+  also covers a withdrawn listing put back on and a fallen-through sale.
+  **This line used to say the unpriced→priced case "belongs here". That was
+  wrong** — it belongs to neither alert, because an unpriced property already
+  passes the budget hard filter, so setting a price can only ever REMOVE a
+  match. Pinned by tests in both modules.
 - **Price-drop alerts on a BULK reprice.** `repriceBlock` (units) changes N
   prices at once and does NOT alert — running the match N times synchronously
   would make the action crawl. Wants its own shape: one task summarising the
