@@ -2011,6 +2011,7 @@ export type Database = {
           mandate_id: string | null
           org_id: string
           property_id: string | null
+          reservation_id: string | null
           title: string
           viewing_id: string | null
         }
@@ -2028,6 +2029,7 @@ export type Database = {
           mandate_id?: string | null
           org_id: string
           property_id?: string | null
+          reservation_id?: string | null
           title: string
           viewing_id?: string | null
         }
@@ -2045,6 +2047,7 @@ export type Database = {
           mandate_id?: string | null
           org_id?: string
           property_id?: string | null
+          reservation_id?: string | null
           title?: string
           viewing_id?: string | null
         }
@@ -2103,6 +2106,13 @@ export type Database = {
             columns: ["property_id"]
             isOneToOne: false
             referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_reservation_id_fkey"
+            columns: ["reservation_id"]
+            isOneToOne: false
+            referencedRelation: "reservations"
             referencedColumns: ["id"]
           },
           {
@@ -3472,6 +3482,10 @@ export type Database = {
         Returns: string
       }
       verify_events_chain: { Args: { p_org: string }; Returns: boolean }
+      warn_expiring_reservations: {
+        Args: { p_org?: string }
+        Returns: undefined
+      }
     }
     Enums: {
       comm_channel:

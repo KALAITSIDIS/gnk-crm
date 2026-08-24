@@ -284,6 +284,9 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
   // The mirror: the property came onto the market rather than changing price.
   new_listing_matched: (p, t) =>
     t("newListingMatched", { count: Number(p.buyers) || 0 }),
+  // 0047's nightly warning, actor-null: written by warn_expiring_reservations()
+  reservation_expiring_soon: (p, t) =>
+    t("reservationExpiringSoon", { days: Number(p.days) || 2 }),
   // 0044 reservations. Written against the PROPERTY, like the nightly sweep:
   // a hold is a fact about the property, which is where a dispute looks.
   reservation_created: (p, t) => {
@@ -370,6 +373,9 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
     const reason = asText(p.reason);
     if (reason === "deal_contacted_or_closed") return t("supersededDealContacted");
     if (reason === "feedback_logged_or_viewing_reopened") return t("supersededFeedbackLogged");
+    // 0047's two reasons: the hold moved, or it stopped being live at all
+    if (reason === "reservation_extended") return t("supersededReservationExtended");
+    if (reason === "reservation_no_longer_live") return t("supersededReservationClosed");
     if (p.mandate_id) return t("supersededMandate");
     return t("superseded");
   },
