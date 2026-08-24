@@ -1543,5 +1543,8 @@ developer.
   held the installments since 0001 with nothing reading them.
 - **Instalment reminders.** Payment plans exist; reminders do not. Same cron
   idiom as 0012/0020/0044.
-- **Reservation expiry warning.** The nightly sweep closes a lapsed hold but
-  nobody is told beforehand. A task at T-2 days, following the nudge pattern.
+- ~~**Reservation expiry warning.**~~ ✅ **DONE 2026-08-24** (`604738b`,
+  migration 0047). Warns 2 days out, self-heals on extend/release, and runs at
+  03:50 so it supersedes the stale warning of anything the 03:45 expiry closed.
+  EXECUTE was locked down in the migration rather than after an advisor run —
+  the first application of T-C4's lesson at write time.
