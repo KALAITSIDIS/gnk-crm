@@ -2481,4 +2481,93 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(chainOk, "reservation events keep the hash chain intact").toBe(true);
   });
 
+  it("32. reservation expiry warning: minted once, self-heals, and anon cannot run it", async () => {
+    // 0047. The sweep is the unit under test; the RLS half is that `anon` and
+    // `authenticated` cannot call it over PostgREST — the hole T-C4 had to
+    // close on expire_reservations, and which this migration was written not to
+    // repeat.
+    const { data: prop } = await svc
+      .from("properties")
+      .insert({
+        org_id: ORG_A,
+        reference: `WARN-${run}`,
+        kind: "standalone",
+        property_type: "apartment",
+        status: "available",
+        title: { en: "Expiry warning fixture" },
+      })
+      .select("id")
+      .single();
+
+    // a live hold lapsing inside the 2-day window
+    const soon = new Date(Date.now() + 36 * 3600e3).toISOString();
+    const { data: res } = await svc
+      .from("reservations")
+      .insert({
+        org_id: ORG_A,
+        property_id: prop!.id,
+        contact_id: contactA,
+        status: "held",
+        expires_at: soon,
+      })
+      .select("id")
+      .single();
+
+    const openWarnings = async () => {
+      const { count } = await svc
+        .from("tasks")
+        .select("id", { count: "exact", head: true })
+        .eq("reservation_id", res!.id)
+        .eq("kind", "reservation_expiring")
+        .eq("is_done", false);
+      return count ?? 0;
+    };
+
+    await svc.rpc("warn_expiring_reservations", { p_org: ORG_A });
+    expect(await openWarnings(), "a hold lapsing inside the window is warned").toBe(1);
+
+    // idempotent: a second run the same night adds nothing
+    await svc.rpc("warn_expiring_reservations", { p_org: ORG_A });
+    expect(await openWarnings(), "a second sweep is a no-op").toBe(1);
+
+    // the warning names the reservation and is assigned — a null assignee is
+    // invisible on every surface, which is what the three-arm fallback prevents
+    const { data: task } = await svc
+      .from("tasks")
+      .select("assignee_id, property_id, due_at")
+      .eq("reservation_id", res!.id)
+      .eq("kind", "reservation_expiring")
+      .single();
+    expect(task!.assignee_id, "the warning must have an assignee").not.toBeNull();
+    expect(task!.property_id).toBe(prop!.id);
+
+    // self-heal: releasing the hold closes the warning rather than deleting it
+    await svc
+      .from("reservations")
+      .update({ status: "released", released_at: new Date().toISOString() })
+      .eq("id", res!.id);
+    await svc.rpc("warn_expiring_reservations", { p_org: ORG_A });
+    expect(await openWarnings(), "a released hold closes its warning").toBe(0);
+
+    const { count: closed } = await svc
+      .from("tasks")
+      .select("id", { count: "exact", head: true })
+      .eq("reservation_id", res!.id)
+      .eq("is_done", true);
+    expect(closed ?? 0, "closed, never deleted — history keeps its shape").toBe(1);
+
+    // --- the T-C4 lesson, asserted rather than assumed -----------------------
+    const anon = anonClient();
+    const { error: anonErr } = await anon.rpc("warn_expiring_reservations", { p_org: ORG_A });
+    expect(anonErr, "anon must not be able to run the sweep").not.toBeNull();
+
+    const { error: agentErr } = await agentA1.client.rpc("warn_expiring_reservations", {
+      p_org: ORG_A,
+    });
+    expect(agentErr, "a signed-in agent must not be able to run it either").not.toBeNull();
+
+    const { data: chainStillOk } = await svc.rpc("verify_events_chain", { p_org: ORG_A });
+    expect(chainStillOk, "warning events keep the hash chain intact").toBe(true);
+  });
+
 });
