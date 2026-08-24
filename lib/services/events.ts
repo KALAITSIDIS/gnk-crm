@@ -277,6 +277,10 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
     return title ? t("documentDeletedTitle", { title }) : t("documentDeleted");
   },
   renewal_task_created: (_p, t) => t("renewalTaskCreated"),
+  // Price-drop alert: the first push use of the matching engine. Fired by the
+  // property save, not by a cron, because the rules live in TypeScript.
+  price_drop_matched: (p, t) =>
+    t("priceDropMatched", { count: Number(p.buyers) || 0 }),
   // 0044 reservations. Written against the PROPERTY, like the nightly sweep:
   // a hold is a fact about the property, which is where a dispute looks.
   reservation_created: (p, t) => {

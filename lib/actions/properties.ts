@@ -486,6 +486,50 @@ export async function updatePropertySection(
     await recomputeDealsFor(supabase, { propertyId });
   }
 
+  // A price drop can put this property inside somebody's budget for the first
+  // time. BEST EFFORT, and deliberately so: the save has already succeeded and
+  // been evented, so an alert failure must never turn it into an error the user
+  // sees — they would retry a save that already worked. It is also skipped for
+  // containers, whose units carry the prices.
+  if (
+    section === "details" &&
+    current.kind !== "project" &&
+    current.kind !== "phase" &&
+    ("asking_price" in changed || "rent_price_month" in changed)
+  ) {
+    try {
+      const { raisePriceDropAlert } = await import("@/lib/services/price-drop-alerts");
+      const { data: fresh } = await supabase
+        .from("properties")
+        .select(
+          "id, reference, assigned_agent_id, status, transaction_type, property_type, " +
+            "district_id, area_id, asking_price, rent_price_month, bedrooms, bathrooms, " +
+            "covered_area_sqm, plot_area_sqm, title_deed_status, vat_status, sea_distance_m, " +
+            "delivery_date, features",
+        )
+        .eq("id", propertyId)
+        .single();
+      if (fresh) {
+        await raisePriceDropAlert(supabase, {
+          orgId: profile.orgId,
+          actorId: profile.id,
+          property: fresh as unknown as Parameters<typeof raisePriceDropAlert>[1]["property"],
+          oldAskingPrice:
+            current.asking_price === null ? null : Number(current.asking_price),
+          oldRentPrice:
+            current.rent_price_month === null ? null : Number(current.rent_price_month),
+        });
+      }
+    } catch (err) {
+      // Best effort, but NOT silent. The first version swallowed without a
+      // trace, and when the alert stopped firing there was nothing anywhere to
+      // say so — the save succeeded, the event was written, and the feature was
+      // simply absent. Sentry is wired (IMPROVEMENTS C1), so this reaches a
+      // durable sink instead of nowhere.
+      console.error("price-drop alert failed", { propertyId, err });
+    }
+  }
+
   revalidatePath(`/properties/${propertyId}`);
   revalidatePath("/properties");
   return { error: null, savedAt: Date.now() };
