@@ -1722,6 +1722,82 @@ export type Database = {
           },
         ]
       }
+      reservation_installments: {
+        Row: {
+          amount: number
+          created_at: string
+          created_by: string | null
+          due_date: string | null
+          id: string
+          label: string
+          milestone: string | null
+          note: string | null
+          org_id: string
+          paid_amount: number | null
+          paid_at: string | null
+          pct: number | null
+          reservation_id: string
+          sort_order: number
+          updated_at: string
+        }
+        Insert: {
+          amount: number
+          created_at?: string
+          created_by?: string | null
+          due_date?: string | null
+          id?: string
+          label: string
+          milestone?: string | null
+          note?: string | null
+          org_id: string
+          paid_amount?: number | null
+          paid_at?: string | null
+          pct?: number | null
+          reservation_id: string
+          sort_order: number
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          created_by?: string | null
+          due_date?: string | null
+          id?: string
+          label?: string
+          milestone?: string | null
+          note?: string | null
+          org_id?: string
+          paid_amount?: number | null
+          paid_at?: string | null
+          pct?: number | null
+          reservation_id?: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reservation_installments_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reservation_installments_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reservation_installments_reservation_id_fkey"
+            columns: ["reservation_id"]
+            isOneToOne: false
+            referencedRelation: "reservations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       reservations: {
         Row: {
           amount: number | null
@@ -1736,6 +1812,7 @@ export type Database = {
           notes: string | null
           offer_id: string | null
           org_id: string
+          payment_plan_id: string | null
           property_id: string
           release_reason: string | null
           released_at: string | null
@@ -1755,6 +1832,7 @@ export type Database = {
           notes?: string | null
           offer_id?: string | null
           org_id: string
+          payment_plan_id?: string | null
           property_id: string
           release_reason?: string | null
           released_at?: string | null
@@ -1774,6 +1852,7 @@ export type Database = {
           notes?: string | null
           offer_id?: string | null
           org_id?: string
+          payment_plan_id?: string | null
           property_id?: string
           release_reason?: string | null
           released_at?: string | null
@@ -1814,6 +1893,13 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reservations_payment_plan_id_fkey"
+            columns: ["payment_plan_id"]
+            isOneToOne: false
+            referencedRelation: "payment_plans"
             referencedColumns: ["id"]
           },
           {
