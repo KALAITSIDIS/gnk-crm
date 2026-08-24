@@ -43,6 +43,7 @@ type Client = SupabaseClient<Database>;
 /** Task kinds this module owns. Both are admitted by `tasks_kind_chk`. */
 export const PRICE_DROP_TASK_KIND = "price_drop_match";
 export const NEW_LISTING_TASK_KIND = "new_listing_match";
+export const BULK_PRICE_DROP_TASK_KIND = "bulk_price_drop_match";
 
 // ---------------------------------------------------------------- triggers --
 
@@ -133,7 +134,7 @@ const REQUIREMENT_COLUMNS =
   "plot_area_min_sqm, title_deed_required, vat_preference, max_sea_distance_m, " +
   "delivery_by, features_required";
 
-type RequirementRow = MatchRequirement & { id: string; contact_id: string };
+export type RequirementRow = MatchRequirement & { id: string; contact_id: string };
 
 export interface AlertProperty extends MatchCandidate {
   reference: string;
@@ -174,7 +175,9 @@ async function raiseOneTask(
   args: {
     orgId: string;
     actorId: string;
-    property: AlertProperty;
+    /** only what a task needs — NOT a full AlertProperty, so a project-level
+     *  alert does not have to invent match fields it will never read */
+    property: { id: string; assigned_agent_id: string | null };
     kind: string;
     title: string;
     eventType: string;
@@ -324,4 +327,125 @@ export async function raiseNewListingAlert(
       `${property.reference} is on the market: ${contactIds.length} ` +
       `matching buyer${contactIds.length === 1 ? "" : "s"}`,
   });
+}
+
+// ------------------------------------------------------- bulk reprice -------
+
+/** One unit's old→new price, as `previewUplift` already computes it. */
+export interface BulkPriceChange {
+  id: string;
+  reference: string;
+  from: number;
+  to: number;
+}
+
+export interface BulkMatchAlertResult extends MatchAlertResult {
+  /** how many of the repriced units gained at least one buyer */
+  unitsAffected: number;
+}
+
+/**
+ * Which units gained buyers, and which buyers — PURE, so the aggregation is
+ * testable without a database and, more importantly, so it can run over the
+ * whole block in memory.
+ *
+ * THE POINT OF THIS FUNCTION IS THE ROUND-TRIP COUNT. Calling
+ * `raisePriceDropAlert` once per unit would issue four queries per unit — for a
+ * 60-unit block that is 240, on an action a desk runs while watching. The
+ * expensive part was never the matching, which is arithmetic over a handful of
+ * rows; it was the queries. Fetch the requirements and the units ONCE, then do
+ * the work here.
+ */
+export function bulkNewlyMatching(
+  changes: BulkPriceChange[],
+  units: Map<string, AlertProperty>,
+  requirements: RequirementRow[],
+): { unitIds: string[]; contactIds: string[] } {
+  const unitIds = new Set<string>();
+  const contactIds = new Set<string>();
+
+  for (const change of changes) {
+    // An uplift can go either way; only a drop can bring anyone new into range.
+    if (!isAlertableDrop(change.from, change.to)) continue;
+    const unit = units.get(change.id);
+    if (!unit) continue;
+
+    for (const req of requirements) {
+      // A rental requirement is judged on rent, which an asking-price uplift
+      // does not touch — so it can never be newly in range because of one.
+      if (req.transaction_type === "rent") continue;
+      if (!wasPricedOut(req.budget_max, change.from, change.to)) continue;
+      if (!matchProperty(req, unit).eligible) continue;
+      unitIds.add(change.id);
+      contactIds.add(req.contact_id);
+    }
+  }
+
+  return { unitIds: [...unitIds], contactIds: [...contactIds] };
+}
+
+const UNIT_COLUMNS =
+  "id, reference, assigned_agent_id, status, transaction_type, property_type, district_id, " +
+  "area_id, asking_price, rent_price_month, bedrooms, bathrooms, covered_area_sqm, " +
+  "plot_area_sqm, title_deed_status, vat_status, sea_distance_m, delivery_date, features";
+
+/**
+ * One alert for a whole block reprice, raised against the PROJECT.
+ *
+ * ONE TASK, NOT ONE PER UNIT, and that is a product decision rather than a
+ * performance one: "60 units repriced, 3 buyers now in budget across 5 of them"
+ * is a single thing for an agent to act on. Five tasks would be five copies of
+ * the same phone call.
+ *
+ * Round trips are CONSTANT — two reads, one count, one insert, one event —
+ * whatever the block size.
+ */
+export async function raiseBulkPriceDropAlert(
+  supabase: Client,
+  args: {
+    orgId: string;
+    actorId: string;
+    project: { id: string; reference: string; assigned_agent_id: string | null };
+    changes: BulkPriceChange[];
+  },
+): Promise<BulkMatchAlertResult> {
+  const none: BulkMatchAlertResult = { newlyMatching: 0, taskCreated: false, unitsAffected: 0 };
+
+  const drops = args.changes.filter((c) => isAlertableDrop(c.from, c.to));
+  if (drops.length === 0) return none;
+
+  const requirements = await activeRequirements(supabase, { budgetedOnly: true });
+  if (requirements.length === 0) return none;
+
+  const { data: unitRows, error } = await supabase
+    .from("properties")
+    .select(UNIT_COLUMNS)
+    .in("id", drops.map((d) => d.id));
+  if (error || !unitRows?.length) return none;
+
+  const units = new Map<string, AlertProperty>(
+    (unitRows as unknown as AlertProperty[]).map((u) => [u.id, u]),
+  );
+
+  const { unitIds, contactIds } = bulkNewlyMatching(drops, units, requirements);
+  if (contactIds.length === 0) return none;
+
+  const result = await raiseOneTask(supabase, {
+    orgId: args.orgId,
+    actorId: args.actorId,
+    // the PROJECT carries the task: the reprice was one act on one project
+    property: {
+      id: args.project.id,
+      assigned_agent_id: args.project.assigned_agent_id,
+    },
+    kind: BULK_PRICE_DROP_TASK_KIND,
+    eventType: "bulk_price_drop_matched",
+    contactIds,
+    title:
+      `Reprice on ${args.project.reference}: ${contactIds.length} ` +
+      `buyer${contactIds.length === 1 ? "" : "s"} now in budget across ` +
+      `${unitIds.length} unit${unitIds.length === 1 ? "" : "s"}`,
+  });
+
+  return { ...result, unitsAffected: unitIds.length };
 }

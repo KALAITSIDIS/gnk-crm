@@ -255,6 +255,7 @@
       "priceDropMatched": "Снижение цены — {count, plural, one {# покупатель} few {# покупателя} many {# покупателей} other {# покупателя}} в рамках бюджета",
       "newListingMatched": "В продаже — {count, plural, one {# подходящий покупатель} few {# подходящих покупателя} many {# подходящих покупателей} other {# подходящего покупателя}}",
       "reservationExpiringSoon": "Срок брони истекает через {days, plural, one {# день} few {# дня} many {# дней} other {# дня}} — создано напоминание",
+      "bulkPriceDropMatched": "Цены блока изменены — {count, plural, one {# покупатель} few {# покупателя} many {# покупателей} other {# покупателя}} в рамках бюджета",
       "supersededReservationExtended": "Напоминание о брони закрыто — бронь продлена",
       "supersededReservationClosed": "Напоминание о брони закрыто — бронь больше не активна",
       "reservationCreated": "Создана бронь",

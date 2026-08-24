@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { BUDGET_TOLERANCE_PCT } from "./matching";
-import { becameMatchable, isAlertableDrop, priceFor, wasPricedOut } from "./match-alerts";
+import {
+  becameMatchable,
+  bulkNewlyMatching,
+  isAlertableDrop,
+  priceFor,
+  wasPricedOut,
+  type AlertProperty,
+  type BulkPriceChange,
+  type RequirementRow,
+} from "./match-alerts";
 
 describe("isAlertableDrop", () => {
   it("fires only on a genuine decrease", () => {
@@ -141,4 +150,124 @@ describe("pricing an unpriced property is NOT an alert — either kind", () => {
   // for every buyer. Setting a price can only ever remove a match, never create
   // one — so there is no "newly matching" buyer to alert. Proven in
   // matching.test.ts ("does not reject an unpriced property").
+});
+
+describe("bulkNewlyMatching — a whole block, in memory", () => {
+  const unit = (id: string, price: number, over: Partial<AlertProperty> = {}): AlertProperty => ({
+    id,
+    reference: id,
+    assigned_agent_id: null,
+    status: "available",
+    transaction_type: "sale",
+    property_type: "apartment",
+    district_id: "d1",
+    area_id: "a1",
+    asking_price: price,
+    rent_price_month: null,
+    bedrooms: 2,
+    bathrooms: 1,
+    covered_area_sqm: 80,
+    plot_area_sqm: null,
+    title_deed_status: "separate",
+    vat_status: "resale_no_vat",
+    sea_distance_m: 500,
+    delivery_date: null,
+    features: [],
+    ...over,
+  });
+
+  const req = (id: string, budgetMax: number, over: Partial<RequirementRow> = {}): RequirementRow =>
+    ({
+      id,
+      contact_id: `c-${id}`,
+      transaction_type: "sale",
+      property_types: [],
+      district_ids: [],
+      area_ids: [],
+      budget_min: null,
+      budget_max: budgetMax,
+      bedrooms_min: null,
+      bedrooms_max: null,
+      bathrooms_min: null,
+      covered_area_min_sqm: null,
+      plot_area_min_sqm: null,
+      title_deed_required: false,
+      vat_preference: null,
+      max_sea_distance_m: null,
+      delivery_by: null,
+      features_required: [],
+      ...over,
+    }) as RequirementRow;
+
+  const asMap = (us: AlertProperty[]) => new Map(us.map((u) => [u.id, u]));
+
+  it("reports only the units that gained someone, and each buyer once", () => {
+    // budget 300k -> ceiling 330k. u1 crosses it, u2 does not, u3 was already in.
+    const changes: BulkPriceChange[] = [
+      { id: "u1", reference: "u1", from: 400000, to: 320000 },
+      { id: "u2", reference: "u2", from: 900000, to: 800000 },
+      { id: "u3", reference: "u3", from: 300000, to: 280000 },
+    ];
+    const units = asMap([unit("u1", 320000), unit("u2", 800000), unit("u3", 280000)]);
+    const out = bulkNewlyMatching(changes, units, [req("r1", 300000)]);
+    expect(out.unitIds).toEqual(["u1"]);
+    expect(out.contactIds).toEqual(["c-r1"]);
+  });
+
+  it("counts a buyer ONCE even when several units come into range", () => {
+    // The whole reason the result is a set: one phone call, not three.
+    const changes: BulkPriceChange[] = [
+      { id: "u1", reference: "u1", from: 400000, to: 320000 },
+      { id: "u2", reference: "u2", from: 400000, to: 310000 },
+    ];
+    const units = asMap([unit("u1", 320000), unit("u2", 310000)]);
+    const out = bulkNewlyMatching(changes, units, [req("r1", 300000)]);
+    expect(out.unitIds.sort()).toEqual(["u1", "u2"]);
+    expect(out.contactIds, "one buyer, not two").toEqual(["c-r1"]);
+  });
+
+  it("ignores a price RISE, which is what an uplift usually is", () => {
+    const changes: BulkPriceChange[] = [{ id: "u1", reference: "u1", from: 300000, to: 340000 }];
+    const units = asMap([unit("u1", 340000)]);
+    expect(bulkNewlyMatching(changes, units, [req("r1", 400000)]).contactIds).toEqual([]);
+  });
+
+  it("ignores a rental requirement — an asking-price uplift cannot reach it", () => {
+    const changes: BulkPriceChange[] = [{ id: "u1", reference: "u1", from: 400000, to: 320000 }];
+    const units = asMap([unit("u1", 320000)]);
+    const rental = req("r1", 300000, { transaction_type: "rent" });
+    expect(bulkNewlyMatching(changes, units, [rental]).contactIds).toEqual([]);
+  });
+
+  it("still applies every OTHER criterion, not just the budget", () => {
+    const changes: BulkPriceChange[] = [{ id: "u1", reference: "u1", from: 400000, to: 320000 }];
+    const units = asMap([unit("u1", 320000, { property_type: "apartment" })]);
+    const wantsVilla = req("r1", 300000, { property_types: ["villa"] });
+    expect(
+      bulkNewlyMatching(changes, units, [wantsVilla]).contactIds,
+      "a drop must not sell an apartment to someone who asked for a villa",
+    ).toEqual([]);
+  });
+
+  it("skips a change whose unit was not fetched, rather than throwing", () => {
+    const changes: BulkPriceChange[] = [{ id: "missing", reference: "x", from: 400000, to: 320000 }];
+    expect(() => bulkNewlyMatching(changes, new Map(), [req("r1", 300000)])).not.toThrow();
+    expect(bulkNewlyMatching(changes, new Map(), [req("r1", 300000)]).contactIds).toEqual([]);
+  });
+
+  it("handles a 60-unit block without needing a database", () => {
+    // The shape that made this function exist: per-unit alerting would have
+    // issued four queries per unit here. This is arithmetic.
+    const changes: BulkPriceChange[] = Array.from({ length: 60 }, (_, i) => ({
+      id: `u${i}`,
+      reference: `u${i}`,
+      from: 400000,
+      to: 320000,
+    }));
+    const units = asMap(changes.map((c) => unit(c.id, 320000)));
+    const reqs = Array.from({ length: 5 }, (_, i) => req(`r${i}`, 300000));
+    const out = bulkNewlyMatching(changes, units, reqs);
+    expect(out.unitIds).toHaveLength(60);
+    expect(out.contactIds).toHaveLength(5);
+  });
 });
