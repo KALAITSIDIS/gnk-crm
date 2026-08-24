@@ -1519,10 +1519,22 @@ developer.
 
 ### Decision-free once someone asks for them
 
-- **Price-drop campaign.** On a price change, find the buyers whose saved
-  search now matches. Cheap now that `matchProperty` exists — this was the
-  outside report's own automation example, and it is one query plus a task.
-- **New-listing alert**, same shape in the other direction.
+- ~~**Price-drop campaign.**~~ ✅ **DONE 2026-08-24** (`08c7b00`, migration
+  0045). Raises one task when a drop brings a property inside a buyer's budget
+  for the FIRST time — `wasPricedOut`, not "can they afford it now", because the
+  latter alerts every already-matching buyer on every drop. **Two lessons came
+  out of it and generalise:** Postgres `numeric` arrives from PostgREST as a
+  STRING, so `Number.isFinite` on it is false and it must be coerced; and a
+  discarded error makes a whole feature vanish silently — both swallow sites now
+  log to Sentry.
+- **New-listing alert**, same shape in the other direction: when a property
+  first becomes `available`, or is priced for the first time. `isAlertableDrop`
+  deliberately excludes the unpriced→priced case precisely because it belongs
+  here rather than in the drop path.
+- **Price-drop alerts on a BULK reprice.** `repriceBlock` (units) changes N
+  prices at once and does NOT alert — running the match N times synchronously
+  would make the action crawl. Wants its own shape: one task summarising the
+  block, or a queued sweep.
 - **Reservation deposits against `payment_plans`.** `reservations.amount` is a
   single figure today; a project sale has a schedule, and `payment_plans` has
   held the installments since 0001 with nothing reading them.
