@@ -2570,4 +2570,65 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(chainStillOk, "warning events keep the hash chain intact").toBe(true);
   });
 
+  it("33. task_kinds: readable, not writable, and the FK still refuses an unknown kind", async () => {
+    // 0049 replaced tasks_kind_chk with a lookup table + FK. The CHECK's value
+    // was a LOUD refusal, so this pins that the replacement refuses too — from
+    // the APP's side, over PostgREST as a real user, which the migration's own
+    // assertion block cannot cover.
+    const { data: kinds, error: readErr } = await agentA1.client
+      .from("task_kinds")
+      .select("kind");
+    expect(readErr, "an agent may read the vocabulary").toBeNull();
+    expect((kinds ?? []).length, "all seven kinds are visible").toBe(7);
+
+    // The vocabulary is the system's: adding a kind is a code change, so not
+    // even an admin edits it from the app.
+    const { error: agentWriteErr } = await agentA1.client
+      .from("task_kinds")
+      .insert({ kind: "agent_invented", description: "nope", added_in: "x" });
+    expect(agentWriteErr, "an agent must not add a kind").not.toBeNull();
+
+    const { error: adminWriteErr } = await adminA.client
+      .from("task_kinds")
+      .insert({ kind: "admin_invented", description: "nope", added_in: "x" });
+    expect(adminWriteErr, "not even an admin adds a kind from the app").not.toBeNull();
+
+    // THE PROTECTION THE CHECK USED TO GIVE. A task with a kind nobody sweeps
+    // is an orphan; 0045 exists because the old CHECK refused one loudly.
+    const { error: badKindErr } = await adminA.client.from("tasks").insert({
+      org_id: ORG_A,
+      title: `RLS33-${run} bogus kind`,
+      kind: "not_a_real_kind",
+    });
+    expect(badKindErr, "an unknown kind must be refused").not.toBeNull();
+    expect(badKindErr!.message).toMatch(/tasks_kind_fkey|foreign key/i);
+
+    // ...and a NULL kind must still be accepted: it is how a human-made task is
+    // told apart from a system one, read by the /tasks badge and the CSV export.
+    const { data: humanTask, error: nullKindErr } = await adminA.client
+      .from("tasks")
+      .insert({ org_id: ORG_A, title: `RLS33-${run} human task`, kind: null })
+      .select("id")
+      .single();
+    expect(nullKindErr, "a human-made task has no kind and must still insert").toBeNull();
+    expect(humanTask).not.toBeNull();
+
+    // every kind a shipped sweep or action writes must exist in the table
+    const shipped = [
+      "mandate_renewal",
+      "deal_no_contact",
+      "viewing_feedback",
+      "price_drop_match",
+      "new_listing_match",
+      "reservation_expiring",
+      "bulk_price_drop_match",
+    ];
+    expect((kinds ?? []).map((k) => k.kind).sort()).toEqual([...shipped].sort());
+
+    // anon reaches nothing
+    const anon = anonClient();
+    const { data: anonSees } = await anon.from("task_kinds").select("kind");
+    expect(anonSees ?? [], "anon must not read task_kinds").toHaveLength(0);
+  });
+
 });
