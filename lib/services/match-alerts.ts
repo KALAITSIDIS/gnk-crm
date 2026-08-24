@@ -40,7 +40,7 @@ import { cyprusEndOfDay } from "@/lib/validators/reservations";
 
 type Client = SupabaseClient<Database>;
 
-/** Task kinds this module owns. Both are admitted by `tasks_kind_chk`. */
+/** Task kinds this module owns. All three are rows in `task_kinds` (0049). */
 export const PRICE_DROP_TASK_KIND = "price_drop_match";
 export const NEW_LISTING_TASK_KIND = "new_listing_match";
 export const BULK_PRICE_DROP_TASK_KIND = "bulk_price_drop_match";
@@ -217,8 +217,8 @@ async function raiseOneTask(
     .single();
 
   if (taskErr || !task) {
-    // NOT SILENT. An earlier version discarded this, and when `tasks_kind_chk`
-    // rejected a new `kind` the whole feature did nothing on a save that
+    // NOT SILENT. An earlier version discarded this, and when the kind
+    // constraint rejected a new `kind` the whole feature did nothing on a save that
     // otherwise succeeded — no task, no event, nothing in any log. That cost a
     // full end-to-end debug cycle; this line is what would have said so.
     console.error("match alert: task insert failed", {

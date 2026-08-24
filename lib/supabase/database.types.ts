@@ -1996,6 +1996,24 @@ export type Database = {
         }
         Relationships: []
       }
+      task_kinds: {
+        Row: {
+          added_in: string
+          description: string
+          kind: string
+        }
+        Insert: {
+          added_in: string
+          description: string
+          kind: string
+        }
+        Update: {
+          added_in?: string
+          description?: string
+          kind?: string
+        }
+        Relationships: []
+      }
       tasks: {
         Row: {
           assignee_id: string | null
@@ -2079,6 +2097,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "deals"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_kind_fkey"
+            columns: ["kind"]
+            isOneToOne: false
+            referencedRelation: "task_kinds"
+            referencedColumns: ["kind"]
           },
           {
             foreignKeyName: "tasks_mandate_id_fkey"
