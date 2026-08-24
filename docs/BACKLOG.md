@@ -1534,10 +1534,30 @@ developer.
   wrong** — it belongs to neither alert, because an unpriced property already
   passes the budget hard filter, so setting a price can only ever REMOVE a
   match. Pinned by tests in both modules.
-- **Price-drop alerts on a BULK reprice.** `repriceBlock` (units) changes N
-  prices at once and does NOT alert — running the match N times synchronously
-  would make the action crawl. Wants its own shape: one task summarising the
-  block, or a queued sweep.
+- ~~**Price-drop alerts on a BULK reprice.**~~ ✅ **DONE 2026-08-24**
+  (`b490c2e`, migration 0048). One task against the PROJECT, aggregated in
+  memory from a single fetch, so round trips are constant whatever the block
+  size.
+
+### New, from building the above
+
+- **A `task_kinds` lookup table instead of widening `tasks_kind_chk`.**
+  0045, 0046, 0047 and 0048 each exist largely to add one string to that CHECK,
+  and the next rule will need a fifth. The constraint EARNS ITS KEEP — 0045
+  exists because it rejected a typo'd kind loudly rather than writing an orphan
+  row no sweep would match — so the replacement must keep that: a `task_kinds`
+  table plus an FK on `tasks.kind` gives the same refusal while making a new
+  rule a data insert. Not done inline because refactoring a working security
+  control deserves its own change.
+
+- **CI: `e2e` can fail to start Supabase with "port 54322 address already in
+  use".** Seen once on 2026-08-24 (`b490c2e`) minutes after identical content
+  passed on the branch. **It is infrastructure, not code — `gh run rerun <id>
+  --failed` clears it.** `rls` and `e2e` both run `supabase start` with no
+  `needs:` between them; on GitHub-hosted runners each job gets its own VM, so
+  this looks like transient Docker networking rather than a real collision. If
+  it becomes frequent, the cheap fix is a retry around `supabase start`. Written
+  down so a recurrence costs minutes rather than an afternoon.
 - **Reservation deposits against `payment_plans`.** `reservations.amount` is a
   single figure today; a project sale has a schedule, and `payment_plans` has
   held the installments since 0001 with nothing reading them.
