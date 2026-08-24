@@ -253,6 +253,7 @@
     "documentDeletedTitle": "Διαγράφηκε έγγραφο — {title}",
     "renewalTaskCreated": "Δημιουργήθηκε υπενθύμιση ανανέωσης",
       "priceDropMatched": "Μείωση τιμής — {count, plural, one {# αγοραστής} other {# αγοραστές}} εντός προϋπολογισμού",
+      "newListingMatched": "Στην αγορά — {count, plural, one {# αγοραστής ταιριάζει} other {# αγοραστές ταιριάζουν}}",
       "reservationCreated": "Δημιουργήθηκε κράτηση",
       "reservationCreatedAmount": "Δημιουργήθηκε κράτηση — προκαταβολή {amount}",
       "reservationExtended": "Παρατάθηκε η κράτηση",
