@@ -22,49 +22,82 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 
 ---
 
-## 0a. NEXT UP — nothing is queued (2026-08-24)
+## 0a. NEXT UP — instalment reminders (2026-08-24)
 
-**All three phases of `IMPROVEMENTS_EXECUTION.md` are shipped, deployed and
-proven on production.** That file holds the plan and the per-phase banners;
-this section points at it and does not restate it.
+**This section was STALE until now** — it said "nothing is queued" and stopped
+at 0044 while six features had shipped past it, with test counts 36 behind.
+That is the bug §0 keeps having, in its own NEXT UP section. Re-read the state
+table above rather than trusting any summary here.
+
+### Shipped since the three phases (all local + hosted, all CI green for the merge SHA)
 
 | | |
 |---|---|
-| Phase A | `b15066c` — share-link event kinds, median/p90 first response (**0042**) |
-| Phase B | `0f0e379` — `buyer_requirements` (**0043**), matching engine, both match views |
-| Phase C | `22246ad` — `reservations` (**0044**), one-live-per-property, nightly expiry |
-| state | local and hosted both at **0044**; 752 unit · 51 RLS; CI green for each merge SHA |
+| `08c7b00` | **Price-drop alerts** (0045) — a drop that crosses a buyer's ceiling raises one task |
+| `ae0a6a2` | **New-listing alerts** (0046) — a status entering `MATCHABLE_STATUSES` does the same |
+| `604738b` | **Reservation expiry warning** (0047) — pg_cron 03:50, `tasks.reservation_id` |
+| `b490c2e` | **Bulk-reprice alerts** (0048) — one task per block, constant round trips |
+| `9070d23` | **`task_kinds` table** (0049) — replaced `tasks_kind_chk`; a new kind is now an INSERT |
+| `264786a` | **Reservation payment schedules** (0050) — frozen amounts, per-line paid state |
 
-**What is left is in `docs/BACKLOG.md`**, split into three items that need an
-operator decision (replacing the "top agents by activity" vanity metric,
-syncing `properties.status` with a live hold, dropping `contacts.preferences`)
-and five that are decision-free once someone asks — price-drop campaigns and
-new-listing alerts being cheap now the matching engine exists.
+`IMPROVEMENTS_EXECUTION.md` holds Phases A–C and their banners. Everything above
+came out of `docs/BACKLOG.md` afterwards.
 
-**The standing recommendation, unchanged and still not taken:** run one real
-week on the system. Production holds **2 buyers, 3 saved searches, 2 matchable
-listings and 1 live hold, all agent-created test data**. Every weight in
-`MATCH_WEIGHTS` is tunable and nothing is stored, but only a real desk
-disagreeing with a ranking will say which way to tune them.
+### What to build next, and why it is ready
 
-**Three lessons these phases produced, worth more than the features.**
+**Instalment reminders.** 0050 deliberately laid the groundwork:
+`reservation_installments.due_date` is nullable and agreed per reservation,
+`paid_at` marks a line settled, and the partial index
+`reservation_installments_due_idx` (`where paid_at is null and due_date is not
+null`) exists for exactly this sweep. It is the fifth use of the cron idiom
+(0012 · 0020 · 0044 · 0047) and **the first new task kind that is a one-line
+insert into `task_kinds` rather than a constraint rewrite** — 0049 paying off.
 
-1. **The deploy order is a RULE.** Each phase contained a change that would have
-   broken production had code landed before schema — A would have painted
-   `NaNh NaNm` on the dashboard, B and C would have thrown on a new tab. Push
-   the branch first (`ci.yml` is `on: push:` with no branch filter, so it is a
-   free CI rehearsal that keeps `main` off red), **then apply the migration to
-   hosted, then merge.**
-2. **`get_advisors` is not a formality.** On 0044's apply it found
-   `expire_reservations()` callable by `anon` over PostgREST — a new function
-   carries a PUBLIC `=X` grant, and every older cron function is clean only
-   because 0007 locked them down. **Every future function needs the same
-   revoke.**
-3. **The plan's own DDL was wrong three times** and each error is left visible
-   in it: `array_length()` on a set-returning function, a `PROPERTY_FEATURE_KEYS`
-   export that does not exist, and a hardcoded `+03:00` that is an hour wrong
-   every Cyprus winter. All three were caught by READING the target before
-   writing. That instruction is load-bearing, not ceremony.
+Shape it on 0047, which is the closest sibling:
+- pg_cron after 03:50, so it runs behind the expiry sweep
+- idempotence keyed to a CYCLE (the line's current `due_date`), never to "does a
+  task exist" — that is 0006's bug, re-fixed by 0012 and 0020
+- self-heal: a reminder whose line got paid or re-dated is COMPLETED, never
+  deleted
+- **revoke EXECUTE in the same migration** (T-C4's lesson, see §0 hosted row)
+
+### Traps a new session will otherwise re-learn
+
+1. **Deploy order is a rule.** Vercel deploys on push; migrations are applied by
+   hand. Push the feature branch first (`ci.yml` is `on: push:` with no branch
+   filter, so it is a free CI rehearsal that keeps `main` off red), **then apply
+   the migration to hosted, then merge.** Every feature above contained a change
+   that would have broken production in the other order.
+2. **`numeric` arrives from PostgREST as a STRING.** `Number.isFinite("700.00")`
+   is false. It silently killed the price-drop alert once; coerce, do not check.
+3. **A discarded error makes a whole feature vanish.** Both alert swallow-sites
+   now `console.error`. When something "does nothing", suspect a dropped error
+   before suspecting logic.
+4. **`get_advisors` is not a formality.** It caught `expire_reservations`
+   callable by `anon` (T-C4). Every new function needs an explicit
+   `revoke execute ... from public, anon, authenticated` — naming roles alone
+   cannot remove the PUBLIC grant, and revoking `public` also strips
+   `service_role`, so re-grant it.
+5. **A migration assertion that cannot run is not a pass.** 0050's probe needs a
+   reservation to exist; on a fresh DB (i.e. CI) it skips. Say which case the
+   NOTICE hit, and cover the constraint in an RLS test.
+6. **Kill stray `next dev` processes.** A leftover on :3000 serves stale code and
+   500s; `TaskStop` does not always reap the child.
+7. **CI `e2e` can flake** on `port 54322 address already in use`.
+   `gh run rerun <id> --failed` clears it — see BACKLOG.
+
+### Still waiting on the operator, unchanged
+
+Replacing the "top agents by activity" vanity metric · whether a live hold should
+flip `properties.status` · dropping `contacts.preferences`. All three are in
+`docs/BACKLOG.md` with the reasoning.
+
+### And one thing to ask about
+
+**Three `document_deleted` events on production at 17:46 UTC 2026-08-24 were
+written by a USER and are not mine** — commission-evidence PDFs for MARIOS
+ANDREOU. See the Data row. §0's rule holds: counts never say who or why. Ask
+before concluding anything about desk adoption.
 
 ## 0a-prev. The project availability share link (2026-08-22)
 
