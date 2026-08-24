@@ -93,3 +93,39 @@ export const transitionReservationSchema = z.object({
 export function cyprusEndOfDay(isoDate: string): Date {
   return zonedWallClockToUtc(`${isoDate}T23:59:59`);
 }
+
+// ---------------------------------------------------------------- schedule --
+
+export const applyPaymentPlanSchema = z.object({
+  reservation_id: z.guid(),
+  payment_plan_id: z.guid(),
+});
+
+export const clearScheduleSchema = z.object({
+  reservation_id: z.guid(),
+});
+
+/**
+ * Mark one line paid, or un-mark it.
+ *
+ * `paid` and `paid_amount` move together because the DB constraint
+ * `installment_paid_coherent` requires it: a line marked paid with no amount
+ * makes "what is outstanding?" unanswerable.
+ */
+export const markInstallmentSchema = z
+  .object({
+    installment_id: z.guid(),
+    paid: z.preprocess((v) => v === "on" || v === true || v === "true", z.boolean()),
+    paid_amount: optNumber,
+    note: optText(500),
+  })
+  .refine((d) => !d.paid || d.paid_amount !== undefined, {
+    message: "Say how much was paid",
+    path: ["paid_amount"],
+  });
+
+export const setInstallmentDueSchema = z.object({
+  installment_id: z.guid(),
+  /** blank clears it — a milestone with no agreed date is normal */
+  due_date: z.preprocess(emptyToUndefined, z.iso.date().optional()),
+});

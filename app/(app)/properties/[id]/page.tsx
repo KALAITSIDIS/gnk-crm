@@ -36,6 +36,11 @@ import {
   ReservationCard,
   type ReservationRow,
 } from "@/components/features/properties/reservation-card";
+import {
+  PaymentScheduleCard,
+  type InstallmentRow,
+  type PlanOption,
+} from "@/components/features/properties/payment-schedule-card";
 import type { MatchCandidate } from "@/lib/services/matching";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
@@ -87,8 +92,16 @@ export default async function PropertyDetailPage({
   const keyRows = unwrapRows(keysRes, "property keys");
 
   const keyIds = keyRows.map((k) => k.id);
-  const [priceRes, eventsRes, keyEventsRes, viewingsRes, documentsRes, reservationsRes] =
-    await Promise.all([
+  const [
+    priceRes,
+    eventsRes,
+    keyEventsRes,
+    viewingsRes,
+    documentsRes,
+    reservationsRes,
+    installmentsRes,
+    plansRes,
+  ] = await Promise.all([
     supabase
       .from("price_history")
       .select("id, old_price, new_price, changed_at, changed_by")
@@ -137,6 +150,19 @@ export default async function PropertyDetailPage({
       .eq("property_id", id)
       .order("held_from", { ascending: false })
       .limit(50),
+    // 0050. Schedule lines for this property's holds — the card picks the live
+    // one's. One query rather than a second round trip once the hold is known.
+    supabase
+      .from("reservation_installments")
+      .select(
+        "id, reservation_id, sort_order, label, pct, amount, milestone, due_date, paid_at, paid_amount, note",
+      )
+      .order("sort_order"),
+    // a unit's plans live on its parent project; a standalone's on itself
+    supabase
+      .from("payment_plans")
+      .select("id, name, installments, project_id")
+      .order("created_at"),
   ]);
   const priceRows = unwrapRows(priceRes, "price history");
   const propertyEventRows = unwrapRows(eventsRes, "events");
@@ -169,6 +195,26 @@ export default async function PropertyDetailPage({
       contact_name: contact?.display_name ?? null,
     };
   });
+
+  // 0050. A property has at most one LIVE hold (0044's partial unique index),
+  // and only that one has a schedule worth acting on.
+  const liveReservation = reservations.find(
+    (r) => r.status === "held" || r.status === "confirmed",
+  );
+  const installments: InstallmentRow[] = (
+    (installmentsRes.data ?? []) as (InstallmentRow & { reservation_id: string })[]
+  ).filter((l) => liveReservation !== undefined && l.reservation_id === liveReservation.id);
+  const planScopeId = p.parent_id ?? p.id;
+  const paymentPlans: PlanOption[] = (
+    (plansRes.data ?? []) as {
+      id: string;
+      name: string;
+      installments: unknown[] | null;
+      project_id: string;
+    }[]
+  )
+    .filter((pl) => pl.project_id === planScopeId)
+    .map((pl) => ({ id: pl.id, name: pl.name, installmentCount: (pl.installments ?? []).length }));
 
   const isLand = p.property_type === "land";
   const media = mediaRows ?? [];
@@ -508,6 +554,26 @@ export default async function PropertyDetailPage({
               isContainer={p.kind === "project" || p.kind === "phase"}
             />
           </div>
+
+          {/* The schedule belongs to the LIVE hold, so it appears only with one */}
+          {liveReservation && p.kind !== "project" && p.kind !== "phase" ? (
+            <div className="mt-4 max-w-3xl rounded-[10px] border border-border bg-surface p-6">
+              <div className="mb-4">
+                <h2 className="text-sm font-semibold text-text-1">Payment schedule</h2>
+                <p className="text-sm text-text-2">
+                  What this buyer owes and when. A plan sets the proportions; the dates are yours
+                  to agree.
+                </p>
+              </div>
+              <PaymentScheduleCard
+                reservationId={liveReservation.id}
+                lines={installments}
+                plans={paymentPlans}
+                canEdit={canEditProperty}
+                askingPrice={p.asking_price === null ? null : Number(p.asking_price)}
+              />
+            </div>
+          ) : null}
         </TabsContent>
 
         <TabsContent value="buyers" className="mt-4">

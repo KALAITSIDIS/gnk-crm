@@ -290,6 +290,29 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
   // 0048: a block reprice, aggregated into one alert against the project
   bulk_price_drop_matched: (p, t) =>
     t("bulkPriceDropMatched", { count: Number(p.buyers) || 0 }),
+  // 0050 payment schedules. Amounts are frozen at apply time, so the event
+  // records what was quoted rather than what a later price would say.
+  reservation_schedule_applied: (p, t) => {
+    const plan = asText(p.plan);
+    // `amount`, not `total`: `total` is already the availability-link UNIT COUNT
+    // in this namespace, and one placeholder name cannot mean a number in one
+    // string and money in another — SAMPLE_PARAMS can only hold one value for it.
+    const amount = asMoney(p.total);
+    return plan && amount
+      ? t("scheduleAppliedPlan", { plan, amount })
+      : t("scheduleApplied", { count: Number(p.lines) || 0 });
+  },
+  reservation_schedule_cleared: (_p, t) => t("scheduleCleared"),
+  installment_paid: (p, t) => {
+    const label = asText(p.label);
+    const amount = asMoney(p.amount);
+    if (label && amount) return t("installmentPaidLabelAmount", { label, amount });
+    return label ? t("installmentPaidLabel", { label }) : t("installmentPaid");
+  },
+  installment_unpaid: (p, t) => {
+    const label = asText(p.label);
+    return label ? t("installmentUnpaidLabel", { label }) : t("installmentUnpaid");
+  },
   // 0044 reservations. Written against the PROPERTY, like the nightly sweep:
   // a hold is a fact about the property, which is where a dispute looks.
   reservation_created: (p, t) => {

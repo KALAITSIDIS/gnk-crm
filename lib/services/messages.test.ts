@@ -65,6 +65,11 @@ const SAMPLE_PARAMS = {
   total: 19,
   // buyer requirements (0043)
   label: "Sea view 2-bed",
+  // reservation payment schedules (0050). NOTE: no `total` here — it is already
+  // defined above as the availability-link unit COUNT, and a duplicate key
+  // would silently shadow it, feeding a string to that plural. Money uses the
+  // existing `amount`.
+  plan: "Standard 10/30/60",
 };
 
 describe("locale message files", () => {

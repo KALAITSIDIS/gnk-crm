@@ -2631,4 +2631,127 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(anonSees ?? [], "anon must not read task_kinds").toHaveLength(0);
   });
 
+  it("34. reservation_installments: org-scoped, delete-gated, and paid lines must state an amount", async () => {
+    // 0050. The migration's own paid-coherence probe is SKIPPED on a database
+    // with no reservations — which is exactly what CI applies migrations to —
+    // so this is where that constraint is covered unconditionally.
+    const { data: prop } = await svc
+      .from("properties")
+      .insert({
+        org_id: ORG_A,
+        reference: `INST-${run}`,
+        kind: "standalone",
+        property_type: "apartment",
+        status: "available",
+        title: { en: "Installment fixture" },
+      })
+      .select("id")
+      .single();
+
+    const { data: res } = await svc
+      .from("reservations")
+      .insert({
+        org_id: ORG_A,
+        property_id: prop!.id,
+        status: "held",
+        expires_at: new Date(Date.now() + 7 * 864e5).toISOString(),
+      })
+      .select("id")
+      .single();
+
+    // --- an agent may write a schedule line ---------------------------------
+    const { data: line, error: insertErr } = await agentA1.client
+      .from("reservation_installments")
+      .insert({
+        org_id: ORG_A,
+        reservation_id: res!.id,
+        sort_order: 0,
+        label: "Reservation",
+        pct: 10,
+        amount: 25000,
+        milestone: "On reservation",
+      })
+      .select("id")
+      .single();
+    expect(insertErr, "an agent may record a schedule").toBeNull();
+
+    // --- THE COHERENCE CONSTRAINT, covered unconditionally ------------------
+    // A line marked paid with no amount makes "what is outstanding?"
+    // unanswerable, which is the whole reason the constraint exists.
+    const { error: paidNoAmountErr } = await agentA1.client
+      .from("reservation_installments")
+      .update({ paid_at: new Date().toISOString() })
+      .eq("id", line!.id);
+    expect(paidNoAmountErr, "paid with no amount must be refused").not.toBeNull();
+    expect(paidNoAmountErr!.message).toMatch(/installment_paid_coherent/);
+
+    const { error: amountNoPaidErr } = await agentA1.client
+      .from("reservation_installments")
+      .update({ paid_amount: 25000 })
+      .eq("id", line!.id);
+    expect(amountNoPaidErr, "an amount with no paid_at must be refused too").not.toBeNull();
+
+    // both together is the only accepted shape
+    const { error: bothErr } = await agentA1.client
+      .from("reservation_installments")
+      .update({ paid_at: new Date().toISOString(), paid_amount: 25000 })
+      .eq("id", line!.id);
+    expect(bothErr, "paid_at and paid_amount together is accepted").toBeNull();
+
+    // --- one line per position ----------------------------------------------
+    const { error: dupErr } = await agentA1.client.from("reservation_installments").insert({
+      org_id: ORG_A,
+      reservation_id: res!.id,
+      sort_order: 0,
+      label: "Duplicate position",
+      amount: 1,
+    });
+    expect(dupErr, "two lines cannot share a position").not.toBeNull();
+
+    // --- cross-org isolation -------------------------------------------------
+    const { data: bSees } = await agentB.client
+      .from("reservation_installments")
+      .select("id")
+      .eq("id", line!.id);
+    expect(bSees ?? [], "org B must not see org A's schedule").toHaveLength(0);
+
+    // --- DELETE is gated to admin / listing manager -------------------------
+    const { count: agentDeleted } = await agentA1.client
+      .from("reservation_installments")
+      .delete({ count: "exact" })
+      .eq("id", line!.id);
+    expect(agentDeleted ?? 0, "an agent must not delete a schedule line").toBe(0);
+
+    const { error: lmDelErr, count: lmDeleted } = await lmA.client
+      .from("reservation_installments")
+      .delete({ count: "exact" })
+      .eq("id", line!.id);
+    expect(lmDelErr, "a listing manager may delete").toBeNull();
+    expect(lmDeleted ?? 0).toBe(1);
+
+    // --- the schedule dies with its reservation, never outlives it ----------
+    const { data: survivor } = await svc
+      .from("reservation_installments")
+      .insert({
+        org_id: ORG_A,
+        reservation_id: res!.id,
+        sort_order: 1,
+        label: "Contract",
+        amount: 75000,
+      })
+      .select("id")
+      .single();
+    await svc.from("reservations").delete().eq("id", res!.id);
+    const { data: orphan } = await svc
+      .from("reservation_installments")
+      .select("id")
+      .eq("id", survivor!.id);
+    expect(orphan ?? [], "deleting a reservation cascades to its schedule").toHaveLength(0);
+
+    // --- anon reaches nothing ------------------------------------------------
+    const anonClient2 = anonClient();
+    const { data: anonLines } = await anonClient2.from("reservation_installments").select("id");
+    expect(anonLines ?? [], "anon must not read schedules").toHaveLength(0);
+  });
+
 });
