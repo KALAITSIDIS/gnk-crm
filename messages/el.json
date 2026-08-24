@@ -255,6 +255,7 @@
       "priceDropMatched": "Μείωση τιμής — {count, plural, one {# αγοραστής} other {# αγοραστές}} εντός προϋπολογισμού",
       "newListingMatched": "Στην αγορά — {count, plural, one {# αγοραστής ταιριάζει} other {# αγοραστές ταιριάζουν}}",
       "reservationExpiringSoon": "Η κράτηση λήγει σε {days, plural, one {# ημέρα} other {# ημέρες}} — δημιουργήθηκε υπενθύμιση",
+      "bulkPriceDropMatched": "Αναπροσαρμογή τιμών — {count, plural, one {# αγοραστής} other {# αγοραστές}} εντός προϋπολογισμού",
       "supersededReservationExtended": "Η υπενθύμιση κράτησης έκλεισε — η κράτηση παρατάθηκε",
       "supersededReservationClosed": "Η υπενθύμιση κράτησης έκλεισε — η κράτηση δεν είναι πλέον ενεργή",
       "reservationCreated": "Δημιουργήθηκε κράτηση",

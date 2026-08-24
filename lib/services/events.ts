@@ -287,6 +287,9 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
   // 0047's nightly warning, actor-null: written by warn_expiring_reservations()
   reservation_expiring_soon: (p, t) =>
     t("reservationExpiringSoon", { days: Number(p.days) || 2 }),
+  // 0048: a block reprice, aggregated into one alert against the project
+  bulk_price_drop_matched: (p, t) =>
+    t("bulkPriceDropMatched", { count: Number(p.buyers) || 0 }),
   // 0044 reservations. Written against the PROPERTY, like the nightly sweep:
   // a hold is a fact about the property, which is where a dispute looks.
   reservation_created: (p, t) => {

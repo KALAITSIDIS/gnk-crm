@@ -660,6 +660,32 @@ export async function applyPriceUplift(
     };
   }
 
+  // A block reprice can bring buyers into range across several units. ONE task
+  // against the project, not one per unit: it was one act and it is one phone
+  // call. Best effort — the prices ARE changed and versioned by this point, so
+  // an alert failure must never be reported as a failed reprice.
+  try {
+    const { raiseBulkPriceDropAlert } = await import("@/lib/services/match-alerts");
+    const { data: projectRow } = await supabase
+      .from("properties")
+      .select("id, reference, assigned_agent_id")
+      .eq("id", input.project_id)
+      .single();
+    if (projectRow) {
+      await raiseBulkPriceDropAlert(supabase, {
+        orgId: project.org_id,
+        actorId: profile.id,
+        project: projectRow,
+        changes: preview.rows,
+      });
+    }
+  } catch (err) {
+    // logged, never swallowed — an earlier alert bug was invisible precisely
+    // because a discarded error left nothing anywhere to say the feature had
+    // stopped working
+    console.error("bulk price-drop alert failed", { projectId: input.project_id, err });
+  }
+
   revalidatePath(`/properties/${input.project_id}/units`);
   revalidatePath("/properties");
   return { error: null, savedAt: Date.now() };
