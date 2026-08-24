@@ -154,7 +154,7 @@ export const MATCH_WEIGHTS = {
  * options. They rank below `available` via the `availableNow` weight rather
  * than being excluded — a ranking problem solved by ranking, not by filtering.
  */
-const MATCHABLE_STATUSES: readonly PropertyStatus[] = ["available", "reserved", "under_offer"];
+export const MATCHABLE_STATUSES: readonly PropertyStatus[] = ["available", "reserved", "under_offer"];
 
 /** `sale_or_rent` satisfies both sides; anything else must agree exactly. */
 function transactionCompatible(want: TransactionType, got: TransactionType): boolean {

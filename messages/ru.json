@@ -253,6 +253,7 @@
     "documentDeletedTitle": "Документ удалён — {title}",
     "renewalTaskCreated": "Создано напоминание о продлении",
       "priceDropMatched": "Снижение цены — {count, plural, one {# покупатель} few {# покупателя} many {# покупателей} other {# покупателя}} в рамках бюджета",
+      "newListingMatched": "В продаже — {count, plural, one {# подходящий покупатель} few {# подходящих покупателя} many {# подходящих покупателей} other {# подходящего покупателя}}",
       "reservationCreated": "Создана бронь",
       "reservationCreatedAmount": "Создана бронь — депозит {amount}",
       "reservationExtended": "Бронь продлена",

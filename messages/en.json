@@ -253,6 +253,7 @@
     "documentDeletedTitle": "Document deleted — {title}",
     "renewalTaskCreated": "Renewal reminder task created",
       "priceDropMatched": "Price drop — {count, plural, one {# buyer} other {# buyers}} now in budget",
+      "newListingMatched": "On the market — {count, plural, one {# matching buyer} other {# matching buyers}}",
       "reservationCreated": "Reservation created",
       "reservationCreatedAmount": "Reservation created — deposit {amount}",
       "reservationExtended": "Reservation extended",

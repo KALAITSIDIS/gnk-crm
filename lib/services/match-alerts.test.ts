@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BUDGET_TOLERANCE_PCT } from "./matching";
-import { isAlertableDrop, priceFor, wasPricedOut } from "./price-drop-alerts";
+import { becameMatchable, isAlertableDrop, priceFor, wasPricedOut } from "./match-alerts";
 
 describe("isAlertableDrop", () => {
   it("fires only on a genuine decrease", () => {
@@ -85,4 +85,60 @@ describe("priceFor", () => {
     expect(priceFor("rent", { asking_price: 250000, rent_price_month: null })).toBeNull();
     expect(priceFor("sale", { asking_price: null, rent_price_month: 1200 })).toBeNull();
   });
+});
+
+describe("becameMatchable — the new-listing trigger", () => {
+  it("fires only when the status ENTERS a matchable state", () => {
+    expect(becameMatchable("draft", "available"), "first publication").toBe(true);
+    expect(becameMatchable("withdrawn", "available"), "put back on the market").toBe(true);
+    // a sale that fell through is a new listing to a buyer never shown it
+    expect(becameMatchable("sold", "available")).toBe(true);
+    expect(becameMatchable(null, "available"), "arriving with no prior state").toBe(true);
+  });
+
+  it("does not fire while already on the market", () => {
+    // These are the ones that would turn the feature into noise: an agent
+    // editing a live listing must not re-alert every matching buyer.
+    expect(becameMatchable("available", "available")).toBe(false);
+    expect(becameMatchable("available", "reserved")).toBe(false);
+    expect(becameMatchable("reserved", "under_offer")).toBe(false);
+    expect(becameMatchable("under_offer", "available")).toBe(false);
+  });
+
+  it("does not fire when leaving the market", () => {
+    expect(becameMatchable("available", "sold")).toBe(false);
+    expect(becameMatchable("available", "withdrawn")).toBe(false);
+    expect(becameMatchable("available", "draft")).toBe(false);
+    expect(becameMatchable("draft", "draft")).toBe(false);
+  });
+
+  it("agrees with the matcher about which statuses are matchable", () => {
+    // becameMatchable reads MATCHABLE_STATUSES rather than restating it. If the
+    // two ever disagreed, the alert would fire for a property the matcher still
+    // hides, or stay silent for one it shows. Assert the full set both ways.
+    for (const live of ["available", "reserved", "under_offer"] as const) {
+      expect(becameMatchable("draft", live), `${live} is matchable`).toBe(true);
+    }
+    for (const dead of ["draft", "sold", "rented", "withdrawn"] as const) {
+      expect(becameMatchable("draft", dead), `${dead} is not matchable`).toBe(false);
+    }
+  });
+});
+
+describe("pricing an unpriced property is NOT an alert — either kind", () => {
+  it("is excluded from the drop path", () => {
+    // An earlier BACKLOG note of mine said this case "belongs to the
+    // new-listing alert". That was wrong, and this pins why.
+    expect(isAlertableDrop(null, 250000)).toBe(false);
+  });
+
+  it("is excluded from the new-listing path too, because status did not change", () => {
+    expect(becameMatchable("available", "available")).toBe(false);
+  });
+
+  // The reason it belongs to NEITHER: matchProperty skips the budget hard
+  // filter when the price is null, so an unpriced property is ALREADY eligible
+  // for every buyer. Setting a price can only ever remove a match, never create
+  // one — so there is no "newly matching" buyer to alert. Proven in
+  // matching.test.ts ("does not reject an unpriced property").
 });

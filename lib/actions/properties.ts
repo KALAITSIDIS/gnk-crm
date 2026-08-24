@@ -491,14 +491,18 @@ export async function updatePropertySection(
   // been evented, so an alert failure must never turn it into an error the user
   // sees — they would retry a save that already worked. It is also skipped for
   // containers, whose units carry the prices.
+  const priceMoved = "asking_price" in changed || "rent_price_month" in changed;
+  const statusMoved = "status" in changed;
   if (
     section === "details" &&
     current.kind !== "project" &&
     current.kind !== "phase" &&
-    ("asking_price" in changed || "rent_price_month" in changed)
+    (priceMoved || statusMoved)
   ) {
     try {
-      const { raisePriceDropAlert } = await import("@/lib/services/price-drop-alerts");
+      const { raisePriceDropAlert, raiseNewListingAlert } = await import(
+        "@/lib/services/match-alerts"
+      );
       const { data: fresh } = await supabase
         .from("properties")
         .select(
@@ -510,15 +514,36 @@ export async function updatePropertySection(
         .eq("id", propertyId)
         .single();
       if (fresh) {
-        await raisePriceDropAlert(supabase, {
-          orgId: profile.orgId,
-          actorId: profile.id,
-          property: fresh as unknown as Parameters<typeof raisePriceDropAlert>[1]["property"],
-          oldAskingPrice:
-            current.asking_price === null ? null : Number(current.asking_price),
-          oldRentPrice:
-            current.rent_price_month === null ? null : Number(current.rent_price_month),
-        });
+        const property = fresh as unknown as Parameters<
+          typeof raisePriceDropAlert
+        >[1]["property"];
+
+        // A property arriving on the market is a bigger event than a price
+        // move on one already there, so it is checked FIRST and the drop is
+        // skipped when it fires — a single save that both publishes and
+        // reprices should raise one alert, not two saying the same thing.
+        let announced = false;
+        if (statusMoved) {
+          const res = await raiseNewListingAlert(supabase, {
+            orgId: profile.orgId,
+            actorId: profile.id,
+            property,
+            previousStatus: current.status as typeof property.status,
+          });
+          announced = res.newlyMatching > 0;
+        }
+
+        if (priceMoved && !announced) {
+          await raisePriceDropAlert(supabase, {
+            orgId: profile.orgId,
+            actorId: profile.id,
+            property,
+            oldAskingPrice:
+              current.asking_price === null ? null : Number(current.asking_price),
+            oldRentPrice:
+              current.rent_price_month === null ? null : Number(current.rent_price_month),
+          });
+        }
       }
     } catch (err) {
       // Best effort, but NOT silent. The first version swallowed without a
@@ -526,7 +551,7 @@ export async function updatePropertySection(
       // say so — the save succeeded, the event was written, and the feature was
       // simply absent. Sentry is wired (IMPROVEMENTS C1), so this reaches a
       // durable sink instead of nowhere.
-      console.error("price-drop alert failed", { propertyId, err });
+      console.error("match alert failed", { propertyId, err });
     }
   }
 
