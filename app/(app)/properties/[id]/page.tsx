@@ -626,6 +626,12 @@ export default async function PropertyDetailPage({
               areas={areas}
               isAdmin={profile.role === "admin"}
               readOnly={!canEditProperty}
+              // the ACTIVE mandate's rate, straight from mandates_safe: it is
+              // already NULL for anyone who is not an admin or this property's
+              // assigned agent, so the view does the gating (doc 04, T4.5)
+              commissionPct={
+                mandatePanelRows.find((m) => m.status === "active")?.commission_pct ?? null
+              }
             />
           </div>
         </TabsContent>
