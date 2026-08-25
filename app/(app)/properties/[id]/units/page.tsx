@@ -11,6 +11,7 @@ import {
   type UnitRow,
 } from "@/components/features/properties/units-matrix";
 import { AvailabilityShare } from "@/components/features/properties/availability-share";
+import { SalesVelocityCard } from "@/components/features/properties/sales-velocity-card";
 import { GenerateUnitsForm } from "@/components/features/properties/generate-units-form";
 import { InheritanceDrift } from "@/components/features/properties/inheritance-drift";
 import {
@@ -29,6 +30,7 @@ import {
 } from "@/lib/services/unit-inheritance";
 import { Button } from "@/components/ui/button";
 import { getCurrentProfile } from "@/lib/services/auth";
+import { fetchProjectVelocity } from "@/lib/queries/sales-velocity";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
 
@@ -162,6 +164,11 @@ export default async function ProjectUnitsPage({
     return acc;
   }, {});
 
+  // 0054: two round trips of its own, the second bounded by the number of SOLD
+  // units rather than by project size — see lib/queries/sales-velocity.ts. Kept
+  // out of the Promise.all above because the event query needs the unit ids.
+  const velocity = await fetchProjectVelocity(supabase, id);
+
   return (
     <div className="flex flex-col gap-4">
       <div>
@@ -180,6 +187,8 @@ export default async function ProjectUnitsPage({
             .join("")}
         </p>
       </div>
+
+      <SalesVelocityCard velocity={velocity} />
 
       <InheritanceDrift
         projectId={id}

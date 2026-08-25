@@ -670,9 +670,38 @@ explicit direction.
 - **Construction progress + delivery date, S.** Finding 10, made useful: a
   milestone % and an expected delivery on the project header, which is also the
   raw material for the M13 developer dashboard.
-- **Sales velocity per project, M.** Units sold per month and absorption rate,
-  computed from `status_changed` events already being written and read by nothing
-  but the timeline. No new data collection at all.
+- ~~**Sales velocity per project, M.**~~ ✅ **DONE 2026-08-25.** A card on
+  `/properties/[id]/units`: units, sold, absorption %, remaining, pace over the
+  last 12 months, a projected months-to-sell-out, and a 24-month bar chart.
+  **NO MIGRATION AND NO NEW COLUMN** — the entry's core claim held exactly.
+
+  **But the entry named the wrong event, and getting that wrong would have
+  undercounted silently.** Property status changes are written by TWO paths in
+  two shapes: the units grid (`updateUnitStatus`) writes `status_changed`
+  `{reference, from, to}`, and the property details form (`saveProperty`) writes
+  `updated` `{section, changed: {status: {from, to}}}`. A unit marked sold from
+  the details form produces no `status_changed` row at all, so a reader that
+  handled only the named shape would have shown a low chart with nothing
+  anywhere saying it was low. `soldAtFromEvents` handles both, and the local
+  fixture deliberately seeds a third of its sales through the `updated` shape so
+  a regression shows up as a wrong total rather than as nothing.
+
+  A `sold_at` column was considered and REFUSED: it would be a second source of
+  truth about something the event log already records, which is the trade the
+  events table exists to avoid.
+
+  **Decisions worth keeping:** only units whose CURRENT status is `sold` are
+  counted, so the chart reconciles with the inventory beside it and a reverted
+  sale is not a sale; `withdrawn` is excluded from `remaining`; the projection
+  uses the last 12 months rather than all time, and is `null` — not "never", not
+  "0 months" — when nothing has sold in a year; sold units with no recorded date
+  are counted in absorption but SURFACED as missing from the chart rather than
+  quietly dropped.
+
+  Scoped to direct `kind = 'unit'` children, the same set the rest of that page
+  shows. A phased project keeps units under its phases, so you read velocity per
+  phase — recursing would make this one card disagree with every other number on
+  the page.
 - ~~**Keys follow the mandate, S.**~~ ✅ **DONE 2026-08-25** (migration 0053).
   Ending a mandate raises one `key_recall` task naming how many keys the agency
   still holds. Both paths covered: `setMandateStatus` on termination (through
