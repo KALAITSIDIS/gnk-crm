@@ -2924,6 +2924,10 @@ export type Database = {
         Args: { p_ip_hash: string; p_limit?: number }
         Returns: boolean
       }
+      nudge_threshold: {
+        Args: { p_fallback: number; p_key: string }
+        Returns: number
+      }
       org_mfa_status: {
         Args: never
         Returns: {

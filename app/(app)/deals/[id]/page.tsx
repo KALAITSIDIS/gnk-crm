@@ -7,6 +7,7 @@ import {
   HealthPanel,
 } from "@/components/features/deals/detail-forms";
 import { LogDealContact } from "@/components/features/deals/log-contact";
+import { readThreshold } from "@/lib/services/nudge-thresholds";
 import { DealOutcomeActions } from "@/components/features/deals/outcome-actions";
 import { OffersCard, type OfferRow } from "@/components/features/deals/offers";
 import { EventTimeline } from "@/components/features/shared/event-timeline";
@@ -38,7 +39,7 @@ export default async function DealDetailPage({
   const { data: deal } = await supabase.from("deals").select("*").eq("id", id).maybeSingle();
   if (!deal) notFound();
 
-  const [{ data: stage }, { data: offerRows }] = await Promise.all([
+  const [{ data: stage }, { data: offerRows }, { data: nudgeCfg }] = await Promise.all([
     supabase
       .from("deal_stages")
       .select("id, name, is_won, is_lost")
@@ -49,6 +50,13 @@ export default async function DealDetailPage({
       .select("*")
       .eq("deal_id", id)
       .order("created_at", { ascending: false }),
+    // 0052: the no-contact copy in the Log contact dialog states this number,
+    // and the desk can change it on Settings → Nudges.
+    supabase
+      .from("cyprus_config")
+      .select("value")
+      .eq("key", "nudge_thresholds")
+      .maybeSingle(),
   ]);
   const offers = offerRows ?? [];
 
@@ -191,7 +199,10 @@ export default async function DealDetailPage({
             )}
           </span>
           <div className="flex items-center gap-2">
-            <LogDealContact dealId={deal.id} />
+            <LogDealContact
+              dealId={deal.id}
+              noContactDays={readThreshold(nudgeCfg?.value ?? null, "deal_no_contact_days")}
+            />
             <DealOutcomeActions
               dealId={deal.id}
               wonEligible={wonEligible}

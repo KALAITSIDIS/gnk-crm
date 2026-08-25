@@ -1290,13 +1290,45 @@ explicit direction.
   `last_activity_at or status`, so the function alone would have been correct
   while the feature stayed broken. RLS test 27 and the reworked E2E nudge spec
   pin both directions. See DECISIONS `T-deal-contact`.
-- **Configurable nudge thresholds (decision, follow-up to B7).** 14 days and 48
-  hours are hardcoded in `create_followup_nudges()`. 14 is deliberately the
-  health score's own activity cliff (doc 02 §C5), so making it independently
-  editable risks the two disagreeing silently about what "stale" means. If the
-  desk wants to tune them, put them in `cyprus_config` with a `coalesce` default
-  so the cron survives a missing key, add the settings row + validation + its
-  event, and decide explicitly whether the health score follows.
+- ~~**Configurable nudge thresholds (decision, follow-up to B7).**~~ ✅ **DONE
+  2026-08-25** (migration 0052). Settings → Nudges, four typed inputs, admin
+  only, evented. Built exactly as this entry prescribed — `cyprus_config` +
+  a `coalesce` default so the cron survives a missing key.
+
+  **THE DECISION IT ASKED FOR WAS PUT TO THE OPERATOR AND ANSWERED: the health
+  score does NOT follow.** It keeps its fixed cliff (full ≤7d, half ≤14d, none
+  after). So setting the nudge to 21 days means the score calls a deal stale a
+  week before anyone is told, and that divergence is now VISIBLE — the settings
+  page says it in plain English — rather than silent, which was the entry's
+  actual worry. The reason to refuse coupling: `deals.health_score` and its
+  factor snapshot are STORED and recomputed only in-action (T3.3), so a score
+  tracking this setting would either be wrong on every existing deal until
+  something touched it, or need a mass recompute from a settings save that —
+  by T3.3's own rule — writes no event and would be invisible in every
+  timeline.
+
+  **This entry undercounted: it is four thresholds, not two.** 0047's 2 days and
+  0051's 7 days joined the original 14/48. **`mandate_renewal` was never one of
+  them** — 0012 already reads `mandates.renewal_reminder_days` per row, which is
+  also the precedent 0052 follows.
+
+  **A BUG WAS FOUND AND FIXED IN THE PROCESS.** The no-contact boundary is a
+  function of the threshold, so changing it trips the existing self-heal — and
+  that self-heal logged `reason: deal_contacted`, which was safe to assert only
+  while the boundary could move for one reason. Writing "the deal was contacted"
+  into an append-only log when nobody contacted anybody cannot be taken back.
+  The sweep now distinguishes the two (a real contact stamps `last_contact_at`
+  AFTER the task was minted) and writes `threshold_changed`. RLS test 36 pins
+  both arms.
+
+  **The risk this entry was really about did not disappear, it MOVED** — from
+  "two hardcoded copies" to "the SQL reader and the TypeScript reader". They are
+  now a matched pair: `public.nudge_threshold()` and `readThreshold()` in
+  `lib/services/nudge-thresholds.ts` implement the same five fallback rules, and
+  `nudge-thresholds.test.ts` runs the same table against TS that 0052's
+  assertion block runs against SQL. **Change one, change the other and both
+  tables** — otherwise the settings page displays a number the sweeps are not
+  using, which is worse than the hardcoding was because it looks authoritative.
 - ~~**Nudges can land on a deactivated assignee (B7 + 0012).**~~ **RESOLVED
   2026-08-02 (migration 0024).** Every arm of the three-armed fallback is now
   active-only in all three system kinds (`deal_no_contact`, `viewing_feedback`,

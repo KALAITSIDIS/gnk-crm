@@ -2919,4 +2919,192 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(chainOk, "reminder events keep the hash chain intact").toBe(true);
   });
 
+
+  it("36. nudge thresholds: the sweeps follow the setting, and a threshold change is not logged as contact", async () => {
+    // 0052. Two things are under test and they are different in kind:
+    //   * RLS — an agent may READ the thresholds (the Log contact dialog states
+    //     the number) but must not WRITE them, and `nudge_threshold()` must not
+    //     be reachable over PostgREST at all.
+    //   * BEHAVIOUR — the sweeps must actually read the row rather than keeping
+    //     their old constants, which a migration that only rewrites function
+    //     bodies could very easily fail to achieve without anyone noticing.
+    const { data: before } = await svc
+      .from("cyprus_config")
+      .select("value")
+      .eq("key", "nudge_thresholds")
+      .single();
+    expect(before, "0052 must have seeded the row").not.toBeNull();
+
+    const setThresholds = async (v: Record<string, number>) => {
+      const { error } = await svc.from("cyprus_config").update({ value: v }).eq("key", "nudge_thresholds");
+      expect(error).toBeNull();
+    };
+
+    try {
+      // --- an agent may read, because the deal page states the number --------
+      const { data: agentSees } = await agentA1.client
+        .from("cyprus_config")
+        .select("value")
+        .eq("key", "nudge_thresholds")
+        .maybeSingle();
+      expect(agentSees, "an agent must be able to read the thresholds").not.toBeNull();
+
+      // --- but only an admin may change them --------------------------------
+      const { count: agentWrote } = await agentA1.client
+        .from("cyprus_config")
+        .update({ value: { deal_no_contact_days: 1 } }, { count: "exact" })
+        .eq("key", "nudge_thresholds");
+      expect(agentWrote ?? 0, "an agent must not change a threshold").toBe(0);
+
+      // --- the reader is not an API ------------------------------------------
+      const anon = anonClient();
+      const { error: anonErr } = await anon.rpc("nudge_threshold", {
+        p_key: "deal_no_contact_days",
+        p_fallback: 14,
+      });
+      expect(anonErr, "anon must not run the reader").not.toBeNull();
+      const { error: agentRpcErr } = await agentA1.client.rpc("nudge_threshold", {
+        p_key: "deal_no_contact_days",
+        p_fallback: 14,
+      });
+      expect(agentRpcErr, "a signed-in agent must not run it either").not.toBeNull();
+
+      // --- fixture: one open deal, silent for five days ----------------------
+      const { data: stage } = await svc
+        .from("deal_stages")
+        .select("id")
+        .eq("org_id", ORG_A)
+        .order("sort_order")
+        .limit(1)
+        .single();
+
+      const { data: deal, error: dealErr } = await svc
+        .from("deals")
+        .insert({
+          org_id: ORG_A,
+          stage_id: stage!.id,
+          title: `NUDGE-${run} threshold deal`,
+          status: "open",
+          last_contact_at: new Date(Date.now() - 5 * 864e5).toISOString(),
+          created_at: new Date(Date.now() - 40 * 864e5).toISOString(),
+        })
+        .select("id")
+        .single();
+      expect(dealErr).toBeNull();
+
+      const openNudges = async () => {
+        const { count } = await svc
+          .from("tasks")
+          .select("id", { count: "exact", head: true })
+          .eq("deal_id", deal!.id)
+          .eq("kind", "deal_no_contact")
+          .eq("is_done", false);
+        return count ?? 0;
+      };
+      // Filter on the PAYLOAD, not on a time-ordered window. Many events share
+      // a timestamp inside one sweep, so "order by occurred_at, take the top
+      // few, then search" quietly misses the row it is looking for.
+      const latestSupersedeReason = async () => {
+        const { data } = await svc
+          .from("events")
+          .select("payload, occurred_at")
+          .eq("event_type", "superseded")
+          .eq("entity_type", "task")
+          .filter("payload->>deal_id", "eq", deal!.id)
+          .order("occurred_at", { ascending: false })
+          .limit(1);
+        return (data?.[0]?.payload as { reason?: string } | undefined)?.reason ?? null;
+      };
+
+      // five days of silence is inside the shipped 14, so nothing fires
+      await setThresholds({
+        deal_no_contact_days: 14,
+        viewing_feedback_hours: 48,
+        reservation_expiry_days: 2,
+        installment_due_days: 7,
+      });
+      await svc.rpc("create_followup_nudges", { p_org: ORG_A });
+      expect(await openNudges(), "at 14 days a five-day silence is not chased").toBe(0);
+
+      // --- tune it down and the sweep follows --------------------------------
+      await setThresholds({
+        deal_no_contact_days: 3,
+        viewing_feedback_hours: 48,
+        reservation_expiry_days: 2,
+        installment_due_days: 7,
+      });
+      await svc.rpc("create_followup_nudges", { p_org: ORG_A });
+      expect(await openNudges(), "at 3 days the same deal IS chased").toBe(1);
+
+      // the title states the CURRENT threshold, not a baked-in 14
+      const { data: task } = await svc
+        .from("tasks")
+        .select("title")
+        .eq("deal_id", deal!.id)
+        .eq("kind", "deal_no_contact")
+        .single();
+      expect(task!.title).toContain("No contact in 3 days");
+
+      // --- THE REASON. Widening the window moves the boundary, which trips the
+      // self-heal. Before 0052 that could only mean contact was logged, so the
+      // sweep asserted `deal_contacted`; asserting it now would write a false
+      // statement into an append-only log that can never be corrected.
+      await setThresholds({
+        deal_no_contact_days: 30,
+        viewing_feedback_hours: 48,
+        reservation_expiry_days: 2,
+        installment_due_days: 7,
+      });
+      await svc.rpc("create_followup_nudges", { p_org: ORG_A });
+      expect(await openNudges(), "widening the window closes the open nudge").toBe(0);
+      expect(
+        await latestSupersedeReason(),
+        "a threshold change must NOT be recorded as the deal having been contacted",
+      ).toBe("threshold_changed");
+
+      // --- a real contact still reads as a real contact ----------------------
+      // a FRESH boundary: reusing one a task already carried would hit the
+      // deliberate ignore-is_done guard (0006) and mint nothing to supersede
+      await setThresholds({
+        deal_no_contact_days: 3,
+        viewing_feedback_hours: 48,
+        reservation_expiry_days: 2,
+        installment_due_days: 7,
+      });
+      await svc
+        .from("deals")
+        .update({ last_contact_at: new Date(Date.now() - 4 * 864e5).toISOString() })
+        .eq("id", deal!.id);
+      await svc.rpc("create_followup_nudges", { p_org: ORG_A });
+      expect(await openNudges(), "a fresh boundary re-arms").toBe(1);
+
+      await svc
+        .from("deals")
+        .update({ last_contact_at: new Date().toISOString() })
+        .eq("id", deal!.id);
+      await svc.rpc("create_followup_nudges", { p_org: ORG_A });
+      expect(await openNudges(), "logging contact closes it").toBe(0);
+      expect(await latestSupersedeReason(), "and that one IS a contact").toBe("deal_contacted");
+
+      // --- corrupt config must not stop a sweep ------------------------------
+      // reachable state: /settings/cyprus-config edits this row as raw JSON
+      await svc
+        .from("cyprus_config")
+        .update({ value: { deal_no_contact_days: "garbage", viewing_feedback_hours: 0 } })
+        .eq("key", "nudge_thresholds");
+      const { error: sweepErr } = await svc.rpc("create_followup_nudges", { p_org: ORG_A });
+      expect(sweepErr, "a corrupt threshold must not break the sweep").toBeNull();
+
+      const { data: chainOk } = await svc.rpc("verify_events_chain", { p_org: ORG_A });
+      expect(chainOk, "threshold events keep the hash chain intact").toBe(true);
+    } finally {
+      // restore, even if an expectation above failed — this row is global and
+      // the suite is sequential, so leaving it tuned would poison later runs
+      await svc
+        .from("cyprus_config")
+        .update({ value: before!.value })
+        .eq("key", "nudge_thresholds");
+    }
+  });
+
 });

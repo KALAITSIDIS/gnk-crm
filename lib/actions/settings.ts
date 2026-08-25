@@ -17,9 +17,11 @@ import {
   areaNameSchema,
   cyprusConfigSchema,
   inviteUserSchema,
+  nudgeThresholdsSchema,
   orgNameSchema,
   stageNameSchema,
 } from "@/lib/validators/settings";
+import { NUDGE_THRESHOLD_KEYS } from "@/lib/services/nudge-thresholds";
 
 /**
  * Settings suite actions (T5.4, doc 02 §C9). Every action is admin-gated
@@ -512,6 +514,61 @@ export async function renameArea(
   });
   revalidatePath("/settings/locations");
   return { error: null };
+}
+
+/* ---------------- nudge thresholds (0052) ---------------- */
+
+/**
+ * Save the four sweep thresholds.
+ *
+ * Writes the SAME `cyprus_config` row the generic JSON editor exposes, on
+ * purpose: one row, one event type, one place the sweeps read. This form exists
+ * because a raw JSON textarea is the wrong way to ask "how many days of silence
+ * before we chase", not because the storage needed to differ.
+ *
+ * The whole object is replaced rather than merged. A partial write could leave
+ * a key behind that the form no longer shows, and an invisible threshold is
+ * exactly what 0052 set out to abolish.
+ */
+export async function saveNudgeThresholds(
+  _prev: SettingsActionState,
+  formData: FormData,
+): Promise<SettingsActionState> {
+  const parsed = nudgeThresholdsSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Invalid input");
+
+  const gate = await requireAdmin();
+  if ("denied" in gate) return fail(gate.denied);
+  const { supabase, profile } = gate;
+
+  const value = Object.fromEntries(
+    NUDGE_THRESHOLD_KEYS.map((k) => [k, parsed.data[k]]),
+  );
+
+  const { data: updated, error } = await supabase
+    .from("cyprus_config")
+    .update({ value: value as never })
+    .eq("key", "nudge_thresholds")
+    .select("key");
+  if (error) return fail(error.message);
+  // RLS filters a denied update to zero rows rather than erroring, and 0052's
+  // row could also have been deleted — either way this must not claim success.
+  if (!updated?.length) {
+    return fail("Nudge thresholds are not configured on this database — re-run migration 0052.");
+  }
+
+  await logEvent(supabase, {
+    orgId: profile.orgId,
+    actorId: profile.id,
+    entityType: "config",
+    entityId: null,
+    eventType: "updated",
+    payload: { key: "nudge_thresholds", ...value },
+  });
+  revalidatePath("/settings/nudges");
+  // the no-contact copy on the deal page states the number
+  revalidatePath("/deals");
+  return ok();
 }
 
 /* ---------------- cyprus config ---------------- */

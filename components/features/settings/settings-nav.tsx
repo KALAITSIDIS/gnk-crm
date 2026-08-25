@@ -9,6 +9,7 @@ const SECTIONS = [
   { href: "/settings/users", label: "Users" },
   { href: "/settings/stages", label: "Deal stages" },
   { href: "/settings/locations", label: "Locations" },
+  { href: "/settings/nudges", label: "Nudges" },
   { href: "/settings/cyprus-config", label: "Cyprus config" },
   { href: "/settings/retention", label: "Data retention" },
 ];

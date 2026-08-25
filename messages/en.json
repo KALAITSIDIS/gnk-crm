@@ -297,6 +297,7 @@
     "superseded": "Task superseded",
     "supersededDealContacted": "Follow-up task closed — the deal was contacted or closed",
     "supersededFeedbackLogged": "Follow-up task closed — viewing feedback was logged",
+    "supersededThresholdChanged": "Follow-up task closed — the no-contact threshold was changed",
     "supersededMandate": "Renewal task superseded — the mandate was renewed or is no longer active",
     "routeUpdated": "Day route updated — {count, plural, one {# stop} other {# stops}}",
     "routeUpdatedDate": "Day route updated — {count, plural, one {# stop} other {# stops}} ({date})",
