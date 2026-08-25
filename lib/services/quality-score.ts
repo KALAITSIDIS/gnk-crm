@@ -160,7 +160,7 @@ export async function recomputeQualityScore(
       .select(
         `property_type, title, public_description, asking_price, rent_price_month,
          covered_area_sqm, plot_area_sqm, bedrooms, bathrooms, planning_zone_code,
-         building_density_pct, location, title_deed_status, permit_status, quality_score,
+         building_density_pct, location, location_approx, title_deed_status, permit_status, quality_score,
          assigned_agent_id, owner_contact_id, developer_contact_id`,
       )
       .eq("id", propertyId)
@@ -196,7 +196,9 @@ export async function recomputeQualityScore(
     hasBedroomsAndBathrooms: p.bedrooms !== null && p.bathrooms !== null,
     hasPlanningZoneAndDensity:
       p.planning_zone_code !== null && p.building_density_pct !== null,
-    hasCoords: p.location !== null,
+    // 0054: a centroid taken as a stand-in is NOT an exact map location. Ten
+    // points for a coordinate nobody surveyed would make this score a lie.
+    hasCoords: p.location !== null && !p.location_approx,
     titleDeedSet: p.title_deed_status !== "unknown",
     permitSet: p.permit_status !== "unknown",
     mandateActive: (mandates ?? []).length > 0,

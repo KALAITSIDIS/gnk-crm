@@ -1316,6 +1316,7 @@ export type Database = {
           internal_notes: string | null
           kind: Database["public"]["Enums"]["property_kind"]
           location: unknown
+          location_approx: boolean
           max_floors: number | null
           max_height_m: number | null
           min_acceptable_price: number | null
@@ -1386,6 +1387,7 @@ export type Database = {
           internal_notes?: string | null
           kind?: Database["public"]["Enums"]["property_kind"]
           location?: unknown
+          location_approx?: boolean
           max_floors?: number | null
           max_height_m?: number | null
           min_acceptable_price?: number | null
@@ -1456,6 +1458,7 @@ export type Database = {
           internal_notes?: string | null
           kind?: Database["public"]["Enums"]["property_kind"]
           location?: unknown
+          location_approx?: boolean
           max_floors?: number | null
           max_height_m?: number | null
           min_acceptable_price?: number | null
