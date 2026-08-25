@@ -124,6 +124,68 @@ export function computeQualityScore(input: QualityScoreInput): QualityScoreResul
   return { score, items, missing: items.filter((i) => !i.earned) };
 }
 
+/**
+ * The property columns the score reads, and the three facts that come from
+ * elsewhere. Exported so the WORKLIST can build the same input in bulk.
+ */
+export interface QualityScoreSource {
+  property_type: string;
+  title: unknown;
+  public_description: unknown;
+  asking_price: number | string | null;
+  rent_price_month: number | string | null;
+  covered_area_sqm: number | string | null;
+  plot_area_sqm: number | string | null;
+  bedrooms: number | null;
+  bathrooms: number | null;
+  planning_zone_code: string | null;
+  building_density_pct: number | string | null;
+  location: unknown;
+  location_approx: boolean | null;
+  title_deed_status: string;
+  permit_status: string;
+  assigned_agent_id: string | null;
+  owner_contact_id: string | null;
+  developer_contact_id: string | null;
+}
+
+/**
+ * Build the score input from a row plus its media and mandate facts.
+ *
+ * ONE DEFINITION, TWO CALLERS. `recomputeQualityScore` scores a single property
+ * from three per-property queries; the worklist scores a whole list from three
+ * queries TOTAL. If each built its own input they would drift, and the drift
+ * would be invisible — a worklist saying "12 missing coordinates" while the
+ * detail pages disagree is worse than no worklist, because it looks
+ * authoritative. Every rule lives here.
+ */
+export function buildQualityInput(
+  p: QualityScoreSource,
+  facts: { hasCoverPhoto: boolean; photoCount: number; mandateActive: boolean },
+): QualityScoreInput {
+  const isLand = p.property_type === "land";
+  return {
+    isLand,
+    hasCoverPhoto: facts.hasCoverPhoto,
+    photoCount: facts.photoCount,
+    titleEn: (p.title as { en?: string } | null)?.en,
+    publicDescriptionEn: (p.public_description as { en?: string } | null)?.en,
+    hasPrice: p.asking_price !== null || p.rent_price_month !== null,
+    hasArea: isLand ? p.plot_area_sqm !== null : p.covered_area_sqm !== null,
+    hasBedroomsAndBathrooms: p.bedrooms !== null && p.bathrooms !== null,
+    hasPlanningZoneAndDensity:
+      p.planning_zone_code !== null && p.building_density_pct !== null,
+    // 0054: a centroid taken as a stand-in is NOT an exact map location. Ten
+    // points for a coordinate nobody surveyed would make this score a lie.
+    hasCoords: p.location !== null && !p.location_approx,
+    titleDeedSet: p.title_deed_status !== "unknown",
+    permitSet: p.permit_status !== "unknown",
+    mandateActive: facts.mandateActive,
+    hasAssignedAgent: p.assigned_agent_id !== null,
+    hasOwnerOrDeveloper: p.owner_contact_id !== null || p.developer_contact_id !== null,
+  };
+}
+
 type Client = SupabaseClient<Database>;
 
 /**
@@ -184,27 +246,13 @@ export async function recomputeQualityScore(
   ]);
   if (!p) return null;
 
-  const isLand = p.property_type === "land";
-  const result = computeQualityScore({
-    isLand,
-    hasCoverPhoto: (media ?? []).some((m) => m.is_cover),
-    photoCount: (media ?? []).length,
-    titleEn: (p.title as { en?: string } | null)?.en,
-    publicDescriptionEn: (p.public_description as { en?: string } | null)?.en,
-    hasPrice: p.asking_price !== null || p.rent_price_month !== null,
-    hasArea: isLand ? p.plot_area_sqm !== null : p.covered_area_sqm !== null,
-    hasBedroomsAndBathrooms: p.bedrooms !== null && p.bathrooms !== null,
-    hasPlanningZoneAndDensity:
-      p.planning_zone_code !== null && p.building_density_pct !== null,
-    // 0054: a centroid taken as a stand-in is NOT an exact map location. Ten
-    // points for a coordinate nobody surveyed would make this score a lie.
-    hasCoords: p.location !== null && !p.location_approx,
-    titleDeedSet: p.title_deed_status !== "unknown",
-    permitSet: p.permit_status !== "unknown",
-    mandateActive: (mandates ?? []).length > 0,
-    hasAssignedAgent: p.assigned_agent_id !== null,
-    hasOwnerOrDeveloper: p.owner_contact_id !== null || p.developer_contact_id !== null,
-  });
+  const result = computeQualityScore(
+    buildQualityInput(p as unknown as QualityScoreSource, {
+      hasCoverPhoto: (media ?? []).some((m) => m.is_cover),
+      photoCount: (media ?? []).length,
+      mandateActive: (mandates ?? []).length > 0,
+    }),
+  );
 
   if (persist && result.score !== p.quality_score) {
     await supabase
