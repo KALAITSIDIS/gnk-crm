@@ -7,6 +7,7 @@ import {
   MarketingForm,
 } from "@/components/features/properties/detail-forms";
 import { ArchivePropertyButton } from "@/components/features/properties/archive-button";
+import { BuildProgressCard } from "@/components/features/properties/build-progress-card";
 import { PartiesForm } from "@/components/features/properties/parties-form";
 import { MediaTab } from "@/components/features/properties/media-tab";
 import { DocumentsTab } from "@/components/features/properties/documents-tab";
@@ -481,6 +482,17 @@ export default async function PropertyDetailPage({
                 </div>
               ))}
             </dl>
+            {/* Finding 10 put these two on the facts list; this says what they
+                MEAN together — how far along, and how far away. Renders for any
+                property that has either, so a unit inheriting its project's
+                dates gets it too. */}
+            <div className="mt-6">
+              <BuildProgressCard
+                constructionStatus={p.construction_status}
+                deliveryDate={p.delivery_date}
+              />
+            </div>
+
             <PriceHistorySection
               rows={priceHistory}
               currentPrice={p.asking_price === null ? null : Number(p.asking_price)}
