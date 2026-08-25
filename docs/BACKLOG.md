@@ -593,8 +593,31 @@ explicit direction.
   from NULL to 1, veranda from NULL to 20, price to €255.000, wrote 5 events and
   5 price_history rows, and left block C's 60 units untouched.
   **VERIFY:** `grep -c "applyUnitType" lib/actions/units.ts` — 0 means reverted.
-- **Create similar, S.** Duplicate any property as a starting point, minus the
-  reference and the unit-specific fields.
+- ~~**Create similar, S.**~~ ✅ **DONE 2026-08-25.** A *Create similar* button on
+  standalone and project properties links to `/properties/new?similar=<id>`,
+  which prefills the create wizard from that property. No migration.
+
+  **IT PREFILLS, IT DOES NOT CREATE.** Making a draft copy on click would have
+  been less code and would burn a REFERENCE every time somebody changed their
+  mind — `reference_counters` never reuses one, so an abandoned draft leaves a
+  permanent hole in the sequence the desk quotes from. Nothing exists until the
+  user submits.
+
+  **The banner is part of the feature, not decoration.** The real risk here is a
+  copied PRICE accepted without being read, so the page names the source
+  (`Prefilled from PAF0001`) and lists what did NOT come across. A silent copy
+  would be the dangerous version.
+
+  Not carried: `reference` (generated, immutable), `status` (inheriting `sold`
+  would be absurd, inheriting `available` a claim nobody made), unit fields and
+  the parent link, and map coordinates (an exact point is a claim about THIS
+  building). Carried: party, kind, type, transaction, district, area, address,
+  title, prices, areas, bed/bath, internal notes.
+
+  **Not offered on units or phases** — `CREATABLE_KINDS` is standalone|project,
+  so the button would promise something that quietly became a standalone. The
+  hand-typed-URL path still degrades safely: it maps to standalone and says so
+  in the drop list rather than producing an orphan unit with no parent.
 - **Area centroid as a coordinate fallback, S.** Migration 0031 already ships
   district and area centroids and the map already falls back to them. Offer the
   same on save, flagged as approximate, so a listing reaches the map today and

@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useRef, useState } from "react";
-import { AlertTriangle, ArrowLeft, ArrowRight } from "lucide-react";
+import { AlertTriangle, ArrowLeft, ArrowRight, Copy } from "lucide-react";
 import Link from "next/link";
 import {
   checkPropertyDuplicate,
@@ -19,6 +19,7 @@ import {
 import { EntityPicker } from "@/components/features/shared/entity-picker";
 import { getPartyDefaults } from "@/lib/actions/party-defaults";
 import type { EntityOption } from "@/lib/actions/entity-search";
+import type { PropertySeed } from "@/lib/services/property-seed";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -40,25 +41,31 @@ function labelize(value: string) {
 export function CreatePropertyWizard({
   districts,
   areas,
+  seed = null,
+  seedParty = null,
 }: {
   districts: (DistrictOption & { code: string })[];
   areas: AreaOption[];
+  /** "Create similar": prefill from an existing property (see property-seed.ts) */
+  seed?: PropertySeed | null;
+  /** the source's owner/developer, resolved server-side so the picker shows a name */
+  seedParty?: EntityOption | null;
 }) {
   const [state, formAction, pending] = useActionState(createProperty, initialState);
   const [step, setStep] = useState<1 | 2>(1);
 
   // step 1 values (kept in state so both steps submit in one form)
-  const [source, setSource] = useState<ListingSource>("owner");
-  const [party, setParty] = useState<EntityOption | null>(null);
+  const [source, setSource] = useState<ListingSource>(seed?.source ?? "owner");
+  const [party, setParty] = useState<EntityOption | null>(seedParty);
   const [partyTerms, setPartyTerms] = useState<{
     labels: string[];
     from: string;
   } | null>(null);
-  const [kind, setKind] = useState<string>("standalone");
-  const [propertyType, setPropertyType] = useState<string>("");
-  const [transaction, setTransaction] = useState<string>("sale");
-  const [districtId, setDistrictId] = useState<string>("");
-  const [address, setAddress] = useState<string>("");
+  const [kind, setKind] = useState<string>(seed?.kind ?? "standalone");
+  const [propertyType, setPropertyType] = useState<string>(seed?.propertyType ?? "");
+  const [transaction, setTransaction] = useState<string>(seed?.transactionType ?? "sale");
+  const [districtId, setDistrictId] = useState<string>(seed?.districtId ?? "");
+  const [address, setAddress] = useState<string>(seed?.address ?? "");
   // The result is stored WITH the address it was for, so a slow answer for an
   // old address cannot be shown against a new one — and so the effect never
   // has to clear state synchronously, which cascades renders.
@@ -151,6 +158,19 @@ export function CreatePropertyWizard({
       <input type="hidden" name="transaction_type" value={transaction} />
       <input type="hidden" name="district_id" value={districtId} />
 
+      {/* A prefilled form that does not say it is prefilled is the dangerous
+          version of this feature: the risk is a copied price accepted without
+          being read. Name the source, and name what did NOT come across. */}
+      {seed ? (
+        <div className="flex items-start gap-2 rounded-lg border border-brand-500/40 bg-brand-100/40 px-3 py-2 text-sm">
+          <Copy className="mt-0.5 size-4 shrink-0 text-brand-700" />
+          <p className="text-text-2">
+            Prefilled from <span className="font-medium text-text-1">{seed.fromReference}</span> —
+            check every field before saving. Not copied: {seed.dropped.join(", ")}.
+          </p>
+        </div>
+      ) : null}
+
       <div className="flex items-center gap-2 text-sm text-text-2">
         <span className={step === 1 ? "font-semibold text-text-1" : ""}>1. Kind & location</span>
         <ArrowRight className="size-3.5" />
@@ -187,6 +207,7 @@ export function CreatePropertyWizard({
                   source === "developer" ? ["developer"] : ["owner", "seller", "landlord"]
                 }
                 hint="Their standard terms fill the rest — every value stays editable."
+                initial={source === seed?.source ? seedParty : null}
                 onChange={onPartyChange}
               />
             </div>
@@ -285,12 +306,17 @@ export function CreatePropertyWizard({
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-2 sm:col-span-2">
               <Label htmlFor="title_en">Title (EN)</Label>
-              <Input id="title_en" name="title_en" placeholder="Seafront villa with pool" />
+              <Input
+                id="title_en"
+                name="title_en"
+                defaultValue={seed?.titleEn ?? ""}
+                placeholder="Seafront villa with pool"
+              />
             </div>
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="area_id">Area</Label>
-              <Select name="area_id" defaultValue="">
+              <Select name="area_id" defaultValue={seed?.areaId ?? ""}>
                 <SelectTrigger id="area_id">
                   <SelectValue placeholder={districtAreas.length ? "Select area…" : "No areas yet"} />
                 </SelectTrigger>
@@ -318,20 +344,39 @@ export function CreatePropertyWizard({
             {showAsking ? (
               <div className="flex flex-col gap-2">
                 <Label htmlFor="asking_price">Asking price (€)</Label>
-                <Input id="asking_price" name="asking_price" type="number" min="0" />
+                <Input
+                  id="asking_price"
+                  name="asking_price"
+                  type="number"
+                  min="0"
+                  defaultValue={seed?.askingPrice ?? ""}
+                />
               </div>
             ) : null}
             {showRent ? (
               <div className="flex flex-col gap-2">
                 <Label htmlFor="rent_price_month">Rent (€ / month)</Label>
-                <Input id="rent_price_month" name="rent_price_month" type="number" min="0" />
+                <Input
+                  id="rent_price_month"
+                  name="rent_price_month"
+                  type="number"
+                  min="0"
+                  defaultValue={seed?.rentPriceMonth ?? ""}
+                />
               </div>
             ) : null}
 
             {isLand ? (
               <div className="flex flex-col gap-2">
                 <Label htmlFor="plot_area_sqm">Plot area (m²)</Label>
-                <Input id="plot_area_sqm" name="plot_area_sqm" type="number" min="0" step="0.01" />
+                <Input
+                  id="plot_area_sqm"
+                  name="plot_area_sqm"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  defaultValue={seed?.plotAreaSqm ?? ""}
+                />
               </div>
             ) : (
               <>
@@ -343,22 +388,40 @@ export function CreatePropertyWizard({
                     type="number"
                     min="0"
                     step="0.01"
+                    defaultValue={seed?.coveredAreaSqm ?? ""}
                   />
                 </div>
                 <div className="flex flex-col gap-2">
                   <Label htmlFor="bedrooms">Bedrooms</Label>
-                  <Input id="bedrooms" name="bedrooms" type="number" min="0" />
+                  <Input
+                    id="bedrooms"
+                    name="bedrooms"
+                    type="number"
+                    min="0"
+                    defaultValue={seed?.bedrooms ?? ""}
+                  />
                 </div>
                 <div className="flex flex-col gap-2">
                   <Label htmlFor="bathrooms">Bathrooms</Label>
-                  <Input id="bathrooms" name="bathrooms" type="number" min="0" />
+                  <Input
+                    id="bathrooms"
+                    name="bathrooms"
+                    type="number"
+                    min="0"
+                    defaultValue={seed?.bathrooms ?? ""}
+                  />
                 </div>
               </>
             )}
 
             <div className="flex flex-col gap-2 sm:col-span-2">
               <Label htmlFor="internal_notes">Internal notes</Label>
-              <Input id="internal_notes" name="internal_notes" placeholder="Not shown anywhere public" />
+              <Input
+                id="internal_notes"
+                name="internal_notes"
+                defaultValue={seed?.internalNotes ?? ""}
+                placeholder="Not shown anywhere public"
+              />
             </div>
           </div>
 
