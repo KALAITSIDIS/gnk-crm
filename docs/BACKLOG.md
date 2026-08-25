@@ -852,9 +852,36 @@ explicit direction.
   mints, opens and revokes with full evidence. Point the same machinery at a
   project and a developer or partner agent gets a live availability matrix
   instead of yesterday's PDF.
-- **Construction progress + delivery date, S.** Finding 10, made useful: a
-  milestone % and an expected delivery on the project header, which is also the
-  raw material for the M13 developer dashboard.
+- ~~**Construction progress + delivery date, S.**~~ ✅ **DONE 2026-08-25.** A
+  *Build & handover* card on the property Overview and on the project units page,
+  above sales velocity. No migration — finding 10 already made both columns
+  editable; this says what they MEAN together.
+
+  **NO PERCENTAGE COLUMN WAS ADDED, AND THE BAR IS NOT A PERCENTAGE OF WORK.**
+  The eight `CONSTRUCTION_STATUSES` are an ordered sequence, so position along
+  them is derivable for free — but eight even steps would put `permit_granted`
+  at 37.5% for a project where **nothing has been built**. The weighting instead
+  gives the three stages where building happens (under construction, structure
+  complete, finishing) **25 points each — 75 of the 100 between them**; paperwork
+  gets 10 across three stages and handover the last 15. The caption on the card
+  says it is a position along the sequence and not a surveyed percentage,
+  because a number on a screen reads as measured unless told otherwise.
+
+  **A free-text status still shows, with NO bar and NO stage.**
+  `construction_status` is `text` and finding 10 deliberately preserves whatever
+  a row holds as "(as recorded)"; inventing a position for a word nobody
+  recognises would undo exactly that. Verified against a real free-text value.
+
+  **The delivery date became an answer rather than a date**: whole months to
+  handover in Cyprus wall-clock, negative once passed, and a flag when the date
+  has gone by with the build unfinished — or when a project is marked delivered
+  with the date still ahead. Both are worded as something to look at, never as
+  an error, because handing over early is legitimate.
+
+  **A test caught an overclaim in my own comment.** It said starting on site was
+  the largest single jump; completing the structure is the same 25 points. The
+  weights were right and the sentence was not — corrected in both, and the test
+  now pins the 25/25/25 shape instead.
 - ~~**Sales velocity per project, M.**~~ ✅ **DONE 2026-08-25.** A card on
   `/properties/[id]/units`: units, sold, absorption %, remaining, pace over the
   last 12 months, a projected months-to-sell-out, and a 24-month bar chart.

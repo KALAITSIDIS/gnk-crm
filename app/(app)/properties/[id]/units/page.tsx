@@ -11,6 +11,7 @@ import {
   type UnitRow,
 } from "@/components/features/properties/units-matrix";
 import { AvailabilityShare } from "@/components/features/properties/availability-share";
+import { BuildProgressCard } from "@/components/features/properties/build-progress-card";
 import { SalesVelocityCard } from "@/components/features/properties/sales-velocity-card";
 import { GenerateUnitsForm } from "@/components/features/properties/generate-units-form";
 import { InheritanceDrift } from "@/components/features/properties/inheritance-drift";
@@ -187,6 +188,11 @@ export default async function ProjectUnitsPage({
             .join("")}
         </p>
       </div>
+
+      <BuildProgressCard
+        constructionStatus={project.construction_status}
+        deliveryDate={project.delivery_date}
+      />
 
       <SalesVelocityCard velocity={velocity} />
 
