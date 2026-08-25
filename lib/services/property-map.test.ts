@@ -183,3 +183,57 @@ describe("hasPrice", () => {
     expect(fc.features[0].properties.hasPrice).toBe(true);
   });
 });
+
+describe("a STORED centroid is still approximate (0054)", () => {
+  // Before location_approx existed, "has a location" and "is exact" were the
+  // same statement. Taking the area centre on save makes them different, and a
+  // reader that still infers precision from the SOURCE alone draws a centroid
+  // as a surveyed point — which is exactly what 0031 set out to prevent.
+  it("marks a stored point approximate when the flag is set", () => {
+    expect(
+      resolvePosition({
+        ...base,
+        location: { lat: 34.9, lng: 32.3 },
+        locationApprox: true,
+      }),
+    ).toEqual({ lat: 34.9, lng: 32.3, precision: "approximate" });
+  });
+
+  it("still calls an unflagged stored point exact", () => {
+    expect(
+      resolvePosition({ ...base, location: { lat: 34.75, lng: 32.41 }, locationApprox: false }),
+    ).toEqual({ lat: 34.75, lng: 32.41, precision: "exact" });
+  });
+
+  it("treats an absent flag as exact, so pre-0054 rows are unchanged", () => {
+    // every existing row has location_approx = false; a row read without the
+    // column must not silently become approximate
+    expect(resolvePosition({ ...base, location: { lat: 34.75, lng: 32.41 } })).toEqual({
+      lat: 34.75, lng: 32.41, precision: "exact",
+    });
+  });
+
+  it("still uses the stored point, not a centroid, when both exist", () => {
+    // the flag changes how the point is LABELLED, never which point is used
+    expect(
+      resolvePosition({
+        ...base,
+        location: { lat: 34.9, lng: 32.3 },
+        locationApprox: true,
+        areaCentroid: { lat: 11.1, lng: 22.2 },
+        districtCentroid: { lat: 33.3, lng: 44.4 },
+      }),
+    ).toEqual({ lat: 34.9, lng: 32.3, precision: "approximate" });
+  });
+
+  it("carries the precision into the GeoJSON the map actually draws", () => {
+    const fc = toGeoJson([
+      { ...base, id: "a", location: { lat: 34.9, lng: 32.3 }, locationApprox: true },
+      { ...base, id: "b", location: { lat: 34.75, lng: 32.41 } },
+    ]);
+    expect(fc.features.map((f) => [f.properties.id, f.properties.precision])).toEqual([
+      ["a", "approximate"],
+      ["b", "exact"],
+    ]);
+  });
+});

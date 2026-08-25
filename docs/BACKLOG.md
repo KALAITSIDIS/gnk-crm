@@ -618,10 +618,41 @@ explicit direction.
   so the button would promise something that quietly became a standalone. The
   hand-typed-URL path still degrades safely: it maps to standalone and says so
   in the drop list rather than producing an orphan unit with no parent.
-- **Area centroid as a coordinate fallback, S.** Migration 0031 already ships
-  district and area centroids and the map already falls back to them. Offer the
-  same on save, flagged as approximate, so a listing reaches the map today and
-  earns exact coordinates later.
+- ~~**Area centroid as a coordinate fallback, S.**~~ ✅ **DONE 2026-08-25**
+  (migration 0054). A *Use the area centre* button on the Details form takes the
+  area's centroid, or the district's when the area has none, and stores it
+  flagged as approximate.
+
+  **THE FLAG IS THE FEATURE, not decoration, and "S" was wrong for that
+  reason.** A button that merely wrote the centroid into `properties.location`
+  would have broken two working things SILENTLY:
+
+  1. **The quality score would start lying.** `computeQualityScore` awards 10
+     points for "Exact map location" on `location !== null` — in TWO places,
+     `quality-score.ts` and the recompute inside `saveProperty`, which must
+     agree or a save and a recompute disagree about the same row. A centroid
+     would earn every property ten points for a coordinate nobody surveyed.
+  2. **The map would lose the distinction it was built with.**
+     `resolvePosition` INFERRED precision from which source it fell back to.
+     Once a centroid lives in `location` that inference says "exact", and
+     0031's own comment — "approximate pins render differently from exact ones
+     so nobody reads a centroid as a surveyed point" — stops being true.
+
+  So `location_approx` is stored, and both readers respect it. A CHECK refuses
+  the flag without a point, because a flag qualifying nothing reads as knowledge
+  we do not have; RLS test 38 proves it from the app's side and the migration
+  proves it as `postgres`.
+
+  **The flag clears itself.** Any hand-typed digit or pasted Maps link over a
+  centroid is the user asserting a real coordinate, so the component wraps its
+  setters rather than calling them directly. Measured end to end on PAF0001:
+  taking the centre stored `POINT(32.4245 34.7754)` with `approx = true` and
+  **left the quality score at 40**; typing real coordinates over it cleared the
+  flag and took the score to 50. Both transitions are in the event diff.
+
+  **Nothing existing moved.** Every row got `false`, so no coordinate already
+  entered became approximate and no quality score changed — the property that
+  made this safe to apply to a production database with real listings on it.
 - **VAT treatment derived, not remembered, M — NEEDS AN OPERATOR DECISION.**
   Reduced-rate eligibility follows from covered area, price and buyer status; the
   calculators exist and `cyprus_config` is built to hold verified thresholds.

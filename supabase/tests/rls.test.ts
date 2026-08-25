@@ -3261,4 +3261,67 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(chainOk, "recall events keep the hash chain intact").toBe(true);
   });
 
+
+  it("38. location_approx: cannot claim an approximate point without a point", async () => {
+    // 0054. The migration proves the constraint as `postgres`; this proves it
+    // from the APP's side, over PostgREST as a real user, which is the path a
+    // bad payload would actually arrive on.
+    const { data: prop, error: insErr } = await agentA1.client
+      .from("properties")
+      .insert({
+        org_id: ORG_A,
+        reference: `APPROX-${run}`,
+        kind: "standalone",
+        property_type: "apartment",
+        status: "available",
+        title: { en: "Approximate location fixture" },
+        assigned_agent_id: agentA1.id,
+      })
+      .select("id, location_approx")
+      .single();
+    expect(insErr, "the fixture must insert").toBeNull();
+    expect(prop!.location_approx, "every row starts exact — 0054 flags nothing").toBe(false);
+
+    // --- a flag with no point is refused --------------------------------
+    const { error: danglingErr } = await agentA1.client
+      .from("properties")
+      .update({ location_approx: true })
+      .eq("id", prop!.id);
+    expect(
+      danglingErr,
+      "a flag qualifying nothing would read as knowledge we do not have",
+    ).not.toBeNull();
+    expect(danglingErr!.message).toMatch(/location_approx_needs_point|violates check/i);
+
+    // --- with a point, it is accepted -----------------------------------
+    const { error: withPointErr } = await agentA1.client
+      .from("properties")
+      .update({
+        location: "SRID=4326;POINT(32.4297 34.7720)",
+        location_approx: true,
+      })
+      .eq("id", prop!.id);
+    expect(withPointErr, "a centroid WITH a point is the whole feature").toBeNull();
+
+    // --- clearing the point while still flagged is refused ---------------
+    const { error: clearErr } = await agentA1.client
+      .from("properties")
+      .update({ location: null })
+      .eq("id", prop!.id);
+    expect(
+      clearErr,
+      "clearing the point must clear the flag too — the app does this, and the DB refuses the incoherent half",
+    ).not.toBeNull();
+
+    // --- clearing both together is fine ----------------------------------
+    const { error: bothErr } = await agentA1.client
+      .from("properties")
+      .update({ location: null, location_approx: false })
+      .eq("id", prop!.id);
+    expect(bothErr, "clearing both together is coherent").toBeNull();
+
+    const { data: chainOk } = await svc.rpc("verify_events_chain", { p_org: ORG_A });
+    expect(chainOk).toBe(true);
+  });
+
 });

@@ -369,6 +369,9 @@ export const detailsSectionSchema = z.object({
   postal_code: optText(20),
   latitude: optLat,
   longitude: optLng,
+  // 0054: the point in the boxes is an area/district centroid, not a surveyed
+  // point. A checkbox-style value, so an absent field means false.
+  location_approx: z.preprocess((v) => v === "on" || v === "true" || v === true, z.boolean()),
   sea_distance_m: optInt,
   amenities_notes: optText(2000),
   asking_price: optNumber,

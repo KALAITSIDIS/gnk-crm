@@ -209,7 +209,11 @@ export function DetailsForm({
           label="Sea distance (m)"
           defaultValue={property.sea_distance_m}
         />
-        <MapLocationFields location={property.location} />
+        <MapLocationFields
+          location={property.location}
+          propertyId={property.id}
+          isApproximate={Boolean((property as { location_approx?: boolean }).location_approx)}
+        />
         <div className="flex flex-col gap-2 sm:col-span-2">
           <Label htmlFor="amenities_notes">Amenities notes</Label>
           <Input

@@ -15,6 +15,8 @@ export type MappableProperty = {
   id: string;
   reference: string;
   location: LatLng | null;
+  /** 0054: `location` holds a centroid, not a surveyed point. */
+  locationApprox?: boolean;
   areaCentroid: LatLng | null;
   districtCentroid: LatLng | null;
   /** Display fields for the popup. The popup is the only way to reach a
@@ -61,7 +63,13 @@ export type PropertyFeatureCollection = {
  * rather than inventing a position.
  */
 export function resolvePosition(p: MappableProperty): Position | null {
-  if (p.location) return { ...p.location, precision: "exact" };
+  // 0054: a stored centroid is still a centroid. Before that column existed,
+  // "has a location" and "is exact" were the same statement; they are not now,
+  // and inferring precision from the SOURCE alone would draw an approximate
+  // point as a surveyed one.
+  if (p.location) {
+    return { ...p.location, precision: p.locationApprox ? "approximate" : "exact" };
+  }
   if (p.areaCentroid) return { ...p.areaCentroid, precision: "approximate" };
   if (p.districtCentroid) return { ...p.districtCentroid, precision: "approximate" };
   return null;

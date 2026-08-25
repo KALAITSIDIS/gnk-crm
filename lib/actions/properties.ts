@@ -203,6 +203,9 @@ export async function updatePropertySection(
   let updates: Database["public"]["Tables"]["properties"]["Update"];
   // readable diff for the location point (raw EWKB hex vs EWKT is meaningless)
   let locationChange: { from: unknown; to: unknown } | null = null;
+  // 0054: tracked separately because it moves INDEPENDENTLY of the point —
+  // typing the same numbers over a centroid changes nothing but the claim.
+  let approxChange: { from: unknown; to: unknown } | null = null;
 
   const { detailsSectionSchema, legalSectionSchema, marketingSectionSchema } = await import(
     "@/lib/validators/properties"
@@ -279,6 +282,17 @@ export async function updatePropertySection(
     if (locationChanged(prevPoint, nextPoint)) {
       updates.location = nextPoint ? toLocationEWKT(nextPoint.lat, nextPoint.lng) : null;
       locationChange = { from: prevPoint, to: nextPoint };
+    }
+
+    // 0054. Deliberately NOT nested inside the branch above: the flag can move
+    // while the point does not (typing the same numbers over a centroid is the
+    // user asserting them), and it must be forced false when the point is
+    // cleared or the CHECK constraint refuses the row.
+    const prevApprox = Boolean((current as { location_approx?: boolean }).location_approx);
+    const nextApprox = nextPoint !== null && d.location_approx;
+    if (nextApprox !== prevApprox) {
+      updates.location_approx = nextApprox;
+      approxChange = { from: prevApprox, to: nextApprox };
     }
   } else if (section === "legal") {
     const parsed = legalSectionSchema.safeParse(raw);
@@ -388,7 +402,10 @@ export async function updatePropertySection(
       hasBedroomsAndBathrooms: merged.bedrooms != null && merged.bathrooms != null,
       hasPlanningZoneAndDensity:
         merged.planning_zone_code != null && merged.building_density_pct != null,
-      hasCoords: merged.location != null,
+      // 0054: a centroid stand-in is not an exact location. This mirrors
+      // quality-score.ts exactly; the two must agree or a save and a recompute
+      // produce different scores for the same row.
+      hasCoords: merged.location != null && !merged.location_approx,
       titleDeedSet: merged.title_deed_status !== "unknown",
       permitSet: merged.permit_status !== "unknown",
       mandateActive: (activeMandates ?? []).length > 0,
@@ -432,6 +449,7 @@ export async function updatePropertySection(
     if (changedValue(prev, next)) changed[key] = { from: prev ?? null, to: next ?? null };
   }
   if (locationChange) changed.location = locationChange;
+  if (approxChange) changed.location_approx = approxChange;
   if (Object.keys(changed).length === 0) {
     return { error: null, savedAt: Date.now() }; // nothing to write, still "saved"
   }
