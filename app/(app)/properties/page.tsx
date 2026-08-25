@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Building2, Download, Map, Plus } from "lucide-react";
+import { Building2, Download, ListChecks, Map, Plus } from "lucide-react";
 import {
   PropertiesFilters,
   type AreaOption,
@@ -165,6 +165,15 @@ export default async function PropertiesPage({
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {/* Deliberately NOT filter-aware, unlike Map and Export below: the
+              worklist answers "what should I go fix across everything", which a
+              filtered subset cannot. */}
+          <Button asChild variant="outline">
+            <Link href="/properties/worklist">
+              <ListChecks className="mr-2 size-4" />
+              Worklist
+            </Link>
+          </Button>
           <Button asChild variant="outline">
             <Link href={mapHref}>
               <Map className="mr-2 size-4" />

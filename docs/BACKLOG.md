@@ -662,10 +662,38 @@ explicit direction.
 - **Owner net ↔ asking ↔ commission, shown, S.** All three are already columns.
   Show the arithmetic so an agent negotiating knows the floor. Admin + assigned
   agent only, matching how `mandates_safe` masks commission.
-- **Quality-score worklist, S.** `computeQualityScore` already returns a
-  `missing` array per property and it is thrown away after rendering one ring.
-  Aggregate it across the list — "19 missing deed status, 12 missing coordinates"
-  — so one category can be cleared in a sitting.
+- ~~**Quality-score worklist, S.**~~ ✅ **DONE 2026-08-25.** `/properties/worklist`,
+  reached from a *Worklist* button on the list. No migration. The entry was
+  right that the information was already being computed and discarded.
+
+  **ORDERED BY POINTS RECOVERABLE, NOT BY COUNT**, and that is the one real
+  decision in it. The question a desk is asking is not "what is most common" but
+  "where does an afternoon buy the most" — so 12 listings missing a price
+  (12 × 10 = 120) ranks ABOVE 22 missing a permit status (22 × 5 = 110), which
+  sorting by count would have put the other way round. Both numbers are shown so
+  the reader can disagree. Verified in the real local data, where exactly that
+  pair appears in exactly that order.
+
+  **The shared input builder is the part that protects it.**
+  `recomputeQualityScore` made THREE queries per property — right for one save,
+  ruinous across a portfolio (60 units = 180 queries). The worklist does three
+  for the whole list. To stop the two paths drifting, the input-building was
+  extracted into `buildQualityInput` and BOTH now call it: a worklist saying
+  "12 missing coordinates" while the detail pages disagree would be worse than
+  no worklist, because it looks authoritative.
+
+  Reads `mandates_safe`, not `mandates`, for the same reason the app path does —
+  a listing manager has no base-table SELECT and would otherwise see every one
+  of their properties in the "Active mandate" bucket.
+
+  **It persists nothing.** Scores are computed fresh for display and the stored
+  `quality_score` column is untouched; a report that quietly rewrites what it
+  reports on is not one.
+
+  Scope: non-archived, status in draft/available/reserved/under_offer — a sold
+  listing needs no more photos. Categories name the TAB the fix lives on, which
+  is what turns a count into an instruction; the tabs are Radix state with no
+  href, so naming them is as close to a deep link as the app allows.
 - **Portfolio tab on a contact, S.** Finding 9, from the other side.
 - ~~**Project availability share link, M.**~~ **SHIPPED 2026-08-22 (`92958e9`)**
   — migration `0041`, a second `kind` on 0023's machinery. **No new table:**
