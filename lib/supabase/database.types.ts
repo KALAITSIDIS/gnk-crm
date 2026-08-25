@@ -2975,6 +2975,10 @@ export type Database = {
       }
       postgis_version: { Args: never; Returns: string }
       postgis_wagyu_version: { Args: never; Returns: string }
+      raise_key_recall_tasks: {
+        Args: { p_actor?: string; p_mandate?: string }
+        Returns: number
+      }
       record_key_movement: {
         Args: {
           p_action: Database["public"]["Enums"]["key_action"]

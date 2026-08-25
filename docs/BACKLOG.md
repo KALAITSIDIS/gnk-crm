@@ -673,9 +673,37 @@ explicit direction.
 - **Sales velocity per project, M.** Units sold per month and absorption rate,
   computed from `status_changed` events already being written and read by nothing
   but the timeline. No new data collection at all.
-- **Keys follow the mandate, S.** Terminating or expiring a mandate should prompt
-  to recall keys still checked out on that property. Both sides are evented;
-  nothing connects them.
+- ~~**Keys follow the mandate, S.**~~ ✅ **DONE 2026-08-25** (migration 0053).
+  Ending a mandate raises one `key_recall` task naming how many keys the agency
+  still holds. Both paths covered: `setMandateStatus` on termination (through
+  the service role from an already-admin-gated action, because the raiser is
+  SECURITY DEFINER and takes any mandate id) and `expire_mandates()` nightly for
+  expiry. Self-heals when the last key goes back.
+
+  **"S" WAS WRONG, AND THE REASON IS THE VALUABLE PART.** `tasks.mandate_id` had
+  only ever carried ONE kind, and two places silently depended on that —
+  `expire_mandates()` step 3 and `supersedeRenewalTasks()` both completed every
+  open task matching a mandate id, with no `kind` filter. A key_recall task
+  hangs off a mandate that is BY DEFINITION no longer active, so both would have
+  closed it on sight: the cron that night, the action within milliseconds. The
+  feature would have looked like it worked — task created, event written — while
+  leaving nobody anything to do.
+
+  **The bug was demonstrated, not assumed.** A rolled-back probe ran the
+  pre-0053 predicate against a real recall task and closed it (1 closed, 0
+  open), then ran the shipped `expire_mandates()` against the same row and left
+  it open. RLS test 37 pins it permanently with a message saying why.
+
+  **Scope decisions worth keeping:** `in_office` and `checked_out` are chased;
+  `with_owner` is the state that CLOSES the task; `lost` is excluded, because a
+  key nobody can find cannot be handed back and is already its own record. The
+  7-day due date is a GRACE PERIOD on a task that has already fired, not a
+  firing threshold — which is why it is deliberately NOT in 0052's
+  `nudge_thresholds`.
+
+  **First run picks up history**, not just tonight's endings: the predicate is
+  "ended mandate + keys still held + no task yet". On a large database that is a
+  one-time batch. Measured before shipping — 0 on production, 0 locally.
 
 - ~~**THE PROPERTY MAP (B5) RENDERS BLANK — SHIPPED, THEN HIDDEN.**~~
   **WITHDRAWN 2026-08-20: THE MAP WAS NEVER BROKEN.** Verified working against

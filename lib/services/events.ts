@@ -277,6 +277,11 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
     return title ? t("documentDeletedTitle", { title }) : t("documentDeleted");
   },
   renewal_task_created: (_p, t) => t("renewalTaskCreated"),
+  // 0053: the mandate ended and the agency still holds keys. Written against
+  // the MANDATE, like renewal_task_created — it is a fact about the contract
+  // ending, and that is the timeline a dispute reads.
+  key_recall_task_created: (p, t) =>
+    t("keyRecallTaskCreated", { count: Number(p.keys) || 0 }),
   // Price-drop alert: the first push use of the matching engine. Fired by the
   // property save, not by a cron, because the rules live in TypeScript.
   price_drop_matched: (p, t) =>
@@ -414,6 +419,9 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
     // threshold. Before 0052 a moved boundary could only mean contact was
     // logged, so the sweep asserted that; it can no longer assume it.
     if (reason === "threshold_changed") return t("supersededThresholdChanged");
+    // 0053: nothing is held any more — the last key went back to the owner, or
+    // was marked lost, which also leaves nothing to recall
+    if (reason === "keys_returned") return t("supersededKeysReturned");
     // 0047's two reasons: the hold moved, or it stopped being live at all
     if (reason === "reservation_extended") return t("supersededReservationExtended");
     // 0051's three reasons share `reservation_no_longer_live` with 0047, so the

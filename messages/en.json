@@ -252,6 +252,8 @@
     "documentDeleted": "Document deleted",
     "documentDeletedTitle": "Document deleted — {title}",
     "renewalTaskCreated": "Renewal reminder task created",
+    "keyRecallTaskCreated": "Mandate ended — {count, plural, one {# key} other {# keys}} still held, recall task created",
+    "supersededKeysReturned": "Key recall closed — nothing is held any more",
       "priceDropMatched": "Price drop — {count, plural, one {# buyer} other {# buyers}} now in budget",
       "newListingMatched": "On the market — {count, plural, one {# matching buyer} other {# matching buyers}}",
       "reservationExpiringSoon": "Reservation lapses in {days, plural, one {# day} other {# days}} — reminder created",

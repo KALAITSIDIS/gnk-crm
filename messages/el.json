@@ -252,6 +252,8 @@
     "documentDeleted": "Διαγράφηκε έγγραφο",
     "documentDeletedTitle": "Διαγράφηκε έγγραφο — {title}",
     "renewalTaskCreated": "Δημιουργήθηκε υπενθύμιση ανανέωσης",
+    "keyRecallTaskCreated": "Η εντολή έληξε — {count, plural, one {# κλειδί} other {# κλειδιά}} ακόμη στην κατοχή μας, δημιουργήθηκε εργασία επιστροφής",
+    "supersededKeysReturned": "Η εργασία επιστροφής κλειδιών έκλεισε — δεν κρατάμε πλέον κανένα",
       "priceDropMatched": "Μείωση τιμής — {count, plural, one {# αγοραστής} other {# αγοραστές}} εντός προϋπολογισμού",
       "newListingMatched": "Στην αγορά — {count, plural, one {# αγοραστής ταιριάζει} other {# αγοραστές ταιριάζουν}}",
       "reservationExpiringSoon": "Η κράτηση λήγει σε {days, plural, one {# ημέρα} other {# ημέρες}} — δημιουργήθηκε υπενθύμιση",

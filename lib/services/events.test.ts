@@ -337,3 +337,37 @@ describe("instalment reminders (0051) — the sign of `days` picks the string", 
     ).toBe("Instalment reminder closed — the due date changed");
   });
 });
+
+describe("key recall (0053)", () => {
+  it("states how many keys are still held", () => {
+    expect(
+      describeEvent(ev("key_recall_task_created", { keys: 2 }, "mandate"), t),
+    ).toBe("Mandate ended — 2 keys still held, recall task created");
+    expect(
+      describeEvent(ev("key_recall_task_created", { keys: 1 }, "mandate"), t),
+    ).toBe("Mandate ended — 1 key still held, recall task created");
+  });
+
+  it("survives a payload with no usable count", () => {
+    expect(String(describeEvent(ev("key_recall_task_created", {}, "mandate"), t))).not.toMatch(
+      /NaN|\{/,
+    );
+  });
+
+  it("closes with its own reason, not a renewal one", () => {
+    // `keys_returned` is written only by raise_key_recall_tasks; the renewal
+    // sweep's `mandate_renewed_or_inactive` must still render as before
+    expect(
+      describeEvent(
+        ev("superseded", { kind: "key_recall", reason: "keys_returned" }, "task"),
+        t,
+      ),
+    ).toBe("Key recall closed — nothing is held any more");
+    expect(
+      describeEvent(
+        ev("superseded", { reason: "mandate_renewed_or_inactive", mandate_id: "m1" }, "task"),
+        t,
+      ),
+    ).toBe("Renewal task superseded — the mandate was renewed or is no longer active");
+  });
+});
