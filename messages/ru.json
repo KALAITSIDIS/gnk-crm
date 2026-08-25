@@ -297,6 +297,7 @@
     "superseded": "Задача заменена",
     "supersededDealContacted": "Напоминание закрыто — по сделке появился контакт или она закрыта",
     "supersededFeedbackLogged": "Напоминание закрыто — отзыв о просмотре внесён",
+    "supersededThresholdChanged": "Напоминание закрыто — порог отсутствия контакта изменён",
     "supersededMandate": "Напоминание о продлении заменено — мандат продлён или больше не активен",
     "routeUpdated": "Маршрут дня обновлён — {count, plural, one {# остановка} few {# остановки} many {# остановок} other {# остановки}}",
     "routeUpdatedDate": "Маршрут дня обновлён — {count, plural, one {# остановка} few {# остановки} many {# остановок} other {# остановки}} ({date})",

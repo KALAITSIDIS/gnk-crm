@@ -410,6 +410,10 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
     const reason = asText(p.reason);
     if (reason === "deal_contacted_or_closed") return t("supersededDealContacted");
     if (reason === "feedback_logged_or_viewing_reopened") return t("supersededFeedbackLogged");
+    // 0052: a no-contact nudge can now also close because an admin moved the
+    // threshold. Before 0052 a moved boundary could only mean contact was
+    // logged, so the sweep asserted that; it can no longer assume it.
+    if (reason === "threshold_changed") return t("supersededThresholdChanged");
     // 0047's two reasons: the hold moved, or it stopped being live at all
     if (reason === "reservation_extended") return t("supersededReservationExtended");
     // 0051's three reasons share `reservation_no_longer_live` with 0047, so the

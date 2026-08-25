@@ -1,4 +1,10 @@
 import { z } from "zod";
+import {
+  FORM_BOUNDS,
+  NUDGE_LABELS,
+  NUDGE_THRESHOLD_KEYS,
+  type NudgeThresholdKey,
+} from "@/lib/services/nudge-thresholds";
 
 /** Roles an admin can hand out in Phase 1 (portal roles are later phases). */
 export const INVITABLE_ROLES = ["admin", "agent", "listing_manager"] as const;
@@ -25,6 +31,25 @@ export const stageNameSchema = z.object({
 export const areaNameSchema = z.object({
   name: z.string().trim().min(1, "Area name is required").max(80),
 });
+
+/**
+ * Nudge thresholds (0052). One coerced integer per sweep, bounded by
+ * FORM_BOUNDS — the operational range, which is deliberately NARROWER than the
+ * SQL guard in `nudge_threshold()`. SQL only has to refuse input that would
+ * break a sweep; this has to refuse input that would be silly.
+ */
+export const nudgeThresholdsSchema = z.object(
+  Object.fromEntries(
+    NUDGE_THRESHOLD_KEYS.map((k) => [
+      k,
+      z.coerce
+        .number({ message: `${NUDGE_LABELS[k].label} must be a number` })
+        .int(`${NUDGE_LABELS[k].label} must be a whole number`)
+        .min(FORM_BOUNDS[k].min, `${NUDGE_LABELS[k].label}: minimum ${FORM_BOUNDS[k].min}`)
+        .max(FORM_BOUNDS[k].max, `${NUDGE_LABELS[k].label}: maximum ${FORM_BOUNDS[k].max}`),
+    ]),
+  ) as Record<NudgeThresholdKey, z.ZodNumber>,
+);
 
 export const cyprusConfigSchema = z.object({
   key: z.string().trim().min(1).max(60),

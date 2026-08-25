@@ -28,14 +28,24 @@ const CHANNEL_LABELS: Record<(typeof COMM_CHANNELS)[number], string> = {
 };
 
 /**
- * "I spoke to the buyer" — the only thing that silences the 14-day no-contact
- * nudge (migration 0025).
+ * "I spoke to the buyer" — the only thing that silences the no-contact nudge
+ * (migration 0025).
  *
  * It is a dialog rather than a one-tap button on purpose: the channel is what
  * makes the record worth anything later, and a single click would recreate the
  * problem this fixes, where contact is asserted without anyone saying so.
+ *
+ * `noContactDays` is passed in rather than hardcoded: since 0052 the desk can
+ * change it on Settings → Nudges, and copy that still said "14-day" would be a
+ * lie told by the very screen the agent is acting on.
  */
-export function LogDealContact({ dealId }: { dealId: string }) {
+export function LogDealContact({
+  dealId,
+  noContactDays,
+}: {
+  dealId: string;
+  noContactDays: number;
+}) {
   const [open, setOpen] = useState(false);
   const [state, formAction, pending] = useActionState(logDealContact, initialState);
   const lastToasted = useRef<number | null>(null);
@@ -91,8 +101,8 @@ export function LogDealContact({ dealId }: { dealId: string }) {
             </div>
 
             <p className="text-sm text-text-2">
-              This resets the 14-day follow-up clock and closes any open chase-up for
-              this deal. Editing the deal does not.
+              This resets the {noContactDays}-day follow-up clock and closes any open chase-up
+              for this deal. Editing the deal does not.
             </p>
 
             {state.error ? <p className="text-sm text-danger">{state.error}</p> : null}
