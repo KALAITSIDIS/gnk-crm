@@ -27,6 +27,60 @@ built without explicit direction.
 > commit. Do not delete it: a struck-through entry is what stops the next person
 > re-proposing the same work.
 
+## How to read this file
+
+**Five different things live here and they look alike.** The warning above
+counts three entries that described already-shipped work; on 2026-08-25 a fourth
+was found, and it failed differently. Nothing was stale — the *state* was simply
+not mechanically distinguishable. A preserved pre-fix entry read as outstanding
+work and a session rebuilt the contact portfolio tab, which had shipped four
+days earlier.
+
+**`VERIFY:` did not save that one, because a preserved original does not carry
+one.** Hence this table and the `(original)` markers: the check above tells you
+whether an entry is DONE, and this tells you whether it is an entry at all.
+
+| Looks like | Means |
+|---|---|
+| `- ~~**Title**~~ **SHIPPED …**` | Done. The text after the strikethrough says when, and usually what it cost. |
+| `  - **Title (original).**` — indented, under a struck entry | The pre-fix text, kept deliberately as a cautionary record. **Not work.** |
+| `- **Title, S/M.**` | Genuinely outstanding. |
+| `- **Title — NEEDS AN OPERATOR DECISION**` | Blocked on a person, not on effort. |
+| `- **NOTE — …**` | A standing gotcha, rule or known flake. **Never work.** Kept because forgetting it costs a cycle. |
+
+**The recipe that returns only outstanding work** — it excludes struck items,
+preserved originals, and anything indented under a parent:
+
+```bash
+grep -n '^- \*\*' docs/BACKLOG.md | grep -v '(original)' | grep -v 'HISTORICAL' | grep -v 'NOTE —'
+```
+
+Drop the last filter to see the standing notes too — they are worth reading
+before starting anything, just never worth building.
+
+**When an item appears in two sections, close BOTH.** That is how the duplicate
+survived: the numbered finding was struck through and the one-line proposal in
+"Proposals that came out of the same read" was not.
+
+**Audited 2026-08-25** by running every `VERIFY:` command in the file. Every one
+still reported "not built", so no entry that CARRIED a check was wrong — the
+backlog's verifiable claims were accurate. The two closed below had no `VERIFY:`
+of their own, which is the pattern: what goes stale is what nothing checks. The
+other problem was that the file's STATES were not mechanically distinguishable,
+which is what this section and the `(original)` markers fix. At that date the genuinely outstanding BUILD items
+were three: owner net ↔ asking ↔ commission, construction progress + delivery
+date, and the rest of the property-map shortlist. Everything else open is an
+operator decision or a standing note.
+
+**Two entries were closed by that audit, and one of them matters.** The RLS
+helper hoist was resolved in its body but never struck at the title. The dormant
+admin was worse: it warned of an admin with no second factor and no recent
+sign-in, and production now shows BOTH admins carrying a verified factor and
+signing in within the week. That entry was stale in the dangerous direction —
+describing an exposure that had already closed itself. **Re-measure a security
+claim before acting on it; this file records what was true when it was
+written.**
+
 ## Properties module audit — 2026-08-21
 
 Fifteen findings from a full read of M1 (properties, mandates, units, media,
@@ -49,7 +103,7 @@ decision (HANDOFF §5) does not cover it.
   no phantom event. E2E in `tests/e2e/property-parties.spec.ts`.
   The original entry follows.
 
-  - **1. A property can never be assigned to an agent — DEFECT.**
+  - **1. A property can never be assigned to an agent — DEFECT. (original).**
   `assigned_agent_id` is written in exactly one place, `lib/actions/properties.ts:67`,
   and only when the creator is an *agent* (self-assign, because the insert policy
   demands it). Nothing else in the app ever sets it: no picker, no bulk action,
@@ -74,7 +128,7 @@ decision (HANDOFF §5) does not cover it.
   after it. **Applied to LOCAL only — hosted is still on 0033** and would
   backfill exactly 1 property (measured 2026-08-21). The original entry follows.
 
-  - **2. Owner and developer are unreachable from the UI.**
+  - **2. Owner and developer are unreachable from the UI. (original).**
   `properties.owner_contact_id` is written only by `scripts/import/properties.mts:213`.
   `properties.developer_contact_id` is written by nothing — its only hit outside
   the generated types is `lib/actions/merge-contacts.ts:128` repointing a column
@@ -98,7 +152,7 @@ decision (HANDOFF §5) does not cover it.
   project with 5 real units — default list 3 rows, `?kind=unit` 5 rows, and the
   CSV agrees with both. The original entry follows.
 
-  - **3. Units flood the properties list.**
+  - **3. Units flood the properties list. (original).**
   `propertyFiltersSchema` (`lib/validators/properties.ts:132`) has no `kind`
   field, so units, phases, projects and standalone listings share one list,
   ordered `created_at desc`, 25 per page. One 60-unit project buries two and a
@@ -378,7 +432,7 @@ decision (HANDOFF §5) does not cover it.
   and a contact tagged `{owner,buyer}` must still match an Owner picker. Every
   existing caller is unchanged. The original entry follows.
 
-  - **12. Every contact picker searches every contact — ENABLER.**
+  - **12. Every contact picker searches every contact — ENABLER. (original).**
   `searchEntities("contact", …)` (`lib/actions/entity-search.ts:23-36`) has no
   type filter, so the "Owner contact" picker on a mandate offers buyers, lawyers
   and bankers. The query already exists one file away —
@@ -873,7 +927,7 @@ explicit direction.
 
   The original entry follows.
 
-  - **THE PROPERTY MAP (B5) RENDERS BLANK — SHIPPED, THEN HIDDEN (2026-08-11).**
+  - **THE PROPERTY MAP (B5) RENDERS BLANK — SHIPPED, THEN HIDDEN (2026-08-11). (original).**
     Everything except the tiles works: the style, TileJSON, sprites and font glyphs
     all load, the canvas is correctly sized (1390x729), WebGL2 is supported, blob
     workers run, nothing is CSP-blocked and nothing errors in the console. MapLibre
@@ -1044,7 +1098,7 @@ explicit direction.
   feature migration.
   **VERIFY:** compare `relacl` for `mandates_safe` on hosted against local; the
   entry is closed when `anon` has no `arwd` and `authenticated` has `r` only.
-- **`recomputeQualityScore` reads mandates from a table that depends on WHO IS
+- **NOTE — `recomputeQualityScore` reads mandates from a table that depends on WHO IS
   CALLING — noted 2026-08-21, handled, worth remembering.** The app reads
   `mandates_safe`, because listing managers have no base-table SELECT and reading
   `mandates` scored their saves 10 points low. A script running as `service_role`
@@ -1055,7 +1109,7 @@ explicit direction.
   explicit option and the caller says which. **Caught by dry-running the
   recompute script before letting it write.** Any future job that scores
   properties outside a user session must pass `mandateSource: "base"`.
-- **A NEW TABLE NEEDS AN EXPLICIT `REVOKE` BEFORE ITS `GRANT`. This rule was
+- **NOTE — A NEW TABLE NEEDS AN EXPLICIT `REVOKE` BEFORE ITS `GRANT`. This rule was
   ALREADY WRITTEN DOWN and I did not follow it — 0039 broke it, 0040 corrected
   it.** `0023` documents the whole trap in its own comments, having hit it on its
   own apply in 2026-08: *"Hosted Supabase applies default privileges that hand
@@ -1259,7 +1313,7 @@ explicit direction.
   **This entry stayed open for 18 days and sent a session off to rebuild finished work on 2026-08-11.** It was caught by globbing `app/**/export/**/route.ts` before writing anything. **The lesson is the file's, not the reader's:** an entry describing work to do is a claim, and claims here go stale silently. Before starting anything from BACKLOG, check whether it already exists.
 - ~~**Export audit logging (decision needed).**~~ **Resolved 2026-07-23: yes, log exports.** Built in `lib/services/export-audit.ts` (org-level `export`/`exported` event, written before the CSV is returned). Contacts export logs; the remaining lists inherit it via `logListExport`. See DECISIONS `T-export-audit`.
 - ~~**Database-level 2FA enforcement (security, follow-up to C2).**~~ **SHIPPED AND APPLIED TO HOSTED 2026-08-11** — migration 0029 `require_aal2`, exactly the opt-in template this entry prescribed, on all 29 RLS-enabled tables. Evidence in IMPROVEMENTS C2, reasoning in DECISIONS `T-aal2-rls`, rollback in `docs/superpowers/plans/2026-08-10-c2-db-2fa-enforcement.md`.
-- **A dormant admin has no second factor** — ~~open~~ **REVIEWED AND KEPT 2026-08-09, operator decision: he needs admin access.** Production has
+- ~~**A dormant admin has no second factor**~~ **CLOSED 2026-08-25 — THE CONDITION NO LONGER HOLDS, measured rather than assumed.** Both production admins now carry a verified factor and both have signed in recently: `gerasimos@` 1 factor, last sign-in 2026-08-20 (the entry below says he had none and had not signed in since 2026-07-15), `nontari@` 1 factor, last sign-in 2026-08-18. **This was stale in the DANGEROUS direction** — a reader would have acted on an exposure that had already been closed by the account simply enrolling. The original assessment follows, because the reasoning about blast radius is still the right reasoning. Production has
   two active admins. `nontari@` enrolled TOTP on 2026-08-09 (factor `verified`).
   `gerasimos@` is also a full admin — same reach over client KYC and the
   evidence chain — with **no verified factor and no sign-in since 2026-07-15**.
@@ -1309,7 +1363,7 @@ explicit direction.
   `revoke … from public, anon` and a `get_advisors` pass, which is precisely
   what migration 0021 got wrong. Then a "2FA" column and an RLS test that a
   non-admin gets nothing back.
-- **RLS helper functions are called ONCE PER ROW — counted, 2026-08-11.**
+- ~~**RLS helper functions are called ONCE PER ROW — counted, 2026-08-11.**~~ **CLOSED 2026-08-25** — re-verified on hosted with the entry's own two checks: `0030_hoist_rls_helpers.sql` is in the repo and `rls_hoisted_policy_count()` returns **24** with **0** bare calls, exactly what it claimed. The body below is kept for the measurements.
   ~~**FIXED ON THE 7 LIST TABLES**~~ — **DONE AND APPLIED TO HOSTED 2026-08-11**,
   migration 0030. 24 policies hoisted, 0 bare, 115 policies before and after,
   `get_advisors` clean. Design and plan under `docs/superpowers/`; rollback is
@@ -1416,25 +1470,25 @@ explicit direction.
   upload *even when the upload fails*, and production still answers 403 for a
   `.js.map`. Reasoning in the commit; the original entry follows.
 
-- **[HISTORICAL — SUPERSEDED BY THE ENTRY ABOVE, WHICH SHIPPED. Not open work.]**
-  **Sentry has no source maps and no release tracking (noticed 2026-08-09).**
-  Delivery is fixed and alerting is proven, but the DATA is poor. `next.config.ts`
-  does not wrap with `withSentryConfig`, so stack traces arrive minified — the
-  2026-08-03 production error read
-  `.next/server/chunks/ssr/[root-of-the-server]__1852x8s._.js:1:6032`, which
-  names no file and no line — and no release is attached, so an issue cannot be
-  tied to the deploy that caused it. With several deploys a day that is the
-  difference between "this broke today" and "this broke, somewhere, sometime".
+  - **Sentry has no source maps and no release tracking (original).**
+    **[HISTORICAL — SUPERSEDED BY THE ENTRY ABOVE, WHICH SHIPPED. Not open work.]**
+    Delivery is fixed and alerting is proven, but the DATA is poor. `next.config.ts`
+    does not wrap with `withSentryConfig`, so stack traces arrive minified — the
+    2026-08-03 production error read
+    `.next/server/chunks/ssr/[root-of-the-server]__1852x8s._.js:1:6032`, which
+    names no file and no line — and no release is attached, so an issue cannot be
+    tied to the deploy that caused it. With several deploys a day that is the
+    difference between "this broke today" and "this broke, somewhere, sometime".
 
-  The prerequisites are ALREADY in Vercel and unused: `SENTRY_AUTH_TOKEN`,
-  `SENTRY_PROJECT` and `VERCEL_GIT_COMMIT_SHA` exist (added Aug 3 by the Sentry
-  integration) — they are exactly what the build plugin needs. So this is
-  `withSentryConfig` plus a release derived from the commit SHA.
+    The prerequisites are ALREADY in Vercel and unused: `SENTRY_AUTH_TOKEN`,
+    `SENTRY_PROJECT` and `VERCEL_GIT_COMMIT_SHA` exist (added Aug 3 by the Sentry
+    integration) — they are exactly what the build plugin needs. So this is
+    `withSentryConfig` plus a release derived from the commit SHA.
 
-  Treat as a BUILD change, not a config tweak: it alters the production build and
-  uploads source maps at build time, so it wants a green CI run and a check that
-  the deploy still succeeds before it is trusted. Verify by reading a real stack
-  trace in Sentry afterwards, not by the plugin being present.
+    Treat as a BUILD change, not a config tweak: it alters the production build and
+    uploads source maps at build time, so it wants a green CI run and a check that
+    the deploy still succeeds before it is trusted. Verify by reading a real stack
+    trace in Sentry afterwards, not by the plugin being present.
 - **Mandatory 2FA (decision, follow-up to C2).** Enrolment is currently opt-in. If the client wants it required, the Supabase guide gives "enforce for all users" and "enforce for new users only" variants. Do the DB-level enforcement above first, and plan a recovery path — Supabase issues no recovery codes, so the practical answer is a second enrolled factor per user plus an admin who can delete a factor via the GoTrue admin API.
 - ~~**Deal-scoped "Log contact" action (follow-up to B7).**~~ **SHIPPED
   2026-08-07 (migration 0025).** It was worse than this entry described: the
@@ -1549,7 +1603,7 @@ explicit direction.
   `csp.spec.ts`: 31 passed / 3 skipped, with `property detail` and `contact
   detail` — the two that used to fail on run 1 — both green via the seeding
   path, and `CSP-FIXTURE-%` / `csp-detail-fixture` counts back to 0 afterwards.
-- **CSP report delivery cannot be confirmed "later" — Vercel log retention is
+- **NOTE — CSP report delivery cannot be confirmed "later" — Vercel log retention is
   ~1 hour on this plan (C1).** `/api/csp-report` sinks to stdout, and HANDOFF
   told the operator to browse production and then grep the runtime logs for
   `[csp]`. A 7-day query returns *"the requested window likely exceeds your
@@ -1599,7 +1653,7 @@ explicit direction.
   it is *designed* to be public — but it should be a conscious decision rather
   than a side effect, and it changes what HANDOFF §2b step 4 can verify. Keep or
   delete deliberately; do not let it happen by accident.
-- **`JWT issued at future` — third sighting, now with a deployment stamp.** Seen
+- **NOTE — `JWT issued at future`, third sighting, now with a deployment stamp.** Seen
   again on prod 2026-08-03T17:07:18Z, route `/properties`, count 1, users 1, on
   deployment `dpl_D3WRnCp…`. Same shape as 2026-07-19 and 2026-07-21: a
   slightly future-dated access token makes PostgREST reject the query and the
@@ -1740,7 +1794,7 @@ developer.
   unknown kind exactly as loudly as the CHECK did, proven in the migration and
   again in RLS test 33.
 
-- **CI: `e2e` can fail to start Supabase with "port 54322 address already in
+- **NOTE — CI: `e2e` can fail to start Supabase with "port 54322 address already in
   use".** Seen once on 2026-08-24 (`b490c2e`) minutes after identical content
   passed on the branch. **It is infrastructure, not code — `gh run rerun <id>
   --failed` clears it.** `rls` and `e2e` both run `supabase start` with no
