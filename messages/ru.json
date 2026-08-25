@@ -252,6 +252,8 @@
     "documentDeleted": "Документ удалён",
     "documentDeletedTitle": "Документ удалён — {title}",
     "renewalTaskCreated": "Создано напоминание о продлении",
+    "keyRecallTaskCreated": "Мандат завершён — {count, plural, one {# ключ} few {# ключа} other {# ключей}} ещё у нас, создана задача на возврат",
+    "supersededKeysReturned": "Задача на возврат ключей закрыта — ключей у нас больше нет",
       "priceDropMatched": "Снижение цены — {count, plural, one {# покупатель} few {# покупателя} many {# покупателей} other {# покупателя}} в рамках бюджета",
       "newListingMatched": "В продаже — {count, plural, one {# подходящий покупатель} few {# подходящих покупателя} many {# подходящих покупателей} other {# подходящего покупателя}}",
       "reservationExpiringSoon": "Срок брони истекает через {days, plural, one {# день} few {# дня} many {# дней} other {# дня}} — создано напоминание",

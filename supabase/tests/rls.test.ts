@@ -2579,7 +2579,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       .from("task_kinds")
       .select("kind");
     expect(readErr, "an agent may read the vocabulary").toBeNull();
-    expect((kinds ?? []).length, "all eight kinds are visible").toBe(8);
+    expect((kinds ?? []).length, "all nine kinds are visible").toBe(9);
 
     // The vocabulary is the system's: adding a kind is a code change, so not
     // even an admin edits it from the app.
@@ -2623,6 +2623,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       "reservation_expiring",
       "bulk_price_drop_match",
       "installment_due",
+      "key_recall",
     ];
     expect((kinds ?? []).map((k) => k.kind).sort()).toEqual([...shipped].sort());
 
@@ -3105,6 +3106,159 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
         .update({ value: before!.value })
         .eq("key", "nudge_thresholds");
     }
+  });
+
+
+  it("37. key recall: raised when a mandate ends, survives expire_mandates(), and self-heals", async () => {
+    // 0053. The assertion that earns its keep is the expire_mandates() one.
+    // `tasks.mandate_id` carried exactly one kind until now, and BOTH supersede
+    // paths matched on mandate_id alone — so a key_recall task, which by
+    // definition hangs off a mandate that is no longer active, was completed on
+    // the next sweep. The feature would have looked like it worked (task
+    // appears, event written) while leaving nobody anything to do.
+    const { data: prop } = await svc
+      .from("properties")
+      .insert({
+        org_id: ORG_A,
+        reference: `KEYS-${run}`,
+        kind: "standalone",
+        property_type: "apartment",
+        status: "available",
+        title: { en: "Key recall fixture" },
+        // gives the three-arm assignee fallback its FIRST arm to land on, and
+        // makes the task visible to that agent — tasks_select lets an agent see
+        // only what they are assigned or created (admins see everything)
+        assigned_agent_id: agentA1.id,
+      })
+      .select("id")
+      .single();
+
+    const { data: mandate, error: mandateErr } = await svc
+      .from("mandates")
+      .insert({
+        org_id: ORG_A,
+        property_id: prop!.id,
+        status: "terminated",
+        type: "open",
+        start_date: new Date(Date.now() - 200 * 864e5).toISOString().slice(0, 10),
+        expiry_date: new Date(Date.now() - 10 * 864e5).toISOString().slice(0, 10),
+      })
+      .select("id")
+      .single();
+    expect(mandateErr, "the fixture mandate must insert").toBeNull();
+
+    const mkKey = async (code: string, status: string) => {
+      const { data, error } = await svc
+        .from("property_keys")
+        .insert({ org_id: ORG_A, property_id: prop!.id, key_code: `${code}-${run}`, status })
+        .select("id")
+        .single();
+      expect(error, `key ${code} must insert`).toBeNull();
+      return data!.id as string;
+    };
+
+    const heldKey = await mkKey("K1", "checked_out");
+    const officeKey = await mkKey("K2", "in_office");
+    // neither of these is recallable: one is already where it belongs, the
+    // other cannot be handed back at all
+    await mkKey("K3", "with_owner");
+    await mkKey("K4", "lost");
+
+    const openRecalls = async () => {
+      const { count } = await svc
+        .from("tasks")
+        .select("id", { count: "exact", head: true })
+        .eq("mandate_id", mandate!.id)
+        .eq("kind", "key_recall")
+        .eq("is_done", false);
+      return count ?? 0;
+    };
+    const closedRecalls = async () => {
+      const { count } = await svc
+        .from("tasks")
+        .select("id", { count: "exact", head: true })
+        .eq("mandate_id", mandate!.id)
+        .eq("kind", "key_recall")
+        .eq("is_done", true);
+      return count ?? 0;
+    };
+
+    // --- the reader is not an API ------------------------------------------
+    const anon = anonClient();
+    const { error: anonErr } = await anon.rpc("raise_key_recall_tasks", {
+      p_mandate: mandate!.id,
+    });
+    expect(anonErr, "anon must not raise recall tasks").not.toBeNull();
+    const { error: agentRpcErr } = await agentA1.client.rpc("raise_key_recall_tasks", {
+      p_mandate: mandate!.id,
+    });
+    expect(
+      agentRpcErr,
+      "a signed-in agent must not either — it is SECURITY DEFINER and takes any mandate id",
+    ).not.toBeNull();
+
+    // --- raised once --------------------------------------------------------
+    const { data: raised } = await svc.rpc("raise_key_recall_tasks", { p_mandate: mandate!.id });
+    expect(raised, "one task for one ended mandate").toBe(1);
+    expect(await openRecalls()).toBe(1);
+
+    // the title counts only what the agency actually holds
+    const { data: task } = await svc
+      .from("tasks")
+      .select("title, assignee_id, property_id")
+      .eq("mandate_id", mandate!.id)
+      .eq("kind", "key_recall")
+      .single();
+    expect(task!.title, "with_owner and lost keys are not chased").toContain("2 keys still held");
+    expect(
+      task!.assignee_id,
+      "the property's agent is the first arm of the fallback",
+    ).toBe(agentA1.id);
+    expect(task!.property_id).toBe(prop!.id);
+
+    // --- idempotent ---------------------------------------------------------
+    const { data: again } = await svc.rpc("raise_key_recall_tasks", { p_mandate: mandate!.id });
+    expect(again, "a second call raises nothing").toBe(0);
+
+    // --- THE REGRESSION PIN -------------------------------------------------
+    // expire_mandates() takes no org argument, so this is a global sweep; the
+    // assertion is deliberately scoped to this fixture's mandate.
+    await svc.rpc("expire_mandates");
+    expect(
+      await openRecalls(),
+      "expire_mandates() must NOT complete the recall task — without the kind filter it matched on mandate_id alone and closed it every night",
+    ).toBe(1);
+
+    // an agent can see it on their own task list
+    const { data: agentSees } = await agentA1.client
+      .from("tasks")
+      .select("id")
+      .eq("mandate_id", mandate!.id)
+      .eq("kind", "key_recall");
+    expect(
+      (agentSees ?? []).length,
+      "the assigned agent sees it on their own task list",
+    ).toBe(1);
+
+    // --- self-heal: the held keys go back ----------------------------------
+    await svc.from("property_keys").update({ status: "with_owner" }).eq("id", heldKey);
+    await svc.rpc("raise_key_recall_tasks", { p_mandate: mandate!.id });
+    expect(await openRecalls(), "one key back is not all of them").toBe(1);
+
+    await svc.from("property_keys").update({ status: "with_owner" }).eq("id", officeKey);
+    await svc.rpc("raise_key_recall_tasks", { p_mandate: mandate!.id });
+    expect(await openRecalls(), "nothing held any more — the chase stops").toBe(0);
+    expect(await closedRecalls(), "closed, never deleted — history keeps its shape").toBe(1);
+
+    // --- cross-org isolation -------------------------------------------------
+    const { data: bSees } = await agentB.client
+      .from("tasks")
+      .select("id")
+      .eq("mandate_id", mandate!.id);
+    expect(bSees ?? [], "org B must not see org A's recall task").toHaveLength(0);
+
+    const { data: chainOk } = await svc.rpc("verify_events_chain", { p_org: ORG_A });
+    expect(chainOk, "recall events keep the hash chain intact").toBe(true);
   });
 
 });

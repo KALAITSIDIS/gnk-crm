@@ -47,6 +47,10 @@ async function supersedeRenewalTasks(
     .from("tasks")
     .update({ is_done: true, done_at: new Date().toISOString() })
     .eq("mandate_id", mandate.id)
+    // 0053: `tasks.mandate_id` is no longer single-kind. Without this filter
+    // this closes the key_recall task the moment the mandate is terminated —
+    // the task hangs off that same mandate, so it matched every time.
+    .eq("kind", "mandate_renewal")
     .eq("is_done", false)
     .select("id");
   for (const t of superseded ?? []) {
@@ -383,6 +387,28 @@ export async function setMandateStatus(
       "mandate_no_longer_active",
     );
   }
+
+  // 0053: the agency should not still be holding the owner's keys for a
+  // property it no longer represents. `expired` is cron-only, so `terminated`
+  // is the only end this action can reach; the nightly sweep covers the other.
+  //
+  // SERVICE ROLE, not the user's client: raise_key_recall_tasks is SECURITY
+  // DEFINER and revoked from `authenticated` on purpose — granting it would let
+  // any signed-in user pass any mandate id. This call site is already
+  // admin-gated above, which is what makes the elevation safe.
+  if (next === "terminated") {
+    const { error: recallErr } = await createAdminClient().rpc("raise_key_recall_tasks", {
+      p_mandate: mandateId,
+      p_actor: profile.id,
+    });
+    // Not fatal: the mandate IS terminated and saying otherwise would be worse
+    // than a missing task, which tonight's expire_mandates() will raise anyway.
+    // Logged rather than swallowed — a discarded error is how a whole feature
+    // silently does nothing (0045).
+    if (recallErr) console.error("key recall task failed to raise", recallErr);
+    else revalidatePath("/tasks");
+  }
+
   await recomputeScores(supabase, m.property_id);
   revalidatePath(`/properties/${m.property_id}`);
   return { error: null };
