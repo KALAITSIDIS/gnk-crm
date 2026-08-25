@@ -1824,6 +1824,17 @@ developer.
   unknown kind exactly as loudly as the CHECK did, proven in the migration and
   again in RLS test 33.
 
+- **NOTE — CI: `supabase/setup-cli@v1` can fail with "Failed to resolve latest
+  Supabase CLI release: rate limit exceeded".** Seen on 2026-08-25
+  (`6349db3`). The `e2e` job goes red **before a single test runs** — the action
+  asks the GitHub API for the newest CLI release and gets rate-limited, so the
+  log contains no test output at all. **Infrastructure, not code:
+  `gh run rerun <id> --failed` cleared it on the first attempt.**
+
+  **Do not read this as the port-54322 flake below** — that one fails inside
+  `supabase start`, this one fails before it. Tell them apart by whether the log
+  mentions a port or the API. If it becomes frequent, pinning a CLI version in
+  the workflow removes the API call entirely.
 - **NOTE — CI: `e2e` can fail to start Supabase with "port 54322 address already in
   use".** Seen once on 2026-08-24 (`b490c2e`) minutes after identical content
   passed on the branch. **It is infrastructure, not code — `gh run rerun <id>
