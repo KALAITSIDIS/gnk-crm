@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Calculator } from "lucide-react";
+import { ArrowLeft, Calculator, Copy } from "lucide-react";
 import {
   DetailsForm,
   LegalForm,
@@ -429,6 +429,16 @@ export default async function PropertyDetailPage({
             {p.kind === "project" || p.kind === "phase" ? (
               <Button asChild variant="outline" size="sm">
                 <Link href={`/properties/${p.id}/units`}>Units matrix</Link>
+              </Button>
+            ) : null}
+            {/* Only for the kinds the create wizard can actually make. A unit
+                or a phase is created from its project, so offering it here
+                would promise something that quietly becomes a standalone. */}
+            {p.kind === "standalone" || p.kind === "project" ? (
+              <Button asChild variant="outline" size="sm">
+                <Link href={`/properties/new?similar=${p.id}`}>
+                  <Copy className="size-3.5" /> Create similar
+                </Link>
               </Button>
             ) : null}
             {profile.role === "admin" ? (
