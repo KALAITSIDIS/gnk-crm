@@ -694,7 +694,26 @@ explicit direction.
   listing needs no more photos. Categories name the TAB the fix lives on, which
   is what turns a count into an instruction; the tabs are Radix state with no
   href, so naming them is as close to a deep link as the app allows.
-- **Portfolio tab on a contact, S.** Finding 9, from the other side.
+- ~~**Portfolio tab on a contact, S.** Finding 9, from the other side.~~
+  **ALREADY SHIPPED — this line was a DUPLICATE and stayed open for four days.**
+  It went in with the audit (`0cc9ab6`, 2026-08-21) and finding 9 shipped the
+  SAME DAY (`19e42a1`) as exactly this: a `portfolio` tab on the contact page.
+  Two lists, one idea, and only the numbered one got struck through.
+
+  **Verified before closing rather than assumed**, on 2026-08-25: the tab is
+  present, reads "Properties (4)" for a contact owning 74 rows, and SQL confirms
+  74 collapse to exactly 4 top-level entries (PAF0001, PAF0002, PAF0002-P2,
+  PAF0003) — the unit rollup finding 9 was built around, agreeing to the row.
+
+  The contact page already covers every side of this: what they own or built
+  (Properties), what they are buying (Deals), what they are looking for (0043
+  saved searches on Preferences), and what has happened (Activity). There is no
+  remaining "other side" to build.
+
+  **Worth reading as a process failure, not just a stale line.** Nothing here
+  distinguished "proposal" from "shipped" except a strikethrough applied by
+  hand, so a duplicate survived in a second list and was picked up as work four
+  days later. When an item appears in two sections, close both.
 - ~~**Project availability share link, M.**~~ **SHIPPED 2026-08-22 (`92958e9`)**
   — migration `0041`, a second `kind` on 0023's machinery. **No new table:**
   `share_link_properties` already joins a link to the one property it names, so
