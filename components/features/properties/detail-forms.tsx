@@ -1,6 +1,7 @@
 "use client";
 
 import { MapLocationFields } from "@/components/features/properties/map-location-fields";
+import { PricingBreakdown } from "@/components/features/properties/pricing-breakdown";
 import { SectionForm } from "@/components/features/properties/section-form";
 import { MultilangTabs, type MultilangValue } from "@/components/features/shared/multilang-tabs";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -149,11 +150,16 @@ export function DetailsForm({
   areas,
   isAdmin = false,
   readOnly = false,
+  commissionPct = null,
 }: {
   property: PropertyDetailData;
   areas: AreaOption[];
   isAdmin?: boolean;
   readOnly?: boolean;
+  /** from the ACTIVE mandate via `mandates_safe`, which returns null unless the
+   *  reader is an admin or this property's assigned agent — that masking is the
+   *  permission check, so this is passed straight through */
+  commissionPct?: number | string | null;
 }) {
   const districtAreas = areas.filter((a) => a.districtId === property.district_id);
   const isLand = property.property_type === "land";
@@ -225,6 +231,12 @@ export function DetailsForm({
       </div>
 
       <SectionTitle>Pricing</SectionTitle>
+      <PricingBreakdown
+        commissionPct={commissionPct}
+        askingPrice={property.asking_price}
+        minAcceptablePrice={property.min_acceptable_price}
+        ownerNetPrice={property.owner_net_price}
+      >
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <NumberField name="asking_price" label="Asking price (€)" defaultValue={property.asking_price} step="0.01" />
         <NumberField
@@ -252,6 +264,7 @@ export function DetailsForm({
           defaultValue={property.vat_status}
         />
       </div>
+      </PricingBreakdown>
 
       <SectionTitle>Areas & rooms</SectionTitle>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

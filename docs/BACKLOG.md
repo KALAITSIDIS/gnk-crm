@@ -713,9 +713,39 @@ explicit direction.
   Suggest the status and show the rule that produced it. **The thresholds must
   come from the operator — a CRM must not invent tax law**, which is the same
   reason B4's reservation agreements are parked (HANDOFF §5).
-- **Owner net ↔ asking ↔ commission, shown, S.** All three are already columns.
-  Show the arithmetic so an agent negotiating knows the floor. Admin + assigned
-  agent only, matching how `mandates_safe` masks commission.
+- ~~**Owner net ↔ asking ↔ commission, shown, S.**~~ ✅ **DONE 2026-08-25.** A
+  live panel under the Pricing fields on the Details tab. No migration.
+
+  **THE FLOOR IS A DIVISION, AND THE TEMPTING VERSION IS WRONG.** Commission is
+  charged on the SALE price, so the lowest sale that still delivers the owner's
+  net is `net / (1 − pct/100)`, not `net + commission`. At 5% on a €200.000 net
+  the naive sum gives €210.000, which returns €199.500 after commission — five
+  hundred short of what the owner was promised. A test pins that difference
+  in euro precisely because the wrong answer looks so reasonable.
+
+  **It is four numbers, not the three the entry counted.**
+  `min_acceptable_price` already existed alongside asking and owner net, and it
+  is a SALE price while owner net is what the owner receives — so the panel also
+  says, in euro, when the min acceptable does not actually deliver the net, and
+  when the ASKING price itself does not (the worse case, which nothing else on
+  the page would have shown).
+
+  **Live, not a snapshot**, because the question is asked mid-negotiation: it
+  reads the fields on input bubble, so typing "what if I take 240?" moves the
+  figures without saving. The three fields stay uncontrolled — converting a
+  working form's inputs to controlled state to feed a read-only panel is a lot
+  of risk for a display.
+
+  **Visibility is not re-implemented.** `commission_pct` arrives from
+  `mandates_safe`, which returns NULL unless the reader is an admin or the
+  property's assigned agent. Nothing derives from null, so the panel simply does
+  not render for anyone else — the masking upstream IS the gate, and a second
+  copy of that rule would be one more thing to drift.
+
+  **A bug in my own explanatory line, caught by reading the rendered page:** it
+  said "divided by 0.96" because `.toFixed(2)` rounded the 0.965 behind a 3.5%
+  rate, and 200.000 / 0.96 is 208.333 — an explanation that does not reproduce
+  the figure printed beside it. Now stated as a percentage (96.5%), which does.
 - ~~**Quality-score worklist, S.**~~ ✅ **DONE 2026-08-25.** `/properties/worklist`,
   reached from a *Worklist* button on the list. No migration. The entry was
   right that the information was already being computed and discarded.
@@ -1794,6 +1824,17 @@ developer.
   unknown kind exactly as loudly as the CHECK did, proven in the migration and
   again in RLS test 33.
 
+- **NOTE — CI: `supabase/setup-cli@v1` can fail with "Failed to resolve latest
+  Supabase CLI release: rate limit exceeded".** Seen on 2026-08-25
+  (`6349db3`). The `e2e` job goes red **before a single test runs** — the action
+  asks the GitHub API for the newest CLI release and gets rate-limited, so the
+  log contains no test output at all. **Infrastructure, not code:
+  `gh run rerun <id> --failed` cleared it on the first attempt.**
+
+  **Do not read this as the port-54322 flake below** — that one fails inside
+  `supabase start`, this one fails before it. Tell them apart by whether the log
+  mentions a port or the API. If it becomes frequent, pinning a CLI version in
+  the workflow removes the API call entirely.
 - **NOTE — CI: `e2e` can fail to start Supabase with "port 54322 address already in
   use".** Seen once on 2026-08-24 (`b490c2e`) minutes after identical content
   passed on the branch. **It is infrastructure, not code — `gh run rerun <id>
