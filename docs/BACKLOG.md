@@ -1563,8 +1563,21 @@ explicit direction.
     uploads source maps at build time, so it wants a green CI run and a check that
     the deploy still succeeds before it is trusted. Verify by reading a real stack
     trace in Sentry afterwards, not by the plugin being present.
-- **Mandatory 2FA — DECIDED YES 2026-08-26, MECHANISM SHIPPED, SWITCH NOT
-  THROWN.** The operator asked for it. It cannot be turned on without shipping a
+- **Mandatory 2FA — DECIDED YES 2026-08-26. LEFT OFF UNTIL BEFORE THE NEXT
+  HIRE, operator decision the same day.** It binds nobody today: production has
+  two users and both are already enrolled (measured 2026-08-26), so the harness
+  work below buys nothing until a third person exists.
+
+  **THE TRIGGER IS WIRED, NOT JUST WRITTEN DOWN.** "Before the next hire" is a
+  condition nobody watches, and a note in this file is exactly how the last
+  conditional item got missed — the contact portfolio tab was rebuilt four days
+  after it shipped because its duplicate sat unread here. So the reminder lives
+  on the **Invite user dialog**, which is the only moment it matters: inviting
+  someone while `MFA_REQUIRED` is false shows a warning saying they will be able
+  to sign in with a password alone. It disappears by itself once the switch is
+  thrown, because it renders on `!MFA_REQUIRED`.
+
+  **MECHANISM SHIPPED, SWITCH NOT THROWN.** The operator asked for it. It cannot be turned on without shipping a
   red pipeline, and BOTH halves were measured rather than predicted:
 
   * **Database half** (drop the opt-in arm from `mfa_satisfied()`): the RLS
