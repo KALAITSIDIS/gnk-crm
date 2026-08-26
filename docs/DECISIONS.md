@@ -2990,3 +2990,50 @@ transition loses rather than both appearing to succeed.
 **The unique violation gets a sentence**, not a driver message — it is the most
 likely error a user will hit, and "release or confirm the existing one first"
 is the actual answer.
+
+## T-top-agents — the vanity metric is gone and nothing replaced it (2026-08-26, migration 0057)
+
+**Operator decision: drop "top agents by activity", replace with nothing.**
+
+0042 predicted this migration in a comment it left inside the function body —
+"the 2026-08-23 review called this a vanity metric and it is right — clicks are
+not conversion. Replacing it needs an operator decision on which metrics take
+its place, so it is a BACKLOG line and deliberately NOT changed here." The
+answer came back: nothing takes its place. Not lead-to-viewing, not win rate,
+not commission. The card is gone and the grid is one card shorter.
+
+**Replace-with-nothing means the query goes too.** Deleting only the card would
+have left every admin dashboard load paying for a 30-day group-by over `events`
+that nobody reads, so 0057 removes `top_actors30` from
+`admin_dashboard_stats`. What was removed is real work: 0042 had made the
+aggregate EXACT (it previously ranked a 5000-row sample), so this is not a stub
+being tidied away.
+
+**The shared fetch was the trap, and the code said so before I touched it.** The
+component had a comment reading "one profiles fetch covers the top-agents bars
+AND the event-feed bylines". Removing the bars must NOT remove that fetch — the
+Latest events feed still needs a name for every actor. `profileIds` narrowed
+from the union of ranked actors and feed actors down to the feed actors alone;
+the fetch, the `actorName` map and the feed annotation all stay. Verified in the
+browser: the feed still renders "· Gerasimos Kalaitsidis" and "· system" after
+the change.
+
+**Three i18n keys were orphaned and went with it** — `dashboard.admin.cards.topAgents`,
+`dashboard.admin.empty.noActivity` and `dashboard.admin.events` (the "{count}
+events" bar label), in all three locales. `dashboard.agent.noActivity` and
+`events.noActivity` are DIFFERENT keys that are still used; a scan by short name
+alone would have deleted them, and nearly did.
+
+**The RLS test was inverted rather than deleted.** Test 22 asserted
+`top_actors30` was present and capped at 5. It now asserts the key is ABSENT.
+That is deliberate: this is a decision that is settled, not a feature that is
+merely unbuilt, and a decision with nothing checking it is the kind that gets
+quietly undone by a later session reading the 0042 comment as a to-do.
+
+**DEPLOY ORDER: the destructive one.** Removing a key from the function's jsonb
+breaks pre-removal code, which does `stats.top_actors30.map(...)` and would
+throw on `undefined`, taking the whole admin dashboard to its error boundary.
+Code merged and deployed FIRST, hosted migration applied after. The reverse
+direction is safe — a deployed component simply ignores a key that is still
+there — and that asymmetry is exactly why code-first is correct here, mirroring
+the note 0042 left on the OPTIONAL `p50/p90` fields for the additive case.

@@ -37,13 +37,11 @@
       "deals": "{count, plural, one {# сделка} few {# сделки} many {# сделок} other {# сделки}}",
       "answered": "{count} с ответом",
       "responseUnanswered": "{count} без ответа",
-      "events": "{count, plural, one {# событие} few {# события} many {# событий} other {# события}}",
       "system": "система",
       "cards": {
         "pipelineByStage": "Воронка по этапам (открытые сделки)",
         "leadsBySource": "Лиды по источникам (30 дн)",
         "listingsByStatus": "Объекты по статусам",
-        "topAgents": "Самые активные агенты (30 дн)",
         "mandatesExpiring": "Мандаты, истекающие ≤30 дней",
         "latestEvents": "Последние события"
       },
@@ -51,7 +49,6 @@
         "noOpenDeals": "Пока ничего (нет открытых сделок).",
         "noLeads": "Нет лидов за последние 30 дней.",
         "noListings": "Пока нет объектов.",
-        "noActivity": "Нет недавней активности.",
         "noMandates": "Нет в ближайшие 30 дней.",
         "noEvents": "Пока нет активности."
       },

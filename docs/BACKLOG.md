@@ -1862,13 +1862,23 @@ developer.
 
 ### Needs an operator decision
 
-- **Replace "top agents by activity" on the admin dashboard.** The review is
-  right that it is a vanity metric — clicks are not conversion — and 0042 left
-  a note saying so in the aggregate. Replacing it means choosing what goes in
-  its place: lead-to-viewing, viewing-to-offer, win rate, commission, or some
-  mix. That is a desk decision, not a code one. (Dashboard *filters* by
-  agent/office/period are a different matter: refused by guardrail 6, and not
-  going here.)
+- ~~**Replace "top agents by activity" on the admin dashboard.**~~ ✅ **DONE
+  2026-08-26** (migration 0057) — **operator decision: dropped, and NOTHING
+  replaced it.** Not lead-to-viewing, not win rate, not commission. The card is
+  gone from the admin dashboard and the grid is one card shorter. See DECISIONS
+  T-top-agents.
+
+  **The query went with the card**, because deleting only the card would leave
+  every dashboard load paying for a 30-day group-by over `events` that nobody
+  reads — 0057 removes `top_actors30` from `admin_dashboard_stats`. Three
+  orphaned i18n keys went too, in all three locales.
+
+  **RLS test 22 now asserts the key is ABSENT**, where it used to assert it was
+  present and capped at 5. This is settled, not unbuilt: without that assertion
+  a later session reading 0042's in-body comment could take it for a to-do.
+
+  (Dashboard *filters* by agent/office/period remain a different matter: refused
+  by guardrail 6, and still not going here.)
 
 - ~~**Sync `properties.status` with a live reservation.**~~ ❌ **DECLINED
   2026-08-26 — operator decision: the listing status stays independent of
