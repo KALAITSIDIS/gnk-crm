@@ -84,11 +84,10 @@ export function buildMergeBackfill(
   const mergedLangs = sortedUnion(primary.languages, duplicate.languages);
   if (!sameSet(mergedLangs, primary.languages ?? [])) updates.languages = mergedLangs;
 
-  // checklists/preferences move wholesale only into an empty primary — the
-  // primary's own answers are never mixed with the duplicate's
-  if (isEmptyJson(primary.preferences) && !isEmptyJson(duplicate.preferences)) {
-    updates.preferences = duplicate.preferences;
-  }
+  // checklists move wholesale only into an empty primary — the primary's own
+  // answers are never mixed with the duplicate's. (0055 removed `preferences`
+  // from this rule with the column; saved searches are ROWS, so a merge moves
+  // them by re-pointing contact_id rather than by copying a blob.)
   if (isEmptyJson(primary.kyc) && !isEmptyJson(duplicate.kyc)) {
     updates.kyc = duplicate.kyc;
   }

@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { ACCOUNT_FEASIBILITY, KYC_ITEMS } from "@/lib/constants/checklists";
-import { PROPERTY_TYPES } from "@/lib/validators/properties";
 
 export const CONTACT_KINDS = ["person", "company"] as const;
 export const TEMPERATURES = ["hot", "warm", "cold", "inactive", "vip"] as const;
@@ -87,14 +86,6 @@ export const COMM_CHANNELS = [
   "other",
 ] as const;
 
-export const CONTACT_PURPOSES = [
-  "own_use",
-  "investment",
-  "relocation",
-  "holiday_home",
-  "rental_income",
-] as const;
-
 /**
  * Radix Select cannot re-select an empty value, so clearable selects offer an
  * explicit "—" item carrying this sentinel; validation treats it as unset.
@@ -104,15 +95,6 @@ export const SELECT_NONE = "__none__";
 const emptyToUndefined = (v: unknown) =>
   v === "" || v === null || v === SELECT_NONE ? undefined : v;
 const optText = (max: number) => z.preprocess(emptyToUndefined, z.string().max(max).optional());
-const optNonNegNumber = z.preprocess(
-  (v) => (v === "" || v === null || v === undefined ? undefined : Number(v)),
-  z.number().min(0).finite().optional(),
-);
-const optNonNegInt = z.preprocess(
-  (v) => (v === "" || v === null || v === undefined ? undefined : Number(v)),
-  z.number().int().min(0).optional(),
-);
-
 export const createContactSchema = z
   .object({
     contact_kind: z.enum(CONTACT_KINDS).default("person"),
@@ -161,21 +143,6 @@ export const createContactSchema = z
 export type CreateContactInput = z.infer<typeof createContactSchema>;
 
 /** Preferences tab payload (doc 02 §C3). `areas` stores area IDs (DECISIONS). */
-export const contactPreferencesSchema = z
-  .object({
-    areas: z.array(z.string().max(100)).max(100).default([]),
-    budget_min: optNonNegNumber,
-    budget_max: optNonNegNumber,
-    bedrooms_min: optNonNegInt,
-    property_types: z.array(z.enum(PROPERTY_TYPES)).default([]),
-    purpose: z.preprocess(emptyToUndefined, z.enum(CONTACT_PURPOSES).optional()),
-  })
-  .refine(
-    (d) => d.budget_min === undefined || d.budget_max === undefined || d.budget_min <= d.budget_max,
-    { message: "Budget min is above budget max", path: ["budget_min"] },
-  );
-
-export type ContactPreferencesInput = z.infer<typeof contactPreferencesSchema>;
 
 const kycItemSchema = z.object({
   done: z.boolean(),

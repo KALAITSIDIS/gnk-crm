@@ -3,7 +3,6 @@ import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import {
   ChecklistsForm,
-  PreferencesForm,
   ProfileForm,
 } from "@/components/features/contacts/detail-forms";
 import { ArchiveContactButton } from "@/components/features/contacts/archive-button";
@@ -332,7 +331,6 @@ export default async function ContactDetailPage({
                 areas={areaOptions}
                 readOnly={!canEdit}
                 readOnlyHint={readOnlyHint}
-                legacyPreferences={c.preferences as Record<string, unknown> | null}
               />
             </section>
 
@@ -346,20 +344,6 @@ export default async function ContactDetailPage({
               <MatchesCard requirements={requirements as unknown as RequirementForMatching[]} />
             </section>
 
-            <section className="rounded-[10px] border border-border bg-surface p-6">
-              <div className="mb-4">
-                <h2 className="text-sm font-semibold text-text-1">Older preferences</h2>
-                <p className="text-sm text-text-2">
-                  Kept from before saved searches existed. Not used for matching.
-                </p>
-              </div>
-              <PreferencesForm
-                contact={c}
-                areaOptions={areaOptions}
-                readOnly={!canEdit}
-                readOnlyHint={readOnlyHint}
-              />
-            </section>
           </div>
         </TabsContent>
 

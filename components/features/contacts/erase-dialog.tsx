@@ -73,7 +73,7 @@ export function EraseContactDialog({
           <div>
             <p className="font-medium text-text-1">What is erased</p>
             <p className="text-text-2">
-              Notes, psychology profile, preferences, source detail, Telegram handle, extra
+              Notes, psychology profile, saved searches, source detail, Telegram handle, extra
               phone numbers, nationality, languages, banking readiness and marketing consent.
               The contact is archived and set to Inactive so it can never appear in a
               marketing or hot-buyer list again. Their own words in lead enquiries are

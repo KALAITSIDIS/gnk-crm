@@ -352,7 +352,6 @@ export function RequirementsCard({
   areas,
   readOnly = false,
   readOnlyHint,
-  legacyPreferences,
 }: {
   contactId: string;
   requirements: RequirementRow[];
@@ -361,7 +360,6 @@ export function RequirementsCard({
   readOnly?: boolean;
   readOnlyHint?: string;
   /** the pre-0043 blob, shown only while it still holds something no row does */
-  legacyPreferences?: Record<string, unknown> | null;
 }) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
@@ -369,28 +367,9 @@ export function RequirementsCard({
   const active = requirements.filter((r) => r.is_active);
   const archived = requirements.filter((r) => !r.is_active);
 
-  const hasLegacy =
-    legacyPreferences !== null &&
-    legacyPreferences !== undefined &&
-    Object.keys(legacyPreferences).length > 0;
 
   return (
     <div className="flex flex-col gap-4">
-      {/* The pre-0043 blob is NOT dropped by the migration, and a silently
-          ignored blob is data loss nobody notices. Shown until a row exists. */}
-      {hasLegacy && requirements.length === 0 ? (
-        <div className="rounded-[10px] border border-warning/40 bg-warning/5 p-4 text-sm">
-          <p className="font-medium text-text-1">Older preferences are still on file</p>
-          <p className="mt-1 text-text-2">
-            This contact has preferences saved before saved searches existed. They are not used for
-            matching. Add them as a search below and they can be matched against listings.
-          </p>
-          <pre className="mt-2 overflow-x-auto rounded bg-surface-2 p-2 text-xs text-text-2">
-            {JSON.stringify(legacyPreferences, null, 2)}
-          </pre>
-        </div>
-      ) : null}
-
       {active.length === 0 && !adding ? (
         <p className="text-sm text-text-2">
           No saved searches yet. Add one and this buyer starts appearing on matching listings.

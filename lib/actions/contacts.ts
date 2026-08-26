@@ -13,7 +13,6 @@ import { createClient } from "@/lib/supabase/server";
 import { changedValue } from "@/lib/utils/diff";
 import {
   bankingReadinessSchema,
-  contactPreferencesSchema,
   createContactSchema,
   kycStateSchema,
 } from "@/lib/validators/contacts";
@@ -259,19 +258,6 @@ export async function updateContactSection(
       assigned_agent_id:
         profile.role === "admin" ? (d.assigned_agent_id ?? null) : current.assigned_agent_id,
     };
-  } else if (section === "preferences") {
-    const parsed = contactPreferencesSchema.safeParse({
-      areas: formData.getAll("pref_areas").map(String).filter(Boolean),
-      budget_min: raw.budget_min,
-      budget_max: raw.budget_max,
-      bedrooms_min: raw.bedrooms_min,
-      property_types: formData.getAll("pref_property_types").map(String).filter(Boolean),
-      purpose: typeof raw.purpose === "string" ? raw.purpose : undefined,
-    });
-    if (!parsed.success) {
-      return { error: parsed.error.issues[0]?.message ?? "Invalid preferences", savedAt: null };
-    }
-    updates = { preferences: JSON.parse(JSON.stringify(parsed.data)) };
   } else if (section === "kyc_banking") {
     const kyc: Record<string, { done: boolean; note?: string; doc_link?: string }> = {};
     for (const [key] of KYC_ITEMS) {

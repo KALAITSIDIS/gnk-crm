@@ -30,7 +30,6 @@ function contact(overrides: Partial<ContactRow> = {}): ContactRow {
     assigned_agent_id: null,
     preferred_channel: null,
     psychology: null,
-    preferences: {},
     kyc: {},
     banking_readiness: {},
     consent_marketing: false,

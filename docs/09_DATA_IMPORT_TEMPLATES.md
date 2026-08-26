@@ -19,7 +19,7 @@ Export current data (Excel, phone contacts, WhatsApp notes) into these two CSVs.
 | temperature | no | hot/warm/cold/inactive/vip | default warm |
 | source | no | website/referral/facebook/instagram/portal/partner/walk_in/whatsapp/telegram/phone/email/other | |
 | psychology | no | investor/relocation/luxury/retirement/holiday/local_family/other | |
-| budget_min / budget_max | no | number EUR | → preferences |
+| budget_min / budget_max | no | number EUR | → a `buyer_requirements` saved search (0055) |
 | pref_areas | no | `Kato Paphos;Peyia` | matched to areas by EN name |
 | pref_bedrooms_min | no | int | |
 | pref_property_types | no | `apartment;villa` | |
