@@ -11,7 +11,7 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 
 | | |
 |---|---|
-| `main` | **in sync with `origin/main` as of 2026-08-25** — **`feat/build-progress` merged: construction progress + delivery. NO MIGRATION.** Branch CI green before the merge; branch deleted. Earlier the same day, **`feat/pricing-breakdown` merged: owner net ↔ asking ↔ commission. NO MIGRATION.** Branch CI green before the merge; branch deleted. Earlier the same day, **`feat/quality-worklist` merged: the listing worklist. NO MIGRATION.** Branch CI green before the merge; branch deleted. Earlier the same day, **`feat/location-approx` merged: migration 0054, area centroid as a coordinate fallback.** CI green on the branch before the merge, 0054 applied to hosted before merging, branch deleted. Earlier the same day, **`feat/create-similar` merged: Create similar. NO MIGRATION.** Branch CI green before the merge; branch deleted. Earlier the same day, **`feat/sales-velocity` merged: sales velocity per project. NO MIGRATION** — the first feature in this run that needed no schema change at all, because the sale dates were already in the event log. Branch CI green before the merge; branch deleted. Earlier the same day, **`feat/key-recall` merged: migration 0053, keys follow the mandate.** CI green on the branch before the merge, 0053 applied to hosted before merging, branch deleted. Earlier the same day, **`feat/nudge-thresholds` merged: migration 0052, configurable nudge thresholds.** CI green on the branch before the merge, and 0052 applied to hosted before merging. Branch deleted local and remote. Previously, as of 2026-08-24, **`feat/installment-reminders` merged: migration 0051, instalment reminders.** CI green on the branch head `44874fc` (`checks` · `e2e` · `rls`) BEFORE the merge, and 0051 was applied to hosted before merging — the sweep is pure SQL, but `tasks.installment_id` is in the generated types the app builds against. Branch deleted local and remote. Earlier the same day, **`feat/reservation-payment-schedule` merged (`264786a`): migration 0050.** CI green for that SHA; production READY, 0 runtime errors; branch deleted. Earlier the same day, `feat/task-kinds-table` merged (`9070d23`): migration 0049.** CI green for that SHA; production READY, 0 runtime errors; branch deleted. Earlier the same day, `feat/bulk-reprice-alerts` merged (`b490c2e`): migration 0048.** **CI went RED on that SHA and was re-run green** — the `e2e` job could not bind port 54322 (`address already in use`), so the Supabase stack never started. Infrastructure, not code: identical content had passed on the branch head `b4d2288` minutes earlier. **`gh run rerun <id> --failed` is the fix**; see BACKLOG. Production READY, 0 runtime errors; branch deleted. Earlier the same day, `feat/reservation-expiry-warning` merged (`604738b`): migration 0047.** CI green for that SHA; production READY, 0 runtime errors; branch deleted. Earlier the same day, `feat/new-listing-alerts` merged (`ae0a6a2`): the second PUSH use of the matching engine, migration 0046.** CI green for that SHA; production READY, 0 runtime errors; branch deleted. Earlier the same day, `feat/price-drop-alerts` merged (`08c7b00`): the first PUSH use of the matching engine, migration 0045.** CI green on `08c7b00` for that SHA; production READY, 0 runtime errors; branch deleted. Earlier the same day, `feat/reservations` merged (`22246ad`, `--no-ff`): Phase C, reservations, migration 0044.** CI green on `22246ad` for that SHA (`checks` · `e2e` · `rls`), green on the branch head `ea79780` first; production READY, 0 runtime errors. Branch deleted local and remote. **ALL THREE PHASES OF `IMPROVEMENTS_EXECUTION.md` ARE NOW SHIPPED AND PROVEN ON PRODUCTION.** Earlier on 2026-08-23, `feat/buyer-requirements` merged (`0f0e379`, `--no-ff`, 8 commits) and PUSHED: Phase B, buyer requirements + bidirectional matching, migration 0043.** CI green on `0f0e379` for that SHA (`checks` · `e2e` · `rls`), and green on the branch head `827c406` first. Production READY from `0f0e379`, `/login` 200, `/contacts` and `/properties` 307, 0 runtime errors in a live 1h window. **0043 was applied to hosted BEFORE the merge** — the Matching buyers tab queries the new table and would have thrown against a 0042 database. Branch deleted local and remote. Earlier the same day, `fix/report-phase-a` merged (`b15066c`, `--no-ff`, 4 commits: T-A1 · T-A2 · T-A3 + the plan) and PUSHED. **CI green on `b15066c` for that SHA — `checks` · `e2e` · `rls`** — and green on the branch head `b9bc0dd` first, which is why main never risked going red: `ci.yml` is `on: push:` with no branch filter, so a branch push is a free rehearsal. Production READY from `b15066c` (`/login` 200, `/dashboard` 307, 0 runtime errors in a live 2h window). **THE "COMMIT, DON'T PUSH" AGREEMENT IS SUPERSEDED** — on 2026-08-23 the operator asked why work was left unpushed and said to navigate and decide rather than park it. Treat push-and-deploy as expected unless told otherwise. `fix/report-phase-a` was **deleted local and remote** once merged, per the standing rule that a stale branch is a claim someone will read. Phase A of `IMPROVEMENTS_EXECUTION.md` shipped; **Phases B and C are specified and NOT started.** `git branch -vv` and `git branch -r` are the answer, not this cell. |
+| `main` | **in sync with `origin/main` as of 2026-08-26** — **`docs/close-map-shortlist` merged: the property-map shortlist closed, and HANDOFF §0a rewritten — the backlog now has ZERO buildable items, six operator decisions and nothing else.** Earlier, as of 2026-08-25, **`feat/build-progress` merged: construction progress + delivery. NO MIGRATION.** Branch CI green before the merge; branch deleted. Earlier the same day, **`feat/pricing-breakdown` merged: owner net ↔ asking ↔ commission. NO MIGRATION.** Branch CI green before the merge; branch deleted. Earlier the same day, **`feat/quality-worklist` merged: the listing worklist. NO MIGRATION.** Branch CI green before the merge; branch deleted. Earlier the same day, **`feat/location-approx` merged: migration 0054, area centroid as a coordinate fallback.** CI green on the branch before the merge, 0054 applied to hosted before merging, branch deleted. Earlier the same day, **`feat/create-similar` merged: Create similar. NO MIGRATION.** Branch CI green before the merge; branch deleted. Earlier the same day, **`feat/sales-velocity` merged: sales velocity per project. NO MIGRATION** — the first feature in this run that needed no schema change at all, because the sale dates were already in the event log. Branch CI green before the merge; branch deleted. Earlier the same day, **`feat/key-recall` merged: migration 0053, keys follow the mandate.** CI green on the branch before the merge, 0053 applied to hosted before merging, branch deleted. Earlier the same day, **`feat/nudge-thresholds` merged: migration 0052, configurable nudge thresholds.** CI green on the branch before the merge, and 0052 applied to hosted before merging. Branch deleted local and remote. Previously, as of 2026-08-24, **`feat/installment-reminders` merged: migration 0051, instalment reminders.** CI green on the branch head `44874fc` (`checks` · `e2e` · `rls`) BEFORE the merge, and 0051 was applied to hosted before merging — the sweep is pure SQL, but `tasks.installment_id` is in the generated types the app builds against. Branch deleted local and remote. Earlier the same day, **`feat/reservation-payment-schedule` merged (`264786a`): migration 0050.** CI green for that SHA; production READY, 0 runtime errors; branch deleted. Earlier the same day, `feat/task-kinds-table` merged (`9070d23`): migration 0049.** CI green for that SHA; production READY, 0 runtime errors; branch deleted. Earlier the same day, `feat/bulk-reprice-alerts` merged (`b490c2e`): migration 0048.** **CI went RED on that SHA and was re-run green** — the `e2e` job could not bind port 54322 (`address already in use`), so the Supabase stack never started. Infrastructure, not code: identical content had passed on the branch head `b4d2288` minutes earlier. **`gh run rerun <id> --failed` is the fix**; see BACKLOG. Production READY, 0 runtime errors; branch deleted. Earlier the same day, `feat/reservation-expiry-warning` merged (`604738b`): migration 0047.** CI green for that SHA; production READY, 0 runtime errors; branch deleted. Earlier the same day, `feat/new-listing-alerts` merged (`ae0a6a2`): the second PUSH use of the matching engine, migration 0046.** CI green for that SHA; production READY, 0 runtime errors; branch deleted. Earlier the same day, `feat/price-drop-alerts` merged (`08c7b00`): the first PUSH use of the matching engine, migration 0045.** CI green on `08c7b00` for that SHA; production READY, 0 runtime errors; branch deleted. Earlier the same day, `feat/reservations` merged (`22246ad`, `--no-ff`): Phase C, reservations, migration 0044.** CI green on `22246ad` for that SHA (`checks` · `e2e` · `rls`), green on the branch head `ea79780` first; production READY, 0 runtime errors. Branch deleted local and remote. **ALL THREE PHASES OF `IMPROVEMENTS_EXECUTION.md` ARE NOW SHIPPED AND PROVEN ON PRODUCTION.** Earlier on 2026-08-23, `feat/buyer-requirements` merged (`0f0e379`, `--no-ff`, 8 commits) and PUSHED: Phase B, buyer requirements + bidirectional matching, migration 0043.** CI green on `0f0e379` for that SHA (`checks` · `e2e` · `rls`), and green on the branch head `827c406` first. Production READY from `0f0e379`, `/login` 200, `/contacts` and `/properties` 307, 0 runtime errors in a live 1h window. **0043 was applied to hosted BEFORE the merge** — the Matching buyers tab queries the new table and would have thrown against a 0042 database. Branch deleted local and remote. Earlier the same day, `fix/report-phase-a` merged (`b15066c`, `--no-ff`, 4 commits: T-A1 · T-A2 · T-A3 + the plan) and PUSHED. **CI green on `b15066c` for that SHA — `checks` · `e2e` · `rls`** — and green on the branch head `b9bc0dd` first, which is why main never risked going red: `ci.yml` is `on: push:` with no branch filter, so a branch push is a free rehearsal. Production READY from `b15066c` (`/login` 200, `/dashboard` 307, 0 runtime errors in a live 2h window). **THE "COMMIT, DON'T PUSH" AGREEMENT IS SUPERSEDED** — on 2026-08-23 the operator asked why work was left unpushed and said to navigate and decide rather than park it. Treat push-and-deploy as expected unless told otherwise. `fix/report-phase-a` was **deleted local and remote** once merged, per the standing rule that a stale branch is a claim someone will read. Phase A of `IMPROVEMENTS_EXECUTION.md` shipped; **Phases B and C are specified and NOT started.** `git branch -vv` and `git branch -r` are the answer, not this cell. |
 | CI | ✅ green — `checks` (typecheck · lint · unit · **build**) + `rls` |
 | Production | `gnk-crm.vercel.app` healthy; **auto-deploys every push**. **Functions run in `fra1` (Frankfurt), pinned in `vercel.json` 2026-08-20** — same region as Supabase `eu-central-1`. They ran in `iad1` (Washington DC) until then, so every request crossed the Atlantic; co-locating made all routes ~3x faster (ENGINEERING_NOTES §8). **`X-Vercel-Id` reads `<edge>::<function>` — check the SECOND field if latency ever looks structural again.** Verified 2026-08-20 after the Next 16.3.1 + region changes: 9 authenticated routes 200 with expected content, 0 runtime errors and 0 5xx in 6h of production logs. **A cache-restored build can keep an OLD `NEXT_PUBLIC_*` value compiled in — see §2b, it caused a login outage on 2026-08-09.** |
 | Hosted DB | `yjgirvzgoiywdojnpkpd` — **54 migrations, latest `0054` (applied 2026-08-25, local and hosted both)** — 0054 adds `properties.location_approx` plus a CHECK that refuses the flag without a point. **It flags NOTHING on apply and cannot move a single existing number** — every row defaults to `false`, so no coordinate already entered becomes approximate and no quality score changes; the migration asserts that count is 0 rather than assuming it. That is the property that made it safe on a database with real listings. The flag exists because `location !== null` was doing double duty as "is exact" in the quality score (TWO call sites) and as the map's precision inference — storing a centroid would have quietly broken both. Chain true before and after — previously 53 migrations, latest `0053` — 0053 adds a NINTH task kind `key_recall`, `raise_key_recall_tasks(uuid, uuid)`, and **narrows two supersede predicates to `kind = 'mandate_renewal'`** — `expire_mandates()` step 3 and, in TypeScript, `supersedeRenewalTasks()`. **That narrowing is the migration.** `tasks.mandate_id` had only ever carried one kind and both places matched on the id alone, so a key_recall task — which hangs off a mandate that is by definition no longer active — was completed on sight by the cron and by the action. Proven both ways in a rolled-back probe: the pre-0053 predicate closes it, the shipped one leaves it open; RLS test 37 pins it. The raiser is service_role-only and the app reaches it through `createAdminClient()` from an already admin-gated action, because granting `authenticated` would let any signed-in user pass any mandate id to a SECURITY DEFINER writer. Chain true before and after — previously 52 migrations, latest `0052` — 0052 adds the `nudge_thresholds` config row and `nudge_threshold(text, numeric)`, and REWRITES three sweeps (`create_followup_nudges`, `warn_expiring_reservations`, `remind_due_installments`) to read it. **`create or replace` preserves the ACL, and the migration asserts that rather than assuming it** — all three still refuse `anon`, and the reader is revoked from `anon` AND `authenticated` because the app reads the config row directly instead. **The corrupt-input fallback is PROVEN in a rolled-back subtransaction**: the row is editable as raw JSON on /settings/cyprus-config, so a string, a 0, a negative and an absurd value are each written and shown to land on the shipped constant. Deleting the row restores exactly pre-0052 behaviour. Chain true before and after — previously 51 migrations, latest `0051` — 0051 adds `tasks.installment_id`, an EIGHTH task kind `installment_due`, and a SIXTH cron job `remind-due-installments @ 03:55`. **`md5(prosrc)` identical on both sides** (`7e1a8309…`), `proacl` byte-identical to `warn_expiring_reservations`, and the function is ABSENT from the security advisor — EXECUTE locked down in the migration, T-C4 applied at write time for the second running. **The eighth kind went in as a one-line INSERT, not a constraint rewrite** — 0049's whole purpose, collected. **Its mint/idempotence probe runs in a SUBTRANSACTION and is rolled back**, because the sweep writes to the hash-chained `events` table and deleting the probe's rows afterwards would either break `verify_events_chain()` or work only by the accident of those rows being last; the errcode is specific so a real failure inside the sweep still propagates. On hosted the probe SKIPPED (0 instalments) and the NOTICE says which case it hit. Chain true before and after; 115 events untouched by the apply — previously 50 migrations, latest `0050` — 0050 adds `reservation_installments` (a hold's FROZEN payment schedule) and `reservations.payment_plan_id`. `relacl` byte-identical to `reservations`, 5 policies, `rls_aal2_coverage()` = 0, absent from the advisor, `anon` INSERT on 0 of 32 RLS tables. **Its paid-coherence probe is SKIPPED on a database with no reservations — which is what CI applies migrations to — and the NOTICE says so rather than claiming a pass; RLS test 34 covers it unconditionally.** Chain true — **0049 REPLACED `tasks_kind_chk` with a `task_kinds` table + FK**, ending the four-migration run of rewriting that CHECK to add one string. **Adding a kind still needs a migration** (a kind with no sweep behind it is an orphan) but it is now a one-line INSERT, and an INSERT cannot silently drop the kinds already there — which a rewritten CHECK can, and 0046 nearly did. The refusal is PROVEN both sides: the migration attempts an unknown kind and fails if it succeeds, then proves NULL still inserts. `task_kinds` is `authenticated=r` only — not even an admin edits the vocabulary from the app — and is absent from the advisor. 31 RLS tables now; `rls_aal2_coverage()` = 0; `anon` INSERT on 0 of them. Chain true; 112 events untouched — 0048 widens `tasks_kind_chk` to a SEVENTH kind. **That is the fourth widening in four migrations and it is a pattern, not a coincidence**: every new system-task rule needs DDL purely to add a string. BACKLOG proposes a `task_kinds` lookup table — the CHECK earns its keep (0045 exists because it rejected a typo loudly) but a new rule should not need a migration. Chain true; 112 events untouched — 0047 adds `tasks.reservation_id`, a sixth `tasks.kind`, and a FIFTH cron job `warn-expiring-reservations @ 03:50`, deliberately five minutes after `expire-reservations` so a hold that lapsed overnight is already `expired` and its stale warning is superseded in the same pass. **EXECUTE was locked down IN the migration this time** — its ACL is byte-identical to `run_chain_checks`, it does NOT appear in the advisor list, and RLS test 32 asserts anon and a signed-in agent are both refused. That is T-C4's lesson applied at write time rather than after the advisor caught it. Chain true; 112 events untouched — 0045 and 0046 only widen `tasks_kind_chk`, to admit `price_drop_match` and `new_listing_match`. Both assertion blocks check that EVERY pre-existing kind survived the rewrite and that no written row was orphaned, because a rewritten CHECK is where a live value gets dropped silently. **0046's first version declared a PL/pgSQL variable named `kind`, which shadows `tasks.kind` and made its own EXISTS ambiguous — the block aborted and the constraint went in UNVERIFIED**, which is exactly the failure an assertion exists to prevent; it is named in the file. Advisor list unchanged, `expire_reservations` still absent from it. Chain true; 112 events untouched — 0045 only widens `tasks_kind_chk` to admit `price_drop_match`, and its assertion block checks that the three PRE-EXISTING kinds survived the rewrite, because a rewritten CHECK is exactly where a live value gets dropped silently. Advisor list unchanged and `expire_reservations` still absent from it, so T-C4's lockdown holds. Chain true; 112 events untouched — 0044 adds `reservations`, `relacl` byte-identical to `price_lists`, 5 policies incl. `require_aal2`, the partial unique index `reservations_one_live_per_property`, and a fourth cron job `expire-reservations @ 03:45`. **The security advisor caught a REAL hole on the apply**: `expire_reservations()` was callable by `anon` over PostgREST because a new function carries a PUBLIC `=X` grant — anyone unauthenticated could have force-expired every live hold in every org. Fixed in T-C4; its ACL now matches `create_followup_nudges` exactly and the advisor list is back to its pre-Phase-C contents. **This is why §3 ends with `get_advisors`.** Chain true before and after; 110 events untouched by the apply — 0043 adds `buyer_requirements`; its `relacl` is byte-identical to `price_lists`, 5 policies incl. `require_aal2`, 5 indexes, `rls_aal2_coverage()` = 0, `anon` INSERT on **0 of 31** RLS tables, and the security advisor list is UNCHANGED (the new table does not appear in it). Chain true before and after; 105 events untouched by the apply. Applied through `execute_sql` in separate calls and NOT `apply_migration`, which stamps a timestamp-shaped version and would have broken the `non_filename_versions` = 0 invariant. **`md5(prosrc)` of `resolve_share_link` is now `529134eb…` on BOTH sides** — before 0041 hosted's copy was 3864 chars to the file's 4280 because it carried NO `--` comments (0023 reached hosted through a comment-stripping path); strip the comments and the two matched exactly, so the drift was never functional, and 0041 closed it. A bare md5 comparison would have looked alarming and meant nothing, `non_filename_versions` = **0**, **79 events**, 3 properties, 1 mandate, 2 contacts, **30 RLS tables** — MEASURED 2026-08-22 in calls separate from the ones that applied. **`verify_events_chain` checked BEFORE and AFTER every apply**, true both sides. `rls_aal2_coverage()` returns **0** — 0039's new table got `require_aal2` explicitly, because a table created after 0029 does NOT inherit it. **`anon` can INSERT on 0 of 30 RLS tables** — 0039 accidentally gave it `arwd` (Supabase's default privileges fire at CREATE TABLE and `grant` is additive), 0040 took it back and made the ACL byte-identical to `price_lists`; see BACKLOG for the rule this produced. **0037 closed a real privilege-escalation path** on `mandates_safe`. **`cyprus_config.default_mandate_terms` (0038) is a PLACEHOLDER** — 3% / open / 6 months, `verified_at` NULL; it prefills every new mandate, so the operator should set the desk's real terms. **DB-level 2FA is LIVE** — `require_aal2` on all 30 RLS tables |
@@ -22,117 +22,62 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 
 ---
 
-## 0a. NEXT UP — stop building; use it for a week (2026-08-24)
+## 0a. NEXT UP — the backlog has NO buildable work left (2026-08-26)
 
-**This is a recommendation with a number behind it, not a preference.**
+**Everything outstanding is blocked on a person, not on effort.** Verified by
+`docs/BACKLOG.md`'s own recipe (see its `## How to read this file`):
 
-Measured on production 2026-08-24, in its own query:
+```bash
+grep -n '^- \*\*' docs/BACKLOG.md | grep -v '(original)' | grep -v 'HISTORICAL' | grep -v 'NOTE —'
+```
 
-| | |
-|---|---|
-| properties | 3 |
-| contacts | 2 |
-| buyer_requirements | **0** |
-| reservations | **0** |
-| payment_plans | **0** |
-| reservation_installments | **0** |
-| tasks with a `kind` (i.e. system-raised) | **0** |
-| `price_drop_matched` + `new_listing_matched` + `bulk_price_drop_matched` + `reservation_expiring_soon` + `installment_due_soon` events, EVER | **0** |
+On 2026-08-26 that returns **six entries and all six are operator decisions**.
+Zero build items. That is a first for this repo, and it is the single most
+important fact for whoever reads this next: **do not go looking for the next
+feature — there isn't one.**
 
-**Every feature shipped since Phase C reads one of those empty tables.** Six
-migrations, six nightly code paths, and between them they have produced exactly
-zero output on production — not because they are broken (each is proven by a
-sweep probe, an RLS test, and a green CI run against a fresh database) but
-because nothing has ever been entered for them to act on. `MATCH_WEIGHTS` is
-still the weighting I guessed at in Phase B, and no real search has scored
-against it.
+### The six, with what each actually needs
 
-The advice to run one real week at the desk before building more has been
-standing since Phase B and has now been passed over SEVEN times, this session
-included. It is the only item here I cannot do without the operator, and it
-changes what is worth building next — which is precisely why building next
-without it keeps compounding.
+| Decision | What it is | Cost to answer |
+|---|---|---|
+| **Drop `contacts.preferences`** | 0043's saved searches superseded it; the column and its tab are still there driving nothing | one word |
+| **Leaked-password protection** | Disabled; one Supabase Auth toggle | one word |
+| **`properties.status` vs a live hold** | 0044 deliberately does NOT flip a property to `reserved` when a hold is taken. Should it? | one sentence |
+| **"Top agents by activity"** | A vanity metric on the admin dashboard nobody has defended | one sentence |
+| **Mandatory 2FA** | Enrolment is opt-in. Both admins now carry a verified factor (measured 2026-08-25) | needs a recovery plan |
+| **VAT treatment derived** | Reduced-rate eligibility follows from area, price and buyer status; `cyprus_config` is built to hold the thresholds | the largest — real rules |
 
-**What a week would settle:** whether the 7-day instalment window and the 2-day
-expiry window match how the desk actually chases · whether `MATCH_WEIGHTS`
-ranks the way an agent would · whether the alerts are useful or noise ·
-whether "top agents by activity" is worth replacing (an open operator decision
-that a week of real activity would answer on its own).
+### And the thing that has been true for eighteen days
 
-### If building continues anyway, in this order
+**Fifteen features shipped between 2026-08-24 and 2026-08-26. Production holds
+3 properties, 2 contacts, 0 reservations, 0 buyer requirements and has never
+raised a single system task.** Measured, repeatedly. Most of those fifteen read
+a table that is empty, so they cannot do anything at all yet.
 
-1. **Configurable nudge thresholds** — 14 days, 48 hours, 2 days and now 7 days
-   are each hardcoded in a different migration, each with a comment explaining
-   that a second editable copy would disagree silently. Four is where that
-   argument stops holding; they want one operator-visible home.
-2. **Keys follow the mandate (S)** — terminating a mandate should prompt for the
-   keys back. Small, self-contained, and needs no data that does not exist.
-3. **Sales velocity per project (M)** — units sold per month and absorption.
-   Reads `properties` and `deals`, both of which have real rows.
+Three of them work on day one with nothing but real listings entered:
 
-Deliberately NOT next: anything else keyed to buyer requirements or
-reservations, until either exists on production.
+* **`/properties/worklist`** — what every live listing is missing, grouped so
+  one gap can be cleared across many at once, ordered by the points an
+  afternoon recovers.
+* **Create similar** — prefills a new property from an existing one, which is
+  what makes entering a run of listings bearable.
+* **The pricing panel** — asking ↔ owner net ↔ commission, with the negotiating
+  floor, on any property with a mandate.
 
-### Shipped since the three phases (all local + hosted, CI green for each merge SHA)
+**The most useful next session is not a build.** It is the operator putting real
+listings in and working the worklist down. Everything else waits on that, and
+saying so plainly is more useful than finding an eleventh thing to build.
 
-| | |
-|---|---|
-| `08c7b00` | **Price-drop alerts** (0045) — a drop crossing a buyer's ceiling raises one task |
-| `ae0a6a2` | **New-listing alerts** (0046) — a status entering `MATCHABLE_STATUSES` does the same |
-| `604738b` | **Reservation expiry warning** (0047) — pg_cron 03:50, `tasks.reservation_id` |
-| `b490c2e` | **Bulk-reprice alerts** (0048) — one task per block, constant round trips |
-| `9070d23` | **`task_kinds` table** (0049) — replaced `tasks_kind_chk`; a new kind is now an INSERT |
-| `264786a` | **Reservation payment schedules** (0050) — frozen amounts, per-line paid state |
-| 0051 | **Instalment reminders** — pg_cron 03:55; chases `converted` sales and overdue lines |
+### If a session must build something anyway
 
-### The 0051 trap worth carrying forward
-
-It **diverges from 0047 on purpose**: it chases `held` · `confirmed` · AND
-`converted`. `converted` is terminal and means the sale went ahead — where a
-buyer on a 10/30/60 plan sits for almost their whole schedule. Reusing
-`LIVE_RESERVATION_STATUSES` would stop chasing money the moment a sale is
-signed. **RLS test 35 fails loudly if someone "tidies" it to match 0047**, and
-its expectation message says why.
-
-Also: `reservation_no_longer_live` is now written by TWO sweeps, so the
-`superseded` renderer disambiguates on `kind`. A third reuse needs the same.
-
-### Traps a new session will otherwise re-learn
-
-1. **Deploy order is a rule.** Push the branch first (`ci.yml` is `on: push:`
-   with no branch filter — a free rehearsal that keeps `main` off red), **then
-   apply the migration to hosted, then merge.**
-2. **`numeric` arrives from PostgREST as a STRING.** `Number.isFinite("700.00")`
-   is false; it silently killed the price-drop alert once. Coerce, do not check.
-3. **A discarded error makes a whole feature vanish.** When something "does
-   nothing", suspect a dropped error before suspecting logic.
-4. **`get_advisors` is not a formality** — it caught `expire_reservations`
-   callable by `anon`. Every new function needs an explicit `revoke execute …
-   from public, anon, authenticated`, then a re-grant to `service_role`.
-5. **A migration assertion that cannot run is not a pass.** Say which case the
-   NOTICE hit, and cover it in an RLS test. 0050 and 0051 both do this.
-6. **A probe that writes to `events` must be rolled back, not deleted.** The
-   table is hash-chained; deleting the probe's rows either breaks
-   `verify_events_chain()` or works only by the accident of them being last.
-   0051 uses a subtransaction with a SPECIFIC errcode — `when others` there
-   would swallow a real failure and report a pass.
-7. **Kill stray `next dev` processes**; a leftover on :3000 serves stale code.
-8. **CI `e2e` can flake** on `port 54322 address already in use` —
-   `gh run rerun <id> --failed` clears it.
-
-### Still waiting on the operator
-
-Replacing the "top agents by activity" vanity metric · whether a live hold
-should flip `properties.status` · dropping `contacts.preferences`. All three in
-`docs/BACKLOG.md` with the reasoning.
-
-### And one thing to ask about
-
-**Three `document_deleted` events on production at 17:46 UTC 2026-08-24 were
-written by a USER and are not mine** — commission-evidence PDFs for MARIOS
-ANDREOU. §0's rule holds: counts never say who or why. Ask before concluding
-anything about desk adoption. (Note the contact count moved 1 → 2 between
-measurements, which is also not mine.)
+There is one shovel-ready idea that is NOT in the backlog because nobody has
+asked for it: a **combined list + map view** with hover sync between the two.
+The map shortlist's last item (hover sync) was closed on 2026-08-26 precisely
+because it needs this and it does not exist — `/properties` references the map 0
+times and `/properties/map` references the list 0 times. It would be a new entry
+and an M/L, and it improves BROWSING, which is not a problem a 3-property
+database has. Offered to the operator on 2026-08-26 and declined in favour of
+taking the decisions.
 
 ## 0a-prev. The project availability share link (2026-08-22)
 
