@@ -1948,7 +1948,7 @@ developer.
 
 - ~~**NOTE — CI: `supabase/setup-cli@v1` can fail with "Failed to resolve latest
   Supabase CLI release: rate limit exceeded".**~~ ✅ **FIXED 2026-08-26 — the
-  version is now pinned.**
+  action is gone; the CLI is an exact devDependency.**
 
   **The cause was `version: latest`**, which makes the action ask the GitHub API
   which release is newest; that call is anonymous and rate-limited. It went red
@@ -1957,18 +1957,34 @@ developer.
   both times the identical content had passed on the branch minutes earlier. The
   job died **before a single test ran**, so the log held no test output at all.
 
-  **Both Supabase-dependent jobs now pin `version: 2.115.0`** (`rls` and `e2e`;
-  `checks` never used the action). That removes the API call entirely, so the
-  failure mode cannot recur. It also closes a drift nobody was watching: 2.115.0
-  is the CLI local development runs, so CI now applies migrations with the same
-  binary they were verified against, instead of whatever shipped that morning.
+  **FIXED IN TWO STEPS THE SAME DAY, and the second replaced the first.**
 
-  **The pin is now a thing that can go stale, and nothing checks it.** `npx
-  supabase` locally is NOT pinned — there is no `supabase` devDependency, so
-  local drifts forward on its own while CI stays put. If a future migration uses
-  syntax a newer CLI introduced, it will pass locally and fail in CI with a
-  confusing error. The durable fix is a `supabase` devDependency at the same
-  version, making one number the source of truth for both sides.
+  The first attempt (`75ae045`) pinned `version: 2.115.0` on the action in both
+  jobs. That killed the API call, and CI proved it — the step went from start to
+  `tar xz` in 0.55s with no resolve attempt in the log. But it left the CLI
+  version written in TWO places: the workflow, and whatever `npx supabase`
+  happened to fetch locally, where nothing was pinned at all. Two numbers that
+  must be hand-synced are the same staleness trap in a new spot.
+
+  **The shape that shipped (`9d70037`, then this) makes package-lock.json the
+  only place the version lives.** `supabase` is an exact devDependency —
+  `"supabase": "2.115.0"`, no caret, because `npm i -D` writes `^2.115.0` by
+  default and a caret is precisely the floating being removed. `supabase/setup-cli`
+  is GONE from the workflow and the three call sites go through `npx`
+  (`npx supabase start` in `rls` and `e2e`, `npx supabase status -o env`).
+  `npm ci` already ran before every one of them, so `npx` resolves from
+  node_modules rather than the network.
+
+  **Why the npm route cannot reproduce the failure:** the package has NO
+  postinstall, and the platform binaries are `optionalDependencies` pinned to
+  exact `2.115.0` on the npm registry (`@supabase/cli-linux-x64` and seven
+  siblings, all in the lockfile). Nothing anywhere in the install or the run
+  contacts the GitHub API. **Do not re-add the action** — it brings back both the
+  rate-limited call and the second version number. The workflow says so at each
+  call site.
+
+  Local and CI now provably run the same binary: bump the devDependency and both
+  sides move together, or neither does.
 
   **Do not read this as the port-54322 flake below** — that one fails inside
   `supabase start`, this one failed before it. Tell them apart by whether the log

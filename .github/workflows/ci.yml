@@ -58,20 +58,23 @@ jobs:
           node-version: 24
           cache: npm
 
-      - uses: supabase/setup-cli@v1
-        with:
-          # PINNED, not `latest`: `latest` asks the GitHub API which release is
-          # newest, and that call is rate-limited — it took `e2e` down on
-          # 2026-08-25 and `rls` on 2026-08-26, both before a single test ran.
-          # 2.115.0 is what local development runs, so CI now uses the same CLI
-          # the migrations were verified against. See docs/BACKLOG.md.
-          version: 2.115.0
-
       - name: Install dependencies
         run: npm ci
 
+      # NO `supabase/setup-cli` STEP, AND DO NOT ADD ONE BACK. The CLI is a
+      # devDependency pinned to an exact version, so `npx` resolves it from
+      # node_modules (installed by the step above) and package-lock.json is the
+      # ONE place the version lives — local and CI provably run the same binary.
+      #
+      # The action was removed on 2026-08-26 because `version: latest` asks the
+      # GitHub API which release is newest and that call is rate-limited: it
+      # killed `e2e` on 08-25 and `rls` on 08-26, both before a single test ran.
+      # The npm route never contacts GitHub — the platform binaries are exact
+      # `optionalDependencies` on the registry, and the package has no
+      # postinstall. Re-adding the action reintroduces both the API call and a
+      # second version number to keep in sync. See docs/BACKLOG.md.
       - name: Start local Supabase stack
-        run: supabase start
+        run: npx supabase start
 
       - name: RLS suite (12 mandatory tests, doc 04)
         run: npm run test:rls
@@ -100,15 +103,6 @@ jobs:
           node-version: 24
           cache: npm
 
-      - uses: supabase/setup-cli@v1
-        with:
-          # PINNED, not `latest`: `latest` asks the GitHub API which release is
-          # newest, and that call is rate-limited — it took `e2e` down on
-          # 2026-08-25 and `rls` on 2026-08-26, both before a single test ran.
-          # 2.115.0 is what local development runs, so CI now uses the same CLI
-          # the migrations were verified against. See docs/BACKLOG.md.
-          version: 2.115.0
-
       - name: Install dependencies
         run: npm ci
 
@@ -117,15 +111,27 @@ jobs:
         # pulls the system libraries a headless browser needs on ubuntu.
         run: npx playwright install --with-deps chromium
 
+      # NO `supabase/setup-cli` STEP, AND DO NOT ADD ONE BACK. The CLI is a
+      # devDependency pinned to an exact version, so `npx` resolves it from
+      # node_modules (installed by the step above) and package-lock.json is the
+      # ONE place the version lives — local and CI provably run the same binary.
+      #
+      # The action was removed on 2026-08-26 because `version: latest` asks the
+      # GitHub API which release is newest and that call is rate-limited: it
+      # killed `e2e` on 08-25 and `rls` on 08-26, both before a single test ran.
+      # The npm route never contacts GitHub — the platform binaries are exact
+      # `optionalDependencies` on the registry, and the package has no
+      # postinstall. Re-adding the action reintroduces both the API call and a
+      # second version number to keep in sync. See docs/BACKLOG.md.
       - name: Start local Supabase stack
-        run: supabase start
+        run: npx supabase start
 
       # Unlike `checks`, this job DOES need Supabase env: the app must actually
       # talk to a database. These are the local stack's well-known demo values,
       # printed by the CLI — not secrets, and never production credentials.
       - name: Export local stack env
         run: |
-          supabase status -o env | sed 's/^/export /' > /tmp/sb.env
+          npx supabase status -o env | sed 's/^/export /' > /tmp/sb.env
           . /tmp/sb.env
           {
             echo "NEXT_PUBLIC_SUPABASE_URL=$API_URL"
