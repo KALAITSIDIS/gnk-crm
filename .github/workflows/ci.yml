@@ -60,7 +60,12 @@ jobs:
 
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          # PINNED, not `latest`: `latest` asks the GitHub API which release is
+          # newest, and that call is rate-limited — it took `e2e` down on
+          # 2026-08-25 and `rls` on 2026-08-26, both before a single test ran.
+          # 2.115.0 is what local development runs, so CI now uses the same CLI
+          # the migrations were verified against. See docs/BACKLOG.md.
+          version: 2.115.0
 
       - name: Install dependencies
         run: npm ci
@@ -97,7 +102,12 @@ jobs:
 
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          # PINNED, not `latest`: `latest` asks the GitHub API which release is
+          # newest, and that call is rate-limited — it took `e2e` down on
+          # 2026-08-25 and `rls` on 2026-08-26, both before a single test ran.
+          # 2.115.0 is what local development runs, so CI now uses the same CLI
+          # the migrations were verified against. See docs/BACKLOG.md.
+          version: 2.115.0
 
       - name: Install dependencies
         run: npm ci
