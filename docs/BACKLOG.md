@@ -1039,9 +1039,26 @@ explicit direction.
     `grep -c "test.fixme"` returns `3`, because a comment in that file explains the
     markers. That wrong number was written here first and caught by running it.)
 
-- **Property map, the rest of the shortlist (proposed 2026-08-20).** Click-to-open
-  popups, fit-to-results and clustering shipped; these four did not, and are
-  listed in the order I would do them.
+- ~~**Property map, the rest of the shortlist (proposed 2026-08-20).**~~
+  **CLOSED 2026-08-26 — THE SHORTLIST IS EXHAUSTED, and this parent line was the
+  last thing making it look otherwise.** Of the four: *Price on the pin* shipped
+  2026-08-20, *Map viewport in the URL* and *Draw-a-polygon* were both decided
+  against BY THE OPERATOR the same day, and *Hover sync* is blocked on a
+  precondition its own entry names.
+
+  **Both `VERIFY:` commands below still return `0`, and for the two declined
+  items that is the CORRECT state rather than a gap** — which is precisely how
+  an aggregate entry misleads: its checks kept passing while its contents were
+  resolved underneath it. Re-verified 2026-08-26.
+
+  **Hover sync needs a combined view that does not exist**, measured not assumed:
+  `/properties` references the map component 0 times and `/properties/map`
+  references the list 0 times — they are separate pages with a toggle between
+  them. Building a split list+map view is a real feature and a NEW entry if
+  anyone wants it, not the tail of this one.
+
+  Click-to-open popups, fit-to-results and clustering shipped; the four below
+  were the rest, in the order I would have done them.
 
   - ~~**Price on the pin.**~~ **SHIPPED 2026-08-20.** Not as originally
     described, though: a label on every pin is destroyed by the stacking, because
