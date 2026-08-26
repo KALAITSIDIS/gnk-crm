@@ -1,8 +1,9 @@
 "use client";
 
 import { useActionState, useState, useTransition } from "react";
-import { Copy, UserPlus } from "lucide-react";
+import { ShieldAlert, Copy, UserPlus } from "lucide-react";
 import { toast } from "sonner";
+import { MFA_REQUIRED } from "@/lib/constants/mfa";
 import {
   inviteUser,
   setUserActive,
@@ -107,6 +108,23 @@ function InviteFlow({ onDone }: { onDone: () => void }) {
 
   return (
     <form action={formAction} className="flex flex-col gap-3">
+      {/* The trigger for a decision taken on 2026-08-26, put where it fires.
+          Mandatory 2FA was decided YES and left off, because enabling it needs
+          the E2E auth setup and the RLS fixtures to enrol TOTP factors first —
+          without that, 204 E2E tests and 3 of 4 RLS files go red. The operator
+          asked for that harness work "before the next hire", and this dialog is
+          the only moment anyone would notice. A note in an 1800-line backlog is
+          how the last conditional decision got missed. */}
+      {!MFA_REQUIRED ? (
+        <p className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-text-2">
+          <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-warning" />
+          <span>
+            Two-factor authentication is <strong>not required</strong> yet — this person will be
+            able to sign in with a password alone. Making it mandatory was agreed, and was left
+            until before the next hire; see <code>lib/constants/mfa.ts</code>.
+          </span>
+        </p>
+      ) : null}
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="inv-name">Full name</Label>
         <Input id="inv-name" name="full_name" required />

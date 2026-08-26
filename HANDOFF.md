@@ -31,7 +31,7 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 grep -n '^- \*\*' docs/BACKLOG.md | grep -v '(original)' | grep -v 'HISTORICAL' | grep -v 'NOTE —'
 ```
 
-On 2026-08-26 that returns **five entries and all five are operator decisions** (it was six until *Drop `contacts.preferences`* was answered and shipped as 0055).
+On 2026-08-26 that returns **five entries and all five are operator decisions** (two are now ANSWERED — `contacts.preferences` shipped as 0055, and mandatory 2FA is decided-yes-but-deferred with its trigger wired to the Invite dialog) (it was six until *Drop `contacts.preferences`* was answered and shipped as 0055).
 Zero build items. That is a first for this repo, and it is the single most
 important fact for whoever reads this next: **do not go looking for the next
 feature — there isn't one.**
@@ -43,7 +43,7 @@ feature — there isn't one.**
 | **Leaked-password protection** | Disabled; one Supabase Auth toggle | one word |
 | **`properties.status` vs a live hold** | 0044 deliberately does NOT flip a property to `reserved` when a hold is taken. Should it? | one sentence |
 | **"Top agents by activity"** | A vanity metric on the admin dashboard nobody has defended | one sentence |
-| **Mandatory 2FA** | Enrolment is opt-in. Both admins now carry a verified factor (measured 2026-08-25) | needs a recovery plan |
+| ~~**Mandatory 2FA**~~ | **ANSWERED 2026-08-26: yes, but LEFT OFF until before the next hire.** It binds nobody today — both users are enrolled. Enabling needs the E2E auth setup and RLS fixtures to enrol TOTP factors, or 204 E2E tests and 3 of 4 RLS files go red (both measured). The gate is built; the switch is one word in `lib/constants/mfa.ts`, and **the reminder is on the Invite user dialog** so the trigger fires where it matters. | done — pending the harness |
 | **VAT treatment derived** | Reduced-rate eligibility follows from area, price and buyer status; `cyprus_config` is built to hold the thresholds | the largest — real rules |
 
 ### And the thing that has been true for eighteen days
