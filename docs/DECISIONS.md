@@ -2955,8 +2955,24 @@ does not destroy the record that the property was held.
 **The property's own `status` is deliberately NOT synced.** Auto-flipping a
 listing to `reserved` on hold and back on expiry couples two entities through a
 cron job, and the revert is where that class of bug lives. The desk sets the
-listing status; this table records the hold. BACKLOG carries the sync as an
-operator decision rather than an assumption.
+listing status; this table records the hold.
+
+> **SETTLED 2026-08-26 — the operator decided it stays independent.** This was
+> left open here as "BACKLOG carries the sync as an operator decision rather
+> than an assumption"; the answer is that `properties.status` is not to be
+> coupled to holds, now or later. **Do not build the trigger.** The shape the
+> BACKLOG sketched — a trigger on `reservations` plus a rule for a status
+> changed by hand in between — is explicitly declined, and that middle case is
+> exactly why: it has no non-surprising answer, because the desk's manual edit
+> and the cron's revert are both legitimate and neither can know about the
+> other.
+>
+> Verified independent at every layer on the day of the decision, so this is a
+> confirmation of the status quo and no code changed: no trigger exists on
+> `reservations` or `reservation_installments`, `expire_reservations()` does not
+> reference `properties` at all, and no reservation flow writes a property row —
+> the only writers of `properties` are the property form, the archive action,
+> and two contact-id repointers in `mandates.ts` and `merge-contacts.ts`.
 
 **Cyprus end-of-day, delegated not re-derived.** `cyprusEndOfDay` calls
 `zonedWallClockToUtc` from `tz.ts`. The first version hardcoded `+03:00`, which
