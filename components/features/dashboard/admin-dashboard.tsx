@@ -53,7 +53,10 @@ interface DashboardStats {
   };
   lead_sources30: { source: string; count: number }[];
   property_statuses: { status: string; count: number }[];
-  top_actors30: { actor_id: string; count: number }[];
+  // NO `top_actors30`. The admin dashboard's "top agents by activity" card was
+  // removed on 2026-08-26 by operator decision (DECISIONS T-top-agents) and
+  // migration 0057 stops the function computing it. Reading it back means
+  // re-adding a metric that was deliberately dropped, not restoring a bug.
 }
 
 function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
@@ -202,17 +205,14 @@ export async function AdminDashboard() {
     display: String(r.count),
   }));
 
-  const topActorIds: [string, number][] = stats.top_actors30.map((r) => [
-    r.actor_id,
-    Number(r.count),
-  ]);
-
-  // one profiles fetch covers the top-agents bars AND the event-feed bylines;
-  // one properties fetch covers mandate references AND event-feed references
+  // one profiles fetch covers the event-feed bylines; one properties fetch
+  // covers mandate references AND event-feed references. Until 2026-08-26 the
+  // profiles fetch ALSO fed the top-agents bars — the bars are gone, the fetch
+  // stays, because the feed still needs a name for every actor.
   const eventActorIds = latestEvents
     .map((e) => e.actor_id)
     .filter((v): v is string => Boolean(v));
-  const profileIds = [...new Set([...topActorIds.map(([id]) => id), ...eventActorIds])];
+  const profileIds = [...new Set(eventActorIds)];
   const expiringIds = expiring
     .map((m) => m.property_id)
     .filter((v): v is string => Boolean(v));
@@ -235,12 +235,6 @@ export async function AdminDashboard() {
   const propRef = new Map(
     unwrapRows(refPropsRes, "property references").map((p) => [p.id, p.reference]),
   );
-
-  const agentRows = topActorIds.map(([id, value]) => ({
-    label: actorName.get(id) ?? "—",
-    value,
-    display: t("events", { count: value }),
-  }));
 
   // annotate the feed with who did it and, for property events, which listing
   const timelineEvents = latestEvents.map((e) => {
@@ -319,9 +313,6 @@ export async function AdminDashboard() {
               />
             }
           />
-        </Card>
-        <Card title={t("cards.topAgents")}>
-          <BarList rows={agentRows} empty={<CardEmpty text={t("empty.noActivity")} />} />
         </Card>
       </div>
 

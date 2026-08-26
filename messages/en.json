@@ -37,13 +37,11 @@
       "deals": "{count, plural, one {# deal} other {# deals}}",
       "answered": "{count} answered",
       "responseUnanswered": "{count} never answered",
-      "events": "{count, plural, one {# event} other {# events}}",
       "system": "system",
       "cards": {
         "pipelineByStage": "Pipeline by stage (open deals)",
         "leadsBySource": "Leads by source (30d)",
         "listingsByStatus": "Listings by status",
-        "topAgents": "Top agents by activity (30d)",
         "mandatesExpiring": "Mandates expiring ≤30 days",
         "latestEvents": "Latest events"
       },
@@ -51,7 +49,6 @@
         "noOpenDeals": "Nothing yet (no open deals).",
         "noLeads": "No leads in the last 30 days.",
         "noListings": "No listings yet.",
-        "noActivity": "No recent activity.",
         "noMandates": "None in the next 30 days.",
         "noEvents": "No activity yet."
       },

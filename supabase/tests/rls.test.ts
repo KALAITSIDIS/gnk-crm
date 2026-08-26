@@ -1214,15 +1214,18 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       "leads7",
       "lead_sources30",
       "property_statuses",
-      "top_actors30",
     ]) {
       expect(statsA, `missing ${key}`).toHaveProperty(key);
     }
-    expect(Array.isArray(statsA.top_actors30)).toBe(true);
+    // 0057 REMOVED `top_actors30`. "Top agents by activity" was dropped by
+    // operator decision on 2026-08-26 and nothing replaced it, so asserting the
+    // key's ABSENCE is the point of this line: it is settled, not unbuilt, and
+    // a decision with nothing checking it is the kind that gets quietly undone.
+    // This used to assert the key was present and capped at 5.
     expect(
-      (statsA.top_actors30 as unknown[]).length,
-      "top agents is capped at 5",
-    ).toBeLessThanOrEqual(5);
+      statsA,
+      "top_actors30 was removed by 0057 and must not come back",
+    ).not.toHaveProperty("top_actors30");
   });
 
   it("23. TEST-1: the suite never writes into the seeded org the dev app uses", async () => {
