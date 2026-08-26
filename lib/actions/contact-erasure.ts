@@ -135,6 +135,19 @@ export async function eraseContactPersonalData(
     documentsRetained = docs?.length ?? 0;
   }
 
+  // 4. Saved searches. What someone is looking for — budget, areas, bedrooms —
+  //    is personal data, and before 0055 it lived in `contacts.preferences`
+  //    and was cleared by the patch above. 0043 moved it to rows and erasure
+  //    was never updated to follow, so it had been surviving Article 17.
+  //    Deleted rather than blanked: a saved search with every field emptied is
+  //    not a record of anything, and it would keep matching nothing forever.
+  const { data: deletedRequirements } = await supabase
+    .from("buyer_requirements")
+    .delete()
+    .eq("contact_id", contactId)
+    .select("id");
+  const requirementsDeleted = deletedRequirements?.length ?? 0;
+
   await logEvent(supabase, {
     orgId: contact.org_id,
     actorId: profile.id,
@@ -147,6 +160,7 @@ export async function eraseContactPersonalData(
           amlBasis,
           retentionUntil: plan.retentionUntil,
           leadsRedacted,
+          requirementsDeleted,
           documentsDeleted,
           documentsRetained,
         }),

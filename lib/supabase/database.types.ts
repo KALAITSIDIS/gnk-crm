@@ -239,7 +239,6 @@ export type Database = {
           party_defaults: Json
           phone_e164: string | null
           phone_raw: string | null
-          preferences: Json
           preferred_channel: Database["public"]["Enums"]["comm_channel"] | null
           psychology: Database["public"]["Enums"]["psychology_profile"] | null
           retention_until: string | null
@@ -279,7 +278,6 @@ export type Database = {
           party_defaults?: Json
           phone_e164?: string | null
           phone_raw?: string | null
-          preferences?: Json
           preferred_channel?: Database["public"]["Enums"]["comm_channel"] | null
           psychology?: Database["public"]["Enums"]["psychology_profile"] | null
           retention_until?: string | null
@@ -319,7 +317,6 @@ export type Database = {
           party_defaults?: Json
           phone_e164?: string | null
           phone_raw?: string | null
-          preferences?: Json
           preferred_channel?: Database["public"]["Enums"]["comm_channel"] | null
           psychology?: Database["public"]["Enums"]["psychology_profile"] | null
           retention_until?: string | null

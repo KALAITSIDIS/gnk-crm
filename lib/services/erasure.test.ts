@@ -42,7 +42,6 @@ describe("planContactErasure", () => {
     const { patch } = planContactErasure({ amlBasis: true, actorId: ACTOR, now: NOW });
     expect(patch.notes).toBeNull();
     expect(patch.psychology).toBeNull();
-    expect(patch.preferences).toEqual({});
     expect(patch.telegram_username).toBeNull();
     expect(patch.additional_phones).toEqual([]);
     expect(patch.nationality).toBeNull();
@@ -105,6 +104,7 @@ describe("buildErasureEventPayload", () => {
       amlBasis: true,
       retentionUntil: "2031-07-21",
       leadsRedacted: 2,
+      requirementsDeleted: 0,
       documentsDeleted: 0,
       documentsRetained: 3,
     });
@@ -118,11 +118,41 @@ describe("buildErasureEventPayload", () => {
     expect(serialized).not.toMatch(/\+\d{6,}/);
   });
 
+  it("reports SAVED SEARCHES as cleared, and counts them", () => {
+    // 0055 dropped `contacts.preferences`, whose contents were the buyer's
+    // criteria and were erased with the profiling layer. Those criteria are
+    // `buyer_requirements` rows now. If this assertion ever fails, Article 17
+    // has quietly stopped reaching a person's search history.
+    const payload = buildErasureEventPayload({
+      amlBasis: false,
+      retentionUntil: null,
+      leadsRedacted: 0,
+      requirementsDeleted: 3,
+      documentsDeleted: 0,
+      documentsRetained: 0,
+    });
+    expect(payload.fields_cleared).toContain("saved_searches");
+    expect(payload.saved_searches_deleted).toBe(3);
+  });
+
+  it("no longer claims to clear `preferences`, which no longer exists", () => {
+    const payload = buildErasureEventPayload({
+      amlBasis: false,
+      retentionUntil: null,
+      leadsRedacted: 0,
+      requirementsDeleted: 0,
+      documentsDeleted: 0,
+      documentsRetained: 0,
+    });
+    expect(payload.fields_cleared).not.toContain("preferences");
+  });
+
   it("reports the KYC checklist as cleared only when there is no AML basis", () => {
     const withAml = buildErasureEventPayload({
       amlBasis: true,
       retentionUntil: "2031-07-21",
       leadsRedacted: 0,
+      requirementsDeleted: 0,
       documentsDeleted: 0,
       documentsRetained: 1,
     });
@@ -130,6 +160,7 @@ describe("buildErasureEventPayload", () => {
       amlBasis: false,
       retentionUntil: null,
       leadsRedacted: 0,
+      requirementsDeleted: 0,
       documentsDeleted: 1,
       documentsRetained: 0,
     });

@@ -1830,10 +1830,41 @@ developer.
   documented rule for what happens when the listing status was changed by hand
   in the meantime — which is the part that needs deciding.
 
-- **Drop `contacts.preferences`.** 0043 kept the column and the Preferences tab
-  still shows the old blob read-only while a contact has no saved searches. It
-  can go once the conversion has been reviewed against real data — but only
-  after someone confirms nothing in it was lost.
+- ~~**Drop `contacts.preferences`.**~~ ✅ **DONE 2026-08-26** (migration 0055),
+  operator decision.
+
+  **The precondition was met with evidence, not asserted.** Production held 2
+  contacts, both carrying `preferences`, and BOTH WERE LITERALLY `{}`. Nothing
+  was ever entered, so nothing was converted and nothing was lost. **The
+  migration does not rely on that measurement** — it re-counts at apply time and
+  hard-aborts if any row holds anything, so a restored backup or a future
+  database cannot lose a blob to this file. Proven by running the guard against
+  a row with content: it refused with "1 of 169 contact(s) still hold
+  preferences".
+
+  **THE DEPLOY ORDER INVERTED, and the standing rule would have broken
+  production.** "Hosted migration BEFORE the merge" is the rule for an ADDITIVE
+  change. A drop is the mirror image: reads survive (`select("*")` just returns
+  one column fewer) but the live code WRITES the column in three places, and an
+  UPDATE naming a dropped column errors. One of the three is **GDPR erasure**,
+  whose patch always sets `preferences: {}` — dropping first would have 500'd
+  Article 17 until the deploy caught up. Order used: merge, deploy, confirm,
+  then drop.
+
+  **It surfaced a real GDPR gap that predates it.** Erasure cleared
+  `contacts.preferences` because a buyer's criteria lived there. 0043 moved those
+  criteria to `buyer_requirements` ROWS and erasure was never updated to follow,
+  so a person's budget, areas and bedroom needs had been surviving Article 17.
+  Erasure now deletes those rows, the audit payload counts them, the dialog says
+  so, and a test asserts `saved_searches` is in `fields_cleared` — if that ever
+  fails, erasure has quietly stopped reaching search history again.
+
+  Removed with it: the Preferences form and its save branch, its validator and
+  the `CONTACT_PURPOSES` vocabulary that existed only for it, the legacy blob
+  panel on the saved-searches card, and the merge rule that moved a blob into an
+  empty primary. **The CSV importer now writes a real saved search** from the
+  same columns instead of packing them into jsonb — so an imported buyer is
+  matched against listings immediately rather than sitting inert.
 
 ### Decision-free once someone asks for them
 

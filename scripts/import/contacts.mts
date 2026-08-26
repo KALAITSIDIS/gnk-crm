@@ -1,6 +1,6 @@
 /**
  * Contacts importer (T5.6, doc 09 contacts_import.csv). Dedup on normalized
- * phone then email; preferences packed into the jsonb column; unmatched
+ * phone then email; search criteria become a buyer_requirements row; unmatched
  * preference areas are flagged in the report, never silently dropped (rule 3).
  *
  *   node --env-file=.env.local scripts/import/contacts.mts --file docs/samples/contacts_import.csv --dry-run
@@ -82,7 +82,11 @@ for (const r of rows) {
       }
     }
 
-    // preferences
+    // Search criteria. 0055 dropped `contacts.preferences`, so these CSV
+    // columns become a REAL saved search (`buyer_requirements`, 0043) rather
+    // than an unstructured blob — which means an imported buyer is matched
+    // against listings immediately instead of sitting inert until somebody
+    // retyped the blob into a search.
     const prefAreaNames = list(r.pref_areas);
     const prefAreaIds: string[] = [];
     const unmatchedAreas: string[] = [];
@@ -91,12 +95,13 @@ for (const r of rows) {
       if (id) prefAreaIds.push(id);
       else unmatchedAreas.push(name);
     }
-    const preferences: Record<string, unknown> = {};
-    if (prefAreaIds.length) preferences.areas = prefAreaIds;
-    if (num(r.budget_min) !== null) preferences.budget_min = num(r.budget_min);
-    if (num(r.budget_max) !== null) preferences.budget_max = num(r.budget_max);
-    if (int(r.pref_bedrooms_min) !== null) preferences.bedrooms_min = int(r.pref_bedrooms_min);
-    if (list(r.pref_property_types).length) preferences.property_types = list(r.pref_property_types);
+    const requirement: Record<string, unknown> = {};
+    if (prefAreaIds.length) requirement.area_ids = prefAreaIds;
+    if (num(r.budget_min) !== null) requirement.budget_min = num(r.budget_min);
+    if (num(r.budget_max) !== null) requirement.budget_max = num(r.budget_max);
+    if (int(r.pref_bedrooms_min) !== null) requirement.bedrooms_min = int(r.pref_bedrooms_min);
+    if (list(r.pref_property_types).length) requirement.property_types = list(r.pref_property_types);
+    const hasRequirement = Object.keys(requirement).length > 0;
 
     const consent = bool(r.consent_marketing);
     const insertRow = {
@@ -116,7 +121,6 @@ for (const r of rows) {
       temperature: str(r.temperature) ?? "warm",
       source: str(r.source),
       psychology: str(r.psychology),
-      preferences,
       consent_marketing: consent,
       consent_at: consent ? new Date().toISOString() : null,
       notes: str(r.notes),
@@ -146,10 +150,26 @@ for (const r of rows) {
       continue;
     }
     await logImported(supabase, orgId, "contact", created.id, { name: detail });
+
+    // A failed requirement must NOT fail the contact: the person is imported
+    // either way, and reporting the gap beats rolling back a good row.
+    let requirementNote = "";
+    if (hasRequirement) {
+      const { error: reqErr } = await supabase.from("buyer_requirements").insert({
+        org_id: orgId,
+        contact_id: created.id,
+        label: "Imported",
+        ...requirement,
+      } as never);
+      requirementNote = reqErr
+        ? ` · saved search FAILED: ${reqErr.message}`
+        : " · saved search created";
+    }
+
     report.add({
       row: line,
       outcome: "created",
-      detail: `${detail}${unmatchedAreas.length ? ` · unmatched areas: ${unmatchedAreas.join(", ")}` : ""}`,
+      detail: `${detail}${requirementNote}${unmatchedAreas.length ? ` · unmatched areas: ${unmatchedAreas.join(", ")}` : ""}`,
     });
   } catch (e) {
     report.add({ row: line, outcome: "error", detail: (e as Error).message });

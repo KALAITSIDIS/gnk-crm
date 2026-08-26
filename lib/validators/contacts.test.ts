@@ -4,7 +4,6 @@ import {
   LEAD_OPEN_STATUSES,
   SELECT_NONE,
   bankingReadinessSchema,
-  contactPreferencesSchema,
   createContactSchema,
   kycStateSchema,
   leadFiltersSchema,
@@ -90,37 +89,6 @@ describe("createContactSchema", () => {
     const off = createContactSchema.safeParse({ first_name: "A" });
     expect(on.success && on.data.has_whatsapp).toBe(true);
     expect(off.success && !off.data.has_whatsapp).toBe(true);
-  });
-});
-
-describe("contactPreferencesSchema", () => {
-  it("coerces form strings to numbers and drops empties", () => {
-    const parsed = contactPreferencesSchema.safeParse({
-      budget_min: "100000",
-      budget_max: "",
-      bedrooms_min: "2",
-    });
-    expect(parsed.success).toBe(true);
-    if (parsed.success) {
-      expect(parsed.data.budget_min).toBe(100000);
-      expect(parsed.data.budget_max).toBeUndefined();
-      expect(parsed.data.bedrooms_min).toBe(2);
-    }
-  });
-
-  it("rejects budget min above budget max", () => {
-    const parsed = contactPreferencesSchema.safeParse({
-      budget_min: "500000",
-      budget_max: "300000",
-    });
-    expect(parsed.success).toBe(false);
-  });
-
-  it("rejects negative budgets and unknown property types", () => {
-    expect(contactPreferencesSchema.safeParse({ budget_min: "-5" }).success).toBe(false);
-    expect(
-      contactPreferencesSchema.safeParse({ property_types: ["castle"] }).success,
-    ).toBe(false);
   });
 });
 

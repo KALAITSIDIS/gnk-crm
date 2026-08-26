@@ -20,7 +20,12 @@ export const LEAD_MESSAGE_REDACTED = "[erased at the contact's request]";
 export const ERASED_FIELD_GROUPS = [
   "notes",
   "profiling",
-  "preferences",
+  // 0055: the buyer's criteria used to live in `contacts.preferences` and were
+  // cleared with the rest of the profiling layer. The column is gone and the
+  // criteria are ROWS now (`buyer_requirements`, 0043), so erasure deletes
+  // those rows instead — dropping the column must not quietly narrow what
+  // Article 17 reaches.
+  "saved_searches",
   "contact_channels",
   "demographics",
   "marketing_consent",
@@ -53,7 +58,6 @@ export interface ErasurePatch {
   notes: null;
   gdpr_notes: string;
   psychology: null;
-  preferences: Record<string, never>;
   source_detail: null;
   telegram_username: null;
   additional_phones: string[];
@@ -97,7 +101,6 @@ export function planContactErasure(input: {
     notes: null,
     gdpr_notes: `Personal data erased ${now.slice(0, 10)} under GDPR Art.17. See the contact's event log for the record of what was erased and retained.`,
     psychology: null,
-    preferences: {},
     source_detail: null,
     telegram_username: null,
     additional_phones: [],
@@ -127,6 +130,8 @@ export function buildErasureEventPayload(input: {
   amlBasis: boolean;
   retentionUntil: string | null;
   leadsRedacted: number;
+  /** 0055: saved searches removed — counted so the audit says how many */
+  requirementsDeleted: number;
   documentsDeleted: number;
   documentsRetained: number;
 }): Record<string, unknown> {
@@ -138,6 +143,7 @@ export function buildErasureEventPayload(input: {
     aml_basis: input.amlBasis,
     retention_until: input.retentionUntil,
     leads_redacted: input.leadsRedacted,
+    saved_searches_deleted: input.requirementsDeleted,
     documents_deleted: input.documentsDeleted,
     documents_retained: input.documentsRetained,
     identity_retained: true,

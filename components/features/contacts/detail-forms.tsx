@@ -24,11 +24,9 @@ import {
   type BankingReadinessState,
   type KycState,
 } from "@/lib/constants/checklists";
-import { PROPERTY_TYPES } from "@/lib/validators/properties";
 import {
   COMM_CHANNELS,
   CONTACT_LANGUAGES,
-  CONTACT_PURPOSES,
   CONTACT_TYPES,
   LEAD_SOURCES,
   PSYCHOLOGY_PROFILES,
@@ -283,123 +281,6 @@ export function ProfileForm({
         <div className="flex flex-col gap-2 sm:col-span-2">
           <Label htmlFor="notes">Notes</Label>
           <Textarea id="notes" name="notes" rows={3} defaultValue={contact.notes ?? ""} />
-        </div>
-      </div>
-    </ActionSectionForm>
-  );
-}
-
-export function PreferencesForm({
-  contact,
-  areaOptions,
-  readOnly = false,
-  readOnlyHint,
-}: {
-  contact: ContactData;
-  areaOptions: { id: string; name: string }[];
-  readOnly?: boolean;
-  readOnlyHint?: string;
-}) {
-  const prefs = (contact.preferences ?? {}) as {
-    areas?: string[];
-    budget_min?: number;
-    budget_max?: number;
-    bedrooms_min?: number;
-    property_types?: string[];
-    purpose?: string;
-  };
-  // areas store IDs (DECISIONS T-audit-contacts); legacy rows hold EN names —
-  // match either so old data still lights up, and the next save writes IDs
-  const areaChecked = (a: { id: string; name: string }) =>
-    (prefs.areas ?? []).some((v) => v === a.id || v === a.name);
-
-  return (
-    <ActionSectionForm
-      action={updateContactSection}
-      hidden={{ contact_id: contact.id, section: "preferences" }}
-      readOnly={readOnly}
-      readOnlyHint={readOnlyHint}
-    >
-      <div className="grid gap-4 sm:grid-cols-3">
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="budget_min">Budget min (€)</Label>
-          <Input
-            id="budget_min"
-            name="budget_min"
-            type="number"
-            min="0"
-            defaultValue={prefs.budget_min ?? ""}
-          />
-        </div>
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="budget_max">Budget max (€)</Label>
-          <Input
-            id="budget_max"
-            name="budget_max"
-            type="number"
-            min="0"
-            defaultValue={prefs.budget_max ?? ""}
-          />
-        </div>
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="bedrooms_min">Bedrooms min</Label>
-          <Input
-            id="bedrooms_min"
-            name="bedrooms_min"
-            type="number"
-            min="0"
-            defaultValue={prefs.bedrooms_min ?? ""}
-          />
-        </div>
-        <div className="flex flex-col gap-2 sm:col-span-3">
-          <Label id="pref-areas-label">Areas of interest</Label>
-          <div
-            role="group"
-            aria-labelledby="pref-areas-label"
-            className="grid grid-cols-2 gap-2 sm:grid-cols-4"
-          >
-            {areaOptions.map((a) => (
-              <label key={a.id} className="flex items-center gap-1.5 text-sm">
-                <Checkbox name="pref_areas" value={a.id} defaultChecked={areaChecked(a)} />
-                {a.name}
-              </label>
-            ))}
-          </div>
-        </div>
-        <div className="flex flex-col gap-2 sm:col-span-3">
-          <Label id="pref-property-types-label">Property types</Label>
-          <div
-            role="group"
-            aria-labelledby="pref-property-types-label"
-            className="grid grid-cols-2 gap-2 sm:grid-cols-4"
-          >
-            {PROPERTY_TYPES.map((t) => (
-              <label key={t} className="flex items-center gap-1.5 text-sm">
-                <Checkbox
-                  name="pref_property_types"
-                  value={t}
-                  defaultChecked={(prefs.property_types ?? []).includes(t)}
-                />
-                {labelize(t)}
-              </label>
-            ))}
-          </div>
-        </div>
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="purpose">Purpose</Label>
-          <Select name="purpose" defaultValue={prefs.purpose ?? SELECT_NONE}>
-            <SelectTrigger id="purpose">
-              <SelectValue placeholder="Select…" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={SELECT_NONE}>—</SelectItem>
-              {CONTACT_PURPOSES.map((p) => (
-                <SelectItem key={p} value={p}>
-                  {labelize(p)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
         </div>
       </div>
     </ActionSectionForm>
