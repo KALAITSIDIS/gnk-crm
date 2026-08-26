@@ -22,61 +22,81 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 
 ---
 
-## 0a. NEXT UP — the backlog has NO buildable work left (2026-08-26)
+## 0a. NEXT UP — nothing to build; four things waiting on a person (2026-08-26)
 
-**Everything outstanding is blocked on a person, not on effort.** Verified by
-`docs/BACKLOG.md`'s own recipe (see its `## How to read this file`):
+**State:** `main` at `ab55a72`, tree clean, local and hosted both at **0055**,
+**897 unit / 58 RLS**, CI green for every merge SHA, production READY with 0
+runtime errors.
+
+**The backlog has ZERO buildable items.** Verified with its own recipe — see
+`docs/BACKLOG.md` §*How to read this file*, and use it rather than reading the
+file by eye:
 
 ```bash
 grep -n '^- \*\*' docs/BACKLOG.md | grep -v '(original)' | grep -v 'HISTORICAL' | grep -v 'NOTE —'
 ```
 
-On 2026-08-26 that returns **five entries and all five are operator decisions** (two are now ANSWERED — `contacts.preferences` shipped as 0055, and mandatory 2FA is decided-yes-but-deferred with its trigger wired to the Invite dialog) (it was six until *Drop `contacts.preferences`* was answered and shipped as 0055).
-Zero build items. That is a first for this repo, and it is the single most
-important fact for whoever reads this next: **do not go looking for the next
-feature — there isn't one.**
+### What is actually outstanding, ranked by risk × cost
 
-### The six, with what each actually needs
+| # | Item | Cost | Why it is first / last |
+|---|---|---|---|
+| 1 | **Copy the offsite backup off this machine** | minutes | `gnk-backups-offsite-2026-08-23.tar.gz` still sits in `D:\dev\TSOPOZIDIS\` beside the nightly sets it is a copy OF. **One disk holds the CRM and every backup.** Nightlies are healthy (sets through 2026-08-26, `verified: true`). |
+| 2 | **Verify `cyprus_config`** | operator | 6 of 8 rows have **never** been verified and the calculators read them live. `default_mandate_terms`' placeholder 3% prefills every mandate; `capital_gains_tax` is quoted to clients; `vat_property` blocks item 5. Only `stamp_duty` and `transfer_fees` carry a `verified_at` (2026-07-23) and both are pinned by `tests/unit/calculators.audit.test.ts`. |
+| 3 | **Leaked-password protection** | one toggle | Operator said they will do it. Supabase Auth → enable the HaveIBeenPwned check. The `auth_leaked_password_protection` advisor lint disappears when it is on. |
+| 4 | **"Top agents by activity"** | one sentence | A vanity metric on the admin dashboard. Replacing it means choosing what goes there. |
+| 5 | **`properties.status` vs a live hold** | one sentence | 0044 deliberately does not couple them. The hard part is the rule for a status changed by hand in between. |
+| 6 | **VAT treatment derived** | largest | Blocked on item 2. |
 
-| Decision | What it is | Cost to answer |
-|---|---|---|
-| **Leaked-password protection** | Disabled; one Supabase Auth toggle | one word |
-| **`properties.status` vs a live hold** | 0044 deliberately does NOT flip a property to `reserved` when a hold is taken. Should it? | one sentence |
-| **"Top agents by activity"** | A vanity metric on the admin dashboard nobody has defended | one sentence |
-| ~~**Mandatory 2FA**~~ | **ANSWERED 2026-08-26: yes, but LEFT OFF until before the next hire.** It binds nobody today — both users are enrolled. Enabling needs the E2E auth setup and RLS fixtures to enrol TOTP factors, or 204 E2E tests and 3 of 4 RLS files go red (both measured). The gate is built; the switch is one word in `lib/constants/mfa.ts`, and **the reminder is on the Invite user dialog** so the trigger fires where it matters. | done — pending the harness |
-| **VAT treatment derived** | Reduced-rate eligibility follows from area, price and buyer status; `cyprus_config` is built to hold the thresholds | the largest — real rules |
+**ANSWERED and closed this session:** `contacts.preferences` (dropped, 0055) and
+mandatory 2FA (agreed, deferred — see below).
 
-### And the thing that has been true for eighteen days
+### The three traps this session paid for. Read these before touching anything.
 
-**Fifteen features shipped between 2026-08-24 and 2026-08-26. Production holds
-3 properties, 2 contacts, 0 reservations, 0 buyer requirements and has never
-raised a single system task.** Measured, repeatedly. Most of those fifteen read
-a table that is empty, so they cannot do anything at all yet.
+1. **A `VERIFY:` line answers "is this built", NEVER "is this still wanted".**
+   The map shortlist's checks kept returning `0` — the correct state for two
+   items the operator had DECLINED — while the parent entry read as open. Same
+   class of failure rebuilt the contact portfolio tab four days after it shipped.
+2. **THE DEPLOY ORDER INVERTS FOR A DESTRUCTIVE MIGRATION.** §0's rule (hosted
+   migration BEFORE the merge) is for ADDITIVE changes. For a DROP, reads survive
+   (`select("*")` returns one column fewer) but the live code's UPDATEs error —
+   0055 would have 500'd **GDPR erasure**, whose patch set `preferences: {}`.
+   Order for a drop: merge → deploy → **confirm the deployed SHA** → then drop.
+3. **What goes stale is what nothing checks.** Every backlog entry carrying a
+   `VERIFY:` was still accurate; the two that were wrong had none. One of those
+   warned of an admin with no second factor — production showed both admins
+   enrolled and signing in that week. **Re-measure a security claim before
+   acting on it.**
 
-Three of them work on day one with nothing but real listings entered:
+### Mandatory 2FA: decided YES, deliberately OFF
 
-* **`/properties/worklist`** — what every live listing is missing, grouped so
-  one gap can be cleared across many at once, ordered by the points an
-  afternoon recovers.
-* **Create similar** — prefills a new property from an existing one, which is
-  what makes entering a run of listings bearable.
-* **The pricing panel** — asking ↔ owner net ↔ commission, with the negotiating
-  floor, on any property with a mandate.
+It binds nobody today (two users, both enrolled). Enabling needs a **test-harness
+project**, measured not guessed:
 
-**The most useful next session is not a build.** It is the operator putting real
-listings in and working the worklist down. Everything else waits on that, and
-saying so plainly is more useful than finding an eleventh thing to build.
+* database half → RLS suite **58 passing → 4 failed / 16 passed / 38 skipped**
+* app half → `tests/e2e/auth.setup.ts` asserts the Dashboard heading after login;
+  the factor-less seed admin lands on `/security`, and it is a `dependency` of
+  every project, so **all 204 E2E tests fall**
 
-### If a session must build something anyway
+The gate is built and browser-verified; the switch is one word (`MFA_REQUIRED`
+in `lib/constants/mfa.ts`). **Never flip the DB half alone** — a factor-less
+session then sees `/contacts` report an empty database over 169 rows while
+`/dashboard` 500s. The reminder is wired to the **Invite user dialog**, so the
+"before the next hire" trigger fires where someone will see it.
 
-There is one shovel-ready idea that is NOT in the backlog because nobody has
-asked for it: a **combined list + map view** with hover sync between the two.
-The map shortlist's last item (hover sync) was closed on 2026-08-26 precisely
-because it needs this and it does not exist — `/properties` references the map 0
-times and `/properties/map` references the list 0 times. It would be a new entry
-and an M/L, and it improves BROWSING, which is not a problem a 3-property
-database has. Offered to the operator on 2026-08-26 and declined in favour of
-taking the decisions.
+### And the thing that has been true for nineteen days
+
+**Sixteen features shipped 2026-08-24 → 26. Production holds 3 properties, 2
+contacts, 0 reservations, 0 buyer requirements, and has never raised a system
+task.** Most of those features read a table that is empty.
+
+Three work on day one with nothing but real listings entered:
+**`/properties/worklist`** (what each listing is missing, ordered by the points an
+afternoon recovers), **Create similar** (prefills a new property from an existing
+one), and the **pricing panel** (asking ↔ owner net ↔ commission with the
+negotiating floor).
+
+**The most useful next session is not a build.** It is the operator entering real
+listings and working the worklist down.
 
 ## 0a-prev. The project availability share link (2026-08-22)
 
