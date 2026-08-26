@@ -1946,22 +1946,33 @@ developer.
   unknown kind exactly as loudly as the CHECK did, proven in the migration and
   again in RLS test 33.
 
-- **NOTE — CI: `supabase/setup-cli@v1` can fail with "Failed to resolve latest
-  Supabase CLI release: rate limit exceeded".** Seen TWICE on 2026-08-25/26
-  (`6349db3` on `e2e`, `2affb4a` on `rls`) — **it is not specific to one job**,
-  it hits whichever job runs the action first, and the same content passed on
-  the branch minutes earlier both times. Twice in two days is a pattern, and the
-  fix is cheap: **pin a CLI version in `ci.yml` so the action stops asking the
-  GitHub API at all.** Until then `gh run rerun <id> --failed` clears it first
-  try. The job goes red **before a single test runs** — the action
-  asks the GitHub API for the newest CLI release and gets rate-limited, so the
-  log contains no test output at all. **Infrastructure, not code:
-  `gh run rerun <id> --failed` cleared it on the first attempt.**
+- ~~**NOTE — CI: `supabase/setup-cli@v1` can fail with "Failed to resolve latest
+  Supabase CLI release: rate limit exceeded".**~~ ✅ **FIXED 2026-08-26 — the
+  version is now pinned.**
+
+  **The cause was `version: latest`**, which makes the action ask the GitHub API
+  which release is newest; that call is anonymous and rate-limited. It went red
+  TWICE in two days — `6349db3` on `e2e` (08-25), `2affb4a` on `rls` (08-26) —
+  **not specific to one job**: it hits whichever job runs the action first, and
+  both times the identical content had passed on the branch minutes earlier. The
+  job died **before a single test ran**, so the log held no test output at all.
+
+  **Both Supabase-dependent jobs now pin `version: 2.115.0`** (`rls` and `e2e`;
+  `checks` never used the action). That removes the API call entirely, so the
+  failure mode cannot recur. It also closes a drift nobody was watching: 2.115.0
+  is the CLI local development runs, so CI now applies migrations with the same
+  binary they were verified against, instead of whatever shipped that morning.
+
+  **The pin is now a thing that can go stale, and nothing checks it.** `npx
+  supabase` locally is NOT pinned — there is no `supabase` devDependency, so
+  local drifts forward on its own while CI stays put. If a future migration uses
+  syntax a newer CLI introduced, it will pass locally and fail in CI with a
+  confusing error. The durable fix is a `supabase` devDependency at the same
+  version, making one number the source of truth for both sides.
 
   **Do not read this as the port-54322 flake below** — that one fails inside
-  `supabase start`, this one fails before it. Tell them apart by whether the log
-  mentions a port or the API. If it becomes frequent, pinning a CLI version in
-  the workflow removes the API call entirely.
+  `supabase start`, this one failed before it. Tell them apart by whether the log
+  mentions a port or the API.
 - **NOTE — CI: `e2e` can fail to start Supabase with "port 54322 address already in
   use".** Seen once on 2026-08-24 (`b490c2e`) minutes after identical content
   passed on the branch. **It is infrastructure, not code — `gh run rerun <id>
