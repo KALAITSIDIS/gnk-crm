@@ -1947,8 +1947,13 @@ developer.
   again in RLS test 33.
 
 - **NOTE — CI: `supabase/setup-cli@v1` can fail with "Failed to resolve latest
-  Supabase CLI release: rate limit exceeded".** Seen on 2026-08-25
-  (`6349db3`). The `e2e` job goes red **before a single test runs** — the action
+  Supabase CLI release: rate limit exceeded".** Seen TWICE on 2026-08-25/26
+  (`6349db3` on `e2e`, `2affb4a` on `rls`) — **it is not specific to one job**,
+  it hits whichever job runs the action first, and the same content passed on
+  the branch minutes earlier both times. Twice in two days is a pattern, and the
+  fix is cheap: **pin a CLI version in `ci.yml` so the action stops asking the
+  GitHub API at all.** Until then `gh run rerun <id> --failed` clears it first
+  try. The job goes red **before a single test runs** — the action
   asks the GitHub API for the newest CLI release and gets rate-limited, so the
   log contains no test output at all. **Infrastructure, not code:
   `gh run rerun <id> --failed` cleared it on the first attempt.**
