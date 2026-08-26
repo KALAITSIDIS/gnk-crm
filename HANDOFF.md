@@ -44,11 +44,13 @@ grep -n '^- \*\*' docs/BACKLOG.md | grep -v '(original)' | grep -v 'HISTORICAL' 
 | ~~2~~ | ~~**Verify `default_mandate_terms`**~~ **DONE 2026-08-26 (0056)** — operator confirmed 3% / **exclusive** / 6 months; only `mandate_type` changed from the 0038 placeholder. `verified_at` stamped, 3 of 8 rows now verified. The four remaining unverified rows have ZERO code references and must be verified BEFORE anything is built on them. |
 | 3 | **Leaked-password protection** | one toggle | Operator said they will do it. Supabase Auth → enable the HaveIBeenPwned check. The `auth_leaked_password_protection` advisor lint disappears when it is on. |
 | 4 | **"Top agents by activity"** | one sentence | A vanity metric on the admin dashboard. Replacing it means choosing what goes there. |
-| 5 | **`properties.status` vs a live hold** | one sentence | 0044 deliberately does not couple them. The hard part is the rule for a status changed by hand in between. |
-| 6 | **VAT treatment derived** | largest | Blocked on item 2. |
+| ~~5~~ | ~~**`properties.status` vs a live hold**~~ **DECIDED 2026-08-26 — stays INDEPENDENT** | — | Operator declined the coupling. **Do not build the trigger**; it is settled, not unbuilt. No code changed — independence was verified at every layer (no trigger on `reservations`, `expire_reservations()` never touches `properties`, no reservation flow writes a property row). See DECISIONS T-C. |
+| 6 | **VAT treatment derived** | largest | Blocked on `cyprus_config.vat_property`, which is still unverified — item 2 above settled `default_mandate_terms` only. |
 
-**ANSWERED and closed this session:** `contacts.preferences` (dropped, 0055) and
-mandatory 2FA (agreed, deferred — see below).
+**ANSWERED and closed this session:** `contacts.preferences` (dropped, 0055),
+mandatory 2FA (agreed, deferred — see below), `default_mandate_terms` (verified,
+0056), and **`properties.status` vs holds (declined — stays independent)**. Two
+operator decisions remain open: the top-agents metric and VAT.
 
 ### The three traps this session paid for. Read these before touching anything.
 

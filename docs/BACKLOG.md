@@ -1870,12 +1870,20 @@ developer.
   agent/office/period are a different matter: refused by guardrail 6, and not
   going here.)
 
-- **Sync `properties.status` with a live reservation.** 0044 deliberately does
-  not: auto-flipping a listing to `reserved` on hold and back on expiry couples
-  two entities through a cron job, and the revert is where that class of bug
-  lives. If the desk wants it, the shape is a trigger on `reservations` plus a
-  documented rule for what happens when the listing status was changed by hand
-  in the meantime — which is the part that needs deciding.
+- ~~**Sync `properties.status` with a live reservation.**~~ ❌ **DECLINED
+  2026-08-26 — operator decision: the listing status stays independent of
+  holds.** Do not build the trigger, and do not re-propose it as an
+  improvement — it is settled, not merely unbuilt. See DECISIONS T-C.
+
+  The shape this entry sketched (a trigger on `reservations`, plus a rule for a
+  status changed by hand in between) is declined **because of** that middle
+  case: the desk's manual edit and the cron's revert are both legitimate, and
+  neither can know about the other, so every rule for reconciling them
+  surprises someone. 0044 chose not to couple them and that choice now stands.
+
+  Nothing changed in code — independence was verified at every layer on the day
+  of the decision: no trigger on `reservations`, `expire_reservations()` never
+  references `properties`, and no reservation flow writes a property row.
 
 - ~~**Drop `contacts.preferences`.**~~ ✅ **DONE 2026-08-26** (migration 0055),
   operator decision.
