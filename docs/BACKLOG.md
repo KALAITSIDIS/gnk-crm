@@ -1563,7 +1563,41 @@ explicit direction.
     uploads source maps at build time, so it wants a green CI run and a check that
     the deploy still succeeds before it is trusted. Verify by reading a real stack
     trace in Sentry afterwards, not by the plugin being present.
-- **Mandatory 2FA (decision, follow-up to C2).** Enrolment is currently opt-in. If the client wants it required, the Supabase guide gives "enforce for all users" and "enforce for new users only" variants. Do the DB-level enforcement above first, and plan a recovery path — Supabase issues no recovery codes, so the practical answer is a second enrolled factor per user plus an admin who can delete a factor via the GoTrue admin API.
+- **Mandatory 2FA — DECIDED YES 2026-08-26, MECHANISM SHIPPED, SWITCH NOT
+  THROWN.** The operator asked for it. It cannot be turned on without shipping a
+  red pipeline, and BOTH halves were measured rather than predicted:
+
+  * **Database half** (drop the opt-in arm from `mfa_satisfied()`): the RLS
+    suite goes from **58 passing to 4 failed / 16 passed / 38 skipped**, three of
+    four files down. The shared fixtures hold no factors ON PURPOSE —
+    `mfa-enforcement.test.ts` says so in its header, because a verified factor
+    gates that user's aal1 sessions and would break every other test.
+  * **App half** (`MFA_REQUIRED`): `tests/e2e/auth.setup.ts` logs in and asserts
+    the Dashboard heading. With the gate on, the seed admin — who has no factor
+    — lands on `/security` instead, the setup fails, and it is a `dependency` of
+    every project, so **all 204 E2E tests go down with it**. That file already
+    records the seed admin having no factor as a KNOWN GAP.
+
+  **What IS shipped and verified in a browser:** the proxy gate, the redirect to
+  `/security?enrol=required`, and the banner explaining why. A factor-less
+  session hitting `/dashboard`, `/properties` or `/contacts` lands on enrolment;
+  enrolment stays reachable because neither `/security` nor the app shell
+  touches an RLS table (that was the trap to avoid — a locked door with the key
+  behind it); and there is no redirect loop. **Turning it on is one word** in
+  `lib/constants/mfa.ts`.
+
+  **What it costs to flip:** the E2E auth setup must enrol a TOTP factor for the
+  seed admin and store an aal2 session, and the RLS fixtures must do the same in
+  `beforeAll`. Feasible — `lib/testing/totp.ts` and `mfa-enforcement.test.ts`
+  already do it for dedicated users — but a test-harness project with real flake
+  risk: that file dodges a 30-second TOTP boundary for ONE user, and this is
+  every fixture on every run. `mfa.spec.ts` needs revisiting too, since it tests
+  enrolling from scratch as the seed admin.
+
+  **Recovery path, since the entry asked for one:** Supabase issues no recovery
+  codes, so the answer is a second enrolled admin plus `auth.admin.mfa.deleteFactor`
+  through the GoTrue admin API, which the app already wraps for unenrolment.
+  Production satisfies it today — two admins, both enrolled (measured 2026-08-26).
 - ~~**Deal-scoped "Log contact" action (follow-up to B7).**~~ **SHIPPED
   2026-08-07 (migration 0025).** It was worse than this entry described: the
   edit did not merely buy 14 days of quiet, it CLOSED the open chase-up

@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { buildCsp, CSP_HEADER, CSP_REPORT_GROUP, CSP_REPORT_PATH } from "@/lib/services/csp";
+import { MFA_ENROL_PATH, MFA_ENROL_REASON, MFA_REQUIRED } from "@/lib/constants/mfa";
 
 export default async function proxy(request: NextRequest) {
   // Browsers post CSP violation reports without credentials, so this one path
@@ -113,6 +114,10 @@ export default async function proxy(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const isLoginPage = path.startsWith("/login");
+  // Enrolment lives here, so it must stay reachable by someone who has nothing
+  // to sign in with yet — otherwise mandatory 2FA is a locked door with the key
+  // behind it.
+  const isSecurityPage = path.startsWith("/security");
   // the second-factor screen is part of signing in, so it must stay reachable
   // while the session is still aal1
   const isMfaVerifyPage = path === "/login/verify";
@@ -140,6 +145,20 @@ export default async function proxy(request: NextRequest) {
       url.search = "";
       return NextResponse.redirect(url);
     }
+    // MANDATORY 2FA (0056). `owesFactor` above only catches someone who HAS a
+    // factor and has not used it — Supabase reports nextLevel 'aal2' for them.
+    // A user with NO factor reports nextLevel 'aal1', so they fall past that
+    // branch, and under mandatory enforcement they would walk into an app where
+    // RLS returns nothing: pages that render "0 contacts" over a full database,
+    // and pages that 500. Send them where they can fix it instead.
+    const hasNoFactor = aal?.currentLevel === "aal1" && aal?.nextLevel === "aal1";
+    if (MFA_REQUIRED && hasNoFactor && !isSecurityPage) {
+      const url = request.nextUrl.clone();
+      url.pathname = MFA_ENROL_PATH;
+      url.search = `?${MFA_ENROL_REASON}=required`;
+      return NextResponse.redirect(url);
+    }
+
     if (!owesFactor && isMfaVerifyPage) {
       // nothing owed — don't strand the user on a challenge they can't answer
       const url = request.nextUrl.clone();
@@ -148,7 +167,10 @@ export default async function proxy(request: NextRequest) {
     }
     if (isLoginPage && !isMfaVerifyPage) {
       const url = request.nextUrl.clone();
-      url.pathname = "/dashboard";
+      // a signed-in user with no factor is bounced to enrolment, not to a
+      // dashboard that would render empty under mandatory enforcement
+      url.pathname = MFA_REQUIRED && hasNoFactor ? MFA_ENROL_PATH : "/dashboard";
+      url.search = MFA_REQUIRED && hasNoFactor ? `?${MFA_ENROL_REASON}=required` : "";
       return NextResponse.redirect(url);
     }
   }
