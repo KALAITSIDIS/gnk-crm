@@ -707,12 +707,34 @@ explicit direction.
   **Nothing existing moved.** Every row got `false`, so no coordinate already
   entered became approximate and no quality score changed — the property that
   made this safe to apply to a production database with real listings on it.
-- **VAT treatment derived, not remembered, M — NEEDS AN OPERATOR DECISION.**
-  Reduced-rate eligibility follows from covered area, price and buyer status; the
-  calculators exist and `cyprus_config` is built to hold verified thresholds.
-  Suggest the status and show the rule that produced it. **The thresholds must
-  come from the operator — a CRM must not invent tax law**, which is the same
-  reason B4's reservation agreements are parked (HANDOFF §5).
+- ~~**VAT treatment derived, not remembered, M.**~~ ✅ **DONE 2026-08-27** — a
+  live panel on the property Details tab. **NO MIGRATION** (0058 verified the
+  thresholds the day before; this only reads them). See DECISIONS T-vat.
+
+  **IT REFUSES RATHER THAN INVENTS.** The entry's binding constraint was "the
+  thresholds must come from the operator — a CRM must not invent tax law", so
+  there is no hardcoded rate anywhere in `lib/services/vat.ts`. A missing or
+  malformed `cyprus_config.vat_property` yields `cannot_derive` naming the
+  missing keys, never a plausible number from a constant. Four tests pin that.
+
+  **THE CLIFF IS THE FEATURE.** Exceeding €475.000 or 190 m² standard-rates the
+  WHOLE purchase, not the excess — so €1 of price can cost €49.000 of relief.
+  Proven in a test and then in the browser: typing 476.000 on an 85 m² unit
+  flipped VAT from €16.975 to €90.440 and the panel said "€1.000 over the cap
+  — that costs €49.000 in VAT relief".
+
+  **IT CONTRADICTS THE STORED FIELD WHEN THE FIGURES DO.** `vat_status` is a
+  dropdown that MATCHING TRUSTS, and nothing ever checked a
+  `reduced_rate_eligible` claim against the caps. The panel now says so in red,
+  because a property offered to buyers on a rate it cannot have is a real
+  commercial error.
+
+  **WHAT IT DOES NOT CLAIM.** The reduced rate turns on the BUYER — natural
+  person, first and primary residence, 10 years, one per couple — which a
+  property row cannot know, so every reduced-rate figure is labelled
+  conditional. Covered area stands in for "buildable area" and says so.
+  Transitional relief (to 2026-12-31) is surfaced only where it would HELP,
+  and points out the permit date it needs is not recorded anywhere.
 - ~~**Owner net ↔ asking ↔ commission, shown, S.**~~ ✅ **DONE 2026-08-25.** A
   live panel under the Pricing fields on the Details tab. No migration.
 
