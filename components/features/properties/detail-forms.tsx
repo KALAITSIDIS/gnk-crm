@@ -2,6 +2,8 @@
 
 import { MapLocationFields } from "@/components/features/properties/map-location-fields";
 import { PricingBreakdown } from "@/components/features/properties/pricing-breakdown";
+import { VatTreatment } from "@/components/features/properties/vat-treatment";
+import type { VatConfigRow } from "@/lib/services/vat";
 import { SectionForm } from "@/components/features/properties/section-form";
 import { MultilangTabs, type MultilangValue } from "@/components/features/shared/multilang-tabs";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -151,6 +153,8 @@ export function DetailsForm({
   isAdmin = false,
   readOnly = false,
   commissionPct = null,
+  vatConfig = null,
+  vatConfigVerifiedAt = null,
 }: {
   property: PropertyDetailData;
   areas: AreaOption[];
@@ -160,6 +164,10 @@ export function DetailsForm({
    *  reader is an admin or this property's assigned agent — that masking is the
    *  permission check, so this is passed straight through */
   commissionPct?: number | string | null;
+  /** `cyprus_config.vat_property`. NOTHING is derived without it — the
+   *  panel refuses rather than falling back to a hardcoded rate. */
+  vatConfig?: VatConfigRow | null;
+  vatConfigVerifiedAt?: string | null;
 }) {
   const districtAreas = areas.filter((a) => a.districtId === property.district_id);
   const isLand = property.property_type === "land";
@@ -230,6 +238,17 @@ export function DetailsForm({
         </div>
       </div>
 
+      {/* VAT is DERIVED here, not read from `vat_status`. The panel needs the
+          price (below) and the covered area (Areas & rooms), so it wraps both:
+          its reads go through the form, but it only re-renders for input
+          events that bubble to it. See vat-treatment.tsx. */}
+      <VatTreatment
+        config={vatConfig}
+        configVerifiedAt={vatConfigVerifiedAt}
+        askingPrice={property.asking_price}
+        coveredAreaSqm={property.covered_area_sqm}
+        vatStatus={property.vat_status}
+      >
       <SectionTitle>Pricing</SectionTitle>
       <PricingBreakdown
         commissionPct={commissionPct}
@@ -295,6 +314,7 @@ export function DetailsForm({
           <Label htmlFor="has_storage">Storage room</Label>
         </div>
       </div>
+      </VatTreatment>
 
       {/* audit finding 10: both columns have existed since 0001 and no screen
           wrote them. Delivery date is the most-asked question about an off-plan

@@ -3037,3 +3037,53 @@ Code merged and deployed FIRST, hosted migration applied after. The reverse
 direction is safe — a deployed component simply ignores a key that is still
 there — and that asymmetry is exactly why code-first is correct here, mirroring
 the note 0042 left on the OPTIONAL `p50/p90` fields for the additive case.
+
+## T-vat — VAT derived, and what it refuses to say (2026-08-27)
+
+**No migration.** 0058 verified `cyprus_config.vat_property` the day before;
+this reads it and derives. `properties.vat_status` is untouched and still
+saved — the panel does not write, override, or shadow it.
+
+**Every number comes from the config row.** BACKLOG's constraint was that a CRM
+must not invent tax law, so `lib/services/vat.ts` contains no rate, cap or
+threshold. A missing row, a malformed one, or one missing a single key returns
+`cannot_derive` listing what is absent. The alternative — a hardcoded 19% that
+silently disagrees with Settings — is the failure this design exists to refuse.
+
+**The cliff is why the panel earns its place.** Crossing €475.000 or 190 m²
+standard-rates the WHOLE purchase rather than the excess, so the marginal euro
+at the boundary costs about €49.000 of relief. An agent negotiating €470k→€480k
+has no way to see that from the fields alone. Pinned by a test that asserts the
+jump between 475.000 and 475.001, and confirmed in the browser.
+
+**It contradicts the record on purpose.** `vat_status` is a declaration that
+`matching.ts` scores buyers against, and nothing had ever checked a
+`reduced_rate_eligible` claim against the caps. Where the figures refuse it the
+panel says so and names the consequence — the property may be offered to buyers
+on a rate it cannot have. It does NOT auto-correct the field: the declaration
+may reflect something the record does not hold, and silently rewriting a
+human's entry from an approximation would be worse than flagging it.
+
+**Three things it explicitly cannot know, all stated in the UI rather than
+buried here.** The buyer half (natural person, first and primary residence, 10
+years, one per couple) — so every reduced-rate figure is conditional. The area
+basis: the law means buildable area, `covered_area_sqm` is the closest field,
+and veranda/roof garden/basement are stored separately. The transitional
+regime: live to 2026-12-31 and often better, but it needs a permit date by
+2023-10-31 that this system does not record, so it is raised as a question and
+only where the old rule would actually help.
+
+**It wraps two form sections, which is not an accident.** The derivation needs
+price (Pricing) and covered area (Areas & rooms). Reads go through
+`target.form` so any named field is reachable, but a re-render only happens for
+input events that BUBBLE to the wrapper — wrapping Pricing alone would leave
+the panel showing a stale answer after an area edit. It also handles
+`HTMLSelectElement`, which PricingBreakdown does not need to: narrowing to
+`HTMLInputElement` would read "" for `vat_status` and treat every property as
+`unknown`.
+
+**A formatting bug caught by reading the rendered page, not the code.** The
+service built its reasons with `toLocaleString("en-GB")` while the app formats
+money as `de-DE`, so one sentence read "€375,000 over the cap — that costs
+€36.020,83". Both formats, four words apart. The service now uses the shared
+`formatMoney`.

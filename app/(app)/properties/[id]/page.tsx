@@ -6,6 +6,7 @@ import {
   LegalForm,
   MarketingForm,
 } from "@/components/features/properties/detail-forms";
+import type { VatConfigRow } from "@/lib/services/vat";
 import { ArchivePropertyButton } from "@/components/features/properties/archive-button";
 import { BuildProgressCard } from "@/components/features/properties/build-progress-card";
 import { PartiesForm } from "@/components/features/properties/parties-form";
@@ -102,6 +103,7 @@ export default async function PropertyDetailPage({
     reservationsRes,
     installmentsRes,
     plansRes,
+    vatConfigRes,
   ] = await Promise.all([
     supabase
       .from("price_history")
@@ -164,6 +166,15 @@ export default async function PropertyDetailPage({
       .from("payment_plans")
       .select("id, name, installments, project_id")
       .order("created_at"),
+    // the verified VAT thresholds (0058). The panel DERIVES from these
+    // rather than from anything hardcoded, so an edit in Settings changes
+    // what the desk is told with no deploy (guardrail 5, as the
+    // calculators already do for transfer fees and stamp duty).
+    supabase
+      .from("cyprus_config")
+      .select("value, verified_at")
+      .eq("key", "vat_property")
+      .maybeSingle(),
   ]);
   const priceRows = unwrapRows(priceRes, "price history");
   const propertyEventRows = unwrapRows(eventsRes, "events");
@@ -644,6 +655,8 @@ export default async function PropertyDetailPage({
               commissionPct={
                 mandatePanelRows.find((m) => m.status === "active")?.commission_pct ?? null
               }
+              vatConfig={(vatConfigRes.data?.value as VatConfigRow | undefined) ?? null}
+              vatConfigVerifiedAt={vatConfigRes.data?.verified_at ?? null}
             />
           </div>
         </TabsContent>
