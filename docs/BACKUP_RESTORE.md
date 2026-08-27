@@ -536,6 +536,11 @@ looks finished and is not.
 
 #### BEFORE the schema restore — enable the extensions by hand
 
+> **Sets taken from 2026-08-26 onward already carry this block inside
+> `pg_dump.sql`** (§4b.1) — `grep -c 'gnk: extension preamble' <set>/pg_dump.sql`
+> returns 1 and you can skip this. Every OLDER set, including everything
+> currently on the USB, still needs it done by hand.
+
 **The dump contains zero `CREATE EXTENSION` statements.** A fresh project has no
 PostGIS and no `pg_trgm`, so `properties` (`geography(point,4326)`) cannot be
 created and the failure cascades:
@@ -873,7 +878,25 @@ public tables 30 · RLS policies 86/86 · auth.users 2
 That had never been proven before. Everything below is what the drill existed to
 find.
 
-### 1. The dump contains NO `CREATE EXTENSION` — restore fails without them
+### 1. ~~The dump contains NO `CREATE EXTENSION`~~ — **FIXED 2026-08-26 for sets taken from now on**
+
+> **`scripts/backup/capture.mjs` now writes a `CREATE EXTENSION IF NOT EXISTS`
+> preamble into `pg_dump.sql`, and REFUSES to promote a set that is missing one
+> or that uses an extension the preamble does not create.** Proven both ways: a
+> produced dump restores into a bare database with **0 errors** (35 tables, all
+> four geography tables present), and a deliberately sabotaged run — postgis
+> removed from the list — was refused with *"uses postgis but the preamble does
+> not create it"*, leaving the destination untouched.
+>
+> **THIS DOES NOT HELP THE SETS YOU ALREADY HAVE.** Every set on disk and on the
+> USB was taken before the fix and carries no preamble, so restoring ANY of them
+> still needs the manual step in §3.1. Check rather than assume:
+>
+> ```bash
+> grep -c 'gnk: extension preamble' <set>/pg_dump.sql   # 0 = do §3.1 by hand
+> ```
+
+The original finding, kept because it is still exactly what the old sets do:
 
 A fresh project has no PostGIS or `pg_trgm`, so `properties`
 (`geography(point,4326)`) cannot be created and the failure cascades:

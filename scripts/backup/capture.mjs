@@ -39,6 +39,9 @@
  *   - A dump can be truncated without erroring — so the event count inside
  *     data.sql is compared against the LIVE count.
  *   - A failed `db dump` still creates its -f file. Size floors catch it.
+ *   - The CLI emits NO `CREATE EXTENSION`, so the schema dump is given one and
+ *     the result is checked: without it a restore into a fresh database dies on
+ *     `type "public.geography" does not exist` (§4b.1, §4d).
  *
  * CREDENTIALS come from the environment, are never logged, never written to the
  * output and never echoed in an error.
@@ -139,6 +142,104 @@ function cliArgs(rest) {
     : ["npx", ["supabase", ...rest]];
 }
 
+/**
+ * THE EXTENSIONS THE SCHEMA CANNOT LOAD WITHOUT, and the reason each is here.
+ *
+ * `supabase db dump --schema public` emits ZERO `CREATE EXTENSION` statements.
+ * Until this was fixed, every set in this repository failed to restore into a
+ * fresh database: 112 errors rooted in `type "public.geography" does not exist`,
+ * and `areas`, `districts`, `properties` and `viewing_slips` were never created
+ * at all. Found in the 2026-08-05 drill (BACKUP_RESTORE §4b.1) and reproduced
+ * UNCHANGED twenty-one days later in the §4d drill on 2026-08-26.
+ *
+ * It lived in the runbook as "enable the extensions by hand before restoring".
+ * That is a step a human has to remember while the business is down, which is
+ * exactly when it will be missed — so the dump now carries it.
+ *
+ * NOT included, deliberately: `pg_cron`. The six sweeps are absent after any
+ * restore because the JOBS live in `cron.job`, which no dump here covers
+ * (§4b.4). Creating the extension would imply that gap is closed. It is not.
+ */
+const REQUIRED_EXTENSIONS = [
+  ["postgis", "properties.location and the area/district centroids are geography(point,4326)"],
+  ["pg_trgm", "the gin_trgm_ops indexes behind contact and property search"],
+  ["pgcrypto", "gen_random_uuid() column defaults"],
+  ["uuid-ossp", "uuid_generate_v*() defaults on the older tables"],
+];
+
+/**
+ * Marker in the dump -> the extension that must supply it. Used to CHECK the
+ * list above still covers what the schema actually references, so that adding a
+ * PostGIS column years from now cannot silently outrun this file.
+ *
+ * NOT EXHAUSTIVE, and it cannot be: it only knows the extensions the project
+ * uses today. `INDEX_METHOD_GUARD` below is the broader net — an index built
+ * with an access method Postgres does not ship is proof of an extension nobody
+ * listed here.
+ */
+/*
+ * QUOTE-TOLERANT ON PURPOSE. The CLI emits fully quoted, schema-qualified
+ * identifiers — `"public"."geography"(Point,4326)`, `"public"."gin_trgm_ops"` —
+ * so the obvious /public\.geography/ matches NOTHING. The first version of this
+ * guard did exactly that, and passed a dump with postgis deliberately removed
+ * from the list above: it reported "every check passed" on a set that could not
+ * restore. Caught by RUNNING that negative case rather than trusting the regex,
+ * which is the only reason this comment exists.
+ */
+const EXTENSION_MARKERS = [
+  [/"?public"?\.\s*"?(geography|geometry)"?/i, "postgis"],
+  [/"?(gin|gist)_trgm_ops"?|"?similarity"?\s*\(/i, "pg_trgm"],
+  [/"?gen_random_uuid"?\s*\(|"?crypt"?\s*\(|"?digest"?\s*\(/i, "pgcrypto"],
+  [/"?uuid_generate_v\d"?/i, "uuid-ossp"],
+];
+
+/** Access methods core Postgres ships. Anything else came from an extension. */
+const INDEX_METHOD_GUARD = new Set(["btree", "hash", "gist", "gin", "brin", "spgist"]);
+
+/** Lets the preamble be found again, by the checks below and by a human. */
+const EXT_MARK = "-- gnk: extension preamble (added by scripts/backup/capture.mjs)";
+const EXT_MARK_END = "-- gnk: end extension preamble";
+
+/**
+ * Splice the preamble in AFTER `CREATE SCHEMA IF NOT EXISTS "public"`, not at
+ * the top of the file: on this project PostGIS installs INTO `public`, so the
+ * schema has to exist first. Idempotent, so a re-run cannot double it.
+ */
+function addExtensionPreamble(file) {
+  if (!file) return;
+  const sql = readFileSync(file, "utf8");
+  if (sql.includes(EXT_MARK)) return;
+
+  const anchor = 'CREATE SCHEMA IF NOT EXISTS "public";';
+  if (!sql.includes(anchor)) {
+    problems.push(`schema: cannot place the extension preamble — '${anchor}' not found (§4b.1)`);
+    return;
+  }
+
+  const body = [
+    "",
+    "",
+    EXT_MARK,
+    "--",
+    "-- The CLI does not emit these and the schema below cannot load without them.",
+    "-- See docs/BACKUP_RESTORE.md §4b.1 and §4d. Safe to re-run; safe on a target",
+    "-- that already has them.",
+    ...REQUIRED_EXTENSIONS.map(([n, why]) => `-- ${n}: ${why}`),
+    "",
+    ...REQUIRED_EXTENSIONS.map(([n]) =>
+      `CREATE EXTENSION IF NOT EXISTS ${/^[a-z_]+$/.test(n) ? n : `"${n}"`} WITH SCHEMA "public";`),
+    "",
+    "-- NOTE: pg_cron is NOT here. The six scheduled sweeps live in `cron.job`,",
+    "-- which no dump in this set covers, so they are gone after a restore and",
+    "-- must be recreated from the migrations (§4b.4).",
+    EXT_MARK_END,
+    "",
+  ].join("\n");
+
+  writeFileSync(file, sql.replace(anchor, anchor + body), { encoding: "utf8" });
+  log(`  schema: extension preamble added (${REQUIRED_EXTENSIONS.map(([n]) => n).join(", ")})`);
+}
+
 function dump(label, extraArgs, file) {
   const target = join(stageDir, file);
   const [cmd, base] = cliArgs(["db", "dump", "--db-url", dbUrl, ...extraArgs, "-f", target]);
@@ -162,6 +263,7 @@ log(`capture ${stamp}  ->  ${finalDir}`);
 log(`staging in ${stagingRoot}\n`);
 log("dumps");
 const schemaFile = dump("schema", ["--schema", "public"], "pg_dump.sql");
+addExtensionPreamble(schemaFile);
 const dataFile = dump("data", ["--schema", "public,auth,storage", "--data-only", "--use-copy"], "data.sql");
 const rolesFile = dump("roles", ["--role-only"], "roles.sql");
 
@@ -188,6 +290,39 @@ else {
   if (owners) problems.push(`schema: ${owners} supabase_admin ownership statements — wrong --schema flag (§4b.2)`);
   if (!schemaSql.includes('CREATE SCHEMA IF NOT EXISTS "public"')) problems.push("schema: no CREATE SCHEMA public");
   log(`  schema: ${owners === 0 ? "no supabase_admin ownership" : "OWNERSHIP PRESENT"}`);
+
+  // ---- the extension preamble, and whether it still covers what is used -----
+  // A set without this restores into a fresh database as 112 errors and four
+  // missing tables (§4b.1, §4d), so its absence makes the set untrustworthy
+  // rather than merely imperfect.
+  if (!schemaSql.includes(EXT_MARK)) {
+    problems.push("schema: no CREATE EXTENSION preamble — restore into a fresh database WILL fail (§4b.1)");
+  } else {
+    const listed = REQUIRED_EXTENSIONS.map(([n]) => n);
+    // Scan the SCHEMA ITSELF, never the preamble: its comment lines name
+    // "geography" and "gin_trgm_ops", so a guard reading the whole file would
+    // be satisfied by its own text and report coverage that is not there.
+    const bodySql = schemaSql.includes(EXT_MARK_END)
+      ? schemaSql.slice(0, schemaSql.indexOf(EXT_MARK)) +
+        schemaSql.slice(schemaSql.indexOf(EXT_MARK_END) + EXT_MARK_END.length)
+      : schemaSql;
+    for (const [re, ext] of EXTENSION_MARKERS) {
+      if (re.test(bodySql) && !listed.includes(ext)) {
+        problems.push(`schema: uses ${ext} but the preamble does not create it (§4b.1)`);
+      }
+    }
+    // The broader net: an index access method core Postgres does not ship is an
+    // extension this file has never heard of. Catches the case the marker list
+    // structurally cannot.
+    for (const m of bodySql.matchAll(/USING\s+"?([a-z_]+)"?\s*\(/gi)) {
+      const method = m[1].toLowerCase();
+      if (!INDEX_METHOD_GUARD.has(method)) {
+        problems.push(`schema: index access method "${method}" is not core Postgres — an extension is missing from REQUIRED_EXTENSIONS (§4b.1)`);
+        break;
+      }
+    }
+    log(`  schema: extension preamble present (${listed.join(", ")})`);
+  }
 }
 
 const dataSql = read(dataFile);
