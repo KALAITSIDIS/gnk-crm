@@ -1030,6 +1030,86 @@ database restore overwrite the metadata.
 
 ---
 
+## 4d. DRILL RESULT — executed 2026-08-26 against the `2026-08-27` set, and it PASSES
+
+**Why this run happened at all: the operator asked for a restore test on the
+basis that none had been done. That premise was wrong, and it came from a line I
+had written into HANDOFF the same day — "No restore test has ever been done."
+§4b and §4c above are exactly that, from 2026-08-05/06.** The HANDOFF line is
+corrected. Recording the mistake because the cost of a doc asserting a drill is
+missing is that someone re-runs it instead of reading it — which is what
+happened here.
+
+The run is still worth having: it is the first drill against a set taken AFTER
+Phase B/C/D shipped (34 tables, 137 policies, 116 events, migrations through
+0057), and the first to compare the restored chain against **live production**
+rather than a second backup.
+
+### What was done
+
+Restored `gnk-backups/2026-08-27` into a throwaway database in the local
+Supabase container (`gnk_restore_test`), NOT a cloud project, then dropped it.
+The dev database was untouched throughout and verified so afterwards (0057, 587
+properties).
+
+Target prepared per §3.1: `postgis`, `pg_trgm`, `pgcrypto`, `uuid-ossp`, plus an
+`auth` schema copied schema-only from the dev database to stand in for what a
+fresh Supabase project provisions.
+
+### Result
+
+| Check | Result |
+|---|---|
+| Set's own `SHA256SUMS` | **52 / 52 OK** |
+| `manifest.json` | `verified: true`, `problems: []`, events inDump 116 = live 116 |
+| Schema restore (`pg_dump.sql`) | **0 errors** once extensions were present |
+| Data restore (`data.sql`) | 8 errors, all explained below |
+| Row counts vs the set's own `data/*.json` | **26 / 26 tables match exactly** |
+| `verify_events_chain` | true |
+| **`md5(string_agg(hash,',' order by id))` restored vs LIVE PRODUCTION** | **`88a742c46f086e44222bea3dc150e842` over 116 rows on BOTH** |
+| Policies / RLS tables | 137 / 34 |
+| Functional query | `admin_dashboard_stats` returns its 6 keys; PAF0001-3 present |
+
+**The hash-aggregate line is the one that matters**, per §5 below: the chain
+function alone cannot tell a restored chain from one `trg_events_hash` re-minted
+during the load. Matching production's aggregate byte for byte says the restore
+reproduces the real evidence.
+
+### §4b.1 reproduced exactly — the dump still has no `CREATE EXTENSION`
+
+A first attempt into a bare database failed with **112 errors** rooted in
+`type "public.geography" does not exist`, and four tables never appeared:
+`areas`, `districts`, `properties`, `viewing_slips` — the geography-bearing ones.
+`operator class "public.gin_trgm_ops" does not exist` follows from the missing
+`pg_trgm`. This is §4b.1 unchanged, twenty-one days later: **the defect is still
+live in the backup script.** §3.1's manual `create extension` block remains
+mandatory, and a restore attempted without reading this runbook still fails.
+
+### The 8 data errors, and why 7 of them are the test target rather than the backup
+
+* **5 × `schema "storage" does not exist`** — this target had no `storage`
+  schema, only `auth`. A real Supabase project provisions both. §4c covers the
+  storage half properly and is not superseded by this run.
+* **2 × syntax error** (`near "documents"`, `near "c002d0bb"`) — NOT corruption.
+  They are the cascade of the above: when a `COPY storage.…` target is missing,
+  psql parses the following data rows as SQL. Confirmed by reading `data.sql`
+  line 741, which is the `storage.buckets` row `documents documents …`.
+* **1 × `permission denied for table spatial_ref_sys`** — PostGIS's own system
+  table, expected, and already documented in §5 as benign.
+
+**So zero errors touched application data**, which the 26/26 row-count match
+independently confirms.
+
+### What this run did NOT cover
+
+* Storage bytes and buckets — see §4c, unchanged.
+* `pg_cron` jobs (§4b.4) — a throwaway database has no scheduler; all six sweeps
+  would still be absent after a real restore.
+* Function grants (§4b.3) — not re-checked here.
+* A real cloud project, RTO timing, or auth sign-in against restored users.
+
+---
+
 ## 5. What "passed" means
 
 The drill passes only if all of these hold on the restored project. Ticks below
