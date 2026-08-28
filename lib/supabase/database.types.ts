@@ -699,6 +699,38 @@ export type Database = {
           },
         ]
       }
+      events_chain_checkpoint: {
+        Row: {
+          full_walk_at: string | null
+          last_hash: string
+          last_id: number
+          org_id: string
+          verified_at: string
+        }
+        Insert: {
+          full_walk_at?: string | null
+          last_hash: string
+          last_id: number
+          org_id: string
+          verified_at: string
+        }
+        Update: {
+          full_walk_at?: string | null
+          last_hash?: string
+          last_id?: number
+          org_id?: string
+          verified_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "events_chain_checkpoint_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       key_movements: {
         Row: {
           action: Database["public"]["Enums"]["key_action"]
@@ -2773,6 +2805,16 @@ export type Database = {
         Args: { p_d30: string; p_d7: string; p_month_start: string }
         Returns: Json
       }
+      advance_chain_checkpoint: {
+        Args: { p_full: boolean; p_org: string }
+        Returns: {
+          failed_id: number
+          from_id: number
+          ok: boolean
+          reason: string
+          walked: number
+        }[]
+      }
       create_followup_nudges: { Args: { p_org?: string }; Returns: undefined }
       current_org_id: { Args: never; Returns: string }
       current_role_gnk: {
@@ -3020,6 +3062,7 @@ export type Database = {
       }
       rls_hoisted_policy_count: { Args: never; Returns: number }
       run_chain_checks: { Args: never; Returns: undefined }
+      run_chain_checks_full: { Args: never; Returns: undefined }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
       st_3dclosestpoint: {
