@@ -107,7 +107,7 @@ insert into properties (
   '00000000-0000-0000-0000-000000000001',
   'PAF0001', 'standalone', 'villa', 'sale', 'available', 'private',
   '{"en":"Seafront villa with pool"}'::jsonb,
-  (select id from districts where code='PAF'),
+  (select id from districts where code='PAF' and org_id='00000000-0000-0000-0000-000000000001'),
   '33333333-0000-0000-0000-000000000002',
   '22222222-2222-2222-2222-222222222222',
   850000, 240, 4, 3
@@ -121,7 +121,7 @@ insert into properties (
   '00000000-0000-0000-0000-000000000001',
   'PAF0002', 'project', 'apartment', 'sale', 'available', 'private',
   '{"en":"Coral Bay Residences"}'::jsonb,
-  (select id from districts where code='PAF'),
+  (select id from districts where code='PAF' and org_id='00000000-0000-0000-0000-000000000001'),
   '33333333-0000-0000-0000-000000000001',
   '22222222-2222-2222-2222-222222222222'
 ) on conflict (id) do nothing;
@@ -138,7 +138,7 @@ select
   'PAF0002-' || u.ref, 'unit',
   '44444444-0000-0000-0000-000000000002', u.ref, 'apartment',
   'sale', 'available', 'private',
-  (select id from districts where code='PAF'),
+  (select id from districts where code='PAF' and org_id='00000000-0000-0000-0000-000000000001'),
   '33333333-0000-0000-0000-000000000001',
   '22222222-2222-2222-2222-222222222222',
   u.price, u.sqm, u.beds, 2
@@ -160,7 +160,7 @@ insert into properties (
   '00000000-0000-0000-0000-000000000001',
   'PAF0003', 'standalone', 'townhouse', 'sale', 'available', 'private',
   '{"en":"Townhouse near the old town"}'::jsonb,
-  (select id from districts where code='PAF'),
+  (select id from districts where code='PAF' and org_id='00000000-0000-0000-0000-000000000001'),
   '33333333-0000-0000-0000-000000000002',
   '22222222-2222-2222-2222-222222222222',
   395000, 150, 3, 2
@@ -179,3 +179,25 @@ insert into mandates (
   '33333333-0000-0000-0000-000000000002',
   3, current_date - 30, current_date + 150
 ) on conflict (id) do nothing;
+
+-- ---------------------------------------------- the reference counter ------
+-- WITHOUT THIS THE UI CANNOT CREATE A PROPERTY AT ALL.
+--
+-- `next_reference()` reads `reference_counters`, not the rows. Inserting
+-- PAF0001-0003 above leaves the counter at its seeded value, so the very next
+-- "Add property" hands back PAF0002, which already exists, and the save dies on
+--
+--   duplicate key value violates unique constraint "properties_org_id_reference_key"
+--
+-- — a raw Postgres error, shown to the user, on the first thing they try. Found
+-- 2026-08-28 by doing exactly that. Advance the counter past every fixture.
+insert into reference_counters (org_id, district_code, last_value)
+select
+  '00000000-0000-0000-0000-000000000001',
+  'PAF',
+  max((regexp_match(reference, '^PAF([0-9]{4})'))[1]::int)
+from properties
+where org_id = '00000000-0000-0000-0000-000000000001'
+  and reference ~ '^PAF[0-9]{4}'
+on conflict (org_id, district_code) do update
+  set last_value = greatest(reference_counters.last_value, excluded.last_value);
