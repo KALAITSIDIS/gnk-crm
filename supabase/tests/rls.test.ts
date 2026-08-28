@@ -1412,6 +1412,62 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     );
   });
 
+  it("21d. partitioned events: writes still route and verify, and partition health is clean", async () => {
+    // 0063. `events` is now RANGE-partitioned monthly on occurred_at with
+    // PK (id, occurred_at). Nothing above this line changed, which is the point
+    // — but three things could break silently and none of them would show up as
+    // an error, so they are asserted.
+
+    // 1. an ordinary write still works through RLS, still gets hashed, and the
+    //    chain still verifies. A partition routing failure would surface here.
+    const { data: written, error: writeErr } = await agentA1.client
+      .from("events")
+      .insert({
+        org_id: ORG_A,
+        actor_id: agentA1.id,
+        entity_type: "config",
+        event_type: `partition_write_${run}`,
+        payload: { note: "routed through the parent" },
+      })
+      .select("id, hash, hash_version, occurred_at")
+      .single();
+    expect(writeErr, "an agent must still be able to append an event").toBeNull();
+    expect(written!.hash, "the trigger still fires on the partitioned table").toMatch(
+      /^[0-9a-f]{64}$/,
+    );
+    expect(written!.hash_version).toBe(2);
+
+    const chain = await svc.rpc("verify_events_chain", { p_org: ORG_A, p_from_id: null });
+    expect(chain.data?.[0]?.ok, "the chain verifies across partitions").toBe(true);
+
+    // 2. the invariants partitioning makes breakable — including any partition
+    //    that has picked up a grant for anon or authenticated.
+    //
+    //    THIS IS DELIBERATELY NOT "try to GET a partition over the API". That
+    //    assertion was written first and is VACUOUS: measured, PostgREST
+    //    excludes partitions from its schema cache, so a partition moved into
+    //    `public` and explicitly granted `select` to anon is STILL refused with
+    //    PGRST205 after a full restart. It passes whether the partition is
+    //    protected or wide open. The GRANT is the real exposure — pg_default_acl
+    //    hands anon `Dxtm` on anything created in `public`, and `D` is TRUNCATE,
+    //    which RLS does not gate — so the grant is what gets asserted.
+    const anon = anonClient();
+    const health = await svc.rpc("events_partition_health");
+    expect(health.error).toBeNull();
+    expect(
+      health.data ?? [],
+      "inversions, duplicate ids, rows stranded in DEFAULT, or a partition granted to an app role",
+    ).toEqual([]);
+
+    // and the health check is not something a browser session can run
+    for (const client of [anon, adminA.client]) {
+      const denied = await client.rpc("events_partition_health");
+      expect(denied.error, "events_partition_health is service-only").not.toBeNull();
+      const denied2 = await client.rpc("ensure_events_partitions", {});
+      expect(denied2.error, "ensure_events_partitions is service-only").not.toBeNull();
+    }
+  });
+
   it("22. admin_dashboard_stats: SECURITY INVOKER — org-scoped, exact, anon denied", async () => {
     // PERF-3 (migration 0018). The dashboard used to sum money in TS over
     // .limit(2000) fetches, so the € tiles silently undercounted past the cap.
