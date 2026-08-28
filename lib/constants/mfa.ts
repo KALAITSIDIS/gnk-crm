@@ -1,79 +1,77 @@
 /**
  * Is a second factor REQUIRED to use the app?
  *
- * Operator decision, 2026-08-26: yes.
+ * Operator decision 2026-08-26: yes. **Turned ON 2026-08-28**, once the test
+ * harness could run under it — see the history at the bottom for what that cost
+ * and why it was worth doing first.
  *
  * ============================================================================
- * ENFORCED IN THE PROXY, NOT IN `mfa_satisfied()`, AND THE REASON WAS MEASURED.
+ * THIS CONSTANT IS ONE HALF OF A PAIR. THE OTHER IS MIGRATION 0059.
  *
- * The obvious implementation is to drop the opt-in arm from `mfa_satisfied()`
- * (0029) so `require_aal2` demands aal2 from everyone. That was written, applied
- * locally, and reverted, because it breaks the thing that proves the rest of the
- * security model works:
+ * This one gates the BROWSER: `proxy.ts` sends a session with no verified
+ * factor to /security to enrol. Migration 0059 gates the DATABASE: it dropped
+ * the opt-in arm from `mfa_satisfied()`, so `require_aal2` now refuses any
+ * session that has not completed a second factor.
  *
- *   RLS suite under a mandatory `mfa_satisfied()`:
- *     58 passing  →  4 failed, 16 passed, 38 skipped  (3 of 4 files down)
+ * Ship one without the other and the system contradicts itself:
  *
- * The shared fixture users have no factors ON PURPOSE — `mfa-enforcement.test.ts`
- * says so at the top: "Never enrol a factor on a shared fixture user: a verified
- * factor gates that user's aal1 sessions, which would break every other test in
- * this suite." Under mandatory mode RLS returns nothing to any of them.
+ *   DB mandatory, app not → a factor-less user is never prompted to enrol and
+ *                           just sees an empty CRM, because `require_aal2` is
+ *                           RESTRICTIVE and a blocked read returns no rows
+ *                           rather than an error. Silent and baffling.
+ *   app mandatory, DB not → the browser gate is the only thing between an aal1
+ *                           token and the data, which is precisely the residual
+ *                           gap this change existed to close.
  *
- * Making the database half work therefore means every fixture user enrolling and
- * completing a TOTP challenge in `beforeAll` — real work, and flaky by nature:
- * that file already notes the 30-second step boundary it has to dodge for ONE
- * user. It also breaks local development, where nobody has an authenticator set
- * up for `admin@gnk.local`.
+ * `supabase/tests/mfa-enforcement.test.ts` asserts the DATABASE's behaviour
+ * against THIS CONSTANT, so the contradiction fails the suite rather than
+ * reaching a user. Flipping this back to `false` without a migration restoring
+ * the opt-in arm will go red, and that is deliberate.
  * ============================================================================
  *
- * WHAT THIS ACTUALLY GIVES, stated precisely rather than generously:
+ * WHAT IT NOW GIVES, stated precisely:
  *
- *   ✓ Nobody can USE the CRM without a second factor. The proxy redirects a
+ *   ✓ Nobody can USE the CRM without a second factor — the proxy redirects a
  *     factor-less session to /security before any page renders.
- *   ✓ Anyone who HAS enrolled is still bound at the database level — the
- *     `require_aal2` policy refuses their aal1 sessions, so the browser gate is
- *     not the only thing standing between an aal1 token and the data.
- *   ✗ It is NOT airtight against someone who has valid credentials, never
- *     enrols, and calls PostgREST directly with a raw aal1 token instead of
- *     using the app. `mfa_satisfied()` still passes them.
+ *   ✓ Nobody can READ THE DATA without one either, whatever client they use.
+ *     `mfa_satisfied()` no longer excuses a user for having no factor, so a raw
+ *     aal1 token against PostgREST returns nothing. This is the half the
+ *     browser gate could never provide, and the reason 0059 exists.
+ *   ✓ Enrolment stays reachable: neither /security nor the app shell touches an
+ *     RLS table, so a user who owes a factor can still get one. There is no
+ *     redirect loop.
  *
- * That residual gap needs the database half, and the database half needs the
- * test harness to enrol factors.
+ * THE LOCKOUT SURFACE IS REAL AND WORTH KNOWING. An account with no factor can
+ * see nothing until it enrols, and there is no self-service password reset in
+ * this app (no SMTP). Recovery for a stuck user is an admin deleting their
+ * factors through the service role — `clearFactors` in lib/testing/mfa.ts is
+ * exactly that call, and works the same way outside tests.
  *
  * ============================================================================
- * SHIPPED OFF. THE MECHANISM IS HERE AND PROVEN; THE SWITCH IS NOT THROWN.
+ * HISTORY — why this was decided on the 26th and only turned on on the 28th.
  *
- * The operator asked for mandatory 2FA on 2026-08-26 and it cannot be turned on
- * today without shipping a red pipeline. BOTH halves break the test suite, and
- * both were measured rather than predicted:
+ * Both halves broke the test suites, measured rather than predicted:
  *
- *   database half → RLS suite 58 passing becomes 4 failed / 16 passed /
- *                   38 skipped, because the shared fixtures hold no factors
- *                   ON PURPOSE (see mfa-enforcement.test.ts's header).
- *   app half      → `tests/e2e/auth.setup.ts` logs in and asserts the Dashboard
- *                   heading. With this true the seed admin — who has no factor —
- *                   lands on /security instead, the setup fails, and it is a
- *                   `dependency` of every project, so all 204 E2E tests go down
- *                   with it. That file already documents the seed admin having
- *                   no factor as a KNOWN GAP.
+ *   database half → RLS suite 58 passing became 4 failed / 16 passed /
+ *                   38 skipped, three of four files down, because every shared
+ *                   fixture user was password-only.
+ *   app half      → `tests/e2e/auth.setup.ts` asserts the Dashboard heading
+ *                   after login; the factor-less seed admin landed on /security
+ *                   instead, and setup is a `dependency` of every project, so
+ *                   all 204 E2E tests fell with it.
  *
- * WHAT IT COSTS TO FLIP: the E2E auth setup must enrol a TOTP factor for the
- * seed admin and store an aal2 session, and the RLS fixtures must do the same
- * in `beforeAll`. Both are feasible — `lib/testing/totp.ts` and
- * `mfa-enforcement.test.ts` already do exactly this for dedicated users — but
- * they are a test-harness project with real flake risk: that file dodges a
- * 30-second TOTP step boundary for ONE user, and this would be every fixture on
- * every run. It also needs `mfa.spec.ts` revisited, since it tests enrolling
- * from scratch as the seed admin.
+ * The harness work (2026-08-28) fixed both at the source rather than working
+ * around them: `createTestUser` now enrols a TOTP factor by default so fixture
+ * clients arrive at aal2, and the E2E setup enrols a real factor for the seed
+ * admin and answers a real challenge on /login/verify. Measured after:
  *
- * Everything else here is done and verified in a browser: a factor-less session
- * hitting /dashboard, /properties or /contacts lands on
- * /security?enrol=required with an explanation, enrolment stays reachable
- * because neither /security nor the app shell touches an RLS table, and there
- * is no redirect loop. Turning it on is this one word.
+ *   RLS  58/58 under BOTH the opt-in and the mandatory rule
+ *   E2E  205 passed, 1 skipped (mfa.spec.ts, which needs a factor-less admin)
+ *
+ * That is what made this a one-word change instead of a red pipeline.
  * ============================================================================
  */
-export const MFA_REQUIRED = false;
+export const MFA_REQUIRED = true;
 
 /** Where the proxy sends someone who has to enrol before going further. */
 export const MFA_ENROL_PATH = "/security";

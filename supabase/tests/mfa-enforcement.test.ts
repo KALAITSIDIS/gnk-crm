@@ -2,13 +2,20 @@
  * C2 — DB-level 2FA enforcement.
  * Requires the local Supabase stack. Run: npm run test:rls
  *
- * Uses DEDICATED per-run users. Never enrol a factor on a shared fixture user:
- * a verified factor gates that user's aal1 sessions, which would break every
- * other test in this suite.
+ * Uses DEDICATED per-run users, created with `enrolFactor: false` because this
+ * file is about factor states themselves.
+ *
+ * The old warning here — "never enrol a factor on a shared fixture user" — was
+ * true while fixtures were password-only. It is now inverted: `createTestUser`
+ * enrols by default and hands back an aal2 client, so the suite passes whether
+ * or not `mfa_satisfied()` still has its opt-in arm. What must never happen is
+ * a fixture left at aal1 WITH a verified factor; that is this file's
+ * `factoredAal1`, built on purpose and nowhere else.
  */
 import { beforeAll, describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { totp } from "@/lib/testing/totp";
+import { enrolAndVerify } from "@/lib/testing/mfa";
+import { MFA_REQUIRED } from "@/lib/constants/mfa";
 import {
   ORG_A,
   TEST_PASSWORD,
@@ -22,30 +29,6 @@ import {
 const run = Date.now().toString(36);
 const svc = serviceClient();
 
-/** Enrol TOTP and complete the challenge; the user's client becomes aal2. */
-async function enrolAndVerify(user: TestUser): Promise<string> {
-  const { data: enrolled, error: enrolErr } = await user.client.auth.mfa.enroll({
-    factorType: "totp",
-  });
-  if (enrolErr) throw new Error(`enroll: ${enrolErr.message}`);
-
-  const { data: ch, error: chErr } = await user.client.auth.mfa.challenge({
-    factorId: enrolled.id,
-  });
-  if (chErr) throw new Error(`challenge: ${chErr.message}`);
-
-  // Generate the code immediately before verify() to minimise the risk of
-  // straddling a 30-second TOTP step boundary; GoTrue's clock-skew tolerance
-  // covers whatever slack remains, so no retry loop is needed here.
-  const { error: verifyErr } = await user.client.auth.mfa.verify({
-    factorId: enrolled.id,
-    challengeId: ch.id,
-    code: totp(enrolled.totp.secret),
-  });
-  if (verifyErr) throw new Error(`verify: ${verifyErr.message}`);
-
-  return enrolled.id;
-}
 
 /** A FRESH password-only session for an existing user — aal1 even if they have
  *  a verified factor. This is the stolen-token shape the policy must stop. */
@@ -68,12 +51,15 @@ beforeAll(async () => {
   await ensureTestOrg(svc, ORG_A, "Test Org A", "test-org-a");
 
   [factored, plain, halfEnrolled] = await Promise.all([
-    createTestUser(svc, `mfa-on-${run}@test.local`, "agent", ORG_A),
-    createTestUser(svc, `mfa-off-${run}@test.local`, "agent", ORG_A),
-    createTestUser(svc, `mfa-half-${run}@test.local`, "agent", ORG_A),
+    // `enrolFactor: false` on all three: this file is ABOUT factor states, so
+    // the fixtures must arrive with none and have them applied deliberately
+    // below. The default (enrol, reach aal2) would delete the thing under test.
+    createTestUser(svc, `mfa-on-${run}@test.local`, "agent", ORG_A, { enrolFactor: false }),
+    createTestUser(svc, `mfa-off-${run}@test.local`, "agent", ORG_A, { enrolFactor: false }),
+    createTestUser(svc, `mfa-half-${run}@test.local`, "agent", ORG_A, { enrolFactor: false }),
   ]);
 
-  await enrolAndVerify(factored);
+  await enrolAndVerify(factored.client);
   factoredAal1 = await signInAal1(factored.email);
 
   // Deliberately enrol WITHOUT verifying: this is the "closed the enrolment
@@ -100,19 +86,38 @@ describe("mfa_satisfied() — the aal claim", () => {
     expect(data).toBe(true);
   });
 
-  it("is true for a user with no factor — the opt-in template", async () => {
+  /**
+   * MODE-DEPENDENT, AND DELIBERATELY KEYED TO `MFA_REQUIRED`.
+   *
+   * A user with no factor is the whole difference between opt-in and mandatory
+   * 2FA, so this assertion has to flip with the policy rather than be deleted
+   * when it changes. Keying it to the app's own constant also PINS THE TWO
+   * HALVES TOGETHER: flip `MFA_REQUIRED` without shipping the migration that
+   * drops `mfa_satisfied()`'s opt-in arm — or the reverse — and this fails.
+   * A browser gate and a database rule disagreeing is the failure that would
+   * otherwise be discovered by a user who cannot read their own data.
+   */
+  it(`is ${!MFA_REQUIRED} for a user with no factor — the ${MFA_REQUIRED ? "mandatory rule" : "opt-in template"}`, async () => {
     const { data, error } = await plain.client.rpc("mfa_satisfied");
     expect(error).toBeNull();
-    expect(data).toBe(true);
+    expect(data).toBe(!MFA_REQUIRED);
   });
 
   // Regression guard for the predicate's headline trap: if it ever checks
   // "has any factor" instead of "has a VERIFIED factor", this user gets
   // locked out of everything and this test is the only thing that notices.
-  it("is true for a user with an UNVERIFIED factor — the abandoned-enrolment trap", async () => {
+  it(`is ${!MFA_REQUIRED} for a user with an UNVERIFIED factor — the abandoned-enrolment trap`, async () => {
     const { data, error } = await halfEnrolled.client.rpc("mfa_satisfied");
     expect(error).toBeNull();
-    expect(data).toBe(true);
+    // Under the opt-in rule this must be TRUE, and the comment above says why:
+    // matching "has any factor" instead of "has a VERIFIED factor" locks out
+    // anyone who closed the enrolment tab.
+    //
+    // Under the mandatory rule it is false for a plainer reason — the session
+    // is aal1 — and the trap moves rather than disappearing: such a user must
+    // still be able to REACH enrolment, which is the proxy's job
+    // (`/security` is exempt in proxy.ts), not this predicate's.
+    expect(data).toBe(!MFA_REQUIRED);
   });
 
   // The revoke is the dangerous line (a security definer function is
@@ -174,17 +179,35 @@ describe("require_aal2 behaviour", () => {
     expect(data).toHaveLength(1);
   });
 
-  // The most important non-regression in this change: this is the unfactored
-  // admin path, and the reason such an admin remains the lockout safety net.
-  it("a user with NO factor is completely unaffected", async () => {
+  /**
+   * The behavioural half of the same switch.
+   *
+   * Opt-in: an unfactored user is completely unaffected — that is what made an
+   * unfactored admin the lockout safety net.
+   *
+   * Mandatory: that safety net is GONE BY DESIGN, and this asserts it is really
+   * gone rather than merely intended. `require_aal2` is RESTRICTIVE, so the
+   * refusal lands on reads AND writes; both are checked, because a rule that
+   * only stopped writes would leak every row to a password-only session.
+   */
+  it(`a user with NO factor is ${MFA_REQUIRED ? "refused everything" : "completely unaffected"}`, async () => {
     const { error: insErr } = await plain.client
       .from("contacts")
       .insert({ org_id: ORG_A, first_name: `plain-${run}` });
-    expect(insErr).toBeNull();
 
     const { data, error } = await plain.client.from("contacts").select("id").limit(1);
-    expect(error).toBeNull();
-    expect(data?.length).toBeGreaterThan(0);
+
+    if (MFA_REQUIRED) {
+      expect(insErr).not.toBeNull();
+      expect(insErr?.message).toMatch(/require_aal2/);
+      // A blocked SELECT under RLS is an empty result, not an error.
+      expect(error).toBeNull();
+      expect(data ?? []).toHaveLength(0);
+    } else {
+      expect(insErr).toBeNull();
+      expect(error).toBeNull();
+      expect(data?.length).toBeGreaterThan(0);
+    }
   });
 
   it("service_role still bypasses everything — the cron path", async () => {

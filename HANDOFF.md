@@ -71,7 +71,7 @@ decision remains open: VAT**, and it is blocked on verifying
    enrolled and signing in that week. **Re-measure a security claim before
    acting on it.**
 
-### Mandatory 2FA: decided YES, deliberately OFF
+### Mandatory 2FA: ON since 2026-08-28 (was decided YES 2026-08-26, held for the harness)
 
 It binds nobody today (two users, both enrolled). Enabling needs a **test-harness
 project**, measured not guessed:
@@ -81,8 +81,7 @@ project**, measured not guessed:
   the factor-less seed admin lands on `/security`, and it is a `dependency` of
   every project, so **all 204 E2E tests fall**
 
-The gate is built and browser-verified; the switch is one word (`MFA_REQUIRED`
-in `lib/constants/mfa.ts`). **Never flip the DB half alone** — a factor-less
+**BOTH HALVES ARE NOW ON** — `MFA_REQUIRED = true` and migration **0059**, shipped together and coupled by a test that asserts the database against the constant. The harness fixed both cliffs at source: RLS **58/58 under BOTH rules**, E2E **205 passed / 1 skipped**. **Never flip one half alone** — a factor-less
 session then sees `/contacts` report an empty database over 169 rows while
 `/dashboard` 500s. The reminder is wired to the **Invite user dialog**, so the
 "before the next hire" trigger fires where someone will see it.

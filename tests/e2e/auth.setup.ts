@@ -1,5 +1,19 @@
 import { test as setup, expect, type Page } from "@playwright/test";
-import { MODULES, baseUrl, fixtureProfile, isLocal, login, serviceClient } from "./helpers";
+import {
+  ADMIN_EMAIL,
+  ADMIN_PASSWORD,
+  LOCAL_ANON_KEY,
+  LOCAL_SUPABASE_URL,
+  MODULES,
+  baseUrl,
+  fixtureProfile,
+  isLocal,
+  login,
+  serviceClient,
+} from "./helpers";
+import { createClient } from "@supabase/supabase-js";
+import { MFA_REQUIRED } from "@/lib/constants/mfa";
+import { clearFactors, enrolAndVerify } from "@/lib/testing/mfa";
 import { assertServingCurrentBuild } from "./server-health";
 
 const AUTH_FILE = "tests/.auth/admin.json";
@@ -222,11 +236,63 @@ async function warmRoutes(page: Page): Promise<void> {
  * project to reuse. Runs as a Playwright `dependency`, so a credential
  * problem fails here with a clear message instead of failing 40 specs.
  */
+/**
+ * WITH MANDATORY 2FA ON, LOGGING IN IS NO LONGER JUST A PASSWORD.
+ *
+ * `MFA_REQUIRED` makes the proxy send a factor-less session to /security, so the
+ * seed admin — who has never had a factor — would never reach the Dashboard,
+ * and this step is a `dependency` of every project. That is the measured "all
+ * 204 E2E tests fall" half of the flip.
+ *
+ * So the harness enrols one, for real, every run.
+ *
+ * WHY IT CLEARS FIRST. `enroll()` returns the shared secret exactly once. A run
+ * that enrolled and stopped there would meet, on the next run, a user owing a
+ * factor whose secret nobody kept — an unanswerable challenge, and a harness
+ * locked out of its own fixture. Unenrolling from the user's own session needs
+ * aal2, which needs that same secret, so the escape has to come from outside:
+ * the service role deletes the factors before anything else happens.
+ *
+ * This is not a bypass. The account genuinely carries a verified TOTP factor
+ * and this step genuinely answers a challenge on /login/verify, through the
+ * app's own page — so under mandatory mode the enrolment and challenge flows
+ * are exercised on every single run rather than only by `mfa.spec.ts`.
+ */
+async function ensureSeedAdminFactor(): Promise<string | undefined> {
+  if (!MFA_REQUIRED) return undefined;
+  if (!isLocal()) {
+    throw new Error(
+      "MFA_REQUIRED is on and the target is deployed: the harness will not touch " +
+        "factors on a real project. Run E2E against a local stack.",
+    );
+  }
+
+  const svc = serviceClient();
+  const { id } = await fixtureProfile(svc);
+  const removed = await clearFactors(svc, id);
+
+  const user = createClient(LOCAL_SUPABASE_URL, LOCAL_ANON_KEY, {
+    auth: { persistSession: false },
+  });
+  const { error } = await user.auth.signInWithPassword({
+    email: ADMIN_EMAIL,
+    password: ADMIN_PASSWORD,
+  });
+  if (error) throw new Error(`seed admin sign-in for enrolment: ${error.message}`);
+
+  const factor = await enrolAndVerify(user);
+  console.log(
+    `[mfa] seed admin: ${removed} old factor(s) removed, fresh TOTP factor enrolled for this run`,
+  );
+  return factor.secret;
+}
+
 setup("authenticate as admin", async ({ page }) => {
   // Cold, this test logs in AND compiles the whole route surface below.
   setup.setTimeout(900_000);
 
-  await login(page);
+  const totpSecret = await ensureSeedAdminFactor();
+  await login(page, ADMIN_EMAIL, ADMIN_PASSWORD, totpSecret);
   await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
   await page.context().storageState({ path: AUTH_FILE });
 

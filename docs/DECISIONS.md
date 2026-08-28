@@ -3087,3 +3087,66 @@ service built its reasons with `toLocaleString("en-GB")` while the app formats
 money as `de-DE`, so one sentence read "€375,000 over the cap — that costs
 €36.020,83". Both formats, four words apart. The service now uses the shared
 `formatMoney`.
+
+## T-mfa-mandatory — mandatory 2FA, and the harness that made it a one-word change (2026-08-28, migration 0059)
+
+**Both halves shipped together, and a test now forces them to stay together.**
+`MFA_REQUIRED = true` gates the browser; 0059 drops the opt-in arm from
+`mfa_satisfied()` and gates the data. `mfa-enforcement.test.ts` asserts the
+database against the constant, so shipping one alone goes red.
+
+**Why that coupling is worth a test rather than a comment.** DB mandatory with
+the app not: a factor-less user is never prompted to enrol and simply sees an
+empty CRM — `require_aal2` is RESTRICTIVE, so a blocked read returns no rows
+rather than an error. Silent, and indistinguishable from "there is no data".
+App mandatory with the DB not: the browser gate is the only thing between an
+aal1 token and the data, which is the gap this change existed to close.
+
+**THE HARNESS WAS THE ACTUAL WORK.** Two measured cliffs: the RLS suite fell
+from 58 passing to 4 failed / 16 passed / 38 skipped, and all 204 E2E tests
+fell with `auth.setup.ts`. Both were fixed at the source. `createTestUser`
+enrols a TOTP factor by default, so fixtures arrive at **aal2** and pass under
+either rule — the suite stopped being mode-specific instead of being taught
+the new mode. The three tests that genuinely cannot hold under both are keyed
+to `MFA_REQUIRED` and assert whichever rule is in force.
+
+**The E2E chicken-and-egg, which is the subtle part.** `enroll()` returns the
+shared secret exactly once. A harness that enrolled and stopped would meet, on
+the next run, a user owing a factor whose secret nobody kept — an unanswerable
+challenge, locked out of its own fixture. Unenrolling needs aal2, which needs
+that secret, so the escape has to come from OUTSIDE the user: the service role
+clears factors first (`clearFactors`). Proven by consecutive runs logging
+`0 old factor(s) removed` then `1 old factor(s) removed`.
+
+**It is not a bypass.** The seed admin genuinely carries a verified factor and
+the setup answers a real challenge on the app's own /login/verify page, so
+under mandatory mode enrolment and challenge are exercised on every single
+run — more often than the dedicated spec ever ran them.
+
+**Why 0059's precondition REPORTS instead of aborting.** The obvious guard —
+refuse to apply while any user lacks a verified factor — is false on exactly
+the databases that must accept it: CI builds a fresh stack whose seed admin
+has no factor, and a developer's local database accumulates factor-less
+fixtures from `mfa-enforcement.test.ts` by design. A guard that aborts on both
+would be deleted by whoever hit it first, which is worse than one that counts
+and warns. Production was checked by hand instead: 2 users, both with a
+verified factor.
+
+**Deploy order was code-first, not the additive rule.** Between the two steps
+someone may be invited, and a new account is factor-less: with 0059 applied
+and the code not yet deployed they would be blocked by RLS with no /security
+redirect to explain it. Code first means the worst intermediate state is a
+user prompted to enrol slightly before the database insists.
+
+**Known regression, recorded rather than hidden:** `mfa.spec.ts` is skipped
+under mandatory mode, losing the wrong-code path and the "password alone stops
+working" assertion. It needs a dedicated user rather than the shared seed
+admin; BACKLOG carries it with a VERIFY line.
+
+**A self-inflicted false failure worth remembering.** The first full E2E run
+appeared to fail with `mfa.enroll: {}`. The auth log said what it really was:
+`POST /factors → 504, context deadline exceeded, 11.1s`. Two Playwright suites
+were running at once, because a `ps aux | grep playwright` check in Git Bash
+cannot see Windows processes and reported zero. **On Windows, check for stray
+processes with PowerShell `Get-Process`, not `ps`** — the Unix check is not
+merely unreliable here, it is blind.
