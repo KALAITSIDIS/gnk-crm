@@ -1,4 +1,5 @@
 import { expect, type Page, type ConsoleMessage, type Response } from "@playwright/test";
+import { totp } from "@/lib/testing/totp";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 /** Local Supabase seed admin (see docs/07_SEED_DATA.sql). */
@@ -116,12 +117,44 @@ export async function assertShellRendered(page: Page) {
   await expect(page.getByText(/something went wrong/i)).toHaveCount(0);
 }
 
-export async function login(page: Page, email = ADMIN_EMAIL, password = ADMIN_PASSWORD) {
+/**
+ * Log in, and pass the TOTP challenge if the account owes one.
+ *
+ * `totpSecret` is required only when the user has a verified factor — which,
+ * with `MFA_REQUIRED` on, is every user. Without it the login stops on
+ * /login/verify, so this THROWS with that sentence rather than letting the
+ * caller watch a `waitForURL` time out for 30s and report "could not log in":
+ * a missing secret and a wrong password look identical from the outside, and
+ * this suite has already paid once for an auth failure that wore the wrong
+ * clothes (see lib/services/auth-errors.ts).
+ */
+export async function login(
+  page: Page,
+  email = ADMIN_EMAIL,
+  password = ADMIN_PASSWORD,
+  totpSecret?: string,
+) {
   await page.goto("/login");
   await page.getByLabel(/email/i).fill(email);
   await page.getByLabel(/password/i).fill(password);
   await page.getByRole("button", { name: /log in/i }).click();
-  await page.waitForURL(/\/dashboard/, { timeout: opTimeout(30_000) });
+
+  // login() in lib/actions/auth.ts routes to the challenge itself rather than
+  // letting the proxy bounce /dashboard, so both destinations are legitimate.
+  await page.waitForURL(/\/(dashboard|login\/verify)/, { timeout: opTimeout(30_000) });
+
+  if (/\/login\/verify/.test(page.url())) {
+    if (!totpSecret) {
+      throw new Error(
+        `${email} owes a second factor and no TOTP secret was supplied. ` +
+          "Pass one from auth.setup.ts (it enrols the factor and holds the secret for the run).",
+      );
+    }
+    // Generated here, immediately before typing, to stay inside the 30s step.
+    await page.getByLabel(/6-digit code/i).fill(totp(totpSecret));
+    await page.getByRole("button", { name: /^verify$/i }).click();
+    await page.waitForURL(/\/dashboard/, { timeout: opTimeout(30_000) });
+  }
 }
 
 /** Unique suffix so audit fixtures are always identifiable and never collide. */
@@ -168,9 +201,23 @@ export const LOCAL_SERVICE_KEY =
   process.env.SUPABASE_SERVICE_ROLE_KEY ??
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU";
 
+/** Where the local stack answers. Shared by the service and anon clients. */
+export const LOCAL_SUPABASE_URL =
+  process.env.NEXT_PUBLIC_SUPABASE_URL ?? "http://127.0.0.1:54321";
+
+/**
+ * Local anon key — the standard demo key, same status as the service one above.
+ * Needed to sign in AS the seed admin when the harness enrols a TOTP factor:
+ * `mfa.enroll()` acts on the caller's own session, so the service role cannot
+ * do it on someone's behalf.
+ */
+export const LOCAL_ANON_KEY =
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0";
+
 export function serviceClient(): SupabaseClient {
   return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL ?? "http://127.0.0.1:54321",
+    LOCAL_SUPABASE_URL,
     LOCAL_SERVICE_KEY,
     { auth: { autoRefreshToken: false, persistSession: false } },
   );

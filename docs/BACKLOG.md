@@ -1641,54 +1641,44 @@ explicit direction.
     uploads source maps at build time, so it wants a green CI run and a check that
     the deploy still succeeds before it is trusted. Verify by reading a real stack
     trace in Sentry afterwards, not by the plugin being present.
-- **Mandatory 2FA — DECIDED YES 2026-08-26. LEFT OFF UNTIL BEFORE THE NEXT
-  HIRE, operator decision the same day.** It binds nobody today: production has
-  two users and both are already enrolled (measured 2026-08-26), so the harness
-  work below buys nothing until a third person exists.
+- ~~**Mandatory 2FA**~~ ✅ **ON since 2026-08-28** — both halves, shipped
+  together: `MFA_REQUIRED = true` (proxy sends a factor-less session to
+  /security) and **migration 0059** (drops the opt-in arm from
+  `mfa_satisfied()`, so `require_aal2` refuses any session that has not
+  completed a factor). See DECISIONS T-mfa-mandatory.
 
-  **THE TRIGGER IS WIRED, NOT JUST WRITTEN DOWN.** "Before the next hire" is a
-  condition nobody watches, and a note in this file is exactly how the last
-  conditional item got missed — the contact portfolio tab was rebuilt four days
-  after it shipped because its duplicate sat unread here. So the reminder lives
-  on the **Invite user dialog**, which is the only moment it matters: inviting
-  someone while `MFA_REQUIRED` is false shows a warning saying they will be able
-  to sign in with a password alone. It disappears by itself once the switch is
-  thrown, because it renders on `!MFA_REQUIRED`.
+  **THE HARNESS WAS THE WHOLE COST, AND IT IS DONE.** Measured before:
+  the database half took the RLS suite from 58 passing to 4 failed / 16
+  passed / 38 skipped, and the app half took all 204 E2E tests down with
+  `auth.setup.ts`. Fixed at the source rather than worked around —
+  `createTestUser` enrols a TOTP factor by default so fixture clients arrive
+  at aal2, and the E2E setup enrols a real factor for the seed admin and
+  answers a real challenge on /login/verify. Measured after: **RLS 58/58
+  under BOTH rules, E2E 205 passed / 1 skipped**.
 
-  **MECHANISM SHIPPED, SWITCH NOT THROWN.** The operator asked for it. It cannot be turned on without shipping a
-  red pipeline, and BOTH halves were measured rather than predicted:
+  **THE TWO HALVES ARE NOW COUPLED BY A TEST.**
+  `mfa-enforcement.test.ts` asserts the DATABASE's behaviour against the
+  `MFA_REQUIRED` constant, so flipping one without the other fails the suite
+  instead of reaching a user. A browser gate and a database rule quietly
+  disagreeing is otherwise discovered by someone staring at an empty CRM,
+  because `require_aal2` is RESTRICTIVE and a blocked read returns no rows
+  rather than an error.
 
-  * **Database half** (drop the opt-in arm from `mfa_satisfied()`): the RLS
-    suite goes from **58 passing to 4 failed / 16 passed / 38 skipped**, three of
-    four files down. The shared fixtures hold no factors ON PURPOSE —
-    `mfa-enforcement.test.ts` says so in its header, because a verified factor
-    gates that user's aal1 sessions and would break every other test.
-  * **App half** (`MFA_REQUIRED`): `tests/e2e/auth.setup.ts` logs in and asserts
-    the Dashboard heading. With the gate on, the seed admin — who has no factor
-    — lands on `/security` instead, the setup fails, and it is a `dependency` of
-    every project, so **all 204 E2E tests go down with it**. That file already
-    records the seed admin having no factor as a KNOWN GAP.
+- **`mfa.spec.ts` is SKIPPED under mandatory 2FA — restore its coverage.** It
+  needs the seed admin to start factor-less, which mandatory mode forbids, and
+  its cleanup would delete a VERIFIED factor — which revokes every session,
+  including the shared `tests/.auth/admin.json` one. That is the same failure
+  its own comment records ("failed 27 tests in the specs that happen to sort
+  after this one") arriving by a different door.
 
-  **What IS shipped and verified in a browser:** the proxy gate, the redirect to
-  `/security?enrol=required`, and the banner explaining why. A factor-less
-  session hitting `/dashboard`, `/properties` or `/contacts` lands on enrolment;
-  enrolment stays reachable because neither `/security` nor the app shell
-  touches an RLS table (that was the trap to avoid — a locked door with the key
-  behind it); and there is no redirect loop. **Turning it on is one word** in
-  `lib/constants/mfa.ts`.
-
-  **What it costs to flip:** the E2E auth setup must enrol a TOTP factor for the
-  seed admin and store an aal2 session, and the RLS fixtures must do the same in
-  `beforeAll`. Feasible — `lib/testing/totp.ts` and `mfa-enforcement.test.ts`
-  already do it for dedicated users — but a test-harness project with real flake
-  risk: that file dodges a 30-second TOTP boundary for ONE user, and this is
-  every fixture on every run. `mfa.spec.ts` needs revisiting too, since it tests
-  enrolling from scratch as the seed admin.
-
-  **Recovery path, since the entry asked for one:** Supabase issues no recovery
-  codes, so the answer is a second enrolled admin plus `auth.admin.mfa.deleteFactor`
-  through the GoTrue admin API, which the app already wraps for unenrolment.
-  Production satisfies it today — two admins, both enrolled (measured 2026-08-26).
+  Enrolment and the challenge are still covered on EVERY run by
+  `auth.setup.ts`, which does both for real. **What is lost is the wrong-code
+  path and the "password alone stops working" assertion.** The fix is to move
+  the spec onto a DEDICATED user instead of the shared seed admin, in a
+  logged-out context — then it is safe in either mode and the shared-session
+  hazard goes away permanently.
+  **VERIFY:** `grep -c 'MFA_REQUIRED' tests/e2e/mfa.spec.ts` — 0 means the
+  skip was removed, so the coverage is back.
 - ~~**Deal-scoped "Log contact" action (follow-up to B7).**~~ **SHIPPED
   2026-08-07 (migration 0025).** It was worse than this entry described: the
   edit did not merely buy 14 days of quiet, it CLOSED the open chase-up

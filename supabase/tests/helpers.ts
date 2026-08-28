@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { enrolAndVerify } from "@/lib/testing/mfa";
 
 // Local stack defaults (standard public demo keys, identical on every machine).
 // Override via env when running against a different stack.
@@ -156,11 +157,30 @@ export interface TestUser {
 }
 
 /** Create an auth user + profile via service role, return a signed-in client. */
+/**
+ * A fixture user whose client is signed in AND, by default, at **aal2**.
+ *
+ * WHY EVERY FIXTURE ENROLS A FACTOR NOW. `require_aal2` is live on every RLS
+ * table, and `mfa_satisfied()` currently passes a user who has no factor at all
+ * — the opt-in arm. The moment that arm is dropped (mandatory 2FA), a suite
+ * built on factor-less users reads NOTHING: measured at 58 passing → 4 failed /
+ * 16 passed / 38 skipped, three of four files down.
+ *
+ * Enrolling here makes the suite pass under BOTH rules rather than only the one
+ * in force today, so the flip stops being a cliff. It is not a workaround for
+ * the policy — it is the fixture behaving like a real user of a system that
+ * requires a second factor.
+ *
+ * `enrolFactor: false` is for the tests that are ABOUT factor states —
+ * mfa-enforcement.test.ts needs a user with none and one enrolled-but-unverified,
+ * and auto-enrolling them would delete the thing under test.
+ */
 export async function createTestUser(
   admin: SupabaseClient,
   email: string,
   role: "admin" | "agent" | "listing_manager",
   orgId: string,
+  opts: { enrolFactor?: boolean } = {},
 ): Promise<TestUser> {
   const password = TEST_PASSWORD;
   const { data: created, error: createErr } = await admin.auth.admin.createUser({
@@ -183,6 +203,10 @@ export async function createTestUser(
   const client = anonClient();
   const { error: signInErr } = await client.auth.signInWithPassword({ email, password });
   if (signInErr) throw new Error(`signIn ${email}: ${signInErr.message}`);
+
+  // Straight to aal2, so this client satisfies `require_aal2` whether or not
+  // `mfa_satisfied()` still carries its opt-in arm.
+  if (opts.enrolFactor !== false) await enrolAndVerify(client);
 
   return { id, email, client };
 }

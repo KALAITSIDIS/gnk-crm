@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { totp } from "../../lib/testing/totp";
 import { ADMIN_EMAIL, ADMIN_PASSWORD, isLocal, opTimeout, serviceClient } from "./helpers";
+import { MFA_REQUIRED } from "@/lib/constants/mfa";
 
 /**
  * Force-remove every factor on the shared local admin.
@@ -43,13 +44,41 @@ test.beforeEach(async () => {
     !isLocal(),
     "2FA enrolment mutates the login — local only, never production",
   );
+
+  /**
+   * SKIPPED UNDER MANDATORY 2FA, and the reason is this file's own scar.
+   *
+   * This spec needs the seed admin to START with no factor, which mandatory
+   * mode forbids — `auth.setup.ts` enrols one for every run precisely so the
+   * suite can log in at all.
+   *
+   * Worse, `clearAdminFactors()` below would then delete a VERIFIED factor, and
+   * that revokes every session for the user — including the shared
+   * `tests/.auth/admin.json` state every other spec runs on. That is the exact
+   * failure the comment further down records ("failed 27 tests in the specs
+   * that happen to sort after this one"), returning by a different door.
+   *
+   * WHAT COVERAGE MOVES, AND WHAT IS LOST. Enrolment and the challenge are
+   * still exercised on EVERY run under mandatory mode, for real, by
+   * `auth.setup.ts` — it enrols a fresh factor and answers a challenge on the
+   * app's own /login/verify page. What is not covered while this is skipped is
+   * the WRONG-code path and the "password alone stops working" assertion.
+   * Reworking this spec onto a dedicated user rather than the shared seed admin
+   * would restore both; see docs/BACKLOG.md.
+   */
+  test.skip(
+    MFA_REQUIRED,
+    "needs the seed admin to start factor-less; under MFA_REQUIRED the setup enrols one, " +
+      "and clearing a verified factor here would revoke the shared session",
+  );
+
   // self-heal: a previous crashed run must not keep the suite locked out
   await clearAdminFactors();
 });
 
 // belt and braces — runs even when the test throws mid-flow
 test.afterEach(async () => {
-  if (!isLocal()) return;
+  if (!isLocal() || MFA_REQUIRED) return;
   await clearAdminFactors();
 });
 
