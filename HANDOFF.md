@@ -73,6 +73,8 @@ decision remains open: VAT**, and it is blocked on verifying
 
 ### Mandatory 2FA: ON since 2026-08-28 (was decided YES 2026-08-26, held for the harness)
 
+**CONFIRMED BY THE OPERATOR 2026-08-28: both production users signed in normally after the flip** — the one check that mattered, because a second factor that locks out the desk is worse than none. Both already held a verified factor, so their sessions were aal2 before the change and nothing about their login altered.
+
 It binds nobody today (two users, both enrolled). Enabling needs a **test-harness
 project**, measured not guessed:
 
