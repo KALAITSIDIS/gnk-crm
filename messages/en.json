@@ -169,6 +169,80 @@
         "chainUnavailable": "Hash-chain verification unavailable: {message}"
       }
     }
+  ,
+    "performanceCard": {
+      "title": "Performance reports",
+      "description": "Agent performance, source ROI, time to close, stage conversion and price reductions — with an audit anchor and CSV export."
+    },
+    "performance": {
+      "title": "Performance reports",
+      "subtitle": "Agent, source, pipeline and pricing metrics over a window — computed live under your own permissions.",
+      "from": "From",
+      "to": "To",
+      "apply": "Apply",
+      "export": "Export CSV",
+      "empty": "Nothing in this window.",
+      "backToReports": "Back to reports",
+      "windowNote": "Window: {from} to {to}, Cyprus local time.",
+      "citation": {
+        "heading": "Audit anchor",
+        "body": "Event chain verified through #{id} ({hash}…) on {when}.",
+        "none": "No verification checkpoint yet — the nightly check has not run.",
+        "scopeOwn": "These figures cover your own records only.",
+        "scopeOrg": "These figures cover the whole agency.",
+        "limits": "The anchor proves the event log was intact; it does not prove the underlying records are unchanged."
+      },
+      "agents": {
+        "heading": "Agent performance",
+        "agent": "Agent",
+        "leads": "Leads",
+        "answered": "Answered",
+        "avgResponse": "Avg response (min)",
+        "viewings": "Viewings",
+        "won": "Won",
+        "wonValue": "Won value",
+        "lost": "Lost"
+      },
+      "sources": {
+        "heading": "Source ROI",
+        "source": "Source",
+        "leads": "Leads",
+        "converted": "Converted",
+        "won": "Won",
+        "wonValue": "Won value",
+        "convertRate": "Convert rate",
+        "winRate": "Win rate"
+      },
+      "ttc": {
+        "heading": "Time to close",
+        "won": "Won",
+        "lost": "Lost",
+        "dealCount": "{count, plural, one {# deal} other {# deals}}",
+        "avg": "avg",
+        "median": "median",
+        "p90": "p90"
+      },
+      "stages": {
+        "heading": "Stage conversion",
+        "stage": "Stage",
+        "entered": "Entered",
+        "advanced": "Advanced",
+        "advanceRate": "Advance rate",
+        "derivedFrom": "Computed from the hash-chained event log.",
+        "nameKeyed": "Stages are matched by name, so renaming one splits its history.",
+        "outcomes": "Closed in this window: {won} won, {lost} lost — counted separately, because those events do not record the stage they left."
+      },
+      "prices": {
+        "heading": "Price reductions",
+        "reductions": "Reductions",
+        "properties": "Properties",
+        "avgCut": "Avg cut",
+        "totalCut": "Total cut",
+        "property": "Property",
+        "cuts": "Cuts",
+        "lastCut": "Last cut"
+      }
+    }
   },
   "events": {
     "created": "Created",

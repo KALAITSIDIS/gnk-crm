@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
-import { FileCheck2, ShieldCheck, ShieldX } from "lucide-react";
+import { FileCheck2, ShieldCheck, ShieldX, TrendingUp } from "lucide-react";
 import { DocumentDownloadButton } from "@/components/features/shared/document-download-button";
 import { VerifyReport } from "@/components/features/reports/verify-report";
 import { createClient } from "@/lib/supabase/server";
@@ -71,6 +71,19 @@ export default async function ReportsPage() {
             {t("evidenceCard.title")}
           </span>
           <span className="block text-sm text-text-2">{t("evidenceCard.description")}</span>
+        </span>
+      </Link>
+
+      <Link
+        href="/reports/performance"
+        className="flex max-w-2xl items-start gap-3 rounded-[10px] border border-border bg-surface p-5 transition-colors hover:border-brand-300"
+      >
+        <TrendingUp className="mt-0.5 size-5 shrink-0 text-brand-700" />
+        <span>
+          <span className="block text-sm font-semibold text-text-1">
+            {t("performanceCard.title")}
+          </span>
+          <span className="block text-sm text-text-2">{t("performanceCard.description")}</span>
         </span>
       </Link>
 
