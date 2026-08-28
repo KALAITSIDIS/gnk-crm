@@ -49,3 +49,20 @@ describe("isCredentialRejection", () => {
     expect(isCredentialRejection({ status: 400, code: "validation_failed" })).toBe(false);
   });
 });
+
+describe("a weak-password warning is not a credential rejection", () => {
+  // Supabase returns `weak_password` ALONGSIDE a valid session when an existing
+  // user's password no longer meets strengthened requirements. This pins the
+  // half that lives here: it must NOT be classified as a bad password, because
+  // that would show "Invalid email or password" for correct credentials.
+  //
+  // The other half — not refusing the sign-in at all — is `login()`'s
+  // `if (error && !data?.session)` guard, added 2026-08-28 with this case.
+  it("is not treated as a credential rejection", () => {
+    expect(isCredentialRejection({ status: 422, code: "weak_password" })).toBe(false);
+  });
+
+  it("and is not mistaken for the bare-400 legacy shape either", () => {
+    expect(isCredentialRejection({ status: 400, code: "weak_password" })).toBe(false);
+  });
+});

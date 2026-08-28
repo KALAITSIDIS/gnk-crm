@@ -22,8 +22,29 @@ export async function login(
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.auth.signInWithPassword(parsed.data);
-  if (error) {
+  const { data, error } = await supabase.auth.signInWithPassword(parsed.data);
+
+  // A SUCCESSFUL SIGN-IN CAN COME BACK WITH AN ERROR ATTACHED, and treating
+  // that as a failure locks people out of an app they just authenticated to.
+  //
+  // When the project's password requirements are strengthened, Supabase keeps
+  // letting existing users in — "Existing users can still sign in with their
+  // current password even if it doesn't meet the new, strengthened
+  // requirements" — but returns a `weak_password` error ALONGSIDE the session.
+  // `isCredentialRejection` correctly says that is not a bad password, so it
+  // would fall to the infrastructure branch: the operator would read "Sign-in
+  // is temporarily unavailable", Sentry would take an exception, and the login
+  // would be refused on correct credentials.
+  //
+  // That is not hypothetical here. Password rules were tightened on 2026-08-28,
+  // and every account's password is `randomBytes(9).toString("base64url")` from
+  // `inviteUser` — 12 characters over [A-Za-z0-9-_], which contains no symbol
+  // roughly two times in three. With no change-password screen and no SMTP,
+  // a refused login here has no self-service way back.
+  //
+  // So the test is whether a SESSION was established, not whether an error
+  // object exists.
+  if (error && !data?.session) {
     // A real credential rejection stays deliberately vague — naming the field
     // would turn this form into an account-existence oracle.
     if (isCredentialRejection(error)) {
