@@ -431,14 +431,69 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       .limit(1)
       .single();
     const original = victim!.event_type;
-    await svc.from("events").update({ event_type: "tampered" }).eq("id", victim!.id);
 
-    const during = await svc.rpc("verify_events_chain", { p_org: ORG_A });
-    expect(during.data, "chain must fail after tamper").toBe(false);
+    // THE RESTORE IS IN `finally`, AND THAT IS LOAD-BEARING. Every other test
+    // in this file that touches events asserts the chain verifies, so a failed
+    // expectation between the tamper and the restore does not fail one test —
+    // it leaves ORG_A's chain broken and cascades into twelve. Measured: adding
+    // the 0060 assertion below without this block turned one real failure into
+    // "12 failed", and the fixture stayed corrupt after the run.
+    try {
+      await svc.from("events").update({ event_type: "tampered" }).eq("id", victim!.id);
 
-    await svc.from("events").update({ event_type: original }).eq("id", victim!.id);
+      const during = await svc.rpc("verify_events_chain", { p_org: ORG_A });
+      expect(during.data, "chain must fail after tamper").toBe(false);
+
+      // 0060: the diagnostic overload must name the row BY ID, inside the same
+      // tamper window. A bare `false` is what turns a real incident into a
+      // manual bisect; this assertion is the point of the migration.
+      const detail = await svc.rpc("verify_events_chain", { p_org: ORG_A, p_from_id: null });
+      expect(detail.error).toBeNull();
+      expect(detail.data?.[0], "the detail form must name the tampered row").toMatchObject({
+        ok: false,
+        failed_id: victim!.id,
+        reason: "hash_mismatch",
+      });
+    } finally {
+      await svc.from("events").update({ event_type: original }).eq("id", victim!.id);
+    }
+
     const after = await svc.rpc("verify_events_chain", { p_org: ORG_A });
     expect(after.data, "chain must verify after restore").toBe(true);
+
+    // The two forms must agree once restored — the boolean is a projection of
+    // the row, not a second implementation free to drift from it.
+    const afterDetail = await svc.rpc("verify_events_chain", { p_org: ORG_A, p_from_id: null });
+    expect(afterDetail.data?.[0], "a clean chain reports no failing row").toMatchObject({
+      ok: true,
+      failed_id: null,
+      reason: null,
+    });
+  });
+
+  it("12b. verify_events_chain: neither signature is reachable by anon or a signed-in agent", async () => {
+    // GRANTS ARE PER SIGNATURE — an overload inherits nothing from the name it
+    // shares, which is the trap that bit 0021 and 0044. 0019's reasoning
+    // applies to the new one too: a full walk is O(all org events), so an
+    // on-demand walk reachable from a browser session is a self-inflicted DoS.
+    // /reports reads the cached chain_checks row instead.
+    const anon = anonClient();
+
+    const anonOneArg = await anon.rpc("verify_events_chain", { p_org: ORG_A });
+    expect(anonOneArg.error, "anon must not execute the boolean form").not.toBeNull();
+    const agentOneArg = await agentA1.client.rpc("verify_events_chain", { p_org: ORG_A });
+    expect(agentOneArg.error, "a signed-in agent must not execute the boolean form").not.toBeNull();
+
+    const anonTwoArg = await anon.rpc("verify_events_chain", { p_org: ORG_A, p_from_id: null });
+    expect(anonTwoArg.error, "anon must not execute the diagnostic form").not.toBeNull();
+    const agentTwoArg = await agentA1.client.rpc("verify_events_chain", {
+      p_org: ORG_A,
+      p_from_id: null,
+    });
+    expect(
+      agentTwoArg.error,
+      "a signed-in agent must not execute the diagnostic form",
+    ).not.toBeNull();
   });
 
   it("13. key_movements: append-only — staff INSERT allowed, UPDATE/DELETE denied for every role", async () => {
