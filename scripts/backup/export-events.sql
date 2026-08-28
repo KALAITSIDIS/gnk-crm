@@ -53,9 +53,18 @@ select E'-- events export ' || now()::text || E'\n'
     || E'-- apply with session_replication_role = replica (see header)\n'
   from events;
 
+-- `hash_version` IS IN THE COLUMN LIST AND MUST STAY THERE (0061). It selects
+-- which formula verify_events_chain recomputes with. Omit it and every restored
+-- row takes the column default of 1, so v2 evidence would be checked against
+-- the v1 formula and an intact restore would read `false` — the exact failure
+-- 0061 exists to end, reintroduced through the back door.
+--
+-- THIS LIST IS HARDCODED, unlike restore.mjs which builds its column list from
+-- the catalog at restore time. A future column added to `events` must be added
+-- here BY HAND, and nothing will tell you if it is not.
 select string_agg(
   format(
-    'insert into events (id, org_id, occurred_at, actor_id, entity_type, entity_id, event_type, payload, prev_hash, hash) overriding system value values (%s, %L, %L, %s, %L, %s, %L, %L::jsonb, %s, %L);',
+    'insert into events (id, org_id, occurred_at, actor_id, entity_type, entity_id, event_type, payload, prev_hash, hash, hash_version) overriding system value values (%s, %L, %L, %s, %L, %s, %L, %L::jsonb, %s, %L, %s);',
     id,
     org_id,
     occurred_at,
@@ -65,7 +74,8 @@ select string_agg(
     event_type,
     payload::text,                       -- exact text; never a JS number
     coalesce(quote_literal(prev_hash), 'null'),
-    hash
+    hash,
+    hash_version
   ), E'\n' order by id)
 from events;
 

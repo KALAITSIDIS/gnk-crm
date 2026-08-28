@@ -5,6 +5,7 @@
  * Fixtures use a per-run suffix so reruns never collide; `supabase db reset`
  * clears accumulated test data.
  */
+import { createHash } from "node:crypto";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
@@ -494,6 +495,118 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       agentTwoArg.error,
       "a signed-in agent must not execute the diagnostic form",
     ).not.toBeNull();
+  });
+
+  it("12c. hash_version: new events are v2, and the v2 hash re-derives OUTSIDE Postgres", async () => {
+    // 0061. THIS IS THE ASSERTION THAT EARNS THE ISO-8601 RENDERING ITS PLACE.
+    // The hash is evidence, so a third party must be able to re-derive it in
+    // another language, years later, from the row alone. If that is not true
+    // then the choice over epoch microseconds bought nothing.
+    const { data: w, error: writeErr } = await svc
+      .from("events")
+      .insert({
+        org_id: ORG_A,
+        actor_id: null,
+        entity_type: "config",
+        entity_id: null,
+        event_type: `hash_version_check_${run}`,
+        // Unicode, a null, a bool, nested and array values — and NO decimal.
+        // A decimal is deliberately absent: `480000.00` survives in Postgres
+        // but PostgREST hands JavaScript `480000`, so a decimal payload cannot
+        // be re-derived from what this client can see. That defect is the whole
+        // reason scripts/backup/export-events.sql exists (BACKUP_RESTORE §1),
+        // and it limits this test rather than being tested by it.
+        payload: { i: 42, n: null, zz: true, note: "Λεμεσός", nested: { k: "v" }, arr: [1, 2] },
+      })
+      .select(
+        "id, org_id, occurred_at, actor_id, entity_type, entity_id, event_type, payload, prev_hash, hash, hash_version",
+      )
+      .single();
+    if (writeErr) throw writeErr;
+
+    expect(w.hash_version, "the trigger stamps v2 on every new row").toBe(2);
+    expect(w.hash).toMatch(/^[0-9a-f]{64}$/);
+
+    // jsonb's own text form: keys ordered by (length, then bytewise), `", "`
+    // between pairs and `": "` after each key. Measured against Postgres.
+    const jsonbText = (v: unknown): string => {
+      if (v === null) return "null";
+      if (Array.isArray(v)) return `[${v.map(jsonbText).join(", ")}]`;
+      if (typeof v === "object") {
+        const keys = Object.keys(v as object).sort(
+          (a, b) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0),
+        );
+        return `{${keys
+          .map((k) => `${JSON.stringify(k)}: ${jsonbText((v as Record<string, unknown>)[k])}`)
+          .join(", ")}}`;
+      }
+      return JSON.stringify(v);
+    };
+
+    // to_char(occurred_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
+    // PostgREST returns e.g. 2026-08-28T09:08:46.892006+00:00 — take the
+    // microseconds verbatim rather than through Date, which truncates to ms.
+    const m = w.occurred_at.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(?:\.(\d+))?/);
+    if (!m) throw new Error(`unparseable occurred_at: ${w.occurred_at}`);
+    expect(w.occurred_at, "the row must come back in UTC for this to be a fair check").toMatch(
+      /(\+00:00|\+00|Z)$/,
+    );
+    const canonical = `${m[1]}T${m[2]}.${(m[3] ?? "").padEnd(6, "0")}Z`;
+
+    const material =
+      "v2|" +
+      (w.prev_hash ?? "") +
+      w.org_id +
+      (w.actor_id ?? "") +
+      w.entity_type +
+      (w.entity_id ?? "") +
+      w.event_type +
+      jsonbText(w.payload) +
+      canonical;
+
+    const rederived = createHash("sha256").update(material, "utf8").digest("hex");
+    expect(rederived, "the v2 hash must re-derive in Node from the row alone").toBe(w.hash);
+
+    const chain = await svc.rpc("verify_events_chain", { p_org: ORG_A, p_from_id: null });
+    expect(chain.data?.[0]?.ok, "the mixed v1/v2 chain verifies end to end").toBe(true);
+  });
+
+  it("12d. hash_version: relabelling a row's version is caught, and an unknown version is refused", async () => {
+    const { data: victim } = await svc
+      .from("events")
+      .select("id, hash_version")
+      .eq("org_id", ORG_A)
+      .order("id", { ascending: false })
+      .limit(1)
+      .single();
+    expect(victim!.hash_version, "the newest row is v2").toBe(2);
+
+    try {
+      // Relabelling v2 -> v1 makes the verifier use the OLD formula on a row
+      // hashed with the new one. It must not silently re-verify.
+      await svc.from("events").update({ hash_version: 1 }).eq("id", victim!.id);
+      const relabelled = await svc.rpc("verify_events_chain", { p_org: ORG_A, p_from_id: null });
+      expect(relabelled.data?.[0], "a v2 row relabelled v1 must be caught").toMatchObject({
+        ok: false,
+        failed_id: victim!.id,
+        reason: "hash_mismatch",
+      });
+
+      // A version the verifier does not know is refused by name rather than
+      // guessed at — this is why there is no CHECK constraint (see 0061).
+      await svc.from("events").update({ hash_version: 99 }).eq("id", victim!.id);
+      const unknown = await svc.rpc("verify_events_chain", { p_org: ORG_A, p_from_id: null });
+      expect(unknown.data?.[0], "an unrecognised version is named, not assumed").toMatchObject({
+        ok: false,
+        failed_id: victim!.id,
+        reason: "unknown_hash_version",
+      });
+    } finally {
+      await svc.from("events").update({ hash_version: 2 }).eq("id", victim!.id);
+    }
+
+    const restored = await svc.rpc("verify_events_chain", { p_org: ORG_A, p_from_id: null });
+    expect(restored.data?.[0]?.ok, "chain verifies once the version is restored").toBe(true);
   });
 
   it("13. key_movements: append-only — staff INSERT allowed, UPDATE/DELETE denied for every role", async () => {
