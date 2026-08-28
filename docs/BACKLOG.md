@@ -1126,14 +1126,53 @@ explicit direction.
   AND resolves a pasted Google Maps link, short links included, which is faster
   than dragging a pin.
 
-- **Leaked-password protection is disabled (operator decision).** Surfaced by
-  the `get_advisors` run after applying 0034 to hosted on 2026-08-21, not by a
-  code read. Supabase Auth can check new passwords against HaveIBeenPwned;
-  it is off. One toggle in the dashboard, no code, no migration — but it is an
-  auth-policy change for real users, so it is the operator's call. Sits with the
-  other auth decisions (mandatory 2FA) rather than with engineering work.
+- **Leaked-password protection is disabled — ASSESSED 2026-08-28 AND IT IS NOT
+  A REAL GAP HERE. Do not pay for Pro to close it.**
+
+  Surfaced by `get_advisors` after applying 0034 on 2026-08-21. Supabase Auth
+  can check new passwords against HaveIBeenPwned, and it is off. Two facts
+  settle it:
+
+  1. **It is Pro-only.** The docs say so outright — "Leaked password protection
+     is available on the Pro Plan and above" — and this org is on the **free**
+     plan (checked 2026-08-28).
+  2. **THERE IS NOTHING FOR IT TO CHECK.** `inviteUser` creates every account
+     with `randomBytes(9).toString("base64url")` — 72 bits of cryptographic
+     entropy, shown once to the admin who hands it over. And there is NO way to
+     change it: no forgot-password link on the login page, no change-password
+     UI anywhere in the app, and no SMTP configured so Supabase's hosted reset
+     cannot send mail either. **No human has ever chosen a password in this
+     system.** HIBP matches candidates against breach corpora; a random
+     12-character string will never be in one.
+
+  **The advisor lint is generic and does not know any of that.** It is correct
+  that the setting is off and wrong that it matters here. Re-open this the day a
+  change-password or self-signup flow appears — at that moment it becomes real,
+  and the free fix is to call the HIBP Pwned Passwords range API directly
+  (k-anonymity: send the first 5 chars of the SHA-1, never the password; no key,
+  no plan). That makes the Pro feature permanently unnecessary.
+
+  **DO THE FREE HALF NOW ANYWAY** — minimum password length and required
+  character classes are NOT Pro-gated (Auth → Providers → Email). They cost
+  nothing and are already right on the day a password screen appears.
+
+  **THE REAL EXPOSURE IS DIFFERENT AND UNTRACKED: the handed-over temp password
+  is PERMANENT**, because nothing in the app can change it. That deserves more
+  attention than the lint ever did.
+
+  **⚠️ DO NOT RUN `supabase config push` TO SET THIS.** It pushes the WHOLE local
+  config to the linked project, and `supabase/config.toml` is tuned for local
+  development: `site_url = "http://127.0.0.1:3000"`,
+  `additional_redirect_urls = ["https://127.0.0.1:3000"]` and
+  `enable_signup = true`. Pushing it would break every auth redirect on
+  gnk-crm.vercel.app and **open public signup on a CRM**. The password fields
+  must be set in the dashboard, or through a scoped Management API PATCH of
+  `/v1/projects/{ref}/config/auth` — never by pushing this file.
+
   **VERIFY:** `get_advisors` type `security` — the `auth_leaked_password_protection`
-  lint disappears once enabled. *(present 2026-08-21.)*
+  lint disappears only on Pro with the toggle on, so its PRESENCE is expected
+  and is not evidence of a regression. *(present 2026-08-21, still present and
+  deliberately so 2026-08-28.)*
 - ~~**A save with no coordinates recorded a `location` change every time.**~~
   **FIXED 2026-08-21** (`locationChanged` in `lib/utils/geo.ts`). The inline
   check computed `samePoint` as "both non-null and equal" and treated
