@@ -1,3 +1,19 @@
+> # ✅ COMPLETE — SHIPPED AND SUPERSEDED. DO NOT EXECUTE.
+>
+> Delivered as migration **0029** (`require_aal2` on every RLS table, plus
+> `mfa_satisfied()`), live on hosted since 2026-08-11 and confirmed in a
+> signed-in session.
+>
+> **It has since been superseded**: 2FA became MANDATORY on 2026-08-28
+> (`MFA_REQUIRED = true` + migration **0059**, which removed the opt-in arm
+> this plan deliberately built). The current behaviour is DECISIONS
+> `T-mfa-mandatory`, not this file.
+>
+> The checkboxes below were never ticked — the work was verified by tests
+> and a hosted apply instead. **Their unticked state is bookkeeping, not
+> outstanding work**, and this banner exists so nobody re-runs a plan whose
+> output is already in production.
+
 # C2 DB-level 2FA Enforcement Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

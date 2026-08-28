@@ -1,3 +1,13 @@
+> # ✅ COMPLETE — SHIPPED. DO NOT EXECUTE.
+>
+> Delivered as migration **0031** (`area_centroids`), live on hosted since
+> 2026-08-11, with a second pass on 2026-08-20 adding click-through,
+> clustering, fit-to-results and price. Radius draw was DECLINED by the
+> operator. See IMPROVEMENTS.md B5.
+>
+> The checkboxes below were never ticked. **Their unticked state is
+> bookkeeping, not outstanding work.**
+
 # B5 Property Map Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
