@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useRef, useState } from "react";
-import { AlertTriangle, ArrowLeft, ArrowRight, Copy } from "lucide-react";
+import { AlertTriangle, ArrowLeft, ArrowRight, Copy, RotateCcw } from "lucide-react";
 import Link from "next/link";
 import {
   checkPropertyDuplicate,
@@ -33,6 +33,100 @@ import {
 import type { AreaOption, DistrictOption } from "@/components/features/properties/filters";
 
 const initialState: PropertyActionState = { error: null };
+
+/* ------------------------------------------------------------------ *
+ * AUTOSAVED DRAFT — so a half-finished entry survives.
+ *
+ * The wizard writes NOTHING until "Create property". Filling step 1, pressing
+ * "Continue" and then leaving used to lose everything silently: no row, no
+ * event, no warning. That happened on 2026-08-28 — the server logs showed two
+ * GETs of /properties/new and no POST at all, and the operator reasonably
+ * believed a listing had been entered.
+ *
+ * IT IS DELIBERATELY LOCAL, NOT A DRAFT ROW. Creating the property up front
+ * would be the obvious fix and the wrong one: it burns a reference the moment
+ * someone opens the form (references never change, and PAF0004 is already a
+ * hole from exactly this), and it litters the database with abandoned records
+ * — the CRM already carries "TERTEWTRT" and a smoke test from earlier passes.
+ * A browser-local draft costs nothing and leaves no trace when abandoned.
+ *
+ * It expires, because a listing half-typed a fortnight ago reappearing under a
+ * different property is worse than losing it. And it never overrides "Create
+ * similar", which is an explicit request for different prefill.
+ * ------------------------------------------------------------------ */
+
+const DRAFT_KEY = "gnk:new-property-draft";
+const DRAFT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** The uncontrolled step-2 inputs. The controlled ones travel as state. */
+const DRAFT_FIELDS = [
+  "title_en",
+  "asking_price",
+  "rent_price_month",
+  "plot_area_sqm",
+  "covered_area_sqm",
+  "bedrooms",
+  "bathrooms",
+  "internal_notes",
+] as const;
+
+interface Draft {
+  v: 1;
+  savedAt: number;
+  step: 1 | 2;
+  source: ListingSource;
+  party: EntityOption | null;
+  kind: string;
+  propertyType: string;
+  transaction: string;
+  districtId: string;
+  areaId: string;
+  address: string;
+  fields: Record<string, string>;
+}
+
+/** Every access is wrapped: localStorage throws outright in some privacy modes,
+ *  and a crashing form is far worse than a lost draft. */
+function readDraft(): Draft | null {
+  try {
+    const raw = window.localStorage.getItem(DRAFT_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw) as Draft;
+    if (d?.v !== 1 || typeof d.savedAt !== "number") return null;
+    if (Date.now() - d.savedAt > DRAFT_TTL_MS) {
+      window.localStorage.removeItem(DRAFT_KEY);
+      return null;
+    }
+    return d;
+  } catch {
+    return null;
+  }
+}
+
+function writeDraft(d: Draft): void {
+  try {
+    window.localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
+  } catch {
+    /* quota or disabled storage — the form must keep working regardless */
+  }
+}
+
+function dropDraft(): void {
+  try {
+    window.localStorage.removeItem(DRAFT_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+function savedAgo(ms: number): string {
+  const mins = Math.max(1, Math.round((Date.now() - ms) / 60000));
+  if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"} ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs} hour${hrs === 1 ? "" : "s"} ago`;
+  const days = Math.round(hrs / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
 
 function labelize(value: string) {
   return value.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
@@ -66,6 +160,18 @@ export function CreatePropertyWizard({
   const [transaction, setTransaction] = useState<string>(seed?.transactionType ?? "sale");
   const [districtId, setDistrictId] = useState<string>(seed?.districtId ?? "");
   const [address, setAddress] = useState<string>(seed?.address ?? "");
+  // controlled so a restored draft can put the area back; Radix Select
+  // cannot be repopulated by writing to a DOM node the way the plain
+  // inputs below can.
+  const [areaId, setAreaId] = useState<string>(seed?.areaId ?? "");
+  const formRef = useRef<HTMLFormElement>(null);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [restoredAt, setRestoredAt] = useState<number | null>(null);
+  /** Restored step-2 values, fed in as `defaultValue`. They CANNOT be written
+   *  into the DOM on mount: the wizard restores while still on step 1, so those
+   *  inputs do not exist yet. The first version did exactly that and silently
+   *  restored only the controlled half — caught in a browser, not by types. */
+  const [draftFields, setDraftFields] = useState<Record<string, string> | null>(null);
   // The result is stored WITH the address it was for, so a slow answer for an
   // old address cannot be shown against a new one — and so the effect never
   // has to clear state synchronously, which cascades renders.
@@ -74,6 +180,166 @@ export function CreatePropertyWizard({
     match: PropertyDuplicateMatch | null;
   } | null>(null);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * Read the uncontrolled step-2 inputs off the form.
+   *
+   * FALLS BACK TO THE LAST KNOWN VALUE when an input is not in the DOM, and
+   * that is not defensive padding — it is the fix for a bug this had:
+   *
+   * step 2's inputs only exist while step 2 is rendered. Saving while on step 1
+   * therefore read every one of them as "" and wrote that over a draft that
+   * had a title and a price in it. Restoring made it worse: restore lands on
+   * step 1, the state change scheduled a save, and the save wiped the very
+   * draft it had just read. The draft survived exactly one round trip and came
+   * back empty.
+   */
+  const readFields = (): Record<string, string> => {
+    const form = formRef.current;
+    const out: Record<string, string> = {};
+    for (const n of DRAFT_FIELDS) {
+      const el = form?.elements.namedItem(n);
+      out[n] =
+        el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
+          ? el.value
+          : (draftFields?.[n] ?? "");
+    }
+    return out;
+  };
+
+  /** The draft as it stands right now. */
+  const buildDraft = (): Draft => ({
+    v: 1,
+    savedAt: Date.now(),
+    step,
+    source,
+    party,
+    kind,
+    propertyType,
+    transaction,
+    districtId,
+    areaId,
+    address,
+    fields: readFields(),
+  });
+
+  const scheduleSave = () => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      const d = buildDraft();
+      const meaningful =
+        Boolean(d.propertyType) ||
+        Boolean(d.districtId) ||
+        Boolean(d.party) ||
+        d.address.trim().length > 0 ||
+        Object.values(d.fields).some((v) => v.trim().length > 0);
+      if (!meaningful) {
+        dropDraft();
+        return;
+      }
+      writeDraft(d);
+    }, 400);
+  };
+
+  /**
+   * Snapshot taken at submit, because REACT RESETS AN UNCONTROLLED FORM once a
+   * server action settles. On a FAILED create the inputs come back empty, and
+   * re-reading them would persist that emptiness over the draft — losing the
+   * entry at the one moment the user most needs it kept. Measured on
+   * 2026-08-28: a create refused by a duplicate reference left the title and
+   * price boxes blank.
+   */
+  const submitted = useRef<Draft | null>(null);
+
+  const handleSubmit = () => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    submitted.current = buildDraft();
+    // Cleared for the success path, which redirects away and must not leave a
+    // draft behind to greet the NEXT listing. The error path below puts it back.
+    dropDraft();
+  };
+
+  // Restore once, on mount. `seed` wins: "Create similar" is an explicit
+  // request for different prefill, and silently overriding it with an older
+  // draft would be the same class of surprise this feature exists to remove.
+  /* eslint-disable react-hooks/set-state-in-effect --
+     Restoring HAS to happen in an effect. Reading localStorage during render
+     (a lazy useState initialiser) would make the server and the client produce
+     different HTML for the same component — a hydration mismatch, and this
+     component is server-rendered. The rule is right in general and wrong for
+     rehydrating browser-only state, which is exactly what this is. */
+  useEffect(() => {
+    if (seed) return;
+    const d = readDraft();
+    if (!d) return;
+    setSource(d.source);
+    setParty(d.party);
+    setKind(d.kind);
+    setPropertyType(d.propertyType);
+    setTransaction(d.transaction);
+    setDistrictId(d.districtId);
+    setAreaId(d.areaId);
+    setAddress(d.address);
+    setStep(d.step);
+    setDraftFields(d.fields);
+    setRestoredAt(d.savedAt);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  // Any change to the controlled half schedules a save; the uncontrolled half
+  // is covered by onInput on the form itself.
+  useEffect(() => {
+    scheduleSave();
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source, party, kind, propertyType, transaction, districtId, areaId, address, step]);
+
+  /**
+   * A FAILED submit must not lose the draft. The draft is dropped when the form
+   * is submitted, because the usual outcome is a redirect to the new property;
+   * if the action comes back with an error instead, the entry is still on
+   * screen and worth keeping, so it is written again.
+   */
+  useEffect(() => {
+    if (!state.error) return;
+    const snap = submitted.current;
+    if (!snap) return;
+    // Put the values back in the boxes the reset emptied, then persist them.
+    const form = formRef.current;
+    for (const n of DRAFT_FIELDS) {
+      const el = form?.elements.namedItem(n);
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+        el.value = snap.fields[n] ?? "";
+      }
+    }
+    setDraftFields(snap.fields);
+    writeDraft({ ...snap, savedAt: Date.now() });
+    submitted.current = null;
+  }, [state.error]);
+
+  const discardDraft = () => {
+    dropDraft();
+    setRestoredAt(null);
+    setDraftFields(null);
+    setSource("owner");
+    setParty(null);
+    setPartyTerms(null);
+    setKind("standalone");
+    setPropertyType("");
+    setTransaction("sale");
+    setDistrictId("");
+    setAreaId("");
+    setAddress("");
+    const form = formRef.current;
+    for (const n of DRAFT_FIELDS) {
+      const el = form?.elements.namedItem(n);
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) el.value = "";
+    }
+    setStep(1);
+  };
 
   // Live duplicate check (audit finding 13). It WARNS — the submit button stays
   // enabled, because two genuinely different units share a building and a guard
@@ -145,7 +411,13 @@ export function CreatePropertyWizard({
   const step1Valid = kind && propertyType && districtId;
 
   return (
-    <form action={formAction} className="flex max-w-2xl flex-col gap-6">
+    <form
+      ref={formRef}
+      action={formAction}
+      onInput={scheduleSave}
+      onSubmit={handleSubmit}
+      className="flex max-w-2xl flex-col gap-6"
+    >
       {/* step-1 values always travel with the form */}
       <input type="hidden" name="kind" value={kind} />
       <input type="hidden" name="source" value={source} />
@@ -167,6 +439,23 @@ export function CreatePropertyWizard({
           <p className="text-text-2">
             Prefilled from <span className="font-medium text-text-1">{seed.fromReference}</span> —
             check every field before saving. Not copied: {seed.dropped.join(", ")}.
+          </p>
+        </div>
+      ) : null}
+
+      {restoredAt !== null ? (
+        <div className="flex items-start gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm">
+          <RotateCcw className="mt-0.5 size-4 shrink-0 text-text-3" />
+          <p className="text-text-2">
+            Restored what you had typed {savedAgo(restoredAt)} — nothing was saved to the CRM,
+            this was kept in this browser.{" "}
+            <button
+              type="button"
+              onClick={discardDraft}
+              className="font-medium text-brand-700 underline hover:no-underline"
+            >
+              Start blank instead
+            </button>
           </p>
         </div>
       ) : null}
@@ -309,14 +598,14 @@ export function CreatePropertyWizard({
               <Input
                 id="title_en"
                 name="title_en"
-                defaultValue={seed?.titleEn ?? ""}
+                defaultValue={draftFields?.title_en ?? seed?.titleEn ?? ""}
                 placeholder="Seafront villa with pool"
               />
             </div>
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="area_id">Area</Label>
-              <Select name="area_id" defaultValue={seed?.areaId ?? ""}>
+              <Select name="area_id" value={areaId} onValueChange={setAreaId}>
                 <SelectTrigger id="area_id">
                   <SelectValue placeholder={districtAreas.length ? "Select area…" : "No areas yet"} />
                 </SelectTrigger>
@@ -349,7 +638,7 @@ export function CreatePropertyWizard({
                   name="asking_price"
                   type="number"
                   min="0"
-                  defaultValue={seed?.askingPrice ?? ""}
+                  defaultValue={draftFields?.asking_price ?? seed?.askingPrice ?? ""}
                 />
               </div>
             ) : null}
@@ -361,7 +650,7 @@ export function CreatePropertyWizard({
                   name="rent_price_month"
                   type="number"
                   min="0"
-                  defaultValue={seed?.rentPriceMonth ?? ""}
+                  defaultValue={draftFields?.rent_price_month ?? seed?.rentPriceMonth ?? ""}
                 />
               </div>
             ) : null}
@@ -375,7 +664,7 @@ export function CreatePropertyWizard({
                   type="number"
                   min="0"
                   step="0.01"
-                  defaultValue={seed?.plotAreaSqm ?? ""}
+                  defaultValue={draftFields?.plot_area_sqm ?? seed?.plotAreaSqm ?? ""}
                 />
               </div>
             ) : (
@@ -388,7 +677,7 @@ export function CreatePropertyWizard({
                     type="number"
                     min="0"
                     step="0.01"
-                    defaultValue={seed?.coveredAreaSqm ?? ""}
+                    defaultValue={draftFields?.covered_area_sqm ?? seed?.coveredAreaSqm ?? ""}
                   />
                 </div>
                 <div className="flex flex-col gap-2">
@@ -398,7 +687,7 @@ export function CreatePropertyWizard({
                     name="bedrooms"
                     type="number"
                     min="0"
-                    defaultValue={seed?.bedrooms ?? ""}
+                    defaultValue={draftFields?.bedrooms ?? seed?.bedrooms ?? ""}
                   />
                 </div>
                 <div className="flex flex-col gap-2">
@@ -408,7 +697,7 @@ export function CreatePropertyWizard({
                     name="bathrooms"
                     type="number"
                     min="0"
-                    defaultValue={seed?.bathrooms ?? ""}
+                    defaultValue={draftFields?.bathrooms ?? seed?.bathrooms ?? ""}
                   />
                 </div>
               </>
@@ -419,7 +708,7 @@ export function CreatePropertyWizard({
               <Input
                 id="internal_notes"
                 name="internal_notes"
-                defaultValue={seed?.internalNotes ?? ""}
+                defaultValue={draftFields?.internal_notes ?? seed?.internalNotes ?? ""}
                 placeholder="Not shown anywhere public"
               />
             </div>
