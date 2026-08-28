@@ -656,6 +656,7 @@ export type Database = {
           entity_type: string
           event_type: string
           hash: string | null
+          hash_version: number
           id: number
           occurred_at: string
           org_id: string
@@ -668,6 +669,7 @@ export type Database = {
           entity_type: string
           event_type: string
           hash?: string | null
+          hash_version?: number
           id?: never
           occurred_at?: string
           org_id: string
@@ -680,6 +682,7 @@ export type Database = {
           entity_type?: string
           event_type?: string
           hash?: string | null
+          hash_version?: number
           id?: never
           occurred_at?: string
           org_id?: string
