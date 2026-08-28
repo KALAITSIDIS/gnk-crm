@@ -3611,7 +3611,16 @@ export type Database = {
         }
         Returns: string
       }
-      verify_events_chain: { Args: { p_org: string }; Returns: boolean }
+      verify_events_chain:
+        | { Args: { p_org: string }; Returns: boolean }
+        | {
+            Args: { p_from_id: number; p_org: string }
+            Returns: {
+              failed_id: number
+              ok: boolean
+              reason: string
+            }[]
+          }
       warn_expiring_reservations: {
         Args: { p_org?: string }
         Returns: undefined
