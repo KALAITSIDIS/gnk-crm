@@ -2853,7 +2853,18 @@ export type Database = {
         | { Args: { schema_name: string; table_name: string }; Returns: string }
         | { Args: { table_name: string }; Returns: string }
       enablelongtransactions: { Args: never; Returns: string }
+      ensure_events_partitions: {
+        Args: { p_from?: string; p_months_ahead?: number }
+        Returns: number
+      }
       equals: { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      events_partition_health: {
+        Args: never
+        Returns: {
+          detail: string
+          problem: string
+        }[]
+      }
       expire_mandates: { Args: never; Returns: undefined }
       expire_reservations: { Args: never; Returns: undefined }
       geometry: { Args: { "": string }; Returns: unknown }
