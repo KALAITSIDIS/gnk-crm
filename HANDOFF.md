@@ -24,8 +24,34 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 
 ## 0a. NEXT UP — the CRM is finished for Phase 1; what is left is data and four decisions (2026-08-28)
 
-**State:** `main` at `5d18d75`+, tree clean, local and hosted both at **0059**,
-**920 unit / 58 RLS / 205 E2E**, CI green, production READY.
+**State:** `main` at `873ad91`+, tree clean, local and hosted both at **0064**,
+**920 unit / 64 RLS / 209 E2E**, CI green, production READY.
+
+**C5 IS COMPLETE — all four steps built, applied to hosted, merged and
+deployed (2026-08-28).** `docs/DECISIONS.md` `T-c5` carries what was measured;
+the short version, because two of these change how you read the chain:
+
+| | |
+|---|---|
+| 0060 | `verify_events_chain(p_org, p_from_id)` returns `(ok, failed_id, reason)`. The one-arg boolean is unchanged, so all four callers stayed put. **`p_from_id` has NO default** — with the wrapper present, a default makes the one-arg call ambiguous and it fails at CALL time, not at apply time |
+| 0061 | `hash_version`. **The chain used to read `false` on intact data under `Asia/Nicosia`** — this desk's own timezone. v1 rows keep the old formula; v2 hashes ISO-8601 UTC. `verify_events_chain` now pins `TimeZone = 'UTC'`, which fixes the v1 rows too |
+| 0062 | `events_chain_checkpoint`. Nightly 03:30 is now incremental; a **full walk runs Sundays 03:35**. `full_walk_at` is the column that tells you how stale the prefix proof is — **a resumed walk does NOT re-prove the prefix**, and that is inherent, not a defect |
+| 0063/0064 | `events` is monthly RANGE-partitioned on `occurred_at`, PK `(id, occurred_at)`. **Partitions live in the `events_parts` schema** because `pg_default_acl` grants `anon=Dxtm` on anything created in `public`, and `D` is TRUNCATE, which RLS does not gate. 0064 dropped the rollback copy after the deploy was confirmed |
+
+**Two things a future session will otherwise get wrong:**
+
+1. **`id` is no longer unique on its own.** PK is `(id, occurred_at)` because
+   Postgres requires the partition key in a unique index — and
+   `verify_events_chain` walks by `id`. `events_partition_health()` reports
+   duplicates; RLS test 21d asserts it returns nothing.
+2. **PostgREST never exposed partitions.** Measured: a partition moved into
+   `public` and granted `select` to `anon` is still refused with `PGRST205`
+   after a restart. Do not write a test that GETs a partition — it passes
+   whether or not the partition is protected. The GRANT is the exposure.
+
+A pre-partition snapshot of production sits at
+`gnk-backups/events-pre-partition-2026-08-28.sql` (120 rows, chain fingerprint
+`31aea3aade863d58c294a77043438468`, sha256 beside it).
 
 **SECURITY POSTURE CHANGED TODAY: 2FA IS MANDATORY.** Both halves are live and
 coupled by a test — `MFA_REQUIRED = true` (proxy) and migration **0059** (the
@@ -54,11 +80,26 @@ needing only photos (15) and an assigned agent (5).
 | 3 | **A9 field CWV** (IMPROVEMENTS) | operator | LCP/CLS/INP need a VISIBLE browser — a 30-second DevTools Lighthouse run. Server timing was already fixed (`fra1`, ~3x). |
 | 4 | **Unequal purchaser shares** | operator | A1's follow-up: the calculator assumes EQUAL shares. A per-share list is ~a day, and the entry says to ask the agents before building it. |
 
-### Buildable: PHASE C IS THE DECIDED NEXT PROJECT (2026-08-28)
+### Buildable: PHASE C — C5 DONE, C4 IS NEXT (2026-08-28)
 
 The operator has decided to build **all of `IMPROVEMENTS.md` §C**. The brief
 is **`docs/PHASE_C_BRIEF.md`** — a re-audit against the code, not the roadmap's
 prose. Start there, not at §C itself.
+
+**C5 is shipped (see the table above). C4 is next, then C3.** Two corrections
+to the brief that the C5 work established, and which apply to reading the rest
+of it:
+
+* **The brief is a re-audit, not scripture, and two of its specifics were
+  wrong when tested.** `p_from_id default null` (§2) would have broken the
+  cron; the epoch-microseconds suggestion (§2) was one of two equally canonical
+  options. Its §3 warning about materialised views and RLS has NOT been tested
+  yet — test it before building on it.
+* **Its finding 3 misdescribed the writers.** It says the instalment and
+  reservation sweeps "write timestamps they compute" into `occurred_at`. They
+  do not: every writer in the codebase takes `default now()`, and the computed
+  dates go in the payload and in `tasks.due_at`. The invariant held by
+  construction, not by luck.
 
 **Order is C5 → C4 → C3 → C7**, and C7 stays gated on a real second-office
 requirement. The brief carries the three findings that matter most, none of

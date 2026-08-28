@@ -3,6 +3,105 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-08-28 · T-c5 (event log: diagnostics, hash_version, checkpoints,
+  partitioning — migrations 0060–0064)** — Phase C item C5, built in the four
+  steps `docs/PHASE_C_BRIEF.md` §2 sets out. What is worth carrying forward is
+  mostly what was MEASURED, because five things turned out differently from the
+  brief or from the obvious guess.
+
+  **0060 — `verify_events_chain` names the failing row.** It returned a bare
+  boolean, so `false` told you the chain was broken and nothing about where, at
+  exactly the moment someone is under pressure. Now an overload
+  `verify_events_chain(p_org, p_from_id)` returns `(ok, failed_id, reason)` and
+  the one-argument boolean survives as a wrapper, so the four callers
+  (`evidence.ts`, `run_chain_checks()`, 13 RLS assertions, the demo scripts) did
+  not move. **`p_from_id` deliberately has NO default, and the brief's
+  `default null` is a latent outage**: with the wrapper present Postgres accepts
+  both CREATEs and then fails at CALL time with `function is not unique`, so the
+  migration would have applied green and broken the 03:30 cron. Overloading was
+  probed first on three axes (SQL resolution, `supabase gen types`, PostgREST
+  argument-name resolution) because nothing in this schema was overloaded before.
+  It also fixed an off-by-one the return type made visible: the old body used
+  `hash <> …`, so a NULL hash made the branch NULL and the failure surfaced one
+  row late — measured, the old body blamed 8 for a corruption at 7.
+
+  **0061 — `hash_version`, and the timezone landmine.** Reproduced before
+  writing anything: the SAME INTACT DATA verified under UTC and FAILED under
+  `Asia/Nicosia` and `America/New_York`. Nicosia is this desk's own timezone, so
+  this was not exotic. `occurred_at::text` renders through the session `TimeZone`
+  GUC and is the ONLY such term — `payload::text` (floats, numerics, unicode),
+  and the three uuid casts are byte-stable under DateStyle, lc_numeric,
+  extra_float_digits and TimeZone. Two fixes: v1 rows keep their formula forever
+  (their hashes ARE the evidence), v2 hashes ISO-8601 UTC with a `v2|` domain
+  separator, and **`verify_events_chain` now pins `TimeZone = 'UTC'`, which
+  fixes the symptom for the v1 rows too**. ISO-8601 rather than the brief's
+  epoch microseconds because the hash is evidence and the material should be
+  legible to a third party re-deriving it years later — RLS test 12c proves that
+  claim by re-deriving the hash in Node from the row alone. `trg_events_hash`
+  deliberately does NOT pin UTC, so the migration's own probe (a v2 row written
+  under UTC+14, verified under UTC, rolled back) is not vacuous; it runs on
+  every CI database. Also fixed a gap this change would otherwise have opened:
+  `scripts/backup/export-events.sql` has a HARDCODED column list, and without
+  `hash_version` every restored row would take the default of 1 — v2 evidence
+  checked with the v1 formula, i.e. the same failure through the back door.
+  Measured both ways on a 492-row round trip.
+
+  **0062 — checkpoints, and the thing incremental verification cannot do.** A
+  resumed walk does NOT re-prove the prefix: with a tamper at id 8 and the anchor
+  at 647, the incremental pass returns `ok` and only the full walk finds it. That
+  is inherent — each row's hash covers the STORED hash of its predecessor, so
+  editing a payload and leaving `hash` alone does not propagate. So `last_hash`
+  is a trust anchor that is re-checked on every resume (with a WARNING and a
+  fallback to a full walk if it has moved, because `run_chain_checks` records
+  only `ok` and would otherwise swallow the signal); the resume starts AT the
+  anchor so the anchor's own payload is recomputed; `full_walk_at` records how
+  stale the prefix proof is and an incremental pass must never restamp it; and a
+  FAILED walk does not advance the checkpoint. Nightly 03:30 is incremental,
+  full walk Sundays 03:35. `run_chain_checks_full()` is a separate NAME rather
+  than a defaulted argument, for the same reason as 0060.
+
+  **0063/0064 — partitioning.** Monthly RANGE on `occurred_at`, PK
+  `(id, occurred_at)`. The safety net is a chain fingerprint —
+  `md5(string_agg(hash order by id))` before and after — not a row count, because
+  the C6 drill produced an org that read `true` at source and `false` after a
+  restore with identical counts. The rollback copy was kept as
+  `events_pre_partition` until the deploy was confirmed, then dropped by 0064,
+  which refuses unless the fingerprint is reproduced exactly (proven by feeding
+  it a tampered copy).
+
+  **Partitions live in `events_parts`, not `public`, and the reason is not the
+  one I first wrote.** `pg_default_acl` grants `anon=Dxtm` and
+  `authenticated=Dxtm` on every table `postgres` creates in `public`; `D` is
+  TRUNCATE, and RLS does not gate TRUNCATE — so a partition in `public` would
+  hand anon the ability to truncate a month of the audit log, monthly, forever.
+  The first draft ALSO claimed PostgREST would expose them. **It does not**: a
+  partition moved into `public` and explicitly granted `select` to `anon` is
+  still refused with `PGRST205` after a full restart, because PostgREST excludes
+  partitions from its schema cache. The RLS test that asserted "a partition is
+  unreachable over the API" was therefore vacuous — it passed whether or not the
+  partition was protected — and was replaced with a check on the GRANT, which is
+  the real exposure. Three further things were measured because a partition
+  inherits none of the parent's protection: the parent's policies DO cover rows
+  in partitions; a policy on a partition does NOT govern parent-routed access
+  (the 64-test suite is green with `using (false)` on every partition, which is
+  what makes the explicit `deny_direct_access` safe and keeps `get_advisors` at
+  its 21 pre-existing lints instead of gaining one per month); and a DEFAULT
+  partition turns a missing month from an outage into a notice — events are
+  written on the same code path as every mutation, so a routing failure would
+  fail the user's save, not just the log.
+
+  **What the new PK gives up, which the brief does not mention:** `id` is no
+  longer unique on its own, and `verify_events_chain` walks by `id`. Nothing can
+  produce a duplicate in practice (`generated always`, and PostgREST never sends
+  `OVERRIDING SYSTEM VALUE`), so `events_partition_health()` detects it rather
+  than the schema preventing it. Monotonicity is asserted at migration time and
+  reported ongoing, but deliberately NOT enforced: a trigger rejecting a
+  back-dated `occurred_at` would refuse a legitimate write, and the chain still
+  verifies when they diverge because it orders by id only. The brief's claim that
+  the instalment and reservation sweeps write computed timestamps into
+  `occurred_at` is wrong — every writer takes `default now()`; the computed dates
+  go in the payload and in `tasks.due_at`.
+
 - **2026-07-20 · T-audit (keys, migration 0013)** — Keys audit fixes; supersedes
   the T4.6 three-statement movement design below. (1) All four movements now go
   through `record_key_movement` (0013), SECURITY DEFINER: the old flow was
