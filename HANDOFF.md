@@ -24,8 +24,31 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 
 ## 0a. NEXT UP — the CRM is finished for Phase 1; what is left is data and four decisions (2026-08-28)
 
-**State:** `main` at `873ad91`+, tree clean, local and hosted both at **0064**,
-**920 unit / 64 RLS / 209 E2E**, CI green, production READY.
+**State:** `main` at `2dd11f0`+, tree clean, local and hosted both at **0065**,
+**929 unit / 67 RLS / 209 E2E**, CI green, production READY.
+
+**C4 IS COMPLETE (2026-08-29)** — migration 0065 plus `/reports/performance`
+and a CSV export per report. Five SECURITY INVOKER aggregates (agent
+performance, source ROI, time to close, stage conversion, price reductions)
+and `report_citation()`. `docs/DECISIONS.md` `T-c4` has the detail; three
+things to know before touching it:
+
+1. **There is no materialised view, and there must not be one.** The brief's
+   warning was measured and is worse than it says: an MV over an RLS table
+   returned BOTH orgs' rows to an org-scoped session — directly AND through a
+   `SECURITY INVOKER` function — and `alter materialized view … enable row
+   level security` is refused outright (42809). An MV cannot be made safe by
+   policy at all, only by never granting it and filtering in a wrapper.
+2. **`stage_changed` records stage NAMES, not ids** (0011). Stage conversion
+   therefore joins on a mutable string and declares it (`stage_key: "name"`);
+   renaming a stage splits its history. Won/lost are separate event types
+   whose payloads carry the DESTINATION stage, so outcomes are counted but
+   deliberately not attributed to the stage they left.
+3. **The citation anchors, it does not reproduce.** It records the verified
+   `(last_id, last_hash)` from 0062 — a point a walk actually proved. It does
+   NOT prove the figures are reproducible, because most metrics read mutable
+   entity tables that are not hash-chained. Only stage conversion is genuinely
+   re-derivable, and it says so in its own output.
 
 **C5 IS COMPLETE — all four steps built, applied to hosted, merged and
 deployed (2026-08-28).** `docs/DECISIONS.md` `T-c5` carries what was measured;
@@ -86,20 +109,26 @@ The operator has decided to build **all of `IMPROVEMENTS.md` §C**. The brief
 is **`docs/PHASE_C_BRIEF.md`** — a re-audit against the code, not the roadmap's
 prose. Start there, not at §C itself.
 
-**C5 is shipped (see the table above). C4 is next, then C3.** Two corrections
-to the brief that the C5 work established, and which apply to reading the rest
-of it:
+**C5 and C4 are shipped (see above). C3 is next; C7 stays gated on a real
+second-office requirement.** How the brief has held up so far, because it
+applies to reading the C3 section too:
 
-* **The brief is a re-audit, not scripture, and two of its specifics were
-  wrong when tested.** `p_from_id default null` (§2) would have broken the
-  cron; the epoch-microseconds suggestion (§2) was one of two equally canonical
-  options. Its §3 warning about materialised views and RLS has NOT been tested
-  yet — test it before building on it.
+* **It is a re-audit, not scripture. Test its specifics.** Four have been
+  checked. Three were wrong or incomplete — `p_from_id default null` (§2)
+  would have applied green and broken the cron; epoch microseconds (§2) was
+  one of two equally canonical options; finding 3 misdescribes the writers
+  (see below). One was RIGHT and understated: §3's materialised-view warning
+  is real, and worse than written — an MV leaks across orgs even behind a
+  `SECURITY INVOKER` function, and RLS cannot be enabled on one at all.
 * **Its finding 3 misdescribed the writers.** It says the instalment and
   reservation sweeps "write timestamps they compute" into `occurred_at`. They
   do not: every writer in the codebase takes `default now()`, and the computed
   dates go in the payload and in `tasks.due_at`. The invariant held by
   construction, not by luck.
+* **§4 (C3) is unverified.** Its claims about `resolve_share_link`,
+  `note_share_link_miss` and the quality gate as a publish predicate are
+  plausible and match what exists, but nobody has checked them against the
+  code yet. Check before building.
 
 **Order is C5 → C4 → C3 → C7**, and C7 stays gated on a real second-office
 requirement. The brief carries the three findings that matter most, none of

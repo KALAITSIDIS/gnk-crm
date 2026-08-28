@@ -3,6 +3,96 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-08-29 · T-c4 (reporting engine — migration 0065, /reports/performance)**
+  — Phase C item C4. Five SECURITY INVOKER aggregates (agent performance,
+  source ROI, time to close, stage conversion, price reductions), a citation, a
+  page and a CSV export per report. `admin_dashboard_stats` (0018) is the
+  pattern throughout: group-bys in SQL, window bounds passed IN from
+  `lib/utils/tz.ts` rather than re-derived, ids returned and names joined by the
+  app.
+
+  **NO MATERIALISED VIEW, AND THE BRIEF UNDERSTATED WHY.** `docs/PHASE_C_BRIEF.md`
+  §3 calls C4 "a materialised-view problem" and warns an MV over an RLS table is
+  computed once for everyone. Measured before writing a line — two rows, one per
+  org, read from a session scoped to org 1111:
+
+      MV read directly                    -> BOTH rows (100 and 999)
+      MV read via a SECURITY INVOKER fn   -> BOTH rows (100 and 999)
+      the same aggregate computed live    -> one row (100)
+
+  And the obvious repair does not exist:
+
+      alter materialized view probe_mv enable row level security;
+      ERROR:  ALTER action ENABLE ROW SECURITY cannot be performed on relation
+              "probe_mv" (42809)
+
+  So an MV cannot be made safe by policy AT ALL — only by never granting it and
+  filtering in a reading wrapper. At 120 events that trade buys nothing, so
+  there is no MV. If a query is ever measurably slow, one can be introduced
+  behind these signatures without a caller moving.
+
+  **THE FIRST DRAFT OF STAGE CONVERSION WOULD HAVE RETURNED ZEROS FOREVER**, and
+  the reason generalises: it read `payload->>'from_stage_id'`, which does not
+  exist. Checking the writer rather than assuming its shape,
+  `move_deal_to_stage` (0011) logs
+  `jsonb_build_object('from', coalesce(v_from_name, v_deal.stage_id::text), 'to', v_to.name)`
+  — NAMES. So the report joins on a mutable string, and DECLARES it in its own
+  output (`stage_key: "name"`) rather than hiding it: renaming a stage splits
+  its history at the rename. Fixing that properly means adding ids to a guarded
+  write path's payload, which is a one-line additive change but not a reporting
+  migration's business. Second finding from the same check: won and lost are
+  NOT `stage_changed` — they are separate event types from
+  `lib/actions/deals.ts` whose payloads carry the DESTINATION stage and not the
+  one left — so outcomes are counted but deliberately not attributed to a source
+  stage. A funnel that guessed would be worse than one that says it cannot.
+
+  **WHAT THE CITATION PROVES, STATED PRECISELY.** The brief's upgrade is to make
+  reports citable so a dispute can re-derive a figure and prove the inputs had
+  not changed. Half of that is achievable and half is not, and overclaiming in
+  an evidence product would be the worst available outcome. ACHIEVED: the report
+  records the VERIFIED `(last_id, last_hash)` of the org's chain from 0062 — a
+  point some walk actually proved, not a bare high-water mark. NOT ACHIEVED:
+  most metrics read MUTABLE entity tables (`deals.expected_value`,
+  `leads.source`, `viewings.status`) which are not hash-chained, so the citation
+  cannot prove they were unchanged and a later re-run may legitimately differ.
+  Only stage conversion is genuinely re-derivable, and it says so with
+  `derived_from: "events"` rather than relying on a comment nobody reads.
+
+  **A BUG 0065's OWN VERIFICATION BLOCK CAUGHT.** `report_citation`'s subqueries
+  relied on RLS to narrow `events_chain_checkpoint`, which holds ONE ROW PER
+  ORG. Correct in the app; SQLSTATE 21000 "more than one row returned by a
+  subquery used as an expression" for anything bypassing RLS — scripts, the test
+  suite, an incident. Every subquery is now org-scoped explicitly. A related
+  correction to my own test: a `service_role` caller gets 42501, not a citation,
+  because `current_org_id()` is authenticated-only (0007) — a caller with no org
+  has nothing to be scoped to. That is correct behaviour, and the first version
+  of the test asserted otherwise.
+
+  **TESTED AGAINST A FIXTURE WITH KNOWN ANSWERS, not production zeros**, which
+  the brief insists on and production (1 property, 1 deal) cannot provide: 3
+  leads with 2 answered at 30 and 90 minutes (avg exactly 60), 2 deals won at 10
+  and 20 days (avg and median 15), 1 lost, 2 completed viewings and 1 cancelled
+  that must not count, two 10% price cuts and a RISE that must be excluded.
+  Every figure asserted exactly. The window is March 2024 so the rest of the
+  suite cannot mix in, and it is CLEARED first — a fixed window with absolute
+  assertions is only correct if it starts empty, and a rerun against a
+  long-lived local stack otherwise reads 6 leads where it asserts 3.
+  Cross-org isolation is asserted and mutation-tested: flipping one report to
+  SECURITY DEFINER makes org B read `{won: 1, leads: 3}` of org A's and the test
+  fails. The migration itself refuses to apply if any `report_*` is DEFINER or
+  executable by anon.
+
+  **The page and export were verified against a running app**, not assumed: all
+  five exports return 200 `text/csv`, an unknown `report` param is rejected 400,
+  each wrote its `exported` audit event with list, count and window, and every
+  rendered figure was recomputed by hand. Two pieces of my own slop removed on
+  review — a variable that existed only to be rendered into a meaningless
+  `sr-only` span, and an unused `getCurrentProfile` call — plus "1 deals" turned
+  into a proper ICU plural. `lib/services/messages.test.ts` caught the new
+  `{id}`, `{won}` and `{lost}` placeholders missing from its superset, in all
+  three locales; the guard was doing its job and was extended rather than
+  worked around.
+
 - **2026-08-28 · T-c5 (event log: diagnostics, hash_version, checkpoints,
   partitioning — migrations 0060–0064)** — Phase C item C5, built in the four
   steps `docs/PHASE_C_BRIEF.md` §2 sets out. What is worth carrying forward is

@@ -156,6 +156,31 @@ the pattern to copy: a single SQL aggregate, **SECURITY INVOKER**, window bounds
 passed in from `lib/utils/tz.ts` rather than re-derived in SQL. Six pg_cron
 sweeps already exist, so the scheduled-refresh idiom is established.
 
+> ### ✅ SHIPPED 2026-08-29 — migration 0065 + `/reports/performance`.
+> Local and hosted applied, CI green, deployed. `docs/DECISIONS.md` `T-c4`.
+>
+> **The trap below is REAL and was understated.** Measured: an MV over an RLS
+> table returned BOTH orgs' rows to an org-scoped session — directly *and*
+> through a `SECURITY INVOKER` function — and the obvious repair does not
+> exist: `alter materialized view … enable row level security` is refused with
+> `42809`. An MV cannot be made safe by policy at all, only by never granting
+> it and filtering in a wrapper. Shipped with **no MV**, as this section's
+> second option recommends.
+>
+> **Two things this section could not have known, found by checking the
+> writers rather than trusting the roadmap's vocabulary:**
+>
+> * `stage_changed` records stage **names**, not ids (0011). The first draft
+>   read `payload->>'from_stage_id'` and would have returned zeros forever.
+> * `won`/`lost` are **separate event types**, not stage changes, and their
+>   payloads carry the destination stage rather than the one left — so a stage
+>   funnel can count outcomes but cannot attribute them.
+>
+> **"Every figure a report prints can be re-derived from the events it cites"
+> is only half achievable, and the shipped code says which half.** Metrics over
+> mutable entity tables cannot be re-derived; only stage conversion can, and it
+> declares `derived_from: "events"` in its own output.
+
 ### THE TRAP THAT WILL BITE — read before writing a line
 
 **Materialised views do not respect RLS.** The roadmap calls C4 "a
