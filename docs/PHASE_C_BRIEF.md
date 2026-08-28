@@ -52,6 +52,30 @@ stop after C3 and say so.
 
 ## 2. C5 — event log: partitioning, checkpoints, and the hash landmine
 
+> ### ✅ SHIPPED 2026-08-28 — migrations 0060, 0061, 0062, 0063, 0064.
+> Local and hosted both applied, CI green, deployed. `docs/DECISIONS.md` `T-c5`
+> has what was measured. **Three specifics below were wrong and are corrected
+> in place**, because a brief that keeps a disproven detail is how the next
+> session inherits it:
+>
+> 1. **`p_from_id default null` (under *Build*) is a latent outage**, not a
+>    style choice. With the boolean wrapper also present, Postgres accepts both
+>    `CREATE`s and then fails at CALL time with `function is not unique` — the
+>    migration applies green and the 03:30 cron breaks. It shipped with **no
+>    default**; a full walk passes `null` explicitly.
+> 2. **Finding 3 misdescribes the writers.** The sweeps do NOT write computed
+>    timestamps into `occurred_at`; every writer in the codebase takes
+>    `default now()`, and the computed dates go into the payload and
+>    `tasks.due_at`. The invariant held by construction, not by luck — which is
+>    a better reason to assert it, not a worse one.
+> 3. **"epoch microseconds"** was one of two equally canonical options. It
+>    shipped as ISO-8601 UTC instead, because the hash is evidence and the
+>    material should be legible to whoever re-derives it.
+>
+> And one thing the brief does not mention at all: PK `(id, occurred_at)` means
+> **`id` is no longer unique on its own**, while `verify_events_chain` still
+> walks by `id`. Detected by `events_partition_health()`.
+
 ### What is actually there
 
 ```
