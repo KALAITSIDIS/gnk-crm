@@ -3050,6 +3050,27 @@ export type Database = {
         Args: { p_direction: string; p_stage_id: string }
         Returns: undefined
       }
+      report_agent_performance: {
+        Args: { p_from: string; p_to: string }
+        Returns: Json
+      }
+      report_citation: { Args: never; Returns: Json }
+      report_price_reductions: {
+        Args: { p_from: string; p_to: string }
+        Returns: Json
+      }
+      report_source_roi: {
+        Args: { p_from: string; p_to: string }
+        Returns: Json
+      }
+      report_stage_conversion: {
+        Args: { p_from: string; p_to: string }
+        Returns: Json
+      }
+      report_time_to_close: {
+        Args: { p_from: string; p_to: string }
+        Returns: Json
+      }
       resolve_share_link: { Args: { p_token_sha256: string }; Returns: Json }
       rls_aal2_coverage: {
         Args: never

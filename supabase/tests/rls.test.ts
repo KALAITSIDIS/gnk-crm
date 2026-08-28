@@ -3669,4 +3669,353 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(chainOk).toBe(true);
   });
 
+  it("38. C4 reporting engine: exact figures over a synthetic fixture with known answers", async () => {
+    /**
+     * 0065. The brief is explicit that "a reporting engine tested only against
+     * zeros is a reporting engine tested against nothing" — production holds 1
+     * property and 1 deal. So this seeds a scenario whose answers are known by
+     * construction and asserts them EXACTLY.
+     *
+     * THE WINDOW IS HISTORICAL (March 2024) ON PURPOSE. ORG_A already carries
+     * whatever the rest of this suite created, and a "last 30 days" window
+     * would mix it in and make exact assertions impossible. leads, deals,
+     * viewings and price_history all accept an explicit timestamp, so the
+     * fixture lives somewhere nothing else does.
+     *
+     * `events` deliberately is NOT back-dated: occurred_at is settable, but a
+     * back-dated event creates the occurred_at/id inversion that
+     * events_partition_health() reports and test 21d asserts is empty (0063).
+     * Stage conversion therefore uses unique stage NAMES in the live window
+     * instead — test 39.
+     */
+    const FROM = "2024-03-01T00:00:00.000Z";
+    const TO = "2024-04-01T00:00:00.000Z";
+    const win = { p_from: FROM, p_to: TO };
+
+    // IDEMPOTENCE. CI builds a fresh database, but this suite is also run
+    // repeatedly against a long-lived local stack, and a fixed window plus
+    // absolute assertions is only correct if the window starts empty — a second
+    // run otherwise reads 6 leads where it asserts 3. Clear the window first, in
+    // FK order (leads reference deals via converted_deal_id). `events` is never
+    // touched: it is append-only, and test 39 adds to the live window instead.
+    await svc.from("leads").delete().eq("org_id", ORG_A).gte("received_at", FROM).lt("received_at", TO);
+    await svc.from("viewings").delete().eq("org_id", ORG_A).gte("scheduled_at", FROM).lt("scheduled_at", TO);
+    await svc.from("price_history").delete().eq("org_id", ORG_A).gte("changed_at", FROM).lt("changed_at", TO);
+    await svc.from("deals").delete().eq("org_id", ORG_A).gte("created_at", FROM).lt("created_at", TO);
+
+    // --- deals: two won (10 and 20 days), one lost (10 days) ----------------
+    const mkDeal = async (
+      agent: string,
+      created: string,
+      close: { won_at: string } | { lost_at: string },
+      value: number,
+    ) => {
+      const status = "won_at" in close ? ("won" as const) : ("lost" as const);
+      const { data, error } = await svc
+        .from("deals")
+        .insert({
+          org_id: ORG_A,
+          deal_type: "sale",
+          stage_id: stageSaleNew,
+          title: `C4-${run}-${status}-${created}`,
+          agent_id: agent,
+          expected_value: value,
+          status,
+          created_at: created,
+          ...close,
+        })
+        .select("id")
+        .single();
+      if (error) throw error;
+      return data.id as string;
+    };
+
+    const wonDeal1 = await mkDeal(
+      agentA1.id,
+      "2024-03-01T00:00:00Z",
+      { won_at: "2024-03-11T00:00:00Z" },
+      100000,
+    );
+    await mkDeal(agentA1.id, "2024-03-01T00:00:00Z", { won_at: "2024-03-21T00:00:00Z" }, 200000);
+    await mkDeal(agentA2.id, "2024-03-05T00:00:00Z", { lost_at: "2024-03-15T00:00:00Z" }, 50000);
+
+    // --- leads: 3 website (2 answered at 30 and 90 min), 1 referral --------
+    const mkLead = async (
+      source: "website" | "referral",
+      agent: string,
+      received: string,
+      answered: string | null,
+      dealId: string | null,
+    ) => {
+      const { error } = await svc.from("leads").insert({
+        org_id: ORG_A,
+        contact_id: contactA,
+        source,
+        channel: "email",
+        status: dealId ? "converted" : "new",
+        received_at: received,
+        first_response_at: answered,
+        assigned_agent_id: agent,
+        converted_deal_id: dealId,
+      });
+      if (error) throw error;
+    };
+    await mkLead("website", agentA1.id, "2024-03-02T10:00:00Z", "2024-03-02T10:30:00Z", wonDeal1);
+    await mkLead("website", agentA1.id, "2024-03-03T10:00:00Z", "2024-03-03T11:30:00Z", null);
+    await mkLead("website", agentA1.id, "2024-03-04T10:00:00Z", null, null);
+    await mkLead("referral", agentA2.id, "2024-03-05T10:00:00Z", null, null);
+
+    // --- viewings: 2 completed for agentA1, 1 cancelled (must not count) ----
+    for (const [when, status] of [
+      ["2024-03-06T09:00:00Z", "completed"],
+      ["2024-03-07T09:00:00Z", "completed"],
+      ["2024-03-08T09:00:00Z", "cancelled"],
+    ] as const) {
+      const { error } = await svc.from("viewings").insert({
+        org_id: ORG_A,
+        property_id: propA1,
+        contact_id: contactA,
+        agent_id: agentA1.id,
+        scheduled_at: when,
+        status,
+      });
+      if (error) throw error;
+    }
+
+    // --- price history: two 10% cuts on one property, plus a RISE ----------
+    for (const [at, oldP, newP] of [
+      ["2024-03-02T12:00:00Z", 500000, 450000],
+      ["2024-03-10T12:00:00Z", 450000, 405000],
+      ["2024-03-20T12:00:00Z", 405000, 420000], // a rise — must be excluded
+    ] as const) {
+      const { error } = await svc.from("price_history").insert({
+        org_id: ORG_A,
+        property_id: propA1,
+        old_price: oldP,
+        new_price: newP,
+        changed_at: at,
+        changed_by: agentA1.id,
+      });
+      if (error) throw error;
+    }
+
+    // ======================= agent performance ============================
+    const perf = await svc.rpc("report_agent_performance", win);
+    expect(perf.error).toBeNull();
+    const rows = perf.data as unknown as Array<Record<string, number | string | null>>;
+    const a1 = rows.find((r) => r.agent_id === agentA1.id)!;
+    const a2 = rows.find((r) => r.agent_id === agentA2.id)!;
+
+    expect(a1.leads_assigned, "agentA1 got 3 leads in March 2024").toBe(3);
+    expect(a1.leads_answered, "2 of them were answered").toBe(2);
+    expect(Number(a1.avg_first_response_min), "30 min and 90 min average to 60").toBeCloseTo(60, 6);
+    expect(a1.viewings_completed, "the cancelled viewing must not count").toBe(2);
+    expect(a1.deals_won).toBe(2);
+    expect(Number(a1.won_value)).toBe(300000);
+    expect(a1.deals_lost).toBe(0);
+
+    expect(a2.leads_assigned).toBe(1);
+    expect(a2.leads_answered, "the referral lead was never answered").toBe(0);
+    expect(a2.avg_first_response_min, "no answered leads means no average, not zero").toBeNull();
+    expect(a2.deals_won).toBe(0);
+    expect(a2.deals_lost).toBe(1);
+
+    // ============================ source ROI ==============================
+    const roi = await svc.rpc("report_source_roi", win);
+    const bySource = Object.fromEntries(
+      (roi.data as unknown as Array<Record<string, number | string | null>>).map((r) => [
+        r.source,
+        r,
+      ]),
+    );
+    expect(bySource.website.leads).toBe(3);
+    expect(bySource.website.converted).toBe(1);
+    expect(bySource.website.won).toBe(1);
+    expect(Number(bySource.website.won_value)).toBe(100000);
+    expect(Number(bySource.website.convert_rate)).toBeCloseTo(1 / 3, 10);
+    expect(Number(bySource.website.win_rate)).toBe(1);
+
+    expect(bySource.referral.leads, "a source that produced nothing is KEPT").toBe(1);
+    expect(bySource.referral.converted).toBe(0);
+    expect(bySource.referral.win_rate, "0 conversions means no win rate, not 0/0").toBeNull();
+
+    // ========================== time to close =============================
+    const ttc = (await svc.rpc("report_time_to_close", win)).data as unknown as {
+      won: { count: number; avg_days: number; median_days: number; p90_days: number };
+      lost: { count: number; avg_days: number };
+    };
+    expect(ttc.won.count).toBe(2);
+    expect(Number(ttc.won.avg_days), "10 and 20 days").toBeCloseTo(15, 6);
+    expect(Number(ttc.won.median_days)).toBeCloseTo(15, 6);
+    expect(ttc.lost.count).toBe(1);
+    expect(Number(ttc.lost.avg_days)).toBeCloseTo(10, 6);
+
+    // ========================= price reductions ===========================
+    const pr = (await svc.rpc("report_price_reductions", win)).data as unknown as {
+      reductions: number;
+      properties_affected: number;
+      avg_cut_fraction: number;
+      total_cut_amount: number;
+      repeat_cuts: Array<{ property_id: string; cuts: number; total_cut: number }>;
+    };
+    expect(pr.reductions, "two cuts; the price RISE must be excluded").toBe(2);
+    expect(pr.properties_affected).toBe(1);
+    expect(Number(pr.avg_cut_fraction), "both cuts were exactly 10%").toBeCloseTo(0.1, 10);
+    expect(Number(pr.total_cut_amount)).toBe(95000);
+    expect(pr.repeat_cuts).toHaveLength(1);
+    expect(pr.repeat_cuts[0].property_id).toBe(propA1);
+    expect(pr.repeat_cuts[0].cuts).toBe(2);
+
+    // ===================== cross-org isolation ============================
+    // The whole fixture is ORG_A's. Org B must see none of it — the assertion
+    // the brief calls for, and the reason none of these is SECURITY DEFINER.
+    const bPerf = (await agentB.client.rpc("report_agent_performance", win))
+      .data as unknown as unknown[];
+    expect(bPerf, "org B must not see org A's agents").toEqual([]);
+    const bRoi = (await agentB.client.rpc("report_source_roi", win)).data as unknown as unknown[];
+    expect(bRoi, "org B must not see org A's lead sources").toEqual([]);
+    const bTtc = (await agentB.client.rpc("report_time_to_close", win)).data as unknown as {
+      won: { count: number };
+    };
+    expect(bTtc.won.count, "org B must not see org A's closes").toBe(0);
+    const bPr = (await agentB.client.rpc("report_price_reductions", win)).data as unknown as {
+      reductions: number;
+    };
+    expect(bPr.reductions, "org B must not see org A's price history").toBe(0);
+
+    // ===================== anon reaches nothing ===========================
+    const anon = anonClient();
+    for (const fn of [
+      "report_agent_performance",
+      "report_source_roi",
+      "report_time_to_close",
+      "report_stage_conversion",
+      "report_price_reductions",
+    ] as const) {
+      const denied = await anon.rpc(fn, win);
+      expect(denied.error, `anon must not execute ${fn}`).not.toBeNull();
+    }
+    expect(
+      (await anon.rpc("report_citation")).error,
+      "anon must not execute report_citation",
+    ).not.toBeNull();
+  });
+
+  it("39. C4 stage conversion is derived from events, and declares which key it joins on", async () => {
+    // 0065. Stage NAMES, not ids: move_deal_to_stage (0011) logs
+    // {'from': <name>, 'to': <name>}. The first draft of this report read
+    // payload->>'from_stage_id' and would have returned zeros forever, so this
+    // asserts against the shape the WRITER actually produces.
+    //
+    // Unique names in the LIVE window, because back-dating an event would make
+    // events_partition_health() report an inversion (test 21d).
+    const S1 = `C4-${run}-Qualified`;
+    const S2 = `C4-${run}-Offer`;
+    const mkMove = async (entityId: string, from: string | null, to: string) => {
+      const { error } = await svc.from("events").insert({
+        org_id: ORG_A,
+        actor_id: agentA1.id,
+        entity_type: "deal",
+        entity_id: entityId,
+        event_type: "stage_changed",
+        payload: from === null ? { to } : { from, to },
+      });
+      if (error) throw error;
+    };
+
+    // three distinct deals reach S1; two of them go on to S2
+    await mkMove(dealA1, null, S1);
+    await mkMove(dealA1, S1, S2);
+    await mkMove(propA1, null, S1); // a second distinct entity id
+    await mkMove(propA1, S1, S2);
+    await mkMove(contactA, null, S1); // a third that stops at S1
+
+    const from = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const to = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const res = await svc.rpc("report_stage_conversion", { p_from: from, p_to: to });
+    expect(res.error).toBeNull();
+    const conv = res.data as unknown as {
+      derived_from: string;
+      stage_key: string;
+      stages: Array<{ stage: string; entered: number; advanced: number; advance_rate: number }>;
+      transitions: Array<{ from: string | null; to: string; deals: number }>;
+      outcomes: { won: number; lost: number };
+      note: string;
+    };
+
+    expect(conv.derived_from, "this is the one report re-derivable from the chain").toBe("events");
+    expect(conv.stage_key, "it declares that it joins on a mutable name").toBe("name");
+
+    const s1 = conv.stages.find((s) => s.stage === S1)!;
+    const s2 = conv.stages.find((s) => s.stage === S2)!;
+    expect(s1.entered, "three deals entered the first stage").toBe(3);
+    expect(s1.advanced, "two of them moved on").toBe(2);
+    expect(Number(s1.advance_rate)).toBeCloseTo(2 / 3, 10);
+    expect(s2.entered).toBe(2);
+    expect(s2.advanced, "nothing moved past the second stage").toBe(0);
+    expect(Number(s2.advance_rate), "0 advanced out of 2 is a rate of 0, not null").toBe(0);
+
+    const t = conv.transitions.find((x) => x.from === S1 && x.to === S2)!;
+    expect(t.deals).toBe(2);
+
+    // the chain must survive events written by a test, as everywhere else
+    const { data: chainOk } = await svc.rpc("verify_events_chain", { p_org: ORG_A });
+    expect(chainOk, "stage_changed fixtures keep the hash chain intact").toBe(true);
+    const health = await svc.rpc("events_partition_health");
+    expect(health.data ?? [], "and do not create an occurred_at inversion").toEqual([]);
+  });
+
+  it("40. C4 citation: org-scoped, honest about scope, and survives a service-role caller", async () => {
+    // 0065. The citation anchors a report in the audit trail. Its subqueries are
+    // org-scoped EXPLICITLY rather than left to RLS, because
+    // events_chain_checkpoint holds one row PER ORG: relying on RLS made it
+    // raise 21000 "more than one row returned by a subquery used as an
+    // expression" for any caller that bypasses RLS. Caught by the migration's
+    // own verification block, which runs as postgres.
+    await svc.rpc("run_chain_checks_full");
+
+    const asAdmin = (await adminA.client.rpc("report_citation")).data as unknown as Record<
+      string,
+      unknown
+    >;
+    expect(asAdmin.scope, "an admin sees the org").toBe("org");
+    expect(asAdmin.chain_verified_through, "the checkpoint anchors the citation").not.toBeNull();
+    expect(asAdmin.chain_verified_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(asAdmin.chain_full_walk_at, "a full walk stamped it").not.toBeNull();
+
+    const asAgent = (await agentA1.client.rpc("report_citation")).data as unknown as Record<
+      string,
+      unknown
+    >;
+    expect(asAgent.scope, "an agent's figures are their own, and the citation says so").toBe("own");
+
+    // org B's citation must anchor to org B's chain, never org A's
+    const asB = (await agentB.client.rpc("report_citation")).data as unknown as Record<
+      string,
+      unknown
+    >;
+    expect(asB.chain_verified_hash, "org B must not be handed org A's anchor").not.toBe(
+      asAdmin.chain_verified_hash,
+    );
+
+    // A SERVICE-ROLE CALLER CANNOT PRODUCE A CITATION, AND THAT IS CORRECT.
+    // report_citation calls current_org_id() and current_role_gnk(), which 0007
+    // granted to `authenticated` only — service_role has no org and no role, so
+    // there is nothing for a citation to be scoped to. The failure is 42501 on
+    // the helper, not a defect here. (The first version of this test asserted
+    // no error and was simply wrong about what service_role can do.)
+    //
+    // The org-scoping fix this test exists for — subqueries returning MULTIPLE
+    // rows for an RLS-bypassing caller, because events_chain_checkpoint holds
+    // one row per org — is proven elsewhere and more strongly: 0065's own
+    // verification block calls report_citation() as `postgres`, with several
+    // orgs holding checkpoints, on every fresh database including CI's. Before
+    // the fix that block raised SQLSTATE 21000 and the migration would not apply.
+    const asService = await svc.rpc("report_citation");
+    expect(
+      asService.error?.code,
+      "service_role has no org, so the citation refuses rather than inventing one",
+    ).toBe("42501");
+  });
+
 });
