@@ -3,8 +3,13 @@
 > **For agentic workers:** implement task-by-task. Steps use checkbox (`- [ ]`)
 > syntax. **One task → implement → verify → commit → next task**
 > (`docs/08_BUILD_PLAYBOOK.md`). Commit format `T<phase>.<n>: description`.
-> **Commit, do not push** — the standing agreement. A push triggers a Vercel
-> deploy and is the operator's to run.
+> ~~**Commit, do not push** — the standing agreement. A push triggers a Vercel
+> deploy and is the operator's to run.~~ **SUPERSEDED 2026-08-23 — do not follow this.**
+> The agreement now is: push the branch for a free CI rehearsal, apply any hosted
+> migration in the order that change requires (additive → before the merge;
+> destructive → after the deploy is confirmed serving), merge, then verify the
+> deploy. Every session since has pushed, merged and deployed continuously; an
+> agent obeying the struck-through line would hold finished work back for no reason.
 
 **Goal:** ship the three items from the 2026-08-23 outside report that survived
 a code-level audit, plus the two dashboard corrections the report earned.

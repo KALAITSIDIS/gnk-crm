@@ -22,86 +22,106 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 
 ---
 
-## 0a. NEXT UP — nothing to build; four things waiting on a person (2026-08-26)
+## 0a. NEXT UP — the CRM is finished for Phase 1; what is left is data and four decisions (2026-08-28)
 
-**State:** `main` at `ab55a72`, tree clean, local and hosted both at **0055**,
-**897 unit / 58 RLS**, CI green for every merge SHA, production READY with 0
-runtime errors.
+**State:** `main` at `5d18d75`+, tree clean, local and hosted both at **0059**,
+**920 unit / 58 RLS / 205 E2E**, CI green, production READY.
 
-**The backlog has ZERO buildable items.** Verified with its own recipe — see
-`docs/BACKLOG.md` §*How to read this file*, and use it rather than reading the
-file by eye:
+**SECURITY POSTURE CHANGED TODAY: 2FA IS MANDATORY.** Both halves are live and
+coupled by a test — `MFA_REQUIRED = true` (proxy) and migration **0059** (the
+opt-in arm is gone from `mfa_satisfied()`). A session without a second factor
+now reads NOTHING, whatever client it uses. Both operators confirmed sign-in
+afterwards. Flipping either half alone fails the RLS suite on purpose; see
+DECISIONS `T-mfa-mandatory`.
 
-```bash
-grep -n '^- \*\*' docs/BACKLOG.md | grep -v '(original)' | grep -v 'HISTORICAL' | grep -v 'NOTE —'
-```
+### The only thing that actually matters now
 
-### What is actually outstanding, ranked by risk × cost
+**Production holds ONE property (PAF0001) and 2 contacts.** Everything below is
+secondary to entering real listings. The reference counter was reset on
+2026-08-28 so the next one is **PAF0002**.
 
-| # | Item | Cost | Why it is first / last |
+The tools that pay off the moment data exists: **`/properties/worklist`** (what
+each listing is missing, ranked by recoverable points), **Create similar**, the
+**pricing panel**, and the new **VAT panel**. PAF0001 itself sits at 85/100,
+needing only photos (15) and an assigned agent (5).
+
+### Waiting on a person — nothing here is engineering work
+
+| # | Item | Who | Note |
 |---|---|---|---|
-| ~~1~~ | ~~**Copy the offsite backup off this machine**~~ **DONE 2026-08-26 — copied to a USB stick (`E:`, Transcend, FAT32) at `E:\gnk-offsite-2026-08-26\`** | — | **The CRM and its backups no longer share one disk.** 873 nightly files SHA256-compared source vs USB: 0 missing, 0 extra, 0 mismatches. Both archives verified against their sidecars and `gzip -t`. **STILL NEEDS A HUMAN: the stick must be STORED ELSEWHERE** — left in this machine it is the same fire/theft/flood as the original. **KEEP BOTH ARCHIVES — they are NOT duplicates:** the nightly job prunes, so 2026-08-07…08-10 survive ONLY in the 08-23 archive (gone from disk), while 08-24…08-27 are only in the new one; 22 distinct sets across the two. **CORRECTION — I wrote here this morning that no restore test had ever been done. That was FALSE**: `docs/BACKUP_RESTORE.md` §4b/§4c record drills from 2026-08-05/06, and the operator asked for a restore test on the strength of my wrong line. **A further drill ran 2026-08-26 (§4d) and PASSES** — the `2026-08-27` set restores with 26/26 tables matching row-for-row and, decisively, `md5(string_agg(hash,',' order by id))` over `events` is `88a742c4…` across 116 rows on BOTH the restored database AND live production, so the restore reproduces real evidence rather than hashes re-minted on the way in. **`README.txt` on the USB was CORRECTED 2026-08-27** — it carried the same false claim for a day, and the correction is recorded in the file rather than quietly deleted. While the stick was plugged in: both archives re-verified OK after their first trip out, and **every set on the stick was confirmed to have `preamble=0`** — they all predate the 2026-08-26 fix, so the README now leads with the four `create extension` lines a restore from this stick needs first, and the `grep -c 'gnk: extension preamble'` test for telling old sets from new. |
-| ~~2~~ | ~~**Verify `default_mandate_terms`**~~ **DONE 2026-08-26 (0056)** — operator confirmed 3% / **exclusive** / 6 months; only `mandate_type` changed from the 0038 placeholder. `verified_at` stamped, 3 of 8 rows now verified. The four remaining unverified rows have ZERO code references and must be verified BEFORE anything is built on them. |
-| ~~3~~ | ~~**Leaked-password protection**~~ **ASSESSED 2026-08-28 — NOT A REAL GAP; do not pay for Pro** | — | It is Pro-only (docs) and this org is on **free**. More to the point there is **nothing for it to check**: `inviteUser` mints every password as `randomBytes(9).toString("base64url")` (72 bits), and there is no forgot-password link, no change-password UI and no SMTP — **no human has ever chosen a password here**. The advisor lint is generic and its presence is EXPECTED, not a regression. Re-open when a change-password or signup flow lands; the free fix then is the HIBP range API (k-anonymity, no key, no plan). **Still worth doing free:** min length + required characters (Auth → Providers → Email). **⚠️ NEVER `supabase config push` to set it** — config.toml carries `site_url=127.0.0.1` and `enable_signup=true` and would open public signup on the CRM. **The untracked real risk: the handed-over temp password is PERMANENT.** |
-| ~~4~~ | ~~**"Top agents by activity"**~~ **DONE 2026-08-26 (0057)** | — | Operator dropped it and replaced it with **nothing**. Card gone, `top_actors30` gone from `admin_dashboard_stats`, 3 orphaned i18n keys gone, RLS test 22 inverted to assert the key is ABSENT. See DECISIONS T-top-agents. |
-| ~~5~~ | ~~**`properties.status` vs a live hold**~~ **DECIDED 2026-08-26 — stays INDEPENDENT** | — | Operator declined the coupling. **Do not build the trigger**; it is settled, not unbuilt. No code changed — independence was verified at every layer (no trigger on `reservations`, `expire_reservations()` never touches `properties`, no reservation flow writes a property row). See DECISIONS T-C. |
-| ~~6~~ | ~~**VAT treatment derived**~~ **DONE 2026-08-27** | — | A live panel on the property Details tab, **no migration**. Derives from the 0058-verified `cyprus_config.vat_property` and **refuses rather than invents** — no rate is hardcoded, a malformed row yields `cannot_derive`. **The cliff is the feature:** €1 over €475.000 costs ~€49.000 of relief because the WHOLE purchase re-rates, proven in a test and in the browser. Also flags a `vat_status` of `reduced_rate_eligible` the caps refuse — matching trusts that field. Buyer eligibility, the covered-area assumption and the 2026-12-31 transitional regime are stated as limits, not hidden. See DECISIONS T-vat. |
+| 1 | **Store the USB offsite** | operator | It is verified and restore-proven but only helps if it leaves the building. |
+| 2 | **B4 contracts** (IMPROVEMENTS) | operator | Viewing confirmation shipped (0027); the two contract templates are **blocked on supplied wording**, not on code. |
+| 3 | **A9 field CWV** (IMPROVEMENTS) | operator | LCP/CLS/INP need a VISIBLE browser — a 30-second DevTools Lighthouse run. Server timing was already fixed (`fra1`, ~3x). |
+| 4 | **Unequal purchaser shares** | operator | A1's follow-up: the calculator assumes EQUAL shares. A per-share list is ~a day, and the entry says to ask the agents before building it. |
 
-**ANSWERED and closed this session:** `contacts.preferences` (dropped, 0055),
-mandatory 2FA (agreed, deferred — see below), `default_mandate_terms` (verified,
-0056), **`properties.status` vs holds (declined — stays independent)**, and
-**"top agents by activity" (dropped, 0057, nothing replaced it)**. **ONE operator
-decision remains open: VAT**, and it is blocked on verifying
-`cyprus_config.vat_property`.
+### Buildable, none of it started, all of it weeks
 
-### The three traps this session paid for. Read these before touching anything.
+`IMPROVEMENTS.md` §C is the honest remaining roadmap: **C3** public listing API
+(2w), **C4** reporting engine beyond commission evidence (2w), **C5** event-log
+partitioning (1w), **C7** role model beyond the three fixed roles (1.5w).
+`docs/BACKLOG.md` has **zero** buildable items — verify with its own recipe, do
+not eyeball it.
 
-1. **A `VERIFY:` line answers "is this built", NEVER "is this still wanted".**
-   The map shortlist's checks kept returning `0` — the correct state for two
-   items the operator had DECLINED — while the parent entry read as open. Same
-   class of failure rebuilt the contact portfolio tab four days after it shipped.
-2. **THE DEPLOY ORDER INVERTS FOR A DESTRUCTIVE MIGRATION.** §0's rule (hosted
-   migration BEFORE the merge) is for ADDITIVE changes. For a DROP, reads survive
-   (`select("*")` returns one column fewer) but the live code's UPDATEs error —
-   0055 would have 500'd **GDPR erasure**, whose patch set `preferences: {}`.
-   Order for a drop: merge → deploy → **confirm the deployed SHA** → then drop.
-3. **What goes stale is what nothing checks.** Every backlog entry carrying a
-   `VERIFY:` was still accurate; the two that were wrong had none. One of those
-   warned of an admin with no second factor — production showed both admins
-   enrolled and signing in that week. **Re-measure a security claim before
-   acting on it.**
+### THREE DOCS ARE NOW WRONG. Fix them before trusting them.
 
-### Mandatory 2FA: ON since 2026-08-28 (was decided YES 2026-08-26, held for the harness)
+1. **`IMPROVEMENTS.md` §D says "Hard delete anywhere" is not recommended** —
+   "the append-only hash-chained `events` spine *is* the commission evidence".
+   Production has now been hard-deleted TWICE: ~19 properties on 2026-08-22 and
+   four on 2026-08-28 (operator-instructed, test records, after the cost was
+   explained). **28 property events now point at rows that no longer exist.**
+   The chain still verifies — events were never touched — but the guidance and
+   the practice disagree, and one of them should change.
+2. **`IMPROVEMENTS.md` C2 still describes 2FA as opt-in enrolment.** It has been
+   mandatory since 2026-08-28.
+3. **`IMPROVEMENTS_EXECUTION.md` still says "Commit, do not push — the standing
+   agreement."** That was superseded on 2026-08-23; this session pushed, merged
+   and deployed continuously. A future agent reading it will hold work back.
 
-**CONFIRMED BY THE OPERATOR 2026-08-28: both production users signed in normally after the flip** — the one check that mattered, because a second factor that locks out the desk is worse than none. Both already held a verified factor, so their sessions were aal2 before the change and nothing about their login altered.
+### A10 leaked-password: assessed, and it is NOT a gap here
 
-It binds nobody today (two users, both enrolled). Enabling needs a **test-harness
-project**, measured not guessed:
+Pro-only, and this org is free — but more to the point **there is nothing for it
+to check**. `inviteUser` mints every password as `randomBytes(9)` (72 bits) and
+there is no forgot-password link, no change-password UI and no SMTP. No human
+has ever chosen a password in this system. The advisor lint's PRESENCE is
+expected. Re-open when a password-change flow lands; the free fix then is the
+HIBP range API, not a plan upgrade. The free half (length + character classes)
+was set in the dashboard on 2026-08-28.
 
-* database half → RLS suite **58 passing → 4 failed / 16 passed / 38 skipped**
-* app half → `tests/e2e/auth.setup.ts` asserts the Dashboard heading after login;
-  the factor-less seed admin lands on `/security`, and it is a `dependency` of
-  every project, so **all 204 E2E tests fall**
+### Where "what remains" actually lives — surveyed 2026-08-28
 
-**BOTH HALVES ARE NOW ON** — `MFA_REQUIRED = true` and migration **0059**, shipped together and coupled by a test that asserts the database against the constant. The harness fixed both cliffs at source: RLS **58/58 under BOTH rules**, E2E **205 passed / 1 skipped**. **Never flip one half alone** — a factor-less
-session then sees `/contacts` report an empty database over 169 rows while
-`/dashboard` 500s. The reminder is wired to the **Invite user dialog**, so the
-"before the next hire" trigger fires where someone will see it.
+Checked, so the next session does not re-survey: **no open GitHub issues, no
+open PRs**, 30 markdown files in the repo. The unchecked boxes in `CLAUDE.md`,
+`IMPROVEMENTS_EXECUTION.md` §checklist and `BACKUP_RESTORE.md` §5 are
+definition-of-done TEMPLATES — they are supposed to be empty and are not work.
 
-### And the thing that has been true for nineteen days
+**`docs/superpowers/plans/` was the one real trap.** Its three plans carried
+**118 unchecked steps and zero ticked**, for work shipped weeks ago (0029, 0030,
+0031, 0032 — DB 2FA, the property map, the RLS helper hoist). Nothing said so.
+Each now opens with a **DO NOT EXECUTE** banner naming the migration that
+delivered it, because a plan that reads as 42 open steps invites a future agent
+to rebuild production. The C2 plan also carried a second hazard: it describes
+building the opt-in arm that **0059 has since removed**.
 
-**Sixteen features shipped 2026-08-24 → 26. Production holds 3 properties, 2
-contacts, 0 reservations, 0 buyer requirements, and has never raised a system
-task.** Most of those features read a table that is empty.
+`IMPROVEMENTS.md` §C is the honest remaining roadmap; `docs/BACKLOG.md` is at
+zero buildable items; the specs under `docs/superpowers/specs/` are design
+records with no checkboxes and nothing outstanding.
 
-Three work on day one with nothing but real listings entered:
-**`/properties/worklist`** (what each listing is missing, ordered by the points an
-afternoon recovers), **Create similar** (prefills a new property from an existing
-one), and the **pricing panel** (asking ↔ owner net ↔ commission with the
-negotiating floor).
+### Traps this session paid for
 
-**The most useful next session is not a build.** It is the operator entering real
-listings and working the worklist down.
+1. **A doc that warns about a trap but still contains it is worse than
+   silence.** `supabase/dev-fixtures.sql` documented "district codes duplicate
+   per org, scope by org_id" in its header and used unscoped lookups anyway.
+2. **On Windows, `ps aux | grep` cannot see Windows processes.** It reported
+   zero Playwright processes while three were running; two suites then fought
+   for the auth service and a TOTP enrol timed out at 11s. Use PowerShell
+   `Get-Process`.
+3. **React resets an uncontrolled form after a server action settles** — so a
+   FAILED create empties the boxes. Anything reading those inputs afterwards
+   reads blanks, which is how the new-property draft briefly overwrote itself.
+4. **`/session-clock` blamed the machine clock when all three clocks agreed to
+   the second.** It fires on PGRST303, which `lib/supabase/clock-skew.ts`
+   records hitting production three times before. The remedy is signing in
+   again, not correcting a clock.
 
 ## 0a-prev. The project availability share link (2026-08-22)
 

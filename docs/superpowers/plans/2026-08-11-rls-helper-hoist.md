@@ -1,3 +1,13 @@
+> # ✅ COMPLETE — SHIPPED. DO NOT EXECUTE.
+>
+> Delivered as migrations **0030** (`hoist_rls_helpers`) and **0032**
+> (`hoist_auth_uid`), both live on hosted. The measured result is recorded
+> in DECISIONS `T-rls-hoist` — the helpers were being called once per row,
+> and two instruments disagreed about it.
+>
+> The checkboxes below were never ticked. **Their unticked state is
+> bookkeeping, not outstanding work.**
+
 # RLS Helper Hoist Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
