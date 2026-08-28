@@ -54,13 +54,34 @@ needing only photos (15) and an assigned agent (5).
 | 3 | **A9 field CWV** (IMPROVEMENTS) | operator | LCP/CLS/INP need a VISIBLE browser — a 30-second DevTools Lighthouse run. Server timing was already fixed (`fra1`, ~3x). |
 | 4 | **Unequal purchaser shares** | operator | A1's follow-up: the calculator assumes EQUAL shares. A per-share list is ~a day, and the entry says to ask the agents before building it. |
 
-### Buildable, none of it started, all of it weeks
+### Buildable: PHASE C IS THE DECIDED NEXT PROJECT (2026-08-28)
 
-`IMPROVEMENTS.md` §C is the honest remaining roadmap: **C3** public listing API
-(2w), **C4** reporting engine beyond commission evidence (2w), **C5** event-log
-partitioning (1w), **C7** role model beyond the three fixed roles (1.5w).
-`docs/BACKLOG.md` has **zero** buildable items — verify with its own recipe, do
-not eyeball it.
+The operator has decided to build **all of `IMPROVEMENTS.md` §C**. The brief
+is **`docs/PHASE_C_BRIEF.md`** — a re-audit against the code, not the roadmap's
+prose. Start there, not at §C itself.
+
+**Order is C5 → C4 → C3 → C7**, and C7 stays gated on a real second-office
+requirement. The brief carries the three findings that matter most, none of
+which appear in `IMPROVEMENTS.md`:
+
+1. **`verify_events_chain` returns a bare boolean** — when it says `false` it
+   tells you nothing about WHERE, and it will say `false` exactly when someone
+   is under pressure. Returning the failing id is the highest-value hour in
+   the whole phase.
+2. **The hash covers `occurred_at::text`, which is session-timezone
+   dependent.** C5 is the only moment that table is open; fixing it needs a
+   `hash_version` column so existing evidence stays verifiable.
+3. **Materialised views do not respect RLS.** C4 is described as "a
+   materialised-view problem"; an MV over `events` is computed once for
+   everyone, and reading it from a SECURITY INVOKER function does NOT
+   re-apply row security. That is a cross-org leak waiting to be written.
+
+**I advised against building §C now** — production holds 1 property, 2
+contacts and 119 events, and C5 partitions a 144 kB table. The operator
+decided to proceed; that is recorded in the brief's §0 along with what it
+changes about scope (build for the SHAPE of the data, not its volume; any
+metric that cannot be checked against real data ships with a synthetic
+fixture that supplies it). Do not re-litigate it.
 
 ### THREE DOCS ARE NOW WRONG. Fix them before trusting them.
 
