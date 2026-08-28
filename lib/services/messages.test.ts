@@ -32,6 +32,11 @@ const SAMPLE_PARAMS = {
   status: "OK",
   when: "21 Jul 2026, 09:14",
   hash: "abc123",
+  // reports.performance (0065): the citation names an event id, and the stage
+  // funnel names its two outcomes
+  id: 121,
+  won: 2,
+  lost: 1,
   message: "detail",
   max: 500,
   // events namespace
