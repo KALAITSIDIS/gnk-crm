@@ -882,7 +882,16 @@ find.
 
 > **`scripts/backup/capture.mjs` now writes a `CREATE EXTENSION IF NOT EXISTS`
 > preamble into `pg_dump.sql`, and REFUSES to promote a set that is missing one
-> or that uses an extension the preamble does not create.** Proven both ways: a
+> or that uses an extension the preamble does not create.**
+>
+> **CONFIRMED IN THE FIRST SCHEDULED RUN.** The 2026-08-28 nightly (03:45,
+> unattended) promoted with `exit=0`, 52/52 SHA256SUMS OK, `verified: true`,
+> `problems: []`, events inDump 116 = live 116, and all four `CREATE EXTENSION`
+> lines present. **It is the first set in this repository that restores into a
+> fresh database with no manual step.** Retention pruned 2026-08-11, which
+> survives in both offsite archives.
+>
+> Proven both ways before that: a
 > produced dump restores into a bare database with **0 errors** (35 tables, all
 > four geography tables present), and a deliberately sabotaged run — postgis
 > removed from the list — was refused with *"uses postgis but the preamble does

@@ -1152,9 +1152,26 @@ explicit direction.
   (k-anonymity: send the first 5 chars of the SHA-1, never the password; no key,
   no plan). That makes the Pro feature permanently unnecessary.
 
-  **DO THE FREE HALF NOW ANYWAY** — minimum password length and required
-  character classes are NOT Pro-gated (Auth → Providers → Email). They cost
-  nothing and are already right on the day a password screen appears.
+  **THE FREE HALF IS DONE — operator set minimum length and required character
+  classes in the dashboard on 2026-08-28** (Auth → Providers → Email; neither
+  is Pro-gated). **The exact values are NOT recorded here because nothing in
+  this repo can read the hosted auth config** — no MCP tool, no Management API
+  token — so treat the dashboard as the source of truth and do not assume.
+
+  **THAT CHANGE ALMOST LOCKED BOTH USERS OUT, and the fix is in `login()`.**
+  Supabase keeps letting existing users in after requirements tighten but
+  returns a `weak_password` error ALONGSIDE the session. `login()` destructured
+  only `error`, and `isCredentialRejection` rightly refuses to call that a bad
+  password, so it landed in the infrastructure branch: "Sign-in is temporarily
+  unavailable", a Sentry exception, and a REFUSED login on correct
+  credentials. Every password here is `randomBytes(9).toString("base64url")` —
+  12 chars over [A-Za-z0-9-_], which contains no symbol ~68% of the time
+  ((62/64)^12), so under the strictest setting each user had about a 2-in-3
+  chance of being refused, with no change-password screen and no SMTP to
+  recover through. Fixed 2026-08-28 (`568e83a`): the guard is now
+  `if (error && !data?.session)` — **a session having been established is the
+  fact that matters; an error beside it is a warning, not a refusal.** Both
+  production users confirmed signing in afterwards.
 
   **THE REAL EXPOSURE IS DIFFERENT AND UNTRACKED: the handed-over temp password
   is PERMANENT**, because nothing in the app can change it. That deserves more
