@@ -1294,6 +1294,124 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(rpcAnon.error, "run_chain_checks must be revoked from anon").not.toBeNull();
   });
 
+  it("21b. events_chain_checkpoint: org-scoped read, no app writes, RPCs service-only", async () => {
+    // 0062. Same audience and lockdown as chain_checks (test 21) — a new table
+    // inherits NONE of it, which is HANDOFF §4.1.
+    await svc.rpc("run_chain_checks_full");
+
+    for (const u of [adminA, agentA1, lmA]) {
+      const { data, error } = await u.client
+        .from("events_chain_checkpoint")
+        .select("org_id, last_id, last_hash, verified_at, full_walk_at");
+      expect(error).toBeNull();
+      expect(data, "staff see exactly their own org's checkpoint").toHaveLength(1);
+      expect(data![0].org_id).toBe(ORG_A);
+      expect(data![0].full_walk_at, "the seeding pass was a full walk").not.toBeNull();
+    }
+
+    const { data: bRows } = await agentB.client.from("events_chain_checkpoint").select("org_id");
+    expect((bRows ?? []).map((r) => r.org_id)).not.toContain(ORG_A);
+
+    const anon = anonClient();
+    const { data: anonRows } = await anon.from("events_chain_checkpoint").select("org_id");
+    expect(anonRows ?? [], "anon must not read checkpoints").toHaveLength(0);
+
+    // writes: no policies + revoked grants
+    const ins = await adminA.client
+      .from("events_chain_checkpoint")
+      .insert({ org_id: ORG_A, last_id: 1, last_hash: "x", verified_at: new Date().toISOString() });
+    expect(ins.error, "admin INSERT must fail").not.toBeNull();
+    const upd = await adminA.client
+      .from("events_chain_checkpoint")
+      .update({ last_hash: "tampered" })
+      .eq("org_id", ORG_A)
+      .select("org_id");
+    expect(upd.data ?? [], "admin UPDATE must move nothing").toHaveLength(0);
+    const del = await adminA.client
+      .from("events_chain_checkpoint")
+      .delete({ count: "exact" })
+      .eq("org_id", ORG_A);
+    expect(del.count ?? 0, "admin DELETE must remove nothing").toBe(0);
+
+    for (const client of [adminA.client, anon]) {
+      const full = await client.rpc("run_chain_checks_full");
+      expect(full.error, "run_chain_checks_full is service/cron only").not.toBeNull();
+      const adv = await client.rpc("advance_chain_checkpoint", { p_org: ORG_A, p_full: false });
+      expect(adv.error, "advance_chain_checkpoint is service/cron only").not.toBeNull();
+    }
+  });
+
+  it("21c. incremental verification resumes, catches a tamper after the anchor, and refuses to advance past damage", async () => {
+    // 0062. The point of the checkpoint, asserted rather than assumed.
+    await svc.rpc("run_chain_checks_full");
+    const { data: anchored } = await svc
+      .from("events_chain_checkpoint")
+      .select("last_id, last_hash, full_walk_at")
+      .eq("org_id", ORG_A)
+      .single();
+
+    const { count: total } = await svc
+      .from("events")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", ORG_A);
+
+    const { data: resumed } = await svc.rpc("advance_chain_checkpoint", {
+      p_org: ORG_A,
+      p_full: false,
+    });
+    expect(resumed?.[0]?.ok).toBe(true);
+    expect(resumed?.[0]?.from_id, "it resumed from the anchor, not from genesis").toBe(
+      anchored!.last_id,
+    );
+    expect(
+      resumed?.[0]?.walked,
+      "an incremental pass must not re-walk the whole chain",
+    ).toBeLessThan(total ?? Number.MAX_SAFE_INTEGER);
+
+    const { data: victim } = await svc
+      .from("events")
+      .insert({
+        org_id: ORG_A,
+        entity_type: "config",
+        event_type: `cp_tamper_${run}`,
+        payload: {},
+      })
+      .select("id, event_type")
+      .single();
+
+    try {
+      await svc.from("events").update({ event_type: "TAMPERED" }).eq("id", victim!.id);
+      const caught = await svc.rpc("advance_chain_checkpoint", { p_org: ORG_A, p_full: false });
+      expect(caught.data?.[0], "the incremental pass names the tampered row").toMatchObject({
+        ok: false,
+        failed_id: victim!.id,
+        reason: "hash_mismatch",
+      });
+
+      const { data: after } = await svc
+        .from("events_chain_checkpoint")
+        .select("last_id")
+        .eq("org_id", ORG_A)
+        .single();
+      expect(
+        after!.last_id,
+        "a failed walk leaves the anchor at the last KNOWN-GOOD position rather than stepping over the damage",
+      ).toBe(anchored!.last_id);
+    } finally {
+      await svc.from("events").update({ event_type: victim!.event_type }).eq("id", victim!.id);
+    }
+
+    await svc.rpc("run_chain_checks_full");
+    const { data: fresh } = await svc
+      .from("events_chain_checkpoint")
+      .select("last_id")
+      .eq("org_id", ORG_A)
+      .single();
+    expect(fresh!.last_id, "a clean full walk re-anchors past the restored row").toBeGreaterThan(
+      anchored!.last_id,
+    );
+  });
+
   it("22. admin_dashboard_stats: SECURITY INVOKER — org-scoped, exact, anon denied", async () => {
     // PERF-3 (migration 0018). The dashboard used to sum money in TS over
     // .limit(2000) fetches, so the € tiles silently undercounted past the cap.
