@@ -1731,6 +1731,24 @@ export type Database = {
           },
         ]
       }
+      public_listing_attempts: {
+        Row: {
+          attempts: number
+          ip_hash: string
+          window_start: string
+        }
+        Insert: {
+          attempts?: number
+          ip_hash: string
+          window_start: string
+        }
+        Update: {
+          attempts?: number
+          ip_hash?: string
+          window_start?: string
+        }
+        Relationships: []
+      }
       reference_counters: {
         Row: {
           district_code: string
@@ -2976,6 +2994,10 @@ export type Database = {
         Args: { p_district_code: string; p_org: string }
         Returns: string
       }
+      note_public_listing_hit: {
+        Args: { p_ip_hash: string; p_limit?: number }
+        Returns: boolean
+      }
       note_share_link_miss: {
         Args: { p_ip_hash: string; p_limit?: number }
         Returns: boolean
@@ -3031,6 +3053,55 @@ export type Database = {
       }
       postgis_version: { Args: never; Returns: string }
       postgis_wagyu_version: { Args: never; Returns: string }
+      public_listings: {
+        Args: { p_limit?: number; p_offset?: number; p_org_slug: string }
+        Returns: {
+          area: string
+          asking_price: number
+          basement_sqm: number
+          bathrooms: number
+          bedrooms: number
+          construction_status: string
+          covered_area_sqm: number
+          currency: string
+          delivery_date: string
+          district: string
+          energy_class: string
+          features: string[]
+          floor_number: number
+          has_storage: boolean
+          kind: Database["public"]["Enums"]["property_kind"]
+          parking_spaces: number
+          plot_area_sqm: number
+          property_type: Database["public"]["Enums"]["property_type"]
+          public_description: Json
+          published_at: string
+          reference: string
+          rent_price_month: number
+          roof_garden_sqm: number
+          sea_distance_m: number
+          short_description: Json
+          title: Json
+          title_deed_status: Database["public"]["Enums"]["title_deed_status"]
+          total_floors: number
+          transaction_type: Database["public"]["Enums"]["transaction_type"]
+          updated_at: string
+          vat_status: Database["public"]["Enums"]["vat_status"]
+          veranda_sqm: number
+          wc: number
+          year_built: number
+        }[]
+      }
+      public_listings_etag: { Args: { p_org_slug: string }; Returns: string }
+      published_below_threshold: {
+        Args: never
+        Returns: {
+          quality_score: number
+          reference: string
+          updated_at: string
+          visibility: Database["public"]["Enums"]["visibility_level"]
+        }[]
+      }
       raise_key_recall_tasks: {
         Args: { p_actor?: string; p_mandate?: string }
         Returns: number

@@ -4018,4 +4018,260 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     ).toBe("42501");
   });
 
+  it("41. C3 public listings: anon sees only public+available, and only allowlisted columns", async () => {
+    /**
+     * 0066. The brief's acceptance criterion, and the reason this is the only
+     * Phase C item that opens a new public surface.
+     *
+     * THE PREDICATE IS `visibility = 'public' AND status = 'available'`, NOT the
+     * quality score. The brief asks for the score to be re-checked here on the
+     * premise that "a listing below 70 cannot be made public internally". It
+     * can: lib/actions/properties.ts lets an admin publish below the threshold
+     * with an audited `publish_override` event, and no DB constraint ties
+     * visibility to the score. Re-checking would silently undo that audited
+     * decision. Operator decision 2026-08-29; published_below_threshold() keeps
+     * the drift visible instead, and test 42 covers it.
+     */
+    const anon = anonClient();
+    const mkProp = async (
+      org: string,
+      ref: string,
+      visibility: string,
+      status: string,
+      extra: Record<string, unknown> = {},
+    ) => {
+      const { data, error } = await svc
+        .from("properties")
+        .insert({
+          org_id: org,
+          reference: ref,
+          property_type: "apartment",
+          visibility,
+          status,
+          asking_price: 250000,
+          bedrooms: 2,
+          ...extra,
+        })
+        .select("id")
+        .single();
+      if (error) throw error;
+      return data.id as string;
+    };
+
+    const pub = `PUB-${run}`;
+    const draft = `DRAFT-${run}`;
+    const priv = `PRIV-${run}`;
+    const arch = `ARCH-${run}`;
+    const sold = `SOLD-${run}`;
+    const otherOrg = `OTHERORG-${run}`;
+
+    // the one that SHOULD appear, carrying values in withheld columns so a leak
+    // would be detectable by value and not only by column name
+    await mkProp(ORG_A, pub, "public", "available", {
+      internal_notes: "SECRET-INTERNAL-NOTE",
+      min_acceptable_price: 199000,
+      owner_net_price: 180000,
+      address: "12 Secret Street",
+      postal_code: "8001",
+      quality_score: 85,
+    });
+    // and the ones that must NOT
+    await mkProp(ORG_A, draft, "public", "draft");
+    await mkProp(ORG_A, priv, "private", "available");
+    await mkProp(ORG_A, arch, "archived", "available");
+    await mkProp(ORG_A, sold, "public", "sold");
+    await mkProp(ORG_B, otherOrg, "public", "available");
+
+    const { data, error } = await anon.rpc("public_listings", { p_org_slug: "test-org-a" });
+    expect(error, "anon must be able to read the public feed").toBeNull();
+    const rows = (data ?? []) as unknown as Array<Record<string, unknown>>;
+    const refs = rows.map((r) => r.reference);
+
+    expect(refs, "a public, available listing is in the feed").toContain(pub);
+    expect(refs, "a DRAFT must not be published").not.toContain(draft);
+    expect(refs, "a PRIVATE listing must not be published").not.toContain(priv);
+    expect(refs, "an ARCHIVED listing must not be published").not.toContain(arch);
+    expect(refs, "a SOLD listing must not be published").not.toContain(sold);
+    expect(refs, "another org's listing must not appear in this org's feed").not.toContain(
+      otherOrg,
+    );
+
+    // --- the withheld list, asserted BY NAME ------------------------------
+    // The brief: "A test asserts the withheld column list by name, so adding a
+    // column to `properties` cannot silently publish it." `properties` has 69
+    // columns and the feed is an allowlist of 34, so this is the half that
+    // catches a future mistake.
+    const row = rows.find((r) => r.reference === pub)!;
+    const WITHHELD = [
+      "id",
+      "org_id",
+      "parent_id",
+      "internal_notes",
+      "address",
+      "postal_code",
+      "location",
+      "location_approx",
+      "min_acceptable_price",
+      "owner_net_price",
+      "owner_contact_id",
+      "developer_contact_id",
+      "assigned_agent_id",
+      "created_by",
+      "quality_score",
+      "unit_number",
+      "block",
+      "sold_at",
+      "share_of_land",
+      "encumbrances_notes",
+      "constraints_notes",
+      "amenities_notes",
+      "inherited_fields",
+      "permit_status",
+      "visibility",
+      "status",
+      "created_at",
+    ] as const;
+    for (const col of WITHHELD) {
+      expect(Object.keys(row), `the public feed must never return ${col}`).not.toContain(col);
+    }
+
+    // and by VALUE, in case a column is ever aliased into the feed under a
+    // different name
+    const serialised = JSON.stringify(row);
+    expect(serialised, "the internal note must not appear under any key").not.toContain(
+      "SECRET-INTERNAL-NOTE",
+    );
+    expect(serialised, "the walk-away price must not appear under any key").not.toContain("199000");
+    expect(serialised, "the owner net price must not appear under any key").not.toContain("180000");
+    expect(serialised, "the street address must not appear under any key").not.toContain(
+      "Secret Street",
+    );
+
+    // what it SHOULD carry, so the allowlist is not vacuously safe
+    expect(row.reference).toBe(pub);
+    expect(row.asking_price).not.toBeUndefined();
+    expect(row.bedrooms).toBe(2);
+
+    // --- anon cannot reach the underlying table at all --------------------
+    const direct = await anon.from("properties").select("reference").eq("reference", pub);
+    expect(direct.data ?? [], "anon must not read `properties` directly").toHaveLength(0);
+    const mandates = await anon.from("mandates").select("id");
+    expect(mandates.data ?? [], "anon must not read mandates").toHaveLength(0);
+  });
+
+  it("42. C3: the score is NOT the public predicate, and the drift is visible", async () => {
+    // 0066 + operator decision. A listing published below PUBLISH_THRESHOLD by
+    // an admin override stays in the feed, and published_below_threshold()
+    // reports it so nobody has to discover it by accident.
+    const anon = anonClient();
+    const ref = `LOWSCORE-${run}`;
+    const { error } = await svc.from("properties").insert({
+      org_id: ORG_A,
+      reference: ref,
+      property_type: "apartment",
+      visibility: "public",
+      status: "available",
+      quality_score: 12,
+    });
+    if (error) throw error;
+
+    const { data } = await anon.rpc("public_listings", { p_org_slug: "test-org-a" });
+    expect(
+      ((data ?? []) as unknown as Array<Record<string, unknown>>).map((r) => r.reference),
+      "an audited admin override must not be silently undone by the API",
+    ).toContain(ref);
+
+    const flagged = await adminA.client.rpc("published_below_threshold");
+    expect(flagged.error).toBeNull();
+    const rows = (flagged.data ?? []) as unknown as Array<{ reference: string; quality_score: number }>;
+    const mine = rows.find((r) => r.reference === ref);
+    expect(mine, "the drift must be visible to staff, not silent").toBeTruthy();
+    expect(mine!.quality_score).toBe(12);
+
+    // it reports quality scores, which the public feed withholds — so anon
+    // must not be able to run it
+    expect(
+      (await anon.rpc("published_below_threshold")).error,
+      "published_below_threshold must not be public",
+    ).not.toBeNull();
+  });
+
+  it("43. C3: the ETag changes when a listing LEAVES the feed, not only when one changes", async () => {
+    // 0066. max(updated_at) alone is not enough: unpublishing lowers the row
+    // count without moving the maximum, and a marketing site would keep serving
+    // a listing that is no longer for sale. The validator hashes the count too.
+    const anon = anonClient();
+    const ref = `ETAG-${run}`;
+    const { data: created, error } = await svc
+      .from("properties")
+      .insert({
+        org_id: ORG_A,
+        reference: ref,
+        property_type: "apartment",
+        visibility: "public",
+        status: "available",
+      })
+      .select("id, updated_at")
+      .single();
+    if (error) throw error;
+
+    const before = (await anon.rpc("public_listings_etag", { p_org_slug: "test-org-a" }))
+      .data as unknown as string;
+    expect(before, "the validator is an md5").toMatch(/^[0-9a-f]{32}$/);
+
+    // unpublish WITHOUT touching updated_at, which is the case a max()-only
+    // validator misses
+    await svc
+      .from("properties")
+      .update({ visibility: "private", updated_at: created.updated_at })
+      .eq("id", created.id);
+
+    const after = (await anon.rpc("public_listings_etag", { p_org_slug: "test-org-a" }))
+      .data as unknown as string;
+    expect(after, "removing a listing must change the validator").not.toBe(before);
+
+    const refs = (
+      ((await anon.rpc("public_listings", { p_org_slug: "test-org-a" })).data ??
+        []) as unknown as Array<Record<string, unknown>>
+    ).map((r) => r.reference);
+    expect(refs, "and the listing is gone from the feed").not.toContain(ref);
+  });
+
+  it("44. C3: the rate limiter counts per IP window and is its own budget", async () => {
+    // 0066. The 0023 idiom with a SEPARATE table: sharing share_link_attempts
+    // would let marketing-site polling exhaust a buyer's proposal-link budget.
+    const anon = anonClient();
+    const ip = `c3-${run}`;
+
+    const first = await anon.rpc("note_public_listing_hit", { p_ip_hash: ip, p_limit: 3 });
+    expect(first.error).toBeNull();
+    expect(first.data, "the first hit is under the limit").toBe(false);
+    await anon.rpc("note_public_listing_hit", { p_ip_hash: ip, p_limit: 3 });
+    await anon.rpc("note_public_listing_hit", { p_ip_hash: ip, p_limit: 3 });
+    const over = await anon.rpc("note_public_listing_hit", { p_ip_hash: ip, p_limit: 3 });
+    expect(over.data, "the fourth hit is over a limit of 3").toBe(true);
+
+    // a different IP has its own budget
+    const other = await anon.rpc("note_public_listing_hit", {
+      p_ip_hash: `${ip}-other`,
+      p_limit: 3,
+    });
+    expect(other.data, "another caller is unaffected").toBe(false);
+
+    // and the counter table itself is unreachable
+    const direct = await anon.from("public_listing_attempts").select("ip_hash");
+    expect(direct.data ?? [], "anon must not read the rate-limit counters").toHaveLength(0);
+    const adminRead = await adminA.client.from("public_listing_attempts").select("ip_hash");
+    expect(adminRead.data ?? [], "not even an admin reads them — no policy grants it").toHaveLength(
+      0,
+    );
+
+    // exhausting the PUBLIC budget must not affect share links (separate table)
+    const shareStill = await anon.rpc("note_share_link_miss", { p_ip_hash: ip, p_limit: 3 });
+    expect(
+      shareStill.data,
+      "the share-link budget is independent of the public API's",
+    ).toBe(false);
+  });
+
 });
