@@ -232,13 +232,27 @@ untouchable by it; a failed set is kept until a human looks at it.
 #### The nightly task — installed 2026-08-06
 
 ```
-Task     : "gnk-crm nightly backup"     Daily 03:45     Logon Mode: Interactive only
+Task     : "gnk-crm nightly backup"     Daily 03:45     Logon: S4U (since 2026-08-29)
+Settings : StartWhenAvailable + WakeToRun + runs-on-battery, 2h execution limit
 Runs     : C:\Users\user\.gnk-crm\run-backup.cmd
-Which is : node --env-file=…\backup.env capture.mjs --out …\gnk-backups --force --keep 14
+Which is : capture.mjs --out …\gnk-backups --force --keep 14
+           && offsite.mjs --keep 7        (REL-01: dated archive → OFFSITE_DIR, §3.3)
+           ;  notify.mjs --rc <final>     (REL-02: healthchecks ping, never fails the run)
 Log      : C:\Users\user\.gnk-crm\backup.log   (exit=N appended per run)
 REPO     : D:\dev\TSOPOZIDIS\gnk-crm        (repointed 2026-08-07)
 DEST     : D:\dev\TSOPOZIDIS\gnk-backups    (repointed 2026-08-07)
 ```
+
+> **The task no longer needs a logged-on user (2026-08-29).** It ran
+> "Interactive only" until the 2026-08-29 audit measured the cost: the 08-29
+> 03:45 run was silently skipped with nobody logged in, and `DisallowStartIf
+> OnBatteries` meant a laptop on battery skipped too. Now: S4U principal (runs
+> logged-out, no stored password), `StartWhenAvailable` (a missed 03:45 fires
+> when the machine comes back), `WakeToRun`, battery allowed — and the change
+> was proven by a real scheduler-context run the same evening (exit=0, full
+> chain incl. the off-site copy). S4U caveat: the OneDrive CLIENT syncs the
+> landed archive to the cloud only while someone is logged in; the file itself
+> lands locally regardless and syncs at next logon.
 
 `run-backup.cmd` hardcodes `REPO` and `DEST` as absolute paths, because Task
 Scheduler's working directory is not the repo. **Moving the workspace breaks
@@ -260,14 +274,25 @@ only `REPO` and `DEST` inside `run-backup.cmd` were repointed.
 Three things to know about it:
 
 - **It does nothing until `backup.env` exists.** Copy `backup.env.example`
-  alongside it and fill in the two credentials; until then every run exits `2`
-  and logs why.
-- **"Interactive only" means it runs when the user is logged on.** A machine that
-  is off or logged out at 03:45 silently takes no backup — check the log, or
-  Task Scheduler's Last Run Result, rather than assuming.
-- **It does not solve off-site** (§3.3), and since 2026-08-07 it is further from
-  solving it: `DEST` is now a second volume on the same machine, with no cloud
-  copy behind it.
+  alongside it and fill in the credentials; until then every run exits `2`
+  and logs why. Two optional keys arm the 2026-08-29 additions: `OFFSITE_DIR`
+  (the off-site leg skips-with-a-log-line without it) and `HEALTHCHECK_URL`
+  (the dead-man ping skips likewise until the operator creates the check).
+- **A machine that is OFF at 03:45 still takes no backup** — S4U +
+  StartWhenAvailable cover asleep/logged-out, not powered-off. That case is
+  exactly what the dead-man's switch exists for: `notify.mjs` pings
+  `HEALTHCHECK_URL` after every run (base URL on success, `/fail` otherwise),
+  and the SERVICE emails after ~26h of silence. **The switch is UNARMED until
+  the operator creates a healthchecks.io check (Period 1 day, Grace 2h) and
+  pastes its URL into `backup.env`** — the plumbing ships first so arming is
+  a paste, not a deploy. Treat the URL as a secret: whoever holds it can fake
+  liveness.
+- **Off-site is now a nightly side effect, not a chore** (§3.3): after a
+  VERIFIED capture, `offsite.mjs` re-checks the newest set's own SHA256SUMS on
+  disk, archives the whole `gnk-backups/` folder, copies the dated archive to
+  `OFFSITE_DIR`, re-hashes the DESTINATION copy, and keeps the newest 7. An
+  off-site failure fails the night — an unshipped backup is the gap the step
+  exists to close.
 
 #### Two API-key facts that cost an evening on 2026-08-06/07
 
@@ -608,7 +633,7 @@ restore cannot report success. `--verify-only` runs that check without writing.
 > already uses. If you ever do get `storage cp` working, verify it against the
 > hashes rather than the file count.
 
-### 3.3 Off-site
+### 3.3 Off-site — AUTOMATED since 2026-08-29
 
 `../gnk-backups/` sits outside the repo deliberately.
 
@@ -620,8 +645,32 @@ restore cannot report success. `--verify-only` runs that check without writing.
 > box, so it survives nothing that takes the machine with it. Until a set is
 > copied off, the off-site gap is total.
 
-Copy the dated folder somewhere that is neither this machine nor the same
-Supabase account.
+**CLOSED as a standing chore on 2026-08-29 (audit REL-01, DECISIONS
+T-offsite):** every nightly now ends with `scripts/backup/offsite.mjs`, which
+archives the whole `gnk-backups/` folder into a DATED
+`gnk-backups-offsite-<date>.tar.gz`, copies it into
+`OFFSITE_DIR = C:\Users\user\OneDrive\gnk-backups-offsite\`, **re-hashes the
+destination copy** (a checksum computed only on the source proves nothing about
+what arrived), and keeps the newest 7. Before archiving it re-verifies the
+newest set's own SHA256SUMS on disk, so a corrupt set is never shipped with a
+clean archive checksum around it.
+
+> **The destination is OneDrive, and the paragraph above still applies —
+> the trade was accepted with eyes open, not forgotten.** Sync propagates a
+> local deletion or encryption. What blunts it: each night writes a NEW dated
+> filename (yesterday's file is never rewritten by the pipeline), retention
+> deletes only what `--keep 7` names, and OneDrive's own file versioning
+> backstops a corrupted overwrite. What it does NOT cover: an attacker or
+> accident deleting the whole destination folder syncs that deletion up
+> (recycle-bin recovery aside). **The USB therefore remains the offline second
+> copy, and copying it is still an operator chore** — but the nightly cloud
+> copy means a stale USB no longer leaves the gap total. Whether a landed file
+> reaches Microsoft's servers is the OneDrive client's job and needs a
+> logged-on session; under the S4U task the file lands locally regardless and
+> syncs at next logon.
+
+For a manual copy to anywhere else, the recipe is unchanged: somewhere that is
+neither this machine nor the same Supabase account.
 
 **Package it as one checksummed archive** so the transfer is a single verifiable
 step rather than 84 files that might arrive partially:
@@ -682,19 +731,15 @@ Deleting them cost nothing that is not still on disk: an archive is a
 repackaging of `gnk-backups/`, all eight sets of which are untouched, and
 rebuilding one is the single `tar` command above.
 
-> **STILL ON THIS MACHINE — the off-site gap is OPEN as of 2026-08-23.** The
-> operator's plan is to copy it to a USB drive; **until that happens nothing has
-> changed**, and no line in this repo should be read as saying otherwise. There
-> was no removable drive attached when the archive was built, and `D:` is a
-> second volume on the same box. OneDrive is not a substitute: it syncs, so a
-> deletion or an encryption propagates.
->
-> **Verify AT THE DESTINATION, not here** — a checksum computed on the machine
-> you copied from proves nothing about what arrived:
->
-> ```bash
-> sha256sum -c gnk-backups-offsite-2026-08-23.tar.gz.sha256
-> ```
+> **RESOLVED 2026-08-29.** The 2026-08-23 archive is preserved OFF-MACHINE as
+> `OFFSITE_DIR\gnk-backups-historical-2026-08-23.tar.gz` (renamed so the
+> nightly retention's dated pattern can never prune it — it holds all eighteen
+> sets of its day, including ones since pruned from `gnk-backups/` by
+> `--keep 14`, so it is deliberately NOT a strict subset of any newer archive
+> and must not be deleted by the §3.3 subset-check ritual). Its checksum was
+> re-verified at the destination after the copy and after the rename. The D:
+> copy remains for the USB ritual; the USB itself is still the offline leg and
+> still worth doing.
 
 ---
 

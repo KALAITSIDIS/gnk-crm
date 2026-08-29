@@ -156,9 +156,10 @@ function cliArgs(rest) {
  * That is a step a human has to remember while the business is down, which is
  * exactly when it will be missed — so the dump now carries it.
  *
- * NOT included, deliberately: `pg_cron`. The six sweeps are absent after any
- * restore because the JOBS live in `cron.job`, which no dump here covers
- * (§4b.4). Creating the extension would imply that gap is closed. It is not.
+ * NOT included, deliberately: `pg_cron`. The scheduled jobs (8 as of 0063)
+ * are absent after any restore because they live in `cron.job`, which no dump
+ * here covers (§4b.4). Creating the extension would imply that gap is closed.
+ * It is not.
  */
 const REQUIRED_EXTENSIONS = [
   ["postgis", "properties.location and the area/district centroids are geography(point,4326)"],
@@ -229,7 +230,7 @@ function addExtensionPreamble(file) {
     ...REQUIRED_EXTENSIONS.map(([n]) =>
       `CREATE EXTENSION IF NOT EXISTS ${/^[a-z_]+$/.test(n) ? n : `"${n}"`} WITH SCHEMA "public";`),
     "",
-    "-- NOTE: pg_cron is NOT here. The six scheduled sweeps live in `cron.job`,",
+    "-- NOTE: pg_cron is NOT here. The scheduled sweeps live in `cron.job`,",
     "-- which no dump in this set covers, so they are gone after a restore and",
     "-- must be recreated from the migrations (§4b.4).",
     EXT_MARK_END,
@@ -262,9 +263,20 @@ function dump(label, extraArgs, file) {
 log(`capture ${stamp}  ->  ${finalDir}`);
 log(`staging in ${stagingRoot}\n`);
 log("dumps");
-const schemaFile = dump("schema", ["--schema", "public"], "pg_dump.sql");
+/**
+ * `events_parts` IS IN BOTH DUMPS SINCE 0063 (found 2026-08-29, the FIRST
+ * capture against partitioned production). Migration 0063 moved the events
+ * rows into monthly partitions living in the `events_parts` schema — the
+ * parent `public.events` owns no rows of its own — so a `--schema public`
+ * data dump silently contains ZERO events, and a schema dump without the
+ * partition DDL restores into a database whose events table has no
+ * partitions and refuses every insert. The verification below caught it
+ * ("missing COPY public.events" + count mismatch) and refused to promote,
+ * which is the system working; this is the fix.
+ */
+const schemaFile = dump("schema", ["--schema", "public,events_parts"], "pg_dump.sql");
 addExtensionPreamble(schemaFile);
-const dataFile = dump("data", ["--schema", "public,auth,storage", "--data-only", "--use-copy"], "data.sql");
+const dataFile = dump("data", ["--schema", "public,events_parts,auth,storage", "--data-only", "--use-copy"], "data.sql");
 const rolesFile = dump("roles", ["--role-only"], "roles.sql");
 
 if (!skipStorage) {
@@ -333,13 +345,27 @@ else {
   if (!dataSql.startsWith("SET session_replication_role = replica;")) {
     problems.push("data: line 1 is not `SET session_replication_role = replica;` — restoring this re-mints every event hash (§5)");
   } else log("  data: session_replication_role = replica on line 1");
-  for (const t of ['COPY "auth"."users"', 'COPY "public"."events"', 'COPY "storage"."objects"']) {
+  for (const t of ['COPY "auth"."users"', 'COPY "storage"."objects"']) {
     if (!dataSql.includes(t)) problems.push(`data: missing ${t}`);
   }
-  const m = dataSql.split('COPY "public"."events"')[1];
-  if (m) {
-    dumpedEvents = m.split("\n\\.")[0].split("\n").slice(1).filter((l) => l.trim() !== "").length;
-    log(`  data: ${dumpedEvents} events in the dump`);
+  /**
+   * Events are PARTITIONED since 0063: the parent `public.events` emits no
+   * COPY at all — the rows arrive as one COPY block PER PARTITION in the
+   * `events_parts` schema (that schema holds nothing else). Sum them; the
+   * cross-check against the live count below is what catches a dump that
+   * silently lost a partition.
+   */
+  const partSegs = dataSql.split('COPY "events_parts"."').slice(1);
+  if (!partSegs.length) {
+    problems.push('data: no COPY "events_parts".* blocks — the partitioned events data is MISSING (0063)');
+  } else {
+    dumpedEvents = 0;
+    for (const seg of partSegs) {
+      // each segment: <partition>" (cols) FROM stdin;\n<rows...>\n\. — an
+      // empty partition has no row lines and contributes zero
+      dumpedEvents += seg.split("\n\\.")[0].split("\n").slice(1).filter((l) => l.trim() !== "").length;
+    }
+    log(`  data: ${dumpedEvents} events in the dump across ${partSegs.length} partition(s)`);
   }
 }
 

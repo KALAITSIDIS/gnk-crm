@@ -3,6 +3,48 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-08-29 · T-offsite — the off-site leg automated, the dead-man's switch
+  plumbed, and the first partitioned-events capture caught red.** Audit
+  REL-01/REL-02, executed the same day.
+
+  **Destination decision (operator, 2026-08-29): OneDrive.** §3.3's objection
+  — sync propagates deletion/encryption — was put to the operator explicitly
+  alongside the alternatives (rclone to a new cloud account; USB-only), and
+  OneDrive was chosen as the only leg automatable that night with zero new
+  credentials. Mitigations recorded in §3.3: dated write-once filenames,
+  destination re-hash after every copy, retention only by the dated pattern,
+  OneDrive versioning as backstop, USB kept as the offline second copy. The
+  historical 18-set archive went off-machine too, renamed
+  `gnk-backups-historical-…` so retention can never prune it (it is NOT a
+  strict subset — it holds sets `--keep 14` has since pruned locally).
+
+  **The first capture after 0063 failed, and that failure was the system
+  working.** Partitioning moved the events rows into `events_parts`, which
+  `--schema public` never dumps — the data dump contained ZERO events and the
+  verify refused to promote (missing COPY + 0-vs-122 count mismatch).
+  `capture.mjs` now dumps `public,events_parts` in BOTH passes and counts
+  events across partition COPY blocks (122 across 15 partitions = live 122 on
+  the fixed run). Every nightly from 08-30 would otherwise have been red — or
+  worse, green-and-empty without the count cross-check. The audit missed this
+  (REL-04 caught the verify-pack drift, not the capture drift); only running
+  the thing found it.
+
+  **Two smaller traps, both measured:** Git-for-Windows' GNU tar parses the
+  colon in `C:\…` as a remote-host spec when it appears in `-f` (fixed with a
+  relative `-f` + `cwd`); and `%ERRORLEVEL%` inside a parenthesised cmd block
+  expands at parse time, so `run-backup.cmd` uses a `goto` shape for the
+  offsite exit code.
+
+  **The task no longer requires a logged-on user:** S4U principal +
+  StartWhenAvailable + WakeToRun + runs-on-battery (it was "Interactive only"
+  AND battery-blocked — the 08-29 03:45 run was silently skipped). Proven by
+  a real scheduler-context run: exit=0 through capture → offsite → notify.
+  `notify.mjs` (dead-man ping) always exits 0 — telemetry must never fail a
+  backup night — and stays UNARMED until the operator creates a
+  healthchecks.io check (Period 1 day, Grace 2h) and pastes the URL into
+  `backup.env`; unarmed, it logs a SKIPPED line every night so the gap stays
+  visible in the log rather than silent.
+
 - **2026-08-29 · T-tax-2026 (migration 0070) — stamp duty abolished, CGT
   exemptions tripled, VAT area-cliff figure corrected.** The 2026-08-29 audit
   checked the two never-verified `cyprus_config` rows against the Official
