@@ -10,7 +10,7 @@ CLAUDE.md                      ← Claude Code reads this automatically every se
 docs/
   01_PROJECT_CONTEXT.md        ← vision, scope, modules, guardrails (the constitution)
   02_PHASE_1_BUILD_SPEC.md     ← architecture decisions + functional specs + acceptance criteria
-  03_DATABASE_SCHEMA.sql       ← authoritative Phase 1 DDL
+  03_DATABASE_SCHEMA.sql       ← Phase 1 DESIGN record, not the current schema (see its header)
   04_RLS_POLICY_MATRIX.md      ← security matrix + mandatory tests
   05_ROUTES_AND_SCREENS.md     ← every page and what's on it
   06_UI_DESIGN_SYSTEM.md       ← brand tokens, components, layout rules

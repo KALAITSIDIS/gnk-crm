@@ -1,8 +1,43 @@
 -- =============================================================================
--- 03_DATABASE_SCHEMA.sql — GN Real Estate OS — Phase 1 authoritative DDL
--- Target: Supabase Postgres (EU). Copy into supabase/migrations/0001_foundations.sql
--- (split if preferred), run `supabase db reset`, fix forward, keep this doc in sync.
--- RLS policies live in doc 04 / migration 0002. Seed data in doc 07 / migration 0003.
+-- 03_DATABASE_SCHEMA.sql — GN Real Estate OS
+--
+-- ⚠️  THIS IS THE PHASE 1 DESIGN AS AUTHORED. IT IS NOT THE CURRENT SCHEMA.
+--     DO NOT READ IT AS A DESCRIPTION OF THE DATABASE. (Reframed 2026-08-29.)
+--
+-- It is, essentially, migration 0001 — which is why `0001_foundations.sql` still
+-- carries this file's own header line. Its value is the DESIGN COMMENTARY: why
+-- each table is shaped as it is. That is worth keeping and is why this file was
+-- not replaced by a dump.
+--
+-- WHERE THE CURRENT SCHEMA ACTUALLY LIVES:
+--   * `supabase/migrations/` — the only authority. 66 migrations and counting.
+--   * `supabase db dump --schema public` — a generated snapshot; HANDOFF §0
+--     names `2026-08-06/pg_dump.sql` as the schema of record.
+--   * `lib/supabase/database.types.ts` — generated, always current, and the
+--     thing TypeScript actually believes.
+--
+-- WHY THE "KEEP THIS DOC IN SYNC" RULE WAS DROPPED RATHER THAN OBEYED. The rule
+-- (CLAUDE.md, and T0.3 in doc 08) was real and was followed for a while — 0004,
+-- 0006, 0011, 0016 and 0023 were all synced back into this file. Then it
+-- stopped, and nobody noticed for roughly forty migrations. Measured on
+-- 2026-08-29, this file contains NONE of:
+--
+--   admin_dashboard_stats (0018) · mfa_satisfied (0029) · buyer_requirements
+--   (0043) · reservations (0044) · task_kinds (0049) · reservation_installments
+--   (0050) · location_approx (0054) · hash_version (0061) ·
+--   events_chain_checkpoint (0062) · the partitioning of `events` (0063) ·
+--   public_listings (0066)
+--
+-- A hand-maintained second copy of a 66-migration schema is a second source of
+-- truth, and this repo has already written down what happens to those: "a
+-- corrected copy is just a copy that goes stale later — delete it and point at
+-- the owner. Do not correct it in place" (HANDOFF §0). Syncing it today would
+-- fix the symptom and re-arm the trap. So the rule is gone, and this banner is
+-- the pointer.
+--
+-- RLS policies live in doc 04 / migration 0002. Seed data in doc 07 /
+-- migration 0003 — both with the same caveat: they describe Phase 1, and the
+-- migrations are what ran.
 -- =============================================================================
 
 -- ---------- extensions ----------
