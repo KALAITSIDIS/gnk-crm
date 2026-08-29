@@ -439,6 +439,13 @@ export async function updatePropertySection(
         payload: { score, threshold: PUBLISH_THRESHOLD },
       });
     }
+    // DB-02 (0073): the public feed orders by published_at desc and nothing
+    // ever wrote it. Stamped on every transition INTO public — a relisting
+    // after months away is genuinely news again — and never cleared on
+    // unpublish, so the column still answers "when was this last public".
+    // Reaching this line means the gate passed or an admin overrode it, and
+    // the diff logger below records the stamp in the update event for free.
+    updates.published_at = new Date().toISOString();
   }
 
   // changed-field payload for the event (guardrail: updates must carry their diff)

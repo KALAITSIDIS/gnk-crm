@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_LIMIT, MAX_LIMIT, parseFeedParams } from "./public-listings";
+import {
+  DEFAULT_LIMIT,
+  MAX_LIMIT,
+  absolutizeListingImages,
+  parseFeedParams,
+  publicMediaUrl,
+} from "./public-listings";
 
 const q = (s: string) => new URLSearchParams(s);
 
@@ -47,5 +53,54 @@ describe("public listing feed params", () => {
   it("offset is not capped at the limit's ceiling", () => {
     // paging deep into a large feed is legitimate; only page SIZE is capped
     expect(parseFeedParams(q("offset=5000")).offset).toBe(5000);
+  });
+});
+
+describe("feed image URLs (FEED-1, 0073)", () => {
+  const URL_BASE = "https://example.supabase.co";
+  const img = (over: Partial<Record<"thumb" | "card" | "full", string | null>> = {}) => ({
+    thumb: "properties/p1/m1_thumb.webp",
+    card: "properties/p1/m1_card.webp",
+    full: "properties/p1/m1_full.webp",
+    alt: { en: "front" },
+    watermarked: true,
+    ...over,
+  });
+
+  it("builds the public-bucket URL a browser can load directly", () => {
+    expect(publicMediaUrl(URL_BASE, "properties/p1/m1_card.webp")).toBe(
+      "https://example.supabase.co/storage/v1/object/public/media/properties/p1/m1_card.webp",
+    );
+  });
+
+  it("no double slashes whatever the inputs carry — broken images on someone else's site", () => {
+    expect(publicMediaUrl(`${URL_BASE}/`, "/properties/p1/m1_card.webp")).toBe(
+      "https://example.supabase.co/storage/v1/object/public/media/properties/p1/m1_card.webp",
+    );
+  });
+
+  it("a null rendition stays null rather than becoming a URL to nothing", () => {
+    expect(publicMediaUrl(URL_BASE, null)).toBeNull();
+    const [row] = absolutizeListingImages([{ images: [img({ thumb: null })] }], URL_BASE);
+    expect((row.images as Array<{ thumb: string | null }>)[0].thumb).toBeNull();
+  });
+
+  it("absolutizes every rendition and leaves the rest of the object alone", () => {
+    const [row] = absolutizeListingImages(
+      [{ reference: "PAF0001", images: [img()] } as { reference: string; images: unknown }],
+      URL_BASE,
+    );
+    const image = (row.images as Array<Record<string, unknown>>)[0];
+    for (const k of ["thumb", "card", "full"] as const) {
+      expect(image[k]).toMatch(/^https:\/\/example\.supabase\.co\/storage\/v1\/object\/public\/media\/properties\//);
+    }
+    expect(image.alt).toEqual({ en: "front" });
+    expect(image.watermarked).toBe(true);
+    expect((row as { reference?: string }).reference).toBe("PAF0001");
+  });
+
+  it("a row without an images array passes through untouched (pre-0073 database mid-rollout)", () => {
+    const rows = [{ reference: "PAF0001" } as { reference: string; images?: unknown }];
+    expect(absolutizeListingImages(rows, URL_BASE)).toEqual(rows);
   });
 });

@@ -4562,4 +4562,103 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(relaxed.error, "the 0072 CHECK refuses an internal KYC row outright").not.toBeNull();
   });
 
+  it("49. the feed carries photo renditions, cover first — never the private original (0073)", async () => {
+    // FEED-1 + DB-02. A real-estate feed without photos cannot power a
+    // marketing site; the renditions were already public-bucket files and
+    // nothing joined them in. And published_at ordered the feed while being
+    // written by nothing. Both halves are pinned here.
+    const anon = anonClient();
+    const refNew = `MEDIA-NEW-${run}`;
+    const refOld = `MEDIA-OLD-${run}`;
+
+    const mk = async (ref: string, publishedAt: string) => {
+      const { data, error } = await svc
+        .from("properties")
+        .insert({
+          org_id: ORG_A,
+          reference: ref,
+          property_type: "apartment",
+          visibility: "public",
+          status: "available",
+          asking_price: 100000,
+          published_at: publishedAt,
+        })
+        .select("id")
+        .single();
+      if (error) throw error;
+      return data.id as string;
+    };
+    const newId = await mk(refNew, new Date().toISOString());
+    await mk(refOld, new Date(Date.now() - 86_400_000).toISOString());
+
+    const addMedia = async (over: Record<string, unknown>) => {
+      const { error } = await svc.from("property_media").insert({
+        org_id: ORG_A,
+        property_id: newId,
+        kind: "photo",
+        storage_path_original: `${ORG_A}/originals/secret-original-${run}.jpg`,
+        ...over,
+      });
+      if (error) throw error;
+    };
+    // cover has the HIGHER sort_order on purpose: cover-first must win over sort
+    await addMedia({
+      sort_order: 2,
+      is_cover: true,
+      path_thumb: `properties/${newId}/cover_thumb.webp`,
+      path_card: `properties/${newId}/cover_card.webp`,
+      path_full: `properties/${newId}/cover_full.webp`,
+    });
+    await addMedia({
+      sort_order: 1,
+      path_thumb: `properties/${newId}/one_thumb.webp`,
+      path_card: `properties/${newId}/one_card.webp`,
+      path_full: `properties/${newId}/one_full.webp`,
+    });
+    // a floor plan must NOT appear until deliberately wired (audit MEDIA-K)
+    await addMedia({
+      sort_order: 0,
+      kind: "floor_plan",
+      path_thumb: `properties/${newId}/plan_thumb.webp`,
+      path_card: `properties/${newId}/plan_card.webp`,
+      path_full: `properties/${newId}/plan_full.webp`,
+    });
+    // a photo still mid-pipeline (no full rendition) is withheld, not half-shipped
+    await addMedia({
+      sort_order: 3,
+      path_thumb: `properties/${newId}/half_thumb.webp`,
+      path_card: null,
+      path_full: null,
+    });
+
+    const { data, error } = await anon.rpc("public_listings", { p_org_slug: "test-org-a" });
+    expect(error).toBeNull();
+    const rows = (data ?? []) as unknown as Array<Record<string, unknown>>;
+    const iNew = rows.findIndex((r) => r.reference === refNew);
+    const iOld = rows.findIndex((r) => r.reference === refOld);
+    expect(iNew, "the fresh listing is in the feed").toBeGreaterThanOrEqual(0);
+    expect(iOld, "the older listing is in the feed").toBeGreaterThanOrEqual(0);
+    expect(iNew, "newest published first — the ordering DB-02 revived").toBeLessThan(iOld);
+
+    const images = rows[iNew].images as Array<Record<string, unknown>>;
+    expect(images, "photos only, finished renditions only").toHaveLength(2);
+    expect(String(images[0].full), "the cover leads even with a later sort_order").toContain(
+      "cover_full",
+    );
+    expect(String(images[1].full)).toContain("one_full");
+    expect(Object.keys(images[0]).sort(), "exactly the five public keys").toEqual([
+      "alt",
+      "card",
+      "full",
+      "thumb",
+      "watermarked",
+    ]);
+
+    // the EXIF-bearing original lives in the PRIVATE bucket and its path must
+    // never leave, under any key
+    expect(JSON.stringify(rows[iNew])).not.toContain(`secret-original-${run}`);
+
+    expect(rows[iOld].images, "no photos means an empty array, not null").toEqual([]);
+  });
+
 });

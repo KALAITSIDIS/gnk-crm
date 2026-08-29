@@ -42,3 +42,49 @@ export function parseFeedParams(params: {
     offset: intParam(params.get("offset"), 0, Number.MAX_SAFE_INTEGER),
   };
 }
+
+/**
+ * FEED-1 (0073): `public_listings()` returns rendition paths RELATIVE to the
+ * public `media` bucket, because SQL does not know the project URL. The route
+ * absolutizes them here so a marketing site gets URLs it can put straight
+ * into <img src> without knowing the Supabase host.
+ *
+ * Pure and separately tested for the same reason parseFeedParams is: this is
+ * string plumbing on a public surface, and the failure mode (a double slash,
+ * a missing bucket segment) renders as broken images on somebody else's site
+ * with nothing in our logs.
+ */
+export interface FeedImage {
+  thumb: string | null;
+  card: string | null;
+  full: string | null;
+  alt: unknown;
+  watermarked: boolean;
+}
+
+export function publicMediaUrl(supabaseUrl: string, path: string | null): string | null {
+  if (!path) return null;
+  const base = supabaseUrl.replace(/\/+$/, "");
+  return `${base}/storage/v1/object/public/media/${path.replace(/^\/+/, "")}`;
+}
+
+/** Maps every listing's `images` paths to absolute URLs, leaving all other
+ *  fields untouched. Tolerates rows without an images key (a feed served by a
+ *  pre-0073 database mid-rollout) by passing them through unchanged. */
+export function absolutizeListingImages<T extends { images?: unknown }>(
+  listings: T[],
+  supabaseUrl: string,
+): T[] {
+  return listings.map((row) => {
+    if (!Array.isArray(row.images)) return row;
+    return {
+      ...row,
+      images: (row.images as FeedImage[]).map((img) => ({
+        ...img,
+        thumb: publicMediaUrl(supabaseUrl, img.thumb),
+        card: publicMediaUrl(supabaseUrl, img.card),
+        full: publicMediaUrl(supabaseUrl, img.full),
+      })),
+    };
+  });
+}
