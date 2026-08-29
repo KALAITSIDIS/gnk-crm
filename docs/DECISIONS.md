@@ -3,6 +3,68 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-08-29 · T-tax-2026 (migration 0070) — stamp duty abolished, CGT
+  exemptions tripled, VAT area-cliff figure corrected.** The 2026-08-29 audit
+  checked the two never-verified `cyprus_config` rows against the Official
+  Gazette and both were wrong, because the 31.12.2025 reform package (in force
+  1.1.2026) changed the law under them.
+
+  **Stamp duty (Law 239(I)/2025, cylaw.org/nomoi/arith/2025_1_239.pdf):** the
+  Stamp Duty Laws 1963–2024 are repealed for documents signed on or after
+  2026-01-01 — the calculator had been over-quoting every buyer since January
+  (€377.50 on a €300k contract, up to €20,000). The bands are KEPT, because
+  they remain the statutory scale for contracts signed on or before
+  2025-12-31; 0070 adds an `abolished` block that `parseStampDutyConfig` now
+  understands and the panel renders as a notice instead of a figure. A
+  MALFORMED abolition block fails the whole config rather than being ignored —
+  silently dropping it would quote a repealed tax, the exact failure the field
+  exists to prevent. Either deploy order is safe: old code ignores the new
+  key; new code without the row falls back to computing.
+
+  **CGT (Law 242(I)/2025 ss.3, 6, 9, same gazette):** lifetime exemptions
+  raised €17,086/€25,629/€85,430 → €30,000/€50,000/€150,000, primary-residence
+  tax charged only on the gain EXCEEDING €150,000, rate 20% unchanged. No code
+  computes from this row (zero references outside the seed) — it misinformed
+  rather than miscalculated, but it misinformed in euros, in the seller's
+  disfavour. s.6's express treatment of antiparoxi as a CGT exchange (5-year
+  completion condition) is recorded in the row's note because the desk runs an
+  antiparoxi pipeline.
+
+  **VAT area-cliff cost (audit finding CALC-VAT-1, `lib/services/vat.ts`):**
+  `reliefLost` substituted the €475,000 value cap as the price for BOTH cliff
+  kinds, so the area-cliff figure priced a hypothetical no eligible dwelling
+  could occupy — €45,262 displayed at 191 m²/€300,000 where the true
+  under-vs-over delta is €28,736.84 (~57% overstated, in a negotiation-facing
+  panel). The hypothetical now sits at the cap actually crossed (value cliff:
+  cap price × real area; area cliff: real price × cap area; both crossed: both
+  caps). The new test pins the area-cliff cost to the exact difference between
+  the 190 m² and 191 m² bills at the same price — the pre-fix formula cannot
+  pass it. Unit count 936 → 942.
+
+  0070 follows the 0056/0058 idiom with ONE measured departure from its
+  `verified_at is null` guard: hosted's `stamp_duty` row turned out to carry
+  **verified_at 2026-07-23** — a Settings verification of the pre-2026 bands
+  made seven months AFTER the statute it verified was repealed (bands
+  byte-equal to the seed; only the stamp and note differ). The calculator's
+  freshness line had been lending "last verified 23 Jul 2026" authority to an
+  abolished tax — a sharper instance of the §0 lesson that a dated "verified"
+  claim is only as good as the source it was checked against. The guard
+  therefore admits any verification dated BEFORE 2026-08-29 (that state is
+  what this migration corrects), is idempotent on its own content, asserts
+  the bands/rate did NOT move (a migration that shifted a tax rate while
+  claiming to verify one would be the worst outcome), and still aborts loudly
+  on a verification dated on/after 2026-08-29 — someone re-verified after the
+  gazette check and a human must reconcile. Applied to hosted before the
+  merge, per the additive rule.
+
+  **CI caught the second-order break, which is the system working:** the e2e
+  calculators spec pinned the old ON-SCREEN stamp figures (€507.50 at €300k,
+  the €20,000 cap), and the branch run failed with three 240s locator
+  timeouts once a fresh-with-0070 database rendered the notice instead. The
+  spec now pins the abolition notice and the absence of any stamp total at
+  any price; the arithmetic pins stay in the unit suite, where they still
+  guard the pre-2026 scale.
+
 - **2026-08-29 · T-stage-ids (migration 0067) + doc 03 reframed** — the two
   follow-ons Phase C left, closed together.
 

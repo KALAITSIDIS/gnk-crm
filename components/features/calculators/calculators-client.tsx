@@ -106,8 +106,15 @@ export function CalculatorsClient({
         : null,
     [valid, price, transferConfig, relief, vatPaid, purchasers],
   );
+  // Law 239(I)/2025: no stamp duty on documents signed on/after the config's
+  // `abolished.from`. The panel then explains instead of computing — the bands
+  // stay in config because they still govern pre-abolition contracts.
+  const stampAbolished = stampConfig?.abolished ?? null;
   const stamp = useMemo(
-    () => (valid && stampConfig ? computeStampDuty(price, stampConfig) : null),
+    () =>
+      valid && stampConfig && !stampConfig.abolished
+        ? computeStampDuty(price, stampConfig)
+        : null,
     [valid, price, stampConfig],
   );
 
@@ -147,17 +154,22 @@ export function CalculatorsClient({
       "Rates from config — verify current legislation.",
     ].join("\n");
 
-  const stampSummary =
-    stamp &&
-    [
-      `Stamp duty for ${formatMoney(price)}:`,
-      ...stamp.rows.map((b) => `  ${bandLabel(b)} @ ${pct(b.rate)} = ${formatMoney(b.fee)}`),
-      ...(stamp.capApplied
-        ? [`Uncapped: ${formatMoney(stamp.uncapped)} → capped at ${formatMoney(stamp.cap)}`]
-        : []),
-      `Total: ${formatMoney(stamp.total)}`,
-      "Rates from config — verify current legislation.",
-    ].join("\n");
+  const stampSummary = stampAbolished
+    ? [
+        `Stamp duty: none — abolished for documents signed on or after ${formatDate(stampAbolished.from)} (${stampAbolished.law}).`,
+        "Contracts signed before that date follow the previous bands.",
+        "Rates from config — verify current legislation.",
+      ].join("\n")
+    : stamp &&
+      [
+        `Stamp duty for ${formatMoney(price)}:`,
+        ...stamp.rows.map((b) => `  ${bandLabel(b)} @ ${pct(b.rate)} = ${formatMoney(b.fee)}`),
+        ...(stamp.capApplied
+          ? [`Uncapped: ${formatMoney(stamp.uncapped)} → capped at ${formatMoney(stamp.cap)}`]
+          : []),
+        `Total: ${formatMoney(stamp.total)}`,
+        "Rates from config — verify current legislation.",
+      ].join("\n");
 
   return (
     <div className="flex flex-col gap-4">
@@ -292,6 +304,28 @@ export function CalculatorsClient({
           <h2 className="text-sm font-semibold text-text-1">Stamp duty</h2>
           {!stampConfig ? (
             <p className="text-sm text-danger">stamp_duty config missing or malformed.</p>
+          ) : stampAbolished ? (
+            <>
+              <p className="rounded-lg bg-success/10 px-3 py-2 text-sm text-success">
+                No stamp duty — abolished for documents signed on or after{" "}
+                {formatDate(stampAbolished.from)} ({stampAbolished.law}).
+              </p>
+              <p className="text-xs text-text-3">
+                Contracts signed before that date follow the previous bands
+                {stampConfig.cap !== null
+                  ? `, capped at ${formatMoney(stampConfig.cap)} per contract`
+                  : ""}
+                .
+              </p>
+              <div className="mt-auto flex items-center justify-between gap-3 pt-1">
+                <FreshnessLine verifiedAt={stampVerifiedAt} />
+                {stampSummary ? (
+                  <Button size="sm" variant="outline" onClick={() => copyText(stampSummary)}>
+                    <Copy className="size-4" /> Copy summary
+                  </Button>
+                ) : null}
+              </div>
+            </>
           ) : stamp ? (
             <>
               <BandTable rows={stamp.rows} />

@@ -152,6 +152,28 @@ describe("deriveVat — THE CLIFF, which is the number worth knowing", () => {
     expect(t.reasons.join(" ")).toMatch(/WHOLE purchase/);
   });
 
+  it("the area cliff costs the TRUE under-vs-over delta, not a €475k hypothetical", () => {
+    // The pre-fix formula substituted the value cap as the price for both
+    // cliff kinds, showing ≈€45,262 here — a scenario no eligible dwelling
+    // could occupy. The honest figure is what the same PRICE would have
+    // yielded at the cap area: 300,000 × 130/190 = €205,263.16 in the reduced
+    // band, × 14% = €28,736.84 (audit finding CALC-VAT-1).
+    const under = deriveVat({ coveredAreaSqm: 190, price: 300000, vatStatus: "new_vat", ...ok });
+    const over = deriveVat({ coveredAreaSqm: 191, price: 300000, vatStatus: "new_vat", ...ok });
+
+    expect(over.cliff!.costsEur).toBe(28736.84);
+    // and it must equal the real difference between the two bills, to the cent
+    expect(round2(over.totalVat! - under.totalVat!)).toBe(over.cliff!.costsEur);
+  });
+
+  it("both caps crossed: the hypothetical sits at BOTH caps", () => {
+    // 200 m² at €500,000 — eligibility at the boundary means 190 m² AND
+    // €475,000: 475,000 × 130/190 = €325,000 reduced, × 14% = €45,500.
+    const t = deriveVat({ coveredAreaSqm: 200, price: 500000, vatStatus: "new_vat", ...ok });
+    expect(t.cliff!.kind).toBe("value"); // value reported first when both crossed
+    expect(t.cliff!.costsEur).toBe(45500);
+  });
+
   it("offers the transitional regime exactly where it would help", () => {
     const t = deriveVat({ coveredAreaSqm: 191, price: 300000, vatStatus: "new_vat", ...ok });
     expect(t.transitionalMayHelp).toEqual({

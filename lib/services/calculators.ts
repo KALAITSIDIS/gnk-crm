@@ -17,9 +17,23 @@ export interface TransferFeesConfig {
   vat_paid_exempt: boolean;
 }
 
+export interface StampAbolition {
+  /** ISO date; documents signed on or after this date owe no stamp duty */
+  from: string;
+  /** the repealing law, quoted verbatim in the UI (e.g. "Law 239(I)/2025") */
+  law: string;
+  note?: string;
+}
+
 export interface StampDutyConfig {
   bands: FeeBand[];
   cap: number | null;
+  /**
+   * Present once the duty is repealed (Law 239(I)/2025, from 2026-01-01): the
+   * calculator renders this notice INSTEAD of a figure. The bands stay — they
+   * remain the correct scale for contracts signed before `from`.
+   */
+  abolished?: StampAbolition | null;
 }
 
 export interface BandRow {
@@ -87,7 +101,23 @@ export function parseStampDutyConfig(value: unknown): StampDutyConfig | null {
   if (v.cap !== undefined && v.cap !== null) {
     if (typeof v.cap !== "number" || !Number.isFinite(v.cap) || v.cap < 0) return null;
   }
-  return { bands: v.bands, cap: typeof v.cap === "number" ? v.cap : null };
+
+  // A malformed abolition block fails the WHOLE config rather than being
+  // ignored: silently dropping it would quote a repealed tax, which is the
+  // exact failure the field exists to prevent.
+  let abolished: StampAbolition | null = null;
+  if (v.abolished !== undefined && v.abolished !== null) {
+    const a = v.abolished as Partial<StampAbolition>;
+    if (typeof a.from !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(a.from)) return null;
+    if (typeof a.law !== "string" || a.law.trim().length === 0) return null;
+    abolished = {
+      from: a.from,
+      law: a.law,
+      ...(typeof a.note === "string" && a.note ? { note: a.note } : {}),
+    };
+  }
+
+  return { bands: v.bands, cap: typeof v.cap === "number" ? v.cap : null, abolished };
 }
 
 /** Progressive banded fee: each band taxes the slice between the previous
