@@ -4477,4 +4477,89 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(chainOk, "the new payload shape keeps the hash chain intact").toBe(true);
   });
 
+  it("47. an event names its author: a staff session cannot forge actor_id (0071)", async () => {
+    // The hash chain proves nothing was EDITED; this policy is what makes a
+    // row's ATTRIBUTION trustworthy. Before 0071 any aal2 session could
+    // append events naming another user — or null, which renders as "system"
+    // — and the log's evidentiary weight is the product's stated USP.
+    const base = {
+      org_id: ORG_A,
+      entity_type: "config",
+      entity_id: null,
+      event_type: `actor_check_${run}`,
+      payload: { note: "test 47" },
+    };
+
+    const forged = await agentA1.client
+      .from("events")
+      .insert({ ...base, actor_id: adminA.id });
+    expect(forged.error, "naming ANOTHER user must be refused").not.toBeNull();
+
+    const asSystem = await agentA1.client
+      .from("events")
+      .insert({ ...base, actor_id: null });
+    expect(asSystem.error, "a null 'system' actor must be refused for a staff session").not.toBeNull();
+
+    const own = await agentA1.client
+      .from("events")
+      .insert({ ...base, actor_id: agentA1.id });
+    expect(own.error, "the ordinary self-attributed write still works").toBeNull();
+
+    // The system rows the sweeps write stay possible: crons and the merge run
+    // as postgres/service_role, which bypass RLS — that is the design, not a
+    // hole, because no authenticated session holds those credentials.
+    const system = await svc.from("events").insert({ ...base, actor_id: null });
+    expect(system.error, "service-role system events are unaffected").toBeNull();
+
+    const { data: chainOk } = await svc.rpc("verify_events_chain", { p_org: ORG_A });
+    expect(chainOk, "the refused inserts wrote nothing and the chain holds").toBe(true);
+  });
+
+  it("48. KYC contact documents are admin-only, and 'internal' KYC is refused at the DB (0072)", async () => {
+    // SEC-02: passport scans / source-of-funds are CDD records — need-to-know,
+    // not org-wide. The app now uploads them as admin_only; this pins the two
+    // halves the app cannot: the SELECT filtering, and the 0072 CHECK that
+    // refuses an internal KYC row from ANY path, service_role included.
+    const { data: doc, error } = await svc
+      .from("documents")
+      .insert({
+        org_id: ORG_A,
+        entity_type: "contact",
+        entity_id: contactA,
+        doc_type: "id_document",
+        title: `kyc-${run}`,
+        storage_path: `${ORG_A}/contacts/${contactA}/kyc-${run}.pdf`,
+        uploaded_by: adminA.id,
+        visibility: "admin_only",
+      })
+      .select("id")
+      .single();
+    if (error) throw error;
+
+    const agentRead = await agentA1.client.from("documents").select("id").eq("id", doc.id);
+    expect(agentRead.error).toBeNull();
+    expect(agentRead.data ?? [], "an agent must read 0 rows for a KYC document").toHaveLength(0);
+
+    const lmRead = await lmA.client.from("documents").select("id").eq("id", doc.id);
+    expect(lmRead.data ?? [], "a listing manager must read 0 rows too").toHaveLength(0);
+
+    const adminRead = await adminA.client.from("documents").select("id").eq("id", doc.id);
+    expect(adminRead.data, "the admin still sees it and can mint the signed URL").toHaveLength(1);
+
+    // and the constraint half: an 'internal' KYC contact doc is refused even
+    // for service_role, which bypasses RLS but not a CHECK — the failure
+    // direction for CDD records is a loud error, never silent over-exposure.
+    const relaxed = await svc.from("documents").insert({
+      org_id: ORG_A,
+      entity_type: "contact",
+      entity_id: contactA,
+      doc_type: "source_of_funds",
+      title: `kyc-internal-${run}`,
+      storage_path: `${ORG_A}/contacts/${contactA}/kyc2-${run}.pdf`,
+      uploaded_by: adminA.id,
+      // visibility omitted → column default 'internal' → must hit the CHECK
+    });
+    expect(relaxed.error, "the 0072 CHECK refuses an internal KYC row outright").not.toBeNull();
+  });
+
 });

@@ -49,13 +49,13 @@ Legend: ✅ full · 🔒 restricted (condition in Notes) · ❌ denied
 | offers | follows parent deal visibility | A AG (own deals) | A ✅ · AG 🔒 own deals | ❌ (status withdrawn) | |
 | viewings | A AG LM | A AG | A ✅ · AG 🔒 (`agent_id = uid`) | ❌ (status cancelled) | |
 | viewing_slips | A AG (agent of viewing) | A AG 🔒 (agent of the viewing) | ❌ | ❌ | Immutable once created |
-| documents | A ✅ · AG LM 🔒 (`visibility = 'internal'`; `admin_only` hidden) | A AG LM | A 🔒 (title/type only) | A | File bodies via signed URLs only |
+| documents | A ✅ · AG LM 🔒 (`visibility = 'internal'`; `admin_only` hidden) | A AG LM | A 🔒 (title/type only) | A | File bodies via signed URLs only. **Contact KYC docs (id_document / proof_of_address / source_of_funds) are `admin_only` — set at upload, backfilled and CHECK-enforced by 0072 against every path incl. service_role. Test 48** |
 | share_links | A AG LM (own org) | A AG LM (`created_by = uid`) | creator or A | ❌ **no policy** | anon: **no grant at all** — buyers reach data only via `resolve_share_link` |
 | share_link_properties | A AG LM (via parent link) | A AG LM (via parent link) | ❌ | creator or A | |
 | share_link_attempts | ❌ no policy, no grant | ❌ | ❌ | ❌ | written only by security-definer functions |
 | tasks | A ✅ · AG LM 🔒 (`assignee_id = uid` OR created_by = uid) | A AG LM | assignee or A | creator or A | |
 | cyprus_config | A AG LM (read) | A | A | ❌ | Edits write `config` events |
-| events | A ✅ · AG LM 🔒 (`actor_id = uid` OR entity is a record they can read — implement pragmatically: A + AG/LM where actor_id = uid; timeline pages assemble via server actions with service role for cross-entity reads, still org-scoped) | A AG LM (org check only) | ❌ **no policy + revoked** | ❌ **no policy + revoked** | The spine. Insert check: `org_id = current_org_id()` |
+| events | A ✅ · AG LM 🔒 (`actor_id = uid` OR entity is a record they can read — implement pragmatically: A + AG/LM where actor_id = uid; timeline pages assemble via server actions with service role for cross-entity reads, still org-scoped) | A AG LM 🔒 (`org_id = current_org_id()` **AND `actor_id = auth.uid()`** since 0071 — a staff session cannot append rows naming another user or "system"; null-actor rows come only from crons/service_role, which bypass RLS. Test 47) | ❌ **no policy + revoked** | ❌ **no policy + revoked** | The spine. An event names its author, enforced at the DB |
 
 ## Storage policies
 
@@ -87,9 +87,10 @@ for update using (
   )
 ) with check (org_id = current_org_id());
 
--- events: insert-only
+-- events: insert-only, and the insert names its author (0071)
 create policy events_insert on events
-for insert with check (org_id = current_org_id());
+for insert with check (org_id = current_org_id()
+  and actor_id = auth.uid());
 create policy events_select_admin on events
 for select using (org_id = current_org_id()
   and (current_role_gnk() = 'admin' or actor_id = auth.uid()));

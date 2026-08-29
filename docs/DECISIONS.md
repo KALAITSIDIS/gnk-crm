@@ -3,6 +3,48 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-08-29 · T-sec-audit (migrations 0071/0072) — events name their
+  author; KYC contact documents go admin-only.** Audit SEC-01/SEC-02.
+
+  **0071:** the events INSERT policy checked only org membership, so any aal2
+  staff session could append rows naming another user — or null, which
+  renders as "system". The chain proves nothing was edited; it never proved a
+  row was written by the person it names, and that attribution is the
+  product's stated USP. The policy now requires `actor_id = auth.uid()`.
+  **Compatibility was enumerated, not assumed**, before tightening: every
+  authenticated writer (logEvent call sites, move_deal_to_stage, add/reorder
+  stage, the price-history and supersede triggers) already writes
+  `auth.uid()`; every null-actor writer is either EXECUTE-revoked from
+  `authenticated` (the sweeps, 0007/0020/0025) or SECURITY DEFINER
+  (record_key_movement, resolve_share_link) or runs as cron/service_role —
+  all bypass RLS. `logEvent`'s optional `actorId` defaulting to null was a
+  standing footgun; the DB now turns a forgotten actor into a loud insert
+  error instead of a silent "system" row. RLS test 47 pins all three
+  directions (forged → refused, null-from-staff → refused, self → works,
+  service-role system rows → unaffected).
+
+  **0072:** contact KYC uploads (id_document, proof_of_address,
+  source_of_funds) never set a visibility, so every passport scan defaulted
+  to org-wide 'internal' while the stricter 'admin_only' tier sat unused
+  outside evidence PDFs. Three layers now: the upload sets
+  `contactDocVisibility(docType)` (unit-pinned as the matched pair of the
+  SQL), a backfill flips any existing rows, and a CHECK refuses an internal
+  KYC contact row from ANY path — service_role bypasses RLS but not a
+  constraint. RLS test 48 pins agent/LM = 0 rows, admin = 1, and the CHECK
+  refusing even service_role. **Deploy order is INVERTED for 0072 and stated
+  in the file**: pre-0072 code inserts KYC docs without a visibility, so
+  applying the CHECK before the deploy would refuse every KYC upload in the
+  gap — code first, then the migration (0055/0057 rule). 0071 is ordinary
+  additive-first; the two ship with opposite orders on purpose.
+
+  **A local bookkeeping find along the way:** the local DB had 0065's CONTENT
+  (the reporting functions) but not its version row — applied by hand during
+  C4 with the local insert missed — which made `migration up` refuse
+  everything after it. Row inserted; `non_filename_versions` stays a
+  hosted-side invariant, but local drift of the same table is what this
+  looked like from the inside. 946 unit / 75 RLS after (both measured; +4
+  unit are the visibility mapping's pins, +2 RLS are tests 47/48).
+
 - **2026-08-29 · T-offsite — the off-site leg automated, the dead-man's switch
   plumbed, and the first partitioned-events capture caught red.** Audit
   REL-01/REL-02, executed the same day.
