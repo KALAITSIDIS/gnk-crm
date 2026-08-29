@@ -17,6 +17,7 @@ docs/
   07_SEED_DATA.sql             ← org, districts, deal stages, Cyprus rate config
   08_BUILD_PLAYBOOK.md         ← ★ step-by-step task list (Sprint 0 → 5)
   09_DATA_IMPORT_TEMPLATES.md  ← CSV formats for migrating your real data
+  10_INFRASTRUCTURE.md         ← GitHub / Supabase / Vercel setup (no secrets — repo is public)
 ```
 
 ## Before starting Claude Code — do these once (10–15 minutes)
