@@ -41,11 +41,21 @@ silent. Format: date · task · decision · rationale.
   the 190 m² and 191 m² bills at the same price — the pre-fix formula cannot
   pass it. Unit count 936 → 942.
 
-  0070 follows the 0056/0058 idiom: guarded on `verified_at is null`, asserts
+  0070 follows the 0056/0058 idiom with ONE measured departure from its
+  `verified_at is null` guard: hosted's `stamp_duty` row turned out to carry
+  **verified_at 2026-07-23** — a Settings verification of the pre-2026 bands
+  made seven months AFTER the statute it verified was repealed (bands
+  byte-equal to the seed; only the stamp and note differ). The calculator's
+  freshness line had been lending "last verified 23 Jul 2026" authority to an
+  abolished tax — a sharper instance of the §0 lesson that a dated "verified"
+  claim is only as good as the source it was checked against. The guard
+  therefore admits any verification dated BEFORE 2026-08-29 (that state is
+  what this migration corrects), is idempotent on its own content, asserts
   the bands/rate did NOT move (a migration that shifted a tax rate while
-  claiming to verify one would be the worst outcome), and aborts loudly if a
-  Settings edit verified either row in the meantime. Applied to hosted before
-  the merge, per the additive rule.
+  claiming to verify one would be the worst outcome), and still aborts loudly
+  on a verification dated on/after 2026-08-29 — someone re-verified after the
+  gazette check and a human must reconcile. Applied to hosted before the
+  merge, per the additive rule.
 
 - **2026-08-29 · T-stage-ids (migration 0067) + doc 03 reframed** — the two
   follow-ons Phase C left, closed together.

@@ -34,11 +34,19 @@
 -- the row falls back to computing, so either order is safe. Standard additive
 -- order applies regardless: hosted first, then merge (HANDOFF §0 rule).
 --
--- GUARDED ON `verified_at IS NULL` like 0056/0058, so it is idempotent and can
--- never overwrite a later correction made through Settings → Cyprus config.
--- If either row was verified in Settings since the audit, this migration
--- ABORTS in its assertion block rather than silently skipping — a human must
--- reconcile the two verifications.
+-- THE GUARD IS NOT 0056/0058's `verified_at IS NULL`, AND THE DIFFERENCE WAS
+-- MEASURED, NOT GUESSED. Hosted's `stamp_duty` row carries verified_at
+-- 2026-07-23 with a source_note reading "Stamp Duty Law verified 2026-07-23"
+-- — a Settings verification of the pre-2026 bands made SEVEN MONTHS AFTER the
+-- statute it verified was repealed (checked on hosted 2026-08-29: the bands
+-- themselves are byte-equal to the seed, only the stamp differs). A null-only
+-- guard would skip that row and the assertion block would abort on every
+-- apply. So the guard admits any verification dated BEFORE this migration's
+-- own (2026-08-29) — an earlier verification is exactly the state this
+-- migration corrects — and each UPDATE is idempotent on its own content
+-- (`abolished` absent / exemptions not yet 30000). A verification dated ON OR
+-- AFTER 2026-08-29 still skips the UPDATE and ABORTS in the assertions:
+-- someone re-verified after the gazette check, and a human must reconcile.
 --
 -- NO EXPLICIT begin/commit — the CLI wraps the file (HANDOFF §3).
 
@@ -62,7 +70,8 @@ update public.cyprus_config
                   || 'contracts; the calculator renders the abolition notice '
                   || 'instead of a figure.'
  where key = 'stamp_duty'
-   and verified_at is null;
+   and not coalesce(value ? 'abolished', false)
+   and (verified_at is null or verified_at < date '2026-08-29');
 
 update public.cyprus_config
    set value = jsonb_set(
@@ -89,7 +98,8 @@ update public.cyprus_config
                   || 'computes from this row; it is reference data for '
                   || 'seller conversations until a CGT calculator ships.'
  where key = 'capital_gains_tax'
-   and verified_at is null;
+   and coalesce((value #>> '{lifetime_exemptions_eur,general}')::numeric, 0) <> 30000
+   and (verified_at is null or verified_at < date '2026-08-29');
 
 do $$
 declare
