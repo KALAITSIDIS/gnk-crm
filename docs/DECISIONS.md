@@ -3,6 +3,63 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-08-29 · T-stage-ids (migration 0067) + doc 03 reframed** — the two
+  follow-ons Phase C left, closed together.
+
+  **`stage_changed` now records stage ids.** `move_deal_to_stage` (0011) logged
+  only NAMES, so `report_stage_conversion` (0065) grouped its funnel on a
+  mutable string — renaming a stage split that stage's history in two at the
+  rename, silently, each spelling holding half the traffic. The payload gains
+  `from_stage_id` / `to_stage_id`; the NAMES STAY, because
+  `lib/services/events.ts` renders them, RLS test 15 asserts `payload.to` by
+  value, and every pre-0067 event has only names. The hash chain is unaffected
+  for the same reason 0061 was: the hash covers `payload::text`, so new rows
+  hash their new shape and existing rows are untouched.
+
+  **The reader was changed in the SAME migration, and that is the point.** A
+  payload field nothing consumes is not an improvement, it is clutter that looks
+  like one. The report resolves an id to the stage's CURRENT name and falls back
+  to the recorded name when there is none — so new events follow a rename, old
+  events behave exactly as before, and a deleted stage falls back to the name
+  recorded at the time, which is then all that describes it. It also reports
+  `moves_with_ids` against `moves_total`, so a reader can see how rename-proof
+  the answer is instead of assuming.
+
+  **A false negative wearing a red X**, worth remembering. The first version of
+  test 45 hardcoded `sort_order`, which is UNIQUE per (org, deal_type): it
+  passed once and then collided forever against a long-lived local stack. The
+  mutation run exposed it — the test failed on a duplicate key rather than on
+  the assertion, so it "failed" for the wrong reason and would have "proved" the
+  mutation was caught when it had not been. **A mutation test only counts if you
+  read WHY it failed.** sort_order is now derived from the existing maximum, and
+  the suite passes twice in a row.
+
+  **`docs/03_DATABASE_SCHEMA.sql` reframed, and its sync rule dropped.**
+  `CLAUDE.md` called it "Authoritative Phase 1 DDL" and instructed "fix it in
+  the migration AND update doc 03 in the same commit"; README and doc 08 T0.3
+  said the same. Measured rather than assumed to be a Phase C oversight: the
+  rule was honoured through 0023 (0004, 0006, 0011, 0016 and 0023 are all in the
+  file) and then stopped, and the file now lacks `admin_dashboard_stats` (0018),
+  `mfa_satisfied` (0029), `buyer_requirements` (0043), `reservations` (0044),
+  `task_kinds` (0049), `reservation_installments` (0050), `location_approx`
+  (0054), `hash_version` (0061), `events_chain_checkpoint` (0062), the
+  partitioning of `events` (0063) and `public_listings` (0066).
+
+  **Dropped rather than obeyed, and NOT replaced by a dump.** Syncing forty
+  migrations by hand would fix the symptom and re-arm the trap — HANDOFF §0
+  already says what to do with a second copy: "a corrected copy is just a copy
+  that goes stale later. When you find one, delete it and point at the owner. Do
+  not correct it in place." Replacing it with `pg_dump` output would have
+  destroyed the design COMMENTARY, which is the file's actual value, and added a
+  third claimant to "the schema". It keeps its content and gains a banner
+  stating what it is, what it is not, and where the current schema lives:
+  `supabase/migrations/` (the authority), a `supabase db dump` snapshot (HANDOFF
+  already names one as the schema of record) and
+  `lib/supabase/database.types.ts` (generated, and what TypeScript believes).
+  Changed in all four places the claim was made, with doc 08's line struck
+  through rather than deleted so a reader who remembers the rule learns it was
+  retired and why.
+
 - **2026-08-29 · T-c3 (public listing API — migration 0066,
   /api/public/listings)** — Phase C item C3, and the only one that opens a new
   public attack surface.

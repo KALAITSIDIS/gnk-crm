@@ -24,8 +24,27 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 
 ## 0a. NEXT UP — the CRM is finished for Phase 1; what is left is data and four decisions (2026-08-28)
 
-**State:** `main` at `f7172f4`+, tree clean, local and hosted both at **0066**,
-**936 unit / 71 RLS / 209 E2E**, CI green, production READY.
+**State:** `main` at `6bfd5f7`+, tree clean, local and hosted both at **0067**,
+**936 unit / 73 RLS / 209 E2E**, CI green, production READY.
+
+**TWO PHASE-C FOLLOW-ONS CLOSED (2026-08-29). One changed a working
+agreement, so read it before touching the docs:**
+
+1. **`docs/03_DATABASE_SCHEMA.sql` is no longer "authoritative", and the
+   sync-it rule is GONE** — removed from `CLAUDE.md`, `README.md` and doc 08
+   T0.3. The rule held to migration 0023 and then lapsed silently: measured
+   2026-08-29, the file was missing `admin_dashboard_stats` (0018),
+   `mfa_satisfied` (0029), `buyer_requirements` (0043), `reservations` (0044),
+   `task_kinds` (0049), `reservation_installments` (0050), `location_approx`
+   (0054) and all of Phase C — while still calling itself the authoritative
+   DDL. **Do not sync schema changes into it.** `supabase/migrations/` is the
+   authority; the file keeps its design commentary, which is its real value.
+2. **`stage_changed` records stage IDS as well as names (0067)**, so renaming
+   a pipeline stage no longer splits its history in
+   `report_stage_conversion`. Additive: names stay (the timeline renderer
+   reads them, RLS test 15 asserts `payload.to`), pre-0067 events behave
+   exactly as before, and the report now returns `moves_with_ids` against
+   `moves_total` so the coverage is visible rather than assumed.
 
 **PHASE C IS DONE except C7, which stays gated.** C5 → C4 → C3 all built,
 applied to hosted, merged and deployed. C7 needs a real second-office or
