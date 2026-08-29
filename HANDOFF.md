@@ -24,8 +24,39 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 
 ## 0a. NEXT UP — the CRM is finished for Phase 1; what is left is data and four decisions (2026-08-28)
 
-**State:** `main` at `2dd11f0`+, tree clean, local and hosted both at **0065**,
-**929 unit / 67 RLS / 209 E2E**, CI green, production READY.
+**State:** `main` at `f7172f4`+, tree clean, local and hosted both at **0066**,
+**936 unit / 71 RLS / 209 E2E**, CI green, production READY.
+
+**PHASE C IS DONE except C7, which stays gated.** C5 → C4 → C3 all built,
+applied to hosted, merged and deployed. C7 needs a real second-office or
+franchise requirement and there is still one office and two admins.
+
+**C3 IS COMPLETE (2026-08-29)** — migration 0066 and
+`GET /api/public/listings?org=<slug>`. **It exposes nothing today**: production
+has no listing with `visibility = 'public'`, so the live feed returns
+`{"count":0,"listings":[]}`. Publishing is an operator action, and until one
+happens the surface is real but empty.
+
+Four things to know before touching it:
+
+1. **The predicate is `visibility='public' AND status='available'` — the score
+   is NOT re-checked**, contrary to the brief. An admin can publish below
+   `PUBLISH_THRESHOLD` deliberately (`publish_override`, audited), and no DB
+   constraint ties visibility to the score, so re-checking would silently undo
+   an audited decision and would drop listings whose score merely decayed.
+   Operator decision; `published_below_threshold()` keeps that drift visible.
+2. **The returned columns are an ALLOWLIST of 34, not a denylist.**
+   `properties` has 69 columns. A column added to `properties` is withheld
+   until somebody edits `public_listings` on purpose — which is the only way
+   "adding a column cannot silently publish it" can actually hold. RLS test 41
+   asserts the withheld names AND that no withheld VALUE appears under any key.
+3. **`/api/public/` is a third public prefix in `proxy.ts`**, beside `/p/` and
+   `/offline`. Anything put under it is unauthenticated by construction.
+4. **It cost six new advisor WARNs**, all deliberate: `public_listings`,
+   `public_listings_etag` and `note_public_listing_hit` are anon- and
+   authenticated-executable SECURITY DEFINER functions, exactly like
+   `resolve_share_link`. No new ERROR-level lint, which is why this is a
+   function and not a granted view.
 
 **C4 IS COMPLETE (2026-08-29)** — migration 0065 plus `/reports/performance`
 and a CSV export per report. Five SECURITY INVOKER aggregates (agent
@@ -103,32 +134,37 @@ needing only photos (15) and an assigned agent (5).
 | 3 | **A9 field CWV** (IMPROVEMENTS) | operator | LCP/CLS/INP need a VISIBLE browser — a 30-second DevTools Lighthouse run. Server timing was already fixed (`fra1`, ~3x). |
 | 4 | **Unequal purchaser shares** | operator | A1's follow-up: the calculator assumes EQUAL shares. A per-share list is ~a day, and the entry says to ask the agents before building it. |
 
-### Buildable: PHASE C — C5 DONE, C4 IS NEXT (2026-08-28)
+### Buildable: PHASE C IS BUILT — ONLY C7 REMAINS, AND IT IS GATED (2026-08-29)
 
-The operator has decided to build **all of `IMPROVEMENTS.md` §C**. The brief
-is **`docs/PHASE_C_BRIEF.md`** — a re-audit against the code, not the roadmap's
-prose. Start there, not at §C itself.
+The operator decided to build **all of `IMPROVEMENTS.md` §C**. The brief is
+**`docs/PHASE_C_BRIEF.md`** — a re-audit against the code, not the roadmap's
+prose. Each of §2, §3 and §4 now opens with a SHIPPED banner and the
+corrections that section needed.
 
-**C5 and C4 are shipped (see above). C3 is next; C7 stays gated on a real
-second-office requirement.** How the brief has held up so far, because it
-applies to reading the C3 section too:
+**C5, C4 and C3 are shipped (migrations 0060–0066). C7 is the only item left
+and it stays gated** — it needs a concrete second-office or franchise
+requirement, and there is one office and two admins. Do not start it on the
+strength of the roadmap alone.
 
-* **It is a re-audit, not scripture. Test its specifics.** Four have been
-  checked. Three were wrong or incomplete — `p_from_id default null` (§2)
-  would have applied green and broken the cron; epoch microseconds (§2) was
-  one of two equally canonical options; finding 3 misdescribes the writers
-  (see below). One was RIGHT and understated: §3's materialised-view warning
-  is real, and worse than written — an MV leaks across orgs even behind a
-  `SECURITY INVOKER` function, and RLS cannot be enabled on one at all.
-* **Its finding 3 misdescribed the writers.** It says the instalment and
-  reservation sweeps "write timestamps they compute" into `occurred_at`. They
-  do not: every writer in the codebase takes `default now()`, and the computed
-  dates go in the payload and in `tasks.due_at`. The invariant held by
-  construction, not by luck.
-* **§4 (C3) is unverified.** Its claims about `resolve_share_link`,
-  `note_share_link_miss` and the quality gate as a publish predicate are
-  plausible and match what exists, but nobody has checked them against the
-  code yet. Check before building.
+**HOW THE BRIEF HELD UP, now that all three sections have been built against
+it.** Worth reading before trusting any other planning document here:
+
+* **Five specifics were checked. Four were wrong, incomplete, or a premise
+  that does not hold.** `p_from_id default null` (§2) would have applied green
+  and broken the 03:30 cron. Epoch microseconds (§2) was one of two equally
+  canonical options. Finding 3 (§2) misdescribes the writers — every writer
+  takes `default now()`; the computed dates go in the payload and
+  `tasks.due_at`, so the invariant held by construction rather than luck. And
+  §4's load-bearing premise — "a listing below 70 cannot be made public
+  internally" — is false: an admin can override, audited, and no DB constraint
+  ties visibility to the score.
+* **One was RIGHT and understated.** §3's materialised-view warning: an MV over
+  an RLS table leaks across orgs even behind a `SECURITY INVOKER` function, and
+  RLS cannot be enabled on an MV at all (42809).
+* **The lesson is not "the brief was bad".** It was a good brief and it aimed
+  the work correctly. It is that a re-audit written without running anything
+  will contain claims that look like facts, and the cheapest moment to find
+  out is before the migration, not after the deploy.
 
 **Order is C5 → C4 → C3 → C7**, and C7 stays gated on a real second-office
 requirement. The brief carries the three findings that matter most, none of

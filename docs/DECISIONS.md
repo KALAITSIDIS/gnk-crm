@@ -3,6 +3,90 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-08-29 · T-c3 (public listing API — migration 0066,
+  /api/public/listings)** — Phase C item C3, and the only one that opens a new
+  public attack surface.
+
+  **THE BRIEF'S LOAD-BEARING PREMISE IS FALSE.** §4 says "a listing below score
+  70 cannot be made public internally (PUBLISH_THRESHOLD), so it must not be
+  reachable externally either. One rule, enforced twice, defined once." It can:
+  `lib/actions/properties.ts` lets an ADMIN publish below the threshold
+  deliberately, writing a `publish_override` audit event, and `properties`
+  carries no constraint tying `visibility` to `quality_score` — the gate is
+  application-level only. So re-checking the score in the API would not be one
+  rule enforced twice; it would be a SECOND rule that silently undoes an audited
+  decision, and that also drops any listing whose score later decayed, with
+  nobody deciding and nothing telling the marketing site why a listing vanished.
+
+  **OPERATOR DECISION:** the feed is `visibility = 'public' AND status =
+  'available'`. The internal publish decision is the single source of truth —
+  the score gates the TRANSITION, the column records the OUTCOME.
+  `published_below_threshold()` reports published listings scoring under 70 so
+  that drift is visible rather than silent, and is staff-only because it
+  exposes scores the feed withholds.
+
+  **AN ALLOWLIST, NOT A DENYLIST, AND THAT IS THE WHOLE MECHANISM.**
+  `properties` has 69 columns; the brief names five to withhold. A denylist
+  cannot satisfy the brief's own acceptance criterion ("a test asserts the
+  withheld column list by name, so adding a column to `properties` cannot
+  silently publish it") — a new column is published by default under a
+  denylist. The feed enumerates 34 columns in SQL. Withheld beyond the brief's
+  five: `address`, `postal_code`, the exact `location` point (0054 added
+  `location_approx` precisely because a coordinate can be an address),
+  `unit_number`, `block`, `quality_score`, `assigned_agent_id`, `created_by`,
+  `org_id`, `parent_id`, `encumbrances_notes`, `constraints_notes`,
+  `amenities_notes`, `sold_at`, `share_of_land`, `permit_status`,
+  `inherited_fields`. RLS test 41 asserts the withheld names AND that no
+  withheld VALUE appears under any key, so aliasing one into the feed under a
+  different name fails too.
+
+  **A SECURITY DEFINER FUNCTION, NOT THE VIEW §4 NAMES.** Three options weighed
+  against what this database does. (1) A plain view granted to `anon` filters
+  rows only by its own WHERE clause — a non-`security_invoker` view runs with
+  the owner's row security, i.e. bypassed — which is the `mandates_safe`
+  pattern the advisor already flags as an ERROR; a second one makes the advisor
+  harder to read for no gain. (2) A `security_invoker` view plus an `anon`
+  SELECT policy on `properties` makes `/rest/v1/properties` itself public with
+  PostgREST's whole filter and embed surface attached, when the brief asks for
+  "one published, cacheable, read-only collection". (3) An anon-executable
+  SECURITY DEFINER function — which is the precedent the brief itself cites,
+  `resolve_share_link`. Option 3: one door, the allowlist IS the select list,
+  and it costs WARNs beside its siblings rather than a new ERROR.
+
+  **A BUG THAT WOULD HAVE SHIPPED, found by calling the endpoint.**
+  `Number(null)` is `0`, not `NaN` — finite and non-negative — so the guard
+  `if (!Number.isFinite(n) || n < 0) return fallback` never fired for an ABSENT
+  parameter, and `GET /api/public/listings?org=gnk`, the plainest call a
+  marketing site can make, answered 200 with an EMPTY feed. No type checker
+  could catch it and no SQL test would have: the SQL was correct. Extracted to
+  `lib/services/public-listings.ts` with seven unit tests.
+
+  **Other decisions worth carrying.** Rate limiting reuses the 0023 idiom with
+  its OWN counter table — sharing `share_link_attempts` would let marketing-site
+  polling exhaust a buyer's proposal-link budget, two unrelated limits coupled
+  through one counter. The ETag hashes the row COUNT as well as
+  `max(updated_at)`, because unpublishing lowers the count without moving the
+  maximum and a max()-only validator would keep serving a listing that is no
+  longer for sale; the limit and offset are in the ETag too, or a cache could
+  answer page 2 with page 1. `/api/public/` is a third public prefix in
+  `proxy.ts` rather than a widening of `/p/`, so a reader of the auth gate can
+  see every public surface in one condition. `callerIpHash` was hoisted out of
+  `app/p/[token]/page.tsx` rather than copied — two hashes that could disagree
+  would silently stop limiting anything.
+
+  **`mfa-enforcement.test.ts` caught `public_listing_attempts` missing
+  `require_aal2`** on the first run. Redundant in practice (the table already
+  denies everyone) but the invariant is "every RLS-enabled public table carries
+  it", and an invariant with one reasonable-looking exception is not one.
+
+  **Verified against production, unauthenticated:** 200 with
+  `Cache-Control: public, max-age=60` and a weak ETag, 304 on `If-None-Match`,
+  204 on the OPTIONS preflight, 400 with no `org`, an empty feed for an unknown
+  org rather than an error or another org's data, and `/dashboard`,
+  `/properties`, `/reports/performance` and `/api/public/../../dashboard` all
+  still 307 to login. The live feed returns `count: 0` because nothing in
+  production is published — the surface is real and currently empty.
+
 - **2026-08-29 · T-c4 (reporting engine — migration 0065, /reports/performance)**
   — Phase C item C4. Five SECURITY INVOKER aggregates (agent performance,
   source ROI, time to close, stage conversion, price reductions), a citation, a
