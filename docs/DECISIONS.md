@@ -57,6 +57,14 @@ silent. Format: date · task · decision · rationale.
   gazette check and a human must reconcile. Applied to hosted before the
   merge, per the additive rule.
 
+  **CI caught the second-order break, which is the system working:** the e2e
+  calculators spec pinned the old ON-SCREEN stamp figures (€507.50 at €300k,
+  the €20,000 cap), and the branch run failed with three 240s locator
+  timeouts once a fresh-with-0070 database rendered the notice instead. The
+  spec now pins the abolition notice and the absence of any stamp total at
+  any price; the arithmetic pins stay in the unit suite, where they still
+  guard the pre-2026 scale.
+
 - **2026-08-29 · T-stage-ids (migration 0067) + doc 03 reframed** — the two
   follow-ons Phase C left, closed together.
 

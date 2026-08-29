@@ -57,9 +57,6 @@ test.describe("Cyprus purchase-cost calculators", () => {
     const transfer = parseEuro(await totalOf(page, /transfer fees/i));
     expect(transfer, "transfer fees for €300,000 with 50% relief").toBe(8600);
 
-    const stamp = parseEuro(await totalOf(page, /stamp duty/i));
-    expect(stamp, "stamp duty for €300,000").toBe(507.5);
-
     assertNoProblems(problems, "calculators");
   });
 
@@ -85,16 +82,29 @@ test.describe("Cyprus purchase-cost calculators", () => {
     ).toBe(5800);
   });
 
-  test("[CALC-1] stamp duty is per contract and ignores the purchaser count", async ({
+  /**
+   * Law 239(I)/2025 repealed stamp duty for documents signed on or after
+   * 2026-01-01 (migration 0070). The panel must EXPLAIN rather than compute —
+   * a figure here would be a repealed tax quoted to a buyer. The old scale's
+   * arithmetic (per-contract assessment, the €20,000 cap) stays pinned in
+   * tests/unit/calculators.audit.test.ts because it still governs contracts
+   * signed on or before 2025-12-31.
+   */
+  test("stamp duty shows the abolition notice, never a figure (Law 239(I)/2025)", async ({
     page,
   }) => {
-    await priceIn(page, "300000");
-    expect(parseEuro(await totalOf(page, /stamp duty/i))).toBe(507.5);
-    await page.getByLabel(/purchasers/i).fill("4");
-    expect(
-      parseEuro(await totalOf(page, /stamp duty/i)),
-      "stamp duty is charged on the document, not per buyer",
-    ).toBe(507.5);
+    const card = page
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: /stamp duty/i }) });
+
+    // the notice renders unconditionally — it does not wait for a price
+    await expect(card.getByText(/abolished for documents signed on or after/i)).toBeVisible();
+    await expect(card.getByText(/239\(I\)\/2025/)).toBeVisible();
+    await expect(card.getByText(/follow the previous bands/i)).toBeVisible();
+
+    // and no price conjures a total — not even one that once engaged the cap
+    await priceIn(page, "12000000");
+    await expect(card.locator("div").filter({ hasText: /^Total/ })).toHaveCount(0);
   });
 
   test("[CALC-1] the purchasers field defaults to a sole purchaser", async ({ page }) => {
@@ -141,10 +151,15 @@ test.describe("Cyprus purchase-cost calculators", () => {
     await expect(page.getByText("8%").first()).toBeVisible();
   });
 
-  test("the stamp-duty cap engages on a very large price", async ({ page }) => {
-    await priceIn(page, "12000000");
-    expect(parseEuro(await totalOf(page, /stamp duty/i))).toBe(20000);
-    await expect(page.getByText(/capped at/i).first()).toBeVisible();
+  test("the copy summary carries the abolition, not a stamp total", async ({ page }) => {
+    // The pasted artifact is what reaches a buyer; it must explain the repeal
+    // rather than total a repealed tax. Clipboard contents are not readable
+    // cross-browser, so assert the on-card copy the summary is built from.
+    const card = page
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: /stamp duty/i }) });
+    await expect(card.getByRole("button", { name: /copy summary/i })).toBeVisible();
+    await expect(card.getByText(/^Total/)).toHaveCount(0);
   });
 
   test("rates are labelled with their verification date (advice liability)", async ({ page }) => {
