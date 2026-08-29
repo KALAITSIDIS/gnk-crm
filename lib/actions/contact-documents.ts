@@ -6,7 +6,7 @@ import { getCurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { CONTACT_DOC_TYPES, type DocType } from "@/lib/validators/documents";
+import { CONTACT_DOC_TYPES, contactDocVisibility, type DocType } from "@/lib/validators/documents";
 
 // type-only export is fine in a "use server" file (erased at runtime);
 // runtime constants are NOT — CONTACT_DOC_TYPES lives in lib/validators/documents.ts
@@ -70,6 +70,11 @@ export async function uploadContactDocument(
       title,
       storage_path: path,
       uploaded_by: profile.id,
+      // SEC-02: KYC types are admin-only by need-to-know; omitting this
+      // defaulted every passport scan to org-wide 'internal' until 2026-08-29.
+      // The 0072 CHECK refuses an internal KYC row anyway — this just makes
+      // the ordinary path set it right instead of erroring.
+      visibility: contactDocVisibility(docType),
     })
     .select("id")
     .single();
