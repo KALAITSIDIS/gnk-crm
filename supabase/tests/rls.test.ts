@@ -4065,6 +4065,41 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     const sold = `SOLD-${run}`;
     const otherOrg = `OTHERORG-${run}`;
 
+    // A DISTRICT AND AREA ARE REQUIRED, not incidental: without them the feed
+    // returns null for both and the jsonb-shape assertion below skips exactly
+    // the two fields 0069 exists to protect. Test 41 originally had no district
+    // and that is part of why the text/jsonb defect survived to production.
+    const { data: district } = await svc
+      .from("districts")
+      .select("id")
+      .eq("org_id", ORG_A)
+      .limit(1)
+      .maybeSingle();
+    let areaId: string | null = null;
+    if (district) {
+      const { data: area } = await svc
+        .from("areas")
+        .select("id")
+        .eq("org_id", ORG_A)
+        .eq("district_id", district.id)
+        .limit(1)
+        .maybeSingle();
+      areaId =
+        area?.id ??
+        (
+          await svc
+            .from("areas")
+            .insert({
+              org_id: ORG_A,
+              district_id: district.id,
+              name: { en: `Area ${run}`, el: `Περιοχή ${run}`, ru: `Район ${run}` },
+            })
+            .select("id")
+            .single()
+        ).data?.id ??
+        null;
+    }
+
     // the one that SHOULD appear, carrying values in withheld columns so a leak
     // would be detectable by value and not only by column name
     await mkProp(ORG_A, pub, "public", "available", {
@@ -4074,6 +4109,8 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       address: "12 Secret Street",
       postal_code: "8001",
       quality_score: 85,
+      district_id: district?.id ?? null,
+      area_id: areaId,
     });
     // and the ones that must NOT
     await mkProp(ORG_A, draft, "public", "draft");
@@ -4151,6 +4188,30 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(row.reference).toBe(pub);
     expect(row.asking_price).not.toBeUndefined();
     expect(row.bedrooms).toBe(2);
+
+    // --- SHAPE, not just presence (0069) ----------------------------------
+    // Every test here asserted which KEYS come back and none asserted their
+    // TYPE, so 0066 shipped `district` and `area` as text while their source
+    // columns are jsonb: the API answered with a STRING CONTAINING ESCAPED
+    // JSON while `title` beside it was an object. Nothing failed. It was found
+    // by looking at the first real published listing.
+    //
+    // A consumer must not have to JSON.parse() some multilingual fields and
+    // not others.
+    for (const key of [
+      "title",
+      "short_description",
+      "public_description",
+      "district",
+      "area",
+    ] as const) {
+      const v = (row as Record<string, unknown>)[key];
+      expect(v, `${key} must be present for this assertion to mean anything`).not.toBeNull();
+      expect(
+        typeof v,
+        `${key} must be a parsed object, not a JSON string — 0069`,
+      ).toBe("object");
+    }
 
     // --- anon cannot reach the underlying table at all --------------------
     const direct = await anon.from("properties").select("reference").eq("reference", pub);

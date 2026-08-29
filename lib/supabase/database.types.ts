@@ -3056,7 +3056,7 @@ export type Database = {
       public_listings: {
         Args: { p_limit?: number; p_offset?: number; p_org_slug: string }
         Returns: {
-          area: string
+          area: Json
           asking_price: number
           basement_sqm: number
           bathrooms: number
@@ -3065,7 +3065,7 @@ export type Database = {
           covered_area_sqm: number
           currency: string
           delivery_date: string
-          district: string
+          district: Json
           energy_class: string
           features: string[]
           floor_number: number
