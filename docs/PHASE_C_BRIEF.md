@@ -231,6 +231,35 @@ prints can be re-derived from the events it cites.
 
 ## 4. C3 — public listing API
 
+> ### ✅ SHIPPED 2026-08-29 — migration 0066 + `/api/public/listings`.
+> Local and hosted applied, CI green, deployed. `docs/DECISIONS.md` `T-c3`.
+>
+> **What this section gets right:** the precedent claims are all true —
+> `resolve_share_link` and `note_share_link_miss` are anon-executable SECURITY
+> DEFINER RPCs, and the IP-hash rate limit exists and was reused.
+>
+> **What it gets wrong, and it is the load-bearing part.** "A listing below
+> score 70 cannot be made public internally" is FALSE: an admin can override
+> the gate deliberately (`publish_override`, audited), and no DB constraint
+> ties `visibility` to `quality_score`. Re-checking the score in the API would
+> not be "one rule enforced twice" — it would be a second rule silently undoing
+> an audited decision, and dropping listings whose score merely decayed.
+> Operator decision: the predicate is `visibility='public' AND
+> status='available'`, and `published_below_threshold()` keeps the drift
+> visible.
+>
+> **Its withheld-column list cannot do what its own "done means" asks.**
+> `properties` has 69 columns; naming five to withhold is a DENYLIST, under
+> which a newly added column is published by default. Shipped as an ALLOWLIST
+> of 34 columns.
+>
+> **The `published_listings` view became a SECURITY DEFINER function** — a
+> granted view would filter rows only by its own WHERE clause and add a second
+> ERROR-level `security_definer_view` lint beside `mandates_safe`, and a
+> `security_invoker` view would need an `anon` policy on `properties`, making
+> `/rest/v1/properties` itself public. The function is this section's own cited
+> precedent.
+
 ### What is actually there — and it is more than the roadmap credits
 
 The precedent already exists: `resolve_share_link` and `note_share_link_miss`
