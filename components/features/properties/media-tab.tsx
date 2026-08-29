@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useActionState, useEffect, useRef, useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { ArrowDown, ArrowUp, Star, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -12,6 +12,7 @@ import {
   uploadPropertyMedia,
   type MediaActionState,
 } from "@/lib/actions/media";
+import { downscaleForUpload } from "@/lib/services/client-image";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { publicMediaUrl } from "@/lib/utils/storage";
@@ -43,19 +44,62 @@ export function MediaTab({
   /** cover/reorder/delete rights: admin/LM only (property_media RLS) */
   canManage?: boolean;
 }) {
-  const [state, formAction, uploading] = useActionState(uploadPropertyMedia, initialState);
+  const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const fileInput = useRef<HTMLInputElement>(null);
-  const lastToasted = useRef<number | null>(null);
 
-  useEffect(() => {
-    if (state.savedAt && state.savedAt !== lastToasted.current) {
-      lastToasted.current = state.savedAt;
-      toast.success("Saved");
+  /**
+   * REL-05 (measured 2026-08-30): Vercel 413s request bodies over ~4.5 MB
+   * BEFORE the server action runs, so (a) each photo is downscaled in the
+   * browser when it would not fit, and (b) files go up ONE PER REQUEST —
+   * the ceiling is on the whole body, and several photos batched into one
+   * FormData could crest it together even after downscaling. Sequential on
+   * purpose: server actions serialize per client anyway, and per-file
+   * progress beats one long spinner.
+   */
+  async function handleUpload(e: React.FormEvent) {
+    e.preventDefault();
+    const files = [...(fileInput.current?.files ?? [])];
+    if (files.length === 0) {
+      setUploadError("Pick at least one image");
+      return;
+    }
+    setUploading(true);
+    setUploadError(null);
+    let failed: string | null = null;
+    let done = 0;
+    for (const original of files) {
+      setProgress(`${done + 1}/${files.length}`);
+      let file = original;
+      try {
+        file = await downscaleForUpload(original);
+      } catch (err) {
+        failed = err instanceof Error ? err.message : `${original.name}: unreadable image`;
+        break;
+      }
+      const fd = new FormData();
+      fd.set("property_id", propertyId);
+      fd.append("files", file);
+      const res = await uploadPropertyMedia(initialState, fd);
+      if (res.error) {
+        failed = res.error;
+        break;
+      }
+      done++;
+    }
+    setUploading(false);
+    setProgress(null);
+    if (failed) {
+      setUploadError(done > 0 ? `${done}/${files.length} uploaded, then: ${failed}` : failed);
+      toast.error(failed);
+    } else {
+      toast.success(done === 1 ? "Saved" : `Saved ${done} photos`);
       if (fileInput.current) fileInput.current.value = "";
     }
-  }, [state.savedAt]);
+  }
 
   const sorted = [...items].sort((a, b) => a.sort_order - b.sort_order);
   // drop selections for photos that no longer exist (deleted elsewhere / revalidated)
@@ -87,8 +131,7 @@ export function MediaTab({
     <div className="flex flex-col gap-4">
       {canUpload ? (
         <>
-          <form action={formAction} className="flex flex-wrap items-center gap-3">
-            <input type="hidden" name="property_id" value={propertyId} />
+          <form onSubmit={handleUpload} className="flex flex-wrap items-center gap-3">
             <input
               ref={fileInput}
               type="file"
@@ -98,18 +141,21 @@ export function MediaTab({
               className="text-sm text-text-2 file:mr-3 file:rounded-lg file:border file:border-border file:bg-surface file:px-3 file:py-1.5 file:text-sm file:text-text-1"
             />
             <Button type="submit" disabled={uploading} size="sm">
-              <Upload className="size-4" /> {uploading ? "Processing…" : "Upload"}
+              <Upload className="size-4" />{" "}
+              {uploading ? `Uploading ${progress ?? "…"}` : "Upload"}
             </Button>
-            {state.error ? (
+            {uploadError ? (
               <p role="alert" className="text-sm text-danger">
-                {state.error}
+                {uploadError}
               </p>
             ) : null}
           </form>
           <p className="text-xs text-text-3">
-            EXIF (incl. GPS) is stripped on upload; renditions 400/800/1600 WebP; originals stay in
-            the private bucket. Watermark applies to public/partner listings when configured in
-            Settings.
+            Large photos are resized in the browser before upload (hosting rejects bodies over
+            ~4.5&nbsp;MB; nothing rendered is lost — renditions cap at 1600px). EXIF (incl. GPS) is
+            stripped; renditions 400/800/1600 WebP; originals stay in the private bucket. Watermark
+            applies to public/partner listings when configured in Settings. Bulk imports:
+            scripts/import/media.mts.
           </p>
         </>
       ) : (

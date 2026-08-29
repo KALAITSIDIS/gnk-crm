@@ -15,6 +15,14 @@ export const RENDITIONS = [
 export type RenditionName = (typeof RENDITIONS)[number]["name"];
 
 export const ACCEPTED_MIME = ["image/jpeg", "image/png", "image/webp"];
+/**
+ * The PIPELINE's cap, reachable only by the bulk importer
+ * (scripts/import/media.mts). Through the UI's server action the REAL ceiling
+ * is Vercel's: request bodies over ~4.5 MB die with a platform 413 before any
+ * app code runs — MEASURED on production 2026-08-30 (3 MB → 200; 5/8/20 MB →
+ * 413). The browser therefore downscales oversized photos and submits one
+ * file per request (lib/services/client-image.ts, media-tab.tsx).
+ */
 export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024; // 20 MB
 
 export interface ProcessedImage {
