@@ -62,7 +62,7 @@ Export current data (Excel, phone contacts, WhatsApp notes) into these two CSVs.
 | mandate_commission_pct | no | number | |
 | mandate_expiry | no | YYYY-MM-DD | |
 | internal_notes | no | text | |
-| photo_folder | no | folder name | Optional: photos placed in `import-media/<folder>/` are pipeline-processed |
+| photo_folder | no | folder name | Photos in `import-media/<folder>/` — imported by `node --env-file=.env.local scripts/import/media.mts --file properties.csv` AFTER the row import (dry-run first; idempotent, `--append` to extend a gallery) |
 
 ## Rules
 

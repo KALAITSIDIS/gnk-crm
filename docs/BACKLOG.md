@@ -1344,9 +1344,18 @@ explicit direction.
   see only their own).
 - "View all →" footer links on the admin Latest-events and Mandates-expiring
   cards once a canonical events/mandates list page exists to link to.
-- Property importer `photo_folder` support (doc 09): ingest photos from
+- ~~Property importer `photo_folder` support (doc 09): ingest photos from
   `import-media/<folder>/` through the T1.4 media pipeline. T5.6 imports all
-  other columns; photo ingestion deferred.
+  other columns; photo ingestion deferred.~~ **DONE 2026-08-30 (audit
+  REL-06): `scripts/import/media.mts`** — the app's real pipeline imported
+  relatively (EXIF strip, 3 renditions, watermark by visibility, private
+  original, per-photo `media_uploaded` event with `source: import_script`,
+  quality recompute per property), natural filename sort, cover-if-none,
+  idempotent by default (`--append` to add to existing galleries), dry-run +
+  report like the row importers. VERIFY: dry-run then live against local
+  PAF0001 (2 photos → rows/renditions/events/score 45), re-run skipped.
+  `import-media/` is git-ignored — this repo is PUBLIC and must never carry
+  client photos.
 - `/leads/[id]` lead detail page (doc 05): lead summary + editable fields +
   conversation/event history (EventTimeline) + convert panel. The inbox now
   covers link contact / assign / correct / reopen / convert / close inline

@@ -45,3 +45,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 !.env.example
+
+# operator photo folders for scripts/import/media.mts - NEVER commit (public repo)
+import-media/

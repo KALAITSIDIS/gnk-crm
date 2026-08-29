@@ -3,6 +3,43 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-08-30 · T-media-import — the ~4.5 MB upload ceiling MEASURED, the
+  browser now downscales, and the bulk photo importer ships.** Audit
+  REL-05 + REL-06, the last two blockers on onboarding the real portfolio.
+
+  **REL-05 settled empirically, not from docs**: unauthenticated POSTs to
+  production (the body must reach the function regardless of auth) — 3 MB →
+  200, 5/8/20 MB → **413** at the platform. So the server action's 20 MB
+  promise was undeliverable; a phone photo would have failed with an opaque
+  413 that reads as a code fault, in production only. Two-part fix, both
+  costless to what any surface renders (renditions cap at 1600 px):
+  `downscaleForUpload` re-encodes oversized photos in the browser at 2000 px
+  (decision logic pure and unit-pinned, incl. that a 9 MB PDF is NOT
+  laundered into a fake JPEG), and the media tab now submits ONE FILE PER
+  REQUEST with per-file progress — the ceiling is on the whole body, and a
+  batch of downscaled photos could crest it together. The stored "original"
+  for UI uploads is now the downscaled file; true camera originals travel
+  through the importer, which never meets the ceiling. The measured numbers
+  live beside MAX_UPLOAD_BYTES so nobody re-derives them from theory.
+
+  **REL-06: `scripts/import/media.mts`** completes doc 09's `photo_folder`
+  column using the app's REAL pipeline via relative imports (the
+  recompute-scores.mts precedent — media.ts and quality-score.ts have no
+  runtime alias imports): EXIF strip, three renditions, watermark by
+  visibility, original to the private bucket, a `media_uploaded` event per
+  photo (actor null, `source: import_script` — service role bypasses the
+  0071 self-attribution policy by design, like the sweeps), quality
+  recompute per property. Natural filename sort (photo2 before photo10),
+  first photo becomes cover only when none exists, **idempotent by
+  default** — a property with photos is skipped so re-running an onboarding
+  batch cannot double a gallery; `--append` opts in. Proven end-to-end
+  against the local stack: dry-run, live (2 generated images → rows with
+  correct sort/cover/dimensions, renditions present, events written, score
+  27 → 45), and a re-run that skipped. Buffers go to storage-js raw — the
+  UTF-8 corruption binaryBody() guards against is Vercel-runtime behaviour,
+  per that helper's own header. `import-media/` is git-ignored: this repo
+  is PUBLIC and must never carry client photos.
+
 - **2026-08-29 · T-feed-media (migration 0073) — the public feed carries
   photos, and `published_at` is real.** Audit FEED-1 + DB-02, the two halves
   of "the feed can actually power the marketing site".
