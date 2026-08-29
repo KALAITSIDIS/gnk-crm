@@ -12,7 +12,7 @@ Execution order for Claude Code. **One task at a time: implement → run verific
 **T0.2 Supabase local + envs.** `supabase init`, local stack, `.env.local` from `.env.example`, `lib/supabase/{client,server,admin}.ts` (admin = service role, server-only).
 ✔ App connects locally; `supabase status` healthy.
 
-**T0.3 Migration 0001 (schema).** Copy `docs/03_DATABASE_SCHEMA.sql` → `supabase/migrations/0001_foundations.sql`. `supabase db reset`; fix any syntax/order errors **and sync the fix back into doc 03** in the same commit.
+**T0.3 Migration 0001 (schema).** Copy `docs/03_DATABASE_SCHEMA.sql` → `supabase/migrations/0001_foundations.sql`. `supabase db reset`; fix any syntax/order errors ~~**and sync the fix back into doc 03** in the same commit~~. **The sync rule was DROPPED on 2026-08-29** — it was honoured through migration 0023 and then lapsed silently for about forty migrations, leaving doc 03 calling itself authoritative while missing most of the schema. `supabase/migrations/` is the authority; doc 03 is now labelled a Phase 1 design record. See its header.
 ✔ Reset completes clean; all tables/enums/functions/triggers/buckets exist.
 
 **T0.4 Migration 0002 (RLS).** Implement every row of doc 04 as policies + the `mandates_safe` view.

@@ -9,7 +9,7 @@ Internal real-estate CRM & property operating system for GN Kalaitsidis Capital,
 |---|---|---|
 | 1 | `docs/01_PROJECT_CONTEXT.md` | Vision, scope, modules, guardrails — the constitution |
 | 2 | `docs/02_PHASE_1_BUILD_SPEC.md` | Architecture decisions + functional spec per module with acceptance criteria |
-| 3 | `docs/03_DATABASE_SCHEMA.sql` | Authoritative Phase 1 DDL (copy into migrations, verify, fix, never redesign silently) |
+| 3 | `docs/03_DATABASE_SCHEMA.sql` | **Phase 1 design record — NOT the current schema** (reframed 2026-08-29). Read it for *why* a table is shaped as it is. For what the database actually holds, read `supabase/migrations/` |
 | 4 | `docs/04_RLS_POLICY_MATRIX.md` | Role × table × operation matrix — implement exactly, test every row |
 | 5 | `docs/05_ROUTES_AND_SCREENS.md` | Full route map and screen contents |
 | 6 | `docs/06_UI_DESIGN_SYSTEM.md` | Brand tokens, layout, component rules |
@@ -57,7 +57,13 @@ npm run db:types         # regenerate types from local DB
 ## Working method
 
 - Follow `docs/08_BUILD_PLAYBOOK.md` strictly: **one task → implement → verify → commit → next task.** Commit message format: `T1.3: property media pipeline (exif strip + renditions)`.
-- If the schema in doc 03 has an error, fix it in the migration AND update doc 03 in the same commit, noting the fix.
+- **Do NOT sync schema changes back into doc 03.** That rule was real, was
+  followed through migration 0023, then quietly stopped — and by 2026-08-29 the
+  file was missing about forty migrations' worth of schema while still calling
+  itself authoritative. A hand-maintained copy of a 66-migration schema is a
+  second source of truth, and §0 of `HANDOFF.md` says what to do with one:
+  point at the owner rather than correcting the copy. `supabase/migrations/` is
+  the authority; `lib/supabase/database.types.ts` is generated from it.
 - If a real ambiguity blocks you, choose the option most consistent with docs 01–02, implement it, and record the decision in `docs/DECISIONS.md` (create it on first use). Do not stop to ask for trivial choices.
 - Never invent scope. If a nice-to-have occurs to you, add a line to `docs/BACKLOG.md` instead of building it.
 - Mobile-first for: viewing slip signing screen, agent daily dashboard, lead inbox. Desktop-first for everything else.
