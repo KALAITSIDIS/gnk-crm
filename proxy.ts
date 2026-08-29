@@ -77,7 +77,20 @@ export default async function proxy(request: NextRequest) {
    * to hydrate. It renders identically either way. Do not add interactivity to
    * that page without moving it off `force-static` first.
    */
-  if (path.startsWith("/p/") || path === "/offline") {
+  /**
+   * `/api/public/` is the C3 listing feed (migration 0066) — a marketing site
+   * polls it with no session. Added as a THIRD narrow prefix rather than
+   * widening either of the two above, and deliberately NOT hidden under `/p/`:
+   * that prefix means "tokenised share link", and a reader of this gate should
+   * be able to see every public surface by reading the condition.
+   *
+   * The prefix is what is public, not the method or the handler. Anything added
+   * under `/api/public/` is unauthenticated by construction, so put nothing
+   * there that is not meant for the open internet. The route itself holds only
+   * the ANON key, so its reach is whatever migration 0066 grants `anon` by
+   * name — nothing in this file can widen that.
+   */
+  if (path.startsWith("/p/") || path.startsWith("/api/public/") || path === "/offline") {
     const publicResponse = withNonce();
     publicResponse.headers.set(CSP_HEADER, csp);
     publicResponse.headers.set(

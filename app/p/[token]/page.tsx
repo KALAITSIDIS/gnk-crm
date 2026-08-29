@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-import { headers } from "next/headers";
 import { Availability as AvailabilityView } from "@/components/features/share-links/availability";
 import { Proposal as ProposalView } from "@/components/features/share-links/proposal";
 import {
@@ -9,6 +7,7 @@ import {
 } from "@/lib/services/share-links";
 import { hashShareToken } from "@/lib/services/share-links-token";
 import { createPublicClient } from "@/lib/supabase/public";
+import { callerIpHash } from "@/lib/services/caller-ip";
 
 export const dynamic = "force-dynamic";
 
@@ -22,19 +21,6 @@ export const dynamic = "force-dynamic";
  * This component cannot widen that boundary — it has an anon client that can
  * reach nothing else.
  */
-
-/** A visitor's IP is never stored; only a salted hash, for the miss counter. */
-async function callerIpHash(): Promise<string> {
-  const h = await headers();
-  const ip =
-    h.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    h.get("x-real-ip") ||
-    "unknown";
-  return createHash("sha256")
-    .update(`${ip}:${process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""}`)
-    .digest("hex")
-    .slice(0, 32);
-}
 
 /**
  * Expired, revoked, unknown and malformed all render THIS — one neutral page,
