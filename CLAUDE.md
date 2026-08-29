@@ -16,6 +16,7 @@ Internal real-estate CRM & property operating system for GN Kalaitsidis Capital,
 | 7 | `docs/07_SEED_DATA.sql` | Districts, deal stages, Cyprus rate config |
 | 8 | `docs/08_BUILD_PLAYBOOK.md` | **The step-by-step task list. Execute in order, one task at a time.** |
 | 9 | `docs/09_DATA_IMPORT_TEMPLATES.md` | CSV import formats for real data |
+| 10 | `docs/10_INFRASTRUCTURE.md` | Where it runs: GitHub, Supabase, Vercel — identifiers, CI shape, cron, deploy discipline. **No secrets: this repo is PUBLIC** |
 
 ## Stack (fixed — do not substitute)
 
