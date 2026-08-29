@@ -377,3 +377,41 @@ describe("[CALC-2] config validation rejects unsafe band tables", () => {
     expect(parseTransferFeesConfig({ bands: [{ up_to: 1, rate: 0.1 }] })).toBeNull(); // no relief_pct
   });
 });
+
+/**
+ * Law 239(I)/2025 repealed the Stamp Duty Laws for documents signed on or
+ * after 2026-01-01 (migration 0070). The bands above stay in config — they
+ * remain the statutory scale for pre-2026 contracts — and an `abolished`
+ * block tells the calculator to render a notice instead of a figure.
+ */
+describe("stamp duty — abolition (Law 239(I)/2025, migration 0070)", () => {
+  const ABOLISHED = { from: "2026-01-01", law: "Law 239(I)/2025" };
+
+  it("parses the post-0070 production shape, abolition included", () => {
+    const parsed = parseStampDutyConfig({ ...STAMP, abolished: ABOLISHED });
+    expect(parsed).not.toBeNull();
+    expect(parsed!.abolished).toEqual(ABOLISHED);
+    // the bands survive — pre-2026 contracts still need them
+    expect(parsed!.bands).toEqual(STAMP.bands);
+  });
+
+  it("a config without the block still parses, with abolished null", () => {
+    // pre-0070 databases (and CI mid-rollout) must keep computing
+    expect(parseStampDutyConfig(STAMP)!.abolished).toBeNull();
+  });
+
+  it("a MALFORMED abolition block fails the whole config, never gets ignored", () => {
+    // silently dropping it would quote a repealed tax — the exact failure
+    // the field exists to prevent
+    expect(parseStampDutyConfig({ ...STAMP, abolished: { from: "2026-01-01" } })).toBeNull(); // no law
+    expect(
+      parseStampDutyConfig({ ...STAMP, abolished: { from: "January 2026", law: "x" } }),
+    ).toBeNull(); // not an ISO date
+    expect(parseStampDutyConfig({ ...STAMP, abolished: { from: "2026-01-01", law: "" } })).toBeNull(); // empty law
+  });
+
+  it("computeStampDuty itself is untouched — pre-2026 contracts still compute", () => {
+    // the abolition is a rendering decision; the scale must not drift
+    expect(computeStampDuty(300000, STAMP).total).toBe(507.5);
+  });
+});

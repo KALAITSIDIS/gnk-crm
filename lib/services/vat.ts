@@ -242,8 +242,22 @@ export function deriveVat(input: VatInput): VatTreatment {
         `Covered area exceeds the ${maxArea} m² total cap by ${overArea} m², so the WHOLE purchase is standard rated.`,
       );
     }
-    // What the cliff costs: the relief that would have applied just under it.
-    const reliefLost = round2(reducedBaseFor(maxValue!, area, areaCap!, valueCap!) * (standardRate! - reducedRate!));
+    // What the cliff costs: the relief that would have applied AT THE CAP THAT
+    // WAS ACTUALLY CROSSED. The hypothetical must hold the other dimension at
+    // its real value — value cliff: the same dwelling priced at the cap; area
+    // cliff: the same price at the cap area; both crossed: both at their caps.
+    // (The pre-fix version substituted the value cap as the price for BOTH
+    // kinds, pricing an area-cliff hypothetical no eligible dwelling could
+    // have — €45,262 shown where the true under-vs-over delta is €28,737 at
+    // 191 m² / €300,000. Audit 2026-08-29, finding CALC-VAT-1.)
+    const reliefLost = round2(
+      reducedBaseFor(
+        overValue > 0 ? maxValue! : price,
+        overArea > 0 ? maxArea! : area,
+        areaCap!,
+        valueCap!,
+      ) * (standardRate! - reducedRate!),
+    );
     return {
       ...base,
       outcome: "standard_only",
