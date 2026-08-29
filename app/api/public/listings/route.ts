@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createPublicClient } from "@/lib/supabase/public";
 import { callerIpHash } from "@/lib/services/caller-ip";
-import { parseFeedParams } from "@/lib/services/public-listings";
+import { absolutizeListingImages, parseFeedParams } from "@/lib/services/public-listings";
 
 /**
  * The public listing feed (IMPROVEMENTS C3, migration 0066).
@@ -87,7 +87,13 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const listings = data ?? [];
+  // FEED-1 (0073): SQL returns rendition paths relative to the public media
+  // bucket; the route knows the project URL, so the site gets absolute URLs.
+  // NEXT_PUBLIC_SUPABASE_URL is inlined at build time (see proxy.ts note).
+  const listings = absolutizeListingImages(
+    (data ?? []) as Array<{ images?: unknown }>,
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  );
   return NextResponse.json(
     { org, count: Array.isArray(listings) ? listings.length : 0, limit, offset, listings },
     {

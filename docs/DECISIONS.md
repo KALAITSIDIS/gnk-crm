@@ -3,6 +3,37 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-08-29 · T-feed-media (migration 0073) — the public feed carries
+  photos, and `published_at` is real.** Audit FEED-1 + DB-02, the two halves
+  of "the feed can actually power the marketing site".
+
+  **`images` is the 35th allowlisted column**: a jsonb array, cover first
+  then sort order, one `{thumb, card, full, alt, watermarked}` object per
+  photo whose rendition pipeline FINISHED — a half-processed photo is
+  withheld, floor plans and virtual tours stay internal until deliberately
+  wired (audit MEDIA-K). SQL returns bucket-relative paths because it does
+  not know the project URL; the route absolutizes them
+  (`absolutizeListingImages`, unit-pinned to be double-slash-proof and to
+  pass a pre-0073 row through untouched mid-rollout). The migration greps
+  its own compiled body to prove the EXIF-bearing original's column is never
+  referenced — the 0041 substring-check idiom, which is why that column name
+  appears only in the header and the assertion block.
+
+  **`published_at` semantics, decided here**: stamped by `saveProperty` on
+  EVERY transition into public (a relisting after months away is genuinely
+  news again), never cleared on unpublish, so the column also answers "when
+  was this last public". Placed at the end of the publish-gate block, so a
+  refused publish stamps nothing and the diff logger records the stamp in
+  the update event for free. Backfill prefers the evented visibility flip
+  (`payload.changed.visibility.to = 'public'`), falls back to `updated_at`,
+  and the migration hard-aborts if any public row is left unstamped.
+
+  **The ETag had a real hole the moment media joined the feed**: it hashed
+  (count | max updated_at) of LISTINGS, and no media mutation touches
+  `properties.updated_at` — a site would cache a stale gallery until some
+  unrelated edit. It now folds in a fingerprint (media id + sort + cover per
+  public listing), so add, remove, reorder and re-cover all move it.
+
 - **2026-08-29 · T-sec-audit (migrations 0071/0072) — events name their
   author; KYC contact documents go admin-only.** Audit SEC-01/SEC-02.
 
