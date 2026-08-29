@@ -4274,4 +4274,146 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     ).toBe(false);
   });
 
+  it("45. stage_changed carries ids, and renaming a stage no longer splits its history", async () => {
+    /**
+     * 0067. `move_deal_to_stage` (0011) recorded stage NAMES only, so
+     * report_stage_conversion (0065) grouped its funnel on a mutable string:
+     * renaming a stage split that stage's history in two at the rename,
+     * silently. The payload now carries ids as well, and the report resolves
+     * them to the CURRENT name.
+     *
+     * This test is the rename, because that is the only thing that proves it.
+     */
+    const nameA = `S1-${run}`;
+    const nameB = `S2-${run}`;
+    // sort_order is UNIQUE per (org, deal_type), so hardcoding it makes the
+    // test pass once and then collide forever against a long-lived local stack.
+    // Derive from whatever is already there.
+    const { data: top } = await svc
+      .from("deal_stages")
+      .select("sort_order")
+      .eq("org_id", ORG_A)
+      .eq("deal_type", "sale")
+      .order("sort_order", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const base = (top?.sort_order ?? 0) + 1;
+    const mkStage = async (name: string, order: number) => {
+      const { data, error } = await svc
+        .from("deal_stages")
+        .insert({ org_id: ORG_A, deal_type: "sale", name, sort_order: order })
+        .select("id")
+        .single();
+      if (error) throw error;
+      return data.id as string;
+    };
+    const s1 = await mkStage(nameA, base);
+    const s2 = await mkStage(nameB, base + 1);
+
+    const { data: deal, error: dealErr } = await svc
+      .from("deals")
+      .insert({
+        org_id: ORG_A,
+        deal_type: "sale",
+        stage_id: s1,
+        title: `stage-ids-${run}`,
+        agent_id: agentA1.id,
+        status: "open",
+      })
+      .select("id")
+      .single();
+    if (dealErr) throw dealErr;
+
+    // the REAL rpc, as the kanban calls it
+    const moved = await agentA1.client.rpc("move_deal_to_stage", {
+      p_deal_id: deal.id,
+      p_stage_id: s2,
+    });
+    expect(moved.error, "the guarded move must still work").toBeNull();
+
+    // --- the payload gained ids and KEPT names ---------------------------
+    const { data: ev } = await svc
+      .from("events")
+      .select("payload")
+      .eq("entity_type", "deal")
+      .eq("entity_id", deal.id)
+      .eq("event_type", "stage_changed")
+      .order("id", { ascending: false })
+      .limit(1)
+      .single();
+    const payload = ev!.payload as Record<string, string>;
+    expect(payload.from, "names stay — the timeline renderer reads them").toBe(nameA);
+    expect(payload.to).toBe(nameB);
+    expect(payload.from_stage_id, "and ids are now recorded").toBe(s1);
+    expect(payload.to_stage_id).toBe(s2);
+
+    const win = {
+      p_from: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+      p_to: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    };
+    type Conv = {
+      stages: Array<{ stage: string; entered: number; advanced: number }>;
+      moves_total: number;
+      moves_with_ids: number;
+    };
+    const before = (await svc.rpc("report_stage_conversion", win)).data as unknown as Conv;
+    expect(
+      before.stages.find((s) => s.stage === nameB)?.entered,
+      "the move shows under the destination stage",
+    ).toBe(1);
+    expect(before.moves_with_ids, "and it is id-backed").toBeGreaterThan(0);
+
+    // --- THE POINT: rename the stage --------------------------------------
+    const renamed = `${nameB}-RENAMED`;
+    await svc.from("deal_stages").update({ name: renamed }).eq("id", s2);
+
+    const after = (await svc.rpc("report_stage_conversion", win)).data as unknown as Conv;
+    expect(
+      after.stages.find((s) => s.stage === renamed)?.entered,
+      "history follows the rename instead of splitting",
+    ).toBe(1);
+    expect(
+      after.stages.find((s) => s.stage === nameB),
+      "and the old spelling is gone, not left holding half the traffic",
+    ).toBeUndefined();
+  });
+
+  it("46. a pre-0067 stage_changed event still reports under its recorded name", async () => {
+    // Backward compatibility, which is the other half of an additive change:
+    // every event written before 0067 has names and no ids, and must behave
+    // exactly as it did. A deleted stage falls back the same way — the recorded
+    // name is then the only thing that describes it.
+    const legacy = `LEGACY-${run}`;
+    const { error } = await svc.from("events").insert({
+      org_id: ORG_A,
+      actor_id: agentA1.id,
+      entity_type: "deal",
+      entity_id: dealA1,
+      event_type: "stage_changed",
+      payload: { from: `${legacy}-A`, to: `${legacy}-B` }, // no ids, as before 0067
+    });
+    if (error) throw error;
+
+    const win = {
+      p_from: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+      p_to: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    };
+    const conv = (await svc.rpc("report_stage_conversion", win)).data as unknown as {
+      stages: Array<{ stage: string; entered: number }>;
+      moves_total: number;
+      moves_with_ids: number;
+    };
+    expect(
+      conv.stages.find((s) => s.stage === `${legacy}-B`)?.entered,
+      "an id-less event still reports under the name it recorded",
+    ).toBe(1);
+    expect(
+      conv.moves_total,
+      "and the coverage counters make the mix visible rather than assumed",
+    ).toBeGreaterThan(conv.moves_with_ids);
+
+    const { data: chainOk } = await svc.rpc("verify_events_chain", { p_org: ORG_A });
+    expect(chainOk, "the new payload shape keeps the hash chain intact").toBe(true);
+  });
+
 });
