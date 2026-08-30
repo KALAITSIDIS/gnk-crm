@@ -282,10 +282,11 @@ Three things to know about it:
   StartWhenAvailable cover asleep/logged-out, not powered-off. That case is
   exactly what the dead-man's switch exists for: `notify.mjs` pings
   `HEALTHCHECK_URL` after every run (base URL on success, `/fail` otherwise),
-  and the SERVICE emails after ~26h of silence. **The switch is UNARMED until
-  the operator creates a healthchecks.io check (Period 1 day, Grace 2h) and
-  pastes its URL into `backup.env`** — the plumbing ships first so arming is
-  a paste, not a deploy. Treat the URL as a secret: whoever holds it can fake
+  and the SERVICE emails after ~26h of silence. **ARMED 2026-08-30**: the check
+  `gnk-crm nightly backup` (Period 1 day, Grace 2h, email to the operator)
+  is live, `HEALTHCHECK_URL` is set, and the full cycle was proven with real
+  pings through notify.mjs — up on rc=0, DOWN + alert email on a /fail, up
+  again on recovery. Treat the URL as a secret: whoever holds it can fake
   liveness.
 - **Off-site is now a nightly side effect, not a chore** (§3.3): after a
   VERIFIED capture, `offsite.mjs` re-checks the newest set's own SHA256SUMS on

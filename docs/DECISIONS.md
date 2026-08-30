@@ -150,10 +150,12 @@ silent. Format: date · task · decision · rationale.
   AND battery-blocked — the 08-29 03:45 run was silently skipped). Proven by
   a real scheduler-context run: exit=0 through capture → offsite → notify.
   `notify.mjs` (dead-man ping) always exits 0 — telemetry must never fail a
-  backup night — and stays UNARMED until the operator creates a
-  healthchecks.io check (Period 1 day, Grace 2h) and pastes the URL into
-  `backup.env`; unarmed, it logs a SKIPPED line every night so the gap stays
-  visible in the log rather than silent.
+  backup night — and stayed UNARMED until 2026-08-30, logging a
+  SKIPPED line nightly so the gap stayed visible — then the operator signed
+  up (the one step account-creation rules reserve for a human) and the check
+  went live the same hour: Period 1 day, Grace 2h, email ON, the whole cycle
+  proven with real pings — up on rc=0, DOWN plus a real alert email on
+  /fail, recovery email on the next rc=0.
 
 - **2026-08-29 · T-tax-2026 (migration 0070) — stamp duty abolished, CGT
   exemptions tripled, VAT area-cliff figure corrected.** The 2026-08-29 audit
