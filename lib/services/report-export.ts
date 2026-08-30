@@ -175,3 +175,14 @@ export const priceReductionsCsv = (
   { header: "First cut", value: (r) => r.first_cut_at },
   { header: "Last cut", value: (r) => r.last_cut_at },
 ];
+
+/**
+ * RPT-4: two exports over different windows were byte-indistinguishable —
+ * the window lived only in the audit event, invisible to whoever holds the
+ * file. Every report row now carries its From/To. APPENDED, never prepended:
+ * the row-substring assertions in report-export.test.ts (and any spreadsheet
+ * the desk already built on these columns) read left-to-right.
+ */
+export function withWindow<T>(cols: CsvColumn<T>[], from: string, to: string): CsvColumn<T>[] {
+  return [...cols, { header: "From", value: () => from }, { header: "To", value: () => to }];
+}

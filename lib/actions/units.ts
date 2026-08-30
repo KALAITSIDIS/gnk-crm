@@ -7,6 +7,7 @@ import { logEvent, logEvents } from "@/lib/services/events";
 import { createClient } from "@/lib/supabase/server";
 import {
   emptyToUndefined,
+  isStatusRegression,
   PROPERTY_STATUSES,
   PROPERTY_TYPES,
 } from "@/lib/validators/properties";
@@ -143,6 +144,12 @@ export async function updateUnitStatus(
   if (!unit) return { error: "Unit not found" };
   if (unit.status === status) return { error: null };
 
+  // DB-01: same admin gate as the details form — leaving sold/rented is a
+  // regression the grid must not offer listing managers implicitly
+  if (isStatusRegression(unit.status, status) && profile.role !== "admin") {
+    return { error: "Only an admin can move a sold or rented unit back to market." };
+  }
+
   const { data: updatedRows, error } = await supabase
     .from("properties")
     .update({ status: status as (typeof PROPERTY_STATUSES)[number] })
@@ -163,6 +170,17 @@ export async function updateUnitStatus(
     eventType: "status_changed",
     payload: { reference: unit.reference, from: unit.status, to: status },
   });
+
+  if (isStatusRegression(unit.status, status)) {
+    await logEvent(supabase, {
+      orgId: unit.org_id,
+      actorId: profile.id,
+      entityType: "property",
+      entityId: unitId,
+      eventType: "status_regression_override",
+      payload: { from: unit.status, to: status },
+    });
+  }
 
   if (unit.parent_id) revalidatePath(`/properties/${unit.parent_id}/units`);
   revalidatePath("/properties");

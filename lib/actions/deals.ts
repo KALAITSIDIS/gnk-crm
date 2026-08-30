@@ -366,7 +366,7 @@ export async function markDealWon(
 
   const { data: deal } = await supabase
     .from("deals")
-    .select("id, org_id, deal_type, status, stage_id")
+    .select("id, org_id, deal_type, status, stage_id, property_id, agent_id")
     .eq("id", dealId)
     .maybeSingle();
   if (!deal) return { error: "Deal not found", savedAt: null };
@@ -376,11 +376,15 @@ export async function markDealWon(
 
   const { data: acceptedOffers } = await supabase
     .from("offers")
-    .select("id")
+    .select("id, amount")
     .eq("deal_id", dealId)
     .eq("status", "accepted")
     .limit(1);
   const hasAccepted = (acceptedOffers ?? []).length > 0;
+  // WF-2: the CONFIRMED price — typed by the closer, defaulted from the
+  // accepted offer. Both may be absent on an admin-override close; reports
+  // then fall back to expected_value via coalesce (0076).
+  const finalValue = parsed.data.final_value ?? acceptedOffers?.[0]?.amount ?? null;
 
   if (!hasAccepted) {
     if (profile.role !== "admin") {
@@ -412,6 +416,7 @@ export async function markDealWon(
       status: "won",
       won_at: now,
       last_activity_at: now,
+      final_value: finalValue,
       ...(wonStage ? { stage_id: wonStage.id, stage_entered_at: now } : {}),
     })
     .eq("id", dealId)
@@ -436,8 +441,64 @@ export async function markDealWon(
     entityType: "deal",
     entityId: dealId,
     eventType: "won",
-    payload: { override: !hasAccepted, ...(wonStage ? { stage: wonStage.name } : {}) },
+    payload: {
+      override: !hasAccepted,
+      ...(finalValue !== null ? { final_value: finalValue } : {}),
+      ...(wonStage ? { stage: wonStage.name } : {}),
+    },
   });
+
+  // DB-01, the leg that ASKS: a won deal whose linked listing still reads
+  // on-market raises a prompt task — never an automatic status flip (the
+  // reservation↔status auto-coupling was DECLINED 2026-08-26; "the desk sets
+  // the listing status" applies here too). One open task per property+kind.
+  if (deal.property_id) {
+    const { data: prop } = await supabase
+      .from("properties")
+      .select("id, reference, status")
+      .eq("id", deal.property_id)
+      .maybeSingle();
+    if (prop && ["available", "reserved", "under_offer"].includes(prop.status)) {
+      const { data: existing } = await supabase
+        .from("tasks")
+        .select("id")
+        .eq("property_id", prop.id)
+        .eq("kind", "listing_status_check")
+        .eq("is_done", false)
+        .limit(1);
+      if (!existing?.length) {
+        const { data: task, error: taskErr } = await supabase
+          .from("tasks")
+          .insert({
+            org_id: deal.org_id,
+            title: `Deal won — update listing status: ${prop.reference}`,
+            due_at: now,
+            assignee_id: deal.agent_id ?? profile.id,
+            property_id: prop.id,
+            deal_id: dealId,
+            created_by: profile.id,
+            kind: "listing_status_check",
+          })
+          .select("id")
+          .single();
+        // a failed prompt must not roll back the win — log loudly instead
+        // (the raiseOneTask precedent: failure logged, never swallowed)
+        if (taskErr) {
+          console.error("listing_status_check task failed:", taskErr.message);
+        } else {
+          await logEvent(supabase, {
+            orgId: deal.org_id,
+            actorId: profile.id,
+            entityType: "property",
+            entityId: prop.id,
+            eventType: "followup_task_created",
+            payload: { kind: "listing_status_check", task_id: task.id, deal_id: dealId },
+          });
+          revalidatePath("/tasks");
+        }
+      }
+    }
+  }
 
   await recomputeDealHealth(supabase, dealId);
   revalidatePath(`/deals/${dealId}`);

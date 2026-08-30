@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -21,12 +22,14 @@ function WonDialog({
   dealId,
   wonEligible,
   isAdmin,
+  acceptedAmount,
   open,
   onOpenChange,
 }: {
   dealId: string;
   wonEligible: boolean;
   isAdmin: boolean;
+  acceptedAmount: number | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -70,6 +73,27 @@ function WonDialog({
               Admin override — mark won without an accepted offer
             </label>
           ) : null}
+          {/* WF-2: the CONFIRMED price — defaulted from the accepted offer,
+              editable when the closing figure differs; reports read it for
+              won deals instead of the pipeline estimate */}
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="won-final-value">Final value (€)</Label>
+            <Input
+              id="won-final-value"
+              name="final_value"
+              type="number"
+              inputMode="decimal"
+              min={0}
+              step="0.01"
+              defaultValue={acceptedAmount ?? undefined}
+              placeholder={acceptedAmount ? undefined : "Confirmed sale / rental value"}
+            />
+            <p className="text-xs text-text-3">
+              {acceptedAmount
+                ? "Prefilled from the accepted offer — adjust if the closing figure differed."
+                : "Optional — reports fall back to the expected value when left blank."}
+            </p>
+          </div>
           {state.error ? <p className="text-sm text-danger">{state.error}</p> : null}
           <div className="flex justify-end gap-2">
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
@@ -143,10 +167,12 @@ export function DealOutcomeActions({
   dealId,
   wonEligible,
   isAdmin,
+  acceptedAmount = null,
 }: {
   dealId: string;
   wonEligible: boolean;
   isAdmin: boolean;
+  acceptedAmount?: number | null;
 }) {
   const [wonOpen, setWonOpen] = useState(false);
   const [lostOpen, setLostOpen] = useState(false);
@@ -163,6 +189,7 @@ export function DealOutcomeActions({
         dealId={dealId}
         wonEligible={wonEligible}
         isAdmin={isAdmin}
+        acceptedAmount={acceptedAmount}
         open={wonOpen}
         onOpenChange={setWonOpen}
       />

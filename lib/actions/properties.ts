@@ -207,9 +207,8 @@ export async function updatePropertySection(
   // typing the same numbers over a centroid changes nothing but the claim.
   let approxChange: { from: unknown; to: unknown } | null = null;
 
-  const { detailsSectionSchema, legalSectionSchema, marketingSectionSchema } = await import(
-    "@/lib/validators/properties"
-  );
+  const { detailsSectionSchema, legalSectionSchema, marketingSectionSchema, isStatusRegression } =
+    await import("@/lib/validators/properties");
 
   if (section === "details") {
     const parsed = detailsSectionSchema.safeParse({
@@ -220,6 +219,17 @@ export async function updatePropertySection(
       return { error: parsed.error.issues[0]?.message ?? "Invalid input", savedAt: null };
     }
     const d = parsed.data;
+
+    // DB-01: leaving sold/rented is a supported but ADMIN-ONLY move —
+    // enforced here, not left to the UI (a form can post any status). The
+    // override event below makes the regression separately auditable.
+    if (isStatusRegression(current.status, d.status) && profile.role !== "admin") {
+      return {
+        error: "Only an admin can move a sold or rented listing back to market.",
+        savedAt: null,
+      };
+    }
+
     updates = {
       status: d.status,
       visibility: d.visibility,
@@ -499,6 +509,20 @@ export async function updatePropertySection(
     eventType: "updated",
     payload: JSON.parse(JSON.stringify({ section, changed })),
   });
+
+  // DB-01: the regression got past the admin gate above — mark it with its
+  // own event (the publish_override idiom), so "who put a sold listing back
+  // on the market" is one query, not a diff excavation.
+  if (changed.status && isStatusRegression(String(changed.status.from), String(changed.status.to))) {
+    await logEvent(supabase, {
+      orgId: profile.orgId,
+      actorId: profile.id,
+      entityType: "property",
+      entityId: propertyId,
+      eventType: "status_regression_override",
+      payload: { from: String(changed.status.from), to: String(changed.status.to) },
+    });
+  }
 
   // score is derived state — recompute on every save (doc 02 §A8); the save's
   // own property.updated event covers auditability, no separate score event

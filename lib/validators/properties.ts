@@ -75,6 +75,20 @@ export function resolveRestoreUpdates(current: {
 export const PROPERTY_SCOPES = ["active", "archived", "all"] as const;
 export type PropertyScope = (typeof PROPERTY_SCOPES)[number];
 
+/**
+ * DB-01: sold/rented assert a CLOSED transaction, and leaving one is a
+ * REGRESSION — supported (a fallen-through sale genuinely relists; the
+ * new-listing alert even covers it) but admin-only and separately evented,
+ * because the flip is externally visible in the public feed and silently
+ * erases the sale from the velocity chart. Kept pure and here so the rule is
+ * pinned by tests, not re-derived in two actions. sold ↔ rented moves stay
+ * unguarded: both still assert a closed transaction.
+ */
+const CLOSED_PROPERTY_STATUSES: readonly string[] = ["sold", "rented"];
+export function isStatusRegression(from: string, to: string): boolean {
+  return CLOSED_PROPERTY_STATUSES.includes(from) && !CLOSED_PROPERTY_STATUSES.includes(to);
+}
+
 export type PropertyScopeMode = "exclude-retired" | "only-retired" | "none";
 
 /**

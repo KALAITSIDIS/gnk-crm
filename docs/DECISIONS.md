@@ -3,6 +3,50 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-08-30 · T-close-the-books (migration 0076) — Won stamps a real
+  number, and four report defects go.** Audit WF-2/DB-03 + DB-01 +
+  RPT-1..4 + CALC-2, the second Phase-3 batch.
+
+  **`deals.final_value`**: Won captured no final sale value — dashboards and
+  the C4 reports summed `expected_value`, a pre-close estimate, while the
+  accepted offer's amount was copied nowhere. The Won dialog now confirms a
+  price (defaulted from the accepted offer, editable, optional on
+  admin-override closes), the column and the `won` event both carry it, and
+  the three won sums read `coalesce(final_value, expected_value)` — pre-0076
+  deals keep their estimate, new closes report reality. RLS test 38 pins the
+  coalesce with an estimate (999999) that must lose to its confirmed 250000.
+
+  **DB-01, inside the settled boundary**: the reservation↔status coupling
+  was DECLINED 2026-08-26 and stays declined — so the Won side got a task
+  that ASKS (`listing_status_check`, the eleventh kind: raised when the won
+  deal's listing still reads on-market, one open task per property) and the
+  regression side got an ADMIN-ONLY gate in both status writers (details
+  form + unit grid) with its own `status_regression_override` event.
+  sold→available stays possible — a fallen-through sale genuinely relists —
+  but named and attributed, never silent. `isStatusRegression` is pure and
+  unit-pinned; sold↔rented stays unguarded (both assert a close).
+
+  **RPT-1**: `report_agent_performance` gains 0042's negative-interval guard
+  on the average ONLY — `leads_answered` still counts anomalous rows,
+  0042's own stated asymmetry ("did the desk reply?" survives a clock
+  anomaly). Pinned by a backdated lead that must not drag the average.
+
+  **RPT-2**: `advance_rate` could exceed 100% (pre-window entrants departing
+  in-window) and counted demotions invisibly. `advanced` is now the
+  intersection cohort — departures by deals that also entered in-window —
+  bounding the rate at 1 by construction; demotions still count and the
+  `note` says so out loud (the 0067 self-describing-output convention).
+  Rebuilt on 0067's body, not 0065's, so stage-id resolution survives.
+
+  **RPT-3/RPT-4/CALC-2**: the report default window now derives from
+  `zonedParts().dayKey` (the old UTC-dated default dropped "today" between
+  Cyprus midnight and 02:00 under a footer claiming Cyprus time); every
+  report CSV carries its window (From/To columns APPENDED so row pins hold,
+  window in the filename); both calculator copy summaries date themselves —
+  "Rates verified {date} · computed {date}" — because an undated quote in a
+  WhatsApp thread outlives every rate change (July's stamp-duty stamp on an
+  abolished tax is the live demonstration).
+
 - **2026-08-30 · T-viewings-loop (migration 0075) — the viewing lifecycle
   stops leaking: reschedule, three-diary clash check, no-show nudge, .ics.**
   Audit WF-1 + WF-6 + WF-7 + ICS-1, the first Phase-3 batch.

@@ -129,6 +129,7 @@ export default async function DealDetailPage({
   }));
 
   const wonEligible = deal.status === "open" && offers.some((o) => o.status === "accepted");
+  const acceptedAmount = offers.find((o) => o.status === "accepted")?.amount ?? null;
 
   const healthJson = (deal.health ?? {}) as {
     budget_confirmed?: boolean;
@@ -207,6 +208,7 @@ export default async function DealDetailPage({
               dealId={deal.id}
               wonEligible={wonEligible}
               isAdmin={profile.role === "admin"}
+              acceptedAmount={acceptedAmount}
             />
           </div>
         </div>
@@ -223,6 +225,7 @@ export default async function DealDetailPage({
             <span>
               <span className="font-semibold">Won</span>
               {deal.won_at ? ` on ${formatDateTime(deal.won_at)}` : null}
+              {deal.final_value !== null ? ` · final value ${formatMoney(deal.final_value)}` : null}
             </span>
           ) : (
             <span>

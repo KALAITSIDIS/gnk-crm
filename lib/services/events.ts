@@ -409,6 +409,9 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
       return t("followupViewingFeedback", { hours: Number(p.hours) || 48 });
     // 0075: the buyer who no-showed is the one most in need of a call
     if (kind === "viewing_no_show") return t("followupViewingNoShow");
+    // 0076: a won deal whose listing still reads on-market — a prompt, never
+    // an automatic flip (the declined reservation↔status coupling's boundary)
+    if (kind === "listing_status_check") return t("followupListingStatusCheck");
     return t("followupTaskCreated");
   },
   // A system task whose condition stopped holding: completed, never deleted, so
@@ -446,6 +449,16 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
     const count = Number(p.stops) || 0;
     const date = asText(p.route_date);
     return date ? t("routeUpdatedDate", { count, date }) : t("routeUpdated", { count });
+  },
+  // DB-01: an admin put a sold/rented listing back on the market — its own
+  // line (the publish_override idiom), because the flip is externally visible
+  // and should never hide inside a generic section save
+  status_regression_override: (p, t) => {
+    const from = asText(p.from);
+    const to = asText(p.to);
+    return from && to
+      ? t("statusRegressionOverride", { from: from.replace(/_/g, " "), to: to.replace(/_/g, " ") })
+      : t("statusRegressionOverrideBare");
   },
   // WF-1: NOT folded into status_changed — that renderer prints raw from/to
   // strings and would show ISO timestamps; this one formats them
