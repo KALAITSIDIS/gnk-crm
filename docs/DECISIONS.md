@@ -3,6 +3,45 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-08-30 · T-viewings-loop (migration 0075) — the viewing lifecycle
+  stops leaking: reschedule, three-diary clash check, no-show nudge, .ics.**
+  Audit WF-1 + WF-6 + WF-7 + ICS-1, the first Phase-3 batch.
+
+  **WF-1**: `rescheduleViewing` — before it, a time change meant cancel +
+  recreate, severing history and polluting the cancellation stats the nudges
+  and dashboard read. Scheduled-only, agent/admin, **refused once a slip is
+  signed** (the slip evidences attendance at the printed time; a new time is
+  a new viewing), clears the day-route stamp when the Cyprus day changes —
+  BACKLOG's own stated requirement for this feature, which also anticipated
+  it (`checkViewingConflicts` has taken `excludeId` since T4.1). Evented
+  `rescheduled {from,to}` with its own renderer line — NOT `status_changed`,
+  whose renderer prints raw strings and would show ISO timestamps.
+
+  **WF-6**: the conflict check now sweeps three diaries — agent, property,
+  buyer — labelling each hit's reason. Two agents booking the same property
+  at overlapping times was never flagged. Still advisory (T4.1's constraint:
+  the create action never blocks); the calendar header's clash count stays
+  agent-only by scope, stated in the commit so it reads as a choice.
+
+  **WF-7 (0075)**: a no_show viewing mints a next-day `viewing_no_show`
+  rebooking task — the buyer most in need of a call was the one buyer who
+  generated nothing. Two arms INSIDE the existing 03:15 sweep, deliberately
+  not a ninth cron job (0074 pins the job count in three places for no
+  operational gain here). One-shot key, the 0053 rationale (no_show is
+  terminal); a later non-cancelled viewing for the same contact+property
+  supersedes with reason `viewing_rebooked` — stating only what the
+  predicate proved (the 0052 lesson); never minted when the rebooking
+  already exists, so no task opens pre-closed. RLS test 51 pins all four
+  behaviours.
+
+  **ICS-1**: per-viewing "Add to calendar (.ics)" — pure string generation,
+  UTC-basis stamps, stable UID + METHOD:PUBLISH so a reschedule REPLACES
+  the entry on re-import. The repo's first dynamic-segment route handler;
+  RLS scopes the read; no export event (derived data — the
+  getSlipDownloadUrl precedent; logListExport stays reserved for bulk
+  lists). A file download, not calendar sync — doc 01 §0.2's Phase-2/3
+  deferral is untouched.
+
 - **2026-08-30 · T-group1-close (migration 0074) — the audit's critical tier
   is closed: the sweeps get a witness, accounts get recovery paths, the
   restore pack catches up.** Audit REL-03 + SEC-03 + REL-04, the last three

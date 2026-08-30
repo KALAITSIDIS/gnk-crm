@@ -66,3 +66,16 @@ export const createViewingSchema = z.object({
     .min(5, "Too short")
     .max(480, "Too long"),
 });
+
+/** Reschedule keeps who/where and moves only when/how long (audit WF-1). */
+export const rescheduleViewingSchema = z.object({
+  viewing_id: z.guid("Missing viewing"),
+  scheduled_at: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, "Pick a date and time"),
+  duration_min: z.coerce
+    .number()
+    .int()
+    .min(5, "Too short")
+    .max(480, "Too long"),
+});
