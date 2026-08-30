@@ -4661,4 +4661,30 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(rows[iOld].images, "no photos means an empty array, not null").toEqual([]);
   });
 
+  it("50. cron_health() is service_role-only and sees all eight jobs (0074)", async () => {
+    // REL-03. The function reads cron.job_run_details as its definer; the
+    // grant surface is the whole security story, so it is pinned per role —
+    // the anon-default-EXECUTE hazard has shipped twice before.
+    const anon = anonClient();
+    const anonCall = await anon.rpc("cron_health");
+    expect(anonCall.error, "anon must be refused").not.toBeNull();
+
+    const authedCall = await agentA1.client.rpc("cron_health");
+    expect(authedCall.error, "a logged-in agent must be refused too — dashboard-only via admin client").not.toBeNull();
+
+    const svcCall = await svc.rpc("cron_health");
+    expect(svcCall.error).toBeNull();
+    const jobs = (svcCall.data ?? []) as Array<Record<string, unknown>>;
+    expect(jobs, "all eight scheduled jobs are visible").toHaveLength(8);
+    for (const job of jobs) {
+      expect(job.jobname, "every row names its job").toBeTruthy();
+      expect(job.schedule, "every row carries the cron expression the TS verdict needs").toBeTruthy();
+      expect(job.active, "migration-built jobs are active").toBe(true);
+    }
+    const names = jobs.map((j) => String(j.jobname));
+    expect(names, "the chain walkers are among them").toEqual(
+      expect.arrayContaining(["verify-events-chain", "verify-events-chain-full", "ensure-events-partitions"]),
+    );
+  });
+
 });

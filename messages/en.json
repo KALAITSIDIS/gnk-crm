@@ -93,6 +93,7 @@
     "chainBadge": "Nightly event hash-chain check: {status} · last verified {when}",
     "chainOk": "OK",
     "chainFailing": "FAILING",
+    "chainStale": "STALE — no result in 48h, check the nightly job",
     "evidenceCard": {
       "title": "Commission evidence report",
       "description": "Chronological, hash-verified activity record for a contact — viewings with signed slips, offers, stage changes — as a stored PDF."

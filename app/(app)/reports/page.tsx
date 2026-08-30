@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
-import { FileCheck2, ShieldCheck, ShieldX, TrendingUp } from "lucide-react";
+import { FileCheck2, ShieldAlert, ShieldCheck, ShieldX, TrendingUp } from "lucide-react";
 import { DocumentDownloadButton } from "@/components/features/shared/document-download-button";
 import { VerifyReport } from "@/components/features/reports/verify-report";
+import { chainCheckIsStale } from "@/lib/services/cron-health";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTime } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
@@ -45,20 +46,37 @@ export default async function ReportsPage() {
       </div>
 
       {chainCheck ? (
-        <div
-          className={cn(
-            "flex max-w-2xl items-center gap-2 rounded-[10px] border px-4 py-3 text-sm font-medium",
-            chainCheck.ok
-              ? "border-success/30 bg-success/10 text-success"
-              : "border-danger/30 bg-danger/10 text-danger",
-          )}
-        >
-          {chainCheck.ok ? <ShieldCheck className="size-4" /> : <ShieldX className="size-4" />}
-          {t("chainBadge", {
-            status: chainCheck.ok ? t("chainOk") : t("chainFailing"),
-            when: formatDateTime(chainCheck.checked_at),
-          })}
-        </div>
+        // A green badge with a three-day-old date is a lie of omission: "OK"
+        // is only evidence while the nightly job that wrote it is alive. An
+        // ok-but-stale result goes amber (REL-03); FAILING stays red — a
+        // stale failure is not less broken.
+        (() => {
+          const stale = chainCheck.ok && chainCheckIsStale(chainCheck.checked_at, new Date());
+          return (
+            <div
+              className={cn(
+                "flex max-w-2xl items-center gap-2 rounded-[10px] border px-4 py-3 text-sm font-medium",
+                !chainCheck.ok
+                  ? "border-danger/30 bg-danger/10 text-danger"
+                  : stale
+                    ? "border-warning/30 bg-warning/10 text-warning"
+                    : "border-success/30 bg-success/10 text-success",
+              )}
+            >
+              {!chainCheck.ok ? (
+                <ShieldX className="size-4" />
+              ) : stale ? (
+                <ShieldAlert className="size-4" />
+              ) : (
+                <ShieldCheck className="size-4" />
+              )}
+              {t("chainBadge", {
+                status: !chainCheck.ok ? t("chainFailing") : stale ? t("chainStale") : t("chainOk"),
+                when: formatDateTime(chainCheck.checked_at),
+              })}
+            </div>
+          );
+        })()
       ) : null}
 
       <Link

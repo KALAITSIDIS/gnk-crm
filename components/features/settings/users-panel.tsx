@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { MFA_REQUIRED } from "@/lib/constants/mfa";
 import {
   inviteUser,
+  resetUserTwoFactor,
   setUserActive,
   setUserRole,
   type SettingsActionState,
@@ -217,6 +218,62 @@ function RoleSelect({ user }: { user: UserRow }) {
   );
 }
 
+/**
+ * The lockout escape (SEC-03): remove a colleague's authenticator so a lost
+ * phone is a five-minute fix, not a dead account. Offered only when the row
+ * actually shows a factor, and never for yourself — self-removal goes through
+ * the Security page, which demands the authenticator it removes.
+ */
+function ResetTwoFactorButton({ user }: { user: UserRow }) {
+  const [confirming, setConfirming] = useState(false);
+  const [pending, start] = useTransition();
+  if (user.isSelf || user.hasTwoFactor !== true) return null;
+
+  const reset = () =>
+    start(async () => {
+      const { error } = await resetUserTwoFactor(user.id);
+      if (error) toast.error(error);
+      else {
+        toast.success("Two-factor authentication reset");
+        setConfirming(false);
+      }
+    });
+
+  return (
+    <>
+      <Button size="sm" variant="outline" disabled={pending} onClick={() => setConfirming(true)}>
+        Reset 2FA
+      </Button>
+      <Dialog open={confirming} onOpenChange={(o) => !o && setConfirming(false)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reset two-factor authentication for {user.fullName}?</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-3 text-sm">
+            <p className="text-text-1">
+              Their authenticator is removed and they are signed out everywhere. At their next
+              sign-in — password only — they will be asked to set up a new authenticator. This is
+              recorded in the event log.
+            </p>
+            <p className="text-text-2">
+              Do this only for a request you can verify is really from {user.fullName} — in
+              person or by a call you placed, not a message you received.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setConfirming(false)} disabled={pending}>
+                Cancel
+              </Button>
+              <Button onClick={reset} disabled={pending}>
+                {pending ? "Resetting…" : "Reset 2FA"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 function ActiveToggle({ user }: { user: UserRow }) {
   const [pending, start] = useTransition();
   return (
@@ -315,7 +372,8 @@ export function UsersPanel({ users }: { users: UserRow[] }) {
                   <TwoFactorBadge user={u} />
                 </TableCell>
                 <TableCell className="text-right">
-                  <div className="flex justify-end">
+                  <div className="flex justify-end gap-2">
+                    <ResetTwoFactorButton user={u} />
                     <ActiveToggle user={u} />
                   </div>
                 </TableCell>

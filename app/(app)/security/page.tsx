@@ -1,4 +1,5 @@
 import { ShieldAlert } from "lucide-react";
+import { ChangePasswordForm } from "@/components/features/settings/change-password-form";
 import { SecurityPanel } from "@/components/features/settings/security-panel";
 import { getMfaStatus } from "@/lib/actions/mfa";
 
@@ -43,6 +44,7 @@ export default async function SecurityPage({
       ) : null}
 
       <SecurityPanel status={status} />
+      <ChangePasswordForm />
     </div>
   );
 }

@@ -596,11 +596,19 @@ With that done the drill's total error count fell 131 → 71 and RLS policies we
 `current_role_gnk` (full table in §4b.3). A restored project is therefore **less
 secure than the project it was copied from**, and nothing on screen says so.
 
-Re-apply migrations **0007 / 0010 / 0019 / 0021 / 0022** — or the revokes by hand
-— and re-check with `scripts/backup/verify-restore.sql` **before letting anyone
-in**. `pg_cron` (all three cron jobs silently absent) and
-`supabase_migrations.schema_migrations` (0 rows dumped) are the same class of
-gap; see §4b.4.
+**Re-apply EVERY migration-defined revoke, not a memorised list** (updated
+2026-08-30, audit REL-04 — the old instruction named 0007/0010/0019/0021/0022
+and had silently fallen ~25 migrations behind: 0037, 0040, the T-C4 sweep
+lockdowns in 0044/0047/0051/0052, 0059, 0062, 0063 and 0066 all define
+revokes too, and a restore that misses them leaves sweeps and reporting
+functions anon-callable). The authoritative list is the migrations
+themselves — `grep -n "revoke" supabase/migrations/*.sql` — and the proof is
+`scripts/backup/verify-restore.sql`, whose grants table is GENERATED from a
+migration-built database (regeneration query in the file; regenerated
+2026-08-30 to the 0073 surface, all 8 cron jobs included). Run it **before
+letting anyone in**. `pg_cron` (all EIGHT cron jobs silently absent after a
+restore) and `supabase_migrations.schema_migrations` (0 rows dumped) are the
+same class of gap; see §4b.4.
 
 ### 3.2 Storage — the part no database backup covers
 
