@@ -39,9 +39,10 @@ export default async function ViewingDetailPage({ params }: { params: Promise<{ 
   const { data: v } = await supabase
     .from("viewings")
     .select(
-      `id, org_id, agent_id, scheduled_at, duration_min, status, feedback, property_id,
+      `id, org_id, agent_id, scheduled_at, duration_min, status, feedback, property_id, deal_id,
        properties(id, reference, address),
        contacts(id, display_name, phone_e164),
+       deals(id, title),
        agent:profiles!agent_id(full_name)`,
     )
     .eq("id", id)
@@ -94,6 +95,21 @@ export default async function ViewingDetailPage({ params }: { params: Promise<{ 
     ],
     ["Agent", agentName],
     ["When", `${formatDateTime(v.scheduled_at)} · ${v.duration_min}m`],
+    // WF-3: the link existed in the schema since T4.1 and rendered nowhere
+    ...(v.deal_id
+      ? ([
+          [
+            "Deal",
+            <Link
+              key="deal"
+              href={`/deals/${v.deal_id}`}
+              className="text-brand-700 hover:underline"
+            >
+              {(v.deals as { title: string } | null)?.title ?? "Open deal"}
+            </Link>,
+          ],
+        ] as [string, React.ReactNode][])
+      : []),
   ];
 
   return (

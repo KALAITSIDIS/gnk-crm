@@ -2924,7 +2924,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       .from("task_kinds")
       .select("kind");
     expect(readErr, "an agent may read the vocabulary").toBeNull();
-    expect((kinds ?? []).length, "all eleven kinds are visible").toBe(11);
+    expect((kinds ?? []).length, "all twelve kinds are visible").toBe(12);
 
     // The vocabulary is the system's: adding a kind is a code change, so not
     // even an admin edits it from the app.
@@ -2971,6 +2971,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       "key_recall",
       "viewing_no_show",
       "listing_status_check",
+      "retention_expired",
     ];
     expect((kinds ?? []).map((k) => k.kind).sort()).toEqual([...shipped].sort());
 
@@ -4901,6 +4902,93 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       .select("id");
     expect(badPrice.error, "a negative asking price is refused").not.toBeNull();
     expect(badPrice.error!.code).toBe("23514");
+  });
+
+  it("53. portal roles are refused at the table (0078) — even for service_role", async () => {
+    // SEC-07. The enum has carried owner_portal/developer_portal/partner_portal
+    // since 0001 with zero scoping; a seeded portal profile would read the org
+    // at staff level. The CHECK binds every path — a trigger could not (the
+    // profiles trigger deliberately exempts null-uid migration/seed paths).
+    for (const role of ["owner_portal", "developer_portal", "partner_portal"] as const) {
+      const refused = await svc
+        .from("profiles")
+        .update({ role })
+        .eq("id", agentA1.id)
+        .select("id");
+      expect(refused.error, `${role} must be refused`).not.toBeNull();
+      expect(refused.error!.code).toBe("23514");
+    }
+    // the row is untouched
+    const { data: still } = await svc
+      .from("profiles")
+      .select("role")
+      .eq("id", agentA1.id)
+      .single();
+    expect(still!.role).toBe("agent");
+  });
+
+  it("54. retention nudge (0078): mints once for an expired duty, admin-assigned, closes on purge", async () => {
+    // SEC-08, inside T-retention-expiry's boundary: the sweep mints a task and
+    // NOTHING else — destruction stays a human act.
+    const { data: erased, error: cErr } = await svc
+      .from("contacts")
+      .insert({
+        org_id: ORG_A,
+        first_name: `Erased-${run}`,
+        erased_at: new Date().toISOString(),
+        retention_until: "2020-01-01", // the window closed years ago
+      })
+      .select("id")
+      .single();
+    expect(cErr).toBeNull();
+
+    const retentionTasks = async () => {
+      const { data, error } = await svc
+        .from("tasks")
+        .select("id, assignee_id, is_done, due_at")
+        .eq("contact_id", erased!.id)
+        .eq("kind", "retention_expired");
+      expect(error).toBeNull();
+      return data ?? [];
+    };
+
+    expect((await svc.rpc("create_followup_nudges", { p_org: ORG_A })).error).toBeNull();
+    let tasks = await retentionTasks();
+    expect(tasks, "an expired duty is nudged exactly once").toHaveLength(1);
+    expect(tasks[0].is_done).toBe(false);
+
+    // admin-assigned ONLY — destruction is admin-only, an agent cannot act
+    const { data: assignee } = await svc
+      .from("profiles")
+      .select("role")
+      .eq("id", tasks[0].assignee_id!)
+      .single();
+    expect(assignee!.role, "the nag lands with an admin").toBe("admin");
+
+    // idempotent — keyed to the cycle (due date = retention_until)
+    expect((await svc.rpc("create_followup_nudges", { p_org: ORG_A })).error).toBeNull();
+    expect(await retentionTasks(), "a second run mints nothing new").toHaveLength(1);
+
+    // a purge nulls the marker (purgeExpiredRetention's write) → the nag closes
+    await svc.from("contacts").update({ retention_until: null }).eq("id", erased!.id);
+    expect((await svc.rpc("create_followup_nudges", { p_org: ORG_A })).error).toBeNull();
+    tasks = await retentionTasks();
+    expect(tasks[0].is_done, "the purge supersedes the open nag").toBe(true);
+
+    const { data: superEvents } = await svc
+      .from("events")
+      .select("id, payload")
+      .eq("event_type", "superseded")
+      .eq("entity_id", tasks[0].id);
+    expect(
+      (superEvents ?? []).filter(
+        (e) => (e.payload as { reason?: string }).reason === "retention_purged_or_changed",
+      ),
+      "the close names only what the predicate proved",
+    ).toHaveLength(1);
+
+    const { data: chainOk } = await svc.rpc("verify_events_chain", { p_org: ORG_A });
+    expect(chainOk, "retention events keep the chain intact").toBe(true);
   });
 
 });

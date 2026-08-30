@@ -37,6 +37,10 @@ export interface OfferRow {
   decided_at: string | null;
   created_at: string;
   contact: EntityOption | null;
+  /** WF-8: past valid_until while still live — computed SERVER-side per
+   *  request (Cyprus end-of-day), never persisted. Advisory: Edit extends
+   *  the validity, Expire is the follow-through — neither is hidden. */
+  lapsed: boolean;
 }
 
 const STATUS_TONES: Record<OfferStatus, string> = {
@@ -218,8 +222,20 @@ export function OffersCard({ dealId, offers }: { dealId: string; offers: OfferRo
                     >
                       {offer.status}
                     </span>
+                    {offer.lapsed ? (
+                      <span
+                        className="ml-1.5 rounded-full border border-danger bg-transparent px-2 py-0.5 text-xs font-medium text-danger"
+                        title="Past its valid-until date — edit to extend, or expire it"
+                      >
+                        lapsed
+                      </span>
+                    ) : null}
                   </TableCell>
-                  <TableCell className="text-text-2">{formatDate(offer.valid_until)}</TableCell>
+                  <TableCell
+                    className={cn("text-text-2", offer.lapsed && "font-medium text-danger")}
+                  >
+                    {formatDate(offer.valid_until)}
+                  </TableCell>
                   <TableCell className="text-text-2">{formatDateTime(offer.created_at)}</TableCell>
                   <TableCell>
                     <div className="flex items-center justify-end gap-1">

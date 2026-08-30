@@ -56,7 +56,7 @@ export default async function TasksPage({
   ] = await Promise.all([
     supabase
       .from("tasks")
-      .select("id, title, due_at, is_done, property_id, deal_id, viewing_id, kind", {
+      .select("id, title, due_at, is_done, property_id, contact_id, deal_id, viewing_id, kind", {
         count: "exact",
       })
       .eq("assignee_id", profile.id)
@@ -68,7 +68,7 @@ export default async function TasksPage({
       .range(pageRange(page).from, pageRange(page).to),
     supabase
       .from("tasks")
-      .select("id, title, due_at, is_done, property_id, deal_id, viewing_id, kind")
+      .select("id, title, due_at, is_done, property_id, contact_id, deal_id, viewing_id, kind")
       .eq("assignee_id", profile.id)
       .eq("is_done", true)
       .order("done_at", { ascending: false })
@@ -102,6 +102,17 @@ export default async function TasksPage({
     : { data: [] };
   const refById = new Map((props ?? []).map((p) => [p.id, p.reference]));
 
+  // WF-5: contact-linked tasks used to render with no link at all
+  const contactIds = [
+    ...new Set(
+      [...openRows, ...doneRows].map((t) => t.contact_id).filter((v): v is string => Boolean(v)),
+    ),
+  ];
+  const { data: contactRows } = contactIds.length
+    ? await supabase.from("contacts").select("id, display_name").in("id", contactIds)
+    : { data: [] };
+  const contactById = new Map((contactRows ?? []).map((c) => [c.id, c.display_name]));
+
   const toItem = (t: (typeof openRows)[number]): TaskItem => ({
     id: t.id,
     title: t.title,
@@ -112,8 +123,20 @@ export default async function TasksPage({
     propertyRef: t.property_id ? (refById.get(t.property_id) ?? null) : null,
     // a nudge links to the thing it is nagging about; the viewing wins because
     // logging the feedback is the action that clears it
-    href: t.viewing_id ? `/viewings/${t.viewing_id}` : t.deal_id ? `/deals/${t.deal_id}` : null,
-    hrefLabel: t.viewing_id ? "Viewing" : t.deal_id ? "Deal" : null,
+    href: t.viewing_id
+      ? `/viewings/${t.viewing_id}`
+      : t.deal_id
+        ? `/deals/${t.deal_id}`
+        : t.contact_id
+          ? `/contacts/${t.contact_id}`
+          : null,
+    hrefLabel: t.viewing_id
+      ? "Viewing"
+      : t.deal_id
+        ? "Deal"
+        : t.contact_id
+          ? (contactById.get(t.contact_id) ?? "Contact")
+          : null,
     isAuto: t.kind !== null,
   });
 
