@@ -3,6 +3,46 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-08-30 · T-property-identity (migration 0077) — the plot gets its
+  legal identity, and the 0001-era schema debt is settled in one deliberate
+  pass.** Audit DB-05 + DB-08/09/10 + WF-10, the third Phase-3 batch.
+
+  **DB-05**: four DLS columns (`registration_no`, `plot_no`, `sheet_plan`,
+  `registry_municipality`) on the legal tab, the wizard and the importer.
+  The registration number is the duplicate signal that works where the
+  address check is blind — unaddressed land, the classic open-mandate
+  duplicate. Entry-time warn-never-block check, org-wide (a plot's number is
+  unique however the listing is districted); the pure matcher treats case
+  and spacing as typist noise and everything else as exact. Withheld from
+  the public feed by the allowlist, by construction.
+
+  **DB-08 — the class decision, taken**: BACKLOG's recorded stance ("the
+  whole 63-finding class is what wants a decision, not this one row") was
+  written to stop piecemeal drive-by indexing — so the decision was taken
+  ONCE: 13 covering indexes, each annotated in the migration with the hot
+  read path that earns it, and the integrity-only tail NAMED as deliberately
+  not indexed, so the next advisor run reads as a decision rather than an
+  oversight.
+
+  **DB-09**: validated CHECKs on every 0001-era money column — the app
+  validators guard the UI, but the service-role importer accepts any finite
+  number and a CHECK binds it where RLS cannot (0072's lesson). Never NOT
+  VALID (0026's stance); offenders counted before each ADD.
+
+  **DB-10**: `contacts_email_unique (org_id, lower(email))` for ACTIVE rows
+  — phone had this since 0001, email had a check-then-act race. Archived
+  rows excluded, which is what keeps the merge flow safe. Every 23505
+  handler now names phone OR email; `updateContactSection` gains the branch
+  it lacked entirely. RLS test 52 pins the case-variant refusal, the
+  archived-holder release, and the negative-money 23514s — all against
+  service_role.
+
+  **WF-10**: "New owner/developer — create without leaving the wizard."
+  `createLead`'s inline dedup-checked pattern minus the redirect that made
+  new-owner intake a two-trip flow; `contact_types` set from the source
+  because the party picker filters on it — a contact created without the
+  type could never be re-found by the picker that just created it.
+
 - **2026-08-30 · T-close-the-books (migration 0076) — Won stamps a real
   number, and four report defects go.** Audit WF-2/DB-03 + DB-01 +
   RPT-1..4 + CALC-2, the second Phase-3 batch.

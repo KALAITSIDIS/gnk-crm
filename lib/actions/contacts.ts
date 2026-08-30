@@ -130,10 +130,14 @@ export async function createContact(
     .select("id")
     .single();
   if (insertErr) {
-    // race with the unique index — surface as a duplicate rather than a raw error
+    // race with a unique index (phone, or email since 0077) — surface as a
+    // duplicate rather than a raw error, naming which field actually matched
     if (insertErr.code === "23505") {
       const race = await checkContactDuplicate(input.phone ?? null, input.email ?? null);
-      return { error: "Duplicate: this phone already exists", duplicate: race };
+      return {
+        error: `Duplicate: this ${race?.matched_on ?? "phone or email"} already exists`,
+        duplicate: race,
+      };
     }
     return { error: insertErr.message, duplicate: null };
   }
@@ -316,7 +320,14 @@ export async function updateContactSection(
     .update(updates)
     .eq("id", contactId)
     .select("id");
-  if (updateErr) return { error: updateErr.message, savedAt: null };
+  if (updateErr) {
+    // 0077: the email unique index can now refuse an edit that races the
+    // advisory pre-check above — say so instead of leaking a raw 23505
+    if (updateErr.code === "23505") {
+      return { error: "Another active contact already uses this phone or email.", savedAt: null };
+    }
+    return { error: updateErr.message, savedAt: null };
+  }
   if (!updatedRows || updatedRows.length === 0) {
     return { error: "You don't have permission to edit this contact.", savedAt: null };
   }
@@ -405,9 +416,10 @@ export async function unarchiveContact(contactId: string): Promise<{ error: stri
     .eq("is_archived", true)
     .select("id");
   if (error) {
-    // partial unique index: another active contact may hold the phone by now
+    // partial unique indexes: another active contact may hold the phone —
+    // or, since 0077, the email — by now
     if (error.code === "23505") {
-      return { error: "Cannot unarchive — another active contact now uses this phone number." };
+      return { error: "Cannot unarchive — another active contact now uses this phone or email." };
     }
     return { error: error.message };
   }

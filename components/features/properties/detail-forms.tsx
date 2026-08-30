@@ -453,6 +453,20 @@ export function LegalForm({
           label="Share of land"
           defaultValue={property.share_of_land}
         />
+        {/* DLS identity (0077, DB-05) — as the title deed prints them. The
+            registration number doubles as the duplicate-detection signal. */}
+        <TextField
+          name="registration_no"
+          label="Registration no. (DLS)"
+          defaultValue={property.registration_no}
+        />
+        <TextField name="plot_no" label="Plot no." defaultValue={property.plot_no} />
+        <TextField name="sheet_plan" label="Sheet / plan" defaultValue={property.sheet_plan} />
+        <TextField
+          name="registry_municipality"
+          label="Registry municipality"
+          defaultValue={property.registry_municipality}
+        />
         <div className="flex flex-col gap-2 sm:col-span-2">
           <Label htmlFor="encumbrances_notes">Encumbrances</Label>
           <Textarea

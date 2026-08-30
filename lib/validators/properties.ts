@@ -299,6 +299,9 @@ export const createPropertySchema = z.object({
   area_id: z.preprocess(emptyToUndefined, z.string().uuid().optional()),
   title_en: z.preprocess(emptyToUndefined, z.string().max(200).optional()),
   address: z.preprocess(emptyToUndefined, z.string().max(300).optional()),
+  // DB-05: entry-time capture — the wizard's registration duplicate warning
+  // fires on this before a reference is ever burned
+  registration_no: z.preprocess(emptyToUndefined, z.string().max(50).optional()),
   asking_price: z.preprocess(
     emptyToUndefined,
     z.coerce.number().positive("Price must be positive").optional(),
@@ -446,6 +449,11 @@ export const legalSectionSchema = z.object({
   permit_status: z.enum(PERMIT_STATUSES),
   share_of_land: optText(100),
   encumbrances_notes: optText(2000),
+  // DLS identity (0077, DB-05) — free text as the deed prints them
+  registration_no: optText(50),
+  plot_no: optText(50),
+  sheet_plan: optText(50),
+  registry_municipality: optText(100),
 });
 
 const multilang = z.object({

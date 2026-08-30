@@ -4854,4 +4854,53 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(chainOk, "the new event types keep the hash chain intact").toBe(true);
   });
 
+  it("52. schema hygiene (0077): email unique for active contacts, negative money refused everywhere", async () => {
+    // DB-09/DB-10. Both bind service_role — RLS is bypassed, a unique index
+    // and a CHECK are not (0072's lesson). The migration's own pre-checks run
+    // against whatever database it lands on; this covers the live refusals
+    // unconditionally, importer paths included.
+    const email = `dup-${run}@example.com`;
+    const { data: first, error: firstErr } = await svc
+      .from("contacts")
+      .insert({ org_id: ORG_A, first_name: `Dup-${run}`, email })
+      .select("id")
+      .single();
+    expect(firstErr).toBeNull();
+
+    // a CASE-VARIANT duplicate must be refused — the index is on lower(email)
+    const dup = await svc
+      .from("contacts")
+      .insert({ org_id: ORG_A, first_name: `Dup2-${run}`, email: email.toUpperCase() });
+    expect(dup.error, "an active case-variant email duplicate is refused").not.toBeNull();
+    expect(dup.error!.code).toBe("23505");
+
+    // archiving frees the address — this is what keeps the merge flow safe
+    // (merged duplicates are archived, and must not block the survivor)
+    await svc.from("contacts").update({ is_archived: true }).eq("id", first!.id);
+    const afterArchive = await svc
+      .from("contacts")
+      .insert({ org_id: ORG_A, first_name: `Dup3-${run}`, email })
+      .select("id")
+      .single();
+    expect(afterArchive.error, "an archived holder no longer blocks the email").toBeNull();
+
+    // negative money is refused at the table — check_violation, not RLS
+    const badOffer = await svc.from("offers").insert({
+      org_id: ORG_A,
+      deal_id: dealA1,
+      contact_id: contactA,
+      amount: -100,
+    });
+    expect(badOffer.error, "a negative offer amount is refused").not.toBeNull();
+    expect(badOffer.error!.code).toBe("23514");
+
+    const badPrice = await svc
+      .from("properties")
+      .update({ asking_price: -1 })
+      .eq("id", propA1)
+      .select("id");
+    expect(badPrice.error, "a negative asking price is refused").not.toBeNull();
+    expect(badPrice.error!.code).toBe("23514");
+  });
+
 });

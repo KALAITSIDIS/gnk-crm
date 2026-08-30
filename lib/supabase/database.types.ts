@@ -1363,17 +1363,21 @@ export type Database = {
           permit_status: Database["public"]["Enums"]["permit_status"]
           planning_zone_code: string | null
           plot_area_sqm: number | null
+          plot_no: string | null
           postal_code: string | null
           property_type: Database["public"]["Enums"]["property_type"]
           public_description: Json
           published_at: string | null
           quality_score: number
           reference: string
+          registration_no: string | null
+          registry_municipality: string | null
           rent_price_month: number | null
           road_frontage_m: number | null
           roof_garden_sqm: number | null
           sea_distance_m: number | null
           share_of_land: string | null
+          sheet_plan: string | null
           short_description: Json
           sold_at: string | null
           status: Database["public"]["Enums"]["property_status"]
@@ -1434,17 +1438,21 @@ export type Database = {
           permit_status?: Database["public"]["Enums"]["permit_status"]
           planning_zone_code?: string | null
           plot_area_sqm?: number | null
+          plot_no?: string | null
           postal_code?: string | null
           property_type: Database["public"]["Enums"]["property_type"]
           public_description?: Json
           published_at?: string | null
           quality_score?: number
           reference: string
+          registration_no?: string | null
+          registry_municipality?: string | null
           rent_price_month?: number | null
           road_frontage_m?: number | null
           roof_garden_sqm?: number | null
           sea_distance_m?: number | null
           share_of_land?: string | null
+          sheet_plan?: string | null
           short_description?: Json
           sold_at?: string | null
           status?: Database["public"]["Enums"]["property_status"]
@@ -1505,17 +1513,21 @@ export type Database = {
           permit_status?: Database["public"]["Enums"]["permit_status"]
           planning_zone_code?: string | null
           plot_area_sqm?: number | null
+          plot_no?: string | null
           postal_code?: string | null
           property_type?: Database["public"]["Enums"]["property_type"]
           public_description?: Json
           published_at?: string | null
           quality_score?: number
           reference?: string
+          registration_no?: string | null
+          registry_municipality?: string | null
           rent_price_month?: number | null
           road_frontage_m?: number | null
           roof_garden_sqm?: number | null
           sea_distance_m?: number | null
           share_of_land?: string | null
+          sheet_plan?: string | null
           short_description?: Json
           sold_at?: string | null
           status?: Database["public"]["Enums"]["property_status"]

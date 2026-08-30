@@ -204,6 +204,12 @@ for (const r of rows) {
       features: list(r.features),
       title_deed_status: str(r.title_deed_status) ?? "unknown",
       permit_status: str(r.permit_status) ?? "unknown",
+      // DLS identity (0077, DB-05) — the registration number is the
+      // duplicate signal, so bulk onboarding should carry it when known
+      registration_no: str(r.registration_no),
+      plot_no: str(r.plot_no),
+      sheet_plan: str(r.sheet_plan),
+      registry_municipality: str(r.registry_municipality),
       planning_zone_code: str(r.planning_zone_code),
       building_density_pct: num(r.building_density_pct),
       coverage_ratio_pct: num(r.coverage_ratio_pct),
