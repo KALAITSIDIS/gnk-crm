@@ -1,6 +1,7 @@
 import { getTranslations } from "next-intl/server";
 import { AdminDashboard } from "@/components/features/dashboard/admin-dashboard";
 import { AgentDashboard } from "@/components/features/dashboard/agent-dashboard";
+import { CronHealth } from "@/components/features/dashboard/cron-health";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
 
@@ -20,7 +21,11 @@ export default async function DashboardPage() {
     <div className="flex flex-col gap-4">
       <h1 className="text-xl font-semibold text-text-1">{t("title")}</h1>
       {profile.role === "admin" ? (
-        <AdminDashboard />
+        <>
+          {/* admin-branch only: cron_health() is service_role-gated (0074) */}
+          <CronHealth />
+          <AdminDashboard />
+        </>
       ) : (
         <AgentDashboard profileId={profile.id} />
       )}

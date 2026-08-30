@@ -2834,6 +2834,17 @@ export type Database = {
         }[]
       }
       create_followup_nudges: { Args: { p_org?: string }; Returns: undefined }
+      cron_health: {
+        Args: never
+        Returns: {
+          active: boolean
+          jobname: string
+          last_start: string
+          last_status: string
+          last_success: string
+          schedule: string
+        }[]
+      }
       current_org_id: { Args: never; Returns: string }
       current_role_gnk: {
         Args: never
@@ -3070,6 +3081,7 @@ export type Database = {
           features: string[]
           floor_number: number
           has_storage: boolean
+          images: Json
           kind: Database["public"]["Enums"]["property_kind"]
           parking_spaces: number
           plot_area_sqm: number
