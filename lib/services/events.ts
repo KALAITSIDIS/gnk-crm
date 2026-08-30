@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Json } from "@/lib/supabase/database.types";
+import { formatDateTime } from "@/lib/utils/format";
 
 /**
  * Append-only event log — the architectural spine (doc 01 §6.2).
@@ -406,6 +407,8 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
     if (kind === "deal_no_contact") return t("followupNoContact", { days: Number(p.days) || 14 });
     if (kind === "viewing_feedback")
       return t("followupViewingFeedback", { hours: Number(p.hours) || 48 });
+    // 0075: the buyer who no-showed is the one most in need of a call
+    if (kind === "viewing_no_show") return t("followupViewingNoShow");
     return t("followupTaskCreated");
   },
   // A system task whose condition stopped holding: completed, never deleted, so
@@ -415,6 +418,8 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
     const reason = asText(p.reason);
     if (reason === "deal_contacted_or_closed") return t("supersededDealContacted");
     if (reason === "feedback_logged_or_viewing_reopened") return t("supersededFeedbackLogged");
+    // 0075: a later viewing for the same buyer+property closes the no-show nag
+    if (reason === "viewing_rebooked") return t("supersededViewingRebooked");
     // 0052: a no-contact nudge can now also close because an admin moved the
     // threshold. Before 0052 a moved boundary could only mean contact was
     // logged, so the sweep asserted that; it can no longer assume it.
@@ -441,6 +446,15 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
     const count = Number(p.stops) || 0;
     const date = asText(p.route_date);
     return date ? t("routeUpdatedDate", { count, date }) : t("routeUpdated", { count });
+  },
+  // WF-1: NOT folded into status_changed — that renderer prints raw from/to
+  // strings and would show ISO timestamps; this one formats them
+  rescheduled: (p, t) => {
+    const from = asText(p.from);
+    const to = asText(p.to);
+    return from && to
+      ? t("viewingRescheduled", { from: formatDateTime(from), to: formatDateTime(to) })
+      : t("viewingRescheduledBare");
   },
   viewing_feedback: (p, t) => {
     const rating = Number(p.rating);

@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, CheckCircle2, PenLine, Star } from "lucide-react";
+import { ArrowLeft, CalendarPlus, CheckCircle2, PenLine, Star } from "lucide-react";
 import { ViewingFeedbackForm } from "@/components/features/viewings/feedback-form";
 import { SlipDownloadButton } from "@/components/features/viewings/slip-download";
 import { ConfirmationCard } from "@/components/features/viewings/confirmation-card";
+import { RescheduleViewingDialog } from "@/components/features/viewings/reschedule-viewing-dialog";
 import { ViewingStatusActions } from "@/components/features/viewings/viewing-status-actions";
 import { Button } from "@/components/ui/button";
 import { getCurrentProfile } from "@/lib/services/auth";
@@ -126,11 +127,32 @@ export default async function ViewingDetailPage({ params }: { params: Promise<{ 
             </div>
           ))}
         </dl>
+        {status === "scheduled" ? (
+          // Plain anchor: file download (audit ICS-1) — the one format every
+          // phone calendar imports. Cancelled/past viewings are noise there.
+          <div className="mt-3 border-t border-border pt-3">
+            <Button asChild size="sm" variant="outline">
+              <a href={`/viewings/${v.id}/ics`} download>
+                <CalendarPlus className="size-4" /> Add to calendar (.ics)
+              </a>
+            </Button>
+          </div>
+        ) : null}
       </Card>
 
       {status === "scheduled" && canManage ? (
         <Card title="Status">
-          <ViewingStatusActions viewingId={v.id} />
+          <div className="flex flex-wrap items-center gap-2">
+            <RescheduleViewingDialog
+              viewingId={v.id}
+              agentId={v.agent_id}
+              propertyId={v.property_id}
+              contactId={contact?.id ?? null}
+              scheduledAt={v.scheduled_at}
+              durationMin={v.duration_min}
+            />
+            <ViewingStatusActions viewingId={v.id} />
+          </div>
         </Card>
       ) : null}
 

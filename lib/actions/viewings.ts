@@ -11,6 +11,7 @@ import { zonedParts, zonedWallClockToUtc } from "@/lib/utils/tz";
 import {
   VIEWING_STATUS_ACTIONS,
   createViewingSchema,
+  rescheduleViewingSchema,
   viewingFeedbackSchema,
   type ViewingStatusAction,
 } from "@/lib/validators/viewings";
@@ -25,20 +26,28 @@ export interface ConflictHit {
   id: string;
   timeLabel: string;
   propertyRef: string | null;
+  /** which diary the clash is in — the agent's, the property's, or the buyer's */
+  reason: "agent" | "property" | "contact";
 }
 
 /**
- * Live double-booking check for the create dialog (T4.1). Returns the agent's
- * existing scheduled viewings that overlap the proposed slot. Advisory only —
- * the create action never blocks on it.
+ * Live double-booking check for the create dialog (T4.1; widened by audit
+ * WF-6). Returns overlapping scheduled viewings across THREE diaries — the
+ * agent's, the property's, and the contact's — because two agents booking the
+ * same property (or the same buyer) at once is just as real a clash as one
+ * agent double-booking themselves. Advisory only — the create action never
+ * blocks on it.
  */
 export async function checkViewingConflicts(input: {
-  agentId: string;
+  agentId?: string | null;
+  propertyId?: string | null;
+  contactId?: string | null;
   scheduledAt: string;
   durationMin: number;
   excludeId?: string;
 }): Promise<ConflictHit[]> {
-  if (!input.agentId || !input.scheduledAt) return [];
+  const axes = [input.agentId, input.propertyId, input.contactId].filter(Boolean);
+  if (axes.length === 0 || !input.scheduledAt) return [];
   let startMs: number;
   try {
     startMs = zonedWallClockToUtc(input.scheduledAt).getTime();
@@ -52,10 +61,16 @@ export async function checkViewingConflicts(input: {
   const from = new Date(startMs - 24 * 3_600_000).toISOString();
   const to = new Date(endMs + 24 * 3_600_000).toISOString();
 
+  const ors = [
+    input.agentId ? `agent_id.eq.${input.agentId}` : null,
+    input.propertyId ? `property_id.eq.${input.propertyId}` : null,
+    input.contactId ? `contact_id.eq.${input.contactId}` : null,
+  ].filter(Boolean);
+
   const { data } = await supabase
     .from("viewings")
-    .select("id, scheduled_at, duration_min, properties(reference)")
-    .eq("agent_id", input.agentId)
+    .select("id, scheduled_at, duration_min, agent_id, property_id, contact_id, properties(reference)")
+    .or(ors.join(","))
     .eq("status", "scheduled")
     .gte("scheduled_at", from)
     .lte("scheduled_at", to);
@@ -70,6 +85,13 @@ export async function checkViewingConflicts(input: {
       id: v.id,
       timeLabel: formatDateTime(v.scheduled_at),
       propertyRef: (v.properties as { reference: string } | null)?.reference ?? null,
+      // the agent's own diary is the strongest claim, so it wins the label
+      // when one row clashes on more than one axis
+      reason: (input.agentId && v.agent_id === input.agentId
+        ? "agent"
+        : input.propertyId && v.property_id === input.propertyId
+          ? "property"
+          : "contact") as ConflictHit["reason"],
     }));
 }
 
@@ -168,6 +190,96 @@ export async function updateViewingStatus(
   revalidatePath("/viewings");
   revalidatePath("/dashboard");
   return { error: null };
+}
+
+/**
+ * Move a scheduled viewing to a new time (audit WF-1). Before this the only
+ * way to change a time was cancel + recreate, which severed the viewing's
+ * history and polluted the cancellation stats that feed nudges and the
+ * dashboard. Same guards as updateViewingStatus: assigned agent or admin,
+ * scheduled only. Refused once a slip is signed — the slip is commission
+ * evidence of attendance at the printed time, so a new time means a new
+ * viewing. Moving to a different Cyprus day clears the route stamp, or the
+ * day sheet would keep a stop that is no longer on that day (BACKLOG's own
+ * stated requirement for this feature).
+ */
+export async function rescheduleViewing(
+  _prev: ViewingActionState,
+  formData: FormData,
+): Promise<ViewingActionState> {
+  const parsed = rescheduleViewingSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input", savedAt: null, viewingId: null };
+  }
+  const d = parsed.data;
+
+  const supabase = await createClient();
+  const profile = await getCurrentProfile(supabase);
+
+  const { data: v } = await supabase
+    .from("viewings")
+    .select("id, org_id, agent_id, status, property_id, scheduled_at, duration_min, route_date")
+    .eq("id", d.viewing_id)
+    .maybeSingle();
+  if (!v) return { error: "Viewing not found", savedAt: null, viewingId: null };
+  if (profile.role !== "admin" && v.agent_id !== profile.id) {
+    return { error: "You can only reschedule your own viewings.", savedAt: null, viewingId: null };
+  }
+  if (v.status !== "scheduled") {
+    return { error: `Viewing is already ${v.status}.`, savedAt: null, viewingId: null };
+  }
+
+  const { count: slipCount } = await supabase
+    .from("viewing_slips")
+    .select("id", { count: "exact", head: true })
+    .eq("viewing_id", d.viewing_id);
+  if ((slipCount ?? 0) > 0) {
+    return {
+      error: "A signed slip exists for this time — cancel and schedule a new viewing instead.",
+      savedAt: null,
+      viewingId: null,
+    };
+  }
+
+  let newUtc: Date;
+  try {
+    newUtc = zonedWallClockToUtc(d.scheduled_at);
+  } catch {
+    return { error: "Invalid date and time", savedAt: null, viewingId: null };
+  }
+  const dayChanged = zonedParts(newUtc).dayKey !== zonedParts(v.scheduled_at).dayKey;
+
+  const { error } = await supabase
+    .from("viewings")
+    .update({
+      scheduled_at: newUtc.toISOString(),
+      duration_min: d.duration_min,
+      ...(dayChanged && v.route_date ? { route_date: null, route_order: null } : {}),
+    })
+    .eq("id", d.viewing_id);
+  if (error) return { error: error.message, savedAt: null, viewingId: null };
+
+  await logEvent(supabase, {
+    orgId: v.org_id,
+    actorId: profile.id,
+    entityType: "viewing",
+    entityId: d.viewing_id,
+    eventType: "rescheduled",
+    payload: {
+      from: v.scheduled_at,
+      to: newUtc.toISOString(),
+      ...(d.duration_min !== v.duration_min
+        ? { duration_from: v.duration_min, duration_to: d.duration_min }
+        : {}),
+      ...(dayChanged && v.route_date ? { route_cleared: v.route_date } : {}),
+    },
+  });
+
+  revalidatePath(`/viewings/${d.viewing_id}`);
+  revalidatePath("/viewings");
+  revalidatePath("/dashboard");
+  revalidatePath(`/properties/${v.property_id}`);
+  return { error: null, savedAt: Date.now(), viewingId: d.viewing_id };
 }
 
 /**

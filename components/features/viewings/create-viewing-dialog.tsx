@@ -46,6 +46,8 @@ export function CreateViewingDialog({
   const lastToasted = useRef<number | null>(null);
 
   const [agentId, setAgentId] = useState<string | null>(defaultAgent?.id ?? null);
+  const [propertyId, setPropertyId] = useState<string | null>(defaultProperty?.id ?? null);
+  const [contactId, setContactId] = useState<string | null>(null);
   const [scheduledAt, setScheduledAt] = useState("");
   const [durationMin, setDurationMin] = useState(30);
   const [conflicts, setConflicts] = useState<ConflictHit[]>([]);
@@ -56,6 +58,8 @@ export function CreateViewingDialog({
   // agent/duration while the remounted fields show the defaults.
   const resetDraft = () => {
     setAgentId(defaultAgent?.id ?? null);
+    setPropertyId(defaultProperty?.id ?? null);
+    setContactId(null);
     setScheduledAt("");
     setDurationMin(30);
     setConflicts([]);
@@ -71,22 +75,25 @@ export function CreateViewingDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- resetDraft is stable in behavior
   }, [state.savedAt]);
 
-  // Live double-booking check whenever agent / time / duration change. All
-  // state writes live inside the debounced callback (not the effect body) so
-  // the check stays off the render path.
+  // Live double-booking check whenever a diary axis / time / duration change
+  // (agent, property, or buyer — audit WF-6). All state writes live inside the
+  // debounced callback (not the effect body) so the check stays off the render
+  // path.
   useEffect(() => {
     if (debounce.current) clearTimeout(debounce.current);
     debounce.current = setTimeout(async () => {
-      if (!agentId || !scheduledAt) {
+      if ((!agentId && !propertyId && !contactId) || !scheduledAt) {
         setConflicts([]);
         return;
       }
-      setConflicts(await checkViewingConflicts({ agentId, scheduledAt, durationMin }));
+      setConflicts(
+        await checkViewingConflicts({ agentId, propertyId, contactId, scheduledAt, durationMin }),
+      );
     }, 300);
     return () => {
       if (debounce.current) clearTimeout(debounce.current);
     };
-  }, [agentId, scheduledAt, durationMin]);
+  }, [agentId, propertyId, contactId, scheduledAt, durationMin]);
 
   return (
     <Dialog
@@ -112,12 +119,14 @@ export function CreateViewingDialog({
             label="Property"
             initial={defaultProperty}
             placeholder="Search reference or title…"
+            onChange={(o) => setPropertyId(o?.id ?? null)}
           />
           <EntityPicker
             name="contact_id"
             kind="contact"
             label="Contact"
             placeholder="Search name, phone…"
+            onChange={(o) => setContactId(o?.id ?? null)}
           />
           <EntityPicker
             name="agent_id"
@@ -165,14 +174,18 @@ export function CreateViewingDialog({
               <TriangleAlert className="mt-0.5 size-4 shrink-0" />
               <div>
                 <p className="font-medium">
-                  This agent already has {conflicts.length} viewing
-                  {conflicts.length > 1 ? "s" : ""} then:
+                  {conflicts.length} overlapping viewing{conflicts.length > 1 ? "s" : ""}:
                 </p>
                 <ul className="mt-1 list-disc pl-4 text-xs">
                   {conflicts.map((c) => (
                     <li key={c.id}>
                       {c.timeLabel}
-                      {c.propertyRef ? ` · ${c.propertyRef}` : ""}
+                      {c.propertyRef ? ` · ${c.propertyRef}` : ""} ·{" "}
+                      {c.reason === "agent"
+                        ? "agent's diary"
+                        : c.reason === "property"
+                          ? "same property"
+                          : "same buyer"}
                     </li>
                   ))}
                 </ul>

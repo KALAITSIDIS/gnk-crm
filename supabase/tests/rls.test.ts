@@ -2924,7 +2924,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       .from("task_kinds")
       .select("kind");
     expect(readErr, "an agent may read the vocabulary").toBeNull();
-    expect((kinds ?? []).length, "all nine kinds are visible").toBe(9);
+    expect((kinds ?? []).length, "all ten kinds are visible").toBe(10);
 
     // The vocabulary is the system's: adding a kind is a code change, so not
     // even an admin edits it from the app.
@@ -2969,6 +2969,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       "bulk_price_drop_match",
       "installment_due",
       "key_recall",
+      "viewing_no_show",
     ];
     expect((kinds ?? []).map((k) => k.kind).sort()).toEqual([...shipped].sort());
 
@@ -4685,6 +4686,139 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(names, "the chain walkers are among them").toEqual(
       expect.arrayContaining(["verify-events-chain", "verify-events-chain-full", "ensure-events-partitions"]),
     );
+  });
+
+  it("51. no-show nudge (0075): mints once, never for a rebooked buyer, closes on rebooking", async () => {
+    const iso = (ms: number) => new Date(Date.now() - ms).toISOString();
+
+    // fresh property so the contact+property rebooking axis belongs to this
+    // test alone — contactA has viewings on propA1 in other tests
+    const { data: prop, error: propErr } = await svc
+      .from("properties")
+      .insert({
+        org_id: ORG_A,
+        reference: `NOSHOW-${run}`,
+        property_type: "apartment",
+        status: "available",
+        asking_price: 150000,
+      })
+      .select("id")
+      .single();
+    expect(propErr).toBeNull();
+
+    const { data: v1, error: v1Err } = await svc
+      .from("viewings")
+      .insert({
+        org_id: ORG_A,
+        property_id: prop!.id,
+        contact_id: contactA,
+        agent_id: agentA1.id,
+        scheduled_at: iso(2 * 86_400_000),
+        status: "no_show",
+      })
+      .select("id, scheduled_at")
+      .single();
+    expect(v1Err).toBeNull();
+
+    const noShowTasks = async () => {
+      const { data, error } = await svc
+        .from("tasks")
+        .select("id, due_at, assignee_id, is_done")
+        .eq("viewing_id", v1!.id)
+        .eq("kind", "viewing_no_show");
+      expect(error).toBeNull();
+      return data ?? [];
+    };
+
+    // --- run 1: exactly one task, assigned to the viewing's agent ------------
+    expect((await svc.rpc("create_followup_nudges", { p_org: ORG_A })).error).toBeNull();
+    let tasks = await noShowTasks();
+    expect(tasks, "a no-show viewing is nudged exactly once").toHaveLength(1);
+    expect(tasks[0].assignee_id).toBe(agentA1.id);
+    expect(tasks[0].is_done).toBe(false);
+
+    // due the Cyprus day AFTER the missed slot, at 23:59 — the EOD idiom
+    const cyprus = (isoStr: string) =>
+      new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Asia/Nicosia",
+        hourCycle: "h23",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(new Date(isoStr));
+    const nextDay = new Date(new Date(v1!.scheduled_at).getTime() + 86_400_000);
+    expect(cyprus(tasks[0].due_at!)).toBe(`${cyprus(nextDay.toISOString()).slice(0, 10)}, 23:59`);
+
+    const { data: mintEvents } = await svc
+      .from("events")
+      .select("id, payload")
+      .eq("entity_id", v1!.id)
+      .eq("event_type", "followup_task_created");
+    expect(
+      (mintEvents ?? []).filter((e) => (e.payload as { kind?: string }).kind === "viewing_no_show"),
+      "the mint is evented",
+    ).toHaveLength(1);
+
+    // --- run 2: idempotent — the one-shot (viewing_id, kind) key holds -------
+    expect((await svc.rpc("create_followup_nudges", { p_org: ORG_A })).error).toBeNull();
+    expect(await noShowTasks(), "a second run mints nothing new").toHaveLength(1);
+
+    // --- a rebooking closes the nag ------------------------------------------
+    const { error: v2Err } = await svc.from("viewings").insert({
+      org_id: ORG_A,
+      property_id: prop!.id,
+      contact_id: contactA,
+      agent_id: agentA1.id,
+      scheduled_at: new Date(Date.now() + 86_400_000).toISOString(),
+      status: "scheduled",
+    });
+    expect(v2Err).toBeNull();
+
+    expect((await svc.rpc("create_followup_nudges", { p_org: ORG_A })).error).toBeNull();
+    tasks = await noShowTasks();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].is_done, "the rebooking supersedes the open nag").toBe(true);
+
+    const { data: superEvents } = await svc
+      .from("events")
+      .select("id, payload")
+      .eq("event_type", "superseded")
+      .eq("entity_id", tasks[0].id);
+    expect(
+      (superEvents ?? []).filter(
+        (e) => (e.payload as { reason?: string }).reason === "viewing_rebooked",
+      ),
+      "the close states only what the predicate proved: a rebooking exists",
+    ).toHaveLength(1);
+
+    // --- a no-show that ALREADY has a later rebooking never mints ------------
+    const { data: v3, error: v3Err } = await svc
+      .from("viewings")
+      .insert({
+        org_id: ORG_A,
+        property_id: prop!.id,
+        contact_id: contactA,
+        agent_id: agentA1.id,
+        scheduled_at: iso(1 * 86_400_000),
+        status: "no_show",
+      })
+      .select("id")
+      .single();
+    expect(v3Err).toBeNull();
+
+    expect((await svc.rpc("create_followup_nudges", { p_org: ORG_A })).error).toBeNull();
+    const { data: v3Tasks } = await svc
+      .from("tasks")
+      .select("id")
+      .eq("viewing_id", v3!.id)
+      .eq("kind", "viewing_no_show");
+    expect(v3Tasks ?? [], "the nag would open pre-closed — so it never opens").toHaveLength(0);
+
+    // the sweep's inserts kept the chain intact
+    const { data: chainOk } = await svc.rpc("verify_events_chain", { p_org: ORG_A });
+    expect(chainOk, "the new event types keep the hash chain intact").toBe(true);
   });
 
 });
