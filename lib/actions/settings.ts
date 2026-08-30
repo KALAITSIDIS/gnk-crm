@@ -296,6 +296,63 @@ export async function setUserActive(
   return { error: null };
 }
 
+/**
+ * Remove a colleague's authenticator factors (audit SEC-03) — the lockout
+ * escape. A user who loses their phone cannot unenrol themselves: that path
+ * requires aal2, which requires the phone. The way out has to come from
+ * OUTSIDE the user, and this is it (the lib/testing/mfa.ts clearFactors
+ * precedent, made an audited product action).
+ *
+ * Self-target is banned like setUserRole: resetting your OWN factors here
+ * would bypass the aal2 gate that unenrollMfa exists to enforce. A locked-out
+ * admin is the other admin's job; a solo admin's escape is the runbook
+ * (docs/10 §lockout).
+ *
+ * Deleting a verified factor signs the target out of every active session —
+ * correct for the lost-phone story, and the dialog says so.
+ */
+export async function resetUserTwoFactor(userId: string): Promise<{ error: string | null }> {
+  if (!z.guid().safeParse(userId).success) return { error: "Invalid user" };
+
+  const gate = await requireAdmin();
+  if ("denied" in gate) return { error: gate.denied };
+  const { supabase, profile } = gate;
+  if (userId === profile.id) {
+    return { error: "You cannot reset your own — remove it from the Security page instead." };
+  }
+
+  // RLS-scoped existence check: a cross-org or unknown id must stop HERE —
+  // the factor deletion below runs with the service role (audit finding #1)
+  const { data: target } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("id", userId)
+    .maybeSingle();
+  if (!target) return { error: "User not found" };
+
+  const admin = createAdminClient();
+  const { data, error: listErr } = await admin.auth.admin.mfa.listFactors({ userId });
+  if (listErr) return { error: listErr.message };
+  const factors = data?.factors ?? [];
+  if (!factors.length) return { error: "This user has no authenticator set up." };
+
+  for (const f of factors) {
+    const { error: delErr } = await admin.auth.admin.mfa.deleteFactor({ userId, id: f.id });
+    if (delErr) return { error: delErr.message };
+  }
+
+  await logEvent(supabase, {
+    orgId: profile.orgId,
+    actorId: profile.id,
+    entityType: "user",
+    entityId: userId,
+    eventType: "mfa_reset",
+    payload: { factors_removed: factors.length },
+  });
+  revalidatePath("/settings/users");
+  return { error: null };
+}
+
 /* ---------------- deal stages ---------------- */
 
 async function logStageEvent(

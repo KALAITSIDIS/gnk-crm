@@ -110,6 +110,40 @@ refuses any non-local URL, deliberately.
 
 Ordering is deliberate: each sweep runs after the one whose events it needs.
 
+Since 0074 the jobs have a witness: `cron_health()` (service_role-only) returns
+per-job facts and the admin dashboard renders the verdict — a job with no
+success inside its schedule's allowance (26h nightly / 8d weekly / 32d monthly,
+`lib/services/cron-health.ts`) shows amber there. A restored database shows
+**all eight unhealthy** until the jobs are recreated (BACKUP_RESTORE §4b.4) —
+that is the panel doing its job, not a false alarm.
+
+### Account lockout runbook (SEC-03)
+
+Who can no longer sign in, and what unlocks them:
+
+* **Forgot password, has their authenticator.** Any admin: Settings → Users →
+  Invite-era flow does not apply — there is no self-service email reset in
+  Phase 1. The admin creates a new one-time password for them via the Supabase
+  dashboard (Auth → Users → Reset password) or hands the task to the operator.
+  The user then changes it on **/security** (Change password) so the admin
+  stops knowing it.
+* **Lost phone (2FA), knows their password.** Any *other* admin: Settings →
+  Users → **Reset 2FA** on their row. Factors are deleted through the admin
+  API, the target is signed out everywhere, the reset lands in the event log
+  (`mfa_reset`), and their next password login walks them through fresh
+  enrolment. Verify the request is really theirs — in person or on a call you
+  placed. Self-reset is deliberately refused: removing your own factor goes
+  through /security, which requires the very authenticator being removed
+  (aal2), so a stolen password can never shed the second factor.
+* **The solo admin locked out of 2FA.** No in-app path on purpose. Escape via
+  the Supabase dashboard (project owner login, which has its own MFA): SQL
+  editor → `select id from auth.users where email = '...'`, then Auth → Users
+  → the user → delete the TOTP factor; or the same via the admin API with the
+  service-role key from `~/.gnk-crm/backup.env`. Log what you did as an
+  operator note — nothing writes the event for you on this path.
+* **Deactivated account.** That is not a lockout, it is a decision — Settings
+  → Users → Reactivate (flag + login ban lift together, evented).
+
 ### Applying a migration to hosted
 
 The full discipline is `HANDOFF.md` §3. In short: separate calls per stage,
