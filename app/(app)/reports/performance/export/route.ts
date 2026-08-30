@@ -12,6 +12,7 @@ import {
   stageConversionCsv,
   timeToCloseCsv,
   timeToCloseRows,
+  withWindow,
   type AgentPerformanceRow,
   type PriceReductions,
   type SourceRoiRow,
@@ -66,7 +67,7 @@ export async function GET(request: NextRequest) {
           p.is_active ? p.full_name : `${p.full_name} (inactive)`,
         ]),
       );
-      csv = toCsv(agentPerformanceCsv(names), rows);
+      csv = toCsv(withWindow(agentPerformanceCsv(names), from, to), rows);
       rowCount = rows.length;
       break;
     }
@@ -74,7 +75,7 @@ export async function GET(request: NextRequest) {
       const { data, error } = await supabase.rpc("report_source_roi", win);
       if (error) return NextResponse.json({ error: "Export failed." }, { status: 500 });
       const rows = (data ?? []) as unknown as SourceRoiRow[];
-      csv = toCsv(sourceRoiCsv(), rows);
+      csv = toCsv(withWindow(sourceRoiCsv(), from, to), rows);
       rowCount = rows.length;
       break;
     }
@@ -82,7 +83,7 @@ export async function GET(request: NextRequest) {
       const { data, error } = await supabase.rpc("report_time_to_close", win);
       if (error) return NextResponse.json({ error: "Export failed." }, { status: 500 });
       const rows = timeToCloseRows(data as unknown as TimeToClose);
-      csv = toCsv(timeToCloseCsv(), rows);
+      csv = toCsv(withWindow(timeToCloseCsv(), from, to), rows);
       rowCount = rows.length;
       break;
     }
@@ -90,7 +91,7 @@ export async function GET(request: NextRequest) {
       const { data, error } = await supabase.rpc("report_stage_conversion", win);
       if (error) return NextResponse.json({ error: "Export failed." }, { status: 500 });
       const rows = (data as unknown as StageConversion)?.stages ?? [];
-      csv = toCsv(stageConversionCsv(), rows);
+      csv = toCsv(withWindow(stageConversionCsv(), from, to), rows);
       rowCount = rows.length;
       break;
     }
@@ -103,7 +104,7 @@ export async function GET(request: NextRequest) {
         ? await supabase.from("properties").select("id, reference").in("id", ids)
         : { data: [] };
       const refs = new Map((props ?? []).map((p) => [p.id, p.reference]));
-      csv = toCsv(priceReductionsCsv(refs), cuts);
+      csv = toCsv(withWindow(priceReductionsCsv(refs), from, to), cuts);
       rowCount = cuts.length;
       break;
     }
@@ -123,7 +124,7 @@ export async function GET(request: NextRequest) {
     status: 200,
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="${csvFilename(`report-${report}`)}"`,
+      "Content-Disposition": `attachment; filename="${csvFilename(`report-${report}-${from}-to-${to}`)}"`,
       "Cache-Control": "no-store",
     },
   });

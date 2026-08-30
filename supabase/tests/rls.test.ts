@@ -2924,7 +2924,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       .from("task_kinds")
       .select("kind");
     expect(readErr, "an agent may read the vocabulary").toBeNull();
-    expect((kinds ?? []).length, "all ten kinds are visible").toBe(10);
+    expect((kinds ?? []).length, "all eleven kinds are visible").toBe(11);
 
     // The vocabulary is the system's: adding a kind is a code change, so not
     // even an admin edits it from the app.
@@ -2970,6 +2970,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       "installment_due",
       "key_recall",
       "viewing_no_show",
+      "listing_status_check",
     ];
     expect((kinds ?? []).map((k) => k.kind).sort()).toEqual([...shipped].sort());
 
@@ -3710,6 +3711,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       created: string,
       close: { won_at: string } | { lost_at: string },
       value: number,
+      finalValue: number | null = null,
     ) => {
       const status = "won_at" in close ? ("won" as const) : ("lost" as const);
       const { data, error } = await svc
@@ -3721,6 +3723,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
           title: `C4-${run}-${status}-${created}`,
           agent_id: agent,
           expected_value: value,
+          final_value: finalValue,
           status,
           created_at: created,
           ...close,
@@ -3738,6 +3741,15 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       100000,
     );
     await mkDeal(agentA1.id, "2024-03-01T00:00:00Z", { won_at: "2024-03-21T00:00:00Z" }, 200000);
+    // 0076: final_value ≠ expected_value — the sums must prefer the CONFIRMED
+    // 250000 over the stale 999999 estimate, or the coalesce is unverified
+    await mkDeal(
+      agentA1.id,
+      "2024-03-01T00:00:00Z",
+      { won_at: "2024-03-25T00:00:00Z" },
+      999999,
+      250000,
+    );
     await mkDeal(agentA2.id, "2024-03-05T00:00:00Z", { lost_at: "2024-03-15T00:00:00Z" }, 50000);
 
     // --- leads: 3 website (2 answered at 30 and 90 min), 1 referral --------
@@ -3764,6 +3776,10 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     await mkLead("website", agentA1.id, "2024-03-02T10:00:00Z", "2024-03-02T10:30:00Z", wonDeal1);
     await mkLead("website", agentA1.id, "2024-03-03T10:00:00Z", "2024-03-03T11:30:00Z", null);
     await mkLead("website", agentA1.id, "2024-03-04T10:00:00Z", null, null);
+    // 0076 (RPT-1): answered BEFORE received — a backdated import's clock
+    // anomaly. Counts as answered ("did the desk reply?" is unchanged) but
+    // must be EXCLUDED from the average, or one bad row drags it negative.
+    await mkLead("website", agentA1.id, "2024-03-05T10:00:00Z", "2024-03-05T08:00:00Z", null);
     await mkLead("referral", agentA2.id, "2024-03-05T10:00:00Z", null, null);
 
     // --- viewings: 2 completed for agentA1, 1 cancelled (must not count) ----
@@ -3807,12 +3823,18 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     const a1 = rows.find((r) => r.agent_id === agentA1.id)!;
     const a2 = rows.find((r) => r.agent_id === agentA2.id)!;
 
-    expect(a1.leads_assigned, "agentA1 got 3 leads in March 2024").toBe(3);
-    expect(a1.leads_answered, "2 of them were answered").toBe(2);
-    expect(Number(a1.avg_first_response_min), "30 min and 90 min average to 60").toBeCloseTo(60, 6);
+    expect(a1.leads_assigned, "agentA1 got 4 leads in March 2024").toBe(4);
+    expect(a1.leads_answered, "3 answered — the negative-interval row still counts here").toBe(3);
+    expect(
+      Number(a1.avg_first_response_min),
+      "30 and 90 min average to 60 — the negative interval is EXCLUDED (0076/RPT-1)",
+    ).toBeCloseTo(60, 6);
     expect(a1.viewings_completed, "the cancelled viewing must not count").toBe(2);
-    expect(a1.deals_won).toBe(2);
-    expect(Number(a1.won_value)).toBe(300000);
+    expect(a1.deals_won).toBe(3);
+    expect(
+      Number(a1.won_value),
+      "100000 + 200000 + coalesce(250000, 999999) — final_value wins (0076)",
+    ).toBe(550000);
     expect(a1.deals_lost).toBe(0);
 
     expect(a2.leads_assigned).toBe(1);
@@ -3829,11 +3851,11 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
         r,
       ]),
     );
-    expect(bySource.website.leads).toBe(3);
+    expect(bySource.website.leads).toBe(4);
     expect(bySource.website.converted).toBe(1);
     expect(bySource.website.won).toBe(1);
     expect(Number(bySource.website.won_value)).toBe(100000);
-    expect(Number(bySource.website.convert_rate)).toBeCloseTo(1 / 3, 10);
+    expect(Number(bySource.website.convert_rate)).toBeCloseTo(1 / 4, 10);
     expect(Number(bySource.website.win_rate)).toBe(1);
 
     expect(bySource.referral.leads, "a source that produced nothing is KEPT").toBe(1);
@@ -3845,9 +3867,9 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       won: { count: number; avg_days: number; median_days: number; p90_days: number };
       lost: { count: number; avg_days: number };
     };
-    expect(ttc.won.count).toBe(2);
-    expect(Number(ttc.won.avg_days), "10 and 20 days").toBeCloseTo(15, 6);
-    expect(Number(ttc.won.median_days)).toBeCloseTo(15, 6);
+    expect(ttc.won.count).toBe(3);
+    expect(Number(ttc.won.avg_days), "10, 20 and 24 days").toBeCloseTo(18, 6);
+    expect(Number(ttc.won.median_days)).toBeCloseTo(20, 6);
     expect(ttc.lost.count).toBe(1);
     expect(Number(ttc.lost.avg_days)).toBeCloseTo(10, 6);
 
@@ -3930,6 +3952,10 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     await mkMove(propA1, null, S1); // a second distinct entity id
     await mkMove(propA1, S1, S2);
     await mkMove(contactA, null, S1); // a third that stops at S1
+    // 0076 (RPT-2): a PRE-WINDOW entrant departing in-window — its entry event
+    // is outside this window, so it must NOT count as advanced. Before 0076 it
+    // pushed S1 to 3/3; unguarded, one more such row pushed the rate past 100%.
+    await mkMove(agentA1.id, S1, S2);
 
     const from = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     const to = new Date(Date.now() + 60 * 60 * 1000).toISOString();
@@ -3950,14 +3976,21 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     const s1 = conv.stages.find((s) => s.stage === S1)!;
     const s2 = conv.stages.find((s) => s.stage === S2)!;
     expect(s1.entered, "three deals entered the first stage").toBe(3);
-    expect(s1.advanced, "two of them moved on").toBe(2);
+    expect(
+      s1.advanced,
+      "two moved on — the pre-window entrant's departure is EXCLUDED (0076)",
+    ).toBe(2);
     expect(Number(s1.advance_rate)).toBeCloseTo(2 / 3, 10);
-    expect(s2.entered).toBe(2);
+    expect(s2.entered, "the pre-window entrant still ENTERS the second stage").toBe(3);
     expect(s2.advanced, "nothing moved past the second stage").toBe(0);
-    expect(Number(s2.advance_rate), "0 advanced out of 2 is a rate of 0, not null").toBe(0);
+    expect(Number(s2.advance_rate), "0 advanced out of 3 is a rate of 0, not null").toBe(0);
+    for (const s of conv.stages) {
+      const rate = s.advance_rate === null ? 0 : Number(s.advance_rate);
+      expect(rate, "advance_rate is bounded at 1 by construction (0076)").toBeLessThanOrEqual(1);
+    }
 
     const t = conv.transitions.find((x) => x.from === S1 && x.to === S2)!;
-    expect(t.deals).toBe(2);
+    expect(t.deals, "transitions count EVERY move, cohort or not").toBe(3);
 
     // the chain must survive events written by a test, as everywhere else
     const { data: chainOk } = await svc.rpc("verify_events_chain", { p_org: ORG_A });

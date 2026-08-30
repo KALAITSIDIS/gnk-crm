@@ -102,6 +102,10 @@ export const markWonSchema = z.object({
     .string()
     .optional()
     .transform((v) => v === "on"),
+  // WF-2: the confirmed price. Optional — the action defaults it from the
+  // accepted offer's amount; an admin-override close has no offer to default
+  // from and may leave it blank.
+  final_value: optionalMoney,
 });
 
 export const markLostSchema = z.object({

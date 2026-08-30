@@ -441,6 +441,7 @@ export type Database = {
           created_by: string | null
           deal_type: Database["public"]["Enums"]["deal_type"]
           expected_value: number | null
+          final_value: number | null
           health: Json
           health_score: number
           id: string
@@ -466,6 +467,7 @@ export type Database = {
           created_by?: string | null
           deal_type?: Database["public"]["Enums"]["deal_type"]
           expected_value?: number | null
+          final_value?: number | null
           health?: Json
           health_score?: number
           id?: string
@@ -491,6 +493,7 @@ export type Database = {
           created_by?: string | null
           deal_type?: Database["public"]["Enums"]["deal_type"]
           expected_value?: number | null
+          final_value?: number | null
           health?: Json
           health_score?: number
           id?: string

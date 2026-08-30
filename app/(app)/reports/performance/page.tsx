@@ -2,8 +2,9 @@ import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 import { Download, ShieldCheck } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
+import { addDayKey } from "@/lib/services/calendar-window";
 import { formatDateTime } from "@/lib/utils/format";
-import { zonedDateRangeToUtc } from "@/lib/utils/tz";
+import { zonedDateRangeToUtc, zonedParts } from "@/lib/utils/tz";
 import {
   num,
   pct,
@@ -17,11 +18,17 @@ import {
 
 export const dynamic = "force-dynamic";
 
-/** Default window: the last 90 Cyprus-local days. Reports need a span. */
+/**
+ * Default window: the last 90 Cyprus-local days (RPT-3). `dayKey`, not
+ * `toISOString().slice(0,10)` — the latter is the UTC date, and between
+ * Cyprus midnight and 02:00/03:00 local it ends the default window on
+ * YESTERDAY'S Cyprus date, silently dropping today from the very report
+ * whose footer claims "Cyprus local time". addDayKey runs at UTC noon so a
+ * DST edge inside the 90 days cannot slip a day.
+ */
 function defaultRange(): { from: string; to: string } {
-  const today = new Date();
-  const start = new Date(today.getTime() - 89 * 86_400_000);
-  return { from: start.toISOString().slice(0, 10), to: today.toISOString().slice(0, 10) };
+  const to = zonedParts(new Date()).dayKey;
+  return { from: addDayKey(to, -89), to };
 }
 
 const isDate = (v: string | undefined): v is string => !!v && /^\d{4}-\d{2}-\d{2}$/.test(v);

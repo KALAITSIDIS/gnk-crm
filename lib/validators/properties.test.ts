@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isStatusRegression,
   partiesSectionSchema,
   propertyFiltersSchema,
   resolvePartyUpdates,
@@ -7,6 +8,25 @@ import {
   resolvePropertyScope,
   resolveRestoreUpdates,
 } from "./properties";
+
+describe("isStatusRegression (DB-01)", () => {
+  it("leaving sold or rented for a market status is a regression", () => {
+    expect(isStatusRegression("sold", "available")).toBe(true);
+    expect(isStatusRegression("rented", "under_offer")).toBe(true);
+    expect(isStatusRegression("sold", "withdrawn")).toBe(true);
+  });
+
+  it("moving between the two closed statuses is not — both assert a close", () => {
+    expect(isStatusRegression("sold", "rented")).toBe(false);
+    expect(isStatusRegression("rented", "sold")).toBe(false);
+  });
+
+  it("ordinary market moves are never regressions — incl. the restore path", () => {
+    expect(isStatusRegression("available", "sold")).toBe(false);
+    expect(isStatusRegression("withdrawn", "available")).toBe(false);
+    expect(isStatusRegression("reserved", "available")).toBe(false);
+  });
+});
 
 describe("resolveRestoreUpdates", () => {
   it("returns visibility to private, never public", () => {

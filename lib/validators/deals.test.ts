@@ -17,6 +17,18 @@ describe("markWonSchema", () => {
   it("rejects a missing deal id", () => {
     expect(markWonSchema.safeParse({}).success).toBe(false);
   });
+
+  it("parses a final value, and a blank one stays undefined for the offer default (0076)", () => {
+    expect(markWonSchema.parse({ deal_id: DEAL_ID, final_value: "245000" }).final_value).toBe(
+      245000,
+    );
+    expect(markWonSchema.parse({ deal_id: DEAL_ID, final_value: "" }).final_value).toBeUndefined();
+    expect(markWonSchema.parse({ deal_id: DEAL_ID }).final_value).toBeUndefined();
+  });
+
+  it("refuses a negative final value — the DB CHECK would too, but loudly here", () => {
+    expect(markWonSchema.safeParse({ deal_id: DEAL_ID, final_value: "-1" }).success).toBe(false);
+  });
 });
 
 describe("markLostSchema", () => {

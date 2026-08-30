@@ -128,6 +128,16 @@ export function CalculatorsClient({
   // agent back the choice they had made.
   const reliefMoot = vatPaid && transferConfig?.vat_paid_exempt === true;
 
+  // CALC-2: the pasted summary must date itself the way the screen does — an
+  // undated quote in a WhatsApp thread outlives every rate change (the July
+  // stamp-duty stamp lending authority to an abolished tax is the live
+  // demonstration). "Computed" is the moment of copying, Cyprus-zoned via
+  // formatDate like everything else.
+  const summaryTail = (verifiedAt: string | null) =>
+    `Rates verified ${verifiedAt ? formatDate(verifiedAt) : "never"} · computed ${formatDate(
+      new Date().toISOString(),
+    )} — verify current legislation.`;
+
   const transferSummary =
     transfer &&
     [
@@ -151,14 +161,14 @@ export function CalculatorsClient({
               : []),
             `Total: ${formatMoney(transfer.total)}`,
           ]),
-      "Rates from config — verify current legislation.",
+      summaryTail(transferVerifiedAt),
     ].join("\n");
 
   const stampSummary = stampAbolished
     ? [
         `Stamp duty: none — abolished for documents signed on or after ${formatDate(stampAbolished.from)} (${stampAbolished.law}).`,
         "Contracts signed before that date follow the previous bands.",
-        "Rates from config — verify current legislation.",
+        summaryTail(stampVerifiedAt),
       ].join("\n")
     : stamp &&
       [
@@ -168,7 +178,7 @@ export function CalculatorsClient({
           ? [`Uncapped: ${formatMoney(stamp.uncapped)} → capped at ${formatMoney(stamp.cap)}`]
           : []),
         `Total: ${formatMoney(stamp.total)}`,
-        "Rates from config — verify current legislation.",
+        summaryTail(stampVerifiedAt),
       ].join("\n");
 
   return (
