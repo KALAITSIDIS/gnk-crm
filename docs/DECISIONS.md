@@ -3,6 +3,53 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-08-30 · T-group1-close (migration 0074) — the audit's critical tier
+  is closed: the sweeps get a witness, accounts get recovery paths, the
+  restore pack catches up.** Audit REL-03 + SEC-03 + REL-04, the last three
+  Group-1 items.
+
+  **REL-03 — `cron_health()` returns FACTS, the TS layer owns VERDICTS.**
+  Eight pg_cron jobs run the desk's nights and nothing read
+  `cron.job_run_details`; a stopped scheduler (the KNOWN post-restore state)
+  or a persistently failing job was invisible until its work silently didn't
+  happen. The split is deliberate: SQL reports (job, schedule, active, last
+  run, last SUCCESS) and `lib/services/cron-health.ts` decides health with
+  per-schedule allowances — 26h nightly, 8d for the Sunday full walk, 32d
+  for the monthly partition job, derived from the cron expression's shape —
+  because one flat threshold either false-alarms the quiet jobs weekly or
+  leaves the nightly ones un-alarmed for days, and either teaches the admin
+  to ignore the panel. The function is service_role-only (the
+  anon-default-EXECUTE hazard has shipped twice; RLS test 50 pins the grant
+  surface) and the admin dashboard renders the verdict through the admin
+  client. The reports chain badge separately gains a STALE state: an OK
+  older than 48h goes amber — a green badge with a three-day-old date is a
+  lie of omission. FAILING stays red; stale never downgrades it.
+
+  **SEC-03 — the two recovery paths that didn't exist.** Change password on
+  /security (until now the only way off the invite-time temp password was
+  asking an admin for another one — which the admin then also knew), gated
+  exactly like unenrollMfa: a factor-holding account needs an aal2 session,
+  so a stolen password can never rotate itself into ownership. Max 72 chars
+  because bcrypt truncates there silently. And admin-side **Reset 2FA** on
+  Settings → Users — the lockout escape for a lost phone, since self-unenrol
+  requires the very phone that's lost. Self-target refused (own removal must
+  stay behind the aal2 gate); RLS-scoped existence check before any
+  service-role call (the setUserActive lesson); factors deleted via the
+  admin API per lib/testing/mfa.ts's clearFactors precedent; evented as
+  `mfa_reset`; the dialog tells the admin to verify the request in person
+  or on a call THEY placed. docs/10 gains the full lockout runbook,
+  including the solo-admin escape through the Supabase dashboard.
+
+  **REL-04 — the restore-verification pack was still proving the 0043
+  database.** `verify-restore.sql` checked 26 tables, 27 function grants and
+  5 cron jobs against a database that now has 36 durable tables, 46
+  functions and 8 jobs — a restore could have lost reservations wholesale
+  and still stamped "verified". Regenerated FROM the migration-built local
+  DB at 0073 with the generation queries kept in the file so the next drift
+  is a re-run, not an archaeology dig; counts extended (+8 durable tables;
+  the two self-pruning rate-limit tables deliberately excluded);
+  `export.mjs` TABLES 26 → 36; baseline refreshed from hosted.
+
 - **2026-08-30 · T-media-import — the ~4.5 MB upload ceiling MEASURED, the
   browser now downscales, and the bulk photo importer ships.** Audit
   REL-05 + REL-06, the last two blockers on onboarding the real portfolio.
