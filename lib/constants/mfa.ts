@@ -39,7 +39,12 @@
  *     browser gate could never provide, and the reason 0059 exists.
  *   ✓ Enrolment stays reachable: neither /security nor the app shell touches an
  *     RLS table, so a user who owes a factor can still get one. There is no
- *     redirect loop.
+ *     redirect loop. CAVEAT, learned 2026-08-30: this claim covered the PAGE
+ *     but not the ACTIONS — startMfaEnrollment read the profile through RLS
+ *     and threw for every factor-less user, so an invited hire's first login
+ *     could not enrol at all. Caught by the restored mfa.spec.ts (the API
+ *     path in auth.setup.ts had been quietly papering over it); the actions
+ *     now authenticate without an RLS read until verify() reaches aal2.
  *
  * THE LOCKOUT SURFACE IS REAL AND WORTH KNOWING. An account with no factor can
  * see nothing until it enrols, and there is no self-service password reset in

@@ -70,7 +70,19 @@ export async function getMfaStatus(): Promise<MfaStatus> {
  */
 export async function startMfaEnrollment(): Promise<MfaEnrollState> {
   const supabase = await createClient();
-  await getCurrentProfile(supabase); // authenticated + active, or throw
+  // Authentication only — deliberately NOT getCurrentProfile. Since 0059 an
+  // aal1 factor-less session reads NOTHING through RLS, profiles included, so
+  // a profile check here breaks the one path INTO compliance: a freshly
+  // invited user's first login could never enrol (found by the restored
+  // mfa.spec.ts on 2026-08-30 — the UI threw "Profile not found" while the
+  // API path in auth.setup.ts quietly worked). A deactivated user's login is
+  // banned at GoTrue by setUserActive, so nothing is lost by trusting the JWT.
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return { error: "Not authenticated.", factorId: null, qrCode: null, secret: null };
+  }
 
   // Clear out abandoned attempts, which would otherwise pile up against the
   // factor limit. NOTE: `listFactors().totp` contains only VERIFIED factors —
@@ -108,7 +120,6 @@ export async function confirmMfaEnrollment(
   if (!parsed.success) return { error: parsed.error.issues[0].message, savedAt: null };
 
   const supabase = await createClient();
-  const profile = await getCurrentProfile(supabase);
 
   const { data: challenge, error: challengeErr } = await supabase.auth.mfa.challenge({ factorId });
   if (challengeErr || !challenge) {
@@ -123,6 +134,12 @@ export async function confirmMfaEnrollment(
   if (verifyErr) {
     return { error: "That code was not accepted. Check the clock on your phone and try again.", savedAt: null };
   }
+
+  // AFTER verify, not before: verify() upgraded this session to aal2, so the
+  // RLS profile read works — for a first-time enrollee it could not have
+  // succeeded a line earlier (0059: aal1 reads nothing; same trap as
+  // startMfaEnrollment's header).
+  const profile = await getCurrentProfile(supabase);
 
   await logEvent(supabase, {
     orgId: profile.orgId,

@@ -1673,21 +1673,25 @@ explicit direction.
   because `require_aal2` is RESTRICTIVE and a blocked read returns no rows
   rather than an error.
 
-- **`mfa.spec.ts` is SKIPPED under mandatory 2FA — restore its coverage.** It
-  needs the seed admin to start factor-less, which mandatory mode forbids, and
-  its cleanup would delete a VERIFIED factor — which revokes every session,
-  including the shared `tests/.auth/admin.json` one. That is the same failure
-  its own comment records ("failed 27 tests in the specs that happen to sort
-  after this one") arriving by a different door.
+- ~~**`mfa.spec.ts` is SKIPPED under mandatory 2FA — restore its coverage.**~~
+  ✅ **DONE 2026-08-30** — exactly as this entry prescribed: the spec now
+  creates and destroys a DEDICATED user in a fresh browser context
+  (`storageState` empty), so it is safe in either MFA mode, never touches the
+  shared `tests/.auth/admin.json` session, and needs no cleanup-through-UI at
+  all (the user is deleted, factor and all). The wrong-code path and the
+  "password alone stops working" assertion are back on every run.
+  **VERIFY:** `grep -c 'MFA_REQUIRED' tests/e2e/mfa.spec.ts` → 0. ✔
 
-  Enrolment and the challenge are still covered on EVERY run by
-  `auth.setup.ts`, which does both for real. **What is lost is the wrong-code
-  path and the "password alone stops working" assertion.** The fix is to move
-  the spec onto a DEDICATED user instead of the shared seed admin, in a
-  logged-out context — then it is safe in either mode and the shared-session
-  hazard goes away permanently.
-  **VERIFY:** `grep -c 'MFA_REQUIRED' tests/e2e/mfa.spec.ts` — 0 means the
-  skip was removed, so the coverage is back.
+  **THE RESTORED COVERAGE PAID FOR ITSELF ON ITS FIRST RUN.** The dedicated
+  user — factor-less, exactly like every freshly invited hire — could not
+  enrol through /security at all: `startMfaEnrollment` read the profile
+  through RLS, and since 0059 an aal1 factor-less session reads NOTHING, so
+  the one path INTO compliance threw "Profile not found". Nobody had noticed
+  because `auth.setup.ts` enrols through the supabase-js API, not the UI, and
+  production's two users both already carry factors. Fixed in the same change
+  (`lib/actions/mfa.ts`: authenticate without an RLS read; fetch the profile
+  for the event only AFTER verify() reaches aal2) — see DECISIONS
+  `T-coverage-hardening`.
 - ~~**Deal-scoped "Log contact" action (follow-up to B7).**~~ **SHIPPED
   2026-08-07 (migration 0025).** It was worse than this entry described: the
   edit did not merely buy 14 days of quiet, it CLOSED the open chase-up
