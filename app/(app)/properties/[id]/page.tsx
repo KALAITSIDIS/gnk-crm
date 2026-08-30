@@ -8,6 +8,7 @@ import {
 } from "@/components/features/properties/detail-forms";
 import type { VatConfigRow } from "@/lib/services/vat";
 import { ArchivePropertyButton } from "@/components/features/properties/archive-button";
+import { AddTaskDialog } from "@/components/features/tasks/add-task-dialog";
 import { BuildProgressCard } from "@/components/features/properties/build-progress-card";
 import { PartiesForm } from "@/components/features/properties/parties-form";
 import { MediaTab } from "@/components/features/properties/media-tab";
@@ -438,6 +439,7 @@ export default async function PropertyDetailPage({
             </Link>
           ) : null}
           <div className="ml-auto flex items-center gap-2">
+            <AddTaskDialog entity={{ property_id: p.id }} entityLabel={p.reference} />
             {p.kind === "project" || p.kind === "phase" ? (
               <Button asChild variant="outline" size="sm">
                 <Link href={`/properties/${p.id}/units`}>Units matrix</Link>

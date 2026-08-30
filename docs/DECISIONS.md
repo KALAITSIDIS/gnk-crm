@@ -3,6 +3,57 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-08-30 · T-compliance-loop (migration 0078) — the consent trail, the
+  portal tripwire, the retention nudge, and three workflow gaps.** Audit
+  SEC-06 + SEC-07 + SEC-08 + WF-5 + WF-8 + WF-3, the final Phase-3 batch —
+  and with it, EVERY buildable item from the 2026-08-29 audit is closed.
+
+  **SEC-06**: a marketing-consent flip now writes its own hash-chained
+  `consent_changed` event beside the generic diff (the setUserRole →
+  role_changed pattern) — Art. 7(1) asks the controller to DEMONSTRATE
+  consent, and one diff key inside a section save is a poor exhibit. The
+  initial grant at create logs too. Channel is a literal (`crm_form`, the
+  only consent surface); deliberately NO invented version field — the
+  consent wording is not versioned, and fake provenance is worse than none.
+
+  **SEC-07 (0078)**: `profiles_role_staff_only` CHECK — the portal enum
+  values are unbuilt (0043's "considered, not overlooked" deferral) and
+  every staff read policy is an org-membership scan, so a portal profile
+  seeded out-of-band would read the org at staff level. A CHECK and not a
+  trigger, because the profiles trigger exempts null-uid paths and cannot
+  catch exactly the seeded-profile threat. SUNSET recorded in the
+  constraint comment: the portal-phase migration drops it in the same file
+  that introduces real portal RLS. RLS test 53 pins the service_role
+  refusal for all three portal values.
+
+  **SEC-08 (0078)**: the retention nudge, inside T-retention-expiry's
+  boundary verbatim ("Surfaced, never automatic … a nightly NUDGE would be
+  a reasonable follow-up — an automatic purge would not"). A twelfth kind
+  `retention_expired` + two arms in the existing 03:15 sweep (the 0075
+  no-ninth-job precedent): admin-assigned ONLY (destruction is admin-only,
+  an agent/creator fallback would assign unactionable work), cycle-keyed to
+  `retention_until`, superseded with `retention_purged_or_changed` when the
+  purge nulls the marker. It will mint nothing until 2031 — which is the
+  point: it fires when memory has long failed. purgeExpiredRetention stays
+  the only destroyer. RLS test 54 pins mint/idempotence/supersede.
+
+  **WF-5 / WF-8 / WF-3**: quick-add tasks link the record they concern
+  (verify-then-insert against RLS so a cross-org uuid fails closed; "Add
+  task" dialogs on the three detail pages, deliberately NOT on /tasks whose
+  spec pins the first add-button; contact-linked tasks finally render a
+  link); offers past `valid_until` badge as "lapsed" on READ (per-request
+  Cyprus clock, no cron, no status write — the manual Expire stays the
+  follow-through); and the viewing↔deal link stops being dead plumbing —
+  the create dialog carries `deal_id` (accepted since T4.1, sent by
+  nothing), the deal page gains a Viewings card with a prefilled scheduler,
+  the contact page a Viewings tab, the viewing page its deal link.
+
+  **Local DB reset mid-batch** (the residue rule): RLS test 41 failed
+  locally only because dozens of public MEDIA-* fixtures from repeated
+  same-day suite runs crowded the 50-row feed past the new listing. Reset,
+  then 81/81 on a FIRST run against a fresh database — which also proves
+  all 78 migrations apply cleanly in sequence. dev-fixtures re-applied.
+
 - **2026-08-30 · T-property-identity (migration 0077) — the plot gets its
   legal identity, and the 0001-era schema debt is settled in one deliberate
   pass.** Audit DB-05 + DB-08/09/10 + WF-10, the third Phase-3 batch.

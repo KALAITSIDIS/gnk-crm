@@ -9,6 +9,13 @@ import { zonedWallClockToUtc } from "@/lib/utils/tz";
 
 export type TaskActionState = { error: string | null; savedAt: number | null };
 
+// z.guid(), not z.uuid(): Postgres accepts any 32-hex uuid but Zod 4's uuid()
+// enforces RFC-4122 variant bits and rejects seeded fixture ids (see T3.2).
+const optionalUuid = z
+  .string()
+  .optional()
+  .transform((v) => (v && z.guid().safeParse(v).success ? v : undefined));
+
 const quickAddSchema = z.object({
   title: z.string().trim().min(2, "Task title is required").max(300),
   // optional date; stored as Cyprus end-of-day so "due today" stays overdue
@@ -18,9 +25,15 @@ const quickAddSchema = z.object({
     .optional()
     .transform((v) => (v ? v : undefined))
     .refine((v) => v === undefined || /^\d{4}-\d{2}-\d{2}$/.test(v), "Invalid due date"),
+  // WF-5: the record the task concerns — the columns existed since 0001, the
+  // form just never sent them, so human follow-ups detached from timelines
+  property_id: optionalUuid,
+  contact_id: optionalUuid,
+  deal_id: optionalUuid,
 });
 
-/** Quick-add (T5.5): a personal task, assigned to whoever created it. */
+/** Quick-add (T5.5): a personal task, assigned to whoever created it —
+ *  optionally linked to the record it concerns (audit WF-5). */
 export async function quickAddTask(
   _prev: TaskActionState,
   formData: FormData,
@@ -34,6 +47,21 @@ export async function quickAddTask(
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
 
+  // Verify-then-insert (the saveOffer idiom): tasks_insert checks only org
+  // membership and the FK accepts a cross-org uuid — read each linked entity
+  // through RLS first and fail closed.
+  const link: { property_id?: string; contact_id?: string; deal_id?: string } = {};
+  for (const [table, col, id] of [
+    ["properties", "property_id", d.property_id],
+    ["contacts", "contact_id", d.contact_id],
+    ["deals", "deal_id", d.deal_id],
+  ] as const) {
+    if (!id) continue;
+    const { data: row } = await supabase.from(table).select("id").eq("id", id).maybeSingle();
+    if (!row) return { error: "That record no longer exists.", savedAt: null };
+    link[col] = id;
+  }
+
   const dueAt = d.due_date ? zonedWallClockToUtc(`${d.due_date}T23:59`).toISOString() : null;
 
   const { data: created, error } = await supabase
@@ -44,6 +72,7 @@ export async function quickAddTask(
       due_at: dueAt,
       assignee_id: profile.id,
       created_by: profile.id,
+      ...link,
     })
     .select("id")
     .single();
@@ -55,11 +84,14 @@ export async function quickAddTask(
     entityType: "task",
     entityId: created.id,
     eventType: "created",
-    payload: { title: d.title, due_at: dueAt },
+    payload: { title: d.title, due_at: dueAt, ...link },
   });
 
   revalidatePath("/tasks");
   revalidatePath("/dashboard");
+  if (link.property_id) revalidatePath(`/properties/${link.property_id}`);
+  if (link.contact_id) revalidatePath(`/contacts/${link.contact_id}`);
+  if (link.deal_id) revalidatePath(`/deals/${link.deal_id}`);
   return { error: null, savedAt: Date.now() };
 }
 

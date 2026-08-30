@@ -10,6 +10,8 @@ import { LogDealContact } from "@/components/features/deals/log-contact";
 import { readThreshold } from "@/lib/services/nudge-thresholds";
 import { DealOutcomeActions } from "@/components/features/deals/outcome-actions";
 import { OffersCard, type OfferRow } from "@/components/features/deals/offers";
+import { AddTaskDialog } from "@/components/features/tasks/add-task-dialog";
+import { CreateViewingDialog } from "@/components/features/viewings/create-viewing-dialog";
 import { EventTimeline } from "@/components/features/shared/event-timeline";
 import { HealthDot } from "@/components/features/shared/health-dot";
 import { Button } from "@/components/ui/button";
@@ -18,6 +20,7 @@ import type { HealthFactor } from "@/lib/services/health-score";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTime, formatMoney } from "@/lib/utils/format";
+import { zonedWallClockToUtc } from "@/lib/utils/tz";
 import { cn } from "@/lib/utils";
 import type { OfferStatus } from "@/lib/validators/deals";
 
@@ -99,6 +102,16 @@ export default async function DealDetailPage({
       : Promise.resolve({ data: [] as never[] }),
   ]);
 
+  // WF-3: the viewing-deal link was dead plumbing — schema and action accept
+  // deal_id, nothing sent or showed it. This card answers "what has this
+  // buyer already seen" mid-negotiation.
+  const { data: dealViewings } = await supabase
+    .from("viewings")
+    .select("id, scheduled_at, status, contacts(display_name), properties(reference)")
+    .eq("deal_id", id)
+    .order("scheduled_at", { ascending: false })
+    .limit(10);
+
   const contactOption = new Map(
     (contactsRes.data ?? []).map((c) => [
       c.id,
@@ -117,6 +130,10 @@ export default async function DealDetailPage({
     .sort((a, b) => (a.occurred_at < b.occurred_at ? 1 : -1))
     .slice(0, 50);
 
+  // WF-8: lapsed is DERIVED on read, per-request clock, Cyprus end-of-day —
+  // no cron, no status write. The manual Expire button stays the decision;
+  // this is the honest badge until someone takes it.
+  const nowMs = new Date().getTime(); // per-request clock, the tasks-page idiom
   const offerList: OfferRow[] = offers.map((o) => ({
     id: o.id,
     amount: o.amount,
@@ -126,6 +143,10 @@ export default async function DealDetailPage({
     decided_at: o.decided_at,
     created_at: o.created_at,
     contact: o.contact_id ? (contactOption.get(o.contact_id) ?? null) : null,
+    lapsed:
+      (o.status === "submitted" || o.status === "countered") &&
+      Boolean(o.valid_until) &&
+      zonedWallClockToUtc(`${o.valid_until}T23:59`).getTime() < nowMs,
   }));
 
   const wonEligible = deal.status === "open" && offers.some((o) => o.status === "accepted");
@@ -164,6 +185,7 @@ export default async function DealDetailPage({
             </span>
           ) : null}
           <HealthDot score={deal.health_score} factors={healthFactors} />
+          <AddTaskDialog entity={{ deal_id: deal.id }} entityLabel={deal.title} />
           <span className="text-sm tabular-nums text-text-2">
             {formatMoney(deal.expected_value)}
           </span>
@@ -268,6 +290,56 @@ export default async function DealDetailPage({
 
           <section className="rounded-[10px] border border-border bg-surface p-6">
             <OffersCard dealId={deal.id} offers={offerList} />
+          </section>
+
+          <section className="rounded-[10px] border border-border bg-surface p-6">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h2 className="text-sm font-semibold text-text-1">Viewings</h2>
+              {deal.status === "open" ? (
+                <CreateViewingDialog
+                  defaultProperty={
+                    property
+                      ? { id: property.id, label: property.reference, sublabel: null }
+                      : null
+                  }
+                  defaultContact={
+                    deal.buyer_contact_id
+                      ? (contactOption.get(deal.buyer_contact_id) ?? null)
+                      : null
+                  }
+                  defaultAgent={
+                    agent ? { id: agent.id, label: agent.full_name, sublabel: null } : null
+                  }
+                  defaultDealId={deal.id}
+                  triggerLabel="Schedule viewing"
+                />
+              ) : null}
+            </div>
+            {(dealViewings ?? []).length > 0 ? (
+              <ul className="flex flex-col divide-y divide-border/60">
+                {(dealViewings ?? []).map((v) => (
+                  <li key={v.id} className="flex items-center justify-between gap-3 py-2 text-sm">
+                    <Link href={`/viewings/${v.id}`} className="text-brand-700 hover:underline">
+                      {formatDateTime(v.scheduled_at)}
+                    </Link>
+                    <span className="text-text-2">
+                      {(v.properties as { reference: string } | null)?.reference ?? ""}
+                      {(v.contacts as { display_name: string | null } | null)?.display_name
+                        ? ` · ${(v.contacts as { display_name: string | null }).display_name}`
+                        : ""}
+                    </span>
+                    <span className="text-xs capitalize text-text-3">
+                      {String(v.status).replace("_", " ")}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-text-3">
+                No viewings linked to this deal yet — scheduling one from here links it
+                automatically.
+              </p>
+            )}
           </section>
 
           <section className="rounded-[10px] border border-border bg-surface p-6">

@@ -6,6 +6,7 @@ import {
   ProfileForm,
 } from "@/components/features/contacts/detail-forms";
 import { ArchiveContactButton } from "@/components/features/contacts/archive-button";
+import { AddTaskDialog } from "@/components/features/tasks/add-task-dialog";
 import {
   ContactDocumentsTab,
   type ContactDocument,
@@ -104,6 +105,7 @@ export default async function ContactDetailPage({
     { data: stageRows },
     { data: documentRows },
     { data: absorber },
+    { data: viewingRows },
   ] = await Promise.all([
     // combined history: this contact + everything merged into it (DECISIONS T2.3)
     supabase
@@ -135,6 +137,13 @@ export default async function ContactDetailPage({
           .eq("id", c.merged_into_id)
           .maybeSingle()
       : Promise.resolve({ data: null }),
+    // WF-3: "what has this buyer already seen" finally has a surface
+    supabase
+      .from("viewings")
+      .select("id, scheduled_at, status, properties(reference)")
+      .eq("contact_id", id)
+      .order("scheduled_at", { ascending: false })
+      .limit(50),
   ]);
 
   const mergedName = new Map((mergedRows ?? []).map((m) => [m.id, m.display_name]));
@@ -236,6 +245,12 @@ export default async function ContactDetailPage({
             </span>
           ) : null}
           <div className="ml-auto flex items-center gap-2">
+            {!c.is_archived && !isErased ? (
+              <AddTaskDialog
+                entity={{ contact_id: c.id }}
+                entityLabel={c.display_name ?? "this contact"}
+              />
+            ) : null}
             {mayUpdate && (!c.is_archived || !c.merged_into_id) ? (
               <ArchiveContactButton
                 contactId={c.id}
@@ -296,6 +311,7 @@ export default async function ContactDetailPage({
             <TabsTrigger value="terms">Standard terms</TabsTrigger>
           ) : null}
           <TabsTrigger value="deals">Deals ({(dealRows ?? []).length})</TabsTrigger>
+          <TabsTrigger value="viewings">Viewings ({(viewingRows ?? []).length})</TabsTrigger>
           <TabsTrigger value="documents">Documents ({documents.length})</TabsTrigger>
         </TabsList>
 
@@ -385,6 +401,32 @@ export default async function ContactDetailPage({
 
         <TabsContent value="portfolio" className="mt-4">
           <PortfolioTab portfolio={portfolio} />
+        </TabsContent>
+
+        <TabsContent value="viewings" className="mt-4">
+          {(viewingRows ?? []).length === 0 ? (
+            <div className="max-w-3xl rounded-[10px] border border-dashed border-border py-12 text-center text-sm text-text-3">
+              No viewings yet — schedule one from a property page or the calendar.
+            </div>
+          ) : (
+            <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-6">
+              <ul className="flex flex-col divide-y divide-border/60">
+                {(viewingRows ?? []).map((v) => (
+                  <li key={v.id} className="flex items-center justify-between gap-3 py-2 text-sm">
+                    <Link href={`/viewings/${v.id}`} className="text-brand-700 hover:underline">
+                      {formatDateTime(v.scheduled_at)}
+                    </Link>
+                    <span className="font-mono text-text-2">
+                      {(v.properties as { reference: string } | null)?.reference ?? ""}
+                    </span>
+                    <span className="text-xs capitalize text-text-3">
+                      {String(v.status).replace("_", " ")}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="deals" className="mt-4">

@@ -35,10 +35,16 @@ const initialState: ViewingActionState = { error: null, savedAt: null, viewingId
 export function CreateViewingDialog({
   defaultAgent = null,
   defaultProperty = null,
+  defaultContact = null,
+  defaultDealId = null,
   triggerLabel = "New viewing",
 }: {
   defaultAgent?: EntityOption | null;
   defaultProperty?: EntityOption | null;
+  /** WF-3: the deal page prefills its buyer so the viewing lands linked */
+  defaultContact?: EntityOption | null;
+  /** WF-3: the schema accepted deal_id since T4.1 — nothing ever sent it */
+  defaultDealId?: string | null;
   triggerLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -47,7 +53,7 @@ export function CreateViewingDialog({
 
   const [agentId, setAgentId] = useState<string | null>(defaultAgent?.id ?? null);
   const [propertyId, setPropertyId] = useState<string | null>(defaultProperty?.id ?? null);
-  const [contactId, setContactId] = useState<string | null>(null);
+  const [contactId, setContactId] = useState<string | null>(defaultContact?.id ?? null);
   const [scheduledAt, setScheduledAt] = useState("");
   const [durationMin, setDurationMin] = useState(30);
   const [conflicts, setConflicts] = useState<ConflictHit[]>([]);
@@ -59,7 +65,7 @@ export function CreateViewingDialog({
   const resetDraft = () => {
     setAgentId(defaultAgent?.id ?? null);
     setPropertyId(defaultProperty?.id ?? null);
-    setContactId(null);
+    setContactId(defaultContact?.id ?? null);
     setScheduledAt("");
     setDurationMin(30);
     setConflicts([]);
@@ -113,6 +119,7 @@ export function CreateViewingDialog({
           <DialogTitle>Schedule viewing</DialogTitle>
         </DialogHeader>
         <form action={formAction} className="flex flex-col gap-3">
+          {defaultDealId ? <input type="hidden" name="deal_id" value={defaultDealId} /> : null}
           <EntityPicker
             name="property_id"
             kind="property"
@@ -125,6 +132,7 @@ export function CreateViewingDialog({
             name="contact_id"
             kind="contact"
             label="Contact"
+            initial={defaultContact}
             placeholder="Search name, phone…"
             onChange={(o) => setContactId(o?.id ?? null)}
           />

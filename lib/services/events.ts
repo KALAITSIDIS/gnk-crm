@@ -412,6 +412,8 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
     // 0076: a won deal whose listing still reads on-market — a prompt, never
     // an automatic flip (the declined reservation↔status coupling's boundary)
     if (kind === "listing_status_check") return t("followupListingStatusCheck");
+    // 0078: the AML retention window closed — surfaced, never auto-purged
+    if (kind === "retention_expired") return t("followupRetentionExpired");
     return t("followupTaskCreated");
   },
   // A system task whose condition stopped holding: completed, never deleted, so
@@ -423,6 +425,8 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
     if (reason === "feedback_logged_or_viewing_reopened") return t("supersededFeedbackLogged");
     // 0075: a later viewing for the same buyer+property closes the no-show nag
     if (reason === "viewing_rebooked") return t("supersededViewingRebooked");
+    // 0078: the records were destroyed, or the duty was re-dated
+    if (reason === "retention_purged_or_changed") return t("supersededRetentionResolved");
     // 0052: a no-contact nudge can now also close because an admin moved the
     // threshold. Before 0052 a moved boundary could only mean contact was
     // logged, so the sweep asserted that; it can no longer assume it.
@@ -450,6 +454,8 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
     const date = asText(p.route_date);
     return date ? t("routeUpdatedDate", { count, date }) : t("routeUpdated", { count });
   },
+  // SEC-06: a consent flip is its own exhibit, not a diff key — Art. 7(1)
+  consent_changed: (p, t) => (p.to === true ? t("consentGranted") : t("consentWithdrawn")),
   // DB-01: an admin put a sold/rented listing back on the market — its own
   // line (the publish_override idiom), because the flip is externally visible
   // and should never hide inside a generic section save

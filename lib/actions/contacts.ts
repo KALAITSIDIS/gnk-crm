@@ -151,6 +151,19 @@ export async function createContact(
     payload: { phone: phoneE164, email: input.email ?? null },
   });
 
+  // SEC-06: an initial grant is consent too — the trail is complete from
+  // birth, not only from the first later flip
+  if (input.consent_marketing) {
+    await logEvent(supabase, {
+      orgId: profile.orgId,
+      actorId: profile.id,
+      entityType: "contact",
+      entityId: created.id,
+      eventType: "consent_changed",
+      payload: { from: null, to: true, channel: "crm_form" },
+    });
+  }
+
   revalidatePath("/contacts");
   redirect(`/contacts/${created.id}`);
 }
@@ -340,6 +353,27 @@ export async function updateContactSection(
     eventType: "updated",
     payload: JSON.parse(JSON.stringify({ section, changed })),
   });
+
+  // SEC-06: Article 7(1) asks the controller to DEMONSTRATE consent — a flip
+  // buried as one diff key inside a generic save is a poor exhibit. The flip
+  // gets its own hash-chained event beside the diff (the setUserRole →
+  // role_changed pattern). Channel is a literal: the CRM form is the only
+  // consent surface today, and inventing a version for wording that is not
+  // versioned would be fake provenance.
+  if (section === "profile" && changed.consent_marketing) {
+    await logEvent(supabase, {
+      orgId: profile.orgId,
+      actorId: profile.id,
+      entityType: "contact",
+      entityId: contactId,
+      eventType: "consent_changed",
+      payload: {
+        from: Boolean(changed.consent_marketing.from),
+        to: Boolean(changed.consent_marketing.to),
+        channel: "crm_form",
+      },
+    });
+  }
 
   // KYC completion is a deal-health factor (doc 02 §C5) — refresh buyer deals
   if (section === "kyc_banking") {
