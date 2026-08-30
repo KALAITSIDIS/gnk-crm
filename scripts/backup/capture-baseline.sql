@@ -20,7 +20,11 @@ $fmt$  select
     %s::bigint as tasks,     %s::bigint as cyprus_config,
     %s::bigint as deal_stages, %s::bigint as districts,
     %s::bigint as auth_users, %s::bigint as migrations,
-    %s::bigint as obj_documents, %s::bigint as obj_signatures, %s::bigint as obj_media
+    %s::bigint as obj_documents, %s::bigint as obj_signatures, %s::bigint as obj_media,
+    %s::bigint as share_links, %s::bigint as share_link_properties,
+    %s::bigint as unit_types, %s::bigint as buyer_requirements,
+    %s::bigint as reservations, %s::bigint as reservation_installments,
+    %s::bigint as task_kinds, %s::bigint as chain_checkpoints
     -- captured %s$fmt$,
   (select count(*) from organizations),
   (select count(*) from profiles),
@@ -43,5 +47,13 @@ $fmt$  select
   (select count(*) from storage.objects where bucket_id = 'documents'),
   (select count(*) from storage.objects where bucket_id = 'signatures'),
   (select count(*) from storage.objects where bucket_id = 'media'),
+  (select count(*) from share_links),
+  (select count(*) from share_link_properties),
+  (select count(*) from unit_types),
+  (select count(*) from buyer_requirements),
+  (select count(*) from reservations),
+  (select count(*) from reservation_installments),
+  (select count(*) from task_kinds),
+  (select count(*) from events_chain_checkpoint),
   now()::date
 ) as expected_block;
