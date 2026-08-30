@@ -93,3 +93,42 @@ export function findAddressMatch(
   }
   return null;
 }
+
+/**
+ * DLS registration numbers are the STRONGER duplicate signal (0077, DB-05):
+ * a plot has exactly one, however it is addressed — and unaddressed land,
+ * where the address check is blind, is exactly where open-mandate duplicates
+ * live. Case and internal spacing are typist noise ("0/12345" vs "0 / 12345"),
+ * so both are set aside; everything else must match exactly.
+ */
+export function normaliseRegistrationNo(value: string): string {
+  return value.toUpperCase().replace(/\s+/g, "").trim();
+}
+
+export interface RegistrationCandidate {
+  id: string;
+  reference: string;
+  registration_no: string | null;
+  title: { en?: string } | null;
+  status: string;
+}
+
+export function findRegistrationMatch(
+  candidates: RegistrationCandidate[],
+  registrationNo: string,
+): PropertyDuplicateMatch | null {
+  const target = normaliseRegistrationNo(registrationNo);
+  if (target.length < 3) return null;
+
+  for (const c of candidates) {
+    if (!c.registration_no) continue;
+    if (normaliseRegistrationNo(c.registration_no) !== target) continue;
+    return {
+      id: c.id,
+      reference: c.reference,
+      label: c.title?.en?.trim() || c.registration_no,
+      status: c.status,
+    };
+  }
+  return null;
+}

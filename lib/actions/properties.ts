@@ -58,6 +58,38 @@ export async function checkPropertyDuplicate(
   );
 }
 
+/**
+ * DLS registration duplicate check (0077, DB-05) — the STRONGER signal, and
+ * the only one that works for unaddressed land. Org-wide (a plot's number is
+ * unique however the listing is districted), same warn-never-block doctrine,
+ * same bounded scan (the partial index keeps the not-null set small and the
+ * matcher pure and tested).
+ */
+export async function checkPropertyRegistrationDuplicate(
+  registrationNo: string,
+): Promise<PropertyDuplicateMatch | null> {
+  if (registrationNo.trim().length < 3) return null;
+
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("properties")
+    .select("id, reference, registration_no, title, status")
+    .not("registration_no", "is", null)
+    .limit(500);
+
+  const { findRegistrationMatch } = await import("@/lib/services/property-duplicate");
+  return findRegistrationMatch(
+    (data ?? []).map((p) => ({
+      id: p.id,
+      reference: p.reference,
+      registration_no: p.registration_no,
+      title: p.title as { en?: string } | null,
+      status: p.status,
+    })),
+    registrationNo,
+  );
+}
+
 export async function createProperty(
   _prev: PropertyActionState,
   formData: FormData,
@@ -132,6 +164,7 @@ export async function createProperty(
       area_id: input.area_id ?? null,
       title: input.title_en ? { en: input.title_en } : {},
       address: input.address ?? null,
+      registration_no: input.registration_no ?? null,
       asking_price: input.asking_price ?? null,
       rent_price_month: input.rent_price_month ?? null,
       bedrooms: input.bedrooms ?? null,
@@ -315,6 +348,10 @@ export async function updatePropertySection(
       permit_status: d.permit_status,
       share_of_land: d.share_of_land ?? null,
       encumbrances_notes: d.encumbrances_notes ?? null,
+      registration_no: d.registration_no ?? null,
+      plot_no: d.plot_no ?? null,
+      sheet_plan: d.sheet_plan ?? null,
+      registry_municipality: d.registry_municipality ?? null,
     };
   } else if (section === "marketing") {
     const parsed = marketingSectionSchema.safeParse({

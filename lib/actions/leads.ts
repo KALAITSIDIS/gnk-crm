@@ -113,13 +113,18 @@ export async function createLead(
       .select("id")
       .single();
     if (contactErr) {
-      // race with the unique phone index → surface as a duplicate, not a raw error
+      // race with a unique index (phone, or email since 0077) → surface as a
+      // duplicate, not a raw error
       if (contactErr.code === "23505") {
         const race = await checkContactDuplicate(
           d.new_contact_phone ?? null,
           d.new_contact_email ?? null,
         );
-        return { error: "A contact with this phone already exists.", savedAt: null, duplicate: race };
+        return {
+          error: `A contact with this ${race?.matched_on ?? "phone or email"} already exists.`,
+          savedAt: null,
+          duplicate: race,
+        };
       }
       return { error: contactErr.message, savedAt: null };
     }

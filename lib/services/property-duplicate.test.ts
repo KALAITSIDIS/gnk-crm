@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   findAddressMatch,
+  findRegistrationMatch,
   normaliseAddress,
+  normaliseRegistrationNo,
   type DuplicateCandidate,
+  type RegistrationCandidate,
 } from "./property-duplicate";
 
 const candidate = (over: Partial<DuplicateCandidate> = {}): DuplicateCandidate => ({
@@ -74,5 +77,38 @@ describe("findAddressMatch", () => {
 
   it("is null-safe on an empty candidate list", () => {
     expect(findAddressMatch([], "12 Poseidonos Avenue")).toBeNull();
+  });
+});
+
+describe("findRegistrationMatch (0077, DB-05)", () => {
+  const reg = (over: Partial<RegistrationCandidate> = {}): RegistrationCandidate => ({
+    id: "p1",
+    reference: "PAF0001",
+    registration_no: "0/12345",
+    title: { en: "Sea-view plot" },
+    status: "available",
+    ...over,
+  });
+
+  it("case and internal spacing are typist noise — '0 / 12345' matches '0/12345'", () => {
+    const m = findRegistrationMatch([reg()], "0 / 12345");
+    expect(m).not.toBeNull();
+    expect(m!.reference).toBe("PAF0001");
+  });
+
+  it("different numbers never match — no fuzziness on a legal identifier", () => {
+    expect(findRegistrationMatch([reg()], "0/12346")).toBeNull();
+  });
+
+  it("candidates without a registration number are skipped, not matched on empty", () => {
+    expect(findRegistrationMatch([reg({ registration_no: null })], "0/12345")).toBeNull();
+  });
+
+  it("a too-short target is not evidence of anything", () => {
+    expect(findRegistrationMatch([reg({ registration_no: "12" })], "12")).toBeNull();
+  });
+
+  it("normalisation uppercases and strips ALL whitespace", () => {
+    expect(normaliseRegistrationNo(" k a 51/29 w2 ")).toBe("KA51/29W2");
   });
 });

@@ -53,6 +53,8 @@ Export current data (Excel, phone contacts, WhatsApp notes) into these two CSVs.
 | features | no | `pool;garden;sea_view;furnished` | keys from features constant |
 | title_deed_status | no | separate/pending/shared/none/unknown | |
 | permit_status | no | full/pending/partial/none/unknown | |
+| registration_no | no | text | DLS registration number; drives the duplicate warning |
+| plot_no / sheet_plan / registry_municipality | no | text | DLS identity, as the deed prints them |
 | planning_zone_code | no | text | land |
 | building_density_pct / coverage_ratio_pct | no | number | land |
 | max_floors / road_frontage_m | no | number | land |

@@ -5,6 +5,7 @@ import { AlertTriangle, ArrowLeft, ArrowRight, Copy, RotateCcw } from "lucide-re
 import Link from "next/link";
 import {
   checkPropertyDuplicate,
+  checkPropertyRegistrationDuplicate,
   createProperty,
   type PropertyActionState,
 } from "@/lib/actions/properties";
@@ -16,6 +17,7 @@ import {
   TRANSACTION_TYPES,
   type ListingSource,
 } from "@/lib/validators/properties";
+import { CreatePartyContact } from "@/components/features/properties/create-party-contact";
 import { EntityPicker } from "@/components/features/shared/entity-picker";
 import { getPartyDefaults } from "@/lib/actions/party-defaults";
 import type { EntityOption } from "@/lib/actions/entity-search";
@@ -82,6 +84,8 @@ interface Draft {
   districtId: string;
   areaId: string;
   address: string;
+  /** optional for drafts saved before 0077 — absent reads as "" */
+  registrationNo?: string;
   fields: Record<string, string>;
 }
 
@@ -160,6 +164,9 @@ export function CreatePropertyWizard({
   const [transaction, setTransaction] = useState<string>(seed?.transactionType ?? "sale");
   const [districtId, setDistrictId] = useState<string>(seed?.districtId ?? "");
   const [address, setAddress] = useState<string>(seed?.address ?? "");
+  // controlled like address: the registration duplicate check needs the live
+  // value (0077, DB-05)
+  const [registrationNo, setRegistrationNo] = useState<string>("");
   // controlled so a restored draft can put the area back; Radix Select
   // cannot be repopulated by writing to a DOM node the way the plain
   // inputs below can.
@@ -180,6 +187,12 @@ export function CreatePropertyWizard({
     match: PropertyDuplicateMatch | null;
   } | null>(null);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // same stored-with-its-input discipline for the DLS check (0077, DB-05)
+  const [regFound, setRegFound] = useState<{
+    forReg: string;
+    match: PropertyDuplicateMatch | null;
+  } | null>(null);
+  const regDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /**
    * Read the uncontrolled step-2 inputs off the form.
@@ -220,6 +233,7 @@ export function CreatePropertyWizard({
     districtId,
     areaId,
     address,
+    registrationNo,
     fields: readFields(),
   });
 
@@ -280,6 +294,7 @@ export function CreatePropertyWizard({
     setDistrictId(d.districtId);
     setAreaId(d.areaId);
     setAddress(d.address);
+    setRegistrationNo(d.registrationNo ?? "");
     setStep(d.step);
     setDraftFields(d.fields);
     setRestoredAt(d.savedAt);
@@ -295,7 +310,7 @@ export function CreatePropertyWizard({
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, party, kind, propertyType, transaction, districtId, areaId, address, step]);
+  }, [source, party, kind, propertyType, transaction, districtId, areaId, address, registrationNo, step]);
 
   /**
    * A FAILED submit must not lose the draft. The draft is dropped when the form
@@ -357,6 +372,23 @@ export function CreatePropertyWizard({
   }, [districtId, address]);
 
   const duplicate = found && found.forAddress === address ? found.match : null;
+
+  // DLS registration duplicate check (0077) — the stronger signal, and the
+  // only one that works for unaddressed land. Same warn-never-block doctrine.
+  useEffect(() => {
+    if (regDebounce.current) clearTimeout(regDebounce.current);
+    if (registrationNo.trim().length < 3) return;
+    const forReg = registrationNo;
+    regDebounce.current = setTimeout(async () => {
+      setRegFound({ forReg, match: await checkPropertyRegistrationDuplicate(forReg) });
+    }, 400);
+    return () => {
+      if (regDebounce.current) clearTimeout(regDebounce.current);
+    };
+  }, [registrationNo]);
+
+  const regDuplicate =
+    regFound && regFound.forReg === registrationNo ? regFound.match : null;
 
 /**
    * Choosing the party fills what it implies (migration 0038).
@@ -487,7 +519,9 @@ export function CreatePropertyWizard({
 
             <div className="flex flex-col gap-2 sm:col-span-2">
               <EntityPicker
-                key={source}
+                // party in the key so an inline-created contact (WF-10) shows
+                // as the selection — the picker seeds itself from `initial`
+                key={`${source}:${party?.id ?? ""}`}
                 name={`party-${source}`}
                 kind="contact"
                 label={source === "developer" ? "Developer" : "Owner"}
@@ -496,9 +530,12 @@ export function CreatePropertyWizard({
                   source === "developer" ? ["developer"] : ["owner", "seller", "landlord"]
                 }
                 hint="Their standard terms fill the rest — every value stays editable."
-                initial={source === seed?.source ? seedParty : null}
+                initial={party ?? (source === seed?.source ? seedParty : null)}
                 onChange={onPartyChange}
               />
+              {!party ? (
+                <CreatePartyContact source={source} onSelect={(o) => void onPartyChange(o)} />
+              ) : null}
             </div>
 
             <div className="flex flex-col gap-2">
@@ -630,6 +667,17 @@ export function CreatePropertyWizard({
               />
             </div>
 
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="registration_no">Registration no. (DLS, optional)</Label>
+              <Input
+                id="registration_no"
+                name="registration_no"
+                value={registrationNo}
+                onChange={(e) => setRegistrationNo(e.target.value)}
+                placeholder="As on the title deed"
+              />
+            </div>
+
             {showAsking ? (
               <div className="flex flex-col gap-2">
                 <Label htmlFor="asking_price">Asking price (€)</Label>
@@ -727,6 +775,23 @@ export function CreatePropertyWizard({
                 is already at this address — {duplicate.label}
                 {duplicate.status === "withdrawn" ? " (withdrawn)" : ""}. Open it instead of
                 creating a second record, unless this really is a different property.
+              </p>
+            </div>
+          ) : null}
+
+          {regDuplicate ? (
+            <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 px-3 py-2 text-sm">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
+              <p className="text-text-2">
+                <Link
+                  href={`/properties/${regDuplicate.id}`}
+                  className="font-mono font-medium text-brand-700 hover:underline"
+                >
+                  {regDuplicate.reference}
+                </Link>{" "}
+                already carries this DLS registration number — {regDuplicate.label}
+                {regDuplicate.status === "withdrawn" ? " (withdrawn)" : ""}. A plot has exactly
+                one; this is almost certainly the same property under a second mandate.
               </p>
             </div>
           ) : null}
