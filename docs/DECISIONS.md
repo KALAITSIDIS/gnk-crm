@@ -3,6 +3,46 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-08-30 · T-coverage-hardening — the skipped MFA spec comes back on a
+  dedicated user, and its first run catches a real onboarding-breaking bug.**
+  BACKLOG's last outstanding item plus e2e for the Phase-3 surfaces nothing
+  pinned. NO MIGRATION.
+
+  **The mfa.spec rework**, exactly as the BACKLOG entry prescribed: a
+  dedicated user created and destroyed by the spec in a fresh browser context
+  — safe in either MFA mode, no shared session to revoke, no factor history
+  to restore. The wrong-code refusal and "password alone stops working" are
+  covered again on every run. VERIFY holds: `grep -c MFA_REQUIRED
+  tests/e2e/mfa.spec.ts` → 0.
+
+  **THE FIRST RUN FOUND A REAL BUG: under mandatory 2FA, an invited user
+  could not enrol.** `startMfaEnrollment` read the profile through RLS, and
+  since 0059 an aal1 factor-less session reads NOTHING — so the one path INTO
+  compliance threw "Profile not found" behind the error boundary. Invisible
+  until now because `auth.setup.ts` enrols through the supabase-js API (not
+  the UI) and production's two users both already carry factors; the
+  MFA_REQUIRED constant's own "enrolment stays reachable" claim covered the
+  PAGE but not the ACTIONS. Fix: `startMfaEnrollment` authenticates from the
+  JWT without an RLS read (a deactivated login is already banned at GoTrue,
+  so nothing is lost); `confirmMfaEnrollment` fetches the profile for its
+  event only AFTER verify() upgrades the session to aal2, where RLS admits
+  it. The constant's comment now records the caveat. The fixed path is proven
+  by the spec that found it — a factor-less user enrols through /security's
+  real UI, wrong code refused, right code in.
+
+  **Three new e2e specs** for surfaces the survey flagged as unpinned:
+  `deal-close.spec.ts` (Won dialog prefills the accepted offer's 250000 over
+  a deliberately stale 999999 estimate; final_value lands on the row AND in
+  the won event; the listing_status_check prompt task is raised while the
+  status stays the desk's call), `viewing-reschedule.spec.ts` (the .ics route
+  serves a real VCALENDAR with the stable UID; reschedule moves the SAME
+  viewing — no cancel+recreate — and events from/to), `entity-tasks.spec.ts`
+  (Add task on a property page links the task, keeps it kind-null, and the
+  /tasks list renders the reference link). One spec-side lesson kept in the
+  file: wait for the dialog to CLOSE before asserting the database — the
+  dialog's own "Final value" label satisfied a bare text assert while the
+  server action was still in flight.
+
 - **2026-08-30 · T-compliance-loop (migration 0078) — the consent trail, the
   portal tripwire, the retention nudge, and three workflow gaps.** Audit
   SEC-06 + SEC-07 + SEC-08 + WF-5 + WF-8 + WF-3, the final Phase-3 batch —

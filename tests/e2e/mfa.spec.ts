@@ -1,90 +1,87 @@
 import { test, expect } from "@playwright/test";
 import { totp } from "../../lib/testing/totp";
-import { ADMIN_EMAIL, ADMIN_PASSWORD, isLocal, opTimeout, serviceClient } from "./helpers";
-import { MFA_REQUIRED } from "@/lib/constants/mfa";
+import { fixtureProfile, isLocal, opTimeout, serviceClient } from "./helpers";
 
 /**
- * Force-remove every factor on the shared local admin.
- *
- * This MUST run even when the test fails mid-flow: a stranded factor makes
- * `auth.setup.ts` land on the challenge screen instead of the dashboard, which
- * breaks every other spec in the suite. It cannot be done through the UI,
- * because a session that failed verification is still `aal1` and the app
- * (correctly) refuses to let an aal1 session switch 2FA off — so it goes through
- * the GoTrue admin API.
- *
- * The key below is the standard local-stack demo service key printed by
- * `supabase status`; it is not a secret and only ever reaches 127.0.0.1. This
- * whole spec is skipped unless the target is localhost.
- */
-async function clearAdminFactors(): Promise<void> {
-  const admin = serviceClient();
-  const { data: users } = await admin.auth.admin.listUsers();
-  const user = users?.users.find((u) => u.email === ADMIN_EMAIL);
-  if (!user) return;
-  const { data } = await admin.auth.admin.mfa.listFactors({ userId: user.id });
-  for (const factor of data?.factors ?? []) {
-    await admin.auth.admin.mfa.deleteFactor({ userId: user.id, id: factor.id });
-  }
-}
-
-/**
- * Two-factor authentication, end to end (IMPROVEMENTS C2).
+ * Two-factor authentication, end to end (IMPROVEMENTS C2; reworked for
+ * mandatory 2FA per docs/BACKLOG.md).
  *
  * The decision logic is unit-tested (lib/services/mfa.test.ts) and the code
  * generator is pinned to the RFC vectors (lib/testing/totp.test.ts). This test
- * does what only the running app can prove: enrol a real TOTP factor, sign out,
- * and confirm the password alone is no longer enough to get in.
+ * does what only the running app can prove: enrol a real TOTP factor, sign
+ * out, and confirm the password alone is no longer enough to get in — plus
+ * the wrong-code refusal, which nothing else exercises.
  *
- * It restores the account to its original state at the end — a leftover factor
- * would lock every other spec out of the shared local login.
+ * IT RUNS ON A DEDICATED USER, NOT THE SEED ADMIN — that is the whole rework.
+ * The previous version needed the shared admin to START factor-less (which
+ * mandatory mode forbids: auth.setup.ts enrols one every run so the suite can
+ * log in at all) and its cleanup deleted a VERIFIED factor, which revokes
+ * every session for the user — including the shared `tests/.auth/admin.json`
+ * state; that failure once took 27 unrelated tests down with it. A user this
+ * spec creates and destroys has no shared session to revoke, no factor
+ * history to restore, and works identically under either MFA mode.
  */
+
+const MFA_USER_EMAIL = "mfa-spec-dedicated@gnk.local";
+const MFA_USER_PASSWORD = "mfa-spec-password-1";
+
+/** Remove the dedicated user entirely — auth.users cascades the profile. */
+async function destroyDedicatedUser(): Promise<void> {
+  const admin = serviceClient();
+  const { data: users } = await admin.auth.admin.listUsers();
+  const user = users?.users.find((u) => u.email === MFA_USER_EMAIL);
+  if (user) await admin.auth.admin.deleteUser(user.id);
+}
+
+// a FRESH context: this spec must never ride (or risk) the shared admin session
+test.use({ storageState: { cookies: [], origins: [] } });
+
 test.beforeEach(async () => {
   test.skip(
     !isLocal(),
-    "2FA enrolment mutates the login — local only, never production",
+    "2FA enrolment creates and deletes a login — local only, never production",
   );
 
-  /**
-   * SKIPPED UNDER MANDATORY 2FA, and the reason is this file's own scar.
-   *
-   * This spec needs the seed admin to START with no factor, which mandatory
-   * mode forbids — `auth.setup.ts` enrols one for every run precisely so the
-   * suite can log in at all.
-   *
-   * Worse, `clearAdminFactors()` below would then delete a VERIFIED factor, and
-   * that revokes every session for the user — including the shared
-   * `tests/.auth/admin.json` state every other spec runs on. That is the exact
-   * failure the comment further down records ("failed 27 tests in the specs
-   * that happen to sort after this one"), returning by a different door.
-   *
-   * WHAT COVERAGE MOVES, AND WHAT IS LOST. Enrolment and the challenge are
-   * still exercised on EVERY run under mandatory mode, for real, by
-   * `auth.setup.ts` — it enrols a fresh factor and answers a challenge on the
-   * app's own /login/verify page. What is not covered while this is skipped is
-   * the WRONG-code path and the "password alone stops working" assertion.
-   * Reworking this spec onto a dedicated user rather than the shared seed admin
-   * would restore both; see docs/BACKLOG.md.
-   */
-  test.skip(
-    MFA_REQUIRED,
-    "needs the seed admin to start factor-less; under MFA_REQUIRED the setup enrols one, " +
-      "and clearing a verified factor here would revoke the shared session",
-  );
+  // self-heal: a previous crashed run must not leave the fixture user behind
+  await destroyDedicatedUser();
 
-  // self-heal: a previous crashed run must not keep the suite locked out
-  await clearAdminFactors();
+  const admin = serviceClient();
+  const { orgId } = await fixtureProfile(admin);
+  const { data: created, error } = await admin.auth.admin.createUser({
+    email: MFA_USER_EMAIL,
+    password: MFA_USER_PASSWORD,
+    email_confirm: true,
+  });
+  expect(error).toBeNull();
+  expect(created?.user).toBeTruthy();
+  const { error: profErr } = await admin.from("profiles").insert({
+    id: created!.user!.id,
+    org_id: orgId,
+    role: "agent",
+    full_name: "MFA Spec User",
+    email: MFA_USER_EMAIL,
+  });
+  expect(profErr).toBeNull();
 });
 
-// belt and braces — runs even when the test throws mid-flow
+// belt and braces — the user goes away even when the test throws mid-flow
 test.afterEach(async () => {
-  if (!isLocal() || MFA_REQUIRED) return;
-  await clearAdminFactors();
+  if (!isLocal()) return;
+  await destroyDedicatedUser();
 });
 
-// runs the whole enrol → sign out → challenge → sign in cycle in one test so the
-// factor is always cleaned up, even though it makes for a long test
+// runs the whole enrol → sign out → challenge → sign in cycle in one test so
+// the fixture user's lifecycle stays inside one test's setup/teardown
 test("password alone stops working once a factor is enrolled", async ({ page }) => {
+  // ---------- sign in factor-less ----------
+  await page.goto("/login");
+  await page.getByLabel(/email/i).fill(MFA_USER_EMAIL);
+  await page.getByLabel(/password/i).fill(MFA_USER_PASSWORD);
+  await page.getByRole("button", { name: /log in/i }).click();
+  // under mandatory mode the proxy routes a factor-less session to /security
+  // to enrol; under opt-in mode the login lands on /dashboard — both correct
+  await page.waitForURL(/\/(security|dashboard)/, { timeout: opTimeout(30_000) });
+
   // ---------- enrol ----------
   await page.goto("/security", { waitUntil: "networkidle" });
   await expect(
@@ -108,19 +105,17 @@ test("password alone stops working once a factor is enrolled", async ({ page }) 
   ).toBeVisible();
 
   // ---------- become a signed-out browser ----------
-  // Deliberately NOT the app's Log out button: Supabase `signOut()` defaults to
-  // GLOBAL scope, which revokes every refresh token for this user — including
-  // the shared `tests/.auth/admin.json` session that every other spec runs on.
-  // Doing that here failed 27 tests in the specs that happen to sort after this
-  // one. Dropping the cookies gives this browser a clean slate without touching
-  // the server-side session.
+  // Cookie-clear rather than the Log out button, kept from the old version on
+  // principle even though this user shares a session with nobody: signOut()
+  // defaults to GLOBAL scope and this spec should never model the pattern
+  // that once took 27 tests down.
   await page.context().clearCookies();
   await page.goto("/login");
   await expect(page).toHaveURL(/\/login/);
 
   // ---------- password alone is no longer enough ----------
-  await page.getByLabel(/email/i).fill(ADMIN_EMAIL);
-  await page.getByLabel(/password/i).fill(ADMIN_PASSWORD);
+  await page.getByLabel(/email/i).fill(MFA_USER_EMAIL);
+  await page.getByLabel(/password/i).fill(MFA_USER_PASSWORD);
   await page.getByRole("button", { name: /log in/i }).click();
 
   // the proxy holds the aal1 session on the challenge screen
@@ -142,12 +137,4 @@ test("password alone stops working once a factor is enrolled", async ({ page }) 
   await page.getByLabel(/6-digit code/i).fill(totp(secret));
   await page.getByRole("button", { name: /^verify$/i }).click();
   await expect(page).toHaveURL(/\/dashboard/, { timeout: opTimeout(20_000) });
-
-  // ---------- clean up: remove the factor ----------
-  await page.goto("/security", { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: /^remove$/i }).click();
-  await page.getByRole("dialog").getByRole("button", { name: /^remove$/i }).click();
-  await expect(
-    page.getByRole("heading", { name: /two-factor authentication is off/i }),
-  ).toBeVisible();
 });
