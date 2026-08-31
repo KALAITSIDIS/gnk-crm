@@ -599,7 +599,7 @@ secure than the project it was copied from**, and nothing on screen says so.
 **Re-apply EVERY migration-defined revoke, not a memorised list** (updated
 2026-08-30, audit REL-04 — the old instruction named 0007/0010/0019/0021/0022
 and had silently fallen ~25 migrations behind: 0037, 0040, the T-C4 sweep
-lockdowns in 0044/0047/0051/0052, 0059, 0062, 0063 and 0066 all define
+lockdowns in 0044/0047/0051/0052, 0060, 0061, 0062, 0063, 0065, 0066 and 0080 all define
 revokes too, and a restore that misses them leaves sweeps and reporting
 functions anon-callable). The authoritative list is the migrations
 themselves — `grep -n "revoke" supabase/migrations/*.sql` — and the proof is
@@ -1242,8 +1242,10 @@ The 2 data errors: `permission denied` on `storage.vector_indexes` /
    project** — new finding: the local stack pre-creates it, cloud does not,
    and the dump (scoped `public,events_parts`) never restores it, so the
    verification pack HARD-ERRORS until you `create schema … create table …`
-   and re-insert one `(version, name)` row per migration filename (78 today;
-   generate from `ls supabase/migrations`).
+   and re-insert one `(version, name)` row per migration filename — the count
+   is whatever `ls supabase/migrations` says, never a number from this doc
+   (a pinned "78 today" here went stale within hours of being written;
+   verify-restore.test.ts now locks the pack's own pin to the files).
 2. **Cron**: `create extension pg_cron`, then replay the eight
    `cron.schedule(…)` calls extracted VERBATIM from the migrations
    (`grep`-able; 0001, 0016, 0020, 0044, 0047, 0051, 0062, 0063). All 8

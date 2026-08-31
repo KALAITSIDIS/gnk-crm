@@ -33,7 +33,11 @@ CI or verified in T5.7; the **manual** ones need a human with production access.
 - `pg_cron` jobs active: **all EIGHT** — the authoritative name/schedule
   table lives in docs/10 §pg_cron (this list was two jobs and six stale when
   caught on 2026-08-31; it now defers rather than drifts). The count must be
-  8 and `cron_health()` on the admin dashboard must show them healthy.
+  8 and `cron_health()` on the admin dashboard must show them healthy —
+  where "healthy" allows amber for a weekly/monthly job whose first tick
+  has not elapsed yet (never-run is EXPECTED right after scheduling or a
+  restore; docs/10 explains which; a gate that fails a correct system
+  teaches people to wave it through).
   ```sql
   select jobname, schedule, active from cron.job order by jobname;
   ```

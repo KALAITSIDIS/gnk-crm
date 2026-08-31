@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 78::bigint as migrations,
+    2::bigint as auth_users, 80::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -55,8 +55,11 @@ with expected as (
     -- capture-baseline.sql, after the 08-29/30 audit-fix run (0070–0073,
     -- PAF0001 content fixes, test-photo deletion — which is why media
     -- objects read 0). migrations and task_kinds bumped 2026-08-31 for
-    -- 0074–0078 (78 migrations, 12 kinds) — caught by the cloud drill,
-    -- §4e, which ran this pack against a real restored cloud project.
+    -- 0074–0078 — caught by the cloud drill, §4e — and were STALE AGAIN
+    -- within hours when 0079 merged (bumped to 79 on 2026-09-01). The pin
+    -- is now locked to the migration files by verify-restore.test.ts, so
+    -- a migration can no longer land without this line moving (80 as of
+    -- 0080, 2026-09-01).
     --
     -- KNOWN CLOUD DELTA (verified 2026-08-31, §4e): on ANY cloud project
     -- — live production included — exactly NINE grants rows fail with
@@ -64,11 +67,14 @@ with expected as (
     -- migration-built database) says false: mfa_satisfied, org_mfa_status,
     -- protect_document_columns, protect_profile_columns,
     -- rls_bare_auth_calls, trg_events_hash, trg_price_history,
-    -- trg_supersede_deal_nudges, trg_supersede_viewing_nudges. That is the
+    -- trg_supersede_deal_nudges, trg_supersede_viewing_nudges — plus, since
+    -- 0080 pinned them at service=false (2026-09-01, not yet drill-verified
+    -- on cloud): set_updated_at and protect_property_reference, same
+    -- mechanism, so ELEVEN rows on a cloud target. That is the
     -- platform's default privileges granting service_role EXECUTE on every
     -- function (HANDOFF's mfa_satisfied note, generalized). service_role
     -- bypasses RLS anyway — the delta is harmless. A cloud run of this
-    -- pack that fails ONLY those nine rows has CONVERGED to production's
+    -- pack that fails ONLY those rows has CONVERGED to production's
     -- own posture: the 2026-08-31 drill proved live production fails the
     -- identical set.
     --
@@ -162,6 +168,8 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   ('rls_bare_auth_calls',      true, false, true,  false),
   ('rls_bare_helper_calls',    true, false, false, true),
   ('rls_hoisted_policy_count', true, false, false, true),
+  -- cron visibility (0074): the admin-dashboard health read, service only
+  ('cron_health',          true,  false, false, true),
   -- app RPCs
   ('next_reference',       true,  false, true, true),
   ('record_key_movement',  true,  false, true, true),
@@ -188,6 +196,11 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   ('note_public_listing_hit', true, true, true, true),
   -- trigger bodies: callable by nobody over PostgREST (0007/0021)
   ('trg_events_hash',              true, false, false, false),
+  -- + the two invoker trigger bodies 0080 brought into the same posture,
+  -- pinned to the MIGRATION-BUILT value (on cloud these two join the nine
+  -- service_role default-ACL deltas in the KNOWN CLOUD DELTA note above)
+  ('set_updated_at',               false, false, false, false),
+  ('protect_property_reference',   false, false, false, false),
   ('trg_price_history',            true, false, false, false),
   ('trg_supersede_deal_nudges',    true, false, false, false),
   ('trg_supersede_viewing_nudges', true, false, false, false),
@@ -207,6 +220,31 @@ grant_checks as (
          ge.secdef::text || '/' || ge.anon::text || '/' || ge.auth::text || '/' || ge.service::text as expected,
          coalesce(ga.secdef::text || '/' || ga.anon::text || '/' || ga.auth::text || '/' || ga.service::text, 'FUNCTION MISSING') as actual
   from grants_expected ge left join grants_actual ga on ga.fn = ge.fn
+),
+-- ---------- the reverse direction: FAIL CLOSED on the unpinned ----------
+-- The join above only examines functions somebody remembered to pin — the
+-- 2026-09-01 review caught it blind to 0074's cron_health() eleven minutes
+-- after the list was generated. Any public SECURITY DEFINER function, or any
+-- function anon can execute, that is NOT in grants_expected fails here: the
+-- two classes where a silently-unchecked function is a hole, not a nit.
+-- (authenticated-EXECUTE invoker functions are deliberately out of scope —
+-- that is the default posture for app RPCs and would drown the signal.)
+grant_unpinned as (
+  select distinct 'grants: UNPINNED ' || p.proname as check_name,
+         'pinned in grants_expected' as expected,
+         'secdef=' || p.prosecdef::text
+           || ' anon=' || has_function_privilege('anon', p.oid, 'EXECUTE')::text
+           || ' — add the row (regenerate the list) before trusting this pack' as actual
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public'
+    and (p.prosecdef or has_function_privilege('anon', p.oid, 'EXECUTE'))
+    and not exists (select 1 from grants_expected ge where ge.fn = p.proname)
+    -- extension-owned functions (PostGIS ships hundreds, anon-executable by
+    -- design) are the platform's surface, not this schema's — out of scope
+    and not exists (select 1 from pg_depend d
+                    where d.classid = 'pg_proc'::regclass and d.objid = p.oid
+                      and d.refclassid = 'pg_extension'::regclass and d.deptype = 'e')
 ),
 
 -- ---------- everything else ----------
@@ -303,6 +341,7 @@ from (
   select 'row count'::text as kind, check_name, expected::text, actual::text from counts
   -- these hold for ANY correct restore; a failure here is real
   union all select 'invariant', check_name, expected, actual from grant_checks
+  union all select 'invariant', check_name, expected, actual from grant_unpinned
   union all select 'invariant', check_name, expected, actual from misc
 ) all_checks
 -- failures first, and within them invariants before baseline counts

@@ -47,6 +47,12 @@ update public.documents
    and doc_type in ('id_document', 'proof_of_address', 'source_of_funds')
    and visibility <> 'admin_only';
 
+-- Re-run guard added 2026-09-01 (post-audit review): drop-if-exists before
+-- each add, the 0045/0049/0054 idiom. INERT on first run; makes a replay
+-- (restore-path db push against an already-migrated DB) a no-op instead of
+-- a 42710 abort. The assertion block below re-proves the constraint exists.
+alter table public.documents
+  drop constraint if exists documents_contact_kyc_admin_only;
 alter table public.documents
   add constraint documents_contact_kyc_admin_only
   check (not (entity_type = 'contact'
