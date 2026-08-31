@@ -3,6 +3,24 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-08-31 · T-repoint-script — the Vercel env swap is a script, and the
+  RTO's scriptable lever is closed.** §6b's finding (the 4-hour RTO is ~98%
+  people) named three levers; `scripts/backup/repoint-vercel.mjs` closes the
+  one code can reach. One command re-points production at a restored
+  Supabase project: shape-checks, a LIVE anon-key probe against the target
+  BEFORE any write (an unverified key baked into a build is an outage
+  wearing a recovery's clothes), atomic per-var REST PATCHes (never the
+  CLI's rm-then-add, which leaves a hole if interrupted), rebuild from the
+  latest READY production deployment, READY wait, /login + feed probes. A
+  failed rebuild leaves the previous deployment serving. Values come from
+  `~/.gnk-crm/backup.env` — the file the recovery flow already maintains —
+  so no secret crosses a shell argument. Plan mode verified against
+  production; the write path has a documented ZERO-CHANGE rehearsal
+  (same-value PATCHes + a rebuild identical to any push) awaiting a
+  permitted run — the session's permission classifier rightly gates
+  production writes, and the rehearsal is a one-liner for the operator.
+  BACKUP_RESTORE §6c.
+
 - **2026-08-31 · T-cloud-restore-drill — the backup restores into a REAL
   cloud project, remediates to production's own posture, and the whole path
   is now measured.** Audit REL-08, the last reliability item — executed
