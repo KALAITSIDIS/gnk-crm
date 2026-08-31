@@ -237,6 +237,9 @@ Settings : StartWhenAvailable + WakeToRun + runs-on-battery, 2h execution limit
 Runs     : C:\Users\user\.gnk-crm\run-backup.cmd
 Which is : capture.mjs --out …\gnk-backups --force --keep 14
            && offsite.mjs --keep 7        (REL-01: dated archive → OFFSITE_DIR, §3.3)
+           && offsite-github.mjs --keep 7 (REL-01 residual: ATTESTED off-machine copy —
+                                           private GitHub release, re-downloaded +
+                                           hash-verified; skips until GH_TOKEN is set)
            ;  notify.mjs --rc <final>     (REL-02: healthchecks ping, never fails the run)
 Log      : C:\Users\user\.gnk-crm\backup.log   (exit=N appended per run)
 REPO     : D:\dev\TSOPOZIDIS\gnk-crm        (repointed 2026-08-07)
@@ -275,9 +278,13 @@ Three things to know about it:
 
 - **It does nothing until `backup.env` exists.** Copy `backup.env.example`
   alongside it and fill in the credentials; until then every run exits `2`
-  and logs why. Two optional keys arm the 2026-08-29 additions: `OFFSITE_DIR`
-  (the off-site leg skips-with-a-log-line without it) and `HEALTHCHECK_URL`
-  (the dead-man ping skips likewise until the operator creates the check).
+  and logs why. Four optional keys arm the additions: `OFFSITE_DIR`
+  (the off-site leg skips-with-a-log-line without it), `HEALTHCHECK_URL`
+  (the dead-man ping skips likewise until the operator creates the check),
+  and `GH_BACKUP_REPO` + `GH_TOKEN` (2026-09-02 — the attested GitHub leg
+  skips until BOTH are set; the token is added BY THE OPERATOR's hand only,
+  never through an agent — the same rule every other secret in this file
+  follows).
 - **A machine that is OFF at 03:45 still takes no backup** — S4U +
   StartWhenAvailable cover asleep/logged-out, not powered-off. That case is
   exactly what the dead-man's switch exists for: `notify.mjs` pings
@@ -679,7 +686,15 @@ clean archive checksum around it.
 > copy means a stale USB no longer leaves the gap total. Whether a landed file
 > reaches Microsoft's servers is the OneDrive client's job and needs a
 > logged-on session; under the S4U task the file lands locally regardless and
-> syncs at next logon.
+> syncs at next logon. **That unattested hop was REL-01's last residual, and
+> it closed on 2026-09-02**: `offsite-github.mjs` ships the same dated
+> archive to the PRIVATE `KALAITSIDIS/gnk-backups-offsite` repo as a release
+> asset, then RE-DOWNLOADS it from GitHub and compares SHA-256 — an
+> off-machine copy proven per night, headless, with its failure failing the
+> night into the dead-man. Interactive proof run 2026-08-31: 10.2 MB up,
+> re-downloaded, hash-identical (`50b4bd61cf96…`); scheduler-context run
+> proven the same day (SKIPPED line under S4U — armed the moment the
+> operator puts `GH_TOKEN` in backup.env).
 
 For a manual copy to anywhere else, the recipe is unchanged: somewhere that is
 neither this machine nor the same Supabase account.
@@ -705,7 +720,12 @@ sha256sum -c gnk-backups-offsite-<date>.tar.gz.sha256
 > viewing slips and evidence PDFs. **Never put it in the repo** — `gnk-crm` is a
 > **public** GitHub repository — and never in a public bucket, a pastebin, a chat
 > or an issue. Acceptable destinations are a personal cloud account that is not
-> the Supabase one, an encrypted USB drive, or another machine.
+> the Supabase one, an encrypted USB drive, or another machine. **The PRIVATE
+> `gnk-backups-offsite` GitHub repo (2026-09-02) is in the first class** — a
+> personal cloud account, not Supabase, never the public code repo;
+> offsite-github.mjs refuses a non-PRIVATE target per run. Same caveat as
+> OneDrive: US-hosted, fine for today's operator test data, and the
+> destination set gets re-decided at real-data onboarding.
 >
 > The current dataset is operator test data (§0), which lowers the stakes *today*
 > and not one day longer than that.
@@ -1459,7 +1479,9 @@ is minutes-to-tens-of-minutes with a human in the loop:
 mechanical path is pointless; the levers that would actually move RTO are having
 the password already to hand, scripting the Vercel env swap (**DONE
 2026-08-31 — §6c**), and writing the provisioning step down so nobody
-improvises it (**DONE 2026-08-31 — §4e**).
+improvises it (**DONE 2026-08-31 — §4e**). RPO got its own lever on
+2026-09-02: the attested GitHub leg (§3.3) means "is there an off-machine
+copy?" is a nightly proven fact, not an assumption about a sync client.
 
 ### What a FRESH cloud project actually looks like — measured 2026-08-06
 
