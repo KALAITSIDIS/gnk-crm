@@ -68,7 +68,7 @@ export default async function PropertyDetailPage({
     supabase.from("areas").select("id, district_id, name"),
     supabase
       .from("property_media")
-      .select("id, path_thumb, path_card, is_cover, sort_order, watermarked, width, height")
+      .select("id, kind, path_thumb, path_card, is_cover, sort_order, watermarked, width, height")
       .eq("property_id", id)
       .order("sort_order"),
     supabase
@@ -232,10 +232,12 @@ export default async function PropertyDetailPage({
   const isLand = p.property_type === "land";
   const media = mediaRows ?? [];
   const mandateRows = mandateSafeRows ?? [];
+  // photos only for the score (MEDIA-K) — the tab still shows every kind
+  const photos = media.filter((m) => m.kind === "photo");
   const quality = computeQualityScore({
     isLand,
-    hasCoverPhoto: media.some((m) => m.is_cover),
-    photoCount: media.length,
+    hasCoverPhoto: photos.some((m) => m.is_cover),
+    photoCount: photos.length,
     titleEn: (p.title as { en?: string } | null)?.en,
     publicDescriptionEn: (p.public_description as { en?: string } | null)?.en,
     hasPrice: p.asking_price !== null || p.rent_price_month !== null,

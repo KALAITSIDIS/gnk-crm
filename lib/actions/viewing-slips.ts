@@ -92,6 +92,7 @@ export async function signViewingSlip(
       orgName: org?.name ?? "Agency",
       agentName,
       signerName: d.signer_name,
+      secondAttendeeName: d.second_attendee_name ?? null,
       propertyRef: property?.reference ?? "—",
       propertyAddress: property?.address ?? null,
       viewingWhen: formatDateTime(v.scheduled_at),
@@ -124,6 +125,7 @@ export async function signViewingSlip(
     org_id: v.org_id,
     viewing_id: d.viewing_id,
     signer_name: d.signer_name,
+    second_attendee_name: d.second_attendee_name ?? null,
     signature_path: sigPath,
     signature_sha256: sha256,
     geolocation,
@@ -152,6 +154,9 @@ export async function signViewingSlip(
       sha256,
       pdf_sha256: pdfSha256,
       signer_name: d.signer_name,
+      // VIEW-2 (0082): the hash-chained copy is the integrity claim — a
+      // column alone is forgeable (0026's principle). Absent key = none named.
+      ...(d.second_attendee_name ? { second_attendee: d.second_attendee_name } : {}),
       geotagged: geolocation !== null,
     },
   });

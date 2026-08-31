@@ -31,7 +31,7 @@ export default async function SignSlipPage({ params }: { params: Promise<{ id: s
     supabase.from("organizations").select("name").eq("id", v.org_id).maybeSingle(),
     supabase
       .from("viewing_slips")
-      .select("id, signer_name, signed_at")
+      .select("id, signer_name, second_attendee_name, signed_at")
       .eq("viewing_id", id)
       .maybeSingle(),
   ]);
@@ -81,7 +81,9 @@ export default async function SignSlipPage({ params }: { params: Promise<{ id: s
           <div>
             <p className="font-semibold text-text-1">Already signed</p>
             <p className="text-sm text-text-2">
-              Signed by {slip.signer_name} on {formatDateTime(slip.signed_at)}.
+              Signed by {slip.signer_name}
+              {slip.second_attendee_name ? ` (with ${slip.second_attendee_name})` : ""} on{" "}
+              {formatDateTime(slip.signed_at)}.
             </p>
           </div>
           <SlipDownloadButton viewingId={id} />

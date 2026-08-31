@@ -15,6 +15,8 @@ export interface SlipPdfData {
   orgName: string;
   agentName: string;
   signerName: string;
+  /** VIEW-2 (0082): optional second attendee — null renders nothing */
+  secondAttendeeName: string | null;
   propertyRef: string;
   propertyAddress: string | null;
   viewingWhen: string;
@@ -76,6 +78,9 @@ function SlipDoc({ d }: { d: SlipPdfData }) {
 
         <Field label="Agent" value={d.agentName} />
         <Field label="Attendee" value={d.signerName} />
+        {d.secondAttendeeName ? (
+          <Field label="Second attendee" value={d.secondAttendeeName} />
+        ) : null}
         <Field label="Property" value={d.propertyRef} />
         {d.propertyAddress ? <Field label="Address" value={d.propertyAddress} /> : null}
         <Field label="Viewing" value={d.viewingWhen} />

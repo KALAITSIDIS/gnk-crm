@@ -85,6 +85,14 @@ export function SignSlip({
         />
       </div>
 
+      {/* VIEW-2 (0082): optional, uncontrolled, and NOT part of the submit
+          gate — the slip is immutable, so signing time is the only chance
+          to name a spouse, parent or translator who attended too */}
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="second_attendee_name">Second attendee (optional)</Label>
+        <Input id="second_attendee_name" name="second_attendee_name" maxLength={200} />
+      </div>
+
       <p className="rounded-[10px] bg-surface-2 p-3 text-xs leading-relaxed text-text-2">
         {gdprLine}
       </p>
