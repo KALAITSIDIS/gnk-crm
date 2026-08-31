@@ -357,9 +357,11 @@ export async function updateContactSection(
   // SEC-06: Article 7(1) asks the controller to DEMONSTRATE consent — a flip
   // buried as one diff key inside a generic save is a poor exhibit. The flip
   // gets its own hash-chained event beside the diff (the setUserRole →
-  // role_changed pattern). Channel is a literal: the CRM form is the only
-  // consent surface today, and inventing a version for wording that is not
-  // versioned would be fake provenance.
+  // role_changed pattern). Channel names THIS surface (the CSV importer is
+  // the other one — it writes channel: "csv_import" since 2026-09-02);
+  // inventing a version for wording that is not versioned would be fake
+  // provenance — capturing wording/version waits on the operator's actual
+  // form text.
   if (section === "profile" && changed.consent_marketing) {
     await logEvent(supabase, {
       orgId: profile.orgId,

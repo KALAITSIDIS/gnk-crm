@@ -104,6 +104,17 @@ for (const r of rows) {
     const hasRequirement = Object.keys(requirement).length > 0;
 
     const consent = bool(r.consent_marketing);
+    // SEC-06 (2026-09-02): consent provenance must be honest. An optional
+    // consent_at CSV column carries the REAL grant time; without it the only
+    // truthful stamp is import time, and the event below says so out loud
+    // rather than passing fabricated time off as history.
+    const consentAtRaw = str(r.consent_at);
+    const consentAt = consent
+      ? (consentAtRaw && !Number.isNaN(Date.parse(consentAtRaw))
+          ? new Date(consentAtRaw).toISOString()
+          : new Date().toISOString())
+      : null;
+    const consentAtIsImportTime = consent && !consentAtRaw;
     const insertRow = {
       org_id: orgId,
       contact_kind: company && !firstName && !lastName ? "company" : "person",
@@ -122,7 +133,7 @@ for (const r of rows) {
       source: str(r.source),
       psychology: str(r.psychology),
       consent_marketing: consent,
-      consent_at: consent ? new Date().toISOString() : null,
+      consent_at: consentAt,
       notes: str(r.notes),
     };
 
@@ -150,6 +161,31 @@ for (const r of rows) {
       continue;
     }
     await logImported(supabase, orgId, "contact", created.id, { name: detail });
+
+    // SEC-06 (2026-09-02): a consent granted through THIS path used to leave
+    // no consent_changed event at all — the trail existed only for the CRM
+    // form, while contacts.ts claimed the form was "the only consent
+    // surface". The grant gets the same dedicated hash-chained event, with
+    // its provenance stated: channel csv_import, and a flag when the stamp
+    // is import time rather than a supplied grant time. Direct insert (the
+    // logImported idiom): system actor, fires the chain trigger like any row.
+    if (consent) {
+      const { error: consentErr } = await supabase.from("events").insert({
+        org_id: orgId,
+        actor_id: null,
+        entity_type: "contact",
+        entity_id: created.id,
+        event_type: "consent_changed",
+        payload: {
+          from: null,
+          to: true,
+          channel: "csv_import",
+          consent_at: consentAt,
+          ...(consentAtIsImportTime ? { consent_at_source: "import_time" } : {}),
+        },
+      });
+      if (consentErr) throw new Error(`consent event insert failed: ${consentErr.message}`);
+    }
 
     // A failed requirement must NOT fail the contact: the person is imported
     // either way, and reporting the gap beats rolling back a good row.

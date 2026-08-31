@@ -159,11 +159,17 @@ export const timeToCloseRows = (t: TimeToClose) => [
   { outcome: "lost", ...t.lost, p90_days: null },
 ];
 
-export const stageConversionCsv = (): CsvColumn<StageRow>[] => [
+// note: the RPC's own caveat sentence (0076's self-describing-output
+// convention) — APPENDED as a constant column, never inserted, so existing
+// left-to-right row pins and desk spreadsheets survive (the withWindow rule).
+// The 2026-09-01 review found the caveat lived ONLY in the payload: demotions
+// count as advancement and nothing the desk exports said so.
+export const stageConversionCsv = (note = ""): CsvColumn<StageRow>[] => [
   { header: "Stage", value: (r) => r.stage },
   { header: "Entered", value: (r) => String(r.entered) },
   { header: "Advanced", value: (r) => String(r.advanced) },
   { header: "Advance rate", value: (r) => pct(num(r.advance_rate)) },
+  { header: "Note", value: () => note },
 ];
 
 export const priceReductionsCsv = (

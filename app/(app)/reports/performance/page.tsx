@@ -298,6 +298,15 @@ export default async function PerformanceReportsPage({
             {t("stages.outcomes", { won: conv.outcomes.won, lost: conv.outcomes.lost })}
           </p>
         ) : null}
+        {conv?.note ? (
+          // the RPC's own caveat, rendered verbatim (0076 self-describing
+          // output): the UI can never disagree with what the payload says —
+          // notably that demotions count as advancement (RPT-2 residual,
+          // 2026-09-01 review)
+          <p className="border-t border-border/60 px-4 py-2 text-xs text-text-3">
+            {conv.note}
+          </p>
+        ) : null}
       </Section>
 
       {/* price reductions --------------------------------------------------- */}
