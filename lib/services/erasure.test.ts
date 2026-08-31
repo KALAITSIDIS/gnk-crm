@@ -4,6 +4,7 @@ import {
   buildErasureEventPayload,
   hasAmlRelationship,
   planContactErasure,
+  resolveRetentionAnchor,
 } from "./erasure";
 
 const NOW = "2026-07-21T10:00:00.000Z";
@@ -25,7 +26,7 @@ describe("hasAmlRelationship", () => {
 
 describe("planContactErasure", () => {
   it("never touches identity fields — name, phone and email are not in the patch", () => {
-    const { patch } = planContactErasure({ amlBasis: false, actorId: ACTOR, now: NOW });
+    const { patch } = planContactErasure({ amlBasis: false, actorId: ACTOR, now: NOW, relationshipEndCandidates: [] });
     for (const key of [
       "first_name",
       "last_name",
@@ -39,7 +40,7 @@ describe("planContactErasure", () => {
   });
 
   it("clears the profiling layer and kills marketing consent", () => {
-    const { patch } = planContactErasure({ amlBasis: true, actorId: ACTOR, now: NOW });
+    const { patch } = planContactErasure({ amlBasis: true, actorId: ACTOR, now: NOW, relationshipEndCandidates: [] });
     expect(patch.notes).toBeNull();
     expect(patch.psychology).toBeNull();
     expect(patch.telegram_username).toBeNull();
@@ -51,17 +52,17 @@ describe("planContactErasure", () => {
   });
 
   it("forces temperature to inactive so the contact cannot resurface in marketing", () => {
-    const { patch } = planContactErasure({ amlBasis: true, actorId: ACTOR, now: NOW });
+    const { patch } = planContactErasure({ amlBasis: true, actorId: ACTOR, now: NOW, relationshipEndCandidates: [] });
     expect(patch.temperature).toBe("inactive");
   });
 
   it("archives the contact", () => {
-    const { patch } = planContactErasure({ amlBasis: false, actorId: ACTOR, now: NOW });
+    const { patch } = planContactErasure({ amlBasis: false, actorId: ACTOR, now: NOW, relationshipEndCandidates: [] });
     expect(patch.is_archived).toBe(true);
   });
 
   describe("with no AML relationship", () => {
-    const plan = planContactErasure({ amlBasis: false, actorId: ACTOR, now: NOW });
+    const plan = planContactErasure({ amlBasis: false, actorId: ACTOR, now: NOW, relationshipEndCandidates: [] });
 
     it("destroys the documents and the KYC checklist", () => {
       expect(plan.deleteDocuments).toBe(true);
@@ -75,7 +76,7 @@ describe("planContactErasure", () => {
   });
 
   describe("with an AML relationship", () => {
-    const plan = planContactErasure({ amlBasis: true, actorId: ACTOR, now: NOW });
+    const plan = planContactErasure({ amlBasis: true, actorId: ACTOR, now: NOW, relationshipEndCandidates: [] });
 
     it("keeps the documents — destroying them would breach the retention duty", () => {
       expect(plan.deleteDocuments).toBe(false);
@@ -85,14 +86,60 @@ describe("planContactErasure", () => {
       expect(plan.patch.kyc).toBeUndefined();
     });
 
-    it(`stamps retention ${AML_RETENTION_YEARS} years out`, () => {
+    it(`with no end-signal, stamps retention ${AML_RETENTION_YEARS} years from the erasure — it ends the relationship`, () => {
       expect(plan.retentionUntil).toBe("2031-07-21");
       expect(plan.patch.retention_until).toBe("2031-07-21");
     });
   });
 
+  // CY-03 (2026-09-02): the clock anchors where the duty starts — the END of
+  // the relationship — not where somebody happened to click Erase.
+  describe("the retention anchor (CY-03)", () => {
+    it("a deal closed years ago anchors the clock there — retention can already be over", () => {
+      const plan = planContactErasure({
+        amlBasis: true,
+        actorId: ACTOR,
+        now: NOW, // 2026-07-21
+        relationshipEndCandidates: ["2020-03-15T09:00:00.000Z", null],
+      });
+      // 2020-03-15 + 5y — six years before the erasure; the duty has lapsed
+      expect(plan.retentionUntil).toBe("2025-03-15");
+    });
+
+    it("the LATEST end-signal wins across signal types", () => {
+      const plan = planContactErasure({
+        amlBasis: true,
+        actorId: ACTOR,
+        now: NOW,
+        relationshipEndCandidates: [
+          "2021-01-01T00:00:00.000Z", // old lost deal
+          "2024-06-30", // mandate expiry (date-only arrives like this)
+          "2023-02-02T12:00:00.000Z", // slip signature
+        ],
+      });
+      expect(plan.retentionUntil).toBe("2029-06-30");
+    });
+
+    it("a FUTURE mandate expiry clamps to now — the relationship was ongoing and the erasure ends it", () => {
+      const plan = planContactErasure({
+        amlBasis: true,
+        actorId: ACTOR,
+        now: NOW,
+        relationshipEndCandidates: ["2030-01-01"],
+      });
+      expect(plan.retentionUntil).toBe("2031-07-21"); // NOW + 5y, not 2035
+    });
+
+    it("nulls and junk among the signals are ignored, not fatal", () => {
+      expect(
+        resolveRetentionAnchor([null, "not-a-date", "2022-05-05T00:00:00.000Z"], NOW),
+      ).toBe("2022-05-05T00:00:00.000Z");
+      expect(resolveRetentionAnchor([null, "garbage"], NOW)).toBe(NOW);
+    });
+  });
+
   it("records who erased and when", () => {
-    const { patch } = planContactErasure({ amlBasis: false, actorId: ACTOR, now: NOW });
+    const { patch } = planContactErasure({ amlBasis: false, actorId: ACTOR, now: NOW, relationshipEndCandidates: [] });
     expect(patch.erased_by).toBe(ACTOR);
     expect(patch.erased_at).toBe(NOW);
   });

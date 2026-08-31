@@ -88,14 +88,45 @@ function addYears(iso: string, years: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * CY-03 (2026-09-02): the anchor for the 5-year AML clock is the END OF THE
+ * RELATIONSHIP, not the erasure date — the file header always said so, the
+ * code silently used `now` as a proxy (found by the 2026-09-01 review).
+ *
+ * The anchor is the LATEST end-signal (deal won/lost, slip signature,
+ * mandate expiry), CLAMPED to `now`: a future mandate expiry means the
+ * relationship was still ongoing, and the erasure itself ends it — which is
+ * also the fallback when no end-signal exists at all (exactly the old
+ * behavior, so a contact with only open deals keeps erasure-date anchoring).
+ * A long-past anchor can land retention_until BEFORE today — then the duty
+ * has already lapsed and /settings/retention immediately offers the purge,
+ * which is CY-03's point: records were being kept five years too long.
+ */
+export function resolveRetentionAnchor(candidates: (string | null)[], now: string): string {
+  const ends = candidates
+    .filter((c): c is string => Boolean(c && !Number.isNaN(Date.parse(c))))
+    .map((c) => new Date(c).toISOString());
+  if (ends.length === 0) return now;
+  const latest = ends.sort()[ends.length - 1];
+  return latest < now ? latest : now;
+}
+
 export function planContactErasure(input: {
   amlBasis: boolean;
   actorId: string;
   /** ISO timestamp; injected so the plan is deterministic under test */
   now: string;
+  /**
+   * End-of-relationship signals gathered by the action (deal won_at/lost_at,
+   * slip signed_at, mandate expiry_date) — nulls welcome. See
+   * resolveRetentionAnchor for the clamping rule.
+   */
+  relationshipEndCandidates: (string | null)[];
 }): ErasurePlan {
-  const { amlBasis, actorId, now } = input;
-  const retentionUntil = amlBasis ? addYears(now, AML_RETENTION_YEARS) : null;
+  const { amlBasis, actorId, now, relationshipEndCandidates } = input;
+  const retentionUntil = amlBasis
+    ? addYears(resolveRetentionAnchor(relationshipEndCandidates, now), AML_RETENTION_YEARS)
+    : null;
 
   const patch: ErasurePatch = {
     notes: null,
