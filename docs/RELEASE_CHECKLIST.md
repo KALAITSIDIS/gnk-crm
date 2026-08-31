@@ -30,8 +30,10 @@ CI or verified in T5.7; the **manual** ones need a human with production access.
   push, the database does not.
 - Seed present: 5 districts, 26 deal stages, 6 `cyprus_config` rows.
 - Buckets exist: `media` (public), `documents` (private), `signatures` (private).
-- `pg_cron` jobs active: `expire-mandates` (daily 03:00) and
-  `verify-events-chain` (daily 03:30, runs `run_chain_checks()`).
+- `pg_cron` jobs active: **all EIGHT** — the authoritative name/schedule
+  table lives in docs/10 §pg_cron (this list was two jobs and six stale when
+  caught on 2026-08-31; it now defers rather than drifts). The count must be
+  8 and `cron_health()` on the admin dashboard must show them healthy.
   ```sql
   select jobname, schedule, active from cron.job order by jobname;
   ```

@@ -3,6 +3,29 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-08-31 · T-vat-transitional (migration 0079) — the transitional
+  deadline gets its condition, before it misleads anyone.** The audit parked
+  "VAT transitional note tightening" behind the Tax Department circular; a
+  recon found the gate lifted — Law 109(I)/2026 (gazetted 2026-04-24) and
+  the Tax Department announcement of 2026-05-04 made the 2026-12-31 deadline
+  CONDITIONAL: it holds only where the building permit was issued after
+  2025-01-01 or is still unissued; for permits issued by 2024-12-31 the
+  filing deadline was 2026-06-15 — which has now PASSED. Our 0058-era note
+  ("STILL LIVE until 2026-12-31") was true for one subset of buyers and
+  false for another, with no way to tell them apart on screen.
+
+  0079 tightens the config in the 0058/0070 verified-rates idiom (guarded on
+  the condition's absence, every figure asserted unchanged, verified_at
+  restamped with both sources); the code half carries `condition` through
+  `transitionalHint` to the panel as a warning line — a config that names a
+  lapse must put it ON THE SCREEN, or the panel quotes a lapsed relief to
+  exactly the buyers it lapsed for. Back-compat pinned: a pre-0079 config
+  renders with condition null, never dropped. Rolled into the same change:
+  the HANDOFF Cron row (listed six of eight jobs) and RELEASE_CHECKLIST
+  (listed two) now defer to docs/10's authoritative table, and the desktop
+  E2E count was re-measured for the first time since 2026-08-22 (212 listed,
+  was 204/206).
+
 - **2026-08-31 · T-repoint-script — the Vercel env swap is a script, and the
   RTO's scriptable lever is closed.** §6b's finding (the 4-hour RTO is ~98%
   people) named three levers; `scripts/backup/repoint-vercel.mjs` closes the

@@ -20,6 +20,7 @@ const CONFIG: VatConfigRow = {
   transitional: {
     deadline: "2026-12-31",
     old_rule: "5% on the first 200 sqm, no value cap",
+    condition: "permit-date condition (0079)",
   },
 };
 
@@ -179,6 +180,26 @@ describe("deriveVat — THE CLIFF, which is the number worth knowing", () => {
     expect(t.transitionalMayHelp).toEqual({
       deadline: "2026-12-31",
       oldRule: "5% on the first 200 sqm, no value cap",
+      condition: "permit-date condition (0079)",
+    });
+  });
+
+  it("a pre-0079 config without the condition still renders — condition null, never dropped", () => {
+    const legacy = {
+      ...CONFIG,
+      transitional: { deadline: "2026-12-31", old_rule: "5% on the first 200 sqm, no value cap" },
+    };
+    const t = deriveVat({
+      coveredAreaSqm: 191,
+      price: 300000,
+      vatStatus: "new_vat",
+      config: legacy,
+      configVerifiedAt: "2026-08-27",
+    });
+    expect(t.transitionalMayHelp).toEqual({
+      deadline: "2026-12-31",
+      oldRule: "5% on the first 200 sqm, no value cap",
+      condition: null,
     });
   });
 
