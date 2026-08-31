@@ -1455,8 +1455,9 @@ is minutes-to-tens-of-minutes with a human in the loop:
 
 **A 4-hour target that is ~98% people.** That ratio is the finding. Shaving the
 mechanical path is pointless; the levers that would actually move RTO are having
-the password already to hand, scripting the Vercel env swap, and writing the
-provisioning step down so nobody improvises it.
+the password already to hand, scripting the Vercel env swap (**DONE
+2026-08-31 — §6c**), and writing the provisioning step down so nobody
+improvises it (**DONE 2026-08-31 — §4e**).
 
 ### What a FRESH cloud project actually looks like — measured 2026-08-06
 
@@ -1522,6 +1523,40 @@ no production data ever left this machine.
 The schema restore otherwise reproduced §4b exactly: **71 errors**, all of them
 `must be able to SET ROLE` (65) plus those 6 — i.e. entirely the §4b.2 auth/storage
 ownership defect, with the extensions enabled first as §3.1 now instructs.
+
+---
+
+## 6c. The Vercel env swap is now a SCRIPT — `scripts/backup/repoint-vercel.mjs`
+
+§6b named three levers that would actually move the 4-hour RTO; this closes
+the scriptable one. Re-pointing production at a restored Supabase project is
+now one command instead of three hand-edited env vars and a remembered
+rebuild (the by-hand version cost six deployments on 2026-08-03 and looked
+like a build failure, because `NEXT_PUBLIC_*` is inlined at build time):
+
+```
+node --env-file="C:/Users/user/.gnk-crm/backup.env" scripts/backup/repoint-vercel.mjs                    # plan (writes nothing)
+node --env-file="C:/Users/user/.gnk-crm/backup.env" scripts/backup/repoint-vercel.mjs --apply --redeploy # execute + rebuild + probe
+```
+
+**The contract**: in a recovery, paste the restored project's values over the
+existing lines in `~/.gnk-crm/backup.env` (`SUPABASE_URL`,
+`SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` — the same file the nightly
+backup and this runbook already use), then run with `--apply --redeploy`.
+The script shape-checks every value, LIVE-verifies the anon key against the
+target project before any write (an unverified key baked into a build is an
+outage wearing a recovery's clothes), PATCHes each var atomically via the
+REST API (never the CLI's rm-then-add, which leaves a hole if interrupted),
+rebuilds from the latest READY production deployment, waits for READY, and
+probes `/login` + the public feed. A failed rebuild leaves the previous
+deployment serving — the alias only moves on success.
+
+**Verified 2026-08-31**: plan mode against production — shapes pass, the
+anon key answers on the target, all three vars resolve with their production
+targets. The write path can be rehearsed at ZERO risk with the same-value
+run above (the PATCHes are no-ops; the rebuild is identical to any push) —
+record the timing here when it runs. The remaining §6b levers stay human:
+the database password in the password manager, and this runbook being read.
 
 ---
 
