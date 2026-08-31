@@ -3,6 +3,42 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-08-31 · T-cloud-restore-drill — the backup restores into a REAL
+  cloud project, remediates to production's own posture, and the whole path
+  is now measured.** Audit REL-08, the last reliability item — executed
+  WITHOUT an operator present, which the audit assumed impossible: the
+  Supabase CLI token (connected the same day) provisions and deletes
+  projects, and psql reaches the scratch through the same docker technique
+  as every hosted apply. Full record: BACKUP_RESTORE **§4e**.
+
+  The verdicts: schema 73 s / 0 errors over the wire (the extension preamble
+  and the public,events_parts dump scope eliminated every historical error
+  class); data 12 s / 2 benign platform-table errors; **the restored chain's
+  hash aggregate is byte-identical to LIVE production over 130 events**; and
+  after the documented remedies (ledger 78 rows, 8 cron jobs, grant
+  lockdown), **verify-restore.sql fails the restored scratch on EXACTLY the
+  same 11 rows as live production** — converged, provably.
+
+  Five findings, all recorded in §4e: (1) `supabase_migrations` schema does
+  not exist at all on fresh cloud — the pack hard-errors until it is
+  recreated; (2) §3.1's "re-apply EVERY migration-defined revoke", taken
+  literally, would replay 0002's blanket table revoke WITHOUT its re-grants
+  and kill authenticated's table access — corrected; (3) DO-block revokes
+  (0065's report loop) escape verbatim extraction — the pack's grants table
+  is the residue-catcher, and it caught exactly the six report functions +
+  two partition helpers; (4) cloud default privileges grant service_role
+  EXECUTE on every function — nine cosmetic pack deltas that production
+  itself shares, now documented IN the pack; (5) the pack's baseline had
+  gone stale (73/9 vs 78/12 after this week's 0074–0078) — refreshed.
+
+  Scratch project created and DELETED the same hour (Management API — the
+  CLI's delete needs a TTY confirm); the generated password lived only in
+  the session scratchpad and died with it. Remaining composition gaps are
+  unchanged and human by nature: auth.users recreation, storage bytes
+  (§4c), the Vercel env swap. The mechanical cloud restore is ~2 minutes
+  measured; §6b's "the 4-hour RTO is ~98% people" now stands on a full
+  end-to-end run.
+
 - **2026-08-30 · T-coverage-hardening — the skipped MFA spec comes back on a
   dedicated user, and its first run catches a real onboarding-breaking bug.**
   BACKLOG's last outstanding item plus e2e for the Phase-3 surfaces nothing
