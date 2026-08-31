@@ -249,15 +249,31 @@ export async function rescheduleViewing(
   }
   const dayChanged = zonedParts(newUtc).dayKey !== zonedParts(v.scheduled_at).dayKey;
 
-  const { error } = await supabase
+  // Compare-and-set on status (2026-09-01 review): the guard above is a
+  // read-then-write, so a cancellation landing between the read and this
+  // write would be silently overwritten into a moved, re-live viewing. The
+  // predicate makes the race lose; the returned row is the proof the write
+  // happened (the markDealWon idiom) — RLS filters a forbidden update to 0
+  // rows with NO error.
+  const { data: moved, error } = await supabase
     .from("viewings")
     .update({
       scheduled_at: newUtc.toISOString(),
       duration_min: d.duration_min,
       ...(dayChanged && v.route_date ? { route_date: null, route_order: null } : {}),
     })
-    .eq("id", d.viewing_id);
+    .eq("id", d.viewing_id)
+    .eq("status", "scheduled")
+    .select("id")
+    .maybeSingle();
   if (error) return { error: error.message, savedAt: null, viewingId: null };
+  if (!moved) {
+    return {
+      error: "The viewing changed under you (cancelled or completed?) — refresh and retry.",
+      savedAt: null,
+      viewingId: null,
+    };
+  }
 
   await logEvent(supabase, {
     orgId: v.org_id,

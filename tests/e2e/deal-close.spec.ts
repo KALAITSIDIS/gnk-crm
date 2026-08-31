@@ -16,6 +16,11 @@ import { fixtureProfile, isLocal, opTimeout, serviceClient } from "./helpers";
 
 const REF = "E2EWON01";
 const DEAL_TITLE = "E2E won-flow fixture deal";
+// a REAL second profile as the deal's agent, so "assigned to the deal's
+// agent" is distinguishable from "assigned to whoever clicked" (2026-09-01
+// review: with agent_id = the closing admin, the assertion was degenerate —
+// a regression to `profile.id` would still pass)
+const AGENT_EMAIL = "deal-close-agent@gnk.local";
 
 async function removeFixture(svc: SupabaseClient): Promise<void> {
   const { data: deals } = await svc.from("deals").select("id").eq("title", DEAL_TITLE);
@@ -30,6 +35,12 @@ async function removeFixture(svc: SupabaseClient): Promise<void> {
     await svc.from("properties").delete().eq("id", p.id);
   }
   await svc.from("contacts").delete().eq("first_name", "E2EWonBuyer");
+  const { data: agentProfile } = await svc
+    .from("profiles")
+    .select("id")
+    .eq("email", AGENT_EMAIL)
+    .maybeSingle();
+  if (agentProfile) await svc.auth.admin.deleteUser(agentProfile.id);
 }
 
 test.beforeEach(() => {
@@ -41,7 +52,23 @@ test("Mark won confirms the accepted price, stamps it, and prompts the listing f
 }) => {
   const svc = serviceClient();
   await removeFixture(svc);
-  const { id: profileId, orgId } = await fixtureProfile(svc);
+  const { orgId } = await fixtureProfile(svc);
+
+  const { data: agentUser, error: agentErr } = await svc.auth.admin.createUser({
+    email: AGENT_EMAIL,
+    password: "deal-close-agent-pw-1",
+    email_confirm: true,
+  });
+  expect(agentErr).toBeNull();
+  const agentId = agentUser!.user!.id;
+  const { error: agentProfErr } = await svc.from("profiles").insert({
+    id: agentId,
+    org_id: orgId,
+    role: "agent",
+    full_name: "Deal Close Agent",
+    email: AGENT_EMAIL,
+  });
+  expect(agentProfErr).toBeNull();
 
   const { data: stage } = await svc
     .from("deal_stages")
@@ -75,7 +102,7 @@ test("Mark won confirms the accepted price, stamps it, and prompts the listing f
       deal_type: "sale",
       stage_id: stage!.id,
       title: DEAL_TITLE,
-      agent_id: profileId,
+      agent_id: agentId,
       property_id: prop!.id,
       buyer_contact_id: buyer!.id,
       expected_value: 999999, // deliberately stale — the confirmed price must win
@@ -139,7 +166,53 @@ test("Mark won confirms the accepted price, stamps it, and prompts the listing f
       .eq("kind", "listing_status_check");
     expect(prompts, "one open prompt task").toHaveLength(1);
     expect(prompts![0].is_done).toBe(false);
-    expect(prompts![0].assignee_id, "assigned to the deal's agent").toBe(profileId);
+    expect(
+      prompts![0].assignee_id,
+      "assigned to the DEAL'S AGENT, not the admin who clicked",
+    ).toBe(agentId);
+
+    // ---------- obeying the prompt completes it (2026-09-01 review) ----------
+    // The task asks for a status update; making that exact update must close
+    // it — an open task that survives being obeyed teaches the desk to
+    // ignore tasks.
+    await page.goto(`/properties/${prop!.id}`, { waitUntil: "networkidle" });
+    // the details form lives behind its tab — Overview is the landing tab
+    await page.getByRole("tab", { name: /^details$/i }).click();
+    await page.getByLabel(/^status$/i).click();
+    await page.getByRole("option", { name: /^sold$/i }).click();
+    await page
+      .locator("form")
+      .filter({ has: page.getByLabel(/^status$/i) })
+      .getByRole("button", { name: /^save$/i })
+      .click();
+    await expect(page.getByText(/^saved$/i).first()).toBeVisible({
+      timeout: opTimeout(15_000),
+    });
+
+    await expect
+      .poll(
+        async () => {
+          const { data: after } = await svc
+            .from("tasks")
+            .select("is_done")
+            .eq("property_id", prop!.id)
+            .eq("kind", "listing_status_check");
+          return after?.every((t) => t.is_done) && after.length === 1;
+        },
+        { timeout: opTimeout(15_000) },
+      )
+      .toBe(true);
+
+    const { data: supersededEvents } = await svc
+      .from("events")
+      .select("payload")
+      .eq("event_type", "superseded")
+      .eq("entity_id", prompts![0].id);
+    expect(supersededEvents, "the completion is evented with its reason").toHaveLength(1);
+    expect(
+      (supersededEvents![0].payload as { reason?: string }).reason,
+      "the reason states what the predicate proved",
+    ).toContain("sold");
   } finally {
     await removeFixture(svc);
   }
