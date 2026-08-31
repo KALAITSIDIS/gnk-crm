@@ -3,6 +3,29 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-02 · T-partials-close (no migration) — three PARTIAL chips become
+  whole.** The 2026-09-01 verification found six FIXED chips overstating; the
+  three code-shaped ones close here. (1) **DB-01**: a reservation converted
+  to a sale while the listing read on-market raised nothing — the deal-Won
+  leg's mirror now runs in transitionReservation after the proven write:
+  same prompt-task idiom (one open per property+kind, assignee through the
+  linked deal or the closer, task failure logged loudly but never rolling
+  back the committed transition, NEVER a status flip — the 2026-08-26
+  boundary). Pinned by reservation-convert.spec.ts, the first reservation
+  e2e in the suite. (2) **RPT-2**: the RPC's caveat that demotions count as
+  advancement lived only in the payload's `note` — the reports page renders
+  it verbatim under the table (0067 self-describing-output: the UI can never
+  disagree with the RPC) and the CSV gains an APPENDED Note column (the
+  withWindow rule — never inserted, row pins survive). (3) **SEC-06**: the
+  CSV importer wrote consent with no consent_changed event and fabricated
+  consent_at as import time — it now writes the dedicated event (channel
+  csv_import, system actor, direct insert firing the chain trigger), honors
+  an optional consent_at CSV column, and FLAGS import-time stamps as
+  `consent_at_source: "import_time"` rather than passing them off as
+  history; contacts.ts's "only consent surface" comment corrected. Still
+  deliberately NOT invented: a consent wording/version — that needs the
+  operator's actual form text, and fake provenance is worse than none.
+
 - **2026-09-02 · T-offsite-attested (no migration) — the last unattested hop
   in the backup path closes.** REL-01's residual (2026-09-01 verification):
   the "off-site" copy landed in a OneDrive folder ON THIS MACHINE, locally

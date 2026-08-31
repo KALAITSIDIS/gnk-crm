@@ -123,6 +123,29 @@ describe("report-export", () => {
     expect(csv).toContain("Offer,2,0,0.0%");
   });
 
+  it("the RPC's caveat travels in the CSV — the note column carries it verbatim", () => {
+    // RPT-2 residual (2026-09-01 review): the caveat that demotions count as
+    // advancement lived only in the payload; a desk spreadsheet built on this
+    // export had no way to know. Appended, never inserted — the withWindow rule.
+    const NOTE =
+      "advanced counts departures in ANY direction (demotions included) by deals that entered the stage in-window";
+    const rows: StageRow[] = [
+      { stage: "Qualified", entered: 3, advanced: 2, advance_rate: 2 / 3 },
+    ];
+    const csv = toCsv(stageConversionCsv(NOTE), rows);
+    const header = csv.replace(/^﻿/, "").split("\r\n")[0];
+    expect(header).toBe("Stage,Entered,Advanced,Advance rate,Note");
+    // comma-free fragment — the full cell arrives RFC-4180-quoted
+    expect(csv).toContain("demotions included");
+    // the existing left-to-right row pin still holds with the appended column
+    expect(csv).toContain("Qualified,3,2,66.7%");
+    // and an absent note stays an empty cell, not a dropped column
+    const bare = toCsv(stageConversionCsv(), rows);
+    expect(bare.replace(/^﻿/, "").split("\r\n")[0]).toBe(
+      "Stage,Entered,Advanced,Advance rate,Note",
+    );
+  });
+
   it("price reductions CSV resolves property references", () => {
     const rows: RepeatCut[] = [
       {

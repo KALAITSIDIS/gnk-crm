@@ -90,8 +90,9 @@ export async function GET(request: NextRequest) {
     case "stage_conversion": {
       const { data, error } = await supabase.rpc("report_stage_conversion", win);
       if (error) return NextResponse.json({ error: "Export failed." }, { status: 500 });
-      const rows = (data as unknown as StageConversion)?.stages ?? [];
-      csv = toCsv(withWindow(stageConversionCsv(), from, to), rows);
+      const conv = data as unknown as StageConversion | null;
+      const rows = conv?.stages ?? [];
+      csv = toCsv(withWindow(stageConversionCsv(conv?.note ?? ""), from, to), rows);
       rowCount = rows.length;
       break;
     }

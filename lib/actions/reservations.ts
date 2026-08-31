@@ -186,7 +186,7 @@ export async function transitionReservation(
 
   const { data: existing } = await supabase
     .from("reservations")
-    .select("id, property_id, status")
+    .select("id, property_id, status, deal_id")
     .eq("id", reservation_id)
     .maybeSingle();
   if (!existing) return fail("That reservation no longer exists.");
@@ -226,6 +226,71 @@ export async function transitionReservation(
     eventType: "reservation_status_changed",
     payload: { reservation_id, from, to, reason: release_reason ?? null },
   });
+
+  // DB-01, the leg the 2026-09-01 review found missing: a CONVERTED
+  // reservation whose listing still reads on-market asks for the same status
+  // update a won deal does — a prompt task, never an automatic flip (the
+  // reservation↔status auto-coupling was DECLINED 2026-08-26). Mirrors
+  // markDealWon byte-for-byte where it matters: one open task per
+  // property+kind, failure logged loudly but never rolling back the
+  // transition that already committed.
+  if (to === "converted") {
+    const { data: prop } = await supabase
+      .from("properties")
+      .select("id, reference, status")
+      .eq("id", existing.property_id)
+      .maybeSingle();
+    if (prop && ["available", "reserved", "under_offer"].includes(prop.status)) {
+      const { data: open } = await supabase
+        .from("tasks")
+        .select("id")
+        .eq("property_id", prop.id)
+        .eq("kind", "listing_status_check")
+        .eq("is_done", false)
+        .limit(1);
+      if (!open?.length) {
+        // assignee mirrors deal.agent_id ?? closer — through the linked deal
+        let assigneeId = profile.id;
+        if (existing.deal_id) {
+          const { data: deal } = await supabase
+            .from("deals")
+            .select("agent_id")
+            .eq("id", existing.deal_id)
+            .maybeSingle();
+          if (deal?.agent_id) assigneeId = deal.agent_id;
+        }
+        const { data: task, error: taskErr } = await supabase
+          .from("tasks")
+          .insert({
+            org_id: profile.orgId,
+            title: `Reservation converted — update listing status: ${prop.reference}`,
+            due_at: nowIso,
+            assignee_id: assigneeId,
+            property_id: prop.id,
+            deal_id: existing.deal_id ?? null,
+            reservation_id,
+            created_by: profile.id,
+            kind: "listing_status_check",
+          })
+          .select("id")
+          .single();
+        if (taskErr) {
+          console.error("listing_status_check task failed:", taskErr.message);
+        } else {
+          await logEvent(supabase, {
+            orgId: profile.orgId,
+            actorId: profile.id,
+            entityType: "property",
+            entityId: prop.id,
+            eventType: "followup_task_created",
+            payload: { kind: "listing_status_check", task_id: task.id, reservation_id },
+          });
+          revalidatePath("/tasks");
+        }
+      }
+    }
+  }
+
   revalidatePath(`/properties/${existing.property_id}`);
   return ok();
 }
