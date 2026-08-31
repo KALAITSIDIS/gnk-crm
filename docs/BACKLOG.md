@@ -178,11 +178,19 @@ decision (HANDOFF §5) does not cover it.
   inventory and are not comparable. Collapsed by default: six versions of sixty
   units is 360 rows nobody asked for on page load.
 
-  **Still open, and the other half of the original entry: APPLYING an uplift.**
-  Reading a version is done; minting the next one by applying a % or fixed
-  change to a selection is not — today you edit unit prices and snapshot.
-  **VERIFY:** `grep -rn "list_price" app components lib/services` — 0 hits means
-  the read half was reverted. The original entry follows.
+  ~~**Still open, and the other half of the original entry: APPLYING an
+  uplift.**~~ **FALSE THE DAY IT WAS WRITTEN — struck 2026-09-02.** The uplift
+  shipped 2026-08-21 in commit `8a39705` (`applyPriceUplift`,
+  `lib/actions/units.ts` — percent-or-fixed over a project/phase selection,
+  per-unit `price_changed` events with `source: "bulk_uplift"`, and it mints the
+  next version itself via `createPriceListVersion`) — the SAME DAY this
+  paragraph was committed in `defdef5`. Line 639 of this file already referred
+  to “the same €100 the bulk uplift uses” while this paragraph said it did not
+  exist. Caught by the 2026-09-01 artifact verification, not by a reader — the
+  ⚠️ warning at the top of this file claimed its fourth victim entry here.
+  **VERIFY:** `grep -n "applyPriceUplift" lib/actions/units.ts` — a hit means
+  the uplift exists; also `grep -rn "list_price" app components lib/services`
+  — 0 hits means the READ half was reverted. The original entry follows.
 
   - **4. Versioned price lists are write-only (original).**
   `createPriceListVersion` snapshots every unit price into

@@ -3,6 +3,24 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-02 · T-gov1-closeout (no migration) — the three doc drifts, and
+  a ruling the operator delegated.** The 2026-09-01 artifact verification
+  found GOV-1 three-quarters open. Closed here: (1) **the hard-delete rule
+  now carves out what practice already proved** — IMPROVEMENTS §D permits
+  hard-deleting operator-created TEST records under four conditions
+  (named instruction, test data only, deletion recorded + orphaned events
+  accepted as its audit trail, chain verified after), and the exception
+  DIES at the first real client record. Ruled by the assistant under the
+  operator's explicit "make decisions for me" delegation — the
+  alternative, keeping a rule broken twice, was the worst option on the
+  table. (2) HANDOFF's "GNK-PAF-0002 still wants archiving" voided — that
+  row was hard-deleted 2026-08-28 and the counter reset means the
+  reference now names a future property. (3) BACKLOG's "APPLYING an
+  uplift is not built" struck — applyPriceUplift shipped the same day the
+  line was written (8a39705 vs defdef5, both 2026-08-21); the file's own
+  stale-claim warning claimed its fourth victim, and the VERIFY line now
+  checks both halves.
+
 - **2026-09-01 · T-test-honesty (no migration) — the review's test-layer
   findings, closed; the review wave ends here.** (1) vat-condition.spec:
   the one regression 0079 existed to prevent — condition in the config,

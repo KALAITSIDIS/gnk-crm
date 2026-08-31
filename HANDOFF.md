@@ -965,8 +965,11 @@ empty, so there is no code path to break.
 > upgraded the ACL is rebuilt anyway, so even a successful revoke would need
 > re-applying.**
 
-**`GNK-PAF-0002`** still wants archiving **via the UI button** so
-`archiveProperty` writes its event.
+~~**`GNK-PAF-0002`** still wants archiving via the UI button~~ **VOID 2026-09-02
+— that row was hard-deleted on 2026-08-28** (operator-instructed; IMPROVEMENTS
+§D now carries the explicit test-record carve-out). The reference itself was
+recycled by the 2026-08-28 counter reset, so this line had begun pointing at a
+FUTURE different property — caught by the 2026-09-01 artifact verification.
 
 ~~CREATE `C:\Users\user\.gnk-crm\backup.env`.~~ **DONE 2026-08-07.** The nightly
 backup is live and its first full run is green — see §2 for the result. If it
