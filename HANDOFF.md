@@ -24,9 +24,10 @@ discipline and local-stack recovery. §7 below covers *operational* traps
 
 ## 0a. NEXT UP — the CRM is finished for Phase 1; what is left is data and four decisions (2026-08-28)
 
-**State (2026-08-29):** hosted at **0070** (tax-reform config rows — see the
-Hosted DB row and DECISIONS `T-tax-2026`), **942 unit / 73 RLS / 209 E2E**, CI
-green, production READY. An outside-style audit ran 2026-08-29 against the code
+**State:** current migration, test and deploy state live in the §0 table
+above — ONLY there (this line carried its own copy of those numbers and went
+stale twice, last caught 2026-09-01 at nine migrations behind; a second copy
+of a count is a second thing to forget). An outside-style audit ran 2026-08-29 against the code
 (45 findings, all verified; report held by the operator) — its headline items
 were the 0070 rate corrections and the VAT area-cliff formula, fixed the same
 day. Previously: `main` at `6bfd5f7`+, tree clean, local and hosted both at
@@ -76,7 +77,8 @@ Four things to know before touching it:
    an audited decision and would drop listings whose score merely decayed.
    Operator decision; `published_below_threshold()` keeps that drift visible.
 2. **The returned columns are an ALLOWLIST of 35 (34 + `images`, 0073), not a
-   denylist.** `properties` has 69 columns. A column added to `properties` is
+   denylist.** `properties` has 73 columns (69 + 0077's four DLS identity
+   columns, which the allowlist deliberately withholds). A column added to `properties` is
    withheld until somebody edits `public_listings` on purpose — which is the
    only way "adding a column cannot silently publish it" can actually hold.
    RLS test 41 asserts the withheld names AND that no withheld VALUE appears

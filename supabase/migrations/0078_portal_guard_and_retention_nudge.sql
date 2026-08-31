@@ -54,6 +54,12 @@ begin
   end if;
 end $$;
 
+-- Re-run guard added 2026-09-01 (post-audit review): drop-if-exists before
+-- each add, the 0045/0049/0054 idiom. INERT on first run; makes a replay
+-- (restore-path db push against an already-migrated DB) a no-op instead of
+-- a 42710 abort. The assertion block below re-proves the constraint exists.
+alter table public.profiles
+  drop constraint if exists profiles_role_staff_only;
 alter table public.profiles
   add constraint profiles_role_staff_only
   check (role in ('admin', 'agent', 'listing_manager'));

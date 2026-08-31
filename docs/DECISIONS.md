@@ -3,6 +3,56 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-01 · T-post-audit-review (migration 0080 + two fix branches) —
+  the post-audit work gets the adversarial read it never had.** Everything
+  merged after the 2026-08-29 audit snapshot (0070–0079, the MFA enrolment
+  fix, feed/photo, five e2e specs, the repoint script, a stack of doc
+  claims) had only ever been reviewed by the sessions that wrote it. A
+  six-lens review (SQL / auth / logic / tests / ops / docs) with an
+  independent refute-first verify pass produced 27 raw findings → 10
+  confirmed (2 high), 3 refuted, 14 lows. The two highs, both real:
+
+  1. `changePassword` crashed for every factor-less user — the exact
+     temp-password shedding SEC-03 shipped it for. Same 0059 trap fixed in
+     startMfaEnrollment on 08-30; the sibling was missed. Fixed on
+     `fix/aal1-password-change`: authenticate from the JWT, profile lookup
+     and the `password_changed` event ride the service role (events is
+     aal2-gated and by then the password HAS changed — the event must not
+     be lost). Pinned by a new mfa.spec e2e running the whole story:
+     change at aal1 → event with empty payload → old password dead → new
+     one in. The spec's self-heal also stopped depending on listUsers
+     page 1 (residue pushes a stranded fixture user off it within days).
+  2. repoint-vercel.mjs live-verified the anon key but only SHAPE-checked
+     the service-role key — a stale sb_secret_ would bake green and kill
+     every admin path (the 2026-08-03 outage class, in the tool built to
+     end it). Now both keys are live-probed (rls_aal2_coverage() is
+     service-only over PostgREST — 200 proves THIS key against THIS
+     project); secrets are scrubbed from every output path; a mid-way
+     PATCH failure states exactly which vars are mixed.
+
+  The restore path got the systemic fixes: 0072/0077/0078's ten bare ADD
+  CONSTRAINTs each gained drop-if-exists (a replay against an
+  already-migrated DB aborted with 42710 mid-restore — all four files now
+  proven no-op on re-run); verify-restore.sql's grants check FAILS CLOSED
+  (any unpinned public secdef/anon-executable function is a failure — the
+  old one-way join was blind to 0074's cron_health eleven minutes after
+  the list was generated), and the new check immediately caught
+  `set_updated_at` + `protect_property_reference` still anon-executable →
+  **migration 0080** revokes them (hygiene, not a hole: trigger-returning
+  functions are not PostgREST-callable). The pack's hand pins are now
+  locked to the repo by verify-restore.test.ts in CI (migrations count ≡
+  file count; every migration-created secdef function ≡ a grants row) —
+  the 78-pin went stale twice in 24 hours; it cannot again. Doc drift
+  corrected: HANDOFF §0a's state line now defers to the §0 table (it was
+  nine migrations behind), properties is 73 columns not 69, the
+  RELEASE_CHECKLIST cron gate no longer fails a correctly-amber never-run
+  job, §3.1's revoke list names real revoke-bearing migrations (0059 has
+  none), §4e's ledger recipe defers to `ls` instead of a number, and this
+  file's own T-group1-close figures are corrected in place. Confirmed
+  mediums on the action/test layers (party email validation, reschedule
+  compare-and-set, listing_status_check completion, VAT condition render
+  coverage, plus triaged lows) land in the next branches.
+
 - **2026-08-31 · T-vat-transitional (migration 0079) — the transitional
   deadline gets its condition, before it misleads anyone.** The audit parked
   "VAT transitional note tightening" behind the Tax Department circular; a
@@ -332,9 +382,11 @@ silent. Format: date · task · decision · rationale.
   including the solo-admin escape through the Supabase dashboard.
 
   **REL-04 — the restore-verification pack was still proving the 0043
-  database.** `verify-restore.sql` checked 26 tables, 27 function grants and
-  5 cron jobs against a database that now has 36 durable tables, 46
-  functions and 8 jobs — a restore could have lost reservations wholesale
+  database.** `verify-restore.sql` checked 13 row-counts, 13 function grants
+  and 3 cron jobs (the 26-table list belonged to export.mjs) against a
+  database that now has 36 durable tables, 46 functions and 8 jobs
+  [figures corrected 2026-09-01 — the original entry overstated the old
+  pack's coverage, which understated how much this fix mattered] — a restore could have lost reservations wholesale
   and still stamped "verified". Regenerated FROM the migration-built local
   DB at 0073 with the generation queries kept in the file so the next drift
   is a re-run, not an archaeology dig; counts extended (+8 durable tables;

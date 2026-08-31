@@ -45,8 +45,11 @@
  *      source. If the rebuild fails, Vercel keeps serving the previous READY
  *      deployment — the alias only moves on success.
  *
- * PLAN MODE VERIFIED 2026-08-31 (shapes, live key check, all three vars
- * resolved with production targets). The write path is rehearsable at any
+ * PLAN MODE VERIFIED 2026-08-31; re-verified 2026-09-01 after the review
+ * hardening (BOTH keys now live-probed — the service key was previously only
+ * shape-checked; secrets scrubbed from every output path; a mid-way PATCH
+ * failure now states exactly which vars are mixed). The write path is
+ * rehearsable at any
  * time with a ZERO-CHANGE run — same values, so the PATCHes are no-ops and
  * the rebuild is identical to any git push:
  *
@@ -75,10 +78,17 @@ const mapping = [
   { env: "SUPABASE_SERVICE_ROLE_KEY", vercel: "SUPABASE_SERVICE_ROLE_KEY", shape: /^sb_secret_[A-Za-z0-9_-]{10,}$/ },
 ];
 
-const mask = (v) => `${v.slice(0, 14)}… (len ${v.length})`;
-const log = (line) => console.log(`[repoint] ${line}`);
+// prefix only (sb_secret_ / sb_publishable_ are 10+ chars of prefix) — the
+// old 14-char slice exposed 4 chars of real key material in every log line
+const mask = (v) => `${v.slice(0, 10)}… (len ${v.length})`;
+// every value that must never reach a terminal or captured log, redacted from
+// ALL output paths — a Vercel validation error can echo the PATCHed value back
+const REDACT = [];
+const scrub = (text) =>
+  REDACT.reduce((t, v) => (v ? t.split(v).join("[redacted]") : t), String(text));
+const log = (line) => console.log(`[repoint] ${scrub(line)}`);
 const fail = (line) => {
-  console.error(`[repoint] FAIL: ${line}`);
+  console.error(`[repoint] FAIL: ${scrub(line)}`);
   process.exit(1);
 };
 
@@ -102,7 +112,9 @@ async function main() {
     if (!v) fail(`${m.env} is missing from the env file`);
     if (!m.shape.test(v)) fail(`${m.env} does not look right (${mask(v)}) — expected ${m.shape}`);
     values[m.env] = v;
+    if (m.env !== "SUPABASE_URL") REDACT.push(v);
   }
+  if (token) REDACT.push(token);
   const ref = values.SUPABASE_URL.match(/^https:\/\/([a-z]{20})\.supabase\.co$/)[1];
   log(`target Supabase project: ${ref}`);
 
@@ -117,6 +129,30 @@ async function main() {
     if (/invalid/i.test(b)) fail(`the anon key is REFUSED by ${ref} — wrong key for this project`);
   }
   log(`anon key accepted by ${ref} (auth health ${probe.status})`);
+
+  // 2b. live-verify the SERVICE-ROLE key the same way — it is the
+  //     highest-privilege secret of the three and was previously only
+  //     shape-checked (2026-09-01 review, high): a stale sb_secret_ from the
+  //     dead project passes the regex, bakes green, and every admin path is
+  //     down until the desk next touches one. rls_aal2_coverage() is
+  //     service_role-only over PostgREST, so a 200 proves THIS key against
+  //     THIS project; anything else refuses.
+  const svcProbe = await fetch(`${values.SUPABASE_URL}/rest/v1/rpc/rls_aal2_coverage`, {
+    method: "POST",
+    headers: {
+      apikey: values.SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${values.SUPABASE_SERVICE_ROLE_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: "{}",
+  });
+  if (svcProbe.status !== 200) {
+    fail(
+      `the service-role key is REFUSED by ${ref} (rls_aal2_coverage -> ${svcProbe.status}) — ` +
+        `wrong or stale key for this project; fix backup.env before anything is written`,
+    );
+  }
+  log(`service-role key accepted by ${ref} (rls_aal2_coverage 200)`);
 
   // 3. resolve project + env var ids
   const team = await vercelApi(`/v2/teams/${TEAM_SLUG}`);
@@ -137,12 +173,24 @@ async function main() {
   }
 
   if (APPLY) {
-    for (const p of plan) {
-      await vercelApi(`/v9/projects/${project.id}/env/${p.id}?teamId=${team.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ value: p.value }),
-      });
-      log(`  PATCHed ${p.vercel}`);
+    const patched = [];
+    try {
+      for (const p of plan) {
+        await vercelApi(`/v9/projects/${project.id}/env/${p.id}?teamId=${team.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ value: p.value }),
+        });
+        patched.push(p.vercel);
+        log(`  PATCHed ${p.vercel}`);
+      }
+    } catch (e) {
+      const stale = plan.map((p) => p.vercel).filter((v) => !patched.includes(v));
+      fail(
+        `env PATCH failed mid-way. Re-pointed: [${patched.join(", ") || "none"}]; ` +
+          `still on the OLD project: [${stale.join(", ")}]. PRODUCTION ENV IS NOW MIXED — ` +
+          `any deploy (including an unrelated git push) builds with that mix. ` +
+          `Rerun --apply to converge before anything deploys. Cause: ${e.message}`,
+      );
     }
   }
 

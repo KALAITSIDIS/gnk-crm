@@ -109,11 +109,24 @@ begin
   if n > 0 then raise exception '0077 aborted: % price list item(s) with a negative list_price — repair first', n; end if;
 end $$;
 
+-- Re-run guard added 2026-09-01 (post-audit review): drop-if-exists before
+-- each add, the 0045/0049/0054 idiom. INERT on first run; makes a replay
+-- (restore-path db push against an already-migrated DB) a no-op instead of
+-- a 42710 abort. The assertion block below re-proves the constraint exists.
+alter table public.offers
+  drop constraint if exists offers_amount_non_negative;
 alter table public.offers
   add constraint offers_amount_non_negative check (amount >= 0);
 alter table public.mandates
+  drop constraint if exists mandates_commission_pct_range;
+alter table public.mandates
   add constraint mandates_commission_pct_range
   check (commission_pct is null or (commission_pct >= 0 and commission_pct <= 100));
+alter table public.properties
+  drop constraint if exists properties_asking_price_non_negative,
+  drop constraint if exists properties_min_acceptable_price_non_negative,
+  drop constraint if exists properties_owner_net_price_non_negative,
+  drop constraint if exists properties_rent_price_month_non_negative;
 alter table public.properties
   add constraint properties_asking_price_non_negative
   check (asking_price is null or asking_price >= 0),
@@ -124,8 +137,12 @@ alter table public.properties
   add constraint properties_rent_price_month_non_negative
   check (rent_price_month is null or rent_price_month >= 0);
 alter table public.deals
+  drop constraint if exists deals_expected_value_non_negative;
+alter table public.deals
   add constraint deals_expected_value_non_negative
   check (expected_value is null or expected_value >= 0);
+alter table public.price_list_items
+  drop constraint if exists price_list_items_list_price_non_negative;
 alter table public.price_list_items
   add constraint price_list_items_list_price_non_negative check (list_price >= 0);
 
