@@ -3,7 +3,8 @@
  *
  * `contacts.retention_until` is written by the GDPR Art.17 erasure flow: when a
  * customer due-diligence relationship existed, the KYC documents must survive
- * the erasure by five years (Cyprus AML). Nothing read that column until this
+ * the END OF THE RELATIONSHIP by five years (Cyprus AML; anchored per CY-03
+ * since 2026-09-02 — before that the erasure date stood in as a proxy). Nothing read that column until this
  * module — data was marked for expiry and then kept forever, leaving the
  * Article 17 implementation half-closed.
  *

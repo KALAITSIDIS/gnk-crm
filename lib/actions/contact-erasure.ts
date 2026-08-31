@@ -53,36 +53,48 @@ export async function eraseContactPersonalData(
   // Does a customer due-diligence relationship exist? Counts are exact and
   // read through the user's client, so RLS scoping applies. Viewing slips are
   // reached through the contact's viewings — slips carry no contact_id.
+  // CY-03: the same reads now also carry the relationship END signals
+  // (won/lost, slip signature, mandate expiry) so the 5-year AML clock can
+  // anchor where the duty actually starts — rows instead of head-counts.
   const [dealsRes, viewingsRes, mandatesRes] = await Promise.all([
     supabase
       .from("deals")
-      .select("id", { count: "exact", head: true })
+      .select("id, won_at, lost_at")
       .or(`buyer_contact_id.eq.${contactId},seller_contact_id.eq.${contactId}`),
     supabase.from("viewings").select("id").eq("contact_id", contactId),
     supabase
       .from("mandates_safe")
-      .select("id", { count: "exact", head: true })
+      .select("id, expiry_date")
       .eq("owner_contact_id", contactId),
   ]);
 
   const viewingIds = (viewingsRes.data ?? []).map((v) => v.id);
-  let viewingSlipCount = 0;
+  let slipRows: { signed_at: string | null }[] = [];
   if (viewingIds.length > 0) {
     const slipRes = await supabase
       .from("viewing_slips")
-      .select("id", { count: "exact", head: true })
+      .select("signed_at")
       .in("viewing_id", viewingIds);
-    viewingSlipCount = slipRes.count ?? 0;
+    slipRows = slipRes.data ?? [];
   }
 
   const amlBasis = hasAmlRelationship({
-    dealCount: dealsRes.count ?? 0,
-    viewingSlipCount,
-    mandateCount: mandatesRes.count ?? 0,
+    dealCount: (dealsRes.data ?? []).length,
+    viewingSlipCount: slipRows.length,
+    mandateCount: (mandatesRes.data ?? []).length,
   });
 
   const now = new Date().toISOString();
-  const plan = planContactErasure({ amlBasis, actorId: profile.id, now });
+  const plan = planContactErasure({
+    amlBasis,
+    actorId: profile.id,
+    now,
+    relationshipEndCandidates: [
+      ...(dealsRes.data ?? []).flatMap((d) => [d.won_at, d.lost_at]),
+      ...slipRows.map((v) => v.signed_at),
+      ...(mandatesRes.data ?? []).map((m) => m.expiry_date),
+    ],
+  });
 
   // 1. Redact the contact row. Row-count guarded: an RLS-filtered no-op must
   //    not go on to delete files and write an event claiming success.

@@ -86,9 +86,10 @@ export function EraseContactDialog({
               Name, phone and email stay, so past transactions remain readable. Signed
               viewing slips, the event log and generated evidence reports are never altered —
               they are the evidence behind your commission, and the log is tamper-evident by
-              design. If this contact ever transacted, their KYC documents are kept for five
-              years to satisfy the AML record-keeping duty; otherwise the documents and files
-              are destroyed now.
+              design. If this contact ever transacted, their KYC documents are kept until five
+              years after the relationship ended (last closed deal, signed slip or mandate
+              expiry — or today, if it was still ongoing) to satisfy the AML record-keeping
+              duty; otherwise the documents and files are destroyed now.
             </p>
           </div>
 

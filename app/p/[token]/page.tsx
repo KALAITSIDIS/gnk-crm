@@ -60,10 +60,25 @@ export default async function ProposalPage({
   const { token } = await params;
   const supabase = createPublicClient();
 
+  // SEC-04 (0081): an IP hash already over its MISS budget gets refused
+  // BEFORE the SECURITY DEFINER resolve — previously the over-budget answer
+  // was discarded into a log line and a scanner got a full resolve per
+  // probe. The peek is READ-ONLY (the 0023 counter means misses, and only
+  // note_share_link_miss may increment it — a legitimate open still never
+  // touches the table), and the refusal is the SAME neutral 200 page as
+  // every other outcome, so a prober learns nothing from being refused.
+  // Strict === true: a transport error fails OPEN, exactly as the feed does.
+  const ipHash = await callerIpHash();
+  const overBudget = await supabase.rpc("share_link_over_budget", { p_ip_hash: ipHash });
+  if (overBudget.data === true) {
+    console.warn("[share-link] over-budget probe refused before resolve");
+    return <Unavailable />;
+  }
+
   // Reject shapes we never mint before touching the database — a cheap miss
   // costs no round trip, and this is where path-traversal-ish junk dies.
   if (!isWellFormedShareToken(token)) {
-    await supabase.rpc("note_share_link_miss", { p_ip_hash: await callerIpHash() });
+    await supabase.rpc("note_share_link_miss", { p_ip_hash: ipHash });
     return <Unavailable />;
   }
 
@@ -80,10 +95,9 @@ export default async function ProposalPage({
   }
 
   if (!data) {
-    const overBudget = await supabase.rpc("note_share_link_miss", {
-      p_ip_hash: await callerIpHash(),
-    });
-    if (overBudget.data) console.warn("[share-link] miss budget exceeded");
+    // still increment on the miss — the budget the peek above reads
+    const missBudget = await supabase.rpc("note_share_link_miss", { p_ip_hash: ipHash });
+    if (missBudget.data) console.warn("[share-link] miss budget exceeded");
     return <Unavailable />;
   }
 

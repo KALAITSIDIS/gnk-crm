@@ -12,6 +12,7 @@ import { normalizePhone } from "@/lib/services/phone";
 import { createClient } from "@/lib/supabase/server";
 import { changedValue } from "@/lib/utils/diff";
 import {
+  COMM_CHANNELS,
   bankingReadinessSchema,
   createContactSchema,
   kycStateSchema,
@@ -475,4 +476,62 @@ export async function unarchiveContact(contactId: string): Promise<{ error: stri
   revalidatePath(`/contacts/${contactId}`);
   revalidatePath("/contacts");
   return { error: null };
+}
+
+// ---------------------------------------------------------------------------
+// DB-11a (2026-09-02): a conversation could only be logged against a lead or
+// a deal — but the desk talks to OWNERS and past buyers who are neither. The
+// contact-level record is EVENT-ONLY on purpose: it feeds no nudge and no
+// health score (deals.last_contact_at stays "a claim someone makes on the
+// deal, deliberately, and nowhere else" — migration 0025). Bumping open
+// deals where this person is the buyer is a named follow-on, not a side
+// effect smuggled in here.
+
+const logContactConversationSchema = z.object({
+  // z.guid(), not z.uuid() — Zod 4 uuid() rejects seeded fixture ids (T3.2)
+  contact_id: z.guid("Missing contact"),
+  channel: z.enum(COMM_CHANNELS, { message: "Choose how you made contact" }),
+  note: z.string().trim().max(2000, "Keep the note under 2000 characters").optional(),
+});
+
+export async function logContactConversation(
+  _prev: ContactSectionState,
+  formData: FormData,
+): Promise<ContactSectionState> {
+  const parsed = logContactConversationSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input", savedAt: null };
+  }
+  const { contact_id: contactId, channel, note } = parsed.data;
+
+  const supabase = await createClient();
+  const profile = await getCurrentProfile(supabase);
+
+  // RLS-scoped re-read — failing here gives the user a sentence instead of a
+  // driver error, and an archived or erased contact takes no new records.
+  const { data: contact } = await supabase
+    .from("contacts")
+    .select("id, is_archived, erased_at")
+    .eq("id", contactId)
+    .maybeSingle();
+  if (!contact) return { error: "Contact not found", savedAt: null };
+  if (contact.is_archived) {
+    return { error: "This contact is archived — restore it first.", savedAt: null };
+  }
+  if (contact.erased_at) {
+    return { error: "This contact was erased — no new records may be added.", savedAt: null };
+  }
+
+  await logEvent(supabase, {
+    orgId: profile.orgId,
+    actorId: profile.id,
+    entityType: "contact",
+    entityId: contactId,
+    eventType: "conversation_logged",
+    payload: { channel, ...(note ? { note } : {}) },
+  });
+
+  revalidatePath(`/contacts/${contactId}`);
+  revalidatePath("/contacts");
+  return { error: null, savedAt: Date.now() };
 }

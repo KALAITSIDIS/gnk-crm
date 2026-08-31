@@ -3193,6 +3193,10 @@ export type Database = {
       rls_hoisted_policy_count: { Args: never; Returns: number }
       run_chain_checks: { Args: never; Returns: undefined }
       run_chain_checks_full: { Args: never; Returns: undefined }
+      share_link_over_budget: {
+        Args: { p_ip_hash: string; p_limit?: number }
+        Returns: boolean
+      }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
       st_3dclosestpoint: {

@@ -101,7 +101,8 @@ export interface VatTreatment {
   /**
    * THE CLIFF. Exceeding either total cap makes the WHOLE purchase standard
    * rated — not just the excess — so a property a little over a cap costs
-   * dramatically more VAT than one just under it. Null when not near a cap.
+   * dramatically more VAT than one just under it. Null when no cap is
+   * crossed (a still-eligible property NEAR a cap gets `nearCliff` instead).
    */
   cliff: {
     kind: "value" | "area";
@@ -109,6 +110,21 @@ export interface VatTreatment {
     over: number;
     /** What crossing it costs in VAT, in EUR. */
     costsEur: number;
+  } | null;
+  /**
+   * THE CLIFF, SEEN FROM BELOW (CALC-VAT-3, 2026-09-02). Set on a still-
+   * eligible property sitting within 5% under a total cap: the negotiation
+   * headroom is tiny and one over-ask crossing standard-rates everything.
+   * 5% is this panel's judgment call, not tax law — the caps themselves stay
+   * config-only. When both dimensions are near, value is reported first (the
+   * both-crossed precedent). Null when comfortably inside or already over.
+   */
+  nearCliff: {
+    kind: "value" | "area";
+    /** Room left before the cap. EUR for value, m² for area. */
+    headroom: number;
+    /** The relief currently enjoyed — what evaporates on crossing, in EUR. */
+    wouldCostEur: number;
   } | null;
   /**
    * Set when `properties.vat_status` says `reduced_rate_eligible` but the caps
@@ -146,6 +162,7 @@ export function deriveVat(input: VatInput): VatTreatment {
     totalVat: null,
     totalWithVat: null,
     cliff: null,
+    nearCliff: null,
     conflictsWithDeclaration: false,
     transitionalMayHelp: null,
   };
@@ -293,6 +310,23 @@ export function deriveVat(input: VatInput): VatTreatment {
     reasons.push("The whole price falls inside the reduced band.");
   }
 
+  // CALC-VAT-3: within 5% under a TOTAL cap (maxValue/maxArea — the cliffs,
+  // never the 130/350k band edges), say so before a negotiation creeps over.
+  // What crossing costs from here is the relief currently enjoyed: the
+  // reduced base × the rate gap — the same figure the over-side cliff would
+  // report for this dwelling clamped at the cap.
+  const NEAR_CLIFF_FRACTION = 0.05;
+  const nearValue = price > maxValue! * (1 - NEAR_CLIFF_FRACTION) && price <= maxValue!;
+  const nearArea = area > maxArea! * (1 - NEAR_CLIFF_FRACTION) && area <= maxArea!;
+  const nearCliff =
+    nearValue || nearArea
+      ? {
+          kind: (nearValue ? "value" : "area") as "value" | "area",
+          headroom: nearValue ? round2(maxValue! - price) : round2(maxArea! - area),
+          wouldCostEur: round2(reducedBase * (standardRate! - reducedRate!)),
+        }
+      : null;
+
   return {
     ...base,
     outcome: "reduced_possible",
@@ -304,8 +338,9 @@ export function deriveVat(input: VatInput): VatTreatment {
     ],
     totalVat,
     totalWithVat: round2(price + totalVat),
-    // How close to the value cliff? Only worth saying when genuinely near it.
+    // a still-eligible dwelling never carries `cliff` — nearCliff is its signal
     cliff: null,
+    nearCliff,
     conflictsWithDeclaration: false,
     transitionalMayHelp: null,
   };

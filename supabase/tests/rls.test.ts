@@ -4368,6 +4368,35 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       shareStill.data,
       "the share-link budget is independent of the public API's",
     ).toBe(false);
+
+    // 0081 (SEC-04): the READ-ONLY peek. It must agree with the miss counter
+    // (the increment above put this hash at 1 of 3 — under budget)...
+    const peekUnder = await anon.rpc("share_link_over_budget", { p_ip_hash: ip, p_limit: 3 });
+    expect(peekUnder.error).toBeNull();
+    expect(peekUnder.data, "peek agrees: 1 miss is under a limit of 3").toBe(false);
+
+    // ...and once the misses cross the limit, the peek reports it...
+    await anon.rpc("note_share_link_miss", { p_ip_hash: ip, p_limit: 3 });
+    await anon.rpc("note_share_link_miss", { p_ip_hash: ip, p_limit: 3 });
+    await anon.rpc("note_share_link_miss", { p_ip_hash: ip, p_limit: 3 });
+    const peekOver = await anon.rpc("share_link_over_budget", { p_ip_hash: ip, p_limit: 3 });
+    expect(peekOver.data, "peek agrees: 4 misses beat a limit of 3").toBe(true);
+
+    // ...WITHOUT ever incrementing: ten peeks later the counter still reads
+    // over-by-one, proven through the miss RPC's own return (the table is
+    // unreadable by design). If the peek inserted, a legitimate buyer's page
+    // opens would eat the miss budget — the exact corruption 0081 refuses.
+    for (let i = 0; i < 10; i++) {
+      await anon.rpc("share_link_over_budget", { p_ip_hash: `${ip}-peekonly`, p_limit: 3 });
+    }
+    const peekVirgin = await anon.rpc("share_link_over_budget", {
+      p_ip_hash: `${ip}-peekonly`,
+      p_limit: 0,
+    });
+    expect(
+      peekVirgin.data,
+      "10 peeks left the hash at 0 attempts — even a limit of 0 is not exceeded",
+    ).toBe(false);
   });
 
   it("45. stage_changed carries ids, and renaming a stage no longer splits its history", async () => {

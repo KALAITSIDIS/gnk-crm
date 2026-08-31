@@ -112,6 +112,25 @@ export function VatTreatment({
           </div>
         ) : null}
 
+        {/* ------------------------------------------- the cliff, from below */}
+        {t.nearCliff ? (
+          <div className="mt-3 flex gap-2 rounded-[8px] border border-warning/40 bg-warning/10 p-3">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
+            <div className="text-sm">
+              <p className="font-semibold text-text-1">
+                {t.nearCliff.kind === "value"
+                  ? `${formatMoney(t.nearCliff.headroom)} under the total cap`
+                  : `${t.nearCliff.headroom} m² under the total cap`}{" "}
+                — crossing it would cost {formatMoney(t.nearCliff.wouldCostEur)} in VAT relief.
+              </p>
+              <p className="mt-0.5 text-text-2">
+                One over-ask standard-rates the whole purchase, not just the excess. Worth
+                knowing before the price moves.
+              </p>
+            </div>
+          </div>
+        ) : null}
+
         {/* -------------------------------------------------------- the cliff */}
         {t.cliff ? (
           <div className="mt-3 flex gap-2 rounded-[8px] border border-warning/40 bg-warning/10 p-3">

@@ -122,6 +122,62 @@ describe("deriveVat — THE CLIFF, which is the number worth knowing", () => {
     expect(under.totalVat).toBe(round2(350000 * 0.05 + 125000 * 0.19));
   });
 
+  // CALC-VAT-3 (2026-09-02): the cliff seen from below — 5% is the panel's
+  // judgment call; the caps themselves stay config-only.
+  it("within 5% under the VALUE cap warns, with the relief at stake priced", () => {
+    const near = deriveVat({ coveredAreaSqm: 100, price: 470000, vatStatus: "new_vat", ...ok });
+    expect(near.outcome).toBe("reduced_possible");
+    expect(near.cliff).toBeNull();
+    expect(near.nearCliff).not.toBeNull();
+    expect(near.nearCliff!.kind).toBe("value");
+    // €475,000 − €470,000
+    expect(near.nearCliff!.headroom).toBe(5000);
+    // relief enjoyed: €350,000 reduced base × (19% − 5%)
+    expect(near.nearCliff!.wouldCostEur).toBe(round2(350000 * 0.14));
+  });
+
+  it("within 5% under the AREA cap warns too", () => {
+    const near = deriveVat({ coveredAreaSqm: 185, price: 300000, vatStatus: "new_vat", ...ok });
+    expect(near.outcome).toBe("reduced_possible");
+    expect(near.nearCliff).not.toBeNull();
+    expect(near.nearCliff!.kind).toBe("area");
+    expect(near.nearCliff!.headroom).toBe(5);
+  });
+
+  it("comfortably inside both caps carries no warning — the panel must not cry wolf", () => {
+    const calm = deriveVat({ coveredAreaSqm: 100, price: 300000, vatStatus: "new_vat", ...ok });
+    expect(calm.nearCliff).toBeNull();
+  });
+
+  it("the 5% boundary is exclusive — €451,250 exactly is not yet near", () => {
+    // 0.95 × 475,000 = 451,250; the band is (451,250, 475,000]
+    const atLine = deriveVat({
+      coveredAreaSqm: 100,
+      price: 451250,
+      vatStatus: "new_vat",
+      ...ok,
+    });
+    expect(atLine.nearCliff).toBeNull();
+    const justOver = deriveVat({
+      coveredAreaSqm: 100,
+      price: 451251,
+      vatStatus: "new_vat",
+      ...ok,
+    });
+    expect(justOver.nearCliff).not.toBeNull();
+  });
+
+  it("both dimensions near reports value first, the both-crossed precedent", () => {
+    const both = deriveVat({ coveredAreaSqm: 185, price: 470000, vatStatus: "new_vat", ...ok });
+    expect(both.nearCliff!.kind).toBe("value");
+  });
+
+  it("the near warning agrees with the over side: the same dwelling one euro over loses what the warning priced", () => {
+    const near = deriveVat({ coveredAreaSqm: 120, price: 475000, vatStatus: "new_vat", ...ok });
+    const over = deriveVat({ coveredAreaSqm: 120, price: 475001, vatStatus: "new_vat", ...ok });
+    expect(near.nearCliff!.wouldCostEur).toBe(over.cliff!.costsEur);
+  });
+
   it("ONE EURO over the cap standard-rates the WHOLE purchase", () => {
     const over = deriveVat({ coveredAreaSqm: 120, price: 475001, vatStatus: "new_vat", ...ok });
     expect(over.outcome).toBe("standard_only");

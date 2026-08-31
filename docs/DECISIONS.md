@@ -3,6 +3,35 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-02 · T-ungated-closures (migration 0081) — four findings that
+  were gated on nothing, closed; three decisions made under delegation.**
+  (1) **SEC-04**: the share-link page resolved first and discarded the
+  over-budget answer into a log line. The naive fix (feed-style
+  check-first) would have silently redefined the 0023 miss counter to a
+  request counter — buyer lockout where it was impossible. 0081 adds the
+  missing primitive instead: `share_link_over_budget()`, a READ-ONLY
+  SECURITY DEFINER peek (read-only PROVEN by the migration's own DO block
+  and by RLS test 44's ten-peeks-leave-zero-attempts pin); the page now
+  refuses an over-budget prober BEFORE the resolve, with the same neutral
+  200 page, and the miss-branch increments stay byte-for-byte. (2)
+  **CY-03**: the 5-year AML clock anchored to the erasure date; the code's
+  own comments stated the correct rule it didn't implement. Now:
+  `resolveRetentionAnchor` — latest end-signal (deal won/lost, slip
+  signature, mandate expiry) CLAMPED to now (an ongoing relationship ends
+  at erasure; no signal keeps the old behavior). A long-closed
+  relationship can now land retention already-lapsed, which immediately
+  offers the purge — that is the point: records were kept five years too
+  long. 0081 also corrects 0017's column comment. (3) **DB-11a**: "Log
+  contact" exists for CONTACTS — event-only by decision (no nudge, no
+  health, no deals.last_contact_at: that stays "a claim made on the deal
+  and nowhere else"); the property variant and the open-deal bump are
+  named follow-ons, not smuggled side effects. (4) **CALC-VAT-3**:
+  `nearCliff` — within 5% under a TOTAL cap (the 190/475k cliffs, never
+  the band edges) the panel warns with the relief at stake priced; 5% is
+  the panel's judgment call (delegated), the caps stay config-only, and a
+  test pins that the near warning and the over-side cliff price the same
+  relief for the same dwelling.
+
 - **2026-09-02 · T-partials-close (no migration) — three PARTIAL chips become
   whole.** The 2026-09-01 verification found six FIXED chips overstating; the
   three code-shaped ones close here. (1) **DB-01**: a reservation converted

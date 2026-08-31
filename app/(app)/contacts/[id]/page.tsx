@@ -14,6 +14,7 @@ import {
 import { EraseContactDialog } from "@/components/features/contacts/erase-dialog";
 import { MergeDialog } from "@/components/features/contacts/merge-dialog";
 import { ChatLinks } from "@/components/features/shared/chat-links";
+import { LogContactConversation } from "@/components/features/contacts/log-contact";
 import { EventTimeline } from "@/components/features/shared/event-timeline";
 import { StatusBadge } from "@/components/features/shared/status-badge";
 import { PortfolioTab } from "@/components/features/contacts/portfolio-tab";
@@ -245,6 +246,10 @@ export default async function ContactDetailPage({
             </span>
           ) : null}
           <div className="ml-auto flex items-center gap-2">
+            {/* DB-11a: same gate as AddTaskDialog — logging a conversation is
+                a claim any role that can see the contact may make (the
+                ChatLinks precedent), not an edit */}
+            {!c.is_archived && !isErased ? <LogContactConversation contactId={c.id} /> : null}
             {!c.is_archived && !isErased ? (
               <AddTaskDialog
                 entity={{ contact_id: c.id }}
