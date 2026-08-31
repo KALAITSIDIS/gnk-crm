@@ -1,6 +1,5 @@
 "use server";
 
-import { z } from "zod";
 import { checkContactDuplicate, type DuplicateMatch } from "@/lib/actions/contacts";
 import type { EntityOption } from "@/lib/actions/entity-search";
 import { getCurrentProfile } from "@/lib/services/auth";
@@ -8,7 +7,8 @@ import { logEvent } from "@/lib/services/events";
 import { splitEnquirerName } from "@/lib/services/lead-contact";
 import { normalizePhone } from "@/lib/services/phone";
 import { createClient } from "@/lib/supabase/server";
-import { LISTING_SOURCES, type ListingSource } from "@/lib/validators/properties";
+import { createPartySchema } from "@/lib/validators/party-contacts";
+import { type ListingSource } from "@/lib/validators/properties";
 
 /**
  * Inline owner/developer creation for the property wizard (audit WF-10) —
@@ -25,23 +25,6 @@ import { LISTING_SOURCES, type ListingSource } from "@/lib/validators/properties
  * the party picker filters on it, so a contact created without the type
  * could never be re-found by the picker that just created it.
  */
-const createPartySchema = z.object({
-  source: z.enum(LISTING_SOURCES),
-  name: z.string().trim().min(2, "Name is required").max(200),
-  phone: z
-    .string()
-    .trim()
-    .max(30)
-    .optional()
-    .transform((v) => v || undefined),
-  email: z
-    .string()
-    .trim()
-    .max(200)
-    .optional()
-    .transform((v) => (v ? v.toLowerCase() : undefined)),
-});
-
 export type CreatePartyResult = {
   error: string | null;
   duplicate: DuplicateMatch | null;

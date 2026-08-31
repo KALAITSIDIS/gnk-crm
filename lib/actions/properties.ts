@@ -561,6 +561,24 @@ export async function updatePropertySection(
     });
   }
 
+  // DB-01's other leg: the listing_status_check raised at deal-win completes
+  // the moment the status it asked for is saved (review 2026-09-01 — it used
+  // to stay open forever, and a prompt that survives being obeyed teaches
+  // the desk to ignore prompts)
+  if (changed.status) {
+    const { completeListingStatusChecks } = await import("@/lib/services/followup-tasks");
+    const closed = await completeListingStatusChecks(supabase, {
+      propertyId,
+      orgId: profile.orgId,
+      actorId: profile.id,
+      newStatus: String((changed.status as { to?: unknown }).to ?? ""),
+    });
+    if (closed > 0) {
+      revalidatePath("/tasks");
+      revalidatePath("/dashboard");
+    }
+  }
+
   // score is derived state — recompute on every save (doc 02 §A8); the save's
   // own property.updated event covers auditability, no separate score event
   const { recomputeQualityScore } = await import("@/lib/services/quality-score");

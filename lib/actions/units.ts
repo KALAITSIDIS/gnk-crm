@@ -182,6 +182,20 @@ export async function updateUnitStatus(
     });
   }
 
+  // DB-01's other leg: the prompt raised at deal-win completes the moment the
+  // status it asked for is set (review 2026-09-01 — it used to stay open forever)
+  const { completeListingStatusChecks } = await import("@/lib/services/followup-tasks");
+  const closed = await completeListingStatusChecks(supabase, {
+    propertyId: unitId,
+    orgId: unit.org_id,
+    actorId: profile.id,
+    newStatus: status,
+  });
+  if (closed > 0) {
+    revalidatePath("/tasks");
+    revalidatePath("/dashboard");
+  }
+
   if (unit.parent_id) revalidatePath(`/properties/${unit.parent_id}/units`);
   revalidatePath("/properties");
   return { error: null };

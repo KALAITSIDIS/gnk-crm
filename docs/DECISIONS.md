@@ -3,6 +3,29 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-01 · T-action-hardening (no migration) — the review's
+  action-layer mediums, closed.** Three defects from T-post-audit-review's
+  confirmed list plus one degenerate test: (1) the wizard's inline
+  owner/developer create was the ONE contact entry path without `.email()`
+  — "n/a" became contacts.email and poisoned 0077's dedup; the schema now
+  lives in lib/validators/party-contacts.ts (testable — the action file
+  imports server-only modules) with parity pinned. (2) rescheduleViewing's
+  UPDATE was read-then-write with no row proof — a cancellation landing
+  between read and write was silently overwritten into a moved, re-live
+  viewing; now compare-and-set on status='scheduled' with the returned row
+  as proof (the markDealWon idiom). (3) the `listing_status_check` prompt
+  raised at deal-win was never completed by anything — obeying it left it
+  open forever, and a prompt that survives being obeyed teaches the desk
+  to ignore prompts; `completeListingStatusChecks`
+  (lib/services/followup-tasks.ts, the supersedeRenewalTasks idiom) now
+  runs from both status-save sites, eventing each completion with the
+  proved reason. (4) deal-close.spec seeded the deal's agent as the
+  closing admin, so "assigned to the deal's agent" could not catch a
+  regression to "assigned to the closer" — the deal now belongs to a
+  dedicated second profile, and the spec walks the full loop: prompt
+  raised → assigned to the REAL agent → status set to sold on the details
+  tab → task completed with its superseded event.
+
 - **2026-09-01 · T-post-audit-review (migration 0080 + two fix branches) —
   the post-audit work gets the adversarial read it never had.** Everything
   merged after the 2026-08-29 audit snapshot (0070–0079, the MFA enrolment
