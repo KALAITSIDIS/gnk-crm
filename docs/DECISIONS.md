@@ -3,6 +3,24 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-01 · T-test-honesty (no migration) — the review's test-layer
+  findings, closed; the review wave ends here.** (1) vat-condition.spec:
+  the one regression 0079 existed to prevent — condition in the config,
+  silent on the screen — had no test that could catch it; the new spec
+  seeds an over-area new-build (the cliff outcome that surfaces the
+  transitional block) and pins the warning line verbatim against the LIVE
+  config row, dates included. (2) RLS test 51's due-date expectation
+  added 24 real hours where the SQL adds one Cyprus CALENDAR day — a
+  latent flake on every DST transition; now date-space arithmetic
+  matching the SQL. (3) The calculators copy-summary test asserted the
+  card while claiming to assert the summary — the summary is built from
+  its own literals, so the card proved nothing; the test now grants
+  clipboard-read (desktop = Chromium) and asserts the pasted artifact
+  itself: the abolition sentence, the law number, no "Total:". Wave
+  totals: 994 unit / 81 RLS / 214 desktop E2E across 44 files; all 10
+  confirmed findings from T-post-audit-review are closed, 14 lows triaged
+  (6 fixed across the wave, the rest recorded there as accepted).
+
 - **2026-09-01 · T-action-hardening (no migration) — the review's
   action-layer mediums, closed.** Three defects from T-post-audit-review's
   confirmed list plus one degenerate test: (1) the wizard's inline

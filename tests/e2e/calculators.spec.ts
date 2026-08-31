@@ -153,12 +153,20 @@ test.describe("Cyprus purchase-cost calculators", () => {
 
   test("the copy summary carries the abolition, not a stamp total", async ({ page }) => {
     // The pasted artifact is what reaches a buyer; it must explain the repeal
-    // rather than total a repealed tax. Clipboard contents are not readable
-    // cross-browser, so assert the on-card copy the summary is built from.
+    // rather than total a repealed tax. The summary string is built from its
+    // own literals, NOT from the card DOM (2026-09-01 review: asserting the
+    // card proved nothing about the clipboard) — so read the clipboard
+    // itself. The desktop project is Chromium, where the permission works.
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
     const card = page
       .locator("section")
       .filter({ has: page.getByRole("heading", { name: /stamp duty/i }) });
-    await expect(card.getByRole("button", { name: /copy summary/i })).toBeVisible();
+    await card.getByRole("button", { name: /copy summary/i }).click();
+    const clip = await page.evaluate(() => navigator.clipboard.readText());
+    expect(clip, "the pasted text explains the repeal").toMatch(/abolished for documents signed/i);
+    expect(clip, "and names the law").toContain("239(I)/2025");
+    expect(clip, "a repealed tax has no total").not.toMatch(/Total:/);
+    // the on-card belt stays too
     await expect(card.getByText(/^Total/)).toHaveCount(0);
   });
 

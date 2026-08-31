@@ -4782,8 +4782,25 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
         hour: "2-digit",
         minute: "2-digit",
       }).format(new Date(isoStr));
-    const nextDay = new Date(new Date(v1!.scheduled_at).getTime() + 86_400_000);
-    expect(cyprus(tasks[0].due_at!)).toBe(`${cyprus(nextDay.toISOString()).slice(0, 10)}, 23:59`);
+    // next CYPRUS calendar day computed in DATE space, matching the SQL's
+    // (scheduled_at at time zone 'Asia/Nicosia')::date + 1 — adding 24 real
+    // hours diverges from it when the interval spans a Cyprus DST change
+    // (2026-09-01 review: the old +86_400_000 was a latent flake twice a year)
+    const ymd = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Nicosia",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(v1!.scheduled_at));
+    const next = new Date(`${ymd}T12:00:00Z`);
+    next.setUTCDate(next.getUTCDate() + 1);
+    const expectedDay = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "UTC",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(next);
+    expect(cyprus(tasks[0].due_at!)).toBe(`${expectedDay}, 23:59`);
 
     const { data: mintEvents } = await svc
       .from("events")
