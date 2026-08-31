@@ -25,12 +25,37 @@ import { fixtureProfile, isLocal, opTimeout, serviceClient } from "./helpers";
 const MFA_USER_EMAIL = "mfa-spec-dedicated@gnk.local";
 const MFA_USER_PASSWORD = "mfa-spec-password-1";
 
-/** Remove the dedicated user entirely — auth.users cascades the profile. */
+/**
+ * Remove the dedicated user entirely — auth.users cascades the profile.
+ *
+ * Looked up through the PROFILES table, not listUsers(): the default listUsers
+ * page is 50 newest-first, and the shared local DB gains 5 users per RLS-suite
+ * run — a user stranded by a hard-killed run would drop off page 1 within days
+ * and this self-heal would silently stop seeing it, failing every later run at
+ * createUser ("email already registered"). The profiles read is deterministic
+ * at any residue level; the paginated auth scan below covers the one window
+ * the profile can't (crashed between createUser and the profile insert).
+ */
 async function destroyDedicatedUser(): Promise<void> {
   const admin = serviceClient();
-  const { data: users } = await admin.auth.admin.listUsers();
-  const user = users?.users.find((u) => u.email === MFA_USER_EMAIL);
-  if (user) await admin.auth.admin.deleteUser(user.id);
+  const { data: profile } = await admin
+    .from("profiles")
+    .select("id")
+    .eq("email", MFA_USER_EMAIL)
+    .maybeSingle();
+  if (profile) {
+    await admin.auth.admin.deleteUser(profile.id);
+    return;
+  }
+  for (let page = 1; page <= 40; page++) {
+    const { data } = await admin.auth.admin.listUsers({ page, perPage: 200 });
+    const user = data?.users.find((u) => u.email === MFA_USER_EMAIL);
+    if (user) {
+      await admin.auth.admin.deleteUser(user.id);
+      return;
+    }
+    if (!data || data.users.length < 200) return; // ran off the end — user is gone
+  }
 }
 
 // a FRESH context: this spec must never ride (or risk) the shared admin session
@@ -137,4 +162,64 @@ test("password alone stops working once a factor is enrolled", async ({ page }) 
   await page.getByLabel(/6-digit code/i).fill(totp(secret));
   await page.getByRole("button", { name: /^verify$/i }).click();
   await expect(page).toHaveURL(/\/dashboard/, { timeout: opTimeout(20_000) });
+});
+
+// The SEC-03 story proper: a freshly invited, factor-less user sheds the
+// temp password BEFORE enrolling 2FA. This is the exact path the 2026-09-01
+// post-audit review found crashing — changePassword read the profile through
+// RLS, and since 0059 an aal1 session reads nothing, so the one flow the
+// /security copy tells a new hire to do first ("replace it now — whoever
+// invited you has seen it") threw instead of saving. Pinned here so the
+// aal1 path can never regress silently again.
+test("a factor-less user can shed the invite-time password before enrolling", async ({
+  page,
+}) => {
+  const NEW_PASSWORD = "mfa-spec-rotated-99";
+
+  // sign in with the "invite-time" password; mandatory mode parks us on /security
+  await page.goto("/login");
+  await page.getByLabel(/email/i).fill(MFA_USER_EMAIL);
+  await page.getByLabel(/password/i).fill(MFA_USER_PASSWORD);
+  await page.getByRole("button", { name: /log in/i }).click();
+  await page.waitForURL(/\/(security|dashboard)/, { timeout: opTimeout(30_000) });
+  await page.goto("/security", { waitUntil: "networkidle" });
+
+  // change the password at aal1, factor-less — this used to crash server-side
+  await page.getByLabel(/^new password$/i).fill(NEW_PASSWORD);
+  await page.getByLabel(/repeat it/i).fill(NEW_PASSWORD);
+  await page.getByRole("button", { name: /change password/i }).click();
+  await expect(page.getByText(/^password changed$/i)).toBeVisible({
+    timeout: opTimeout(15_000),
+  });
+
+  // the mutation is evented even at aal1 (the write rides the service role)
+  const admin = serviceClient();
+  const { data: profile } = await admin
+    .from("profiles")
+    .select("id")
+    .eq("email", MFA_USER_EMAIL)
+    .single();
+  const { data: events } = await admin
+    .from("events")
+    .select("payload")
+    .eq("entity_id", profile!.id)
+    .eq("event_type", "password_changed");
+  expect(events, "password_changed must be logged").toHaveLength(1);
+  expect(events![0].payload, "the payload must never carry the credential").toEqual({});
+
+  // ---------- the old password is dead, the new one works ----------
+  await page.context().clearCookies();
+  await page.goto("/login");
+  await page.getByLabel(/email/i).fill(MFA_USER_EMAIL);
+  await page.getByLabel(/password/i).fill(MFA_USER_PASSWORD);
+  await page.getByRole("button", { name: /log in/i }).click();
+  await expect(page.getByText(/invalid email or password/i)).toBeVisible({
+    timeout: opTimeout(15_000),
+  });
+
+  // the form clears itself on a failed attempt — refill BOTH fields
+  await page.getByLabel(/email/i).fill(MFA_USER_EMAIL);
+  await page.getByLabel(/password/i).fill(NEW_PASSWORD);
+  await page.getByRole("button", { name: /log in/i }).click();
+  await page.waitForURL(/\/(security|dashboard)/, { timeout: opTimeout(30_000) });
 });
