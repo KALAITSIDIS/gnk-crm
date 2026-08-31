@@ -54,6 +54,8 @@ export interface VatConfigRow {
   transitional?: {
     deadline?: unknown;
     old_rule?: unknown;
+    /** 0079: the deadline is CONDITIONAL on the building-permit issue date */
+    condition?: unknown;
   } | null;
 }
 
@@ -115,7 +117,7 @@ export interface VatTreatment {
    */
   conflictsWithDeclaration: boolean;
   /** Set when the transitional regime would be BETTER than the current rules. */
-  transitionalMayHelp: { deadline: string; oldRule: string } | null;
+  transitionalMayHelp: { deadline: string; oldRule: string; condition: string | null } | null;
 }
 
 /** PostgREST hands numerics over as strings; blanks arrive as "" or null. */
@@ -327,7 +329,11 @@ function transitionalHint(cfg: VatConfigRow): VatTreatment["transitionalMayHelp"
   const deadline = typeof t.deadline === "string" ? t.deadline : null;
   const oldRule = typeof t.old_rule === "string" ? t.old_rule : null;
   if (!deadline || !oldRule) return null;
-  return { deadline, oldRule };
+  // 0079: the deadline stopped being unconditional on 2026-05-04 — a config
+  // that carries the condition must have it REACH THE SCREEN, or the panel
+  // quotes a lapsed relief to exactly the buyers it lapsed for
+  const condition = typeof t.condition === "string" ? t.condition : null;
+  return { deadline, oldRule, condition };
 }
 
 /** Does this treatment carry anything worth rendering? */

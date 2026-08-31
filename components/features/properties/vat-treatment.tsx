@@ -159,6 +159,13 @@ export function VatTreatment({
                 They need a planning permit issued, or applied for, by 31 October 2023 — which is
                 not recorded here. Check the permit before quoting.
               </p>
+              {t.transitionalMayHelp.condition ? (
+                // 0079: the deadline is conditional, and for one subset it has
+                // already lapsed — that reads as a warning, not a footnote
+                <p className="mt-0.5 font-medium text-warning">
+                  Condition: {t.transitionalMayHelp.condition}.
+                </p>
+              ) : null}
             </div>
           </div>
         ) : null}
