@@ -45,16 +45,32 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 73::bigint as migrations,
+    2::bigint as auth_users, 78::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
     0::bigint as reservations, 0::bigint as reservation_installments,
-    9::bigint as task_kinds, 1::bigint as chain_checkpoints
+    12::bigint as task_kinds, 1::bigint as chain_checkpoints
     -- captured 2026-08-30 from hosted (yjgirvzgoiywdojnpkpd) via
     -- capture-baseline.sql, after the 08-29/30 audit-fix run (0070–0073,
     -- PAF0001 content fixes, test-photo deletion — which is why media
-    -- objects read 0).
+    -- objects read 0). migrations and task_kinds bumped 2026-08-31 for
+    -- 0074–0078 (78 migrations, 12 kinds) — caught by the cloud drill,
+    -- §4e, which ran this pack against a real restored cloud project.
+    --
+    -- KNOWN CLOUD DELTA (verified 2026-08-31, §4e): on ANY cloud project
+    -- — live production included — exactly NINE grants rows fail with
+    -- service_role EXECUTE = true where this table (built from a local,
+    -- migration-built database) says false: mfa_satisfied, org_mfa_status,
+    -- protect_document_columns, protect_profile_columns,
+    -- rls_bare_auth_calls, trg_events_hash, trg_price_history,
+    -- trg_supersede_deal_nudges, trg_supersede_viewing_nudges. That is the
+    -- platform's default privileges granting service_role EXECUTE on every
+    -- function (HANDOFF's mfa_satisfied note, generalized). service_role
+    -- bypasses RLS anyway — the delta is harmless. A cloud run of this
+    -- pack that fails ONLY those nine rows has CONVERGED to production's
+    -- own posture: the 2026-08-31 drill proved live production fails the
+    -- identical set.
     --
     -- `events` IS THE ONE THAT GOES STALE. It is append-only, so it drifts
     -- upward on every single use of the app and never returns. Check `events`

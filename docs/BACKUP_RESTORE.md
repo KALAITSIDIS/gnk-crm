@@ -608,7 +608,10 @@ migration-built database (regeneration query in the file; regenerated
 2026-08-30 to the 0073 surface, all 8 cron jobs included). Run it **before
 letting anyone in**. `pg_cron` (all EIGHT cron jobs silently absent after a
 restore) and `supabase_migrations.schema_migrations` (0 rows dumped) are the
-same class of gap; see §4b.4.
+same class of gap; see §4b.4. **Before executing any of this on a cloud
+target, read §4e — the 2026-08-31 cloud drill found two corrections to
+this recipe (skip 0002's blanket table revoke; DO-block revokes need the
+pack to catch their residue) and proved the whole path end to end.**
 
 ### 3.2 Storage — the part no database backup covers
 
@@ -1193,6 +1196,85 @@ independently confirms.
   would still be absent after a real restore.
 * Function grants (§4b.3) — not re-checked here.
 * A real cloud project, RTO timing, or auth sign-in against restored users.
+
+---
+
+## 4e. CLOUD DRILL — executed 2026-08-31 against the `2026-08-31` set, and it PASSES
+
+**The first restore into a REAL cloud project** (audit REL-08) — the run §4d
+could not do and §6b's 2026-08-06 measurements stopped short of: production
+data restored over the wire into a fresh Supabase project, verified against
+LIVE production, remediated to production's own posture, then destroyed.
+Executed without an operator present: the Supabase CLI token (in
+`~/.gnk-crm/backup.env` since 2026-08-31) provisions and deletes projects, and
+psql runs through the local supabase container exactly as hosted applies do.
+
+### What was done, with timings
+
+| step | how | time | errors |
+|---|---|---|---|
+| provision `gnk-crm-rto-drill-2` (eu-central-1) | `npx supabase projects create … --db-password <generated>` | REST answered 401 by the time the CLI returned | — |
+| set integrity | `sha256sum -c SHA256SUMS` | — | **40/40 OK** |
+| schema (`pg_dump.sql`, preamble in-dump) | psql over session pooler :5432 | **73 s** | **0** |
+| data (`data.sql`) | same | **12 s** | 2 benign (below) |
+| remedies: ledger + cron + lockdown | see recipe below | **9 s** + one targeted pass | 2 benign (below) |
+| teardown | Management API `DELETE /v1/projects/<ref>` (CLI delete needs a TTY confirm) | seconds | — |
+
+The 2 data errors: `permission denied` on `storage.vector_indexes` /
+`storage.buckets_vectors` — platform-owned storage internals, the
+`spatial_ref_sys` class. Zero errors touched application data.
+
+### The verdicts that matter
+
+* **`md5(string_agg(hash,',' order by id))` restored vs LIVE production:
+  `f447558e35ee9dfab0612e0c9bec4243` over 130 rows on BOTH** — the restored
+  cloud database carries the real evidence chain, not a re-minted one (§5).
+* `verify_events_chain` true; row counts match the set throughout.
+* **`verify-restore.sql` on the remediated scratch fails EXACTLY the same 11
+  rows as live production** (9 = the service_role cloud delta now documented
+  in the pack itself; 2 were the pack's own stale baseline, fixed the same
+  day). **Restored posture == production posture** is the convergence bar,
+  and it was met.
+
+### The remedy recipe, as actually executed (§4b.4 + §3.1, made concrete)
+
+1. **`supabase_migrations.schema_migrations` does not EXIST on a fresh cloud
+   project** — new finding: the local stack pre-creates it, cloud does not,
+   and the dump (scoped `public,events_parts`) never restores it, so the
+   verification pack HARD-ERRORS until you `create schema … create table …`
+   and re-insert one `(version, name)` row per migration filename (78 today;
+   generate from `ls supabase/migrations`).
+2. **Cron**: `create extension pg_cron`, then replay the eight
+   `cron.schedule(…)` calls extracted VERBATIM from the migrations
+   (`grep`-able; 0001, 0016, 0020, 0044, 0047, 0051, 0062, 0063). All 8
+   scheduled in one pass.
+3. **Grant lockdown — §3.1's sentence needs two corrections, both found by
+   this drill:**
+   * **Do NOT replay 0002's blanket
+     `revoke all on all tables in schema public from anon, authenticated`** —
+     it is followed in 0002 by per-table re-grants that the dump already
+     carries, so replaying the revoke alone strips `authenticated`'s table
+     access and kills the app. Replay every OTHER migration-defined revoke.
+   * **Verbatim extraction misses revokes inside DO-block loops** (0065's
+     report-function loop and friends): after the replay, `anon` still held
+     EXECUTE on the six `report_*` functions and the two partition helpers.
+     **The pack's grants table is the tool that catches the residue** — fix
+     the rows it flags (revoke by `pg_proc` oid, so signatures are exact),
+     re-run, converge.
+
+### What this run still does not cover — the remaining HUMAN composition
+
+* **Auth sign-in**: `auth.users` is in no dump (the profiles rows restore
+  under `session_replication_role = replica`, FKs unenforced) — after a real
+  restore every login must be recreated (admin API / invites) and profiles
+  re-pointed if ids change. Untested here, deliberately: it needs a decision
+  about identity, not a script.
+* **Storage bytes** — §4c's path, unchanged.
+* **Vercel env swap + redeploy** — §6b's 72 s + the human steps.
+* **RTO's human share stands**: the mechanical cloud path is now ~2 minutes
+  measured end to end, which sharpens §6b's finding — the 4-hour target is
+  ~98% people, and the levers are the password, the env swap script, and
+  this runbook being read.
 
 ---
 
