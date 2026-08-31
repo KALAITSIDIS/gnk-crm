@@ -38,7 +38,10 @@
  *      archive's — a checksum computed only on the source proves nothing
  *      about what arrived (§3.3).
  * Whether the file then reaches Microsoft's servers is OneDrive's job; that
- * is the one hop this machine cannot attest.
+ * was the one hop this machine could not attest — offsite-github.mjs
+ * (2026-09-02) closes it: same archive to a PRIVATE GitHub release,
+ * re-downloaded and hash-compared, so an off-machine copy is PROVEN nightly
+ * once the operator arms GH_TOKEN.
  *
  * No credential is read, logged, or written — the archive contents are
  * whatever capture.mjs already produced.

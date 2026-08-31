@@ -3,6 +3,27 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-02 · T-offsite-attested (no migration) — the last unattested hop
+  in the backup path closes.** REL-01's residual (2026-09-01 verification):
+  the "off-site" copy landed in a OneDrive folder ON THIS MACHINE, locally
+  re-hashed, with the actual off-machine hop delegated to the sync client —
+  unattested and unalarmed, i.e. the original defect under a green chip.
+  `offsite-github.mjs` now ships the same dated archive to the PRIVATE
+  `KALAITSIDIS/gnk-backups-offsite` repo as a release asset, RE-DOWNLOADS it
+  from GitHub and compares SHA-256 — an off-machine copy proven per night,
+  keep 7, pattern-scoped prune, non-private targets refused per run.
+  Destination decided under the operator's delegation: a personal cloud
+  account that is not Supabase and not the public code repo, same
+  test-data-today caveat as OneDrive, re-decided at real-data onboarding.
+  Proven three ways on 2026-08-31: interactive run (10.2 MB up,
+  re-downloaded, hash-identical), --clobber re-run after the nightly rebuilt
+  the archive, and a real scheduler-context task run (the S4U leg logs
+  SKIPPED until armed — an unarmed leg must not fail nights). The ONE step
+  left is the operator's by design: paste `GH_TOKEN` into backup.env (the
+  classifier rightly blocked the agent doing it — credentials land there by
+  the operator's hand only, HANDOFF item 1b). After that, a missed GitHub
+  upload fails the night into the armed dead-man.
+
 - **2026-09-02 · T-gov1-closeout (no migration) — the three doc drifts, and
   a ruling the operator delegated.** The 2026-09-01 artifact verification
   found GOV-1 three-quarters open. Closed here: (1) **the hard-delete rule
