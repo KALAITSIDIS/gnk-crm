@@ -227,7 +227,12 @@ export async function recomputeQualityScore(
       )
       .eq("id", propertyId)
       .maybeSingle(),
-    supabase.from("property_media").select("id, is_cover").eq("property_id", propertyId),
+    // photos only (MEDIA-K): a floor plan must not inflate the photo score
+    supabase
+      .from("property_media")
+      .select("id, is_cover")
+      .eq("property_id", propertyId)
+      .eq("kind", "photo"),
     // see `mandateSource` above — neither table is right for both callers.
     // Branched rather than parameterised: Supabase infers the row type from a
     // LITERAL table name, and a variable collapses it (same trap as a built

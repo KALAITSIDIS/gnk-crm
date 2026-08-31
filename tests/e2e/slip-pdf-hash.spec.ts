@@ -116,6 +116,9 @@ test.describe("Signed slip PDF hash", () => {
     // Draw on the real signature pad. It binds pointer events and exports via
     // toDataURL on pointer-up, so nothing short of an actual stroke produces a
     // signature — setting the hidden input would be React-controlled anyway.
+    // VIEW-2 (0082): name a second attendee so the whole trail is asserted
+    await page.getByLabel(/second attendee/i).fill("Maria Companion");
+
     const canvas = page.locator("canvas");
     await expect(canvas).toBeVisible();
     const box = (await canvas.boundingBox())!;
@@ -147,12 +150,15 @@ test.describe("Signed slip PDF hash", () => {
     // What the app recorded.
     const { data: slip, error: slipErr } = await svc
       .from("viewing_slips")
-      .select("pdf_path, pdf_sha256, signature_sha256")
+      .select("pdf_path, pdf_sha256, signature_sha256, second_attendee_name")
       .eq("viewing_id", viewingId)
       .single();
     expect(slipErr, `reading the slip row: ${slipErr?.message}`).toBeNull();
     expect(slip!.pdf_path, "a PDF should have been stored").toBeTruthy();
     expect(slip!.pdf_sha256, "0026: the PDF hash must be recorded").toMatch(/^[0-9a-f]{64}$/);
+    expect(slip!.second_attendee_name, "VIEW-2: the second attendee lands on the row").toBe(
+      "Maria Companion",
+    );
 
     // The PNG hash must NOT have been reused for the PDF — that would look
     // correct in the row and prove nothing about the file.
@@ -175,5 +181,9 @@ test.describe("Signed slip PDF hash", () => {
       .eq("event_type", "viewing_slip_signed");
     expect(events?.length, "one viewing_slip_signed event").toBe(1);
     expect((events![0].payload as { pdf_sha256?: string }).pdf_sha256).toBe(slip!.pdf_sha256);
+    expect(
+      (events![0].payload as { second_attendee?: string }).second_attendee,
+      "VIEW-2: the hash-chained payload carries the second attendee — the column alone is forgeable",
+    ).toBe("Maria Companion");
   });
 });

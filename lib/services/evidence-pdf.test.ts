@@ -123,6 +123,7 @@ describe("renderSlipPdf (unicode)", () => {
       orgName: "GN Kalaitsidis Capital",
       agentName: "Γιώργος Καλαϊτσίδης",
       signerName: "Дмитрий Иванов",
+      secondAttendeeName: "Ελένη Παπαδοπούλου", // VIEW-2: same unicode bar
       propertyRef: "PAF0001",
       propertyAddress: "Οδός Ποσειδώνος 12, Πάφος",
       viewingWhen: "20 Jul 2026, 10:00",

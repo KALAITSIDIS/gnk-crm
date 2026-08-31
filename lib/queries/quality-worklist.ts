@@ -52,7 +52,12 @@ export async function fetchQualityWorklist(
   const ids = properties.map((p) => p.id);
 
   const [mediaRes, mandateRes] = await Promise.all([
-    supabase.from("property_media").select("property_id, is_cover").in("property_id", ids),
+    // photos only (MEDIA-K) — must agree with recomputeQualityScore's filter
+    supabase
+      .from("property_media")
+      .select("property_id, is_cover")
+      .in("property_id", ids)
+      .eq("kind", "photo"),
     supabase.from("mandates_safe").select("property_id").eq("status", "active").in("property_id", ids),
   ]);
   if (mediaRes.error) throw new Error(`Worklist media query failed: ${mediaRes.error.message}`);

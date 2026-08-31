@@ -51,7 +51,7 @@ export default async function ViewingDetailPage({ params }: { params: Promise<{ 
 
   const { data: slip } = await supabase
     .from("viewing_slips")
-    .select("id, signer_name, signed_at")
+    .select("id, signer_name, second_attendee_name, signed_at")
     .eq("viewing_id", id)
     .maybeSingle();
 
@@ -184,7 +184,9 @@ export default async function ViewingDetailPage({ params }: { params: Promise<{ 
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="flex items-center gap-2 text-sm text-text-2">
               <CheckCircle2 className="size-4 text-success" />
-              Signed by {slip.signer_name} on {formatDateTime(slip.signed_at)}
+              Signed by {slip.signer_name}
+              {slip.second_attendee_name ? ` (with ${slip.second_attendee_name})` : ""} on{" "}
+              {formatDateTime(slip.signed_at)}
             </p>
             <SlipDownloadButton viewingId={v.id} />
           </div>

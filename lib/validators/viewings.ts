@@ -44,6 +44,12 @@ export interface ViewingFeedback {
 export const signSlipSchema = z.object({
   viewing_id: z.guid("Missing viewing"),
   signer_name: z.string().trim().min(2, "Signer name is required").max(200),
+  // VIEW-2 (0082): optional — a rendered-but-empty input submits "", which
+  // must read as absent, not as a too-short name
+  second_attendee_name: z.preprocess(
+    emptyToUndefined,
+    z.string().trim().min(2, "Second attendee name is too short").max(200).optional(),
+  ),
   signature_data: z
     .string()
     .regex(/^data:image\/png;base64,[A-Za-z0-9+/=]+$/, "Please add a signature"),

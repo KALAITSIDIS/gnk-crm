@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 
 export interface MediaItem {
   id: string;
+  kind: string;
   path_thumb: string | null;
   path_card: string | null;
   is_cover: boolean;
@@ -45,6 +46,7 @@ export function MediaTab({
   canManage?: boolean;
 }) {
   const [uploading, setUploading] = useState(false);
+  const [uploadKind, setUploadKind] = useState<"photo" | "floor_plan">("photo");
   const [progress, setProgress] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -82,6 +84,9 @@ export function MediaTab({
       }
       const fd = new FormData();
       fd.set("property_id", propertyId);
+      // MEDIA-K: hand-built FormData — the select's name attribute alone
+      // would never travel; the choice rides React state
+      fd.set("kind", uploadKind);
       fd.append("files", file);
       const res = await uploadPropertyMedia(initialState, fd);
       if (res.error) {
@@ -96,7 +101,9 @@ export function MediaTab({
       setUploadError(done > 0 ? `${done}/${files.length} uploaded, then: ${failed}` : failed);
       toast.error(failed);
     } else {
-      toast.success(done === 1 ? "Saved" : `Saved ${done} photos`);
+      toast.success(
+        done === 1 ? "Saved" : `Saved ${done} ${uploadKind === "floor_plan" ? "plans" : "photos"}`,
+      );
       if (fileInput.current) fileInput.current.value = "";
     }
   }
@@ -140,6 +147,15 @@ export function MediaTab({
               multiple
               className="text-sm text-text-2 file:mr-3 file:rounded-lg file:border file:border-border file:bg-surface file:px-3 file:py-1.5 file:text-sm file:text-text-1"
             />
+            <select
+              aria-label="Upload as"
+              value={uploadKind}
+              onChange={(e) => setUploadKind(e.target.value as "photo" | "floor_plan")}
+              className="h-9 rounded-[8px] border border-border bg-surface px-3 text-sm text-text-1"
+            >
+              <option value="photo">Photo</option>
+              <option value="floor_plan">Floor plan</option>
+            </select>
             <Button type="submit" disabled={uploading} size="sm">
               <Upload className="size-4" />{" "}
               {uploading ? `Uploading ${progress ?? "…"}` : "Upload"}
@@ -247,6 +263,12 @@ export function MediaTab({
                       WM
                     </span>
                   ) : null}
+                  {item.kind === "floor_plan" ? (
+                    // internal-only: feed + share links exclude non-photos
+                    <span className="absolute bottom-2 left-2 rounded-full bg-black/50 px-2 py-0.5 text-[10px] text-white">
+                      Plan · internal
+                    </span>
+                  ) : null}
                   {canManage ? (
                     <div className="flex items-center justify-between gap-1 p-2">
                       <div className="flex gap-1">
@@ -286,7 +308,9 @@ export function MediaTab({
                           variant="ghost"
                           size="icon"
                           className={cn("size-7", item.is_cover && "text-accent-500")}
-                          disabled={isPending || item.is_cover}
+                          // plans are never cover-eligible (server enforces it
+                          // too — this just spares the user a refused click)
+                          disabled={isPending || item.is_cover || item.kind !== "photo"}
                           onClick={() =>
                             startTransition(async () => {
                               const { error } = await setMediaCover(propertyId, item.id);

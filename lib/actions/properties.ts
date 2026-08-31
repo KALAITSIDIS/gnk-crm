@@ -424,7 +424,12 @@ export async function updatePropertySection(
       "@/lib/services/quality-score"
     );
     const [{ data: media }, { data: activeMandates }] = await Promise.all([
-      supabase.from("property_media").select("id, is_cover").eq("property_id", propertyId),
+      // photos only (MEDIA-K) — the publish gate must agree with the score
+      supabase
+        .from("property_media")
+        .select("id, is_cover")
+        .eq("property_id", propertyId)
+        .eq("kind", "photo"),
       // mandates_safe, not the base table — listing managers can't read the
       // base table and would lose the active-mandate points
       supabase

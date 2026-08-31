@@ -2388,6 +2388,7 @@ export type Database = {
           org_id: string
           pdf_path: string | null
           pdf_sha256: string | null
+          second_attendee_name: string | null
           signature_path: string
           signature_sha256: string
           signed_at: string
@@ -2401,6 +2402,7 @@ export type Database = {
           org_id: string
           pdf_path?: string | null
           pdf_sha256?: string | null
+          second_attendee_name?: string | null
           signature_path: string
           signature_sha256: string
           signed_at?: string
@@ -2414,6 +2416,7 @@ export type Database = {
           org_id?: string
           pdf_path?: string | null
           pdf_sha256?: string | null
+          second_attendee_name?: string | null
           signature_path?: string
           signature_sha256?: string
           signed_at?: string

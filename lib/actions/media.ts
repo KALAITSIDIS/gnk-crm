@@ -11,6 +11,7 @@ import {
   shouldWatermark,
 } from "@/lib/services/media";
 import { recomputeQualityScore } from "@/lib/services/quality-score";
+import { UPLOADABLE_MEDIA_KINDS } from "@/lib/validators/media";
 import { binaryBody } from "@/lib/services/storage-upload";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -27,6 +28,13 @@ export async function uploadPropertyMedia(
   if (typeof propertyId !== "string") return { error: "Missing property", savedAt: null };
 
   const files = formData.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
+  // MEDIA-K (2026-09-02): the upload names its kind; junk falls back to
+  // photo rather than erroring (the property-documents idiom — a form can
+  // post anything). Only raster-uploadable kinds are offered.
+  const rawKind = String(formData.get("kind") ?? "photo");
+  const kind = (UPLOADABLE_MEDIA_KINDS as readonly string[]).includes(rawKind)
+    ? (rawKind as (typeof UPLOADABLE_MEDIA_KINDS)[number])
+    : "photo";
   if (files.length === 0) return { error: "Pick at least one image", savedAt: null };
 
   const supabase = await createClient();
@@ -44,7 +52,10 @@ export async function uploadPropertyMedia(
 
   // org watermark is optional until Settings ships it
   let watermark: Buffer | null = null;
-  if (shouldWatermark(property.visibility)) {
+  // floor plans skip the watermark: they never reach the feed or a share
+  // link (kind='photo' filters, RLS test 49), and a watermark across plan
+  // lines destroys the one thing a plan is for
+  if (kind === "photo" && shouldWatermark(property.visibility)) {
     const { data: wmFile } = await admin.storage.from("media").download(WATERMARK_PATH);
     if (wmFile) watermark = Buffer.from(await wmFile.arrayBuffer());
   }
@@ -108,7 +119,7 @@ export async function uploadPropertyMedia(
       .insert({
         org_id: property.org_id,
         property_id: propertyId,
-        kind: "photo",
+        kind,
         storage_path_original: originalPath,
         path_thumb: renditionPath("thumb"),
         path_card: renditionPath("card"),
@@ -116,7 +127,9 @@ export async function uploadPropertyMedia(
         width: processed.width,
         height: processed.height,
         sort_order: nextSort++,
-        is_cover: !hasCover,
+        // only photos are cover-eligible: a floor-plan cover would score the
+        // 5 cover points while the feed (photos-only) shows no cover at all
+        is_cover: kind === "photo" && !hasCover,
         watermarked: processed.watermarked,
         exif_stripped: true,
         created_by: profile.id,
@@ -136,7 +149,7 @@ export async function uploadPropertyMedia(
         savedAt: null,
       };
     }
-    hasCover = true;
+    if (kind === "photo") hasCover = true;
 
     await logEvent(supabase, {
       orgId: property.org_id,
@@ -144,7 +157,7 @@ export async function uploadPropertyMedia(
       entityType: "property",
       entityId: propertyId,
       eventType: "media_uploaded",
-      payload: { media_id: row.id, file: file.name, watermarked: processed.watermarked },
+      payload: { media_id: row.id, file: file.name, kind, watermarked: processed.watermarked },
     });
   }
 
@@ -164,12 +177,15 @@ export async function setMediaCover(
   const profile = await getCurrentProfile(supabase);
 
   // set the new cover first (with row-count proof), clear the old one after —
-  // a denied call must not leave the property coverless
+  // a denied call must not leave the property coverless. kind='photo' in the
+  // predicate: only photos are cover-eligible (MEDIA-K) — enforced HERE, not
+  // in the UI, because a form can post any media id
   const { data: setRows, error } = await supabase
     .from("property_media")
     .update({ is_cover: true })
     .eq("id", mediaId)
     .eq("property_id", propertyId)
+    .eq("kind", "photo")
     .select("id");
   if (error) return { error: error.message };
   if (!setRows || setRows.length === 0) {
@@ -296,12 +312,14 @@ export async function deleteMediaBulk(
     .filter((p): p is string => Boolean(p));
   if (originalPaths.length) await admin.storage.from("documents").remove(originalPaths);
 
-  // keep a cover: promote the first remaining photo if the cover was deleted
+  // keep a cover: promote the first remaining PHOTO if the cover was deleted
+  // (MEDIA-K: a floor plan must never become the cover — see the upload path)
   if (deletedRows.some((m) => m.is_cover)) {
     const { data: rest } = await supabase
       .from("property_media")
       .select("id")
       .eq("property_id", propertyId)
+      .eq("kind", "photo")
       .order("sort_order")
       .limit(1);
     if (rest?.[0]) {

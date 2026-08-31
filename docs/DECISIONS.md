@@ -3,6 +3,33 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-02 · T-media-and-attendee (migration 0082) — the last two builds
+  of the wave, and one finding settled by NOT building.** (1) **VIEW-2**:
+  viewing slips carry an optional second attendee — captured at signing
+  time or never (slips are immutable; that is the point of evidence), on
+  the row, in the PDF (conditional line, same unicode bar), and in the
+  hash-chained viewing_slip_signed payload (a column alone is forgeable —
+  0026's principle). Nullable, no backfill: old slips honestly recorded
+  one attendee. slip-pdf-hash.spec extended to drive the field through
+  the real form. (2) **MEDIA-K**: uploads can finally say what they are —
+  a photo/floor-plan picker (the enum carried floor_plan since 0001 while
+  both insert paths hardcoded photo). Floor plans are INTERNAL and
+  second-class by decision: never cover-eligible (enforced at the upload,
+  the delete-promotion, and setMediaCover's own predicate — a form can
+  post anything), excluded from all four photo-score sites, skipped by
+  the watermark (a mark across plan lines destroys the plan), and still
+  filtered out of feed + share links by the 0073/0041 SQL that RLS test
+  49 pins. Caveat recorded: "internal" is metadata-level — renditions
+  live in the public media bucket; truly-private plans would be a
+  documents-bucket design. Importer stays photos-only. (3) **DB-07 —
+  SETTLED, NO BUILD** (delegated decision): energy_class is already a
+  closed vocabulary end-to-end (select + hard z.enum — no reachable path
+  writes junk), and construction_status is open BY SHIPPED DESIGN
+  (BACKLOG finding 10, four files + a test pin the stance). A DB CHECK
+  would fight the shipped stance and grandfathering complexity to
+  prevent a defect nothing can produce. Revisit only if a non-app write
+  path appears.
+
 - **2026-09-02 · T-ungated-closures (migration 0081) — four findings that
   were gated on nothing, closed; three decisions made under delegation.**
   (1) **SEC-04**: the share-link page resolved first and discarded the

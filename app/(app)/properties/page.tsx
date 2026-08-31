@@ -75,7 +75,7 @@ export default async function PropertiesPage({
        title, bedrooms, covered_area_sqm, plot_area_sqm, asking_price,
        rent_price_month, quality_score,
        districts(name), areas(name),
-       property_media(path_thumb, is_cover, sort_order),
+       property_media(path_thumb, is_cover, sort_order, kind),
        ${mandateEmbed(filters)}`,
       { count: "exact" },
     );
@@ -99,10 +99,14 @@ export default async function PropertiesPage({
       path_thumb: string | null;
       is_cover: boolean;
       sort_order: number;
+      kind: string;
     }[];
+    // fallback prefers PHOTOS (MEDIA-K): a coverless gallery must not put a
+    // floor plan on the card
+    const photos = media.filter((m) => m.kind === "photo");
     const cover =
       media.find((m) => m.is_cover) ??
-      [...media].sort((a, b) => a.sort_order - b.sort_order)[0];
+      [...photos].sort((a, b) => a.sort_order - b.sort_order)[0];
     return {
       id: p.id,
       reference: p.reference,
