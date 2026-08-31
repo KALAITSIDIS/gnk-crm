@@ -3,6 +3,17 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-02 · T-drop-sold-at (migration 0083, DESTRUCTIVE — applied
+  hosted AFTER the deploy, the 0055/0057 order) — DB-12, the wave's last
+  item.** `properties.sold_at` was created in 0001 and never written or
+  read: sale dates live in the event log, and sales-velocity's header
+  explicitly declined the column. Dropped, types regenerated, the feed
+  test's withheld pin trimmed, the properties column count corrected to
+  72. With this the 2026-09-01 verification's entire buildable list is
+  CLOSED — every remaining open finding needs a business event (WF-4,
+  DB-04, DB-06), the operator (SEC-05, CY-05, REL-07, REL-08's attended
+  half, GH_TOKEN), or was settled by decision (DB-07).
+
 - **2026-09-02 · T-media-and-attendee (migration 0082) — the last two builds
   of the wave, and one finding settled by NOT building.** (1) **VIEW-2**:
   viewing slips carry an optional second attendee — captured at signing
