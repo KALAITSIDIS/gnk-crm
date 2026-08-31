@@ -77,8 +77,9 @@ Four things to know before touching it:
    an audited decision and would drop listings whose score merely decayed.
    Operator decision; `published_below_threshold()` keeps that drift visible.
 2. **The returned columns are an ALLOWLIST of 35 (34 + `images`, 0073), not a
-   denylist.** `properties` has 73 columns (69 + 0077's four DLS identity
-   columns, which the allowlist deliberately withholds). A column added to `properties` is
+   denylist.** `properties` has 72 columns (69 + 0077's four DLS identity
+   columns − 0083's dead `sold_at`; the allowlist deliberately withholds the
+   DLS four). A column added to `properties` is
    withheld until somebody edits `public_listings` on purpose — which is the
    only way "adding a column cannot silently publish it" can actually hold.
    RLS test 41 asserts the withheld names AND that no withheld VALUE appears

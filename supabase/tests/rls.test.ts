@@ -4192,7 +4192,6 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       "quality_score",
       "unit_number",
       "block",
-      "sold_at",
       "share_of_land",
       "encumbrances_notes",
       "constraints_notes",

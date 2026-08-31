@@ -1379,7 +1379,6 @@ export type Database = {
           share_of_land: string | null
           sheet_plan: string | null
           short_description: Json
-          sold_at: string | null
           status: Database["public"]["Enums"]["property_status"]
           title: Json
           title_deed_status: Database["public"]["Enums"]["title_deed_status"]
@@ -1454,7 +1453,6 @@ export type Database = {
           share_of_land?: string | null
           sheet_plan?: string | null
           short_description?: Json
-          sold_at?: string | null
           status?: Database["public"]["Enums"]["property_status"]
           title?: Json
           title_deed_status?: Database["public"]["Enums"]["title_deed_status"]
@@ -1529,7 +1527,6 @@ export type Database = {
           share_of_land?: string | null
           sheet_plan?: string | null
           short_description?: Json
-          sold_at?: string | null
           status?: Database["public"]["Enums"]["property_status"]
           title?: Json
           title_deed_status?: Database["public"]["Enums"]["title_deed_status"]
