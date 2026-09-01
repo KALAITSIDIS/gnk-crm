@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_FLOOR, MAX_GENERATED_UNITS, MAX_PER_FLOOR } from "@/lib/services/unit-generator";
 
 export const PROPERTY_TYPES = [
   "apartment",
@@ -315,6 +316,41 @@ export const createPropertySchema = z.object({
   covered_area_sqm: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
   plot_area_sqm: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
   internal_notes: z.preprocess(emptyToUndefined, z.string().max(5000).optional()),
+
+  /* ---- Project layout (2026-09-02) — wizard step 2 for a container. ----
+   * A project was created with NO UNITS, scored 100/100 and went public; the
+   * wizard had asked it for a villa's bedrooms and never mentioned units. Now a
+   * project's step 2 asks how the DEVELOPMENT is laid out and creates the units
+   * at the same time. Every field is optional: a blank count means "add them
+   * later", and the action only generates when a real spec arrives. The
+   * `gen_` prefix keeps these apart from the property's own columns above.
+   * Kept a plain z.object (no refine) so nothing that extends this schema
+   * breaks — the run ceiling for the floor grid is enforced in the action. */
+  gen_layout: z.enum(["floors", "villas"]).optional(),
+  gen_villa_count: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().min(1).max(MAX_GENERATED_UNITS).optional(),
+  ),
+  gen_villa_prefix: z.preprocess(emptyToUndefined, z.string().max(10).optional()),
+  gen_block: z.preprocess(emptyToUndefined, z.string().max(20).optional()),
+  gen_floor_from: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().min(0).max(MAX_FLOOR).optional(),
+  ),
+  gen_floor_to: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().min(0).max(MAX_FLOOR).optional(),
+  ),
+  gen_per_floor: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().min(1).max(MAX_PER_FLOOR).optional(),
+  ),
+  gen_bedrooms: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).optional()),
+  gen_bathrooms: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).optional()),
+  gen_covered_area_sqm: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
+  gen_plot_area_sqm: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
+  gen_base_price: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
+  gen_price_step: z.preprocess(emptyToUndefined, z.coerce.number().min(0).optional()),
 });
 
 export type CreatePropertyInput = z.infer<typeof createPropertySchema>;

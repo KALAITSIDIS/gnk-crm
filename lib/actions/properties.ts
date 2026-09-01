@@ -5,6 +5,13 @@ import { redirect } from "next/navigation";
 import type { Database } from "@/lib/supabase/database.types";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
+import {
+  generateUnits,
+  generateVillaUnits,
+  MAX_GENERATED_UNITS,
+} from "@/lib/services/unit-generator";
+import { UNIT_PARENT_SELECT } from "@/lib/services/unit-inheritance";
+import { writeGeneratedUnits } from "@/lib/services/unit-writer";
 import { generateReference } from "@/lib/services/reference";
 import { createClient } from "@/lib/supabase/server";
 import { changedValue } from "@/lib/utils/diff";
@@ -152,6 +159,53 @@ export async function createProperty(
     };
   }
 
+  /**
+   * Project layout (2026-09-02). A container's units are generated in the same
+   * submit — decided HERE, before the insert, because the only thing worse
+   * than a project with no units is a project that exists but whose creator
+   * saw an error and pressed the button again. Everything that can be refused
+   * is refused before a reference is burned; the generation itself runs after
+   * the row exists (it needs the parent's id and inheritable columns).
+   */
+  const isContainer = input.kind === "project";
+  const layout = isContainer ? input.gen_layout : undefined;
+  const generated =
+    layout === "villas" && input.gen_villa_count
+      ? generateVillaUnits({
+          prefix: input.gen_villa_prefix ?? null,
+          count: input.gen_villa_count,
+          bedrooms: input.gen_bedrooms ?? null,
+          bathrooms: input.gen_bathrooms ?? null,
+          coveredAreaSqm: input.gen_covered_area_sqm ?? null,
+          plotAreaSqm: input.gen_plot_area_sqm ?? null,
+          basePrice: input.gen_base_price ?? null,
+          pricePerVilla: input.gen_price_step ?? null,
+        })
+      : layout === "floors" &&
+          input.gen_floor_from !== undefined &&
+          input.gen_floor_to !== undefined &&
+          input.gen_per_floor !== undefined
+        ? generateUnits({
+            block: input.gen_block ?? null,
+            floorFrom: input.gen_floor_from,
+            floorTo: input.gen_floor_to,
+            perFloor: input.gen_per_floor,
+            bedrooms: input.gen_bedrooms ?? null,
+            bathrooms: input.gen_bathrooms ?? null,
+            coveredAreaSqm: input.gen_covered_area_sqm ?? null,
+            basePrice: input.gen_base_price ?? null,
+            pricePerFloor: input.gen_price_step ?? null,
+          })
+        : [];
+  if (generated.length > MAX_GENERATED_UNITS) {
+    return {
+      error: `That would create more than ${MAX_GENERATED_UNITS} units — narrow the range, or add the rest from the units page.`,
+    };
+  }
+  if (layout === "floors" && generated.length === 0 && input.gen_floor_from !== undefined) {
+    return { error: "That floor range produces no units — check floors from/to and units per floor." };
+  }
+
   const { data: created, error: insertErr } = await supabase
     .from("properties")
     .insert({
@@ -167,9 +221,12 @@ export async function createProperty(
       registration_no: input.registration_no ?? null,
       asking_price: input.asking_price ?? null,
       rent_price_month: input.rent_price_month ?? null,
-      bedrooms: input.bedrooms ?? null,
-      bathrooms: input.bathrooms ?? null,
-      covered_area_sqm: input.covered_area_sqm ?? null,
+      // a container's rooms and covered area belong to its UNITS (the score
+      // and the gate grade it on units since 2026-09-02); the site's plot is
+      // the one area measure a development legitimately has
+      bedrooms: isContainer ? null : (input.bedrooms ?? null),
+      bathrooms: isContainer ? null : (input.bathrooms ?? null),
+      covered_area_sqm: isContainer ? null : (input.covered_area_sqm ?? null),
       plot_area_sqm: input.plot_area_sqm ?? null,
       internal_notes: input.internal_notes ?? null,
       owner_contact_id: ownerId,
@@ -208,8 +265,33 @@ export async function createProperty(
     },
   });
 
+  if (generated.length > 0) {
+    // the freshly inserted row, with every inheritable column — units inherit
+    // from the parent exactly as a hand-added unit does
+    const { data: parent } = await supabase
+      .from("properties")
+      .select(UNIT_PARENT_SELECT)
+      .eq("id", created.id)
+      .single();
+    const written = parent
+      ? await writeGeneratedUnits(supabase, parent, generated, {
+          propertyType: input.property_type,
+          actorId: profile.id,
+        })
+      : { error: "could not re-read the new project" };
+    if (written.error) {
+      // The project EXISTS and its reference is burned; an error here would
+      // send the operator back to a form whose resubmit makes a second one.
+      // Log loudly and land them on the units page, which shows the empty
+      // state and the generator — nothing is lost, and the retry is one click.
+      console.error(`[createProperty] units did not land for ${reference}:`, written.error);
+    }
+  }
+
   revalidatePath("/properties");
-  redirect(`/properties/${created.id}`);
+  // A project lands on its units matrix: that page IS what a project is made
+  // of, and when the count was left blank it says so and offers the generator.
+  redirect(isContainer ? `/properties/${created.id}/units` : `/properties/${created.id}`);
 }
 
 export async function updatePropertySection(

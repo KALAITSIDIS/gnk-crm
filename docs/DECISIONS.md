@@ -3,6 +3,61 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-02 · T-wizard-project-layout (no migration) — a project is
+  created WITH its units, and lands where they live.** The follow-on the
+  container entry below deferred. The operator's instruction was two
+  clauses: "do the wizard too, land on units matrix" — the second is the
+  redirect decision the previous entry had left open, made by the operator.
+
+  (1) **Step 2 changes shape by kind.** For "One property" it is still Core
+  details. For "A development with units" (the Kind copy now says what
+  happens next instead of "Developer project") it becomes Development
+  layout: no bedrooms, bathrooms or covered area — a container never has
+  them, the score and gate grade it on units — but the site's plot area, and
+  a Units section with the same Floors/Villas toggle as the units page. The
+  toggle defaults from the property type (apartments stack; everything else
+  is villas), the count is optional ("Leave blank to add later"), and a live
+  line says exactly what will be written: "Creates 3 villas, V01 through V03
+  · €800,000 to €850,000". That preview calls the SAME pure generator the
+  action calls, so it cannot drift from the write — the rule the units page
+  already lives by. The submit button says "Create project + 3 villas".
+  (2) **One writer for both paths.** The tail of `generateProjectUnits` —
+  reference minting, the collision pre-check, the insert with inheritance,
+  the RLS-denied message, one `logEvents` — moved verbatim into
+  `lib/services/unit-writer.ts` and the units action now calls it, so the
+  wizard's units are byte-for-byte what the matrix would have made. The
+  units-page e2e (7 tests, both layouts, the collision refusal, inheritance
+  drift) passed unchanged through the refactor, which is the proof.
+  (3) **Refuse before the reference burns, never after.** Everything that
+  can be refused — more than 200 units, an empty floor range — is refused
+  BEFORE the project row is inserted. Generation itself must run after (it
+  needs the parent's id and inheritable columns), and if THAT fails the
+  project exists and its reference is spent; returning an error there would
+  send the operator back to a form whose resubmit makes a second project.
+  So the failure is logged loudly and the operator lands on the units page
+  anyway, where the empty state and the generator make the retry one click
+  and nothing is lost. `createProperty` runs `gen_*` through the same
+  `emptyToUndefined` preprocess as every other optional field; prefix and
+  block normalise `""` and `null` alike in the generator, so a cleared field
+  on the client and an absent key on the server produce identical labels.
+  (4) **Landing.** A container redirects to `/properties/{id}/units`; one
+  property still lands on its own page (pinned as a non-regression). The
+  units page gained the one line the whole story was missing — "Not a
+  listing until it has units" with the consequence (cannot be published,
+  matched or reserved; the units carry the prices) — because a project with
+  no units once scored 100 and went public with nothing on any screen
+  saying it was empty. It states the consequence only; the matrix's own
+  empty row already says "No units yet — add the first one below", and a
+  first draft that repeated those words was caught by the party spec's
+  strict locator resolving to two elements — a test failure that was really
+  a copy review.
+
+  The draft (localStorage) carries the layout section: the controlled inputs
+  as a `gen` object, the per-unit uncontrolled ones through `DRAFT_FIELDS`
+  like every other field; older drafts without `gen` restore to the defaults.
+  "Start blank instead" now also resets the registration number, which it
+  had missed.
+
 - **2026-09-02 · T-container-aware-listings (no migration) — the app learns
   what a project is.** The operator entered a real development, and the CRM
   told them it was perfect: a project with ZERO UNITS scored 100/100 and went
@@ -39,11 +94,9 @@ silent. Format: date · task · decision · rationale.
   The generator form gains a Floors/Villas toggle, keeping the floor field
   ids the e2e drives by.
 
-  Not done, deliberately: the wizard's step 2 does not yet generate units
-  inline. The units matrix now has both layouts and the gate stops the bad
-  outcome; wiring generation into creation is a separate change with its own
-  redirect decision (createProperty redirects to the property, not the units
-  page).
+  Left for a separate change at the time: the wizard's step 2 did not yet
+  generate units inline, because creation had its own redirect decision.
+  Done the same day — see T-wizard-project-layout above.
 
 - **2026-09-02 · T-search-empty-state (no migration) — the first
   browser-agent session's one real UI bug.** The operator ran Claude in

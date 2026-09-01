@@ -211,6 +211,25 @@ export default async function ProjectUnitsPage({
         />
       ) : null}
 
+      {/* The state the wizard now lands on when units were left for later.
+          Said out loud, because a project with no units scored 100/100 and
+          went public once — nothing on this page had told anyone it was
+          empty, or what being empty costs (2026-09-02). */}
+      {units.length === 0 && phases.length === 0 ? (
+        <div className="flex items-start gap-2 rounded-[10px] border border-warning/40 bg-warning/10 p-4 text-sm">
+          {/* the matrix below already says "no units yet" and offers the way
+              out — this line is the CONSEQUENCE, stated once */}
+          <span className="mt-0.5 font-semibold text-warning">Not a listing until it has units.</span>
+          <p className="text-text-2">
+            This {project.kind} cannot be published, no buyer can be matched to it, and nothing
+            on it can be reserved — the units carry the prices.{" "}
+            {canManage
+              ? "Generate them below: describe the block or the villas once and every unit is created."
+              : "An admin or listing manager can generate them from this page."}
+          </p>
+        </div>
+      ) : null}
+
       <UnitsMatrix units={units} canManage={canManage} />
 
       <AvailabilityShare

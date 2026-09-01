@@ -17,6 +17,7 @@ import {
   resolveInheritedUnitFields,
   UNIT_PARENT_SELECT,
 } from "@/lib/services/unit-inheritance";
+import { writeGeneratedUnits } from "@/lib/services/unit-writer";
 import {
   generateUnits,
   generateVillaUnits,
@@ -331,78 +332,14 @@ export async function generateProjectUnits(
           basePrice: input.base_price ?? null,
           pricePerFloor: input.price_per_floor ?? null,
         });
-  if (generated.length === 0) return { error: "That range produces no units", savedAt: null };
-
-  const references = generated.map((u) => `${project.reference}-${u.label}`);
-
-  // Check before writing rather than relying on the unique violation: a 23505
-  // names one reference, and the desk needs to know the shape of the clash.
-  const { data: clashing } = await supabase
-    .from("properties")
-    .select("reference")
-    .in("reference", references);
-  if (clashing && clashing.length > 0) {
-    const names = clashing.map((c) => c.reference).sort();
-    const shown = names.slice(0, 5).join(", ");
-    return {
-      error:
-        names.length === 1
-          ? `${shown} already exists — nothing was created.`
-          : `${names.length} of these already exist (${shown}${names.length > 5 ? ", …" : ""}) — nothing was created.`,
-      savedAt: null,
-    };
-  }
-
-  const inherited = resolveInheritedUnitFields(project);
-  const { data: created, error: insertErr } = await supabase
-    .from("properties")
-    .insert(
-      generated.map((u, i) => ({
-        org_id: project.org_id,
-        reference: references[i],
-        kind: "unit" as const,
-        parent_id: project.id,
-        property_type: input.property_type,
-        ...inherited,
-        inherited_fields: [...INHERITED_UNIT_FIELDS],
-        unit_number: u.unit_number,
-        block: u.block,
-        floor_number: u.floor_number,
-        bedrooms: u.bedrooms,
-        bathrooms: u.bathrooms,
-        covered_area_sqm: u.covered_area_sqm,
-        ...(u.plot_area_sqm !== null ? { plot_area_sqm: u.plot_area_sqm } : {}),
-        asking_price: u.asking_price,
-        status: "available" as const,
-        created_by: profile.id,
-      })),
-    )
-    .select("id, reference");
-  if (insertErr) return { error: insertErr.message, savedAt: null };
-  if (!created || created.length === 0) {
-    return { error: "Nothing was created — only admins and listing managers manage units.", savedAt: null };
-  }
-
-  // One event per unit, in ONE statement. Each unit is its own entity and owes
-  // its own `created` row; the chain survives a multi-row insert (see logEvents).
-  const inheritedNames = inheritedFieldsWithValues(project);
-  await logEvents(
-    supabase,
-    created.map((row) => ({
-      orgId: project.org_id,
-      actorId: profile.id,
-      entityType: "property" as const,
-      entityId: row.id,
-      eventType: "created",
-      payload: {
-        reference: row.reference,
-        kind: "unit",
-        parent: project.reference,
-        inherited: inheritedNames,
-        generated: true,
-      },
-    })),
-  );
+  // The write lives in lib/services/unit-writer.ts, shared with the wizard's
+  // create-and-generate path — one insert shape, one collision check, one
+  // event statement, so the two callers cannot drift.
+  const written = await writeGeneratedUnits(supabase, project, generated, {
+    propertyType: input.property_type,
+    actorId: profile.id,
+  });
+  if (written.error) return { error: written.error, savedAt: null };
 
   revalidatePath(`/properties/${project.id}/units`);
   revalidatePath("/properties");
