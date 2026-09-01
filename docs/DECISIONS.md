@@ -3,6 +3,48 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-02 · T-container-aware-listings (no migration) — the app learns
+  what a project is.** The operator entered a real development, and the CRM
+  told them it was perfect: a project with ZERO UNITS scored 100/100 and went
+  Public. Neither the wizard nor the operator was at fault —
+  `computeQualityScore` had no notion of `kind`, so it graded a container as
+  a dwelling, on bedrooms and covered area it will never have. Three changes,
+  and the diagnosis matters more than any of them: the app was SILENT where
+  it should have spoken.
+
+  (1) **The score understands containers.** For project/phase the dwelling
+  pair (area 10 + rooms/planning 5) is replaced by a single "At least one
+  unit" worth their combined 15, so every branch still totals exactly 100 and
+  the gap appears in the quality worklist by name. Deliberately recorded in
+  the tests: an otherwise-complete empty project still scores **85, above the
+  70 publish threshold** — the score informs, it does not gate.
+  (2) **The publish gate refuses an empty container**, and this refusal is
+  NOT overridable. The score override exists for a listing that is thin but
+  deliberate; an empty project is not thin, it is empty — units carry the
+  prices, containers cannot be reserved (reservations.ts) and never appear in
+  buyer matching (queries/matches.ts), so publishing one puts a page in front
+  of buyers that nothing can act on. The refusal names "Coming soon", which
+  is already in the visibility list and is the honest state for a development
+  whose units are not defined yet.
+  (3) **Villas generate.** The floor grid could not describe a villa complex
+  — it numbers 101…1NN (an apartment number that reaches proposals) and
+  writes floor_number = 1 on every villa, a lie the units matrix and the
+  availability share both print. `generateVillaUnits` sits BESIDE
+  `generateUnits` in the same pure module rather than folding a discriminator
+  into it: the two share their OUTPUT type, which is the contract the action
+  depends on, so reference minting, the collision pre-check, the insert and
+  the per-unit events are byte-for-byte unchanged. Numbers are zero-padded to
+  the width of the run (V01…V12) because the matrix orders `unit_number` as
+  TEXT; `block` is left free because it is the repricing scope, not a label.
+  The generator form gains a Floors/Villas toggle, keeping the floor field
+  ids the e2e drives by.
+
+  Not done, deliberately: the wizard's step 2 does not yet generate units
+  inline. The units matrix now has both layouts and the gate stops the bad
+  outcome; wiring generation into creation is a separate change with its own
+  redirect decision (createProperty redirects to the property, not the units
+  page).
+
 - **2026-09-02 · T-search-empty-state (no migration) — the first
   browser-agent session's one real UI bug.** The operator ran Claude in
   Chrome against production as a working agent and reported four issues;

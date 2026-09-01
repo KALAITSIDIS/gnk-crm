@@ -10,9 +10,24 @@ import type { Database } from "@/lib/supabase/database.types";
  * Weights (total 100):
  *   cover photo 5 · ≥6 photos 10 · title EN 5 · public description EN ≥300
  *   chars 10 · price 10 · covered/plot area 10 · bedrooms+bathrooms 5 (land:
- *   planning zone + density instead) · exact coords 10 · title-deed status 10
- *   · permit status 5 · active mandate 10 · assigned agent 5 · owner or
- *   developer linked 5
+ *   planning zone + density instead; CONTAINER: one item worth 15 in place of
+ *   both — see below) · exact coords 10 · title-deed status 10 · permit
+ *   status 5 · active mandate 10 · assigned agent 5 · owner or developer
+ *   linked 5
+ *
+ * CONTAINERS SCORE DIFFERENTLY (2026-09-02). A project or phase is not a
+ * dwelling: units carry the prices, a container cannot be reserved
+ * (reservations.ts) and is excluded from buyer matching (queries/matches.ts).
+ * Grading it on bedrooms and covered area asked the wrong question and got a
+ * wrong answer — a real project was created with NO UNITS, scored 100/100,
+ * and went Public on the strength of that score. The two dwelling items
+ * (area 10 + rooms/planning 5) are replaced by a single "At least one unit"
+ * worth their combined 15, so every branch still totals exactly 100.
+ *
+ * NOTE the 15 is not enough on its own: an otherwise-complete empty project
+ * still reaches 85, above PUBLISH_THRESHOLD. The publish gate refuses an
+ * empty container separately (lib/actions/properties.ts) — the score informs,
+ * the gate enforces. Do not remove one believing the other covers it.
  *
  * REBALANCED 2026-08-21 (BACKLOG audit finding 15). Two responsibility items
  * were added and paid for out of imagery, which carried 25 of the 100 points —
@@ -36,6 +51,10 @@ export const PUBLISH_THRESHOLD = 70;
 
 export interface QualityScoreInput {
   isLand: boolean;
+  /** kind is project or phase — graded on units, not on rooms and area. */
+  isContainer: boolean;
+  /** Child properties. A threshold like photoCount, so "≥ N" stays free. */
+  unitCount: number;
   hasCoverPhoto: boolean;
   photoCount: number;
   titleEn: string | null | undefined;
@@ -86,25 +105,38 @@ export function computeQualityScore(input: QualityScoreInput): QualityScoreResul
       ),
     },
     { key: "price", label: "Price set", points: 10, earned: input.hasPrice },
-    {
-      key: "area",
-      label: input.isLand ? "Plot area set" : "Covered area set",
-      points: 10,
-      earned: input.hasArea,
-    },
-    input.isLand
-      ? {
-          key: "planning",
-          label: "Planning zone + building density",
-          points: 5,
-          earned: input.hasPlanningZoneAndDensity,
-        }
-      : {
-          key: "rooms",
-          label: "Bedrooms + bathrooms",
-          points: 5,
-          earned: input.hasBedroomsAndBathrooms,
-        },
+    // The dwelling pair — area + rooms/planning, 15 together — or, for a
+    // container, the one thing that actually makes it a listing.
+    ...(input.isContainer
+      ? [
+          {
+            key: "units",
+            label: "At least one unit",
+            points: 15,
+            earned: input.unitCount >= 1,
+          },
+        ]
+      : [
+          {
+            key: "area",
+            label: input.isLand ? "Plot area set" : "Covered area set",
+            points: 10,
+            earned: input.hasArea,
+          },
+          input.isLand
+            ? {
+                key: "planning",
+                label: "Planning zone + building density",
+                points: 5,
+                earned: input.hasPlanningZoneAndDensity,
+              }
+            : {
+                key: "rooms",
+                label: "Bedrooms + bathrooms",
+                points: 5,
+                earned: input.hasBedroomsAndBathrooms,
+              },
+        ]),
     { key: "coords", label: "Exact map location", points: 10, earned: input.hasCoords },
     { key: "deed", label: "Title deed status known", points: 10, earned: input.titleDeedSet },
     { key: "permit", label: "Permit status known", points: 5, earned: input.permitSet },
@@ -130,6 +162,8 @@ export function computeQualityScore(input: QualityScoreInput): QualityScoreResul
  */
 export interface QualityScoreSource {
   property_type: string;
+  /** standalone | project | phase | unit — containers are graded on units. */
+  kind: string;
   title: unknown;
   public_description: unknown;
   asking_price: number | string | null;
@@ -161,11 +195,20 @@ export interface QualityScoreSource {
  */
 export function buildQualityInput(
   p: QualityScoreSource,
-  facts: { hasCoverPhoto: boolean; photoCount: number; mandateActive: boolean },
+  facts: {
+    hasCoverPhoto: boolean;
+    photoCount: number;
+    mandateActive: boolean;
+    /** Child properties — only read for containers. */
+    unitCount?: number;
+  },
 ): QualityScoreInput {
   const isLand = p.property_type === "land";
+  const isContainer = p.kind === "project" || p.kind === "phase";
   return {
     isLand,
+    isContainer,
+    unitCount: facts.unitCount ?? 0,
     hasCoverPhoto: facts.hasCoverPhoto,
     photoCount: facts.photoCount,
     titleEn: (p.title as { en?: string } | null)?.en,
@@ -216,11 +259,11 @@ export async function recomputeQualityScore(
 ): Promise<QualityScoreResult | null> {
   const persist = options.persist ?? true;
 
-  const [{ data: p }, { data: media }, { data: mandates }] = await Promise.all([
+  const [{ data: p }, { data: media }, { count: unitCount }, { data: mandates }] = await Promise.all([
     supabase
       .from("properties")
       .select(
-        `property_type, title, public_description, asking_price, rent_price_month,
+        `property_type, kind, title, public_description, asking_price, rent_price_month,
          covered_area_sqm, plot_area_sqm, bedrooms, bathrooms, planning_zone_code,
          building_density_pct, location, location_approx, title_deed_status, permit_status, quality_score,
          assigned_agent_id, owner_contact_id, developer_contact_id`,
@@ -233,6 +276,12 @@ export async function recomputeQualityScore(
       .select("id, is_cover")
       .eq("property_id", propertyId)
       .eq("kind", "photo"),
+    // Containers are graded on units (2026-09-02) — a head count, so an empty
+    // project is distinguishable from a populated one without pulling rows.
+    supabase
+      .from("properties")
+      .select("id", { count: "exact", head: true })
+      .eq("parent_id", propertyId),
     // see `mandateSource` above — neither table is right for both callers.
     // Branched rather than parameterised: Supabase infers the row type from a
     // LITERAL table name, and a variable collapses it (same trap as a built
@@ -255,6 +304,7 @@ export async function recomputeQualityScore(
     buildQualityInput(p as unknown as QualityScoreSource, {
       hasCoverPhoto: (media ?? []).some((m) => m.is_cover),
       photoCount: (media ?? []).length,
+      unitCount: unitCount ?? 0,
       mandateActive: (mandates ?? []).length > 0,
     }),
   );

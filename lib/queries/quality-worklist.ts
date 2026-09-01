@@ -38,7 +38,7 @@ export async function fetchQualityWorklist(
   const { data: rows, error } = await supabase
     .from("properties")
     .select(
-      "id, reference, title, quality_score, property_type, public_description, asking_price, rent_price_month, covered_area_sqm, plot_area_sqm, bedrooms, bathrooms, planning_zone_code, building_density_pct, location, location_approx, title_deed_status, permit_status, assigned_agent_id, owner_contact_id, developer_contact_id",
+      "id, reference, title, quality_score, property_type, kind, parent_id, public_description, asking_price, rent_price_month, covered_area_sqm, plot_area_sqm, bedrooms, bathrooms, planning_zone_code, building_density_pct, location, location_approx, title_deed_status, permit_status, assigned_agent_id, owner_contact_id, developer_contact_id",
     )
     .neq("visibility", "archived")
     // spread, not a cast: `as const` gives the literal union the typed client
@@ -77,11 +77,23 @@ export async function fetchQualityWorklist(
     (mandateRes.data ?? []).map((m) => m.property_id).filter((v): v is string => Boolean(v)),
   );
 
+  // Unit counts WITHOUT a fourth query: units are properties, so a container's
+  // children are already in `properties` unless they are sold/archived — and a
+  // container whose every unit has sold is not one the worklist should chase.
+  // Undercounting that way is the safe direction; the detail page and the
+  // publish gate both count exactly.
+  const unitCount = new Map<string, number>();
+  for (const row of properties) {
+    if (!row.parent_id) continue;
+    unitCount.set(row.parent_id, (unitCount.get(row.parent_id) ?? 0) + 1);
+  }
+
   const scored: ScoredProperty[] = properties.map((p) => {
     const result = computeQualityScore(
       buildQualityInput(p as unknown as QualityScoreSource, {
         hasCoverPhoto: hasCover.has(p.id),
         photoCount: photoCount.get(p.id) ?? 0,
+        unitCount: unitCount.get(p.id) ?? 0,
         mandateActive: mandated.has(p.id),
       }),
     );

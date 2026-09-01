@@ -40,10 +40,14 @@ export interface UnitGenerationSpec {
 export interface GeneratedUnit {
   unit_number: string;
   block: string | null;
-  floor_number: number;
+  /** Null for villas — they do not stack, and writing 1 would be a lie the
+   *  units matrix and the availability share both print. */
+  floor_number: number | null;
   bedrooms: number | null;
   bathrooms: number | null;
   covered_area_sqm: number | null;
+  /** Villas normally have their own plot; a stacked unit does not. */
+  plot_area_sqm: number | null;
   asking_price: number | null;
   /** What goes after the project reference: block + number, e.g. "B301". */
   label: string;
@@ -106,11 +110,97 @@ export function generateUnits(spec: UnitGenerationSpec): GeneratedUnit[] {
         bedrooms: spec.bedrooms ?? null,
         bathrooms: spec.bathrooms ?? null,
         covered_area_sqm: spec.coveredAreaSqm ?? null,
+        plot_area_sqm: null,
         asking_price: priceFor(spec, floor),
         label: `${block ?? ""}${unit_number}`,
       });
     }
   }
 
+  return units;
+}
+
+/* ========================================================================== *
+ * VILLAS — the same job, a different shape.
+ *
+ * A villa complex has no floors, so the floor grid above cannot describe it:
+ * its labels come out "101…1NN" (an apartment number that would reach a
+ * proposal), it would write floor_number = 1 on every villa (a lie the matrix
+ * and the availability share both print), and a per-villa price ladder is not
+ * expressible at all.
+ *
+ * Kept BESIDE generateUnits rather than folded into it: every exported piece
+ * above is floor-shaped and pinned by floor-named tests, and a discriminator
+ * would push branching into generatedCount, priceFor and the spec type — four
+ * places changed to save one loop. The two share their OUTPUT type, which is
+ * the contract the action actually depends on, so the insert, the collision
+ * check and the events are untouched.
+ * ========================================================================== */
+
+export interface VillaGenerationSpec {
+  /** Goes before the number: "V" gives V01…V12. Empty means bare numbers. */
+  prefix?: string | null;
+  count: number;
+  /** First number — 1 gives V01. Mirrors `startIndex` above. */
+  startNumber?: number;
+  bedrooms?: number | null;
+  bathrooms?: number | null;
+  coveredAreaSqm?: number | null;
+  plotAreaSqm?: number | null;
+  /** Price of the first villa. */
+  basePrice?: number | null;
+  /** Added per villa after the first — a plot-by-plot ladder, if there is one. */
+  pricePerVilla?: number | null;
+}
+
+/** How many rows a villa spec would produce, without building them. */
+export function villaCount(spec: Pick<VillaGenerationSpec, "count">): number {
+  return Number.isInteger(spec.count) && spec.count > 0 ? spec.count : 0;
+}
+
+/**
+ * Zero-padded to the width of the run: 12 villas give V01…V12, not V1…V12.
+ * The units matrix and the availability share both order by `unit_number` as
+ * TEXT, so unpadded numbers read V1, V10, V11, V2 — the floor scheme already
+ * has that wart above floor 9 and one instance of it is enough.
+ */
+export function villaNumberFor(prefix: string | null, n: number, width: number): string {
+  return `${prefix ?? ""}${String(n).padStart(width, "0")}`;
+}
+
+/** Price of the nth villa (n counted from the first). Null base ⇒ null price. */
+export function villaPriceFor(
+  spec: Pick<VillaGenerationSpec, "basePrice" | "pricePerVilla">,
+  offset: number,
+): number | null {
+  if (spec.basePrice === null || spec.basePrice === undefined) return null;
+  return spec.basePrice + offset * (spec.pricePerVilla ?? 0);
+}
+
+export function generateVillaUnits(spec: VillaGenerationSpec): GeneratedUnit[] {
+  const total = villaCount(spec);
+  if (total === 0) return [];
+  const start = spec.startNumber ?? 1;
+  const prefix = spec.prefix?.trim() || null;
+  // width of the LAST number, so the whole run pads consistently
+  const width = Math.max(2, String(start + total - 1).length);
+
+  const units: GeneratedUnit[] = [];
+  for (let i = 0; i < total; i++) {
+    const unit_number = villaNumberFor(prefix, start + i, width);
+    units.push({
+      unit_number,
+      // `block` is the repricing/scope axis (blocksOf, applyUnitType) — a "V"
+      // block would show up as a scope that means nothing. Left free.
+      block: null,
+      floor_number: null,
+      bedrooms: spec.bedrooms ?? null,
+      bathrooms: spec.bathrooms ?? null,
+      covered_area_sqm: spec.coveredAreaSqm ?? null,
+      plot_area_sqm: spec.plotAreaSqm ?? null,
+      asking_price: villaPriceFor(spec, i),
+      label: unit_number,
+    });
+  }
   return units;
 }

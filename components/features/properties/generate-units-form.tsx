@@ -18,6 +18,8 @@ import { PROPERTY_TYPES } from "@/lib/validators/properties";
 import {
   generatedCount,
   generateUnits,
+  generateVillaUnits,
+  villaCount,
   MAX_GENERATED_UNITS,
 } from "@/lib/services/unit-generator";
 import { formatMoney } from "@/lib/utils/format";
@@ -59,14 +61,23 @@ export function GenerateUnitsForm({
     }
   }, [state.savedAt]);
 
+  // Villas do not stack, so they get their own fields and their own generator
+  // — see unit-generator.ts. The floor group stays the default and keeps its
+  // ids, because the e2e drives this form by #gen-block and friends.
+  const [layout, setLayout] = useState<"floors" | "villas">("floors");
+  const isVillas = layout === "villas";
+
   const [block, setBlock] = useState("A");
   const [floorFrom, setFloorFrom] = useState("1");
   const [floorTo, setFloorTo] = useState("5");
   const [perFloor, setPerFloor] = useState("4");
   const [basePrice, setBasePrice] = useState("");
   const [pricePerFloor, setPricePerFloor] = useState("");
+  const [villaCountRaw, setVillaCountRaw] = useState("6");
+  const [villaPrefix, setVillaPrefix] = useState("V");
+  const [pricePerVilla, setPricePerVilla] = useState("");
 
-  const spec = {
+  const floorSpec = {
     block,
     floorFrom: Number(floorFrom),
     floorTo: Number(floorTo),
@@ -74,15 +85,29 @@ export function GenerateUnitsForm({
     basePrice: basePrice ? Number(basePrice) : null,
     pricePerFloor: pricePerFloor ? Number(pricePerFloor) : null,
   };
-  const valid =
-    Number.isInteger(spec.floorFrom) &&
-    Number.isInteger(spec.floorTo) &&
-    Number.isInteger(spec.perFloor) &&
-    spec.floorTo >= spec.floorFrom &&
-    spec.perFloor > 0;
-  const count = valid ? generatedCount(spec) : 0;
+  const villaSpec = {
+    prefix: villaPrefix,
+    count: Number(villaCountRaw),
+    basePrice: basePrice ? Number(basePrice) : null,
+    pricePerVilla: pricePerVilla ? Number(pricePerVilla) : null,
+  };
+  const valid = isVillas
+    ? Number.isInteger(villaSpec.count) && villaSpec.count > 0
+    : Number.isInteger(floorSpec.floorFrom) &&
+      Number.isInteger(floorSpec.floorTo) &&
+      Number.isInteger(floorSpec.perFloor) &&
+      floorSpec.floorTo >= floorSpec.floorFrom &&
+      floorSpec.perFloor > 0;
+  const count = valid ? (isVillas ? villaCount(villaSpec) : generatedCount(floorSpec)) : 0;
   const tooMany = count > MAX_GENERATED_UNITS;
-  const preview = valid && count > 0 && !tooMany ? generateUnits(spec) : [];
+  // THE SAME function the action calls — a second implementation for display
+  // could disagree with the one that inserts, which is the worst bug here.
+  const preview =
+    valid && count > 0 && !tooMany
+      ? isVillas
+        ? generateVillaUnits(villaSpec)
+        : generateUnits(floorSpec)
+      : [];
   const first = preview[0];
   const last = preview[preview.length - 1];
 
@@ -92,14 +117,68 @@ export function GenerateUnitsForm({
       className="flex flex-col gap-3 rounded-[10px] border border-border bg-surface p-4"
     >
       <input type="hidden" name="project_id" value={projectId} />
-      <h3 className="text-base font-semibold text-text-1">Generate a block</h3>
+      {/* the discriminator the action parses — Object.fromEntries only sees
+          what is in the DOM, so this must be a real input */}
+      <input type="hidden" name="layout" value={layout} />
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-base font-semibold text-text-1">
+          {isVillas ? "Generate the villas" : "Generate a block"}
+        </h3>
+        <div className="flex rounded-lg border border-border p-0.5 text-xs">
+          {(["floors", "villas"] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => setLayout(mode)}
+              aria-pressed={layout === mode}
+              className={
+                layout === mode
+                  ? "rounded-[6px] bg-accent-500 px-2 py-1 font-medium text-white"
+                  : "rounded-[6px] px-2 py-1 text-text-2 hover:bg-surface-2"
+              }
+            >
+              {mode === "floors" ? "Floors" : "Villas"}
+            </button>
+          ))}
+        </div>
+      </div>
       <p className="-mt-1 text-xs text-text-3">
-        Floors repeat and layouts repeat — describe the pattern once. Every unit inherits the
-        project exactly as a single added unit does.
+        {isVillas
+          ? "Villas do not stack — describe how many and how they are numbered. Every villa inherits the project exactly as a single added unit does."
+          : "Floors repeat and layouts repeat — describe the pattern once. Every unit inherits the project exactly as a single added unit does."}
       </p>
 
       <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        <div className="flex flex-col gap-1.5">
+        {isVillas ? (
+          <>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="gen-villa-count">How many villas</Label>
+              <Input
+                id="gen-villa-count"
+                name="villa_count"
+                type="number"
+                min="1"
+                value={villaCountRaw}
+                onChange={(e) => setVillaCountRaw(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="gen-villa-prefix">Numbering</Label>
+              <Input
+                id="gen-villa-prefix"
+                name="villa_prefix"
+                value={villaPrefix}
+                onChange={(e) => setVillaPrefix(e.target.value)}
+                placeholder="V"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="gen-plot">Plot m² each</Label>
+              <Input id="gen-plot" name="plot_area_sqm" type="number" min="0" step="0.01" />
+            </div>
+          </>
+        ) : null}
+        <div className={isVillas ? "hidden" : "flex flex-col gap-1.5"}>
           <Label htmlFor="gen-block">Block</Label>
           <Input
             id="gen-block"
@@ -109,7 +188,7 @@ export function GenerateUnitsForm({
             placeholder="A"
           />
         </div>
-        <div className="flex flex-col gap-1.5">
+        <div className={isVillas ? "hidden" : "flex flex-col gap-1.5"}>
           <Label htmlFor="gen-floor-from">Floors from</Label>
           <Input
             id="gen-floor-from"
@@ -120,7 +199,7 @@ export function GenerateUnitsForm({
             onChange={(e) => setFloorFrom(e.target.value)}
           />
         </div>
-        <div className="flex flex-col gap-1.5">
+        <div className={isVillas ? "hidden" : "flex flex-col gap-1.5"}>
           <Label htmlFor="gen-floor-to">Floors to</Label>
           <Input
             id="gen-floor-to"
@@ -131,7 +210,7 @@ export function GenerateUnitsForm({
             onChange={(e) => setFloorTo(e.target.value)}
           />
         </div>
-        <div className="flex flex-col gap-1.5">
+        <div className={isVillas ? "hidden" : "flex flex-col gap-1.5"}>
           <Label htmlFor="gen-per-floor">Units per floor</Label>
           <Input
             id="gen-per-floor"
@@ -144,7 +223,7 @@ export function GenerateUnitsForm({
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="gen-type">Type</Label>
-          <Select name="property_type" defaultValue="apartment">
+          <Select key={layout} name="property_type" defaultValue={isVillas ? "villa" : "apartment"}>
             <SelectTrigger id="gen-type">
               <SelectValue />
             </SelectTrigger>
@@ -181,7 +260,21 @@ export function GenerateUnitsForm({
             onChange={(e) => setBasePrice(e.target.value)}
           />
         </div>
-        <div className="flex flex-col gap-1.5">
+        {isVillas ? (
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="gen-villa-step">+ € per villa</Label>
+            <Input
+              id="gen-villa-step"
+              name="price_per_villa"
+              type="number"
+              min="0"
+              step="0.01"
+              value={pricePerVilla}
+              onChange={(e) => setPricePerVilla(e.target.value)}
+            />
+          </div>
+        ) : null}
+        <div className={isVillas ? "hidden" : "flex flex-col gap-1.5"}>
           <Label htmlFor="gen-price-step">+ € per floor</Label>
           <Input
             id="gen-price-step"
@@ -201,8 +294,8 @@ export function GenerateUnitsForm({
       >
         {tooMany ? (
           <span className="text-danger">
-            That is {count} units — the limit is {MAX_GENERATED_UNITS} per run. Narrow the floor
-            range.
+            That is {count} units — the limit is {MAX_GENERATED_UNITS} per run.{" "}
+            {isVillas ? "Generate them in batches." : "Narrow the floor range."}
           </span>
         ) : first && last ? (
           <>
@@ -222,7 +315,11 @@ export function GenerateUnitsForm({
             ) : null}
           </>
         ) : (
-          <span className="text-text-3">Set a floor range to see what will be created.</span>
+          <span className="text-text-3">
+            {isVillas
+              ? "Set how many villas to see what will be created."
+              : "Set a floor range to see what will be created."}
+          </span>
         )}
       </div>
 
@@ -234,7 +331,11 @@ export function GenerateUnitsForm({
       <div>
         <Button type="submit" size="sm" disabled={pending || tooMany || count === 0}>
           <Rows3 className="size-4" />
-          {pending ? "Generating…" : count > 0 ? `Generate ${count} units` : "Generate units"}
+          {pending
+            ? "Generating…"
+            : count > 0
+              ? `Generate ${count} ${isVillas ? "villas" : "units"}`
+              : "Generate units"}
         </Button>
       </div>
     </form>
