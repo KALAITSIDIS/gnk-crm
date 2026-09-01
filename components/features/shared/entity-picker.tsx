@@ -20,6 +20,7 @@ export function EntityPicker({
   placeholder = "Search…",
   contactTypes,
   hint,
+  emptyHint,
   onChange,
 }: {
   name: string;
@@ -31,6 +32,8 @@ export function EntityPicker({
   contactTypes?: readonly string[];
   /** Small line under the field — say what the search is narrowed to. */
   hint?: string;
+  /** Shown inside the "no matches" row — point at the way out (e.g. create). */
+  emptyHint?: string;
   /** Fires when the selection changes (choose or clear) — for dependent UI. */
   onChange?: (option: EntityOption | null) => void;
 }) {
@@ -42,15 +45,28 @@ export function EntityPicker({
   const [query, setQuery] = useState("");
   const [options, setOptions] = useState<EntityOption[]>([]);
   const [open, setOpen] = useState(false);
+  const [searching, setSearching] = useState(false);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Newest query wins: a slow earlier search must not overwrite a later one. */
+  const seq = useRef(0);
   const inputId = `picker-${name}`;
 
   const onQueryChange = (value: string) => {
     setQuery(value);
     setOpen(true);
     if (debounce.current) clearTimeout(debounce.current);
+    if (!value.trim()) {
+      setOptions([]);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    const mine = ++seq.current;
     debounce.current = setTimeout(async () => {
-      setOptions(await searchEntities(kind, value, contactTypes));
+      const found = await searchEntities(kind, value, contactTypes);
+      if (mine !== seq.current) return;
+      setOptions(found);
+      setSearching(false);
     }, 300);
   };
 
@@ -102,9 +118,21 @@ export function EntityPicker({
             autoComplete="off"
             className="pl-8"
           />
-          {open && options.length > 0 ? (
+          {/* A dropdown that renders ONLY on hits is indistinguishable from a
+              broken search — the agent cannot tell "still looking", "nothing
+              here" and "this field is dead" apart. All three states show
+              (found by the 2026-09-01 browser-agent session). */}
+          {open && query.trim() ? (
             <ul className="absolute z-20 mt-1 max-h-48 w-full divide-y divide-border overflow-y-auto rounded-lg border border-border bg-surface shadow-md">
-              {options.map((o) => (
+              {searching ? (
+                <li className="px-3 py-2 text-sm text-text-3">Searching…</li>
+              ) : options.length === 0 ? (
+                <li className="px-3 py-2 text-sm text-text-3">
+                  No matches for “{query.trim()}”.
+                  {emptyHint ? <span className="block text-xs">{emptyHint}</span> : null}
+                </li>
+              ) : (
+                options.map((o) => (
                 <li key={o.id}>
                   <button
                     type="button"
@@ -124,7 +152,8 @@ export function EntityPicker({
                     ) : null}
                   </button>
                 </li>
-              ))}
+                ))
+              )}
             </ul>
           ) : null}
         </div>
