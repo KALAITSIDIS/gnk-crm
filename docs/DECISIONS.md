@@ -3,6 +3,26 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-02 · T-search-empty-state (no migration) — the first
+  browser-agent session's one real UI bug.** The operator ran Claude in
+  Chrome against production as a working agent and reported four issues;
+  three were not app bugs (two retracted by the operator, one the known
+  Radix-select synthetic-click quirk — the report's own evidence agreed,
+  since selecting by option TEXT landed correctly everywhere). The fourth
+  was real: `EntityPicker` rendered its dropdown ONLY on hits
+  (`open && options.length > 0`), so "searching", "no matches" and "this
+  field is broken" were the same picture — which is exactly how the agent
+  read it. All three states now render, the newest query wins via a
+  sequence guard (a slow earlier search could overwrite a later one), and
+  an optional `emptyHint` points at the way out ("Use 'New owner' below").
+  Pinned by an e2e in create-wizard-party.spec.
+
+  Also from that session, and NOT bugs: a doubled property title in
+  PAF0004 is corrupted DATA, not a render fault — the automation typed
+  into a non-empty field and browser typing APPENDS. `docs/
+  AGENT_TEST_PROMPT.md` now front-loads that trap (and the Radix one) so
+  the next session neither repeats it nor re-reports it.
+
 - **2026-09-02 · T-drop-sold-at (migration 0083, DESTRUCTIVE — applied
   hosted AFTER the deploy, the 0055/0057 order) — DB-12, the wave's last
   item.** `properties.sold_at` was created in 0001 and never written or

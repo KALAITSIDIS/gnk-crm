@@ -114,3 +114,24 @@ test("choosing a developer writes their terms onto the new property", async ({ p
   await admin.from("properties").delete().eq("id", property!.id);
   await admin.from("contacts").delete().eq("id", developer!.id);
 });
+
+/**
+ * A search box that renders nothing on zero hits is indistinguishable from a
+ * broken one — the agent cannot tell "still looking", "nothing here" and "this
+ * field is dead" apart, and reports it as a bug (a browser-agent session did
+ * exactly that on 2026-09-01). The empty state is the fix; this pins it.
+ */
+test("the owner search says so when it finds nothing, and points at the way out", async ({
+  page,
+}) => {
+  await page.goto("/properties/new", { waitUntil: "networkidle" });
+
+  const search = page.getByPlaceholder(/search owners/i);
+  await expect(search).toBeVisible();
+  // a string no seeded contact can match
+  await search.fill("zzzznobody");
+
+  const empty = page.getByText(/no matches for/i);
+  await expect(empty, "zero hits must SAY zero hits").toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/use .New owner. below to create one/i)).toBeVisible();
+});

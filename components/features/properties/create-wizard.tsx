@@ -530,6 +530,11 @@ export function CreatePropertyWizard({
                   source === "developer" ? ["developer"] : ["owner", "seller", "landlord"]
                 }
                 hint="Their standard terms fill the rest — every value stays editable."
+                emptyHint={
+                  source === "developer"
+                    ? "Use “New developer” below to create one."
+                    : "Use “New owner” below to create one."
+                }
                 initial={party ?? (source === seed?.source ? seedParty : null)}
                 onChange={onPartyChange}
               />
