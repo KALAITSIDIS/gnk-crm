@@ -33,6 +33,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { AreaOption, DistrictOption } from "@/components/features/properties/filters";
+import {
+  generateUnits,
+  generateVillaUnits,
+  generatedCount,
+  villaCount,
+  MAX_GENERATED_UNITS,
+} from "@/lib/services/unit-generator";
+import { formatMoney } from "@/lib/utils/format";
 
 const initialState: PropertyActionState = { error: null };
 
@@ -70,6 +78,12 @@ const DRAFT_FIELDS = [
   "bedrooms",
   "bathrooms",
   "internal_notes",
+  // per-unit fields of a project's layout section (2026-09-02) — uncontrolled
+  // like the rest, so a draft carries them the same way
+  "gen_bedrooms",
+  "gen_bathrooms",
+  "gen_covered_area_sqm",
+  "gen_plot_area_sqm",
 ] as const;
 
 interface Draft {
@@ -87,7 +101,39 @@ interface Draft {
   /** optional for drafts saved before 0077 — absent reads as "" */
   registrationNo?: string;
   fields: Record<string, string>;
+  /** the project layout section's controlled half — optional for older drafts */
+  gen?: GenDraft;
 }
+
+/**
+ * The controlled inputs of a project's layout section (they drive the live
+ * preview, so they must be state, and state travels in the draft as values —
+ * the uncontrolled per-unit inputs go through DRAFT_FIELDS instead).
+ * `layout: ""` means "follow the property type": apartments stack, the rest
+ * do not.
+ */
+interface GenDraft {
+  layout: "" | "floors" | "villas";
+  villaCount: string;
+  villaPrefix: string;
+  block: string;
+  floorFrom: string;
+  floorTo: string;
+  perFloor: string;
+  basePrice: string;
+  priceStep: string;
+}
+const DEFAULT_GEN: GenDraft = {
+  layout: "",
+  villaCount: "",
+  villaPrefix: "V",
+  block: "A",
+  floorFrom: "",
+  floorTo: "",
+  perFloor: "",
+  basePrice: "",
+  priceStep: "",
+};
 
 /** Every access is wrapped: localStorage throws outright in some privacy modes,
  *  and a crashing form is far worse than a lost draft. */
@@ -167,6 +213,8 @@ export function CreatePropertyWizard({
   // controlled like address: the registration duplicate check needs the live
   // value (0077, DB-05)
   const [registrationNo, setRegistrationNo] = useState<string>("");
+  const [gen, setGen] = useState<GenDraft>(DEFAULT_GEN);
+  const setGenField = (k: keyof GenDraft, v: string) => setGen((g) => ({ ...g, [k]: v }));
   // controlled so a restored draft can put the area back; Radix Select
   // cannot be repopulated by writing to a DOM node the way the plain
   // inputs below can.
@@ -235,6 +283,7 @@ export function CreatePropertyWizard({
     address,
     registrationNo,
     fields: readFields(),
+    gen,
   });
 
   const scheduleSave = () => {
@@ -295,6 +344,7 @@ export function CreatePropertyWizard({
     setAreaId(d.areaId);
     setAddress(d.address);
     setRegistrationNo(d.registrationNo ?? "");
+    setGen(d.gen ?? DEFAULT_GEN);
     setStep(d.step);
     setDraftFields(d.fields);
     setRestoredAt(d.savedAt);
@@ -310,7 +360,7 @@ export function CreatePropertyWizard({
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, party, kind, propertyType, transaction, districtId, areaId, address, registrationNo, step]);
+  }, [source, party, kind, propertyType, transaction, districtId, areaId, address, registrationNo, gen, step]);
 
   /**
    * A FAILED submit must not lose the draft. The draft is dropped when the form
@@ -348,6 +398,8 @@ export function CreatePropertyWizard({
     setDistrictId("");
     setAreaId("");
     setAddress("");
+    setRegistrationNo("");
+    setGen(DEFAULT_GEN);
     const form = formRef.current;
     for (const n of DRAFT_FIELDS) {
       const el = form?.elements.namedItem(n);
@@ -437,6 +489,56 @@ export function CreatePropertyWizard({
   const district = districts.find((d) => d.id === districtId);
   const districtAreas = areas.filter((a) => a.districtId === districtId);
   const isLand = propertyType === "land";
+  // A project or phase is a CONTAINER: units carry the prices, it cannot be
+  // reserved and buyers are never matched to it (reservations.ts:71,
+  // queries/matches.ts:92). Step 2 asks it how it is laid out, not how many
+  // bedrooms it has. `phase` is not creatable here; checking both keeps the
+  // rule honest against the code that enforces it.
+  const isContainer = kind === "project" || kind === "phase";
+  const genLayout: "floors" | "villas" =
+    gen.layout || (propertyType === "apartment" ? "floors" : "villas");
+  const genFloorSpec = {
+    block: gen.block,
+    floorFrom: Number(gen.floorFrom),
+    floorTo: Number(gen.floorTo),
+    perFloor: Number(gen.perFloor),
+    basePrice: gen.basePrice ? Number(gen.basePrice) : null,
+    pricePerFloor: gen.priceStep ? Number(gen.priceStep) : null,
+  };
+  const genVillaSpec = {
+    prefix: gen.villaPrefix,
+    count: Number(gen.villaCount),
+    basePrice: gen.basePrice ? Number(gen.basePrice) : null,
+    pricePerVilla: gen.priceStep ? Number(gen.priceStep) : null,
+  };
+  // blank means "later" — Number("") is 0, which must not read as floor 0
+  const genValid =
+    genLayout === "villas"
+      ? Number.isInteger(genVillaSpec.count) && genVillaSpec.count > 0
+      : gen.floorFrom !== "" &&
+        gen.floorTo !== "" &&
+        gen.perFloor !== "" &&
+        Number.isInteger(genFloorSpec.floorFrom) &&
+        Number.isInteger(genFloorSpec.floorTo) &&
+        Number.isInteger(genFloorSpec.perFloor) &&
+        genFloorSpec.floorTo >= genFloorSpec.floorFrom &&
+        genFloorSpec.perFloor > 0;
+  const genCount =
+    isContainer && genValid
+      ? genLayout === "villas"
+        ? villaCount(genVillaSpec)
+        : generatedCount(genFloorSpec)
+      : 0;
+  const genTooMany = genCount > MAX_GENERATED_UNITS;
+  // the SAME functions the action calls — the preview must be what gets written
+  const genPreview =
+    genCount > 0 && !genTooMany
+      ? genLayout === "villas"
+        ? generateVillaUnits(genVillaSpec)
+        : generateUnits(genFloorSpec)
+      : [];
+  const genFirst = genPreview[0];
+  const genLast = genPreview[genPreview.length - 1];
   // sale_or_rent listings carry both prices
   const showRent = transaction === "rent" || transaction === "sale_or_rent";
   const showAsking = transaction !== "rent";
@@ -461,6 +563,7 @@ export function CreatePropertyWizard({
       <input type="hidden" name="property_type" value={propertyType} />
       <input type="hidden" name="transaction_type" value={transaction} />
       <input type="hidden" name="district_id" value={districtId} />
+      {isContainer ? <input type="hidden" name="gen_layout" value={genLayout} /> : null}
 
       {/* A prefilled form that does not say it is prefilled is the dangerous
           version of this feature: the risk is a copied price accepted without
@@ -495,7 +598,9 @@ export function CreatePropertyWizard({
       <div className="flex items-center gap-2 text-sm text-text-2">
         <span className={step === 1 ? "font-semibold text-text-1" : ""}>1. Kind & location</span>
         <ArrowRight className="size-3.5" />
-        <span className={step === 2 ? "font-semibold text-text-1" : ""}>2. Core details</span>
+        <span className={step === 2 ? "font-semibold text-text-1" : ""}>
+          2. {isContainer ? "Development layout" : "Core details"}
+        </span>
       </div>
 
       {step === 1 ? (
@@ -552,12 +657,16 @@ export function CreatePropertyWizard({
                 <SelectContent>
                   {CREATABLE_KINDS.map((k) => (
                     <SelectItem key={k} value={k}>
-                      {k === "standalone" ? "Standalone listing" : "Developer project"}
+                      {k === "standalone" ? "One property" : "A development with units"}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-text-3">Units are added from the project page later.</p>
+              <p className="text-xs text-text-3">
+                {kind === "project"
+                  ? "Step 2 asks how it is laid out and creates the units — or leave that for later."
+                  : "A single house, apartment, plot or premises."}
+              </p>
             </div>
 
             <div className="flex flex-col gap-2">
@@ -708,9 +817,11 @@ export function CreatePropertyWizard({
               </div>
             ) : null}
 
-            {isLand ? (
+            {isLand || isContainer ? (
               <div className="flex flex-col gap-2">
-                <Label htmlFor="plot_area_sqm">Plot area (m²)</Label>
+                <Label htmlFor="plot_area_sqm">
+                  {isContainer ? "Site plot area (m²)" : "Plot area (m²)"}
+                </Label>
                 <Input
                   id="plot_area_sqm"
                   name="plot_area_sqm"
@@ -767,6 +878,212 @@ export function CreatePropertyWizard({
             </div>
           </div>
 
+          {isContainer ? (
+            <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-2 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-text-1">Units</h3>
+                  <p className="text-xs text-text-3">
+                    Describe the development once and every unit is created with it. Leave the
+                    count blank to add them from the units page later.
+                  </p>
+                </div>
+                <div className="flex rounded-lg border border-border p-0.5 text-xs">
+                  {(["floors", "villas"] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setGenField("layout", mode)}
+                      aria-pressed={genLayout === mode}
+                      className={
+                        genLayout === mode
+                          ? "rounded-[6px] bg-accent-500 px-2 py-1 font-medium text-white"
+                          : "rounded-[6px] px-2 py-1 text-text-2 hover:bg-surface-2"
+                      }
+                    >
+                      {mode === "floors" ? "Floors" : "Villas"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-3">
+                {genLayout === "villas" ? (
+                  <>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="gen_villa_count">How many villas</Label>
+                      <Input
+                        id="gen_villa_count"
+                        name="gen_villa_count"
+                        type="number"
+                        min="1"
+                        value={gen.villaCount}
+                        onChange={(e) => setGenField("villaCount", e.target.value)}
+                        placeholder="Leave blank to add later"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="gen_villa_prefix">Numbering</Label>
+                      <Input
+                        id="gen_villa_prefix"
+                        name="gen_villa_prefix"
+                        value={gen.villaPrefix}
+                        onChange={(e) => setGenField("villaPrefix", e.target.value)}
+                        placeholder="V"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="gen_plot_area_sqm">Plot m² each</Label>
+                      <Input
+                        id="gen_plot_area_sqm"
+                        name="gen_plot_area_sqm"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        defaultValue={draftFields?.gen_plot_area_sqm ?? ""}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="gen_block">Block</Label>
+                      <Input
+                        id="gen_block"
+                        name="gen_block"
+                        value={gen.block}
+                        onChange={(e) => setGenField("block", e.target.value)}
+                        placeholder="A"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="gen_floor_from">Floors from</Label>
+                      <Input
+                        id="gen_floor_from"
+                        name="gen_floor_from"
+                        type="number"
+                        min="0"
+                        value={gen.floorFrom}
+                        onChange={(e) => setGenField("floorFrom", e.target.value)}
+                        placeholder="Leave blank to add later"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="gen_floor_to">Floors to</Label>
+                      <Input
+                        id="gen_floor_to"
+                        name="gen_floor_to"
+                        type="number"
+                        min="0"
+                        value={gen.floorTo}
+                        onChange={(e) => setGenField("floorTo", e.target.value)}
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="gen_per_floor">Units per floor</Label>
+                      <Input
+                        id="gen_per_floor"
+                        name="gen_per_floor"
+                        type="number"
+                        min="1"
+                        value={gen.perFloor}
+                        onChange={(e) => setGenField("perFloor", e.target.value)}
+                      />
+                    </div>
+                  </>
+                )}
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="gen_bedrooms">Beds each</Label>
+                  <Input
+                    id="gen_bedrooms"
+                    name="gen_bedrooms"
+                    type="number"
+                    min="0"
+                    defaultValue={draftFields?.gen_bedrooms ?? ""}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="gen_bathrooms">Baths each</Label>
+                  <Input
+                    id="gen_bathrooms"
+                    name="gen_bathrooms"
+                    type="number"
+                    min="0"
+                    defaultValue={draftFields?.gen_bathrooms ?? ""}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="gen_covered_area_sqm">m² each</Label>
+                  <Input
+                    id="gen_covered_area_sqm"
+                    name="gen_covered_area_sqm"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    defaultValue={draftFields?.gen_covered_area_sqm ?? ""}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="gen_base_price">First price €</Label>
+                  <Input
+                    id="gen_base_price"
+                    name="gen_base_price"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={gen.basePrice}
+                    onChange={(e) => setGenField("basePrice", e.target.value)}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="gen_price_step">
+                    {genLayout === "villas" ? "+ € per villa" : "+ € per floor"}
+                  </Label>
+                  <Input
+                    id="gen_price_step"
+                    name="gen_price_step"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={gen.priceStep}
+                    onChange={(e) => setGenField("priceStep", e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div
+                data-testid="wizard-units-preview"
+                className="rounded-lg bg-surface px-3 py-2 text-sm text-text-2"
+              >
+                {genTooMany ? (
+                  <span className="text-danger">
+                    That is {genCount} units — the limit is {MAX_GENERATED_UNITS} per run. Create
+                    the first {MAX_GENERATED_UNITS} here and the rest from the units page.
+                  </span>
+                ) : genFirst && genLast ? (
+                  <>
+                    Creates <span className="font-semibold text-text-1">{genCount}</span>{" "}
+                    {genLayout === "villas" ? "villas" : "units"},{" "}
+                    <span className="font-mono text-text-1">{genFirst.label}</span> through{" "}
+                    <span className="font-mono text-text-1">{genLast.label}</span>
+                    {genFirst.asking_price !== null && genLast.asking_price !== null ? (
+                      <>
+                        {" · "}
+                        {formatMoney(genFirst.asking_price)} to {formatMoney(genLast.asking_price)}
+                      </>
+                    ) : null}
+                    . References get the project&apos;s prefix on creation and never change.
+                  </>
+                ) : (
+                  <span className="text-text-3">
+                    No units yet — the project will land on its units page, where they can be
+                    added any time.
+                  </span>
+                )}
+              </div>
+            </div>
+          ) : null}
+
           {duplicate ? (
             <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 px-3 py-2 text-sm">
               <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
@@ -812,7 +1129,13 @@ export function CreatePropertyWizard({
               <ArrowLeft className="size-4" /> Back
             </Button>
             <Button type="submit" disabled={pending}>
-              {pending ? "Creating…" : "Create property"}
+              {pending
+                ? "Creating…"
+                : isContainer && genCount > 0 && !genTooMany
+                  ? `Create project + ${genCount} ${genLayout === "villas" ? "villas" : "units"}`
+                  : isContainer
+                    ? "Create project"
+                    : "Create property"}
             </Button>
           </div>
         </div>

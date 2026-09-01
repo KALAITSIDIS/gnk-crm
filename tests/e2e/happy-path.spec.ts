@@ -99,7 +99,7 @@ test.describe.serial("critical path", () => {
     await page.goto("/properties/new", { waitUntil: "networkidle" });
 
     // Step 1 — classification. Kind and Transaction already default to
-    // "Standalone listing" / "Sale", so only the two empty ones need setting.
+    // "One property" / "Sale", so only the two empty ones need setting.
     await selectOption(page, /^Property type$/, /apartment|villa|house/i);
     await selectOption(page, /^District$/, /paphos/i);
     // NB: scope to <main> — /next/i also matches the Next.js dev-tools button.

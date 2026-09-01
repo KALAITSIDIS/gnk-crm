@@ -65,16 +65,21 @@ test("choosing a developer writes their terms onto the new property", async ({ p
     (district!.name as { en?: string }).en!,
   );
 
-  // the source also chose the kind
-  await expect(page.getByLabel("Kind")).toContainText("Developer project");
+  // the source also chose the kind (relabelled 2026-09-02: it now says what
+  // happens next instead of "Developer project")
+  await expect(page.getByLabel("Kind")).toContainText("A development with units");
 
   await page.getByLabel("Property type").click();
   await page.getByRole("option", { name: "Apartment", exact: true }).click();
   await page.getByRole("button", { name: /Continue/ }).click();
   await page.getByLabel("Title (EN)").fill(`Wizard party ${tag}`);
-  await page.getByRole("button", { name: /Create property/ }).click();
+  // a project's submit says so; the count is left blank so it stays "Create project"
+  await page.getByRole("button", { name: /^Create project$/ }).click();
 
-  await page.waitForURL(/\/properties\/[0-9a-f-]{36}$/);
+  // a PROJECT lands on its units matrix (2026-09-02) — the count was left
+  // blank here, so it arrives empty and the page says so
+  await page.waitForURL(/\/properties\/[0-9a-f-]{36}\/units$/);
+  await expect(page.getByText(/Not a listing until it has units/)).toBeVisible();
 
   const { data: created } = await admin
     .from("properties")
