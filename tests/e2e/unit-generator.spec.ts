@@ -260,3 +260,105 @@ test.describe("inheritance drift", () => {
     await admin.from("properties").delete().eq("id", project.id);
   });
 });
+
+/**
+ * Villas do not stack (2026-09-02). The floor grid would have numbered them
+ * 101…1NN and written floor_number = 1 on each — an apartment number and a
+ * lie, both of which reach a proposal through the availability share.
+ */
+test.describe("villa complexes", () => {
+  test("generates numbered villas with no floor, and prices the row", async ({ page }) => {
+    const admin = svc();
+    const { orgId } = await fixtureProfile(admin);
+    const project = await seedProject(admin, orgId);
+
+    await page.goto(`/properties/${project.id}/units`, { waitUntil: "networkidle" });
+
+    // switch the generator to villas
+    await page.getByRole("button", { name: /^Villas$/ }).click();
+    await page.locator("#gen-villa-count").fill("4");
+    await page.locator("#gen-villa-prefix").fill("V");
+    await page.locator("#gen-base-price").fill("800000");
+    await page.locator("#gen-villa-step").fill("50000");
+
+    // the preview is built by the SAME function the action calls
+    await expect(page.getByTestId("generate-preview")).toContainText(`${project.reference}-V01`);
+    await expect(page.getByTestId("generate-preview")).toContainText(`${project.reference}-V04`);
+
+    await page.getByRole("button", { name: /^Generate 4 villas$/ }).click();
+
+    await expect
+      .poll(async () => {
+        const { count } = await admin
+          .from("properties")
+          .select("id", { count: "exact", head: true })
+          .eq("parent_id", project.id);
+        return count ?? 0;
+      }, { timeout: 20_000 })
+      .toBe(4);
+
+    const { data: villas } = await admin
+      .from("properties")
+      .select("reference, unit_number, floor_number, asking_price, kind, visibility")
+      .eq("parent_id", project.id)
+      .order("unit_number");
+
+    // padded, so text ordering reads correctly past nine
+    expect(villas!.map((v) => v.unit_number)).toEqual(["V01", "V02", "V03", "V04"]);
+    expect(villas!.map((v) => v.reference)).toEqual([
+      `${project.reference}-V01`,
+      `${project.reference}-V02`,
+      `${project.reference}-V03`,
+      `${project.reference}-V04`,
+    ]);
+    // the whole point: no invented floor
+    expect(villas!.every((v) => v.floor_number === null), "villas have no floor").toBe(true);
+    expect(villas!.map((v) => Number(v.asking_price))).toEqual([800000, 850000, 900000, 950000]);
+    expect(villas!.every((v) => v.kind === "unit")).toBe(true);
+    // the visibility exclusion holds on this path too
+    expect(villas!.every((v) => v.visibility === "private")).toBe(true);
+  });
+});
+
+/**
+ * The incident this whole change exists for: a project with no units scored
+ * 100/100 and went public, where no buyer could be matched to it and nobody
+ * could reserve it.
+ */
+test.describe("an empty container is not a listing", () => {
+  test("scores the missing units and refuses to publish", async ({ page }) => {
+    const admin = svc();
+    const { orgId } = await fixtureProfile(admin);
+    const project = await seedProject(admin, orgId);
+
+    await page.goto(`/properties/${project.id}`, { waitUntil: "networkidle" });
+    // The score no longer awards a dwelling's points to a container: an empty
+    // project cannot reach 100 (the item list itself is pinned in
+    // quality-score.test.ts — the ring only shows it on hover).
+    await expect(page.getByLabel(/quality score \d+ of 100/i)).toBeVisible({ timeout: 15_000 });
+    const ringLabel = await page.getByLabel(/quality score \d+ of 100/i).getAttribute("aria-label");
+    expect(Number(ringLabel!.match(/\d+/)![0]), "an empty container is not perfect").toBeLessThan(100);
+
+    // try to publish it
+    await page.getByRole("tab", { name: /^details$/i }).click();
+    await page.getByLabel(/^visibility$/i).click();
+    await page.getByRole("option", { name: /^public$/i }).click();
+    await page
+      .locator("form")
+      .filter({ has: page.getByLabel(/^visibility$/i) })
+      .getByRole("button", { name: /^save$/i })
+      .click();
+
+    await expect(page.getByText(/with no units cannot be published/i)).toBeVisible({
+      timeout: 15_000,
+    });
+
+    // and it really did not publish
+    const { data: after } = await admin
+      .from("properties")
+      .select("visibility")
+      .eq("id", project.id)
+      .single();
+    expect(after!.visibility, "the refusal is not cosmetic").not.toBe("public");
+  });
+});

@@ -9,6 +9,8 @@ import {
 /** Everything earned, so a test can take exactly what it wants away. */
 const perfect: QualityScoreInput = {
   isLand: false,
+  isContainer: false,
+  unitCount: 0,
   hasCoverPhoto: true,
   photoCount: 6,
   titleEn: "A title",

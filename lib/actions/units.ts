@@ -19,7 +19,9 @@ import {
 } from "@/lib/services/unit-inheritance";
 import {
   generateUnits,
+  generateVillaUnits,
   generatedCount,
+  villaCount,
   MAX_FLOOR,
   MAX_GENERATED_UNITS,
   MAX_PER_FLOOR,
@@ -201,31 +203,60 @@ export async function updateUnitStatus(
   return { error: null };
 }
 
+/**
+ * Two layouts, one action. `layout` defaults to "floors" so every existing
+ * caller — and the e2e that predates villas — parses unchanged. The floor
+ * fields go optional because a villa form does not render them, and
+ * `Object.fromEntries` simply omits what is not in the DOM.
+ */
 const generateUnitsSchema = z
   .object({
     project_id: z.guid("Missing project"),
-    block: z.preprocess(emptyToUndefined, z.string().max(20).optional()),
-    floor_from: z.coerce.number().int().min(0).max(MAX_FLOOR),
-    floor_to: z.coerce.number().int().min(0).max(MAX_FLOOR),
-    per_floor: z.coerce.number().int().min(1).max(MAX_PER_FLOOR),
-    start_index: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).max(MAX_PER_FLOOR).optional()),
+    layout: z.enum(["floors", "villas"]).default("floors"),
     property_type: z.enum(PROPERTY_TYPES),
+    // shared across both layouts
     bedrooms: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).optional()),
     bathrooms: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).optional()),
     covered_area_sqm: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
     base_price: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
+    // floors
+    block: z.preprocess(emptyToUndefined, z.string().max(20).optional()),
+    floor_from: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).max(MAX_FLOOR).optional()),
+    floor_to: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).max(MAX_FLOOR).optional()),
+    per_floor: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1).max(MAX_PER_FLOOR).optional()),
+    start_index: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).max(MAX_PER_FLOOR).optional()),
     price_per_floor: z.preprocess(emptyToUndefined, z.coerce.number().min(0).optional()),
+    // villas — capped by the run ceiling, never by MAX_PER_FLOOR, which is a
+    // floor-scheme limit and has nothing to say about how many villas exist
+    villa_count: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1).max(MAX_GENERATED_UNITS).optional()),
+    villa_prefix: z.preprocess(emptyToUndefined, z.string().max(10).optional()),
+    start_number: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).optional()),
+    plot_area_sqm: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
+    price_per_villa: z.preprocess(emptyToUndefined, z.coerce.number().min(0).optional()),
   })
-  .refine((d) => d.floor_to >= d.floor_from, {
+  .refine((d) => d.layout !== "floors" || (d.floor_from !== undefined && d.floor_to !== undefined && d.per_floor !== undefined), {
+    message: "Floors from, floors to and units per floor are all required",
+    path: ["floor_to"],
+  })
+  .refine((d) => d.layout !== "floors" || (d.floor_to ?? 0) >= (d.floor_from ?? 0), {
     message: "Top floor must not be below the bottom floor",
     path: ["floor_to"],
   })
+  .refine((d) => d.layout !== "villas" || d.villa_count !== undefined, {
+    message: "How many villas?",
+    path: ["villa_count"],
+  })
   .refine(
     (d) =>
-      generatedCount({ floorFrom: d.floor_from, floorTo: d.floor_to, perFloor: d.per_floor }) <=
-      MAX_GENERATED_UNITS,
+      (d.layout === "villas"
+        ? villaCount({ count: d.villa_count ?? 0 })
+        : generatedCount({
+            floorFrom: d.floor_from ?? 0,
+            floorTo: d.floor_to ?? 0,
+            perFloor: d.per_floor ?? 0,
+          })) <= MAX_GENERATED_UNITS,
     {
-      message: `That would create more than ${MAX_GENERATED_UNITS} units — narrow the floor range`,
+      message: `That would create more than ${MAX_GENERATED_UNITS} units — narrow the range`,
       path: ["floor_to"],
     },
   );
@@ -272,18 +303,34 @@ export async function generateProjectUnits(
     return { error: "Units can only be added to a project", savedAt: null };
   }
 
-  const generated = generateUnits({
-    block: input.block ?? null,
-    floorFrom: input.floor_from,
-    floorTo: input.floor_to,
-    perFloor: input.per_floor,
-    startIndex: input.start_index,
-    bedrooms: input.bedrooms ?? null,
-    bathrooms: input.bathrooms ?? null,
-    coveredAreaSqm: input.covered_area_sqm ?? null,
-    basePrice: input.base_price ?? null,
-    pricePerFloor: input.price_per_floor ?? null,
-  });
+  // The ONE dispatch point. Everything below — reference minting, the
+  // collision pre-check, the insert and the per-unit events — is shared, which
+  // is why the villa path is a second pure function rather than a second action.
+  const generated =
+    input.layout === "villas"
+      ? generateVillaUnits({
+          prefix: input.villa_prefix ?? null,
+          count: input.villa_count ?? 0,
+          startNumber: input.start_number,
+          bedrooms: input.bedrooms ?? null,
+          bathrooms: input.bathrooms ?? null,
+          coveredAreaSqm: input.covered_area_sqm ?? null,
+          plotAreaSqm: input.plot_area_sqm ?? null,
+          basePrice: input.base_price ?? null,
+          pricePerVilla: input.price_per_villa ?? null,
+        })
+      : generateUnits({
+          block: input.block ?? null,
+          floorFrom: input.floor_from ?? 0,
+          floorTo: input.floor_to ?? 0,
+          perFloor: input.per_floor ?? 0,
+          startIndex: input.start_index,
+          bedrooms: input.bedrooms ?? null,
+          bathrooms: input.bathrooms ?? null,
+          coveredAreaSqm: input.covered_area_sqm ?? null,
+          basePrice: input.base_price ?? null,
+          pricePerFloor: input.price_per_floor ?? null,
+        });
   if (generated.length === 0) return { error: "That range produces no units", savedAt: null };
 
   const references = generated.map((u) => `${project.reference}-${u.label}`);
@@ -324,6 +371,7 @@ export async function generateProjectUnits(
         bedrooms: u.bedrooms,
         bathrooms: u.bathrooms,
         covered_area_sqm: u.covered_area_sqm,
+        ...(u.plot_area_sqm !== null ? { plot_area_sqm: u.plot_area_sqm } : {}),
         asking_price: u.asking_price,
         status: "available" as const,
         created_by: profile.id,

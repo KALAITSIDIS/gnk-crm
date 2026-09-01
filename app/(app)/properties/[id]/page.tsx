@@ -59,7 +59,7 @@ export default async function PropertyDetailPage({
 
   // mandates via mandates_safe, NOT the base table: LM has no base-table
   // policy and commission columns are masked in the view (doc 04, T4.5)
-  const [propertyRes, areasRes, mediaRes, mandatesRes, keysRes] = await Promise.all([
+  const [propertyRes, areasRes, mediaRes, mandatesRes, keysRes, unitCountRes] = await Promise.all([
     supabase
       .from("properties")
       .select("*, districts(name), areas(name)")
@@ -81,6 +81,8 @@ export default async function PropertyDetailPage({
       .select("id, key_code, description, status, current_holder_name")
       .eq("property_id", id)
       .order("created_at", { ascending: true }),
+    // child units, as a head count — the container score item (2026-09-02)
+    supabase.from("properties").select("id", { count: "exact", head: true }).eq("parent_id", id),
   ]);
 
   // a genuine query failure renders the error boundary, not a misleading 404
@@ -236,6 +238,8 @@ export default async function PropertyDetailPage({
   const photos = media.filter((m) => m.kind === "photo");
   const quality = computeQualityScore({
     isLand,
+    isContainer: p.kind === "project" || p.kind === "phase",
+    unitCount: unitCountRes.count ?? 0,
     hasCoverPhoto: photos.some((m) => m.is_cover),
     photoCount: photos.length,
     titleEn: (p.title as { en?: string } | null)?.en,

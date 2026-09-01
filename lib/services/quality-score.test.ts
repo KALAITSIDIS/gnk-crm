@@ -3,6 +3,8 @@ import { computeQualityScore, type QualityScoreInput } from "./quality-score";
 
 const empty: QualityScoreInput = {
   isLand: false,
+  isContainer: false,
+  unitCount: 0,
   hasCoverPhoto: false,
   photoCount: 0,
   titleEn: null,
@@ -21,6 +23,8 @@ const empty: QualityScoreInput = {
 
 const full: QualityScoreInput = {
   isLand: false,
+  isContainer: false,
+  unitCount: 0,
   hasCoverPhoto: true,
   photoCount: 6,
   titleEn: "Seafront villa",
@@ -109,5 +113,56 @@ describe("computeQualityScore — weight table (doc 02 §C1)", () => {
 
   it("an owner OR a developer earns the party point, not both required", () => {
     expect(computeQualityScore({ ...empty, hasOwnerOrDeveloper: true }).score).toBe(5);
+  });
+});
+
+/**
+ * A project or phase is not a dwelling. It was graded as one until 2026-09-02,
+ * which is how a real project with NO UNITS scored 100/100 and went public.
+ */
+describe("containers are graded on units, not rooms", () => {
+  const container = (over: Partial<QualityScoreInput> = {}): QualityScoreInput => ({
+    ...full,
+    isContainer: true,
+    unitCount: 0,
+    // a container legitimately has none of these — they must stop being asked
+    hasArea: false,
+    hasBedroomsAndBathrooms: false,
+    ...over,
+  });
+
+  it("still totals 100 when everything is earned — the branch is a swap, not a discount", () => {
+    expect(computeQualityScore(container({ unitCount: 12 })).score).toBe(100);
+  });
+
+  it("never asks a container for covered area or bedrooms", () => {
+    const keys = computeQualityScore(container()).items.map((i) => i.key);
+    expect(keys).not.toContain("area");
+    expect(keys).not.toContain("rooms");
+    expect(keys).not.toContain("planning");
+    expect(keys).toContain("units");
+  });
+
+  it("an empty project loses exactly the 15 the dwelling pair carried", () => {
+    expect(computeQualityScore(container({ unitCount: 0 })).score).toBe(85);
+    expect(computeQualityScore(container({ unitCount: 1 })).score).toBe(100);
+  });
+
+  it("names the gap so the worklist can chase it", () => {
+    const { missing } = computeQualityScore(container({ unitCount: 0 }));
+    expect(missing.map((m) => m.key)).toContain("units");
+    expect(missing.find((m) => m.key === "units")?.label).toBe("At least one unit");
+  });
+
+  it("85 is ABOVE the publish threshold — the score informs, the gate enforces", () => {
+    // this is why lib/actions/properties.ts refuses an empty container
+    // separately; removing that gate would reopen the incident
+    expect(computeQualityScore(container({ unitCount: 0 })).score).toBeGreaterThan(70);
+  });
+
+  it("a land CONTAINER is still scored as a container, not as land", () => {
+    const keys = computeQualityScore(container({ isLand: true })).items.map((i) => i.key);
+    expect(keys).toContain("units");
+    expect(keys).not.toContain("planning");
   });
 });

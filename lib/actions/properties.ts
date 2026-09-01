@@ -423,7 +423,7 @@ export async function updatePropertySection(
     const { computeQualityScore, PUBLISH_THRESHOLD } = await import(
       "@/lib/services/quality-score"
     );
-    const [{ data: media }, { data: activeMandates }] = await Promise.all([
+    const [{ data: media }, { data: activeMandates }, { count: unitCount }] = await Promise.all([
       // photos only (MEDIA-K) — the publish gate must agree with the score
       supabase
         .from("property_media")
@@ -437,14 +437,43 @@ export async function updatePropertySection(
         .select("id")
         .eq("property_id", propertyId)
         .eq("status", "active"),
+      // child units — a container is graded and gated on them
+      supabase
+        .from("properties")
+        .select("id", { count: "exact", head: true })
+        .eq("parent_id", propertyId),
     ]);
     const merged = { ...(current as Record<string, unknown>), ...updates } as Record<
       string,
       unknown
     >;
     const isLand = merged.property_type === "land";
+    const isContainer = current.kind === "project" || current.kind === "phase";
+
+    // An EMPTY container cannot be published, and this refusal is not
+    // overridable (2026-09-02). The score override exists for a listing that
+    // is thin but deliberate — a judgement call an admin is entitled to make.
+    // An empty project is not thin, it is empty: units carry the prices, a
+    // container cannot be reserved and never appears in buyer matching, so
+    // publishing one puts a page in front of buyers that nothing can act on.
+    // A real project reached the public feed this way, at 100/100, because
+    // the score was measuring a dwelling that was not there.
+    //
+    // "Coming soon" is the honest state for a development whose units are not
+    // defined yet, and it is already in the visibility list — so the refusal
+    // names it rather than offering another override.
+    if (isContainer && (unitCount ?? 0) === 0) {
+      return {
+        error:
+          `A ${current.kind} with no units cannot be published — buyers cannot be matched to it ` +
+          `and it cannot be reserved. Add its units first, or set visibility to "Coming soon".`,
+        savedAt: null,
+      };
+    }
     const result = computeQualityScore({
       isLand,
+      isContainer,
+      unitCount: unitCount ?? 0,
       hasCoverPhoto: (media ?? []).some((m) => m.is_cover),
       photoCount: (media ?? []).length,
       titleEn: (merged.title as { en?: string } | null)?.en,
