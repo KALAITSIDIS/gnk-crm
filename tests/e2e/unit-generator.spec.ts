@@ -517,6 +517,13 @@ test.describe("an empty container is not a listing", () => {
       await savePublic(page, project.id);
     };
 
+    // plain save first: a phase-only project is refused with no override in
+    // sight (the refusal runs before the override is ever read)
+    await page.goto(`/properties/${project.id}`, { waitUntil: "networkidle" });
+    await page.getByRole("tab", { name: /^details$/i }).click();
+    await savePublic(page, project.id);
+    await expect(page.getByText(CONTAINER_REFUSAL)).toBeVisible({ timeout: 15_000 });
+
     await publishWithOverride();
     await expect(page.getByText(CONTAINER_REFUSAL)).toBeVisible({ timeout: 15_000 });
     const { data: withPhaseOnly } = await admin
@@ -535,7 +542,9 @@ test.describe("an empty container is not a listing", () => {
     });
 
     await publishWithOverride();
-    await expect(page.getByText("Saved")).toBeVisible({ timeout: 15_000 });
+    // exact: the details panel carries "derived, not saved" in running text,
+    // which a substring match accepts even when the save was refused
+    await expect(page.getByText("Saved", { exact: true })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText(CONTAINER_REFUSAL)).toHaveCount(0);
     await expect
       .poll(async () => {

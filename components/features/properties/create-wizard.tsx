@@ -427,6 +427,26 @@ export function CreatePropertyWizard({
    */
   const submitted = useRef<Draft | null>(null);
 
+  /**
+   * Enter must not create the property from step 1.
+   *
+   * The HTML implicit-submission rule: a form with exactly one text field and
+   * no submit button in the DOM submits on Enter. On step 1 that is precisely
+   * the shape — the party search box is the only text input, "Continue" is a
+   * type="button", and the real submit lives in the step-2 branch. So typing
+   * a developer's name and pressing Enter to search ran createProperty
+   * instead: a blank titleless row, a district sequence number spent, an
+   * immutable reference, no way to delete it (2026-09-02 fix-wave review).
+   * Step 2 keeps normal Enter-to-submit behaviour.
+   */
+  const blockImplicitSubmit = (e: React.KeyboardEvent<HTMLFormElement>) => {
+    if (step !== 1 || e.key !== "Enter") return;
+    const el = e.target as HTMLElement | null;
+    // a textarea's Enter is a newline, and Radix's own controls handle theirs
+    if (el instanceof HTMLTextAreaElement) return;
+    e.preventDefault();
+  };
+
   const handleSubmit = () => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     submitted.current = buildDraft();
@@ -498,7 +518,12 @@ export function CreatePropertyWizard({
     setDraftFields(snap.fields);
     writeDraft({ ...snap, savedAt: Date.now() });
     submitted.current = null;
-  }, [state.error]);
+    // `state`, NOT `state.error`: two consecutive submits refused with the
+    // SAME message are two distinct result objects but one unchanged string,
+    // so keying on the message skipped this effect on the second — React had
+    // already reset the form, and the draft stayed dropped (2026-09-02
+    // fix-wave review).
+  }, [state]);
 
   const discardDraft = () => {
     dropDraft();
@@ -680,6 +705,7 @@ export function CreatePropertyWizard({
       ref={formRef}
       action={formAction}
       onInput={scheduleSave}
+      onKeyDown={blockImplicitSubmit}
       onSubmit={handleSubmit}
       className="flex max-w-2xl flex-col gap-6"
     >
@@ -733,6 +759,12 @@ export function CreatePropertyWizard({
           2. {isContainer ? "Development layout" : "Core details"}
         </span>
       </div>
+
+      {step === 1 && state.error ? (
+        <p role="alert" className="text-sm text-danger">
+          {state.error}
+        </p>
+      ) : null}
 
       {step === 1 ? (
         <div className="flex flex-col gap-4 rounded-[10px] border border-border bg-surface p-6">

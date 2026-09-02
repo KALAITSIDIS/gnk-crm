@@ -140,3 +140,50 @@ test("the owner search says so when it finds nothing, and points at the way out"
   await expect(empty, "zero hits must SAY zero hits").toBeVisible({ timeout: 15_000 });
   await expect(page.getByText(/use .New owner. below to create one/i)).toBeVisible();
 });
+
+/**
+ * Enter in the party search must SEARCH, not create the listing.
+ *
+ * Step 1 has exactly one text field (this box) and no submit button — the
+ * HTML implicit-submission shape. Pressing Enter therefore ran createProperty
+ * from step 1: a titleless row, a spent district sequence number, an
+ * immutable reference, and no delete anywhere in the app. Found by the
+ * 2026-09-02 fix-wave review; the wizard now swallows Enter on step 1.
+ */
+test("Enter in the owner search does not create a property from step 1", async ({ page }) => {
+  const admin = svc();
+  const { orgId } = await fixtureProfile(admin);
+
+  const before = await admin
+    .from("properties")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", orgId);
+
+  await page.goto("/properties/new");
+  // make step 1 SCHEMA-VALID, so nothing but the guard can stop a submit:
+  // kind and transaction default, district and type are the two to set
+  await page.getByLabel("District").click();
+  await page.getByRole("option", { name: "Paphos" }).click();
+  await page.getByLabel("Property type").click();
+  await page.getByRole("option", { name: "Villa", exact: true }).click();
+
+  // Proving a NEGATIVE, so the wait is the test: an unguarded Enter creates
+  // the row and navigates to it within ~1s (measured by removing the guard:
+  // 32 properties → 33, URL /properties/{id}). Asserting immediately after
+  // the keypress passes on BOTH builds — it just wins the race — which is
+  // how the first version of this test could not fail.
+  await page.getByLabel("Owner").fill("Nobody By That Name");
+  await page.getByLabel("Owner").press("Enter");
+  await page.waitForTimeout(3000);
+
+  // (counting POSTs cannot discriminate here: the picker's own search IS a
+  // server action and posts to this same route)
+  await expect(page).toHaveURL(/\/properties\/new$/);
+  await expect(page.getByRole("button", { name: /Continue/ })).toBeVisible();
+
+  const after = await admin
+    .from("properties")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", orgId);
+  expect(after.count, "Enter must not mint a reference").toBe(before.count);
+});

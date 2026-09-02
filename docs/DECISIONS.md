@@ -3,6 +3,52 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-02 · T-wizard-enter-guard (no migration) — Enter in the party
+  search was creating listings.** The fix wave's own review (six lenses, two
+  refuters each with a tie-breaker) confirmed thirteen; four were already
+  closed by the previous merge. The one that mattered was not in the range at
+  all — it had been there since the wizard was built:
+
+  (1) **Step 1 had the HTML implicit-submission shape.** One text field (the
+  owner/developer search), no submit button in the DOM (Continue is a
+  `type="button"`, the real submit lives in the step-2 branch). So typing a
+  name and pressing Enter to search ran `createProperty` from step 1: a
+  titleless row, a district sequence number spent, an immutable reference,
+  and no delete anywhere in this app. **Reproduced before fixing** — with the
+  guard removed, one keypress took the local database from 32 properties to
+  33 and redirected to the new record. The form now swallows Enter on step 1
+  (step 2 keeps normal Enter-to-submit), and a refused submit renders its
+  error on step 1 too, where nothing was rendering it before.
+  (2) **The e2e for it could not fail at first.** `toHaveURL` right after the
+  keypress passes on a broken build too — it just wins the race against the
+  server action. The test now waits out the action it is asserting did not
+  happen, and was proven by removing the guard and watching it fail. Counting
+  POSTs cannot discriminate here: the picker's own search IS a server action
+  posting to the same route.
+  (3) **The units matrix listed archived units the banner said did not
+  exist.** The matrix query had no visibility filter while the shared
+  definition excludes archived, so a project whose units were all archived
+  read "12 units" over a full matrix and, underneath, "Not a listing until it
+  has units". The matrix now excludes them and the empty state says how many
+  are archived and where Restore is.
+  (4) **A unit's own save never refreshed its container.** The details tab
+  writes visibility (archived is in the list) and the price — exactly the
+  inputs to "at least one unit" and "units priced" — and only the unit's own
+  score was recomputed, so the list showed a stale project score.
+  (5) Two test-honesty items: the phase e2e's `"Saved"` matched the details
+  panel's "derived, not saved" in running text (exact now), and DECISIONS
+  claimed that test covered the unticked-override refusal when it only ever
+  ticked it — the plain refusal is now actually asserted first.
+
+  **A note on the cleanup, because it is the worse lesson.** Tidying the
+  local database after the reproduction, I deleted `events` rows for the
+  probe's properties. That breaks the hash chain — the guardrail this whole
+  system is built on — and two generator e2e failed on
+  `verify_events_chain` next run. Local only, and repaired with the suffix
+  delete this repo already documents (60 events from today's runs, chain true
+  again on all three orgs). The rule, restated: **events are append-only even
+  when tidying test data.** A property row can be deleted; its events cannot.
+
 - **2026-09-02 · T-container-review (no migration) — the two container
   merges reviewed adversarially the same day, and what survived.** Eight
   independent lenses over `4f7f423..5205954` (action correctness, phases and
