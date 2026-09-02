@@ -292,9 +292,21 @@ export async function createProperty(
       .select(UNIT_PARENT_SELECT)
       .eq("id", created.id)
       .single();
+    // What a UNIT is, is decided by the layout, not by what the development
+    // calls itself: a "building" or "mixed use" development's flats are
+    // apartments, a villa complex's units are villas. Only when the
+    // development is already named after its dwelling type does that type
+    // carry (the units page's generator defaults the same way; 2026-09-02
+    // review, critic pass).
+    const DWELLING_TYPES = new Set(["apartment", "villa", "townhouse", "house"]);
+    const unitPropertyType = DWELLING_TYPES.has(input.property_type)
+      ? input.property_type
+      : layout === "villas"
+        ? ("villa" as const)
+        : ("apartment" as const);
     const written = parent
       ? await writeGeneratedUnits(supabase, parent, generated, {
-          propertyType: input.property_type,
+          propertyType: unitPropertyType,
           actorId: profile.id,
         })
       : { error: "could not re-read the new project" };

@@ -90,7 +90,7 @@ silent. Format: date · task · decision · rationale.
   half-filled range. Doc 02 §A8/§C1 and HANDOFF §0a were corrected.
 
   **The completeness critic's pass** (run after the fixes above started)
-  added seven candidates; six were built, one settled:
+  added seven candidates; all seven survived 3/3 and all seven were built:
   a rent development's generated units now carry `rent_price_month`, not a
   sale price (the writer reads the parent's transaction type; a let unit
   counts as priced everywhere); the units-page generator exposes the villa
@@ -102,10 +102,14 @@ silent. Format: date · task · decision · rationale.
   (only live rows are scored); the "at least one unit" gap names the units
   page as where it is fixed; and the wizard's partial-failure path lands on
   the units page with `?units=failed&reason=…` rendered as an alert — a
-  console line was not "loud" to the person at the desk. Settled, no build:
-  the wizard stamps the container's property type on every generated unit.
-  A mixed development (apartments and penthouses) is two runs on the units
-  page, where the type is per run, and unit types exist for the rest.
+  console line was not "loud" to the person at the desk. The last one I had
+  first settled as no-build and the verifiers were right to keep it: the
+  wizard stamped the development's OWN property type on every unit, so a
+  "building" or "mixed use" development minted units typed "building". A
+  unit's type now follows the layout (floors → apartment, villas → villa)
+  unless the development is already named after a dwelling type, which is
+  how the units page's generator defaults too. A mixed development is
+  still two runs on the units page, where the type is per run.
 
 - **2026-09-02 · T-wizard-project-layout (no migration) — a project is
   created WITH its units, and lands where they live.** The follow-on the

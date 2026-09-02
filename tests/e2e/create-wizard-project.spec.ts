@@ -266,6 +266,51 @@ test("an apartment block is created WITH its floors", async ({ page }) => {
   await admin.from("properties").delete().eq("id", projectId);
 });
 
+/**
+ * A unit's TYPE follows the layout, not what the development calls itself:
+ * a "building" is a development of apartments, and stamping "building" on
+ * every flat (which the first cut did) mis-typed them for matching and for
+ * every list (2026-09-02 review, critic pass).
+ */
+test("a building's units are apartments, not buildings", async ({ page }) => {
+  const admin = svc();
+  await fixtureProfile(admin);
+  const tag = randomBytes(3).toString("hex");
+  const title = `Wizard building ${tag}`;
+  createdTitles.push(title);
+
+  await beginDevelopment(page, /^Building$/);
+  await page.getByLabel("Title (EN)").fill(title);
+  // a building is not an apartment, so the layout does not default to floors
+  // by type — say so explicitly, then describe one floor
+  await page.getByRole("button", { name: /^Floors$/ }).click();
+  await page.locator("#gen_block").fill("B");
+  await page.locator("#gen_floor_from").fill("1");
+  await page.locator("#gen_floor_to").fill("1");
+  await page.locator("#gen_per_floor").fill("2");
+  await expect(page.getByTestId("wizard-units-preview")).toContainText("Creates 2 units");
+  await page.getByRole("button", { name: /^Create project \+ 2 units$/ }).click();
+  await page.waitForURL(/\/properties\/[0-9a-f-]{36}\/units$/);
+  const projectId = page.url().match(/properties\/([0-9a-f-]{36})\/units/)![1];
+
+  const { data: project } = await admin
+    .from("properties")
+    .select("property_type")
+    .eq("id", projectId)
+    .single();
+  expect(project!.property_type, "the development keeps its own type").toBe("building");
+
+  const { data: units } = await admin
+    .from("properties")
+    .select("property_type")
+    .eq("parent_id", projectId);
+  expect(units!.length).toBe(2);
+  expect(units!.every((u) => u.property_type === "apartment"), "its units are flats").toBe(true);
+
+  await admin.from("properties").delete().eq("parent_id", projectId);
+  await admin.from("properties").delete().eq("id", projectId);
+});
+
 test("toggling Floors → Villas does not carry a floor into the plot area", async ({ page }) => {
   await beginDevelopment(page, /^Apartment$/);
 
