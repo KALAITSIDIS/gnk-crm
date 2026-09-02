@@ -162,6 +162,25 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
     return reason ? t("lostReason", { reason }) : t("lost");
   },
   spam: (_p, t) => t("spam"),
+  // Written since the security and mandate work but never registered, so the
+  // timeline printed the raw verb ("mfa reset") — the evidence was recorded,
+  // it just did not read like evidence (2026-09-02 registry sweep).
+  mfa_reset: (p, t) => {
+    const count = typeof p.factors_removed === "number" ? p.factors_removed : null;
+    return count === null ? t("mfaReset") : t("mfaResetCount", { count });
+  },
+  password_changed: (_p, t) => t("passwordChanged"),
+  renewed: (p, t) => {
+    // payload fields arrive as `unknown`; asObject takes Json, same cast it makes internally
+    const w = asObject(p.new_window as Parameters<typeof asObject>[0]);
+    const start = asText(w.start);
+    const expiry = asText(w.expiry);
+    return start && expiry ? t("mandateRenewedWindow", { start, expiry }) : t("mandateRenewed");
+  },
+  unit_type_created: (p, t) => {
+    const code = asText(p.code);
+    return code ? t("unitTypeCreatedCode", { code }) : t("unitTypeCreated");
+  },
   claimed: (_p, t) => t("claimed"),
   assigned: (p, t) => {
     const name = asText(p.to_name);

@@ -3,6 +3,25 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-02 · T-timeline-registry (no migration) — four events reached
+  the log before the timeline learned to say them.** Diffing every
+  `eventType:` written anywhere in `lib/` against `EVENT_LINES` found four
+  verbs with no registry entry: `mfa_reset`, `password_changed`, `renewed`
+  and `unit_type_created`. `describeEvent` falls back to the raw verb, so the
+  evidence WAS recorded and the chain was never in question — the timeline
+  just printed "mfa reset" where the rest of the log reads in sentences. On
+  the surface this product is sold on (an admin resetting someone's 2FA, a
+  mandate renewal), that is worth the four lines.
+
+  The renewal line shows the NEW window only, though the payload carries both:
+  a renewal is read for what it grants, and the previous row sits directly
+  above it. Keys were added to all three locale files, not just the English
+  one the app currently renders (doc 02 §A5) — `messages.test.ts` compiles
+  every message in every locale, and it caught the two placeholders the new
+  keys introduced before the suite went green. The fallback itself is now
+  pinned too, so a future unregistered verb degrades visibly rather than
+  silently.
+
 - **2026-09-02 · T-button-submit-class (no migration) — one bug of a class
   means the class was never checked.** The Enter hole closed earlier the same
   day was one instance of a general shape: `components/ui/button.tsx` renders

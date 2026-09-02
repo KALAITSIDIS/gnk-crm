@@ -371,3 +371,59 @@ describe("key recall (0053)", () => {
     ).toBe("Renewal task superseded — the mandate was renewed or is no longer active");
   });
 });
+
+/**
+ * A written event type with no registry entry still renders — as its raw verb
+ * ("mfa reset"). The evidence is recorded either way, but the timeline is the
+ * surface this product is sold on, so the verbs it prints have to read like
+ * evidence. These four were written by the security, mandate and unit-type
+ * work and never registered (found 2026-09-02 by diffing every `eventType:`
+ * written in lib/ against the registry).
+ */
+describe("event types that reached the log before the registry", () => {
+  it("names the admin 2FA reset, with the factor count when it carries one", () => {
+    expect(describeEvent(ev("mfa_reset", { factors_removed: 2 }, "profile"), t)).toContain(
+      "2 factor(s) removed",
+    );
+    // and degrades to the plain sentence when the payload predates the count
+    expect(describeEvent(ev("mfa_reset", {}, "profile"), t)).toContain(
+      "Two-factor authentication reset",
+    );
+  });
+
+  it("names a password change", () => {
+    expect(describeEvent(ev("password_changed", {}, "profile"), t)).toContain("Password changed");
+  });
+
+  it("shows the mandate's NEW window, which is the fact a renewal adds", () => {
+    const line = describeEvent(
+      ev(
+        "renewed",
+        {
+          previous_window: { start: "2026-01-01", expiry: "2026-06-30" },
+          new_window: { start: "2026-07-01", expiry: "2027-06-30" },
+        },
+        "mandate",
+      ),
+      t,
+    );
+    expect(line).toContain("2026-07-01");
+    expect(line).toContain("2027-06-30");
+    // the OLD window is in the payload but not in the line — a renewal is
+    // read for what it grants, and the previous row is directly above it
+    expect(line).not.toContain("2026-01-01");
+  });
+
+  it("names the unit type by its code", () => {
+    expect(describeEvent(ev("unit_type_created", { code: "A2" }, "property"), t)).toContain(
+      "A2",
+    );
+  });
+
+  it("still falls back to the raw verb for a type nobody has registered", () => {
+    expect(describeEvent(ev("something_nobody_registered", {}, "deal"), t)).toContain(
+      "something nobody registered",
+    );
+  });
+});
+

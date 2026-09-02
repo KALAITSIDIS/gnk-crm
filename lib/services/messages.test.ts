@@ -75,6 +75,10 @@ const SAMPLE_PARAMS = {
   // would silently shadow it, feeding a string to that plural. Money uses the
   // existing `amount`.
   plan: "Standard 10/30/60",
+  // mandate renewal (registry sweep 2026-09-02) — the NEW window's two dates.
+  // `date` above is a different placeholder and is already taken.
+  start: "2026-07-01",
+  expiry: "2027-06-30",
 };
 
 describe("locale message files", () => {
