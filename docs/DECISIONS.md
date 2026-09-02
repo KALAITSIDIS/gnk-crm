@@ -111,6 +111,18 @@ silent. Format: date · task · decision · rationale.
   how the units page's generator defaults too. A mixed development is
   still two runs on the units page, where the type is per run.
 
+  **Same evening, found by running the house procedure:** a weight change
+  makes every stored `quality_score` stale, and `npm run recompute:scores`
+  exists for that — and it no longer loaded. `quality-score.ts` had gained
+  its first RUNTIME lib-to-lib import (the shared unit definition) written
+  as `@/lib/services/container-units`; plain Node, which runs that script
+  and the media importer, resolves neither a tsconfig alias nor an
+  extensionless path. The import is now `./container-units.ts` and tsconfig
+  allows `.ts` extension imports (legal under `noEmit`; the scripts already
+  imported lib files that way). The recompute then ran against production:
+  PAF0002 100 → 75, the other three unchanged — the list and the detail
+  page agree again.
+
 - **2026-09-02 · T-wizard-project-layout (no migration) — a project is
   created WITH its units, and lands where they live.** The follow-on the
   container entry below deferred. The operator's instruction was two

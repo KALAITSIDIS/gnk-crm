@@ -51,8 +51,11 @@ import type { Database } from "@/lib/supabase/database.types";
 export const PUBLISH_THRESHOLD = 70;
 
 // What counts as a unit lives in ONE place (2026-09-02 review): a phase is
-// not a unit, and a project's units may sit under its phases.
-import { countContainerUnits } from "@/lib/services/container-units";
+// not a unit, and a project's units may sit under its phases. RELATIVE and
+// WITH the extension, not "@/": scripts/recompute-scores.mts and the media
+// importer load this file under plain Node, which resolves neither a
+// tsconfig alias nor an extensionless path — the alias broke both for a day.
+import { countContainerUnits } from "./container-units.ts";
 
 export interface QualityScoreInput {
   isLand: boolean;
