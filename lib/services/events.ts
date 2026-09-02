@@ -341,6 +341,18 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
   // 0051's nightly chase, actor-null: written by remind_due_installments().
   // `days` is SIGNED — negative means the line is already overdue — so the sign
   // picks the string and the message always states a positive number of days.
+  // the due date MOVED — the fact a buyer and an agent later remember
+  // differently, so the line names both dates (2026-09-02 guardrail-1 sweep)
+  installment_due_changed: (p, t) => {
+    const label = asText(p.label);
+    const from = asText(p.from);
+    const to = asText(p.to);
+    if (label && from && to) return t("installmentDueChangedLabel", { label, from, to });
+    if (from && to) return t("installmentDueChanged", { from, to });
+    return to
+      ? t("installmentDueSet", { to })
+      : t("installmentDueCleared");
+  },
   installment_due_soon: (p, t) => {
     const label = asText(p.label) ?? "";
     const days = Number(p.days);

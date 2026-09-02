@@ -417,6 +417,10 @@
     "mandateRenewed": "Mandate renewed",
     "mandateRenewedWindow": "Mandate renewed — new window {start} → {expiry}",
     "unitTypeCreated": "Unit type created",
-    "unitTypeCreatedCode": "Unit type {code} created"
+    "unitTypeCreatedCode": "Unit type {code} created",
+    "installmentDueChanged": "Instalment due date {from} → {to}",
+    "installmentDueChangedLabel": "Instalment due date {from} → {to} — {label}",
+    "installmentDueSet": "Instalment due date set to {to}",
+    "installmentDueCleared": "Instalment due date cleared"
   }
 }

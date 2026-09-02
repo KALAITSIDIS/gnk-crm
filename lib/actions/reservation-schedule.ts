@@ -233,7 +233,17 @@ export async function setInstallmentDue(
   const { installment_id, due_date } = parsed.data;
 
   const supabase = await createClient();
-  await getCurrentProfile(supabase);
+  const profile = await getCurrentProfile(supabase);
+
+  // the date BEFORE the write, so the event can say what it moved from: a
+  // payment milestone on a live hold is exactly the kind of fact a buyer and
+  // an agent later remember differently (2026-09-02 guardrail-1 sweep — this
+  // action wrote no event at all, alone among the five in this file)
+  const { data: before } = await supabase
+    .from("reservation_installments")
+    .select("id, label, due_date, reservation_id")
+    .eq("id", installment_id)
+    .maybeSingle();
 
   const { data: updated, error } = await supabase
     .from("reservation_installments")
@@ -248,6 +258,21 @@ export async function setInstallmentDue(
     | { property_id: string }[]
     | null;
   const propertyId = Array.isArray(joined) ? joined[0]?.property_id : joined?.property_id;
+
+  await logEvent(supabase, {
+    orgId: profile.orgId,
+    actorId: profile.id,
+    entityType: "property",
+    entityId: propertyId ?? null,
+    eventType: "installment_due_changed",
+    payload: {
+      reservation_id: before?.reservation_id ?? null,
+      installment_id,
+      label: before?.label ?? null,
+      from: before?.due_date ?? null,
+      to: due_date ?? null,
+    },
+  });
   if (propertyId) revalidatePath(`/properties/${propertyId}`);
   return ok();
 }

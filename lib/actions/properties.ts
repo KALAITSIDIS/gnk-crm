@@ -546,6 +546,8 @@ export async function updatePropertySection(
   // Scored over current + pending updates: the fields fixed in THIS save must
   // count, otherwise filling the gaps and publishing in one go is rejected.
   const goingPublic = updates.visibility === "public" && current.visibility !== "public";
+  /** set when an admin's override clears the gate; written only once the publish itself has. */
+  let overrideToLog: { score: number; threshold: number } | null = null;
   if (goingPublic) {
     const { computeQualityScore, PUBLISH_THRESHOLD } = await import(
       "@/lib/services/quality-score"
@@ -645,14 +647,15 @@ export async function updatePropertySection(
           savedAt: null,
         };
       }
-      await logEvent(supabase, {
-        orgId: profile.orgId,
-        actorId: profile.id,
-        entityType: "property",
-        entityId: propertyId,
-        eventType: "publish_override",
-        payload: { score, threshold: PUBLISH_THRESHOLD },
-      });
+      // NOT logged here. `logEvent` is an immediate insert with no
+      // surrounding transaction, and the UPDATE that actually publishes is
+      // still ~40 lines below — every failure between the two (an RLS
+      // no-op, a constraint, a dead connection) used to leave an override
+      // event standing for a publish that never happened. An authorisation
+      // recorded for an act that did not occur is worse than none: this is
+      // the log the desk would produce in a dispute. Deferred to after the
+      // write (2026-09-02 guardrail-1 sweep).
+      overrideToLog = { score, threshold: PUBLISH_THRESHOLD };
     }
     // DB-02 (0073): the public feed orders by published_at desc and nothing
     // ever wrote it. Stamped on every transition INTO public — a relisting
@@ -704,6 +707,20 @@ export async function updatePropertySection(
         "Nothing was saved — this property isn't assigned to you. Admins and listing managers can edit any property.",
       savedAt: null,
     };
+  }
+
+  // The override goes in FIRST, and only now that the publish it authorised
+  // has actually changed a row: it is the authorisation for the write above,
+  // and it must never stand alone (see where it is captured).
+  if (overrideToLog) {
+    await logEvent(supabase, {
+      orgId: profile.orgId,
+      actorId: profile.id,
+      entityType: "property",
+      entityId: propertyId,
+      eventType: "publish_override",
+      payload: overrideToLog,
+    });
   }
 
   await logEvent(supabase, {

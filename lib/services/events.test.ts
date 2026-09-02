@@ -427,3 +427,32 @@ describe("event types that reached the log before the registry", () => {
   });
 });
 
+/**
+ * A payment milestone's date moving on a live hold. The action wrote no event
+ * at all until the 2026-09-02 guardrail-1 sweep — it was the only one of the
+ * five in its file that did not — so this pins both the verb and the fact
+ * that the line names BOTH dates: the dispute is always "we agreed the 30th".
+ */
+describe("an instalment's due date moving", () => {
+  const due = (payload: Record<string, unknown>) =>
+    describeEvent(ev("installment_due_changed", payload, "property"), t);
+
+  it("names the old date, the new one and the milestone", () => {
+    const line = due({ label: "On signing", from: "2026-07-30", to: "2026-08-15" });
+    expect(line).toContain("2026-07-30");
+    expect(line).toContain("2026-08-15");
+    expect(line).toContain("On signing");
+  });
+
+  it("still reads when the milestone has no label", () => {
+    const line = due({ from: "2026-07-30", to: "2026-08-15" });
+    expect(line).toContain("2026-07-30");
+    expect(line).toContain("2026-08-15");
+  });
+
+  it("distinguishes a date being SET from one being cleared", () => {
+    expect(due({ to: "2026-08-15" })).toContain("2026-08-15");
+    expect(due({})).toContain("cleared");
+  });
+});
+

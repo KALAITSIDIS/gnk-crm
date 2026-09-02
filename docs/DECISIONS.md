@@ -3,6 +3,49 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-03 · T-event-integrity (no migration) — the evidence spine
+  swept, and the three things it was getting wrong about itself.** Guardrail
+  1 says every state change writes a hash-chained event; nobody had ever
+  checked that claim across the whole surface. All 122 exported server
+  actions were traced (105 mutate, 100 already correct), every claimed gap
+  put to two skeptics: 17 confirmed, 12 refuted. Three are fixed here — the
+  ones about whether the log tells the truth, rather than how much detail it
+  carries:
+
+  (1) **A payment milestone's date moved with no record at all.**
+  `setInstallmentDue` was the only action of the five in its file that wrote
+  no event on any path, while writing `reservation_installments.due_date` on
+  a live hold. "We agreed the 30th" is the dispute this log exists to settle.
+  It now records the old date and the new one, and the verb is registered in
+  the timeline before it ships — the mistake the entry below this one had to
+  come back and fix.
+  (2) **An override could stand for a publish that never happened.**
+  `publish_override` was written INSIDE the gate block, about forty lines and
+  several failure paths before the UPDATE that actually publishes — and
+  `logEvent` is an immediate insert with no surrounding transaction. An RLS
+  no-op, a constraint, a dropped connection, and the log held an admin's
+  authorisation for an act that did not occur. **An authorisation recorded
+  for something that did not happen is worse than no record**: this is the
+  log the desk would produce in a dispute. It is now captured in the gate and
+  written after the write it authorises, immediately before that write's own
+  `updated` event. The gate had no e2e at all for an ordinary listing (only
+  the 2026-09-02 container refusals), so `publish-gate.spec.ts` now pins the
+  whole path: refused, no override event yet, override ticked, published, one
+  override event carrying the score, ordered before the save it authorised.
+  (3) **The fee bands were overwritten with no from/to.** `cyprus_config`
+  holds one mutable row per key — no history table, no trigger — and the
+  calculators never persist a result, so once a transfer-fee band was edited
+  the previous rates existed in no row and no event. The event now carries
+  the whole before/after, and a `section` so the admin feed stops printing a
+  bare "Updated" for the one row guardrail 5 exists to protect.
+
+  Left for a follow-up, deliberately: the other 14, which are one shape —
+  a write commits, a later step fails, and the event that describes the
+  first write is never reached (share links, price lists, media covers, the
+  merge, the retention purge, viewing routes and slips). They need the same
+  systematic treatment, not fourteen ad-hoc patches, and none of them
+  fabricates a record the way (2) did.
+
 - **2026-09-02 · T-timeline-registry (no migration) — four events reached
   the log before the timeline learned to say them.** Diffing every
   `eventType:` written anywhere in `lib/` against `EVENT_LINES` found four

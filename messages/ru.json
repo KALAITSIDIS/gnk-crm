@@ -417,6 +417,10 @@
     "mandateRenewed": "Мандат продлён",
     "mandateRenewedWindow": "Мандат продлён — новый период {start} → {expiry}",
     "unitTypeCreated": "Создан тип объекта",
-    "unitTypeCreatedCode": "Создан тип объекта {code}"
+    "unitTypeCreatedCode": "Создан тип объекта {code}",
+    "installmentDueChanged": "Срок платежа {from} → {to}",
+    "installmentDueChangedLabel": "Срок платежа {from} → {to} — {label}",
+    "installmentDueSet": "Установлен срок платежа {to}",
+    "installmentDueCleared": "Срок платежа снят"
   }
 }
