@@ -3,6 +3,114 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-02 · T-container-review (no migration) — the two container
+  merges reviewed adversarially the same day, and what survived.** Eight
+  independent lenses over `4f7f423..5205954` (action correctness, phases and
+  kinds, events/RLS, wizard client state, copy honesty, test honesty, docs
+  drift, blast radius) produced 23 deduplicated candidates; each went to
+  three refuters with different briefs (trace it, weigh its impact, assume
+  it is false and find why). Fifteen survived 3/3 or 2/3; one was refuted;
+  the run was cut twice by the session limit and resumed from its journal,
+  so the last seven verdicts arrived after the fixes below had started —
+  they are folded in where they confirmed. The one that mattered:
+
+  (1) **A phase is not a unit.** The "at least one unit" count everywhere
+  was a bare child-row count. A project holding one EMPTY PHASE and no units
+  satisfied the non-overridable refusal, scored 100, and its units page hid
+  the empty banner — one `createPhase` away from the exact incident the
+  merge was shipped to prevent. And a project whose units sit UNDER its
+  phases (units.parent_id = the phase) had zero direct units, so it passed
+  only by counting the phases. There is now ONE definition, in
+  `lib/services/container-units.ts`: rows with kind = unit, not archived,
+  whose parent is the container or any of its phases. The gate, the score's
+  recompute, the detail page, the units-page banner and the worklist all
+  read it (the worklist through the pure `tallyContainerUnits`, because it
+  scores a portfolio from three queries and must not add one per
+  container). Sold units still count — a sold-out development existed;
+  archived ones do not — archiving is the removal here. The count THROWS on
+  a query error rather than reading as zero: the gate must fail closed.
+  Pinned: five tally tests, and an e2e that publishes a project with an
+  empty phase (refused, override ticked or not) and then with one unit
+  under that phase (allowed).
+  (2) **The reference is minted AFTER the refusals, not before.** The
+  previous entry's "refuse before the reference burns" was false in the
+  code: `generateReference` ran first, so every refused submit (more than
+  200 units, an empty floor range) consumed a PAF number — a committed RPC
+  counter, not part of the insert. The generation decision is pure and now
+  runs first; the reference is the last side-effect before the insert. The
+  floors refusal is also symmetric now: ANY floor field typed with no units
+  produced is a refusal (it fired only on floors-from), and the wizard draws
+  the same line client-side with the same sentence and a disabled button.
+  (3) **The Floors/Villas branches were keyless siblings.** React reused
+  the third input across the toggle, so a typed "Floors to" became every
+  villa's plot area — silent data corruption on a real create. Each branch
+  is keyed now, and every layout input is controlled state, so nothing can
+  alias. A fresh-session Back from step 2 also wiped every uncontrolled
+  step-2 value (pre-existing for the property's own fields; the merge had
+  extended it to values fanned out into N unit rows) — Back now snapshots
+  them first.
+  (4) **"Units priced" replaces "Price set" for containers.** Every line of
+  container copy says the units carry the prices, and the score still
+  docked a project 10 for its own asking price. The item keeps its key so
+  the worklist groups one gap; an otherwise-complete empty development now
+  scores 75 — still above the threshold on purpose. The container's own
+  price is labelled a FROM price in the wizard and the overview, which also
+  stopped reading "Area —" for a development (site plot) and "— / —" for
+  rooms it never has.
+  (5) **Stored scores follow units.** `createProperty` never wrote
+  `quality_score` (the list read 0 until the first save — pre-existing) and
+  nothing recomputed a container when units were generated, added,
+  archived or restored. `refreshContainerScores` recomputes the parent and,
+  through a phase, the project, from every one of those paths.
+  (6) **One role rule.** The wizard let an agent bulk-generate units and
+  then landed them on a page that says only admins and listing managers
+  manage units. The units page's rule (2026-07-17) stands; the wizard shows
+  the layout section only to those roles, and the action ignores a posted
+  layout from anyone else.
+  (7) **Two bypasses closed.** The CSV importer wrote visibility straight
+  from the file — a `kind=project` row with `visibility=public` walked past
+  the gate; a container now imports as `coming_soon` at most, with a note
+  (dry-run proven). "Create similar" from a project carried bedrooms and
+  covered area the container wizard never shows and the action nulls; they
+  are dropped and named in the page's not-copied list.
+  (8) **Client bounds mirror the schema** (MAX_FLOOR, MAX_PER_FLOOR, prefix
+  and block lengths, a zero base price), so the preview never promises a
+  write the server refuses with a field-less zod message; over 200 units
+  disables submit and the copy no longer claims a partial create the app
+  never did.
+
+  Tests were the other half of the findings: the two new generator e2e
+  tests never cleaned up (the RESTRICT FK blocks a parent-only sweep — a
+  describe-level afterEach now deletes grandchildren → children → project);
+  the empty-container score assertion could not fail (a bare project scores
+  the same in either branch — it now opens the ring's tooltip and asserts
+  "At least one unit" is listed and "Covered area set" is not); and the
+  "non-overridable" property had no test ticking the override. Three wizard
+  e2e were added for the floors path, the toggle aliasing and the
+  half-filled range. Doc 02 §A8/§C1 and HANDOFF §0a were corrected.
+
+  **The completeness critic's pass** (run after the fixes above started)
+  added seven candidates; all seven survived 3/3 and all seven were built:
+  a rent development's generated units now carry `rent_price_month`, not a
+  sale price (the writer reads the parent's transaction type; a let unit
+  counts as priced everywhere); the units-page generator exposes the villa
+  **Start at** number the action had accepted all along, so a second run
+  continues V07… instead of colliding; a raced insert (two people generating
+  the same run — the pre-check is not atomic, the unique index is) returns a
+  sentence instead of a constraint name; the worklist loads every
+  non-archived row so a SOLD-OUT development's units still count for it
+  (only live rows are scored); the "at least one unit" gap names the units
+  page as where it is fixed; and the wizard's partial-failure path lands on
+  the units page with `?units=failed&reason=…` rendered as an alert — a
+  console line was not "loud" to the person at the desk. The last one I had
+  first settled as no-build and the verifiers were right to keep it: the
+  wizard stamped the development's OWN property type on every unit, so a
+  "building" or "mixed use" development minted units typed "building". A
+  unit's type now follows the layout (floors → apartment, villas → villa)
+  unless the development is already named after a dwelling type, which is
+  how the units page's generator defaults too. A mixed development is
+  still two runs on the units page, where the type is per run.
+
 - **2026-09-02 · T-wizard-project-layout (no migration) — a project is
   created WITH its units, and lands where they live.** The follow-on the
   container entry below deferred. The operator's instruction was two
@@ -72,7 +180,8 @@ silent. Format: date · task · decision · rationale.
   unit" worth their combined 15, so every branch still totals exactly 100 and
   the gap appears in the quality worklist by name. Deliberately recorded in
   the tests: an otherwise-complete empty project still scores **85, above the
-  70 publish threshold** — the score informs, it does not gate.
+  70 publish threshold** — the score informs, it does not gate. (75 since
+  T-container-review the same day: the price item became "Units priced".)
   (2) **The publish gate refuses an empty container**, and this refusal is
   NOT overridable. The score override exists for a listing that is thin but
   deliberate; an empty project is not thin, it is empty — units carry the

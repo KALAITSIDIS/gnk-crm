@@ -18,6 +18,7 @@ import {
   UNIT_PARENT_SELECT,
 } from "@/lib/services/unit-inheritance";
 import { writeGeneratedUnits } from "@/lib/services/unit-writer";
+import { refreshContainerScores } from "@/lib/services/quality-score";
 import {
   generateUnits,
   generateVillaUnits,
@@ -122,6 +123,9 @@ export async function createUnit(
       inherited: inheritedFieldsWithValues(project),
     },
   });
+
+  // the containers above now have one more unit — their stored score moved
+  await refreshContainerScores(supabase, project.id);
 
   revalidatePath(`/properties/${project.id}/units`);
   return { error: null, savedAt: Date.now() };
@@ -341,6 +345,8 @@ export async function generateProjectUnits(
   });
   if (written.error) return { error: written.error, savedAt: null };
 
+  await refreshContainerScores(supabase, project.id);
+
   revalidatePath(`/properties/${project.id}/units`);
   revalidatePath("/properties");
   return { error: null, savedAt: Date.now() };
@@ -461,6 +467,9 @@ export async function createPhase(
       inherited: inheritedFieldsWithValues(project),
     },
   });
+
+  // a phase is not a unit, but the new row's own stored score starts at 0
+  await refreshContainerScores(supabase, created.id);
 
   revalidatePath(`/properties/${project.id}/units`);
   revalidatePath("/properties");

@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState } from "react";
+import { Fragment, useActionState, useEffect, useRef, useState } from "react";
 import { AlertTriangle, ArrowLeft, ArrowRight, Copy, RotateCcw } from "lucide-react";
 import Link from "next/link";
 import {
@@ -38,7 +38,9 @@ import {
   generateVillaUnits,
   generatedCount,
   villaCount,
+  MAX_FLOOR,
   MAX_GENERATED_UNITS,
+  MAX_PER_FLOOR,
 } from "@/lib/services/unit-generator";
 import { formatMoney } from "@/lib/utils/format";
 
@@ -78,12 +80,9 @@ const DRAFT_FIELDS = [
   "bedrooms",
   "bathrooms",
   "internal_notes",
-  // per-unit fields of a project's layout section (2026-09-02) — uncontrolled
-  // like the rest, so a draft carries them the same way
-  "gen_bedrooms",
-  "gen_bathrooms",
-  "gen_covered_area_sqm",
-  "gen_plot_area_sqm",
+  // NOT the gen_* inputs: every box of the layout section is controlled and
+  // travels in `gen` (see GenDraft). The per-unit four were uncontrolled here
+  // until 2026-09-02 — which is how a "Floors to" got posted as a plot area.
 ] as const;
 
 interface Draft {
@@ -101,16 +100,22 @@ interface Draft {
   /** optional for drafts saved before 0077 — absent reads as "" */
   registrationNo?: string;
   fields: Record<string, string>;
-  /** the project layout section's controlled half — optional for older drafts */
+  /** the project layout section, every box of it — optional for older drafts,
+   *  and one saved before 2026-09-02 lacks the per-unit keys (merged on restore) */
   gen?: GenDraft;
 }
 
 /**
- * The controlled inputs of a project's layout section (they drive the live
- * preview, so they must be state, and state travels in the draft as values —
- * the uncontrolled per-unit inputs go through DRAFT_FIELDS instead).
- * `layout: ""` means "follow the property type": apartments stack, the rest
- * do not.
+ * EVERY input of a project's layout section, as state (they drive the live
+ * preview, and state travels in the draft as values). `layout: ""` means
+ * "follow the property type": apartments stack, the rest do not.
+ *
+ * The four per-unit boxes were uncontrolled until 2026-09-02. Two reasons
+ * they are not any more: the preview passed them to nothing, so it could not
+ * be "what gets written" — and the Floors and Villas branches share a slot,
+ * so React reused the third branch input across the toggle and a typed
+ * "Floors to" was posted as every villa's plot area. Controlled, the value is
+ * whatever the state says, and both specs carry it.
  */
 interface GenDraft {
   layout: "" | "floors" | "villas";
@@ -120,6 +125,10 @@ interface GenDraft {
   floorFrom: string;
   floorTo: string;
   perFloor: string;
+  bedrooms: string;
+  bathrooms: string;
+  coveredArea: string;
+  plotArea: string;
   basePrice: string;
   priceStep: string;
 }
@@ -131,9 +140,107 @@ const DEFAULT_GEN: GenDraft = {
   floorFrom: "",
   floorTo: "",
   perFloor: "",
+  bedrooms: "",
+  bathrooms: "",
+  coveredArea: "",
+  plotArea: "",
   basePrice: "",
   priceStep: "",
 };
+
+/** Blank means "later" — Number("") is 0, which must not read as floor 0. */
+function floorRangeValid(gen: GenDraft): boolean {
+  const from = Number(gen.floorFrom);
+  const to = Number(gen.floorTo);
+  const per = Number(gen.perFloor);
+  return (
+    gen.floorFrom !== "" &&
+    gen.floorTo !== "" &&
+    gen.perFloor !== "" &&
+    Number.isInteger(from) &&
+    Number.isInteger(to) &&
+    Number.isInteger(per) &&
+    to >= from &&
+    per > 0
+  );
+}
+
+const FLOOR_RANGE_PROBLEM =
+  "That floor range produces no units — check floors from/to and units per floor.";
+
+/**
+ * What `createPropertySchema` would refuse in the layout section, said in the
+ * words of the box that carries it — or null when the section is submittable.
+ *
+ * Mirrors the server bound for bound (2026-09-02). The preview's promise is
+ * only worth something if the write it describes cannot bounce off
+ * validation: "Creates 6 units" over a 70th floor was a lie the schema then
+ * exposed as a generic error, and a half-typed floor range read "No units
+ * yet" while the action refused it. A blank box is "not given" — the schema's
+ * `emptyToUndefined` — so only a filled box can be wrong. Only the ACTIVE
+ * layout's boxes count: the other layout is unmounted and never posted.
+ */
+function layoutProblem(gen: GenDraft, layout: "floors" | "villas"): string | null {
+  const whole = (s: string, min: number, max = Infinity) => {
+    const n = Number(s);
+    return Number.isInteger(n) && n >= min && n <= max;
+  };
+  const above0 = (s: string) => Number(s) > 0;
+  let count = 0;
+
+  if (layout === "floors") {
+    if (gen.floorFrom !== "" || gen.floorTo !== "" || gen.perFloor !== "") {
+      if (!floorRangeValid(gen)) return FLOOR_RANGE_PROBLEM;
+      if (!whole(gen.floorFrom, 0, MAX_FLOOR)) {
+        return `Floors from must be between 0 and ${MAX_FLOOR}.`;
+      }
+      if (!whole(gen.floorTo, 0, MAX_FLOOR)) {
+        return `Floors to must be between 0 and ${MAX_FLOOR}.`;
+      }
+      if (!whole(gen.perFloor, 1, MAX_PER_FLOOR)) {
+        return `Units per floor must be between 1 and ${MAX_PER_FLOOR}.`;
+      }
+      count = generatedCount({
+        floorFrom: Number(gen.floorFrom),
+        floorTo: Number(gen.floorTo),
+        perFloor: Number(gen.perFloor),
+      });
+    }
+    if (gen.block.length > 20) return "Block can be at most 20 characters.";
+  } else {
+    if (gen.villaCount !== "") {
+      if (!whole(gen.villaCount, 1)) {
+        return "How many villas must be a whole number of 1 or more — or leave it blank.";
+      }
+      count = villaCount({ count: Number(gen.villaCount) });
+    }
+    if (gen.villaPrefix.length > 10) return "Numbering can be at most 10 characters.";
+    if (gen.plotArea !== "" && !above0(gen.plotArea)) {
+      return "Plot m² each must be above 0 — or leave it blank.";
+    }
+  }
+  // there is no partial create — the action refuses the whole submit
+  if (count > MAX_GENERATED_UNITS) {
+    return `That is ${count} units — the limit is ${MAX_GENERATED_UNITS} per run. Reduce it to ${MAX_GENERATED_UNITS} or fewer and add the rest from the units page.`;
+  }
+  if (gen.bedrooms !== "" && !whole(gen.bedrooms, 0)) {
+    return "Beds each must be a whole number of 0 or more.";
+  }
+  if (gen.bathrooms !== "" && !whole(gen.bathrooms, 0)) {
+    return "Baths each must be a whole number of 0 or more.";
+  }
+  if (gen.coveredArea !== "" && !above0(gen.coveredArea)) {
+    return "m² each must be above 0 — or leave it blank.";
+  }
+  // "0" is a number the generator would ladder from; the schema says positive()
+  if (gen.basePrice !== "" && !above0(gen.basePrice)) {
+    return "First price must be above 0 — or leave it blank";
+  }
+  if (gen.priceStep !== "" && !(Number(gen.priceStep) >= 0)) {
+    return `${layout === "villas" ? "+ € per villa" : "+ € per floor"} cannot be negative.`;
+  }
+  return null;
+}
 
 /** Every access is wrapped: localStorage throws outright in some privacy modes,
  *  and a crashing form is far worse than a lost draft. */
@@ -185,11 +292,17 @@ function labelize(value: string) {
 export function CreatePropertyWizard({
   districts,
   areas,
+  canGenerate,
   seed = null,
   seedParty = null,
 }: {
   districts: (DistrictOption & { code: string })[];
   areas: AreaOption[];
+  /** Whether the viewer may create a project's units here. The units page
+   *  lets only admin and listing_manager manage units, and the wizard offering
+   *  generation to an agent (2026-09-02) wrote rows they could not then touch.
+   *  Decided server-side from the profile, like the units page's `canManage`. */
+  canGenerate: boolean;
   /** "Create similar": prefill from an existing property (see property-seed.ts) */
   seed?: PropertySeed | null;
   /** the source's owner/developer, resolved server-side so the picker shows a name */
@@ -344,7 +457,9 @@ export function CreatePropertyWizard({
     setAreaId(d.areaId);
     setAddress(d.address);
     setRegistrationNo(d.registrationNo ?? "");
-    setGen(d.gen ?? DEFAULT_GEN);
+    // merged over the defaults: a draft saved before 2026-09-02 has no
+    // per-unit keys in `gen` (they were in `fields`), and must restore to ""
+    setGen({ ...DEFAULT_GEN, ...(d.gen ?? {}) });
     setStep(d.step);
     setDraftFields(d.fields);
     setRestoredAt(d.savedAt);
@@ -405,6 +520,18 @@ export function CreatePropertyWizard({
       const el = form?.elements.namedItem(n);
       if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) el.value = "";
     }
+    setStep(1);
+  };
+
+  /**
+   * Back unmounts step 2 and its uncontrolled inputs with it. Without a
+   * snapshot the next Continue mounted them from `draftFields` — null in a
+   * fresh session — so every box came back empty, and the save the step
+   * change scheduled read "" for all of them and wrote that over the draft
+   * (2026-09-02). Snapshot first: the remount and the save both read it.
+   */
+  const goBack = () => {
+    setDraftFields(readFields());
     setStep(1);
   };
 
@@ -495,44 +622,48 @@ export function CreatePropertyWizard({
   // bedrooms it has. `phase` is not creatable here; checking both keeps the
   // rule honest against the code that enforces it.
   const isContainer = kind === "project" || kind === "phase";
+  // the layout section exists only for a container AND a role that may manage
+  // units — otherwise no gen_* is posted and the action generates nothing
+  const genActive = isContainer && canGenerate;
   const genLayout: "floors" | "villas" =
     gen.layout || (propertyType === "apartment" ? "floors" : "villas");
+  // blank is "not given", as the schema's emptyToUndefined makes of it — so
+  // the specs carry field for field what the action builds from the post
+  const numOrNull = (s: string): number | null => (s === "" ? null : Number(s));
+  const genPerUnit = {
+    bedrooms: numOrNull(gen.bedrooms),
+    bathrooms: numOrNull(gen.bathrooms),
+    coveredAreaSqm: numOrNull(gen.coveredArea),
+    basePrice: numOrNull(gen.basePrice),
+  };
   const genFloorSpec = {
+    ...genPerUnit,
     block: gen.block,
     floorFrom: Number(gen.floorFrom),
     floorTo: Number(gen.floorTo),
     perFloor: Number(gen.perFloor),
-    basePrice: gen.basePrice ? Number(gen.basePrice) : null,
-    pricePerFloor: gen.priceStep ? Number(gen.priceStep) : null,
+    pricePerFloor: numOrNull(gen.priceStep),
   };
   const genVillaSpec = {
+    ...genPerUnit,
     prefix: gen.villaPrefix,
     count: Number(gen.villaCount),
-    basePrice: gen.basePrice ? Number(gen.basePrice) : null,
-    pricePerVilla: gen.priceStep ? Number(gen.priceStep) : null,
+    plotAreaSqm: numOrNull(gen.plotArea),
+    pricePerVilla: numOrNull(gen.priceStep),
   };
-  // blank means "later" — Number("") is 0, which must not read as floor 0
+  // one line the schema would refuse, or null; while set, submit is disabled
+  const genProblem = genActive ? layoutProblem(gen, genLayout) : null;
   const genValid =
-    genLayout === "villas"
-      ? Number.isInteger(genVillaSpec.count) && genVillaSpec.count > 0
-      : gen.floorFrom !== "" &&
-        gen.floorTo !== "" &&
-        gen.perFloor !== "" &&
-        Number.isInteger(genFloorSpec.floorFrom) &&
-        Number.isInteger(genFloorSpec.floorTo) &&
-        Number.isInteger(genFloorSpec.perFloor) &&
-        genFloorSpec.floorTo >= genFloorSpec.floorFrom &&
-        genFloorSpec.perFloor > 0;
+    genLayout === "villas" ? villaCount(genVillaSpec) > 0 : floorRangeValid(gen);
   const genCount =
-    isContainer && genValid
+    genActive && genValid && genProblem === null
       ? genLayout === "villas"
         ? villaCount(genVillaSpec)
         : generatedCount(genFloorSpec)
       : 0;
-  const genTooMany = genCount > MAX_GENERATED_UNITS;
   // the SAME functions the action calls — the preview must be what gets written
   const genPreview =
-    genCount > 0 && !genTooMany
+    genCount > 0
       ? genLayout === "villas"
         ? generateVillaUnits(genVillaSpec)
         : generateUnits(genFloorSpec)
@@ -563,7 +694,7 @@ export function CreatePropertyWizard({
       <input type="hidden" name="property_type" value={propertyType} />
       <input type="hidden" name="transaction_type" value={transaction} />
       <input type="hidden" name="district_id" value={districtId} />
-      {isContainer ? <input type="hidden" name="gen_layout" value={genLayout} /> : null}
+      {genActive ? <input type="hidden" name="gen_layout" value={genLayout} /> : null}
 
       {/* A prefilled form that does not say it is prefilled is the dangerous
           version of this feature: the risk is a copied price accepted without
@@ -794,7 +925,11 @@ export function CreatePropertyWizard({
 
             {showAsking ? (
               <div className="flex flex-col gap-2">
-                <Label htmlFor="asking_price">Asking price (€)</Label>
+                <Label htmlFor="asking_price">
+                  {/* the units carry the prices; a container's own is the
+                      "from" figure the listing leads with (2026-09-02) */}
+                  {isContainer ? "From price (€), optional" : "Asking price (€)"}
+                </Label>
                 <Input
                   id="asking_price"
                   name="asking_price"
@@ -878,7 +1013,7 @@ export function CreatePropertyWizard({
             </div>
           </div>
 
-          {isContainer ? (
+          {genActive ? (
             <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-2 p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
@@ -908,8 +1043,14 @@ export function CreatePropertyWizard({
               </div>
 
               <div className="grid gap-3 sm:grid-cols-3">
+                {/* KEYED fragments, so the toggle REMOUNTS the branch. Unkeyed,
+                    React matched the two branches by position and reused the
+                    third input across them: a typed "Floors to" surfaced as
+                    "Plot m² each" and was posted as gen_plot_area_sqm — every
+                    villa got the floor number as its plot (2026-09-02). The
+                    boxes are controlled as well, so neither defence is alone. */}
                 {genLayout === "villas" ? (
-                  <>
+                  <Fragment key="villas">
                     <div className="flex flex-col gap-1.5">
                       <Label htmlFor="gen_villa_count">How many villas</Label>
                       <Input
@@ -917,6 +1058,7 @@ export function CreatePropertyWizard({
                         name="gen_villa_count"
                         type="number"
                         min="1"
+                        max={MAX_GENERATED_UNITS}
                         value={gen.villaCount}
                         onChange={(e) => setGenField("villaCount", e.target.value)}
                         placeholder="Leave blank to add later"
@@ -927,6 +1069,7 @@ export function CreatePropertyWizard({
                       <Input
                         id="gen_villa_prefix"
                         name="gen_villa_prefix"
+                        maxLength={10}
                         value={gen.villaPrefix}
                         onChange={(e) => setGenField("villaPrefix", e.target.value)}
                         placeholder="V"
@@ -940,17 +1083,19 @@ export function CreatePropertyWizard({
                         type="number"
                         min="0"
                         step="0.01"
-                        defaultValue={draftFields?.gen_plot_area_sqm ?? ""}
+                        value={gen.plotArea}
+                        onChange={(e) => setGenField("plotArea", e.target.value)}
                       />
                     </div>
-                  </>
+                  </Fragment>
                 ) : (
-                  <>
+                  <Fragment key="floors">
                     <div className="flex flex-col gap-1.5">
                       <Label htmlFor="gen_block">Block</Label>
                       <Input
                         id="gen_block"
                         name="gen_block"
+                        maxLength={20}
                         value={gen.block}
                         onChange={(e) => setGenField("block", e.target.value)}
                         placeholder="A"
@@ -963,6 +1108,7 @@ export function CreatePropertyWizard({
                         name="gen_floor_from"
                         type="number"
                         min="0"
+                        max={MAX_FLOOR}
                         value={gen.floorFrom}
                         onChange={(e) => setGenField("floorFrom", e.target.value)}
                         placeholder="Leave blank to add later"
@@ -975,6 +1121,7 @@ export function CreatePropertyWizard({
                         name="gen_floor_to"
                         type="number"
                         min="0"
+                        max={MAX_FLOOR}
                         value={gen.floorTo}
                         onChange={(e) => setGenField("floorTo", e.target.value)}
                       />
@@ -986,11 +1133,12 @@ export function CreatePropertyWizard({
                         name="gen_per_floor"
                         type="number"
                         min="1"
+                        max={MAX_PER_FLOOR}
                         value={gen.perFloor}
                         onChange={(e) => setGenField("perFloor", e.target.value)}
                       />
                     </div>
-                  </>
+                  </Fragment>
                 )}
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="gen_bedrooms">Beds each</Label>
@@ -999,7 +1147,8 @@ export function CreatePropertyWizard({
                     name="gen_bedrooms"
                     type="number"
                     min="0"
-                    defaultValue={draftFields?.gen_bedrooms ?? ""}
+                    value={gen.bedrooms}
+                    onChange={(e) => setGenField("bedrooms", e.target.value)}
                   />
                 </div>
                 <div className="flex flex-col gap-1.5">
@@ -1009,7 +1158,8 @@ export function CreatePropertyWizard({
                     name="gen_bathrooms"
                     type="number"
                     min="0"
-                    defaultValue={draftFields?.gen_bathrooms ?? ""}
+                    value={gen.bathrooms}
+                    onChange={(e) => setGenField("bathrooms", e.target.value)}
                   />
                 </div>
                 <div className="flex flex-col gap-1.5">
@@ -1020,16 +1170,19 @@ export function CreatePropertyWizard({
                     type="number"
                     min="0"
                     step="0.01"
-                    defaultValue={draftFields?.gen_covered_area_sqm ?? ""}
+                    value={gen.coveredArea}
+                    onChange={(e) => setGenField("coveredArea", e.target.value)}
                   />
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="gen_base_price">First price €</Label>
+                  <Label htmlFor="gen_base_price">
+                    {transaction === "rent" ? "First rent €/month" : "First price €"}
+                  </Label>
                   <Input
                     id="gen_base_price"
                     name="gen_base_price"
                     type="number"
-                    min="0"
+                    min="0.01"
                     step="0.01"
                     value={gen.basePrice}
                     onChange={(e) => setGenField("basePrice", e.target.value)}
@@ -1055,11 +1208,8 @@ export function CreatePropertyWizard({
                 data-testid="wizard-units-preview"
                 className="rounded-lg bg-surface px-3 py-2 text-sm text-text-2"
               >
-                {genTooMany ? (
-                  <span className="text-danger">
-                    That is {genCount} units — the limit is {MAX_GENERATED_UNITS} per run. Create
-                    the first {MAX_GENERATED_UNITS} here and the rest from the units page.
-                  </span>
+                {genProblem ? (
+                  <span className="text-danger">{genProblem}</span>
                 ) : genFirst && genLast ? (
                   <>
                     Creates <span className="font-semibold text-text-1">{genCount}</span>{" "}
@@ -1082,6 +1232,11 @@ export function CreatePropertyWizard({
                 )}
               </div>
             </div>
+          ) : isContainer ? (
+            <p className="text-sm text-text-3">
+              An admin or listing manager adds the units after creation — you will land on the
+              units page.
+            </p>
           ) : null}
 
           {duplicate ? (
@@ -1125,13 +1280,16 @@ export function CreatePropertyWizard({
           ) : null}
 
           <div className="flex items-center gap-2">
-            <Button type="button" variant="outline" onClick={() => setStep(1)}>
+            <Button type="button" variant="outline" onClick={goBack}>
               <ArrowLeft className="size-4" /> Back
             </Button>
-            <Button type="submit" disabled={pending}>
+            {/* held while the layout section would be refused by the schema —
+                the preview names the box; the alternative was a submit that
+                came back with a generic validation error (2026-09-02) */}
+            <Button type="submit" disabled={pending || genProblem !== null}>
               {pending
                 ? "Creating…"
-                : isContainer && genCount > 0 && !genTooMany
+                : genCount > 0
                   ? `Create project + ${genCount} ${genLayout === "villas" ? "villas" : "units"}`
                   : isContainer
                     ? "Create project"

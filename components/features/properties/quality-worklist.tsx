@@ -105,7 +105,9 @@ export function QualityWorklist({ worklist }: { worklist: Worklist }) {
                   instruction. */}
               {tab ? (
                 <p className="mt-1 text-xs text-text-3">
-                  Fixed on the <span className="font-medium text-text-2">{tab}</span> tab.
+                  Fixed on the <span className="font-medium text-text-2">{tab}</span>
+                  {/* a container's units live on their own page, not a tab */}
+                  {tab.endsWith(" page") ? "." : " tab."}
                 </p>
               ) : null}
 
