@@ -750,8 +750,18 @@ export async function updatePropertySection(
   // score is derived state — recompute on every save (doc 02 §A8); the save's
   // own property.updated event covers auditability, no separate score event.
   // Quietly: the save has happened; a failed count must not report it as failed.
-  const { recomputeQuietly } = await import("@/lib/services/quality-score");
+  const { recomputeQuietly, refreshContainerScores } = await import(
+    "@/lib/services/quality-score"
+  );
   await recomputeQuietly(supabase, propertyId);
+  // A UNIT's own save moves its container's score: the details section writes
+  // visibility (archived is in the list) and the price, which are exactly the
+  // inputs to "at least one unit" and "units priced". Nothing refreshed the
+  // parent, so the list showed a stale project score until the project itself
+  // was next saved (2026-09-02 fix-wave review). No-ops on a null parent.
+  if (current.kind === "unit") {
+    await refreshContainerScores(supabase, current.parent_id);
+  }
 
   // title deed status is a deal-health factor (doc 02 §C5) — refresh open deals
   if (section === "legal") {

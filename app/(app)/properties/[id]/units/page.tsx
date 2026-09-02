@@ -76,6 +76,12 @@ export default async function ProjectUnitsPage({
       .select(UNIT_ROW_SELECT)
       .eq("parent_id", id)
       .eq("kind", "unit")
+      // the ONE definition (container-units.ts) excludes archived units, so
+      // this list must too — the page was printing "12 units" over a matrix
+      // of archived rows while its own banner said the project had none
+      // (2026-09-02 fix-wave review). An archived unit lives in the archived
+      // list, where Restore is.
+      .neq("visibility", "archived")
       .order("block")
       .order("unit_number"),
     supabase
@@ -131,6 +137,15 @@ export default async function ProjectUnitsPage({
   // the phases, so a project whose units all sit under phases is not told it
   // is empty, and a project with only empty phases IS (2026-09-02 review)
   const unitFacts = await countContainerUnits(supabase, id);
+  // archived units are excluded everywhere else; counted here only so the
+  // empty-state can say WHY a project that clearly had units looks empty
+  const { count: archivedUnits } = await supabase
+    .from("properties")
+    .select("id", { count: "exact", head: true })
+    .eq("parent_id", id)
+    .eq("kind", "unit")
+    .eq("visibility", "archived");
+  const archivedUnitCount = archivedUnits ?? 0;
 
   const units: UnitRow[] = (unitRows ?? []).map((u) => ({
     ...u,
@@ -256,7 +271,9 @@ export default async function ProjectUnitsPage({
             This {project.kind} cannot be published, no buyer can be matched to it, and nothing
             on it can be reserved — the units carry the prices.{" "}
             {phases.length > 0 ? "Its phases are empty too — a phase is not a unit. " : ""}
-            {units.length > 0 ? "Its only units are archived. " : ""}
+            {archivedUnitCount > 0
+              ? `Its ${archivedUnitCount} unit${archivedUnitCount === 1 ? " is" : "s are"} archived — restore one from the archived list to bring it back. `
+              : ""}
             {canManage
               ? "Generate them below: describe the block or the villas once and every unit is created."
               : "An admin or listing manager can generate them from this page."}
