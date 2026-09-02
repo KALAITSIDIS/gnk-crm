@@ -117,9 +117,17 @@ test.describe("property parties", () => {
     const { orgId } = await fixtureProfile(admin);
     const propertyId = await seedProperty(admin, orgId, "standalone");
 
+    // IN THIS ORG. The picker runs as the signed-in user and profiles are
+    // RLS-scoped, so an agent from another org is invisible to it — while
+    // this query runs as the service role and sees every org. A local
+    // database accumulates cross-org fixtures (by 2026-09-02: 64 active
+    // agents, the first of them in Test Org A), so this silently started
+    // choosing an agent the UI could never offer. Green on a fresh CI
+    // database, red locally: the residue rule in reverse (tests/README.md).
     const { data: agent } = await admin
       .from("profiles")
       .select("id, full_name")
+      .eq("org_id", orgId)
       .eq("role", "agent")
       .eq("is_active", true)
       .limit(1)
@@ -129,7 +137,9 @@ test.describe("property parties", () => {
     await page.goto(`/properties/${propertyId}`);
 
     // Drive the real control: search, pick, save.
-    await page.getByLabel("Assigned agent", { exact: true }).fill(agent!.full_name.slice(0, 4));
+    // the WHOLE name: the picker returns at most 8 matches and ~50 local
+    // fixture agents share the prefix "Test"
+    await page.getByLabel("Assigned agent", { exact: true }).fill(agent!.full_name);
     await page.getByRole("button", { name: new RegExp(agent!.full_name) }).click();
     await page
       .locator("form", { has: page.locator('input[name="section"][value="parties"]') })
