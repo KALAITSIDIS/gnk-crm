@@ -417,6 +417,10 @@
     "mandateRenewed": "Η εντολή ανανεώθηκε",
     "mandateRenewedWindow": "Η εντολή ανανεώθηκε — νέα περίοδος {start} → {expiry}",
     "unitTypeCreated": "Δημιουργήθηκε τύπος μονάδας",
-    "unitTypeCreatedCode": "Δημιουργήθηκε τύπος μονάδας {code}"
+    "unitTypeCreatedCode": "Δημιουργήθηκε τύπος μονάδας {code}",
+    "installmentDueChanged": "Ημερομηνία δόσης {from} → {to}",
+    "installmentDueChangedLabel": "Ημερομηνία δόσης {from} → {to} — {label}",
+    "installmentDueSet": "Ορίστηκε ημερομηνία δόσης {to}",
+    "installmentDueCleared": "Καταργήθηκε η ημερομηνία δόσης"
   }
 }

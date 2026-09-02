@@ -658,6 +658,19 @@ export async function saveCyprusConfig(
   if ("denied" in gate) return fail(gate.denied);
   const { supabase, profile } = gate;
 
+  // The OLD row, read before the write. `cyprus_config` keeps one mutable
+  // row per key: there is no history table and no trigger, and the
+  // calculators never persist a result, so once a band is overwritten the
+  // previous rates exist nowhere — unless this event carries them. These are
+  // the numbers every fee quoted to a buyer is computed from, and "what did
+  // the calculator say in July" is precisely the question this log exists to
+  // answer (2026-09-02 guardrail-1 sweep).
+  const { data: before } = await supabase
+    .from("cyprus_config")
+    .select("value, verified_at, source_note")
+    .eq("key", d.key)
+    .maybeSingle();
+
   const { data: updated, error } = await supabase
     .from("cyprus_config")
     .update({
@@ -677,7 +690,22 @@ export async function saveCyprusConfig(
     entityType: "config",
     entityId: null,
     eventType: "updated",
-    payload: { key: d.key, verified_at: d.verified_at ?? null },
+    payload: {
+      // `section` is what the timeline renderer reads for an `updated` line;
+      // without it this printed a bare "Updated" in the admin feed
+      section: `Cyprus config — ${d.key}`,
+      key: d.key,
+      verified_at: d.verified_at ?? null,
+      changed: {
+        value: { from: (before?.value ?? null) as never, to: value as never },
+        ...(before?.verified_at !== (d.verified_at ?? null)
+          ? { verified_at: { from: before?.verified_at ?? null, to: d.verified_at ?? null } }
+          : {}),
+        ...(before?.source_note !== (d.source_note || null)
+          ? { source_note: { from: before?.source_note ?? null, to: d.source_note || null } }
+          : {}),
+      },
+    },
   });
   revalidatePath("/settings/cyprus-config");
   revalidatePath("/calculators");
