@@ -95,7 +95,9 @@ export default async function ProjectUnitsPage({
     // audit finding 11 — a project's phases, each with its own unit count
     supabase
       .from("properties")
-      .select("id, reference, title, status, delivery_date, units:properties!parent_id(count)")
+      // the phase's units by visibility, counted here — a bare embedded count
+      // would include archived ones and contradict the banner (2026-09-02)
+      .select("id, reference, title, status, delivery_date, units:properties!parent_id(visibility)")
       .eq("parent_id", id)
       .eq("kind", "phase")
       .order("reference"),
@@ -120,7 +122,9 @@ export default async function ProjectUnitsPage({
     title: (ph.title as { en?: string } | null)?.en ?? null,
     status: ph.status,
     delivery_date: ph.delivery_date,
-    unitCount: (ph.units as { count: number }[] | null)?.[0]?.count ?? 0,
+    unitCount: ((ph.units as { visibility: string }[] | null) ?? []).filter(
+      (u) => u.visibility !== "archived",
+    ).length,
   }));
 
   // the ONE definition of "has units" (container-units.ts) — reaches through
@@ -252,6 +256,7 @@ export default async function ProjectUnitsPage({
             This {project.kind} cannot be published, no buyer can be matched to it, and nothing
             on it can be reserved — the units carry the prices.{" "}
             {phases.length > 0 ? "Its phases are empty too — a phase is not a unit. " : ""}
+            {units.length > 0 ? "Its only units are archived. " : ""}
             {canManage
               ? "Generate them below: describe the block or the villas once and every unit is created."
               : "An admin or listing manager can generate them from this page."}

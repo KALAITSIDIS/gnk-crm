@@ -123,6 +123,35 @@ silent. Format: date · task · decision · rationale.
   PAF0002 100 → 75, the other three unchanged — the list and the detail
   page agree again.
 
+  **The fix wave reviewed in turn** (six lenses; the run was cut by the
+  session limit after three, resumed for the rest). What the first three
+  established, all corrected the same evening:
+  *Reverted:* the rent remap. Writing a rent development's units to
+  `rent_price_month` was right about the column and wrong about the
+  system — the units subsystem is sale-shaped end to end: the matrix, price
+  lists, the uplift, the public availability share (SQL, 0041) and sales
+  velocity all read `asking_price` as THE unit price, and every one of them
+  showed a rent unit as unpriced. Units carry `asking_price` again whatever
+  the development does, as they did before today; a rent development's
+  monthly figure prints as a plain price without "/month". Making the
+  subsystem rent-aware is a feature with a migration, **gated on the first
+  rental development** (HANDOFF §0a). The critic's finding was real; the
+  one-line answer to it was not.
+  *After-write refreshes never fail the write:* `refreshContainerScores`
+  and a new `recomputeQuietly` swallow and log — a count that failed after
+  a generated block had landed reported the block as failed, and the retry
+  then hit the collision check. The publish GATE still throws: there,
+  failing closed is the point.
+  *The definition, tightened:* an archived phase takes its units with it
+  (the in-memory tally never sees an archived phase, so the two halves now
+  agree), and the counts are HEAD counts — PostgREST caps a row select at
+  1000 silently, which is the exact kind of number this module exists to
+  prevent. The worklist pages its portfolio query for the same reason.
+  *The units page agrees with itself:* the matrix lists archived units, so
+  the banner now says "Its only units are archived" in that case, and the
+  per-phase cards count non-archived units instead of a bare embedded
+  count.
+
 - **2026-09-02 · T-wizard-project-layout (no migration) — a project is
   created WITH its units, and lands where they live.** The follow-on the
   container entry below deferred. The operator's instruction was two

@@ -46,31 +46,40 @@ export async function countContainerUnits(
   supabase: SupabaseClient<Database>,
   containerId: string,
 ): Promise<ContainerUnitFacts> {
+  // an archived phase takes its units with it — the in-memory tally cannot
+  // see an archived phase at all (the worklist never loads one), and the
+  // two halves must agree (2026-09-02 fix-wave review)
   const { data: phases, error: phaseErr } = await supabase
     .from("properties")
     .select("id")
     .eq("parent_id", containerId)
-    .eq("kind", "phase");
+    .eq("kind", "phase")
+    .neq("visibility", "archived");
   if (phaseErr) throw new Error(`Container phase query failed: ${phaseErr.message}`);
 
   const parents = [containerId, ...(phases ?? []).map((p) => p.id)];
-  // rows, not a head count: a development holds at most a few hundred units
-  // and the priced count needs the column
-  const { data: units, error: unitErr } = await supabase
-    .from("properties")
-    .select("id, asking_price, rent_price_month")
-    .in("parent_id", parents)
-    .eq("kind", "unit")
-    .neq("visibility", "archived");
+  // HEAD counts, not rows: PostgREST caps a row select at 1000 silently, and
+  // a count that quietly stops at 1000 is exactly the kind of number this
+  // module exists to prevent. Two counts, one filter apart.
+  const base = () =>
+    supabase
+      .from("properties")
+      .select("id", { count: "exact", head: true })
+      .in("parent_id", parents)
+      .eq("kind", "unit")
+      .neq("visibility", "archived");
+  const [{ count: unitCount, error: unitErr }, { count: pricedCount, error: pricedErr }] =
+    await Promise.all([
+      base(),
+      // priced by a sale price or — for a hand-entered let unit — a rent
+      base().or("asking_price.not.is.null,rent_price_month.not.is.null"),
+    ]);
   if (unitErr) throw new Error(`Container unit query failed: ${unitErr.message}`);
+  if (pricedErr) throw new Error(`Container priced-unit query failed: ${pricedErr.message}`);
 
-  const rows = units ?? [];
   return {
-    unitCount: rows.length,
-    // a let unit is priced by its rent — a rent development's units carry
-    // rent_price_month, never asking_price
-    pricedUnitCount: rows.filter((u) => u.asking_price !== null || u.rent_price_month !== null)
-      .length,
+    unitCount: unitCount ?? 0,
+    pricedUnitCount: pricedCount ?? 0,
     phaseCount: (phases ?? []).length,
   };
 }

@@ -363,13 +363,34 @@ export async function refreshContainerScores(
   parentId: string | null | undefined,
 ): Promise<void> {
   if (!parentId) return;
-  const { data: parent } = await supabase
-    .from("properties")
-    .select("kind, parent_id")
-    .eq("id", parentId)
-    .maybeSingle();
-  await recomputeQualityScore(supabase, parentId);
-  if (parent?.kind === "phase" && parent.parent_id) {
-    await recomputeQualityScore(supabase, parent.parent_id);
+  // NEVER throws: this runs after a write that already succeeded. A count
+  // that fails here must not turn a generated block into "an error" whose
+  // retry the collision check then refuses (2026-09-02 fix-wave review).
+  // The publish GATE keeps throwing — there, failing closed is the point.
+  try {
+    const { data: parent } = await supabase
+      .from("properties")
+      .select("kind, parent_id")
+      .eq("id", parentId)
+      .maybeSingle();
+    await recomputeQualityScore(supabase, parentId);
+    if (parent?.kind === "phase" && parent.parent_id) {
+      await recomputeQualityScore(supabase, parent.parent_id);
+    }
+  } catch (err) {
+    console.error("[refreshContainerScores] stored score not refreshed", { parentId, err });
+  }
+}
+
+/**
+ * The same for a row's OWN stored score after its own write: derived state,
+ * never worth failing the save, the create or the restore it follows. The
+ * next save recomputes anyway.
+ */
+export async function recomputeQuietly(supabase: Client, propertyId: string): Promise<void> {
+  try {
+    await recomputeQualityScore(supabase, propertyId);
+  } catch (err) {
+    console.error("[recomputeQuietly] stored score not refreshed", { propertyId, err });
   }
 }
