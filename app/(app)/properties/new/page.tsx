@@ -1,6 +1,7 @@
 import { CreatePropertyWizard } from "@/components/features/properties/create-wizard";
 import type { EntityOption } from "@/lib/actions/entity-search";
 import { buildPropertySeed, type PropertySeed } from "@/lib/services/property-seed";
+import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
 
@@ -12,10 +13,16 @@ export default async function NewPropertyPage({
   const supabase = await createClient();
   const { similar } = await searchParams;
 
-  const [districtsRes, areasRes] = await Promise.all([
+  const [districtsRes, areasRes, profile] = await Promise.all([
     supabase.from("districts").select("id, code, name, sort_order").order("sort_order"),
     supabase.from("areas").select("id, district_id, name"),
+    getCurrentProfile(supabase),
   ]);
+  // The units page lets only these two roles manage units (its `canManage`),
+  // so the wizard offers to create them to the same two — an agent creating a
+  // project wrote units it could not then touch (2026-09-02). Everyone else
+  // still creates the project; the units come afterwards from that page.
+  const canGenerate = profile.role === "admin" || profile.role === "listing_manager";
 
   const districts = unwrapRows(districtsRes, "districts").map((d) => ({
     id: d.id,
@@ -89,6 +96,7 @@ export default async function NewPropertyPage({
       <CreatePropertyWizard
         districts={districts}
         areas={areas}
+        canGenerate={canGenerate}
         seed={seed}
         seedParty={seedParty}
       />

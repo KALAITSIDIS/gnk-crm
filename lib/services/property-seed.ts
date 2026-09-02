@@ -100,6 +100,15 @@ export function buildPropertySeed(src: SeedSource): PropertySeed {
     dropped.push(`its ${src.kind} placement — a ${src.kind} is created from its project`);
   }
 
+  // A development's rooms and covered area belong to its UNITS — the wizard
+  // never shows them for a project and the action nulls them (2026-09-02).
+  // Carrying them across silently would list them as copied when they were
+  // dropped on arrival; say so instead.
+  const fromContainer = src.kind === "project" || src.kind === "phase";
+  if (fromContainer) {
+    dropped.push("bedrooms, bathrooms and covered area — a development's units carry those");
+  }
+
   // The party decides `source`, not the other way round: a row carrying a
   // developer is a developer listing whatever else it says.
   const isDeveloper = src.developer_contact_id !== null;
@@ -118,9 +127,9 @@ export function buildPropertySeed(src: SeedSource): PropertySeed {
     askingPrice: str(src.asking_price),
     rentPriceMonth: str(src.rent_price_month),
     plotAreaSqm: str(src.plot_area_sqm),
-    coveredAreaSqm: str(src.covered_area_sqm),
-    bedrooms: str(src.bedrooms),
-    bathrooms: str(src.bathrooms),
+    coveredAreaSqm: fromContainer ? "" : str(src.covered_area_sqm),
+    bedrooms: fromContainer ? "" : str(src.bedrooms),
+    bathrooms: fromContainer ? "" : str(src.bathrooms),
     internalNotes: src.internal_notes ?? "",
     dropped,
   };

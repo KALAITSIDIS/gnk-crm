@@ -6,6 +6,7 @@ import {
   type QualityScoreSource,
 } from "@/lib/services/quality-score";
 import { buildWorklist, type ScoredProperty, type Worklist } from "@/lib/services/quality-worklist";
+import { tallyContainerUnits } from "@/lib/services/container-units";
 
 /**
  * Score every live listing and aggregate what they are missing.
@@ -38,15 +39,19 @@ export async function fetchQualityWorklist(
   const { data: rows, error } = await supabase
     .from("properties")
     .select(
-      "id, reference, title, quality_score, property_type, kind, parent_id, public_description, asking_price, rent_price_month, covered_area_sqm, plot_area_sqm, bedrooms, bathrooms, planning_zone_code, building_density_pct, location, location_approx, title_deed_status, permit_status, assigned_agent_id, owner_contact_id, developer_contact_id",
+      "id, reference, title, quality_score, status, property_type, kind, parent_id, public_description, asking_price, rent_price_month, covered_area_sqm, plot_area_sqm, bedrooms, bathrooms, planning_zone_code, building_density_pct, location, location_approx, title_deed_status, permit_status, assigned_agent_id, owner_contact_id, developer_contact_id",
     )
-    .neq("visibility", "archived")
-    // spread, not a cast: `as const` gives the literal union the typed client
-    // wants, and casting to string[] would have thrown that away for nothing
-    .in("status", [...LIVE_STATUSES]);
+    .neq("visibility", "archived");
   if (error) throw new Error(`Worklist property query failed: ${error.message}`);
 
-  const properties = rows ?? [];
+  // Every non-archived row is loaded so a container's SOLD units still count
+  // for it (2026-09-02 review, critic pass: a sold-out development was being
+  // chased for "at least one unit"). Only live rows are SCORED — a sold
+  // listing needs no more photos. `as const` gives the literal union the
+  // typed client wants; a string[] cast would throw that away for nothing.
+  const allRows = rows ?? [];
+  const live = new Set<string>(LIVE_STATUSES);
+  const properties = allRows.filter((r) => live.has(r.status));
   if (properties.length === 0) return buildWorklist([]);
 
   const ids = properties.map((p) => p.id);
@@ -78,22 +83,23 @@ export async function fetchQualityWorklist(
   );
 
   // Unit counts WITHOUT a fourth query: units are properties, so a container's
-  // children are already in `properties` unless they are sold/archived — and a
+  // units are already in `properties` unless they are sold/archived — and a
   // container whose every unit has sold is not one the worklist should chase.
   // Undercounting that way is the safe direction; the detail page and the
-  // publish gate both count exactly.
-  const unitCount = new Map<string, number>();
-  for (const row of properties) {
-    if (!row.parent_id) continue;
-    unitCount.set(row.parent_id, (unitCount.get(row.parent_id) ?? 0) + 1);
-  }
+  // publish gate both count exactly (container-units.ts).
+  //
+  // Same DEFINITION as those, though (2026-09-02 review): only kind = unit
+  // counts — a phase is a child row, not a unit — and a unit under a phase
+  // counts for the phase AND for the project above it.
+  const units = tallyContainerUnits(allRows);
 
   const scored: ScoredProperty[] = properties.map((p) => {
     const result = computeQualityScore(
       buildQualityInput(p as unknown as QualityScoreSource, {
         hasCoverPhoto: hasCover.has(p.id),
         photoCount: photoCount.get(p.id) ?? 0,
-        unitCount: unitCount.get(p.id) ?? 0,
+        unitCount: units.get(p.id)?.unitCount ?? 0,
+        pricedUnitCount: units.get(p.id)?.pricedUnitCount ?? 0,
         mandateActive: mandated.has(p.id),
       }),
     );

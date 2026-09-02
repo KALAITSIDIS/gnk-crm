@@ -51,6 +51,68 @@ async function seedProject(admin: SupabaseClient, orgId: string) {
   return data!;
 }
 
+/**
+ * Remove a seeded project and everything under it. Order matters —
+ * `properties.parent_id` is ON DELETE RESTRICT — so units go before the phase
+ * that holds them, and both go before the project. Two levels are enough:
+ * `createPhase` refuses a phase inside a phase.
+ */
+async function cleanupProject(admin: SupabaseClient, projectId: string) {
+  const { data: children } = await admin
+    .from("properties")
+    .select("id")
+    .eq("parent_id", projectId);
+  const childIds = (children ?? []).map((c) => c.id);
+  if (childIds.length > 0) {
+    await admin.from("properties").delete().in("parent_id", childIds);
+  }
+  await admin.from("properties").delete().eq("parent_id", projectId);
+  await admin.from("properties").delete().eq("id", projectId);
+}
+
+/**
+ * Insert a phase or a unit under `parentId` the way the app's own actions do:
+ * same org, district, property type and transaction type as the parent,
+ * available, private. The reference is the caller's — the app composes it as
+ * `${parent.reference}-${code}` (createPhase, createUnit) and so do the tests.
+ */
+async function seedChild(
+  admin: SupabaseClient,
+  parentId: string,
+  child: {
+    kind: "phase" | "unit";
+    reference: string;
+    unit_number?: string;
+    asking_price?: number;
+  },
+) {
+  const { data: parent } = await admin
+    .from("properties")
+    .select("org_id, district_id, property_type, transaction_type")
+    .eq("id", parentId)
+    .single();
+  const { data, error } = await admin
+    .from("properties")
+    .insert({
+      org_id: parent!.org_id,
+      district_id: parent!.district_id,
+      property_type: parent!.property_type,
+      transaction_type: parent!.transaction_type,
+      parent_id: parentId,
+      kind: child.kind,
+      reference: child.reference,
+      unit_number: child.unit_number ?? null,
+      asking_price: child.asking_price ?? null,
+      status: "available" as const,
+      visibility: "private" as const,
+      title: { en: child.reference },
+    })
+    .select("id")
+    .single();
+  expect(error, `seeding ${child.kind} ${child.reference}`).toBeNull();
+  return data!;
+}
+
 /** Fill the generator form and submit it. */
 async function generate(
   page: import("@playwright/test").Page,
@@ -267,10 +329,20 @@ test.describe("inheritance drift", () => {
  * lie, both of which reach a proposal through the availability share.
  */
 test.describe("villa complexes", () => {
+  // Keyed on the seeded id rather than deleted inline, so a failed assertion
+  // still removes its villas (units first: parent_id is ON DELETE RESTRICT).
+  let seededId: string | null = null;
+  test.afterEach(async () => {
+    if (!seededId) return;
+    await cleanupProject(svc(), seededId);
+    seededId = null;
+  });
+
   test("generates numbered villas with no floor, and prices the row", async ({ page }) => {
     const admin = svc();
     const { orgId } = await fixtureProfile(admin);
     const project = await seedProject(admin, orgId);
+    seededId = project.id;
 
     await page.goto(`/properties/${project.id}/units`, { waitUntil: "networkidle" });
 
@@ -326,32 +398,64 @@ test.describe("villa complexes", () => {
  * could reserve it.
  */
 test.describe("an empty container is not a listing", () => {
+  let seededId: string | null = null;
+  test.afterEach(async () => {
+    if (!seededId) return;
+    await cleanupProject(svc(), seededId);
+    seededId = null;
+  });
+
+  const CONTAINER_REFUSAL = /with no units cannot be published/i;
+
+  /** The details form — the visibility select, the admin override and Save live here. */
+  const detailsForm = (page: import("@playwright/test").Page) =>
+    page.locator("form").filter({ has: page.getByLabel(/^visibility$/i) });
+
+  /**
+   * Set visibility Public and press Save, then wait for the server action's
+   * round trip. The wait is what makes a SECOND save assertable: the refusal
+   * from the first save is still on screen, so "the message is visible" alone
+   * could not tell a refused save from one that never happened.
+   */
+  async function savePublic(page: import("@playwright/test").Page, projectId: string) {
+    await page.getByLabel(/^visibility$/i).click();
+    await page.getByRole("option", { name: /^public$/i }).click();
+    const roundTrip = page.waitForResponse(
+      (r) =>
+        r.request().method() === "POST" && new URL(r.url()).pathname === `/properties/${projectId}`,
+    );
+    await detailsForm(page).getByRole("button", { name: /^save$/i }).click();
+    await roundTrip;
+  }
+
+  /** The admin's override checkbox (detail-forms.tsx: `<Checkbox id="publish_override">`). */
+  async function tickOverride(page: import("@playwright/test").Page) {
+    const override = detailsForm(page).locator("#publish_override");
+    await override.check();
+    await expect(override).toBeChecked();
+  }
+
   test("scores the missing units and refuses to publish", async ({ page }) => {
     const admin = svc();
     const { orgId } = await fixtureProfile(admin);
     const project = await seedProject(admin, orgId);
+    seededId = project.id;
 
     await page.goto(`/properties/${project.id}`, { waitUntil: "networkidle" });
-    // The score no longer awards a dwelling's points to a container: an empty
-    // project cannot reach 100 (the item list itself is pinned in
-    // quality-score.test.ts — the ring only shows it on hover).
-    await expect(page.getByLabel(/quality score \d+ of 100/i)).toBeVisible({ timeout: 15_000 });
-    const ringLabel = await page.getByLabel(/quality score \d+ of 100/i).getAttribute("aria-label");
-    expect(Number(ringLabel!.match(/\d+/)![0]), "an empty container is not perfect").toBeLessThan(100);
+    // The score grades a container on its units, not on rooms and area: the
+    // ring's tooltip must list the container item and NOT a dwelling's. The
+    // number itself is pinned in quality-score.test.ts; this pins the branch.
+    const ring = page.getByLabel(/quality score \d+ of 100/i);
+    await expect(ring).toBeVisible({ timeout: 15_000 });
+    await ring.hover();
+    const tooltip = page.getByRole("tooltip");
+    await expect(tooltip).toContainText("At least one unit");
+    await expect(tooltip).not.toContainText("Covered area set");
 
     // try to publish it
     await page.getByRole("tab", { name: /^details$/i }).click();
-    await page.getByLabel(/^visibility$/i).click();
-    await page.getByRole("option", { name: /^public$/i }).click();
-    await page
-      .locator("form")
-      .filter({ has: page.getByLabel(/^visibility$/i) })
-      .getByRole("button", { name: /^save$/i })
-      .click();
-
-    await expect(page.getByText(/with no units cannot be published/i)).toBeVisible({
-      timeout: 15_000,
-    });
+    await savePublic(page, project.id);
+    await expect(page.getByText(CONTAINER_REFUSAL)).toBeVisible({ timeout: 15_000 });
 
     // and it really did not publish
     const { data: after } = await admin
@@ -360,5 +464,88 @@ test.describe("an empty container is not a listing", () => {
       .eq("id", project.id)
       .single();
     expect(after!.visibility, "the refusal is not cosmetic").not.toBe("public");
+
+    // The admin override is for a listing that is thin but deliberate. An
+    // empty container is not thin, it is empty — so the override must neither
+    // publish it NOR be written to the log as if it had been consulted.
+    await tickOverride(page);
+    await savePublic(page, project.id);
+    await expect(page.getByText(CONTAINER_REFUSAL)).toBeVisible();
+    // exact: the details panel also says "derived, not saved" in running text
+    await expect(page.getByText("Saved", { exact: true })).toHaveCount(0);
+
+    const { data: overridden } = await admin
+      .from("properties")
+      .select("visibility")
+      .eq("id", project.id)
+      .single();
+    expect(overridden!.visibility, "the override does not reach an empty container").not.toBe(
+      "public",
+    );
+    const { data: overrideEvents } = await admin
+      .from("events")
+      .select("id")
+      .eq("entity_type", "property")
+      .eq("entity_id", project.id)
+      .eq("event_type", "publish_override");
+    expect(overrideEvents, "no override was consulted, so none may be logged").toEqual([]);
+  });
+
+  /**
+   * A phase is a container too, not a unit: a project holding only an empty
+   * phase has nothing a buyer can act on. But a unit UNDER that phase is a
+   * unit of the project — that is how a phased development is laid out — so
+   * the count has to look one level down, not just at direct children.
+   */
+  test("a phase is not a unit", async ({ page }) => {
+    const admin = svc();
+    const { orgId } = await fixtureProfile(admin);
+    const project = await seedProject(admin, orgId);
+    seededId = project.id;
+
+    const phase = await seedChild(admin, project.id, {
+      kind: "phase",
+      reference: `${project.reference}-P1`,
+    });
+
+    // With the override ticked from the start, the score gate cannot be the
+    // thing that refuses — only the container rule can.
+    const publishWithOverride = async () => {
+      await page.goto(`/properties/${project.id}`, { waitUntil: "networkidle" });
+      await page.getByRole("tab", { name: /^details$/i }).click();
+      await tickOverride(page);
+      await savePublic(page, project.id);
+    };
+
+    await publishWithOverride();
+    await expect(page.getByText(CONTAINER_REFUSAL)).toBeVisible({ timeout: 15_000 });
+    const { data: withPhaseOnly } = await admin
+      .from("properties")
+      .select("visibility")
+      .eq("id", project.id)
+      .single();
+    expect(withPhaseOnly!.visibility, "a phase must not count as a unit").not.toBe("public");
+
+    // one unit under the phase makes the project a listing
+    await seedChild(admin, phase.id, {
+      kind: "unit",
+      reference: `${project.reference}-P1-01`,
+      unit_number: "01",
+      asking_price: 100000,
+    });
+
+    await publishWithOverride();
+    await expect(page.getByText("Saved")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(CONTAINER_REFUSAL)).toHaveCount(0);
+    await expect
+      .poll(async () => {
+        const { data } = await admin
+          .from("properties")
+          .select("visibility")
+          .eq("id", project.id)
+          .single();
+        return data?.visibility;
+      })
+      .toBe("public");
   });
 });

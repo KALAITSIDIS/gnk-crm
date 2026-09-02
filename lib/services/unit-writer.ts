@@ -85,7 +85,13 @@ export async function writeGeneratedUnits(
         bathrooms: u.bathrooms,
         covered_area_sqm: u.covered_area_sqm,
         ...(u.plot_area_sqm !== null ? { plot_area_sqm: u.plot_area_sqm } : {}),
-        asking_price: u.asking_price,
+        // the generator prices a row; WHICH column it is depends on what the
+        // development does. A rent development's units are let, not sold —
+        // writing its "first price" as a sale price put a rental on the
+        // for-sale side of every report (2026-09-02 review, critic pass).
+        ...(project.transaction_type === "rent"
+          ? { rent_price_month: u.asking_price, asking_price: null }
+          : { asking_price: u.asking_price }),
         // `visibility` deliberately absent — the column defaults to private, and
         // a public project must never mint sixty already-published empty units
         status: "available" as const,
@@ -93,7 +99,18 @@ export async function writeGeneratedUnits(
       })),
     )
     .select("id, reference");
-  if (insertErr) return { error: insertErr.message };
+  if (insertErr) {
+    // The pre-check above is not atomic: two people generating the same run
+    // at once both pass it and the (org_id, reference) unique index refuses
+    // the second insert — with a message that named a constraint, not a
+    // situation. Same wording as the pre-check, so the two cannot drift.
+    return {
+      error:
+        insertErr.code === "23505"
+          ? "One of these references was created a moment ago by someone else — nothing was created. Reload the page and generate again."
+          : insertErr.message,
+    };
+  }
   if (!created || created.length === 0) {
     return { error: "Nothing was created — only admins and listing managers manage units." };
   }

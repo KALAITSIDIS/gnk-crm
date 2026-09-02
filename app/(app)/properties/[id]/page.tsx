@@ -29,6 +29,7 @@ import {
 import { EventTimeline } from "@/components/features/shared/event-timeline";
 import { QualityScoreRing } from "@/components/features/shared/quality-score-ring";
 import { computeQualityScore } from "@/lib/services/quality-score";
+import { countContainerUnits, EMPTY_CONTAINER_FACTS } from "@/lib/services/container-units";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { MandateBadge, type MandateBadgeState } from "@/components/features/shared/mandate-badge";
 import { StatusBadge } from "@/components/features/shared/status-badge";
@@ -59,7 +60,7 @@ export default async function PropertyDetailPage({
 
   // mandates via mandates_safe, NOT the base table: LM has no base-table
   // policy and commission columns are masked in the view (doc 04, T4.5)
-  const [propertyRes, areasRes, mediaRes, mandatesRes, keysRes, unitCountRes] = await Promise.all([
+  const [propertyRes, areasRes, mediaRes, mandatesRes, keysRes] = await Promise.all([
     supabase
       .from("properties")
       .select("*, districts(name), areas(name)")
@@ -81,8 +82,6 @@ export default async function PropertyDetailPage({
       .select("id, key_code, description, status, current_holder_name")
       .eq("property_id", id)
       .order("created_at", { ascending: true }),
-    // child units, as a head count — the container score item (2026-09-02)
-    supabase.from("properties").select("id", { count: "exact", head: true }).eq("parent_id", id),
   ]);
 
   // a genuine query failure renders the error boundary, not a misleading 404
@@ -91,6 +90,11 @@ export default async function PropertyDetailPage({
   }
   const p = propertyRes.data;
   if (!p) notFound();
+  // a container's units by the ONE definition (container-units.ts): kind =
+  // unit, not archived, under this row or any of its phases — the gate, the
+  // score and the worklist read the same. A phase is not a unit.
+  const isContainerRow = p.kind === "project" || p.kind === "phase";
+  const unitFacts = isContainerRow ? await countContainerUnits(supabase, id) : EMPTY_CONTAINER_FACTS;
   const areaRows = unwrapRows(areasRes, "areas");
   const mediaRows = unwrapRows(mediaRes, "property media");
   const mandateSafeRows = unwrapRows(mandatesRes, "mandates");
@@ -238,8 +242,9 @@ export default async function PropertyDetailPage({
   const photos = media.filter((m) => m.kind === "photo");
   const quality = computeQualityScore({
     isLand,
-    isContainer: p.kind === "project" || p.kind === "phase",
-    unitCount: unitCountRes.count ?? 0,
+    isContainer: isContainerRow,
+    unitCount: unitFacts.unitCount,
+    pricedUnitCount: unitFacts.pricedUnitCount,
     hasCoverPhoto: photos.some((m) => m.is_cover),
     photoCount: photos.length,
     titleEn: (p.title as { en?: string } | null)?.en,
@@ -368,8 +373,12 @@ export default async function PropertyDetailPage({
     ["Type", p.property_type.replace(/_/g, " ")],
     ["Transaction", p.transaction_type.replace(/_/g, " ")],
     ["Location", [district, area, p.address].filter(Boolean).join(" · ") || "—"],
+    // A container's own price is a FROM figure — the units carry the prices
+    // — and its one area is the site; it has no rooms of its own (2026-09-02
+    // review: the overview read "Area —" for a development whose site plot
+    // the wizard had just asked for).
     [
-      "Price",
+      isContainerRow ? "From price" : "Price",
       p.transaction_type === "rent"
         ? p.rent_price_month
           ? `${formatMoney(Number(p.rent_price_month))}/mo`
@@ -377,9 +386,9 @@ export default async function PropertyDetailPage({
         : formatMoney(p.asking_price === null ? null : Number(p.asking_price)),
     ],
     [
-      "Area",
+      isContainerRow ? "Site plot" : "Area",
       formatArea(
-        p.property_type === "land"
+        p.property_type === "land" || isContainerRow
           ? p.plot_area_sqm === null
             ? null
             : Number(p.plot_area_sqm)
@@ -388,7 +397,9 @@ export default async function PropertyDetailPage({
             : Number(p.covered_area_sqm),
       ),
     ],
-    ["Bedrooms / Bathrooms", `${p.bedrooms ?? "—"} / ${p.bathrooms ?? "—"}`],
+    ...(isContainerRow
+      ? [["Units", `${unitFacts.unitCount} (${unitFacts.pricedUnitCount} priced)`] as [string, string]]
+      : [["Bedrooms / Bathrooms", `${p.bedrooms ?? "—"} / ${p.bathrooms ?? "—"}`] as [string, string]]),
     ["Quality score", `${quality.score}/100`],
     // T4.6 acceptance: current key holder visible on Overview
     [

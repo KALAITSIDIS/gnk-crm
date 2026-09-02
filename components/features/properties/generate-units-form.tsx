@@ -76,6 +76,10 @@ export function GenerateUnitsForm({
   const [villaCountRaw, setVillaCountRaw] = useState("6");
   const [villaPrefix, setVillaPrefix] = useState("V");
   const [pricePerVilla, setPricePerVilla] = useState("");
+  // blank = 1. A second run must be able to CONTINUE the numbering (V07…),
+  // otherwise it collides with the first and the pre-check refuses it — the
+  // action accepted start_number all along, no form exposed it (2026-09-02).
+  const [villaStart, setVillaStart] = useState("");
 
   const floorSpec = {
     block,
@@ -88,11 +92,15 @@ export function GenerateUnitsForm({
   const villaSpec = {
     prefix: villaPrefix,
     count: Number(villaCountRaw),
+    startNumber: villaStart.trim() === "" ? undefined : Number(villaStart),
     basePrice: basePrice ? Number(basePrice) : null,
     pricePerVilla: pricePerVilla ? Number(pricePerVilla) : null,
   };
   const valid = isVillas
-    ? Number.isInteger(villaSpec.count) && villaSpec.count > 0
+    ? Number.isInteger(villaSpec.count) &&
+      villaSpec.count > 0 &&
+      (villaSpec.startNumber === undefined ||
+        (Number.isInteger(villaSpec.startNumber) && villaSpec.startNumber >= 0))
     : Number.isInteger(floorSpec.floorFrom) &&
       Number.isInteger(floorSpec.floorTo) &&
       Number.isInteger(floorSpec.perFloor) &&
@@ -170,6 +178,18 @@ export function GenerateUnitsForm({
                 value={villaPrefix}
                 onChange={(e) => setVillaPrefix(e.target.value)}
                 placeholder="V"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="gen-villa-start">Start at</Label>
+              <Input
+                id="gen-villa-start"
+                name="start_number"
+                type="number"
+                min="0"
+                value={villaStart}
+                onChange={(e) => setVillaStart(e.target.value)}
+                placeholder="1"
               />
             </div>
             <div className="flex flex-col gap-1.5">

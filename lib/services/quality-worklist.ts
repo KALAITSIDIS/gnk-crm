@@ -67,6 +67,8 @@ const FIX_LOCATION: Record<string, string> = {
   title_en: "Marketing",
   description_en: "Marketing",
   price: "Details",
+  // a container's gaps are fixed on its units page, not on a tab
+  units: "Units page",
   area: "Details",
   rooms: "Details",
   planning: "Legal",

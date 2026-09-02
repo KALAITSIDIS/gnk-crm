@@ -29,6 +29,7 @@ import {
   UNIT_PARENT_SELECT,
   UNIT_ROW_SELECT,
 } from "@/lib/services/unit-inheritance";
+import { countContainerUnits } from "@/lib/services/container-units";
 import { Button } from "@/components/ui/button";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { fetchProjectVelocity } from "@/lib/queries/sales-velocity";
@@ -43,10 +44,15 @@ interface PriceListItemRow {
 
 export default async function ProjectUnitsPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  /** `?units=failed&reason=…` — the wizard created the project but not its units */
+  searchParams: Promise<{ units?: string; reason?: string }>;
 }) {
   const { id } = await params;
+  const { units: unitsParam, reason: unitsReason } = await searchParams;
+  const unitsFailed = unitsParam === "failed";
   const supabase = await createClient();
 
   // the full inheritable set, because the drift panel compares every one of them
@@ -116,6 +122,11 @@ export default async function ProjectUnitsPage({
     delivery_date: ph.delivery_date,
     unitCount: (ph.units as { count: number }[] | null)?.[0]?.count ?? 0,
   }));
+
+  // the ONE definition of "has units" (container-units.ts) — reaches through
+  // the phases, so a project whose units all sit under phases is not told it
+  // is empty, and a project with only empty phases IS (2026-09-02 review)
+  const unitFacts = await countContainerUnits(supabase, id);
 
   const units: UnitRow[] = (unitRows ?? []).map((u) => ({
     ...u,
@@ -215,7 +226,24 @@ export default async function ProjectUnitsPage({
           Said out loud, because a project with no units scored 100/100 and
           went public once — nothing on this page had told anyone it was
           empty, or what being empty costs (2026-09-02). */}
-      {units.length === 0 && phases.length === 0 ? (
+      {/* The wizard's partial-failure landing: the project row exists, its
+          units did not land, and the person who pressed the button must be
+          told WHY here, not in a server log (2026-09-02 review). */}
+      {unitsFailed ? (
+        <div
+          role="alert"
+          className="flex items-start gap-2 rounded-[10px] border border-danger/40 bg-danger/10 p-4 text-sm"
+        >
+          <span className="mt-0.5 font-semibold text-danger">The project was created — its units were not.</span>
+          <p className="text-text-2">
+            {unitsReason ? `${unitsReason} ` : ""}
+            Nothing else was lost: describe the layout again in the generator below and it will
+            create them now.
+          </p>
+        </div>
+      ) : null}
+
+      {unitFacts.unitCount === 0 ? (
         <div className="flex items-start gap-2 rounded-[10px] border border-warning/40 bg-warning/10 p-4 text-sm">
           {/* the matrix below already says "no units yet" and offers the way
               out — this line is the CONSEQUENCE, stated once */}
@@ -223,6 +251,7 @@ export default async function ProjectUnitsPage({
           <p className="text-text-2">
             This {project.kind} cannot be published, no buyer can be matched to it, and nothing
             on it can be reserved — the units carry the prices.{" "}
+            {phases.length > 0 ? "Its phases are empty too — a phase is not a unit. " : ""}
             {canManage
               ? "Generate them below: describe the block or the villas once and every unit is created."
               : "An admin or listing manager can generate them from this page."}

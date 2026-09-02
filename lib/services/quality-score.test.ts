@@ -132,7 +132,9 @@ describe("containers are graded on units, not rooms", () => {
   });
 
   it("still totals 100 when everything is earned — the branch is a swap, not a discount", () => {
-    expect(computeQualityScore(container({ unitCount: 12 })).score).toBe(100);
+    // "everything" for a container includes a priced unit — its price item is
+    // its units' prices, not its own (2026-09-02 review)
+    expect(computeQualityScore(container({ unitCount: 12, pricedUnitCount: 12 })).score).toBe(100);
   });
 
   it("never asks a container for covered area or bedrooms", () => {
@@ -143,9 +145,11 @@ describe("containers are graded on units, not rooms", () => {
     expect(keys).toContain("units");
   });
 
-  it("an empty project loses exactly the 15 the dwelling pair carried", () => {
-    expect(computeQualityScore(container({ unitCount: 0 })).score).toBe(85);
-    expect(computeQualityScore(container({ unitCount: 1 })).score).toBe(100);
+  it("an empty project loses the 15 the dwelling pair carried AND the 10 for price", () => {
+    // no units means no priced units either: the two items an empty
+    // development cannot earn are exactly the two its units would carry
+    expect(computeQualityScore(container({ unitCount: 0, pricedUnitCount: 0 })).score).toBe(75);
+    expect(computeQualityScore(container({ unitCount: 1, pricedUnitCount: 1 })).score).toBe(100);
   });
 
   it("names the gap so the worklist can chase it", () => {
@@ -154,7 +158,7 @@ describe("containers are graded on units, not rooms", () => {
     expect(missing.find((m) => m.key === "units")?.label).toBe("At least one unit");
   });
 
-  it("85 is ABOVE the publish threshold — the score informs, the gate enforces", () => {
+  it("75 is ABOVE the publish threshold — the score informs, the gate enforces", () => {
     // this is why lib/actions/properties.ts refuses an empty container
     // separately; removing that gate would reopen the incident
     expect(computeQualityScore(container({ unitCount: 0 })).score).toBeGreaterThan(70);
@@ -164,5 +168,54 @@ describe("containers are graded on units, not rooms", () => {
     const keys = computeQualityScore(container({ isLand: true })).items.map((i) => i.key);
     expect(keys).toContain("units");
     expect(keys).not.toContain("planning");
+  });
+});
+
+/**
+ * "The units carry the prices" — every line of container copy says so, and
+ * until the 2026-09-02 review the score still docked a project 10 points for
+ * not having an asking price OF ITS OWN. The item is now about the units.
+ */
+describe("a container's price is its units' prices", () => {
+  const container = (over: Partial<QualityScoreInput> = {}): QualityScoreInput => ({
+    ...full,
+    isContainer: true,
+    unitCount: 3,
+    hasArea: false,
+    hasBedroomsAndBathrooms: false,
+    ...over,
+  });
+
+  it("a project's own asking price earns nothing when none of its units is priced", () => {
+    const result = computeQualityScore(container({ hasPrice: true, pricedUnitCount: 0 }));
+    const price = result.items.find((i) => i.key === "price");
+    expect(price?.label).toBe("Units priced");
+    expect(price?.earned).toBe(false);
+    expect(result.score).toBe(90);
+  });
+
+  it("one priced unit earns the item even with no project-level price", () => {
+    const result = computeQualityScore(container({ hasPrice: false, pricedUnitCount: 1 }));
+    expect(result.items.find((i) => i.key === "price")?.earned).toBe(true);
+    expect(result.score).toBe(100);
+  });
+
+  it("keeps the SAME key, so the worklist groups both gaps under one row", () => {
+    const { missing } = computeQualityScore(container({ pricedUnitCount: 0 }));
+    expect(missing.map((m) => m.key)).toContain("price");
+  });
+
+  it("a dwelling is still graded on its own price — nothing changed for the common case", () => {
+    const price = computeQualityScore({ ...full, hasPrice: true }).items.find(
+      (i) => i.key === "price",
+    );
+    expect(price?.label).toBe("Price set");
+    expect(price?.earned).toBe(true);
+  });
+
+  it("an absent pricedUnitCount reads as zero, never as NaN or true", () => {
+    const { pricedUnitCount: _drop, ...without } = container({ hasPrice: true });
+    void _drop;
+    expect(computeQualityScore(without).items.find((i) => i.key === "price")?.earned).toBe(false);
   });
 });

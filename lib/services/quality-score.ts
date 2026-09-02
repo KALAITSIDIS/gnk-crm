@@ -25,7 +25,8 @@ import type { Database } from "@/lib/supabase/database.types";
  * worth their combined 15, so every branch still totals exactly 100.
  *
  * NOTE the 15 is not enough on its own: an otherwise-complete empty project
- * still reaches 85, above PUBLISH_THRESHOLD. The publish gate refuses an
+ * still reaches 75 (85 before the price item became "Units priced" in the
+ * 2026-09-02 review), above PUBLISH_THRESHOLD. The publish gate refuses an
  * empty container separately (lib/actions/properties.ts) — the score informs,
  * the gate enforces. Do not remove one believing the other covers it.
  *
@@ -49,12 +50,26 @@ import type { Database } from "@/lib/supabase/database.types";
 
 export const PUBLISH_THRESHOLD = 70;
 
+// What counts as a unit lives in ONE place (2026-09-02 review): a phase is
+// not a unit, and a project's units may sit under its phases.
+import { countContainerUnits } from "@/lib/services/container-units";
+
 export interface QualityScoreInput {
   isLand: boolean;
   /** kind is project or phase — graded on units, not on rooms and area. */
   isContainer: boolean;
-  /** Child properties. A threshold like photoCount, so "≥ N" stays free. */
+  /**
+   * Sellable units under the container, directly or through its phases —
+   * see container-units.ts for the definition. A threshold like photoCount,
+   * so "≥ N" stays free.
+   */
   unitCount: number;
+  /**
+   * Of those, the ones carrying an asking price. A container's "Price set"
+   * (2026-09-02 review): the units carry the prices, so grading a project on
+   * its own asking price contradicted every line of copy that says so.
+   */
+  pricedUnitCount?: number;
   hasCoverPhoto: boolean;
   photoCount: number;
   titleEn: string | null | undefined;
@@ -104,7 +119,17 @@ export function computeQualityScore(input: QualityScoreInput): QualityScoreResul
         input.publicDescriptionEn && input.publicDescriptionEn.trim().length >= 300,
       ),
     },
-    { key: "price", label: "Price set", points: 10, earned: input.hasPrice },
+    // A container's price is its units' prices. The container's own
+    // asking_price is a "from" figure — informative, not the thing a buyer
+    // can act on. Same key, so the worklist groups both under one gap.
+    input.isContainer
+      ? {
+          key: "price",
+          label: "Units priced",
+          points: 10,
+          earned: (input.pricedUnitCount ?? 0) >= 1,
+        }
+      : { key: "price", label: "Price set", points: 10, earned: input.hasPrice },
     // The dwelling pair — area + rooms/planning, 15 together — or, for a
     // container, the one thing that actually makes it a listing.
     ...(input.isContainer
@@ -199,8 +224,10 @@ export function buildQualityInput(
     hasCoverPhoto: boolean;
     photoCount: number;
     mandateActive: boolean;
-    /** Child properties — only read for containers. */
+    /** Sellable units under a container — only read for containers. */
     unitCount?: number;
+    /** …of which priced — only read for containers. */
+    pricedUnitCount?: number;
   },
 ): QualityScoreInput {
   const isLand = p.property_type === "land";
@@ -209,6 +236,7 @@ export function buildQualityInput(
     isLand,
     isContainer,
     unitCount: facts.unitCount ?? 0,
+    pricedUnitCount: facts.pricedUnitCount ?? 0,
     hasCoverPhoto: facts.hasCoverPhoto,
     photoCount: facts.photoCount,
     titleEn: (p.title as { en?: string } | null)?.en,
@@ -259,7 +287,7 @@ export async function recomputeQualityScore(
 ): Promise<QualityScoreResult | null> {
   const persist = options.persist ?? true;
 
-  const [{ data: p }, { data: media }, { count: unitCount }, { data: mandates }] = await Promise.all([
+  const [{ data: p }, { data: media }, { data: mandates }] = await Promise.all([
     supabase
       .from("properties")
       .select(
@@ -276,12 +304,6 @@ export async function recomputeQualityScore(
       .select("id, is_cover")
       .eq("property_id", propertyId)
       .eq("kind", "photo"),
-    // Containers are graded on units (2026-09-02) — a head count, so an empty
-    // project is distinguishable from a populated one without pulling rows.
-    supabase
-      .from("properties")
-      .select("id", { count: "exact", head: true })
-      .eq("parent_id", propertyId),
     // see `mandateSource` above — neither table is right for both callers.
     // Branched rather than parameterised: Supabase infers the row type from a
     // LITERAL table name, and a variable collapses it (same trap as a built
@@ -300,11 +322,19 @@ export async function recomputeQualityScore(
   ]);
   if (!p) return null;
 
+  // Containers are graded on units (2026-09-02) — the ONE definition, which
+  // reaches through phases and ignores archived units (container-units.ts).
+  const isContainer = p.kind === "project" || p.kind === "phase";
+  const units = isContainer
+    ? await countContainerUnits(supabase, propertyId)
+    : { unitCount: 0, pricedUnitCount: 0 };
+
   const result = computeQualityScore(
     buildQualityInput(p as unknown as QualityScoreSource, {
       hasCoverPhoto: (media ?? []).some((m) => m.is_cover),
       photoCount: (media ?? []).length,
-      unitCount: unitCount ?? 0,
+      unitCount: units.unitCount,
+      pricedUnitCount: units.pricedUnitCount,
       mandateActive: (mandates ?? []).length > 0,
     }),
   );
@@ -316,4 +346,27 @@ export async function recomputeQualityScore(
       .eq("id", propertyId);
   }
   return result;
+}
+
+/**
+ * A unit landed, changed or was archived: the STORED score of everything
+ * above it is stale (2026-09-02 review). The list and the CSV read the
+ * column, the detail page computes live, and the two disagreed for any
+ * container whose units were generated rather than edited. Recomputes the
+ * parent and, when the parent is a phase, the project above it.
+ */
+export async function refreshContainerScores(
+  supabase: Client,
+  parentId: string | null | undefined,
+): Promise<void> {
+  if (!parentId) return;
+  const { data: parent } = await supabase
+    .from("properties")
+    .select("kind, parent_id")
+    .eq("id", parentId)
+    .maybeSingle();
+  await recomputeQualityScore(supabase, parentId);
+  if (parent?.kind === "phase" && parent.parent_id) {
+    await recomputeQualityScore(supabase, parent.parent_id);
+  }
 }

@@ -113,16 +113,76 @@ export async function createProperty(
     return { error: "Your role cannot create properties" };
   }
 
+  /**
+   * Project layout (2026-09-02). A container's units are generated in the same
+   * submit — decided HERE, first, because this block is pure: it reads only
+   * the parsed input and can refuse without having touched anything. The
+   * first cut placed it after `generateReference`, so every refused submit
+   * burned a district sequence number (review finding, same day) — the
+   * counter is a committed RPC, not part of the insert. Everything that can
+   * be refused is refused before the reference is minted; the generation
+   * itself runs after the row exists (it needs the parent's id and
+   * inheritable columns).
+   *
+   * Who may generate: the same people who manage units on the units page
+   * (admin, listing manager). An agent's project lands on that page with
+   * the units left for them — the wizard says so and posts no layout, and
+   * this ignores one if it were posted anyway.
+   */
+  const isContainer = input.kind === "project";
+  const canGenerate = profile.role === "admin" || profile.role === "listing_manager";
+  const layout = isContainer && canGenerate ? input.gen_layout : undefined;
+  // "touched" — any floor field typed — is what separates "later" (nothing
+  // typed, an empty project by design) from "wrong" (a range that yields
+  // nothing). The wizard draws the same line client-side.
+  const floorsTouched =
+    layout === "floors" &&
+    (input.gen_floor_from !== undefined ||
+      input.gen_floor_to !== undefined ||
+      input.gen_per_floor !== undefined);
+  const generated =
+    layout === "villas" && input.gen_villa_count
+      ? generateVillaUnits({
+          prefix: input.gen_villa_prefix ?? null,
+          count: input.gen_villa_count,
+          bedrooms: input.gen_bedrooms ?? null,
+          bathrooms: input.gen_bathrooms ?? null,
+          coveredAreaSqm: input.gen_covered_area_sqm ?? null,
+          plotAreaSqm: input.gen_plot_area_sqm ?? null,
+          basePrice: input.gen_base_price ?? null,
+          pricePerVilla: input.gen_price_step ?? null,
+        })
+      : layout === "floors" &&
+          input.gen_floor_from !== undefined &&
+          input.gen_floor_to !== undefined &&
+          input.gen_per_floor !== undefined
+        ? generateUnits({
+            block: input.gen_block ?? null,
+            floorFrom: input.gen_floor_from,
+            floorTo: input.gen_floor_to,
+            perFloor: input.gen_per_floor,
+            bedrooms: input.gen_bedrooms ?? null,
+            bathrooms: input.gen_bathrooms ?? null,
+            coveredAreaSqm: input.gen_covered_area_sqm ?? null,
+            basePrice: input.gen_base_price ?? null,
+            pricePerFloor: input.gen_price_step ?? null,
+          })
+        : [];
+  if (generated.length > MAX_GENERATED_UNITS) {
+    return {
+      error: `That would create more than ${MAX_GENERATED_UNITS} units — narrow the range, or add the rest from the units page.`,
+    };
+  }
+  if (floorsTouched && generated.length === 0) {
+    return { error: "That floor range produces no units — check floors from/to and units per floor." };
+  }
+
   const { data: district, error: districtErr } = await supabase
     .from("districts")
     .select("code")
     .eq("id", input.district_id)
     .single();
   if (districtErr || !district) return { error: "District not found" };
-
-  // Reference is generated here — at final submit, atomically with the insert —
-  // so abandoned wizards never burn sequence numbers (DECISIONS.md, T1.2).
-  const reference = await generateReference(supabase, profile.orgId, district.code);
 
   /**
    * The party's standard terms, RE-RESOLVED HERE (migration 0038).
@@ -159,52 +219,10 @@ export async function createProperty(
     };
   }
 
-  /**
-   * Project layout (2026-09-02). A container's units are generated in the same
-   * submit — decided HERE, before the insert, because the only thing worse
-   * than a project with no units is a project that exists but whose creator
-   * saw an error and pressed the button again. Everything that can be refused
-   * is refused before a reference is burned; the generation itself runs after
-   * the row exists (it needs the parent's id and inheritable columns).
-   */
-  const isContainer = input.kind === "project";
-  const layout = isContainer ? input.gen_layout : undefined;
-  const generated =
-    layout === "villas" && input.gen_villa_count
-      ? generateVillaUnits({
-          prefix: input.gen_villa_prefix ?? null,
-          count: input.gen_villa_count,
-          bedrooms: input.gen_bedrooms ?? null,
-          bathrooms: input.gen_bathrooms ?? null,
-          coveredAreaSqm: input.gen_covered_area_sqm ?? null,
-          plotAreaSqm: input.gen_plot_area_sqm ?? null,
-          basePrice: input.gen_base_price ?? null,
-          pricePerVilla: input.gen_price_step ?? null,
-        })
-      : layout === "floors" &&
-          input.gen_floor_from !== undefined &&
-          input.gen_floor_to !== undefined &&
-          input.gen_per_floor !== undefined
-        ? generateUnits({
-            block: input.gen_block ?? null,
-            floorFrom: input.gen_floor_from,
-            floorTo: input.gen_floor_to,
-            perFloor: input.gen_per_floor,
-            bedrooms: input.gen_bedrooms ?? null,
-            bathrooms: input.gen_bathrooms ?? null,
-            coveredAreaSqm: input.gen_covered_area_sqm ?? null,
-            basePrice: input.gen_base_price ?? null,
-            pricePerFloor: input.gen_price_step ?? null,
-          })
-        : [];
-  if (generated.length > MAX_GENERATED_UNITS) {
-    return {
-      error: `That would create more than ${MAX_GENERATED_UNITS} units — narrow the range, or add the rest from the units page.`,
-    };
-  }
-  if (layout === "floors" && generated.length === 0 && input.gen_floor_from !== undefined) {
-    return { error: "That floor range produces no units — check floors from/to and units per floor." };
-  }
+  // Reference is generated here — at final submit, the LAST side effect
+  // before the insert — so abandoned wizards and refused submits never burn
+  // sequence numbers (DECISIONS.md, T1.2; T-wizard-project-layout).
+  const reference = await generateReference(supabase, profile.orgId, district.code);
 
   const { data: created, error: insertErr } = await supabase
     .from("properties")
@@ -265,6 +283,7 @@ export async function createProperty(
     },
   });
 
+  let unitsFailure: string | null = null;
   if (generated.length > 0) {
     // the freshly inserted row, with every inheritable column — units inherit
     // from the parent exactly as a hand-added unit does
@@ -282,16 +301,30 @@ export async function createProperty(
     if (written.error) {
       // The project EXISTS and its reference is burned; an error here would
       // send the operator back to a form whose resubmit makes a second one.
-      // Log loudly and land them on the units page, which shows the empty
-      // state and the generator — nothing is lost, and the retry is one click.
+      // Land them on the units page WITH the reason (a console line is not
+      // "loud" to the person at the desk — 2026-09-02 review, critic pass);
+      // the page says what happened and the generator is right below it.
       console.error(`[createProperty] units did not land for ${reference}:`, written.error);
+      unitsFailure = written.error;
     }
   }
 
   revalidatePath("/properties");
   // A project lands on its units matrix: that page IS what a project is made
   // of, and when the count was left blank it says so and offers the generator.
-  redirect(isContainer ? `/properties/${created.id}/units` : `/properties/${created.id}`);
+  // The stored score is what the list and the CSV read; nothing had written
+  // it at creation, so every new property sat at 0 there until its first
+  // save (2026-09-02 review). Computed once the units exist, since a
+  // container's score is theirs.
+  const { recomputeQualityScore } = await import("@/lib/services/quality-score");
+  await recomputeQualityScore(supabase, created.id);
+
+  redirect(
+    isContainer
+      ? `/properties/${created.id}/units` +
+          (unitsFailure ? `?units=failed&reason=${encodeURIComponent(unitsFailure)}` : "")
+      : `/properties/${created.id}`,
+  );
 }
 
 export async function updatePropertySection(
@@ -505,7 +538,7 @@ export async function updatePropertySection(
     const { computeQualityScore, PUBLISH_THRESHOLD } = await import(
       "@/lib/services/quality-score"
     );
-    const [{ data: media }, { data: activeMandates }, { count: unitCount }] = await Promise.all([
+    const [{ data: media }, { data: activeMandates }] = await Promise.all([
       // photos only (MEDIA-K) — the publish gate must agree with the score
       supabase
         .from("property_media")
@@ -519,11 +552,6 @@ export async function updatePropertySection(
         .select("id")
         .eq("property_id", propertyId)
         .eq("status", "active"),
-      // child units — a container is graded and gated on them
-      supabase
-        .from("properties")
-        .select("id", { count: "exact", head: true })
-        .eq("parent_id", propertyId),
     ]);
     const merged = { ...(current as Record<string, unknown>), ...updates } as Record<
       string,
@@ -531,6 +559,15 @@ export async function updatePropertySection(
     >;
     const isLand = merged.property_type === "land";
     const isContainer = current.kind === "project" || current.kind === "phase";
+    // ONE definition of "a unit" — kind = unit, not archived, under the
+    // container or any of its phases (container-units.ts). The first cut
+    // counted every child row, so an empty PHASE satisfied this gate.
+    const { countContainerUnits, EMPTY_CONTAINER_FACTS } = await import(
+      "@/lib/services/container-units"
+    );
+    const units = isContainer
+      ? await countContainerUnits(supabase, propertyId)
+      : EMPTY_CONTAINER_FACTS;
 
     // An EMPTY container cannot be published, and this refusal is not
     // overridable (2026-09-02). The score override exists for a listing that
@@ -544,18 +581,21 @@ export async function updatePropertySection(
     // "Coming soon" is the honest state for a development whose units are not
     // defined yet, and it is already in the visibility list — so the refusal
     // names it rather than offering another override.
-    if (isContainer && (unitCount ?? 0) === 0) {
+    if (isContainer && units.unitCount === 0) {
       return {
         error:
           `A ${current.kind} with no units cannot be published — buyers cannot be matched to it ` +
-          `and it cannot be reserved. Add its units first, or set visibility to "Coming soon".`,
+          `and it cannot be reserved.` +
+          (units.phaseCount > 0 ? ` Its phases are empty too.` : ``) +
+          ` Add its units first, or set visibility to "Coming soon".`,
         savedAt: null,
       };
     }
     const result = computeQualityScore({
       isLand,
       isContainer,
-      unitCount: unitCount ?? 0,
+      unitCount: units.unitCount,
+      pricedUnitCount: units.pricedUnitCount,
       hasCoverPhoto: (media ?? []).some((m) => m.is_cover),
       photoCount: (media ?? []).length,
       titleEn: (merged.title as { en?: string } | null)?.en,
@@ -801,7 +841,7 @@ export async function archiveProperty(propertyId: string): Promise<PropertyActio
 
   const { data: current } = await supabase
     .from("properties")
-    .select("id, visibility")
+    .select("id, visibility, parent_id")
     .eq("id", propertyId)
     .maybeSingle();
   if (!current) return { error: "Property not found" };
@@ -827,6 +867,11 @@ export async function archiveProperty(propertyId: string): Promise<PropertyActio
     payload: { manual: true, visibility: { from: current.visibility, to: "archived" } },
   });
 
+  // an archived unit no longer counts for the container above it — its
+  // stored score (what the list reads) moves with it (2026-09-02 review)
+  const { refreshContainerScores } = await import("@/lib/services/quality-score");
+  await refreshContainerScores(supabase, current.parent_id);
+
   revalidatePath(`/properties/${propertyId}`);
   revalidatePath("/properties");
   return { error: null };
@@ -851,7 +896,7 @@ export async function restoreProperty(propertyId: string): Promise<PropertyActio
 
   const { data: current } = await supabase
     .from("properties")
-    .select("id, status, visibility")
+    .select("id, status, visibility, parent_id")
     .eq("id", propertyId)
     .maybeSingle();
   if (!current) return { error: "Property not found" };
@@ -887,9 +932,13 @@ export async function restoreProperty(propertyId: string): Promise<PropertyActio
     },
   });
 
-  // visibility feeds the quality score / publish gate inputs
-  const { recomputeQualityScore } = await import("@/lib/services/quality-score");
+  // visibility feeds the quality score / publish gate inputs — and a restored
+  // unit counts for its container again (2026-09-02 review)
+  const { recomputeQualityScore, refreshContainerScores } = await import(
+    "@/lib/services/quality-score"
+  );
   await recomputeQualityScore(supabase, propertyId);
+  await refreshContainerScores(supabase, current.parent_id);
 
   revalidatePath(`/properties/${propertyId}`);
   revalidatePath("/properties");

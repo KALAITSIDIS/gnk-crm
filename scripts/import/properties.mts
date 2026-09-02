@@ -170,6 +170,20 @@ for (const r of rows) {
     const lat = num(r.latitude);
     const lng = num(r.longitude);
 
+    // The publish gate refuses an empty container (2026-09-02) and this
+    // importer writes visibility straight from the file, which would walk a
+    // unit-less project past it. A container imports as coming_soon at most;
+    // publish it from the app once its units exist — the gate checks then.
+    const requestedVisibility = str(r.visibility) ?? "private";
+    const isContainerRow = kind === "project" || kind === "phase";
+    const visibility =
+      isContainerRow && requestedVisibility === "public" ? "coming_soon" : requestedVisibility;
+    if (visibility !== requestedVisibility) {
+      notes.push(
+        "a " + kind + " cannot be imported public — set to coming_soon; publish it from the app once its units exist",
+      );
+    }
+
     const insertRow: Record<string, unknown> = {
       org_id: orgId,
       parent_id: parentId,
@@ -177,7 +191,7 @@ for (const r of rows) {
       property_type: propertyType,
       transaction_type: str(r.transaction_type) ?? "sale",
       status: str(r.status) ?? "available",
-      visibility: str(r.visibility) ?? "private",
+      visibility,
       district_id: districtId,
       area_id: areaId,
       address: str(r.address),
