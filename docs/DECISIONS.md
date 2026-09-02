@@ -3,6 +3,53 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-02 · T-button-submit-class (no migration) — one bug of a class
+  means the class was never checked.** The Enter hole closed earlier the same
+  day was one instance of a general shape: `components/ui/button.tsx` renders
+  a bare `<button>` and set no `type`, and in HTML an untyped button inside a
+  form IS a submit control. Every Cancel, Add-another and dialog trigger
+  written inside a form was one click from running that form's action. So all
+  63 untyped buttons in the 29 files that contain a form were audited, each
+  traced to its nearest form THROUGH the Radix portal boundary (Dialog,
+  Popover, DropdownMenu and Sheet content render at document.body, so a
+  button written inside them is not inside the form it appears to be in),
+  with every verdict checked twice.
+
+  (1) **One live instance.** The payment-schedule card's **Cancel** sat
+  directly inside the apply-a-plan form: clicking it would post
+  `applyPaymentPlan`, which DELETEs the reservation's instalments, INSERTs a
+  fresh schedule, updates the reservation and writes an event — and the
+  payload was always schema-valid, so nothing would have refused it. It was
+  masked only incidentally (the same click unmounts the form, and React
+  flushes that before the browser's activation behaviour), which is not a
+  defence. Now `type="button"`.
+  (2) **The class is closed at the root.** `Button` defaults to
+  `type="button"` unless the caller says otherwise, so only an explicit
+  `type="submit"` submits. This was safe to do because the audit's other
+  finding was that **no form anywhere relies on an untyped button to
+  submit** — all 66 real submits already declare it. The cost is that a new
+  submit button must now say so, which is the safe direction: a submit that
+  does nothing is visible immediately; an accidental one writes to the
+  database. `asChild` is left alone, since it renders someone else's element
+  (usually a Link) where `type` is meaningless.
+  (3) **The Enter guard, narrowed.** It swallowed Enter on any non-textarea
+  target, which put it in the middle of the step-1 Radix selects' keyboard
+  path for no reason. It now fires only on a text input, which is where the
+  implicit-submission hole was.
+
+  **And the full suite found a test that only passes on a fresh database.**
+  `property-parties` picks "the first active agent" with the service role and
+  then drives the picker to find them — but the picker runs as the signed-in
+  user and profiles are RLS-scoped by org, while the service role sees every
+  org. A local database accumulates cross-org fixtures (64 active agents by
+  today, the first of them in Test Org A), so the test had silently started
+  choosing an agent the UI could never offer: a four-minute timeout locally,
+  green in CI on a fresh database. That is the repo's residue rule in
+  reverse, and worth the same suspicion. It now picks an agent from the org
+  it is signed in as (3.7s), and the two other unscoped fixture picks were
+  checked and are safe — they select by a unique email, not an arbitrary
+  first row.
+
 - **2026-09-02 · T-wizard-enter-guard (no migration) — Enter in the party
   search was creating listings.** The fix wave's own review (six lenses, two
   refuters each with a tie-breaker) confirmed thirteen; four were already

@@ -41,11 +41,29 @@ const buttonVariants = cva(
   }
 )
 
+/**
+ * `type` defaults to "button", not the HTML default of "submit".
+ *
+ * A <button> with no type inside a <form> is a submit control, so every
+ * Cancel, Add-another and dialog trigger written inside a form was one click
+ * from running that form's action. One had shipped: a Cancel that rewrote a
+ * reservation's whole instalment schedule (2026-09-02 audit of all 63 untyped
+ * buttons; that was the only live instance, and no form relied on an untyped
+ * button to submit — every real submit already declares type="submit").
+ *
+ * The cost of this default is that a NEW submit button must say so. That is
+ * the safe direction: a submit that does nothing is visible immediately, an
+ * accidental submit writes to the database.
+ *
+ * `asChild` is left alone — it renders someone else's element (usually a
+ * Link), and `type` on an anchor is meaningless.
+ */
 function Button({
   className,
   variant = "default",
   size = "default",
   asChild = false,
+  type,
   ...props
 }: React.ComponentProps<"button"> &
   VariantProps<typeof buttonVariants> & {
@@ -59,6 +77,7 @@ function Button({
       data-variant={variant}
       data-size={size}
       className={cn(buttonVariants({ variant, size, className }))}
+      type={asChild ? type : (type ?? "button")}
       {...props}
     />
   )

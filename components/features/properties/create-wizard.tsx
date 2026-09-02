@@ -441,9 +441,11 @@ export function CreatePropertyWizard({
    */
   const blockImplicitSubmit = (e: React.KeyboardEvent<HTMLFormElement>) => {
     if (step !== 1 || e.key !== "Enter") return;
-    const el = e.target as HTMLElement | null;
-    // a textarea's Enter is a newline, and Radix's own controls handle theirs
-    if (el instanceof HTMLTextAreaElement) return;
+    // ONLY a text input. Narrower than "not a textarea" on purpose: the
+    // step-1 selects are Radix triggers (buttons) that open on Enter, and a
+    // blanket preventDefault here would sit in the middle of their keyboard
+    // path for no reason — the implicit-submission hole is the text box.
+    if (!(e.target instanceof HTMLInputElement)) return;
     e.preventDefault();
   };
 

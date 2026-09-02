@@ -186,7 +186,11 @@ export function PaymentScheduleCard({
               <Button type="submit" disabled={applying}>
                 {applying ? "Applying…" : "Apply"}
               </Button>
-              <Button variant="ghost" size="sm" onClick={() => setChoosing(false)}>
+              {/* type="button" or this Cancel APPLIES the plan: an untyped
+                  button inside a form is a submit control, and this form's
+                  action rewrites the reservation's whole instalment schedule
+                  (2026-09-02 button-class audit) */}
+              <Button type="button" variant="ghost" size="sm" onClick={() => setChoosing(false)}>
                 <X className="size-4" /> Cancel
               </Button>
             </form>
