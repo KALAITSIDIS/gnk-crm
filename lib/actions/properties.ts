@@ -328,8 +328,8 @@ export async function createProperty(
   // it at creation, so every new property sat at 0 there until its first
   // save (2026-09-02 review). Computed once the units exist, since a
   // container's score is theirs.
-  const { recomputeQualityScore } = await import("@/lib/services/quality-score");
-  await recomputeQualityScore(supabase, created.id);
+  const { recomputeQuietly } = await import("@/lib/services/quality-score");
+  await recomputeQuietly(supabase, created.id);
 
   redirect(
     isContainer
@@ -748,9 +748,10 @@ export async function updatePropertySection(
   }
 
   // score is derived state — recompute on every save (doc 02 §A8); the save's
-  // own property.updated event covers auditability, no separate score event
-  const { recomputeQualityScore } = await import("@/lib/services/quality-score");
-  await recomputeQualityScore(supabase, propertyId);
+  // own property.updated event covers auditability, no separate score event.
+  // Quietly: the save has happened; a failed count must not report it as failed.
+  const { recomputeQuietly } = await import("@/lib/services/quality-score");
+  await recomputeQuietly(supabase, propertyId);
 
   // title deed status is a deal-health factor (doc 02 §C5) — refresh open deals
   if (section === "legal") {
@@ -946,10 +947,10 @@ export async function restoreProperty(propertyId: string): Promise<PropertyActio
 
   // visibility feeds the quality score / publish gate inputs — and a restored
   // unit counts for its container again (2026-09-02 review)
-  const { recomputeQualityScore, refreshContainerScores } = await import(
+  const { recomputeQuietly, refreshContainerScores } = await import(
     "@/lib/services/quality-score"
   );
-  await recomputeQualityScore(supabase, propertyId);
+  await recomputeQuietly(supabase, propertyId);
   await refreshContainerScores(supabase, current.parent_id);
 
   revalidatePath(`/properties/${propertyId}`);

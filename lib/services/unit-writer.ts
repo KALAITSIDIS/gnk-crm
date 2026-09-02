@@ -85,13 +85,15 @@ export async function writeGeneratedUnits(
         bathrooms: u.bathrooms,
         covered_area_sqm: u.covered_area_sqm,
         ...(u.plot_area_sqm !== null ? { plot_area_sqm: u.plot_area_sqm } : {}),
-        // the generator prices a row; WHICH column it is depends on what the
-        // development does. A rent development's units are let, not sold —
-        // writing its "first price" as a sale price put a rental on the
-        // for-sale side of every report (2026-09-02 review, critic pass).
-        ...(project.transaction_type === "rent"
-          ? { rent_price_month: u.asking_price, asking_price: null }
-          : { asking_price: u.asking_price }),
+        // asking_price, whatever the development's transaction type. The
+        // units subsystem is SALE-SHAPED end to end — the matrix, price
+        // lists, the uplift, the public availability share (SQL, 0041) and
+        // sales velocity all read this column as THE unit price. A same-day
+        // attempt to write a rent development's figure to rent_price_month
+        // made its units invisible to every one of them; reverted. Making
+        // the subsystem rent-aware is a real feature with a migration, gated
+        // on the first rental development (DECISIONS T-container-review).
+        asking_price: u.asking_price,
         // `visibility` deliberately absent — the column defaults to private, and
         // a public project must never mint sixty already-published empty units
         status: "available" as const,

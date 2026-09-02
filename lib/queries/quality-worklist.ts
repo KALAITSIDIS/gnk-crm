@@ -36,13 +36,28 @@ const LIVE_STATUSES = ["draft", "available", "reserved", "under_offer"] as const
 export async function fetchQualityWorklist(
   supabase: SupabaseClient<Database>,
 ): Promise<Worklist> {
-  const { data: rows, error } = await supabase
-    .from("properties")
-    .select(
-      "id, reference, title, quality_score, status, property_type, kind, parent_id, public_description, asking_price, rent_price_month, covered_area_sqm, plot_area_sqm, bedrooms, bathrooms, planning_zone_code, building_density_pct, location, location_approx, title_deed_status, permit_status, assigned_agent_id, owner_contact_id, developer_contact_id",
-    )
-    .neq("visibility", "archived");
-  if (error) throw new Error(`Worklist property query failed: ${error.message}`);
+  // Paged, because PostgREST caps a select at 1000 rows SILENTLY and a
+  // worklist that quietly forgot the tail of the portfolio would report it
+  // complete (2026-09-02 fix-wave review). Pre-existing, but the tally now
+  // loads sold rows too, so the cap got closer.
+  const PAGE = 1000;
+  type Row = NonNullable<Awaited<ReturnType<typeof fetchPage>>["data"]>[number];
+  const fetchPage = (from: number) =>
+    supabase
+      .from("properties")
+      .select(
+        "id, reference, title, quality_score, status, property_type, kind, parent_id, public_description, asking_price, rent_price_month, covered_area_sqm, plot_area_sqm, bedrooms, bathrooms, planning_zone_code, building_density_pct, location, location_approx, title_deed_status, permit_status, assigned_agent_id, owner_contact_id, developer_contact_id",
+      )
+      .neq("visibility", "archived")
+      .order("id")
+      .range(from, from + PAGE - 1);
+  const rows: Row[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await fetchPage(from);
+    if (error) throw new Error(`Worklist property query failed: ${error.message}`);
+    rows.push(...(data ?? []));
+    if (!data || data.length < PAGE) break;
+  }
 
   // Every non-archived row is loaded so a container's SOLD units still count
   // for it (2026-09-02 review, critic pass: a sold-out development was being

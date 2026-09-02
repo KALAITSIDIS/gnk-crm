@@ -1175,9 +1175,7 @@ export function CreatePropertyWizard({
                   />
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="gen_base_price">
-                    {transaction === "rent" ? "First rent €/month" : "First price €"}
-                  </Label>
+                  <Label htmlFor="gen_base_price">First price €</Label>
                   <Input
                     id="gen_base_price"
                     name="gen_base_price"
