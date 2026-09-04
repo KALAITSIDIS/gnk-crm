@@ -3,6 +3,44 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-04 · T-public-door-review (no migration) — five was the budget for
+  the entire internet.** An eight-lens adversarial review of the public front
+  door produced 67 findings; 8 survived triage and 7 survived adversarial
+  verification. This entry covers the CRM half; the other six were site-side.
+
+  The marketing site posts server-to-server, so every enquiry it forwarded
+  reached this endpoint from one egress address. `callerIpHash` therefore
+  returned the same value for every visitor and `RATE_LIMIT = 5` became a
+  site-wide budget: the sixth genuine buyer in any quarter of an hour was
+  refused with "Too many enquiries from this address" — an address that was not
+  theirs — with no lead written, no alert fired and nothing logged, so the firm
+  could never learn it had happened. Five posts every fifteen minutes from a
+  shell loop kept the only inbound channel shut, for free.
+
+  (1) **Two budgets, not one.** The site forwards the visitor as
+  `x-gnk-visitor-ip` and that gets the tight per-person limit; the address the
+  packets actually came from keeps its own ceiling of 60. Forging the header
+  buys a fresh personal budget, never an escape from the origin one. The header
+  is trusted only to make the limit STRICTER.
+  (2) **One budget when the caller IS the visitor.** With no header the two
+  hashes are the same value, and returning both would spend the same counter
+  twice per request — silently halving five to two. This is why the decision is
+  a pure function in `enquiry-budget.ts` with a test that says so, rather than
+  three lines inline in the route: inline it sat behind `next/headers`, which is
+  request-scoped and cannot be unit tested.
+  (3) **The fail-open is KEPT, and now says so.** The review called it a defect.
+  The outcomes are not symmetric: a junk lead is marked spam in one click, while
+  a real buyer told "too many enquiries" — which would also be a lie about why —
+  is gone. What was actually wrong was the silence, so a counter that has
+  stopped working now logs at error level instead of failing permissively
+  without a trace. Reverse this only if junk volume ever outweighs a lost
+  instruction.
+  (4) **`hashIp` moved, not copied.** `caller-ip.ts` already records that two
+  copies of a hash would be two copies that could disagree, and a limiter keyed
+  on a hash that changed shape stops limiting anything because the counters
+  never match an existing row. It now lives in `ip-hash.ts` and `caller-ip.ts`
+  re-exports it.
+
 - **2026-09-04 · T-enquiry-alert (no migration) — the CRM learns to tell
   somebody.** The enquiry door shipped this morning, and an enquiry through it
   landed in the lead inbox where it waited for a human to go and look. This

@@ -1,6 +1,7 @@
 import { after, NextResponse, type NextRequest } from "next/server";
 import { createPublicClient } from "@/lib/supabase/public";
 import { callerIpHash } from "@/lib/services/caller-ip";
+import { budgetsFor } from "@/lib/services/enquiry-budget";
 import { enquiryCompleteness, publicEnquirySchema } from "@/lib/validators/public-enquiry";
 import { sendEnquiryAlert } from "@/lib/services/enquiry-alert";
 
@@ -20,8 +21,13 @@ import { sendEnquiryAlert } from "@/lib/services/enquiry-alert";
  */
 export const dynamic = "force-dynamic";
 
-/** Submissions per IP per 15 minutes. The feed's budget is 120; this writes. */
-const RATE_LIMIT = 5;
+/**
+ * Set by our own marketing site, which posts on a visitor's behalf. Trusted
+ * only to make the limit STRICTER for that visitor, never to lift it — the
+ * reasoning, the two limits and the no-double-count rule all live in
+ * lib/services/enquiry-budget.ts, where they can be tested.
+ */
+const VISITOR_IP_HEADER = "x-gnk-visitor-ip";
 
 const CORS = {
   // A public contact form: any site may post one, exactly as any site may
@@ -61,15 +67,30 @@ export async function POST(request: NextRequest) {
   // Rate limit BEFORE anything else touches the database, so a flood costs one
   // counter round trip. Its own counter (0084) — a flood here must not spend a
   // buyer's share-link budget or the feed's.
-  const overBudget = await supabase.rpc("note_public_enquiry_hit", {
-    p_ip_hash: await callerIpHash(),
-    p_limit: RATE_LIMIT,
-  });
-  if (overBudget.data === true) {
-    return NextResponse.json(
-      { error: "Too many enquiries from this address. Try again shortly." },
-      { status: 429, headers: { ...CORS, "Cache-Control": "no-store", "Retry-After": "900" } },
-    );
+  const budgets = budgetsFor(
+    await callerIpHash(),
+    request.headers.get(VISITOR_IP_HEADER),
+  );
+  for (const b of budgets) {
+    const check = await supabase.rpc("note_public_enquiry_hit", {
+      p_ip_hash: b.hash,
+      p_limit: b.limit,
+    });
+    if (check.data === true) {
+      return NextResponse.json(
+        { error: "Too many enquiries from this address. Try again shortly." },
+        { status: 429, headers: { ...CORS, "Cache-Control": "no-store", "Retry-After": "900" } },
+      );
+    }
+    // DELIBERATELY FAILS OPEN, and says so. If the counter itself errors we let
+    // the enquiry through rather than answer 429, because the two outcomes are
+    // not symmetric: a junk lead is marked spam in one click, while a real
+    // buyer told "too many enquiries" — which would also be a lie about why —
+    // is gone. Logged at error level so a counter that has stopped working is
+    // visible rather than silently permissive, which was the actual defect.
+    if (check.error) {
+      console.error("[public enquiry] rate counter failed, allowing:", check.error.message);
+    }
   }
 
   // The honeypot is checked AFTER the rate limit and answered like a success:
