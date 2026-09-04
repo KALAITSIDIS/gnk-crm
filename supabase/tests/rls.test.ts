@@ -5036,4 +5036,128 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(chainOk, "retention events keep the chain intact").toBe(true);
   });
 
+  it("55. the public enquiry door (0084) writes a lead and nothing else", async () => {
+    // The FIRST unauthenticated write into this system. What matters is not
+    // that it works — it is the size of the hole it opens.
+    const anon = anonClient();
+    const marker = `enq-${run}`;
+
+    const ok = await anon.rpc("submit_public_enquiry", {
+      p_org_slug: "test-org-a",
+      p_name: `Buyer ${marker}`,
+      p_email: "buyer@example.invalid",
+      p_phone: "",
+      p_message: `Interested — ${marker}`,
+      p_property_ref: "",
+    });
+    expect(ok.error).toBeNull();
+    expect(ok.data, "a complete enquiry is accepted").toBe(true);
+
+    const { data: leads } = await svc
+      .from("leads")
+      .select("id, source, status, contact_id, property_id, message, criteria")
+      .eq("org_id", ORG_A)
+      .like("message", `%${marker}%`);
+    expect(leads ?? [], "exactly one lead").toHaveLength(1);
+    const lead = leads![0]!;
+    expect(lead.source).toBe("website");
+    expect(lead.status).toBe("new");
+    // NO CONTACT. Anonymous traffic must not mint rows in the desk's own
+    // dedup surface; the desk links or creates one when it works the lead.
+    expect(lead.contact_id, "no contact is created from an anonymous form").toBeNull();
+
+    // The reply details are in `message`, which GDPR erasure can redact, and
+    // NOT in `criteria`, which it never touches.
+    expect(lead.message).toContain("buyer@example.invalid");
+    expect(JSON.stringify(lead.criteria ?? {}), "criteria carries shape, not identity").not.toContain(
+      "buyer@example.invalid",
+    );
+
+    // The event exists and carries NOTHING that could ever need erasing —
+    // a hash-chained row cannot be rewritten.
+    const { data: events } = await svc
+      .from("events")
+      .select("event_type, actor_id, payload")
+      .eq("entity_type", "lead")
+      .eq("entity_id", lead.id);
+    expect(events ?? [], "the lead owes its event").toHaveLength(1);
+    const ev = events![0]!;
+    expect(ev.event_type).toBe("created");
+    expect(ev.actor_id, "nobody signed in did this").toBeNull();
+    const payload = JSON.stringify(ev.payload ?? {});
+    expect(payload, "no email in an unerasable row").not.toContain("buyer@example.invalid");
+    expect(payload, "no name in an unerasable row").not.toContain(marker);
+    expect(payload).toContain("website");
+
+    // Refusals: no way to reply, nothing to say, and an org that is not ours.
+    const noReply = await anon.rpc("submit_public_enquiry", {
+      p_org_slug: "test-org-a", p_name: "X", p_email: "", p_phone: "",
+      p_message: "hello", p_property_ref: "",
+    });
+    expect(noReply.data, "an enquiry with no email and no phone is refused").toBe(false);
+    const noSubject = await anon.rpc("submit_public_enquiry", {
+      p_org_slug: "test-org-a", p_name: "X", p_email: "a@example.invalid", p_phone: "",
+      p_message: "", p_property_ref: "",
+    });
+    expect(noSubject.data, "an enquiry about nothing is refused").toBe(false);
+    const wrongOrg = await anon.rpc("submit_public_enquiry", {
+      p_org_slug: `no-such-${run}`, p_name: "X", p_email: "a@example.invalid", p_phone: "",
+      p_message: "hi", p_property_ref: "",
+    });
+    expect(wrongOrg.data, "an unknown org is refused").toBe(false);
+
+    // A PRIVATE reference must not resolve — otherwise this endpoint answers
+    // "which of your references exist" to anyone who asks.
+    const { data: hidden } = await svc
+      .from("properties")
+      .insert({
+        org_id: ORG_A,
+        reference: `PRIV-${marker}`,
+        kind: "standalone",
+        property_type: "apartment",
+        status: "available",
+        visibility: "private",
+      })
+      .select("id")
+      .single();
+    const probe = await anon.rpc("submit_public_enquiry", {
+      p_org_slug: "test-org-a", p_name: `Prober ${marker}`, p_email: "p@example.invalid",
+      p_phone: "", p_message: "", p_property_ref: `PRIV-${marker}`,
+    });
+    expect(probe.data, "the enquiry is still accepted").toBe(true);
+    const { data: probed } = await svc
+      .from("leads")
+      .select("property_id")
+      .eq("org_id", ORG_A)
+      .like("message", `%Prober ${marker}%`)
+      .single();
+    expect(probed!.property_id, "a private reference does not resolve").toBeNull();
+
+    // The blast radius: two functions by name, and no table at all.
+    const readLeads = await anon.from("leads").select("id");
+    expect(readLeads.data ?? [], "anon must not read leads").toHaveLength(0);
+    const readCounter = await anon.from("public_enquiry_attempts").select("ip_hash");
+    expect(readCounter.data ?? [], "anon must not read the enquiry counters").toHaveLength(0);
+    const writeLead = await anon.from("leads").insert({ org_id: ORG_A, source: "website" });
+    expect(writeLead.error, "anon must not insert a lead directly").not.toBeNull();
+
+    // Its budget is its OWN — a flood here must not spend the feed's.
+    const ip = `enqrate-${run}`;
+    expect((await anon.rpc("note_public_enquiry_hit", { p_ip_hash: ip, p_limit: 2 })).data).toBe(false);
+    await anon.rpc("note_public_enquiry_hit", { p_ip_hash: ip, p_limit: 2 });
+    expect(
+      (await anon.rpc("note_public_enquiry_hit", { p_ip_hash: ip, p_limit: 2 })).data,
+      "the third hit is over a limit of 2",
+    ).toBe(true);
+    expect(
+      (await anon.rpc("note_public_listing_hit", { p_ip_hash: ip, p_limit: 2 })).data,
+      "the feed's budget for the same caller is untouched",
+    ).toBe(false);
+
+    const { data: chainOk } = await svc.rpc("verify_events_chain", { p_org: ORG_A });
+    expect(chainOk, "an anonymous write keeps the chain intact").toBe(true);
+
+    await svc.from("properties").delete().eq("id", hidden!.id);
+  });
+
 });
