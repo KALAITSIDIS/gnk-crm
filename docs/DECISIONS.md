@@ -3,6 +3,40 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-04 · T-enquiry-alert (no migration) — the CRM learns to tell
+  somebody.** The enquiry door shipped this morning, and an enquiry through it
+  landed in the lead inbox where it waited for a human to go and look. This
+  app had never sent anything outbound: Supabase handles its own auth mail and
+  there was no sender anywhere in it. Production's last logged call was seven
+  weeks old. The inbox colour-codes response time in minutes — green under
+  five, amber under an hour — which is right for a market where speed wins the
+  instruction and useless if nobody knows the clock started.
+
+  (1) **After the response, not before it.** The alert runs inside Next's
+  `after()`, so the visitor has their 202 before any mail provider is called.
+  That is not a latency optimisation, it is the same rule the guardrail sweep
+  established: **the enquiry is already committed by the time this runs, so
+  nothing here may turn a saved enquiry into a failed one.** `sendEnquiryAlert`
+  cannot throw — a provider error, a 422, a dead network all return a status
+  and log, and the visitor's thank-you is untouched either way.
+  (2) **Armed by configuration, skipping loudly.** With no `RESEND_API_KEY`
+  and `ENQUIRY_ALERT_TO` it logs SKIPPED and carries on, exactly as the
+  off-site backup leg does while it waits for its token. The key lives in
+  Vercel's environment and never in this repository, which is public. Set both
+  and it starts working with no deploy.
+  (3) **Only the public door.** A lead the desk types into the CRM needs no
+  email — they are looking at it. This fires for anonymous enquiries only.
+  (4) **Plain text, and one link.** It is read on a phone, usually while
+  walking: who, both ways to reach them, what they asked, and the inbox. The
+  `reply_to` is the buyer, so a reply from that phone reaches them rather than
+  the void.
+
+  One thing removed on the way: the first draft told the desk whether the
+  quoted reference matched a PUBLISHED listing. The route cannot know that —
+  0084's function returns only success — so the claim went. The lead's own
+  message already carries that note where it applies, written by the function
+  that does know.
+
 - **2026-09-04 · T-public-enquiries (migration 0084) — the first public
   WRITE path, because the loop was starved at the top.** Measured that day,
   production held 4 properties, 3 leads and **zero** viewings, offers,
