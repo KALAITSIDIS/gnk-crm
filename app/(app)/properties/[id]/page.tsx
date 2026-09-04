@@ -446,6 +446,17 @@ export default async function PropertyDetailPage({
           <MandateBadge state={mandateState} />
           <StatusBadge status={p.status} />
           <StatusBadge status={p.visibility} />
+          {/* Public and Available are TWO switches and the feed needs both
+              (0066: `visibility = 'public' and status = 'available'`). Setting
+              one without the other reads as published and reaches nobody — a
+              real session did exactly that and reported the listing live
+              (2026-09-03). Said here, next to the pair that disagrees. */}
+          {p.visibility === "public" && p.status !== "available" ? (
+            <span className="text-xs text-warning" role="note">
+              Public, but not on the site: the public feed only carries listings whose status is
+              Available.
+            </span>
+          ) : null}
           {p.asking_price !== null ? (
             <Link
               href={`/calculators?price=${Number(p.asking_price)}`}
