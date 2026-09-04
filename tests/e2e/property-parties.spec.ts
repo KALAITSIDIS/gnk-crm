@@ -233,3 +233,59 @@ test.describe("property kind filter", () => {
     await admin.from("properties").delete().eq("id", projectId);
   });
 });
+
+/**
+ * A save that worked must not LOOK like it failed.
+ *
+ * React resets an uncontrolled form once a server action settles, so the
+ * boxes fall back to whatever the last server render supplied. A real
+ * production session on 2026-09-03 reported the Marketing tab as a silent
+ * no-op — toast, then blank fields — and only a hard reload proved the data
+ * had saved. Nothing was lost, but an operator who cannot trust a save stops
+ * trusting the app.
+ *
+ * HONEST LIMIT OF THIS TEST: it pins the invariant, not the bug. It passes
+ * with the snapshot-restore removed as well, because locally the revalidated
+ * server render wins the race against the reset and the box never visibly
+ * reverts. What was observed in production is that race going the other way.
+ * The fix makes the outcome deterministic instead of timing-dependent; this
+ * test is what stops the invariant regressing, and does not prove the repair.
+ */
+test("what you typed is still on screen after the save", async ({ page }) => {
+  const admin = svc();
+  const { orgId } = await fixtureProfile(admin);
+  const propertyId = await seedProperty(admin, orgId, "standalone");
+  const typed = `Marketing copy ${randomBytes(3).toString("hex")}`;
+
+  try {
+    await page.goto(`/properties/${propertyId}`);
+    await page.getByRole("tab", { name: /^marketing$/i }).click();
+
+    const title = page.getByLabel(/^title \(en\)$/i);
+    await title.fill(typed);
+    const form = page.locator("form").filter({ has: title });
+    await form.getByRole("button", { name: /^save$/i }).click();
+
+    await expect(page.getByText("Saved", { exact: true })).toBeVisible({ timeout: 15_000 });
+    // the assertion the bug would fail: WITHOUT reloading, the box still
+    // holds what was typed rather than the pre-save value
+    await expect(title, "the form must not blank itself after a successful save").toHaveValue(
+      typed,
+    );
+
+    // …and it really did save, which is the half a reload used to prove
+    await expect
+      .poll(async () => {
+        const { data } = await admin
+          .from("properties")
+          .select("title")
+          .eq("id", propertyId)
+          .single();
+        return (data?.title as { en?: string } | null)?.en;
+      })
+      .toBe(typed);
+  } finally {
+    await admin.from("properties").delete().eq("id", propertyId);
+  }
+});
+

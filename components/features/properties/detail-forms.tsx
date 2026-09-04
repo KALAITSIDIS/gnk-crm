@@ -171,6 +171,10 @@ export function DetailsForm({
 }) {
   const districtAreas = areas.filter((a) => a.districtId === property.district_id);
   const isLand = property.property_type === "land";
+  // a development's one area is its SITE — the overview calls it "Site plot",
+  // and the same field labelled "Plot (m²)" here read as a different field to
+  // a real operator (2026-09-03 session)
+  const isContainer = property.kind === "project" || property.kind === "phase";
 
   return (
     <SectionForm propertyId={property.id} section="details" readOnly={readOnly}>
@@ -288,7 +292,7 @@ export function DetailsForm({
       <SectionTitle>Areas & rooms</SectionTitle>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <NumberField name="covered_area_sqm" label="Covered (m²)" defaultValue={property.covered_area_sqm} step="0.01" />
-        <NumberField name="plot_area_sqm" label="Plot (m²)" defaultValue={property.plot_area_sqm} step="0.01" />
+        <NumberField name="plot_area_sqm" label={isContainer ? "Site plot (m²)" : "Plot (m²)"} defaultValue={property.plot_area_sqm} step="0.01" />
         <NumberField name="veranda_sqm" label="Veranda (m²)" defaultValue={property.veranda_sqm} step="0.01" />
         <NumberField name="roof_garden_sqm" label="Roof garden (m²)" defaultValue={property.roof_garden_sqm} step="0.01" />
         <NumberField name="basement_sqm" label="Basement (m²)" defaultValue={property.basement_sqm} step="0.01" />

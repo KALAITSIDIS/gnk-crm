@@ -126,6 +126,11 @@ export function EntityPicker({
             <ul className="absolute z-20 mt-1 max-h-48 w-full divide-y divide-border overflow-y-auto rounded-lg border border-border bg-surface shadow-md">
               {searching ? (
                 <li className="px-3 py-2 text-sm text-text-3">Searching…</li>
+              ) : query.trim().length < 2 ? (
+                // searchEntities returns [] below two characters, and calling
+                // that "no matches" is a lie the operator acts on — one real
+                // session concluded the agent search was broken (2026-09-03)
+                <li className="px-3 py-2 text-sm text-text-3">Keep typing — two letters or more.</li>
               ) : options.length === 0 ? (
                 <li className="px-3 py-2 text-sm text-text-3">
                   No matches for “{query.trim()}”.

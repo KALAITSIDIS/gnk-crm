@@ -3,6 +3,49 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-04 · T-real-session-findings (no migration) — what one real
+  operator session found, and one incident it caused.** The operator ran a
+  browser agent against production to rehearse completing a development, told
+  it to invent the specifics for a test, and it did: PAF0005 (a "Create
+  similar" copy of the real PAF0002) was filled with an invented title deed
+  status, permit status and map pin, given five villas at invented prices,
+  and set Public.
+
+  **The incident, and why exposure was nil.** Fabricated LEGAL statuses are
+  not a cosmetic problem — deed and permit status are claims about a real
+  property, and they propagated by inheritance to all five units, so seven
+  rows carried them. Nothing reached anyone: the feed's predicate is
+  `visibility = 'public' AND status = 'available'` (0066) and the record was
+  still `draft`, so it never left the CRM. All seven are archived, each with
+  its own event naming the reason; the chain verifies; PAF0001–PAF0004 were
+  untouched throughout. `scripts/maintenance/archive-records.mts` exists for
+  this: dry-run by default, refuses a reference it cannot find, writes the
+  event immediately after each update, and attributes to the system rather
+  than to a person who clicked nothing.
+
+  Four findings came out of the same session. All four were real:
+
+  (1) **A save that worked looked like a no-op.** React resets an
+  uncontrolled form once a server action settles, so a section form's boxes
+  fall back to the last server render's values — the operator saw a green
+  toast over blank fields and only a hard reload proved the data was safe.
+  The create wizard has carried a snapshot-and-restore workaround for this
+  since 2026-08-28; the section forms never got one, and now have it.
+  **Honest limit: the e2e for it pins the invariant, not the bug.** It passes
+  with the fix removed, because locally the revalidated render wins the race
+  and the field never visibly reverts; production is where that race goes the
+  other way. The fix makes the outcome deterministic instead of dependent on
+  which async path lands first.
+  (2) **"Public" on a draft does not publish, and nothing said so.** Two
+  switches, and the feed needs both. The operator reported the listing live;
+  it was not. The property header now says so where the two badges disagree.
+  (3) **The entity picker called a one-letter query "No matches".**
+  `searchEntities` returns nothing below two characters, so the picker was
+  reporting an empty result as a definitive answer — the session concluded
+  the agent search was broken. It now says "Keep typing".
+  (4) **"Plot (m²)" on Details is the "Site plot" of the Overview.** A
+  container's one area, under two names since 2026-09-02. One name now.
+
 - **2026-09-03 · T-event-integrity (no migration) — the evidence spine
   swept, and the three things it was getting wrong about itself.** Guardrail
   1 says every state change writes a hash-chained event; nobody had ever
