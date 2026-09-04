@@ -1743,6 +1743,24 @@ export type Database = {
           },
         ]
       }
+      public_enquiry_attempts: {
+        Row: {
+          attempts: number
+          ip_hash: string
+          window_start: string
+        }
+        Insert: {
+          attempts?: number
+          ip_hash: string
+          window_start: string
+        }
+        Update: {
+          attempts?: number
+          ip_hash?: string
+          window_start?: string
+        }
+        Relationships: []
+      }
       public_listing_attempts: {
         Row: {
           attempts: number
@@ -3020,6 +3038,10 @@ export type Database = {
         Args: { p_district_code: string; p_org: string }
         Returns: string
       }
+      note_public_enquiry_hit: {
+        Args: { p_ip_hash: string; p_limit?: number }
+        Returns: boolean
+      }
       note_public_listing_hit: {
         Args: { p_ip_hash: string; p_limit?: number }
         Returns: boolean
@@ -3779,6 +3801,17 @@ export type Database = {
       st_wrapx: {
         Args: { geom: unknown; move: number; wrap: number }
         Returns: unknown
+      }
+      submit_public_enquiry: {
+        Args: {
+          p_email: string
+          p_message: string
+          p_name: string
+          p_org_slug: string
+          p_phone: string
+          p_property_ref?: string
+        }
+        Returns: boolean
       }
       unlockrows: { Args: { "": string }; Returns: number }
       updategeometrysrid: {

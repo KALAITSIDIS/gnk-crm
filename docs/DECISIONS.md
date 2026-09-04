@@ -3,6 +3,60 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-04 · T-public-enquiries (migration 0084) — the first public
+  WRITE path, because the loop was starved at the top.** Measured that day,
+  production held 4 properties, 3 leads and **zero** viewings, offers,
+  reservations or tasks: the daily loop has never run, for want of anything
+  arriving at the top of it. Meanwhile `public_listings` (0066) served a
+  34-column trilingual feed with image renditions that nothing consumed,
+  because a person reading a listing had no way to reach the desk. This is
+  that door — and the reasoning is almost entirely about what it must NOT do.
+
+  (1) **Its own counter, and a write-shaped budget.** 5 submissions per IP
+  per 15 minutes against the feed's 120: polling a feed is what a marketing
+  site does, five enquiries in a quarter hour is not what a buyer does. Its
+  own table, for the reason 0066 already gives — a flood here must not spend
+  a buyer's share-link budget, nor be spent by one.
+  (2) **No contact is created.** A contact is the desk's core asset and its
+  dedup surface, and letting anonymous traffic mint them fills it with a
+  bot's addresses. `leads.status = 'spam'` already exists as the designed
+  containment; the desk's own flow creates or links a contact, with dedup,
+  once it decides the enquiry is real.
+  (3) **The enquirer's details go in `message`, never `criteria`.** GDPR
+  erasure redacts `leads.message` and never touches the jsonb, so putting a
+  name there would have manufactured personal data the erasure flow cannot
+  reach. Residual, recorded rather than hidden: that redaction is scoped by
+  `contact_id`, so an enquiry nobody has linked yet is not reachable either —
+  it becomes reachable at the moment there is a contact to erase against.
+  (4) **Nothing identifying goes in the event.** Events are hash-chained and
+  cannot be rewritten — the erasure code says exactly that where it explains
+  why a lead message may be redacted and a payload may not. The payload
+  carries shape (source, whether an email or a phone came) and never content,
+  and the migration's own assertion block fails the apply if it ever does.
+  (5) **A private reference does not resolve.** A listing reference links the
+  lead only if that listing is already public; otherwise it stays text in the
+  message. The alternative answers "which of your references exist" to anyone
+  who asks. The enquiry is still accepted either way, so the refusal is not a
+  signal either.
+
+  The route adds a useful 400 for whoever builds the site, a honeypot that
+  answers 202 and drops the submission (rejecting it would teach a bot which
+  field gave it away), and the rate check BEFORE the write so a flood costs
+  one counter round trip. It holds the ANON client: rewritten to do whatever
+  it liked, it could still reach two functions by name and no table.
+
+  Pinned at three levels: the migration's assertion block (accepts, refuses,
+  no PII in the event, anon has no table reach, `rls_aal2_coverage() = 0` —
+  which caught the new table missing `require_aal2`, exactly as 0066's
+  counter table was caught), RLS test 55 (the blast radius, the private-
+  reference probe, and that the budget is genuinely its own), and four e2e
+  over real HTTP. The restore pack's migration pin and `grants_expected`
+  moved in the same change — its fail-closed check exists precisely to catch
+  an anon-executable function nobody declared.
+
+  **Not built yet: the site itself.** This is the half that had to be right;
+  a page that posts to it is the easy half and follows.
+
 - **2026-09-04 · T-real-session-findings (no migration) — what one real
   operator session found, and one incident it caused.** The operator ran a
   browser agent against production to rehearse completing a development, told

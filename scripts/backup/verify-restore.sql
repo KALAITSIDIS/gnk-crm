@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 83::bigint as migrations,
+    2::bigint as auth_users, 84::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -196,6 +196,12 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   ('public_listings',         true, true, true, true),
   ('public_listings_etag',    true, true, true, true),
   ('note_public_listing_hit', true, true, true, true),
+  -- 0084, the public enquiry door: anon-callable by name, like the feed's
+  -- three above. The fail-closed check below is why they must be pinned here
+  -- the moment they exist — an anon-executable function nobody declared is
+  -- exactly what that check is for.
+  ('submit_public_enquiry',   true, true, true, true),
+  ('note_public_enquiry_hit', true, true, true, true),
   -- trigger bodies: callable by nobody over PostgREST (0007/0021)
   ('trg_events_hash',              true, false, false, false),
   -- + the two invoker trigger bodies 0080 brought into the same posture,
