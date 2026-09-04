@@ -1,7 +1,8 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { after, NextResponse, type NextRequest } from "next/server";
 import { createPublicClient } from "@/lib/supabase/public";
 import { callerIpHash } from "@/lib/services/caller-ip";
 import { enquiryCompleteness, publicEnquirySchema } from "@/lib/validators/public-enquiry";
+import { sendEnquiryAlert } from "@/lib/services/enquiry-alert";
 
 /**
  * The public enquiry door (WF-4, migration 0084) — the first place anything
@@ -98,6 +99,21 @@ export async function POST(request: NextRequest) {
     // problem, so what is left is an org slug that does not exist.
     return json({ error: "Unknown `org`." }, 400);
   }
+
+  // The desk is told AFTER the response goes out. `after()` runs once the
+  // visitor already has their 202, so a slow mail provider never delays the
+  // thank-you — and a failed send can never turn a saved enquiry into an
+  // error, which is the whole reason the alert lives here and not inside the
+  // database function.
+  after(async () => {
+    await sendEnquiryAlert({
+      name: input.name,
+      email: input.email ?? null,
+      phone: input.phone ?? null,
+      message: input.message ?? null,
+      propertyReference: input.property_reference ?? null,
+    });
+  });
 
   // 202, not 201: the desk decides what this becomes, and the caller gets no
   // id — there is nothing it could legitimately do with one.
