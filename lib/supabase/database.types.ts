@@ -1321,6 +1321,7 @@ export type Database = {
       properties: {
         Row: {
           address: string | null
+          adviser_view: Json
           amenities_notes: string | null
           area_id: string | null
           asking_price: number | null
@@ -1395,6 +1396,7 @@ export type Database = {
         }
         Insert: {
           address?: string | null
+          adviser_view?: Json
           amenities_notes?: string | null
           area_id?: string | null
           asking_price?: number | null
@@ -1469,6 +1471,7 @@ export type Database = {
         }
         Update: {
           address?: string | null
+          adviser_view?: Json
           amenities_notes?: string | null
           area_id?: string | null
           asking_price?: number | null
@@ -3104,6 +3107,7 @@ export type Database = {
       public_listings: {
         Args: { p_limit?: number; p_offset?: number; p_org_slug: string }
         Returns: {
+          adviser_view: Json
           area: Json
           asking_price: number
           basement_sqm: number
