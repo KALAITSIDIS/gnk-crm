@@ -229,9 +229,19 @@ export async function setMediaCover(
  * the same shape when they land, and an existing translation is preserved
  * rather than overwritten by an English-only edit.
  *
- * Empty CLEARS rather than storing "": the site treats an empty alt as absent
- * and falls back to the title, and a blank string would defeat that while
- * looking identical in the database.
+ * Empty DELETES the key rather than storing "". Not for the site's sake — its
+ * `text()` trims before testing, so a blank string falls through to el, then ru,
+ * then the title exactly as an absent one does. It is so that `{}` stays the
+ * single meaning of "no description": anything that ever asks whether a
+ * photograph HAS one — a coverage count, a translation pass, the jsonb key test
+ * — gets one answer instead of two that look different and mean the same.
+ *
+ * A cleared alt is a real change to what the feed publishes, so it moves the
+ * feed's validator: 0086 folds alt into `public_listings_etag`, which until then
+ * hashed only a photo's id, sort order and cover flag. This action is also the
+ * one media path that does NOT recompute the quality score, which is what
+ * incidentally touches `properties.updated_at` for the others — so before 0086
+ * an edit here moved nothing the validator could see.
  */
 export async function setMediaAlt(
   propertyId: string,

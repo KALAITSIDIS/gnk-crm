@@ -4170,9 +4170,12 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
 
     // --- the withheld list, asserted BY NAME ------------------------------
     // The brief: "A test asserts the withheld column list by name, so adding a
-    // column to `properties` cannot silently publish it." `properties` has 69
-    // columns and the feed is an allowlist of 34, so this is the half that
-    // catches a future mistake.
+    // column to `properties` cannot silently publish it." The feed is an
+    // allowlist and `properties` is roughly twice its width, so this is the
+    // half that catches a future mistake. (Both counts used to be written out
+    // here and both went stale — 34 became 36 across 0073 and 0085, and the
+    // column count moves whenever anything is added to the table. The list
+    // below is the assertion; a number in a comment is not.)
     const row = rows.find((r) => r.reference === pub)!;
     const WITHHELD = [
       "id",
@@ -5158,6 +5161,93 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(chainOk, "an anonymous write keeps the chain intact").toBe(true);
 
     await svc.from("properties").delete().eq("id", hidden!.id);
+  });
+
+  it("56. the feed's validator moves when a photograph is redescribed (0086)", async () => {
+    // A validator is a PROMISE: same etag, same body. The route answers a
+    // matching If-None-Match with 304 and no body at all.
+    //
+    // 0073 folded a photo fingerprint into it — id + sort_order + is_cover —
+    // and its comment claimed "every media mutation moves it", which was true
+    // for as long as alt was unwritable. 0085 put alt in the feed body and
+    // setMediaAlt gave it its first write path, so a published sentence became
+    // editable without moving a single input to the hash: alt lives on
+    // property_media, and setMediaAlt is the one media action that does not
+    // recompute the quality score, which is what otherwise touches
+    // properties.updated_at by a side effect.
+    const anon = anonClient();
+    const ref = `ETAG-ALT-${run}`;
+
+    const { data: prop, error: propErr } = await svc
+      .from("properties")
+      .insert({
+        org_id: ORG_A,
+        reference: ref,
+        property_type: "apartment",
+        visibility: "public",
+        status: "available",
+        asking_price: 100000,
+        published_at: new Date().toISOString(),
+      })
+      .select("id")
+      .single();
+    if (propErr) throw propErr;
+
+    const { data: photo, error: mediaErr } = await svc
+      .from("property_media")
+      .insert({
+        org_id: ORG_A,
+        property_id: prop.id,
+        kind: "photo",
+        is_cover: true,
+        sort_order: 0,
+        storage_path_original: `${ORG_A}/originals/etag-alt-${run}.jpg`,
+        path_thumb: `properties/${prop.id}/alt_thumb.webp`,
+        path_card: `properties/${prop.id}/alt_card.webp`,
+        path_full: `properties/${prop.id}/alt_full.webp`,
+      })
+      .select("id")
+      .single();
+    if (mediaErr) throw mediaErr;
+
+    const etag = async () => {
+      const { data, error } = await anon.rpc("public_listings_etag", { p_org_slug: "test-org-a" });
+      expect(error, "anon computes the validator — it is the feed's own caller").toBeNull();
+      return String(data);
+    };
+    const altOf = async () => {
+      const { data } = await anon.rpc("public_listings", { p_org_slug: "test-org-a" });
+      const row = ((data ?? []) as unknown as Array<Record<string, unknown>>).find(
+        (r) => r.reference === ref,
+      )!;
+      return (row.images as Array<Record<string, unknown>>)[0].alt;
+    };
+
+    const before = await etag();
+    expect(await altOf(), "a photograph starts with no description").toEqual({});
+
+    // Exactly what setMediaAlt writes: {en} merged into the existing jsonb.
+    await svc
+      .from("property_media")
+      .update({ alt: { en: `A balcony above the harbour ${run}` } })
+      .eq("id", photo.id);
+
+    expect(await altOf(), "the body changed — the feed serves alt (0085)").toEqual({
+      en: `A balcony above the harbour ${run}`,
+    });
+    expect(
+      await etag(),
+      "…so the validator must have changed too, or a conditional GET is told 304 about a body that moved",
+    ).not.toBe(before);
+
+    // And clearing it moves the validator back: setMediaAlt DELETES the key
+    // rather than storing "", so the two states are genuinely distinct.
+    await svc.from("property_media").update({ alt: {} }).eq("id", photo.id);
+    expect(await etag(), "clearing is a mutation too, and it returns to the empty state").toBe(
+      before,
+    );
+
+    await svc.from("properties").delete().eq("id", prop.id);
   });
 
 });

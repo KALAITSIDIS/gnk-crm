@@ -3,6 +3,83 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-05 · T-close-of-day (migration 0086) — a validator that would have
+  lied, and a page that told a machine what it withheld from a person.** A
+  six-lens adversarial review over everything shipped since the 08-29 audit:
+  43 findings, 6 survived triage, 4 survived verification. Two were CRM-side.
+
+  (1) **The feed's ETag could not see `alt`, which the same batch made
+  editable.** `public_listings_etag` hashes (row count | max
+  `properties.updated_at` | a fingerprint of id + sort_order + is_cover per
+  photo), and 0073's comment claimed the property that made it correct —
+  "every media mutation moves it". `setMediaAlt` created a sixth media
+  mutation and 0085 put its result in the feed body, so an operator could
+  correct a published description while every input to the hash stayed
+  identical. It is also the ONE media action that does not recompute the
+  quality score, which is what incidentally moves `properties.updated_at` for
+  upload / set-cover / delete. The route answers a matching `If-None-Match`
+  with 304 and no body, so a conditional cache would have renewed its
+  freshness every 60s while serving the previous text, indefinitely.
+  0086 folds `md5(alt)` into the fingerprint. **Nothing was actually stale**:
+  gnk-web fetches with `revalidate: 60` and sends no `If-None-Match` at all,
+  and every published photograph still carries `alt: {}`. This was a promise
+  that had become false, not a failure in progress — fixed because the
+  endpoint's own OPTIONS response advertises the header, and the migration
+  PROVES the dependency rather than asserting it: a subtransaction changes a
+  real photograph's alt, checks the etag moved, and rolls back. RLS test 56
+  covers it unconditionally, and was watched to fail against the 0085 body.
+  (2) **The state pointer had gone stale for the third recorded time.**
+  HANDOFF's Hosted DB row still read 84 migrations after 0085 was applied,
+  while `verify-restore.sql` pinned 85 and the live feed returned 36 columns
+  including `adviser_view`. Nothing reads HANDOFF but people, which is exactly
+  why it is the working agreement's first instruction. The same class took
+  three stale counts with it: "34 columns" in the feed route (36 since 0085),
+  "69 columns / allowlist of 34" in RLS test 41, and "unique to these six"
+  above eight anon-executable rows in the restore pack. Where a number could
+  simply be deleted in favour of the assertion beneath it, it was; where it
+  was kept, the comment now states how to check it.
+
+  The other two were site-side (gnk-web `fix/container-structured-data`): a
+  development's JSON-LD published the floorSize, bedrooms and firm price the
+  visible page withholds, and no page but the card said a development was one.
+  Both are the same shape as (2) — one fact, two places, nothing connecting
+  them — which is now eight recorded instances and the reason the fixes bind
+  sources rather than correcting copies.
+
+- **2026-09-05 · T-adviser-view (migration 0085) — two fields the people who
+  own the words could not reach.** The marketing site led every listing with a
+  block headed "Our view" that was rendering `short_description`, a summary;
+  and every one of the eighteen published photographs carried `alt: {}`. In
+  both cases the schema, the feed and the site were built and the WRITE PATH
+  was missing — `property_media.alt` had been in the schema since 0001 with
+  nothing able to fill it. A field the principals cannot reach is a field that
+  stays empty, and its first replacement here was a TypeScript file keyed on
+  reference, which meant publishing a sentence required a developer and a
+  deploy at a two-person firm.
+
+  (1) **`adviser_view` is its own column, not `short_description`.** That one
+  doubles as the meta description and og:description, where 80–120 words of
+  judgement would truncate mid-sentence in every search result and shared
+  link. 36th column on the feed's allowlist — which exists precisely so a new
+  column is NOT published until someone edits the function deliberately.
+  (2) **The migration was rebuilt from 0073, and the first draft was not.** It
+  copied 0069's body, which predates `images`, so recreating the function
+  would have silently deleted every photograph from the public site. **The
+  count assertion passed** — 0069's 34 plus `adviser_view` is 35, exactly the
+  pre-0085 count, because it added one and dropped one. A COUNT IS NOT A
+  SHAPE. Caught only by applying locally and diffing the regenerated types,
+  where `- images: Json` appeared. The assertion now names columns.
+  (3) **`setMediaAlt` preserves other languages and DELETES on empty.** It
+  reads the existing jsonb before writing so an English edit cannot drop an
+  el/ru translation, and clearing removes the key rather than storing `""` —
+  not for the site's sake (its `text()` trims and falls through either way)
+  but so `{}` stays the single meaning of "no description". Row-count proof
+  rather than a trusted update, because RLS decides who may write and a silent
+  zero-row update looks exactly like success.
+  (4) **The container price label follows the same rule as the site.** A
+  project's `asking_price` is a "from" figure, so the form now says "From
+  price (€)" for a container and "Asking price (€)" for a dwelling.
+
 - **2026-09-04 · T-public-door-review (no migration) — five was the budget for
   the entire internet.** An eight-lens adversarial review of the public front
   door produced 67 findings; 8 survived triage and 7 survived adversarial
