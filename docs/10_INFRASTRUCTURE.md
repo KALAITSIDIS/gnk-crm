@@ -64,7 +64,7 @@ places that must be hand-synced. `package-lock.json` is the only place it lives.
 | Region | `eu-central-1` (EU — required, doc 01) |
 | Postgres | 17.6.1.141 |
 | DB host | `db.yjgirvzgoiywdojnpkpd.supabase.co` |
-| Migrations | **83**, latest `0083_drop_dead_sold_at` |
+| Migrations | **86**, latest `0086_etag_covers_alt` — `npx supabase migration list --linked` is the answer that cannot go stale; HANDOFF's Hosted DB row carries the story |
 | Extensions | `postgis`, `pg_trgm`, `pgcrypto`, `pg_cron` |
 
 ### Secrets you must carry over yourself
