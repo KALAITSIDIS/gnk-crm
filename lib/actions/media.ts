@@ -238,10 +238,13 @@ export async function setMediaCover(
  *
  * A cleared alt is a real change to what the feed publishes, so it moves the
  * feed's validator: 0086 folds alt into `public_listings_etag`, which until then
- * hashed only a photo's id, sort order and cover flag. This action is also the
- * one media path that does NOT recompute the quality score, which is what
- * incidentally touches `properties.updated_at` for the others — so before 0086
- * an edit here moved nothing the validator could see.
+ * hashed only a photo's id, sort order and cover flag. This action is one of
+ * two media paths that do NOT recompute the quality score (which is what
+ * incidentally touches `properties.updated_at` for upload, set-cover and
+ * delete); the other is moveMedia, whose sort_order was already in the
+ * fingerprint — so before 0086 an edit here was the only media change the
+ * validator could not see. 0086's own header says "the ONE"; that is the
+ * overstatement, and it stays because an applied migration is never rewritten.
  */
 export async function setMediaAlt(
   propertyId: string,

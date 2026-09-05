@@ -15,9 +15,12 @@ silent. Format: date · task · decision · rationale.
   "every media mutation moves it". `setMediaAlt` created a sixth media
   mutation and 0085 put its result in the feed body, so an operator could
   correct a published description while every input to the hash stayed
-  identical. It is also the ONE media action that does not recompute the
-  quality score, which is what incidentally moves `properties.updated_at` for
-  upload / set-cover / delete. The route answers a matching `If-None-Match`
+  identical. It is one of the two media actions that do not recompute the
+  quality score (which is what incidentally moves `properties.updated_at` for
+  upload / set-cover / delete); the other, reorder, was already covered because
+  sort_order is in the fingerprint. 0086's own header says "the ONE" — an
+  overstatement, left in place because an applied migration is never
+  rewritten. The route answers a matching `If-None-Match`
   with 304 and no body, so a conditional cache would have renewed its
   freshness every 60s while serving the previous text, indefinitely.
   0086 folds `md5(alt)` into the fingerprint. **Nothing was actually stale**:
@@ -43,8 +46,37 @@ silent. Format: date · task · decision · rationale.
   development's JSON-LD published the floorSize, bedrooms and firm price the
   visible page withholds, and no page but the card said a development was one.
   Both are the same shape as (2) — one fact, two places, nothing connecting
-  them — which is now eight recorded instances and the reason the fixes bind
-  sources rather than correcting copies.
+  them — the latest of a long line, and the reason the fixes bind sources
+  rather than correcting copies.
+
+  (3) **The post-merge verification, run on the day's own writing.** Six
+  read-only lenses over production and both repos, then refutation: 51 raw,
+  5 confirmed. Every one was the shape above, and three of the five were
+  written that same day while fixing the shape: HANDOFF's Hosted DB row went
+  stale a FOURTH time, this time by ordering — the 0086 paragraph was appended
+  after the 0085 one, so the cell's newest-first convention put "85" at the
+  head; the restore pack's own comment repeated the pin it annotates, "(85
+  as of 0085)", thirteen lines below the pin that now read 86; and "the ONE
+  media action that does not recompute the score" was written in four places
+  when `moveMedia` is a second (safe, because sort_order is hashed). The other
+  two were older sentences the day's work made false: 0085's column comment,
+  the field's help text, the 0085 header and gnk-web's `Listing` type all say
+  an empty view "falls back to the summary", while the page suppresses a
+  summary that merely repeats the opening of the description — PAF0003, the
+  very listing 0085 names, renders neither; and the search bar's bedroom
+  filter was still built from a container's own count after every other
+  surface was gated. Fixes bind or delete: the bedroom logic moved into
+  `lib/search.ts` with the same `isContainer` gate and a test; the restore
+  pack comment no longer repeats a number; the HANDOFF numbers point at the
+  assertions that answer them. 0085 and 0086 are not edited — applied
+  migrations are never rewritten — so their two overstatements are recorded
+  here and corrected in the copies code and operators actually read.
+
+  One correction to the day's record: gnk-web commit 4e1da06 says "13 new
+  tests, each verified to fail with its fix removed". Measured: 7 fail with
+  the container gate removed, a further 4 fail with the gate INVERTED (the
+  dwelling side), and 2 — absolute URLs, no offer without a price — pin
+  unrelated requirements and were not mutation-tested. 11 of 13, not 13.
 
 - **2026-09-05 · T-adviser-view (migration 0085) — two fields the people who
   own the words could not reach.** The marketing site led every listing with a
