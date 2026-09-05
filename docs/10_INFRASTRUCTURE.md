@@ -43,7 +43,7 @@ Runs on every push and pull request. Three jobs:
 | `rls` | boots a local Supabase stack, applies **every** migration, runs the RLS suite |
 | `e2e` | boots the stack, builds, starts the production server, runs Playwright desktop |
 
-**The `rls` and `e2e` jobs apply all 83 migrations to a fresh database on every
+**The `rls` and `e2e` jobs apply all 86 migrations to a fresh database on every
 run.** That is why several migrations carry `do $$ … raise exception … $$`
 blocks: a migration whose own assertion fails takes CI red before anything
 reaches a person.
@@ -64,7 +64,7 @@ places that must be hand-synced. `package-lock.json` is the only place it lives.
 | Region | `eu-central-1` (EU — required, doc 01) |
 | Postgres | 17.6.1.141 |
 | DB host | `db.yjgirvzgoiywdojnpkpd.supabase.co` |
-| Migrations | **83**, latest `0083_drop_dead_sold_at` |
+| Migrations | **86**, latest `0086_etag_covers_alt` — `npx supabase migration list --linked` is the answer that cannot go stale; HANDOFF's Hosted DB row carries the story |
 | Extensions | `postgis`, `pg_trgm`, `pgcrypto`, `pg_cron` |
 
 ### Secrets you must carry over yourself
@@ -87,7 +87,7 @@ in this repo:
 
 ```bash
 npx supabase start      # boots the local stack
-npx supabase db reset   # re-runs all 83 migrations + seed
+npx supabase db reset   # re-runs all 86 migrations + seed
 npm run db:types        # regenerate lib/supabase/database.types.ts
 ```
 

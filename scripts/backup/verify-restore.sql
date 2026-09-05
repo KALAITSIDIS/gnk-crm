@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 85::bigint as migrations,
+    2::bigint as auth_users, 86::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -189,10 +189,15 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   ('report_citation',          false, false, true, true),
   ('published_below_threshold',false, false, true, true),
   -- the deliberate anon surface: share links (0023/0041, + the 0081
-  -- read-only budget peek) and the public listing feed (0066/0073). anon =
-  -- TRUE is unique to these six and is the
-  -- point — a restore that DROPS these grants kills every live proposal link
-  -- and the marketing feed silently, which is why they are pinned.
+  -- read-only budget peek) and the public listing feed (0066/0073/0086).
+  -- anon = TRUE is unique to these six and the two 0084 added below — EIGHT
+  -- rows in this table, and nothing else in the database — which is the
+  -- point: a restore that DROPS these grants kills every live proposal link
+  -- and the marketing feed silently, which is why they are pinned. (The
+  -- count is stated because it is checkable: grep this file for
+  -- ^  \('.*true, true, true, true\) — the row form, so this sentence is not
+  -- itself a hit — and it must return eight. It read "these six" while there
+  -- were eight, for as long as it took someone to notice.)
   ('resolve_share_link',      true, true, true, true),
   ('share_link_over_budget',  true, true, true, true),
   ('note_share_link_miss',    true, true, true, true),

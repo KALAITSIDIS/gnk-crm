@@ -15,7 +15,10 @@ import { absolutizeListingImages, parseFeedParams } from "@/lib/services/public-
  * three functions 0066 grants it by name, and `public_listings` enumerates its
  * own column allowlist in SQL. Nothing this file does can widen that — if this
  * handler were rewritten to select whatever it liked, it would still get back
- * 34 columns of published listings and nothing else.
+ * 36 columns of published listings and nothing else — 34 at 0066, plus
+ * `images` (0073) and `adviser_view` (0085). The number is here for
+ * orientation only; what enforces it is the allowlist in the migration, which
+ * asserts its own columns BY NAME, and RLS test 41.
  *
  * `?org=` is required and is a SLUG, because the feed is per-agency: without it
  * a multi-tenant deployment would blend two agencies' listings into one feed.
