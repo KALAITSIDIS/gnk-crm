@@ -406,6 +406,7 @@
     "priceChange": "Price {from} → {to}",
     "mediaReordered": "Photos reordered",
     "mediaCoverSet": "Cover photo set",
+    "mediaAltSet": "Photo description set",
     "publishOverride": "Publish gate overridden (score {score} < {threshold})",
     "paymentPlanCreated": "Payment plan created",
     "priceListCreated": "Price list created",

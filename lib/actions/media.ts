@@ -214,6 +214,79 @@ export async function setMediaCover(
   return { error: null };
 }
 
+/**
+ * The description a screen reader, and a search engine, actually reads.
+ *
+ * WHY THIS DID NOT EXIST. `property_media.alt` has been in the schema since
+ * migration 0001, the public feed exposes it, and the marketing site reads it
+ * with `text(img.alt)` and falls back to the listing title. Every layer was
+ * built except the one that writes it — so on 2026-09-05 all eighteen published
+ * photographs carried `alt: {}`, not because nobody filled them in but because
+ * nothing could.
+ *
+ * MULTILANG, like every other public string here. The column is jsonb and the
+ * site's `text()` prefers `en`, so English is what is written; el and ru follow
+ * the same shape when they land, and an existing translation is preserved
+ * rather than overwritten by an English-only edit.
+ *
+ * Empty CLEARS rather than storing "": the site treats an empty alt as absent
+ * and falls back to the title, and a blank string would defeat that while
+ * looking identical in the database.
+ */
+export async function setMediaAlt(
+  propertyId: string,
+  mediaId: string,
+  alt: string,
+): Promise<{ error: string | null }> {
+  const trimmed = alt.trim();
+  if (trimmed.length > 300) {
+    return { error: "Keep it under 300 characters — it is read aloud, not published as copy." };
+  }
+
+  const supabase = await createClient();
+  const profile = await getCurrentProfile(supabase);
+
+  // Read the existing value so another language is not lost by an English edit.
+  const { data: current, error: readErr } = await supabase
+    .from("property_media")
+    .select("alt")
+    .eq("id", mediaId)
+    .eq("property_id", propertyId)
+    .maybeSingle();
+  if (readErr) return { error: readErr.message };
+  if (!current) return { error: "That photograph is not on this property." };
+
+  const existing = (current.alt ?? {}) as Record<string, string>;
+  const next = { ...existing };
+  if (trimmed) next.en = trimmed;
+  else delete next.en;
+
+  // Row-count proof rather than trusting the update: RLS decides whether this
+  // profile may write, and a silent zero-row update would look like success.
+  const { data: rows, error } = await supabase
+    .from("property_media")
+    .update({ alt: next })
+    .eq("id", mediaId)
+    .eq("property_id", propertyId)
+    .select("id");
+  if (error) return { error: error.message };
+  if (!rows || rows.length === 0) {
+    return { error: "Not saved — only admins and listing managers manage photos." };
+  }
+
+  await logEvent(supabase, {
+    orgId: profile.orgId,
+    actorId: profile.id,
+    entityType: "property",
+    entityId: propertyId,
+    eventType: "media_alt_set",
+    // the text itself, so the timeline shows what was written without a join
+    payload: { media_id: mediaId, alt: trimmed || null },
+  });
+  revalidatePath(`/properties/${propertyId}`);
+  return { error: null };
+}
+
 export async function moveMedia(
   propertyId: string,
   mediaId: string,

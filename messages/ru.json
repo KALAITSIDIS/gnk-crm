@@ -406,6 +406,7 @@
     "priceChange": "Цена {from} → {to}",
     "mediaReordered": "Фотографии переупорядочены",
     "mediaCoverSet": "Установлено обложечное фото",
+    "mediaAltSet": "Задано описание фотографии",
     "publishOverride": "Публикация переопределена (оценка {score} < {threshold})",
     "paymentPlanCreated": "Создан план платежей",
     "priceListCreated": "Создан прайс-лист",
