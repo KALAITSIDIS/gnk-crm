@@ -488,6 +488,11 @@ export async function updatePropertySection(
         el: raw.short_description_el,
         ru: raw.short_description_ru,
       },
+      adviser_view: {
+        en: raw.adviser_view_en,
+        el: raw.adviser_view_el,
+        ru: raw.adviser_view_ru,
+      },
       public_description: {
         en: raw.public_description_en,
         el: raw.public_description_el,
@@ -502,6 +507,7 @@ export async function updatePropertySection(
     updates = {
       title: strip(parsed.data.title),
       short_description: strip(parsed.data.short_description),
+      adviser_view: strip(parsed.data.adviser_view),
       public_description: strip(parsed.data.public_description),
     };
   } else if (section === "parties") {

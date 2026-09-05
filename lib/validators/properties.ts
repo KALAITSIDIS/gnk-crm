@@ -501,5 +501,8 @@ const multilang = z.object({
 export const marketingSectionSchema = z.object({
   title: multilang,
   short_description: multilang,
+  /* The firm's own judgement, not a summary — see 0085. Same multilang cap as
+     the others: it is public text and the site renders it verbatim. */
+  adviser_view: multilang,
   public_description: multilang,
 });

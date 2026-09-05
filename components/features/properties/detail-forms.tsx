@@ -520,6 +520,17 @@ export function MarketingForm({
         multiline
         rows={3}
       />
+      {/* Between the summary and the long description on purpose: it is the
+          block the listing page leads with, and the order here mirrors the page.
+          Left empty, the site falls back to the summary under an honest
+          "Summary" heading rather than claiming a view that was never written. */}
+      <MultilangTabs
+        name="adviser_view"
+        label="Our view — your judgement on this property, 80–120 words"
+        defaultValue={(property.adviser_view ?? {}) as MultilangValue}
+        multiline
+        rows={5}
+      />
       <MultilangTabs
         name="public_description"
         label="Public description"
