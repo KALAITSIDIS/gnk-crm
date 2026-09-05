@@ -406,6 +406,7 @@
     "priceChange": "Τιμή {from} → {to}",
     "mediaReordered": "Αναδιατάχθηκαν οι φωτογραφίες",
     "mediaCoverSet": "Ορίστηκε φωτογραφία εξωφύλλου",
+    "mediaAltSet": "Ορίστηκε περιγραφή φωτογραφίας",
     "publishOverride": "Παρακάμφθηκε η πύλη δημοσίευσης (βαθμός {score} < {threshold})",
     "paymentPlanCreated": "Δημιουργήθηκε πλάνο πληρωμών",
     "priceListCreated": "Δημιουργήθηκε τιμοκατάλογος",

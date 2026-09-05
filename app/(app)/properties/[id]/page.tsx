@@ -69,7 +69,7 @@ export default async function PropertyDetailPage({
     supabase.from("areas").select("id, district_id, name"),
     supabase
       .from("property_media")
-      .select("id, kind, path_thumb, path_card, is_cover, sort_order, watermarked, width, height")
+      .select("id, kind, path_thumb, path_card, is_cover, sort_order, watermarked, width, height, alt")
       .eq("property_id", id)
       .order("sort_order"),
     supabase

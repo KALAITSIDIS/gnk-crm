@@ -550,6 +550,7 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
   },
   media_reordered: (_p, t) => t("mediaReordered"),
   media_cover_set: (_p, t) => t("mediaCoverSet"),
+  media_alt_set: (_p, t) => t("mediaAltSet"),
   publish_override: (p, t) =>
     t("publishOverride", { score: Number(p.score) || 0, threshold: Number(p.threshold) || 0 }),
   payment_plan_created: (_p, t) => t("paymentPlanCreated"),

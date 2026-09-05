@@ -8,6 +8,7 @@ import {
   deleteMedia,
   deleteMediaBulk,
   moveMedia,
+  setMediaAlt,
   setMediaCover,
   uploadPropertyMedia,
   type MediaActionState,
@@ -28,6 +29,21 @@ export interface MediaItem {
   watermarked: boolean;
   width: number | null;
   height: number | null;
+  /** jsonb, multilang — same shape as every other public string here. The
+   *  marketing site reads `en` and falls back to the listing title. Typed as
+   *  the generated Json rather than a string map because that is what the
+   *  column returns; read it through altEn() below. */
+  alt: unknown;
+}
+
+/**
+ * The English description, or "". `alt` is jsonb and arrives as Json, so it is
+ * narrowed here once rather than cast at every use.
+ */
+function altEn(alt: unknown): string {
+  if (!alt || typeof alt !== "object") return "";
+  const v = (alt as Record<string, unknown>).en;
+  return typeof v === "string" ? v : "";
 }
 
 const initialState: MediaActionState = { error: null, savedAt: null };
@@ -339,6 +355,31 @@ export function MediaTab({
                           <Trash2 className="size-3.5" />
                         </Button>
                       </div>
+                    </div>
+                  ) : null}
+                  {canManage && item.kind === "photo" ? (
+                    <div className="border-t border-border px-2 pb-2 pt-1.5">
+                      <label className="sr-only" htmlFor={`alt-${item.id}`}>
+                        Photo description
+                      </label>
+                      <input
+                        id={`alt-${item.id}`}
+                        defaultValue={altEn(item.alt)}
+                        maxLength={300}
+                        placeholder="Describe it — read aloud, and by Google"
+                        className="w-full rounded-[6px] border border-border bg-surface px-2 py-1 text-xs text-text placeholder:text-text-3 focus:border-accent-500"
+                        // Saves on blur, not per keystroke: this writes an
+                        // event, and one per character would bury the timeline.
+                        onBlur={(e) => {
+                          const next = e.currentTarget.value.trim();
+                          if (next === altEn(item.alt)) return;
+                          startTransition(async () => {
+                            const { error } = await setMediaAlt(propertyId, item.id, next);
+                            if (error) toast.error(error);
+                            else toast.success(next ? "Description saved" : "Description cleared");
+                          });
+                        }}
+                      />
                     </div>
                   ) : null}
                 </div>
