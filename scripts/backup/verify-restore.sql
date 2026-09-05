@@ -58,8 +58,9 @@ with expected as (
     -- 0074–0078 — caught by the cloud drill, §4e — and were STALE AGAIN
     -- within hours when 0079 merged (bumped to 79 on 2026-09-01). The pin
     -- is now locked to the migration files by verify-restore.test.ts, so
-    -- a migration can no longer land without this line moving (85 as of
-    -- 0085, 2026-09-05).
+    -- a migration can no longer land without this line moving. The number
+    -- is deliberately NOT repeated in this comment: the test guards the
+    -- pin, not the prose, and the prose is where it went stale twice.
     --
     -- KNOWN CLOUD DELTA (verified 2026-08-31, §4e): on ANY cloud project
     -- — live production included — exactly NINE grants rows fail with

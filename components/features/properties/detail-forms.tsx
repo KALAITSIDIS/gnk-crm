@@ -522,8 +522,11 @@ export function MarketingForm({
       />
       {/* Between the summary and the long description on purpose: it is the
           block the listing page leads with, and the order here mirrors the page.
-          Left empty, the site falls back to the summary under an honest
-          "Summary" heading rather than claiming a view that was never written. */}
+          Left empty, the site never claims a view that was not written: it
+          shows the summary under an honest "Summary" heading instead — unless
+          the summary merely repeats the opening of the long description, in
+          which case it shows nothing there (PAF0003 is that case; the guard
+          lives in gnk-web's listing page). */}
       <MultilangTabs
         name="adviser_view"
         label="Our view — your judgement on this property, 80–120 words"

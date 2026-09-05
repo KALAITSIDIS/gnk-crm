@@ -5172,9 +5172,11 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     // for as long as alt was unwritable. 0085 put alt in the feed body and
     // setMediaAlt gave it its first write path, so a published sentence became
     // editable without moving a single input to the hash: alt lives on
-    // property_media, and setMediaAlt is the one media action that does not
-    // recompute the quality score, which is what otherwise touches
-    // properties.updated_at by a side effect.
+    // property_media, and setMediaAlt is one of the two media actions that do
+    // not recompute the quality score (which is what otherwise touches
+    // properties.updated_at as a side effect). The other is reorder, and it was
+    // already covered because sort_order is in the fingerprint — so alt was
+    // the only media change the validator could not see.
     const anon = anonClient();
     const ref = `ETAG-ALT-${run}`;
 
