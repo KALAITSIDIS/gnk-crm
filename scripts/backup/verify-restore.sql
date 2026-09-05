@@ -58,8 +58,8 @@ with expected as (
     -- 0074–0078 — caught by the cloud drill, §4e — and were STALE AGAIN
     -- within hours when 0079 merged (bumped to 79 on 2026-09-01). The pin
     -- is now locked to the migration files by verify-restore.test.ts, so
-    -- a migration can no longer land without this line moving (80 as of
-    -- 0080, 2026-09-01).
+    -- a migration can no longer land without this line moving (85 as of
+    -- 0085, 2026-09-05).
     --
     -- KNOWN CLOUD DELTA (verified 2026-08-31, §4e): on ANY cloud project
     -- — live production included — exactly NINE grants rows fail with
@@ -68,9 +68,12 @@ with expected as (
     -- protect_document_columns, protect_profile_columns,
     -- rls_bare_auth_calls, trg_events_hash, trg_price_history,
     -- trg_supersede_deal_nudges, trg_supersede_viewing_nudges — plus, since
-    -- 0080 pinned them at service=false (2026-09-01, not yet drill-verified
-    -- on cloud): set_updated_at and protect_property_reference, same
-    -- mechanism, so ELEVEN rows on a cloud target. That is the
+    -- 0080 pinned them at service=false: set_updated_at and
+    -- protect_property_reference, same mechanism, so ELEVEN rows on a cloud
+    -- target. DRILL-VERIFIED ON CLOUD 2026-09-05 (previously predicted but
+    -- unverified for that pair): a read-only run of this pack against live
+    -- production failed exactly these eleven grants rows and no others, so
+    -- the prediction held for the 0080 pair too. That is the
     -- platform's default privileges granting service_role EXECUTE on every
     -- function (HANDOFF's mfa_satisfied note, generalized). service_role
     -- bypasses RLS anyway — the delta is harmless. A cloud run of this
