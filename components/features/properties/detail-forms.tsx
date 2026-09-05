@@ -261,7 +261,21 @@ export function DetailsForm({
         ownerNetPrice={property.owner_net_price}
       >
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <NumberField name="asking_price" label="Asking price (€)" defaultValue={property.asking_price} step="0.01" />
+        {/* "From price" on a container, exactly as the create wizard and the
+            overview already call it: the units carry the prices and this figure
+            is only what the listing leads with. This form was the one place
+            still calling it "Asking price (€)" for a project, and on 2026-09-05
+            PAF0002 was found holding 4,850,000 in it — a whole-development total
+            typed into a field whose label invited exactly that. The units total
+            4,800,000 and the from price is 800,000; nothing validates this
+            number, so the label is the only thing standing between a typist and
+            a wrong figure on a live mandate. */}
+        <NumberField
+          name="asking_price"
+          label={isContainer ? "From price (€)" : "Asking price (€)"}
+          defaultValue={property.asking_price}
+          step="0.01"
+        />
         <NumberField
           name="min_acceptable_price"
           label="Min acceptable (€)"
