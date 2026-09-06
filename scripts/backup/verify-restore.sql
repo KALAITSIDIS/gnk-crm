@@ -87,10 +87,13 @@ with expected as (
     -- first when this block looks wrong, and re-capture rather than assuming
     -- a bad restore.
     --
-    -- The two rate-limit counter tables (share_link_attempts,
-    -- public_listing_attempts) are DELIBERATELY absent: they self-prune on a
-    -- rolling window, so any snapshot of them is stale by design and would
-    -- manufacture false failures. They still travel in export.mjs.
+    -- The rate-limit counter tables (share_link_attempts,
+    -- public_listing_attempts, public_enquiry_attempts) are DELIBERATELY
+    -- absent from the counts: they self-prune on a rolling window, so any
+    -- snapshot of them is stale by design and would manufacture false
+    -- failures. They still travel in export.mjs — whose TABLES list is now
+    -- pinned to the migrations by verify-restore.test.ts, after 0084's
+    -- counter was missing from it for a day.
 ),
 
 -- ---------- row counts ----------

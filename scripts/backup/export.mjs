@@ -70,7 +70,7 @@ const TABLES = [
   "viewing_slips", "documents", "tasks", "price_lists", "price_list_items",
   "payment_plans", "price_history", "reservations", "reservation_installments",
   "share_links", "share_link_properties", "share_link_attempts",
-  "public_listing_attempts", "chain_checks", "events_chain_checkpoint",
+  "public_listing_attempts", "public_enquiry_attempts", "chain_checks", "events_chain_checkpoint",
   "events",
 ];
 

@@ -550,7 +550,13 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
   },
   media_reordered: (_p, t) => t("mediaReordered"),
   media_cover_set: (_p, t) => t("mediaCoverSet"),
-  media_alt_set: (_p, t) => t("mediaAltSet"),
+  // media.ts writes the text itself so this line can show it without a join;
+  // `alt: null` is a clear, and a clear is not a "set"
+  media_alt_set: (p, t) => {
+    const alt = asText(p.alt);
+    if (alt) return t("mediaAltSetText", { alt });
+    return p.alt === null ? t("mediaAltCleared") : t("mediaAltSet");
+  },
   publish_override: (p, t) =>
     t("publishOverride", { score: Number(p.score) || 0, threshold: Number(p.threshold) || 0 }),
   payment_plan_created: (_p, t) => t("paymentPlanCreated"),

@@ -407,6 +407,8 @@
     "mediaReordered": "Фотографии переупорядочены",
     "mediaCoverSet": "Установлено обложечное фото",
     "mediaAltSet": "Задано описание фотографии",
+    "mediaAltSetText": "Задано описание фотографии — {alt}",
+    "mediaAltCleared": "Описание фотографии удалено",
     "publishOverride": "Публикация переопределена (оценка {score} < {threshold})",
     "paymentPlanCreated": "Создан план платежей",
     "priceListCreated": "Создан прайс-лист",

@@ -193,7 +193,7 @@ export default async function DealDetailPage({
             <Link
               href={`/calculators?price=${Number(deal.expected_value)}`}
               className="inline-flex items-center gap-1 text-xs font-medium text-text-2 hover:text-brand-700"
-              title="Transfer fees & stamp duty for this amount"
+              title="Purchase-cost calculators for the expected value"
             >
               <Calculator className="size-3.5" /> Costs
             </Link>

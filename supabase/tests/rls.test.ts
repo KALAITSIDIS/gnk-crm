@@ -18,6 +18,11 @@ import {
   serviceClient,
   type TestUser,
 } from "./helpers";
+import type { Database } from "@/lib/supabase/database.types";
+import type { FeedImage } from "@/lib/services/public-listings";
+
+/** One row of public_listings() exactly as `npm run db:types` last wrote it. */
+type FeedRow = Database["public"]["Functions"]["public_listings"]["Returns"][number];
 
 const run = Date.now().toString(36);
 const svc = serviceClient();
@@ -4171,8 +4176,8 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     // --- the withheld list, asserted BY NAME ------------------------------
     // The brief: "A test asserts the withheld column list by name, so adding a
     // column to `properties` cannot silently publish it." The feed is an
-    // allowlist and `properties` is roughly twice its width, so this is the
-    // half that catches a future mistake. (Both counts used to be written out
+    // allowlist and `properties` is roughly twice its width, so the withheld
+    // list is one half; the returned list below is the other. (Both counts used to be written out
     // here and both went stale — 34 became 36 across 0073 and 0085, and the
     // column count moves whenever anything is added to the table. The list
     // below is the assertion; a number in a comment is not.)
@@ -4208,6 +4213,60 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     for (const col of WITHHELD) {
       expect(Object.keys(row), `the public feed must never return ${col}`).not.toContain(col);
     }
+
+    // --- the RETURNED list, asserted BY NAME — the other half ---------------
+    // 0085's first draft dropped `images` while adding `adviser_view` and its
+    // COUNT check passed: a count is not a shape. 0085's own block names only
+    // the 14 columns the site consumes, and a migration's assertion runs once,
+    // at its own apply — it cannot see a later rebuild. This is the pin that
+    // runs on every push, bound to the generated types in BOTH directions: a
+    // name here that the types lack fails `satisfies`; a name the types have
+    // that is missing here fails the completeness line. Regenerate the types
+    // (`npm run db:types`) and this list together with every feed rebuild.
+    const FEED_COLUMNS = [
+      "adviser_view",
+      "area",
+      "asking_price",
+      "basement_sqm",
+      "bathrooms",
+      "bedrooms",
+      "construction_status",
+      "covered_area_sqm",
+      "currency",
+      "delivery_date",
+      "district",
+      "energy_class",
+      "features",
+      "floor_number",
+      "has_storage",
+      "images",
+      "kind",
+      "parking_spaces",
+      "plot_area_sqm",
+      "property_type",
+      "public_description",
+      "published_at",
+      "reference",
+      "rent_price_month",
+      "roof_garden_sqm",
+      "sea_distance_m",
+      "short_description",
+      "title",
+      "title_deed_status",
+      "total_floors",
+      "transaction_type",
+      "updated_at",
+      "vat_status",
+      "veranda_sqm",
+      "wc",
+      "year_built",
+    ] as const satisfies readonly (keyof FeedRow)[];
+    type MissingFeedColumn = Exclude<keyof FeedRow, (typeof FEED_COLUMNS)[number]>;
+    const everyFeedColumnListed: [MissingFeedColumn] extends [never] ? true : MissingFeedColumn = true;
+    expect(everyFeedColumnListed).toBe(true);
+    expect(Object.keys(row).sort(), "the feed returns exactly the allowlist, by name").toEqual(
+      [...FEED_COLUMNS].sort(),
+    );
 
     // and by VALUE, in case a column is ever aliased into the feed under a
     // different name
@@ -4712,13 +4771,16 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       "cover_full",
     );
     expect(String(images[1].full)).toContain("one_full");
-    expect(Object.keys(images[0]).sort(), "exactly the five public keys").toEqual([
-      "alt",
-      "card",
-      "full",
-      "thumb",
-      "watermarked",
-    ]);
+    // Bound to the code's own copy of the shape (public-listings.ts FeedImage),
+    // so a key added to one and not the other fails to compile before it fails
+    // here. No is_cover ON PURPOSE: position IS the contract — the cover is
+    // element 0 — and the consumer (gnk-web lib/format.ts coverImage) reads it
+    // that way.
+    const IMAGE_KEYS = ["alt", "card", "full", "thumb", "watermarked"] as const satisfies readonly (keyof FeedImage)[];
+    type MissingImageKey = Exclude<keyof FeedImage, (typeof IMAGE_KEYS)[number]>;
+    const everyImageKeyListed: [MissingImageKey] extends [never] ? true : MissingImageKey = true;
+    expect(everyImageKeyListed).toBe(true);
+    expect(Object.keys(images[0]).sort(), "exactly the five public keys").toEqual([...IMAGE_KEYS]);
 
     // the EXIF-bearing original lives in the PRIVATE bucket and its path must
     // never leave, under any key

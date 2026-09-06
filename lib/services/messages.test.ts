@@ -79,6 +79,8 @@ const SAMPLE_PARAMS = {
   // `date` above is a different placeholder and is already taken.
   start: "2026-07-01",
   expiry: "2027-06-30",
+  // media alt text (2026-09-06): the description itself is interpolated
+  alt: "Sea view from the terrace",
 };
 
 describe("locale message files", () => {
