@@ -3,6 +3,48 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-06 · T-enquiry-door (migration 0087) — the route is the only door,
+  and the database now says so.** The first item of the audit response
+  (docs/AUDIT_2026-09-06_RESPONSE.md, Now #2), closing A01 and A05 with one
+  rider.
+
+  (1) **A revoke, not a new role.** 0084 granted EXECUTE on
+  `submit_public_enquiry` and `note_public_enquiry_hit` to `anon` "by name,
+  exactly as 0066 did it" — but 0066 grants a READ, this is a WRITE, and every
+  control that makes the write safe (per-IP counter, honeypot, e-mail format,
+  desk alert) lives in the Next route. Anyone holding the publishable key
+  could call the function over PostgREST and skip all four: one silent lead
+  and one permanent hash-chained event per call, no ceiling. What bounded it
+  was that the key reaches no browser, no commit and no CI — an accident of
+  this deployment that lasts until the first client-side Supabase call. Both
+  functions are service_role-only now and the route calls with the server-only
+  admin client every admin action already uses: no new secret, no new role,
+  the site untouched. The audit's dedicated-role adapter with a custom-signed
+  JWT is a new credential class for one function; refused.
+  (2) **Resolution is the binding.** The typed `p_property_ref` — up to 40
+  characters, no format check — reached `leads.criteria` and the immutable
+  event verbatim, under comments promising "shape only"; a reference alone
+  satisfies completeness, so it was a second free-text input into the one
+  store nothing can rewrite. The function now resolves FIRST and only the
+  row's own `reference` (or null) travels; the typed text stays in the
+  erasable "About:" line. Not a reference-shape regex, which would copy 0033's
+  shape into a second place.
+  (3) **Rider: `check (currency = 'EUR')` on properties**, validated on apply
+  after a preflight that aborts on any non-EUR row. No application path writes
+  another currency; the CHECK makes the site's `CURRENCY` constant a fact
+  rather than an assumption.
+  (4) **Deploy order is the 0055/0057 one.** A revoke is destructive to the OLD
+  route, which holds the anon client — so the route deploys first (service_role
+  already had EXECUTE), READY is confirmed, THEN 0087 applies on hosted. The
+  additive order would answer every enquiry 503 until the deploy landed.
+  (5) **Proven both ways.** RLS test 55 was watched to fail against 0086 (anon
+  still accepted) and, separately, against 0084's function body under 0087's
+  grants (typed text still in the event) before passing. The migration's own
+  block types an e-mail address into the reference field and asserts it reaches
+  the message and nothing else, then asserts a published reference resolves to
+  its canonical spelling; the restore pack's grant pins flip to
+  `true/false/false/true` and its anon-surface count drops from eight to six.
+
 - **2026-09-06 · T-deferred-sweep (no migration) — the findings two reviews
   confirmed and dropped for slot budget, fixed as bindings.** Thirteen items,
   each re-confirmed at HEAD by its own agent; twelve fixed, one recorded.

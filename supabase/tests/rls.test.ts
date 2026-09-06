@@ -5101,20 +5101,32 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(chainOk, "retention events keep the chain intact").toBe(true);
   });
 
-  it("55. the public enquiry door (0084) writes a lead and nothing else", async () => {
+  it("55. the public enquiry door (0084/0087): the route is the only door, and nothing typed reaches the chain", async () => {
     // The FIRST unauthenticated write into this system. What matters is not
     // that it works — it is the size of the hole it opens.
     const anon = anonClient();
     const marker = `enq-${run}`;
-
-    const ok = await anon.rpc("submit_public_enquiry", {
+    const enquiry = {
       p_org_slug: "test-org-a",
       p_name: `Buyer ${marker}`,
       p_email: "buyer@example.invalid",
       p_phone: "",
       p_message: `Interested — ${marker}`,
       p_property_ref: "",
-    });
+    };
+
+    // 0087: the DATABASE refuses anon. Until then every control — the
+    // counter, the honeypot, the e-mail format, the desk alert — lived only
+    // in the Next route, and anyone holding the publishable key could skip
+    // all four with one PostgREST call (audit A01).
+    const refused = await anon.rpc("submit_public_enquiry", enquiry);
+    expect(refused.error, "anon is refused at the database since 0087").not.toBeNull();
+    expect(refused.data).toBeNull();
+    const refusedCounter = await anon.rpc("note_public_enquiry_hit", { p_ip_hash: "x", p_limit: 5 });
+    expect(refusedCounter.error, "anon cannot touch the counter either").not.toBeNull();
+
+    // The route calls with the service role. From here on, `svc` IS the route.
+    const ok = await svc.rpc("submit_public_enquiry", enquiry);
     expect(ok.error).toBeNull();
     expect(ok.data, "a complete enquiry is accepted").toBe(true);
 
@@ -5155,21 +5167,94 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(payload).toContain("website");
 
     // Refusals: no way to reply, nothing to say, and an org that is not ours.
-    const noReply = await anon.rpc("submit_public_enquiry", {
+    const noReply = await svc.rpc("submit_public_enquiry", {
       p_org_slug: "test-org-a", p_name: "X", p_email: "", p_phone: "",
       p_message: "hello", p_property_ref: "",
     });
     expect(noReply.data, "an enquiry with no email and no phone is refused").toBe(false);
-    const noSubject = await anon.rpc("submit_public_enquiry", {
+    const noSubject = await svc.rpc("submit_public_enquiry", {
       p_org_slug: "test-org-a", p_name: "X", p_email: "a@example.invalid", p_phone: "",
       p_message: "", p_property_ref: "",
     });
     expect(noSubject.data, "an enquiry about nothing is refused").toBe(false);
-    const wrongOrg = await anon.rpc("submit_public_enquiry", {
+    const wrongOrg = await svc.rpc("submit_public_enquiry", {
       p_org_slug: `no-such-${run}`, p_name: "X", p_email: "a@example.invalid", p_phone: "",
       p_message: "hi", p_property_ref: "",
     });
     expect(wrongOrg.data, "an unknown org is refused").toBe(false);
+
+    // 0087: TYPED TEXT NEVER REACHES THE CHAIN. A reference alone satisfies
+    // completeness, so the reference argument was a second free-text input —
+    // an e-mail address typed there went into criteria and the immutable
+    // event payload verbatim, under comments promising "shape only" (audit
+    // A05). Now only the resolved canonical reference, or null, travels; the
+    // typed text stays in the erasable About: line.
+    const typed = await svc.rpc("submit_public_enquiry", {
+      p_org_slug: "test-org-a", p_name: `Typer ${marker}`, p_email: "t@example.invalid",
+      p_phone: "", p_message: "", p_property_ref: `typed-${marker}@example.invalid`,
+    });
+    expect(typed.data, "a reference alone is still enough to accept").toBe(true);
+    const { data: typedLead } = await svc
+      .from("leads")
+      .select("id, message, criteria")
+      .eq("org_id", ORG_A)
+      .like("message", `%Typer ${marker}%`)
+      .single();
+    expect(typedLead!.message, "the desk still sees what was typed, where erasure can reach it").toContain(
+      `About: typed-${marker}@example.invalid`,
+    );
+    expect(
+      (typedLead!.criteria as { listing_reference?: unknown }).listing_reference,
+      "an unresolved reference is null in criteria, not the typed text",
+    ).toBeNull();
+    const { data: typedEvents } = await svc
+      .from("events")
+      .select("payload")
+      .eq("entity_type", "lead")
+      .eq("entity_id", typedLead!.id);
+    expect(JSON.stringify(typedEvents![0]!.payload), "typed text never enters an unerasable row").not.toContain(
+      `typed-${marker}`,
+    );
+    expect(
+      (typedEvents![0]!.payload as { listing_reference?: unknown }).listing_reference,
+    ).toBeNull();
+
+    // …and a PUBLISHED reference resolves to the row's own spelling.
+    const { data: published } = await svc
+      .from("properties")
+      .insert({
+        org_id: ORG_A,
+        reference: `PUB-${marker}`,
+        kind: "standalone",
+        property_type: "apartment",
+        status: "available",
+        visibility: "public",
+        asking_price: 100000,
+      })
+      .select("id")
+      .single();
+    const about = await svc.rpc("submit_public_enquiry", {
+      p_org_slug: "test-org-a", p_name: `Asker ${marker}`, p_email: "ask@example.invalid",
+      p_phone: "", p_message: "", p_property_ref: `PUB-${marker}`,
+    });
+    expect(about.data).toBe(true);
+    const { data: aboutLead } = await svc
+      .from("leads")
+      .select("id, property_id, criteria")
+      .eq("org_id", ORG_A)
+      .like("message", `%Asker ${marker}%`)
+      .single();
+    expect(aboutLead!.property_id, "a published reference resolves").toBe(published!.id);
+    expect((aboutLead!.criteria as { listing_reference?: unknown }).listing_reference).toBe(`PUB-${marker}`);
+    const { data: aboutEvents } = await svc
+      .from("events")
+      .select("payload")
+      .eq("entity_type", "lead")
+      .eq("entity_id", aboutLead!.id);
+    expect(
+      aboutEvents![0]!.payload as { listing_reference?: unknown; matched_listing?: unknown },
+      "the event carries the canonical reference and says it matched",
+    ).toMatchObject({ listing_reference: `PUB-${marker}`, matched_listing: true });
 
     // A PRIVATE reference must not resolve — otherwise this endpoint answers
     // "which of your references exist" to anyone who asks.
@@ -5185,7 +5270,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       })
       .select("id")
       .single();
-    const probe = await anon.rpc("submit_public_enquiry", {
+    const probe = await svc.rpc("submit_public_enquiry", {
       p_org_slug: "test-org-a", p_name: `Prober ${marker}`, p_email: "p@example.invalid",
       p_phone: "", p_message: "", p_property_ref: `PRIV-${marker}`,
     });
@@ -5206,12 +5291,14 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     const writeLead = await anon.from("leads").insert({ org_id: ORG_A, source: "website" });
     expect(writeLead.error, "anon must not insert a lead directly").not.toBeNull();
 
-    // Its budget is its OWN — a flood here must not spend the feed's.
+    // Its budget is its OWN — a flood here must not spend the feed's. The feed's
+    // counter stays anon-callable (a READ surface); the enquiry counter is the
+    // route's alone since 0087.
     const ip = `enqrate-${run}`;
-    expect((await anon.rpc("note_public_enquiry_hit", { p_ip_hash: ip, p_limit: 2 })).data).toBe(false);
-    await anon.rpc("note_public_enquiry_hit", { p_ip_hash: ip, p_limit: 2 });
+    expect((await svc.rpc("note_public_enquiry_hit", { p_ip_hash: ip, p_limit: 2 })).data).toBe(false);
+    await svc.rpc("note_public_enquiry_hit", { p_ip_hash: ip, p_limit: 2 });
     expect(
-      (await anon.rpc("note_public_enquiry_hit", { p_ip_hash: ip, p_limit: 2 })).data,
+      (await svc.rpc("note_public_enquiry_hit", { p_ip_hash: ip, p_limit: 2 })).data,
       "the third hit is over a limit of 2",
     ).toBe(true);
     expect(
@@ -5220,9 +5307,9 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     ).toBe(false);
 
     const { data: chainOk } = await svc.rpc("verify_events_chain", { p_org: ORG_A });
-    expect(chainOk, "an anonymous write keeps the chain intact").toBe(true);
+    expect(chainOk, "the door's writes keep the chain intact").toBe(true);
 
-    await svc.from("properties").delete().eq("id", hidden!.id);
+    await svc.from("properties").delete().in("id", [hidden!.id, published!.id]);
   });
 
   it("56. the feed's validator moves when a photograph is redescribed (0086)", async () => {

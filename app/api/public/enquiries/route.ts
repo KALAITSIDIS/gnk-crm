@@ -1,5 +1,5 @@
 import { after, NextResponse, type NextRequest } from "next/server";
-import { createPublicClient } from "@/lib/supabase/public";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { callerIpHash } from "@/lib/services/caller-ip";
 import { budgetsFor } from "@/lib/services/enquiry-budget";
 import { enquiryCompleteness, publicEnquirySchema } from "@/lib/validators/public-enquiry";
@@ -10,10 +10,18 @@ import { sendEnquiryAlert } from "@/lib/services/enquiry-alert";
  * outside this system can WRITE into it.
  *
  * PUBLIC AND UNAUTHENTICATED BY DESIGN, like the listing feed beside it:
- * `proxy.ts` exempts `/api/public/`. Everything that keeps it safe is one
- * layer down, in SQL — read 0084's header for the reasoning. This handler
- * holds the ANON client, so even rewritten to do whatever it liked it could
- * reach exactly two functions by name and no table at all.
+ * `proxy.ts` exempts `/api/public/`. The function it calls validates on its
+ * own terms — read 0084's header for the reasoning.
+ *
+ * THIS HANDLER IS THE ONLY DOOR, AND SINCE 0087 THE DATABASE SAYS SO. The two
+ * functions are EXECUTE-granted to service_role alone, so this file calls
+ * them with the server-only admin client. That client bypasses RLS, which is
+ * exactly why this file must stay as small as it is: every write still goes
+ * through submit_public_enquiry, and nothing here touches a table. Until 0087
+ * the publishable key could reach the same two functions from anywhere and
+ * skip every control below — counter, honeypot, e-mail format, desk alert —
+ * one silent lead and one permanent event per call (the 2026-09-06 audit's
+ * A01; docs/AUDIT_2026-09-06_RESPONSE.md, Now #2).
  *
  * WHAT THIS FILE ADDS on top of the function: a useful 400 for whoever is
  * building the site, the honeypot drop, and the rate check BEFORE the write
@@ -62,7 +70,8 @@ export async function POST(request: NextRequest) {
   const incomplete = enquiryCompleteness(input);
   if (incomplete) return json({ error: incomplete }, 400);
 
-  const supabase = createPublicClient();
+  // Service role, deliberately: see the header. Nothing below reads a table.
+  const supabase = createAdminClient();
 
   // Rate limit BEFORE anything else touches the database, so a flood costs one
   // counter round trip. Its own counter (0084) — a flood here must not spend a
