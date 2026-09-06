@@ -28,6 +28,7 @@ export function PartiesForm({
   developer,
   agent,
   readOnly,
+  updatedAt,
 }: {
   propertyId: string;
   kind: string;
@@ -36,6 +37,8 @@ export function PartiesForm({
   agent: EntityOption | null;
   /** true unless the viewer is an admin or listing manager */
   readOnly: boolean;
+  /** the row's updated_at as rendered — see SectionForm */
+  updatedAt?: string | null;
 }) {
   const showDeveloper = (DEVELOPER_KINDS as readonly string[]).includes(kind);
 
@@ -44,6 +47,7 @@ export function PartiesForm({
       propertyId={propertyId}
       section="parties"
       readOnly={readOnly}
+      updatedAt={updatedAt}
       readOnlyNote="Read-only — only admins and listing managers can change who a property belongs to."
     >
       <div className="grid gap-4 sm:grid-cols-2">

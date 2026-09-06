@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { updatePropertySection, type UpdateSectionState } from "@/lib/actions/properties";
+import { EXPECTED_UPDATED_AT } from "@/lib/services/optimistic-save";
 import { Button } from "@/components/ui/button";
 
 const initialState: UpdateSectionState = { error: null, savedAt: null };
@@ -17,6 +18,7 @@ export function SectionForm({
   section,
   readOnly = false,
   readOnlyNote,
+  updatedAt,
   children,
 }: {
   propertyId: string;
@@ -26,6 +28,10 @@ export function SectionForm({
   /** Why it is read-only, when assignment isn't the reason (e.g. the parties
    *  section, which is admin + listing manager regardless of assignment). */
   readOnlyNote?: string;
+  /** The row's `updated_at` as rendered — the trigger-maintained column,
+   *  never a client clock. Carried back so the save can refuse if the row
+   *  moved in between (lib/services/optimistic-save.ts). */
+  updatedAt?: string | null;
   children: React.ReactNode;
 }) {
   const [state, formAction, pending] = useActionState(updatePropertySection, initialState);
@@ -35,9 +41,12 @@ export function SectionForm({
   useEffect(() => {
     if (state.savedAt && state.savedAt !== lastToasted.current) {
       lastToasted.current = state.savedAt;
-      toast.success("Saved");
+      // "Saved but not recorded" is a save — the toast must not say otherwise
+      // — with a hole in the timeline the person can do something about.
+      if (state.notice) toast.warning(state.notice);
+      else toast.success("Saved");
     }
-  }, [state.savedAt]);
+  }, [state.savedAt, state.notice]);
 
   /**
    * REACT RESETS AN UNCONTROLLED FORM once a server action settles, so the
@@ -93,6 +102,7 @@ export function SectionForm({
     <form ref={formRef} action={formAction} onSubmit={snapshot} className="flex flex-col gap-4">
       <input type="hidden" name="property_id" value={propertyId} />
       <input type="hidden" name="section" value={section} />
+      {updatedAt ? <input type="hidden" name={EXPECTED_UPDATED_AT} value={updatedAt} /> : null}
       {/* min-w-0 overrides the fieldset UA default min-inline-size:min-content,
           which otherwise stops it shrinking and lets a long unbroken value in a
           field-sizing-content textarea drag the whole form past the viewport */}
@@ -102,6 +112,11 @@ export function SectionForm({
       {state.error ? (
         <p role="alert" className="text-sm text-danger">
           {state.error}
+        </p>
+      ) : null}
+      {state.notice ? (
+        <p role="status" className="text-sm text-warning">
+          {state.notice}
         </p>
       ) : null}
       {readOnly ? (

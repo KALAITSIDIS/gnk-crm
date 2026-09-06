@@ -177,7 +177,12 @@ export function DetailsForm({
   const isContainer = property.kind === "project" || property.kind === "phase";
 
   return (
-    <SectionForm propertyId={property.id} section="details" readOnly={readOnly}>
+    <SectionForm
+      propertyId={property.id}
+      section="details"
+      readOnly={readOnly}
+      updatedAt={property.updated_at}
+    >
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <SelectField
           name="status"
@@ -452,7 +457,12 @@ export function LegalForm({
   readOnly?: boolean;
 }) {
   return (
-    <SectionForm propertyId={property.id} section="legal" readOnly={readOnly}>
+    <SectionForm
+      propertyId={property.id}
+      section="legal"
+      readOnly={readOnly}
+      updatedAt={property.updated_at}
+    >
       <div className="grid gap-4 sm:grid-cols-2">
         <SelectField
           name="title_deed_status"
@@ -507,7 +517,12 @@ export function MarketingForm({
   readOnly?: boolean;
 }) {
   return (
-    <SectionForm propertyId={property.id} section="marketing" readOnly={readOnly}>
+    <SectionForm
+      propertyId={property.id}
+      section="marketing"
+      readOnly={readOnly}
+      updatedAt={property.updated_at}
+    >
       <MultilangTabs
         name="title"
         label="Title"

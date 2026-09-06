@@ -3,6 +3,42 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-06 · T-optimistic-save (no migration) — a section save refuses
+  when the row moved since the page rendered, and says so when it saved but
+  could not record.** Audit A06, Next #6 of `AUDIT_2026-09-06_RESPONSE.md`.
+  Two people share this desk, and a section save wrote whatever the form held
+  over whatever the row held: the second of two overlapping edits silently
+  undid the first, and the timeline recorded both as ordinary updates — a
+  record that says the wrong thing happened on purpose.
+
+  (1) **The expectation is the row's own `updated_at`**, the trigger-
+  maintained column as PostgREST serialised it when the page rendered,
+  carried back in a hidden `expected_updated_at` by `SectionForm` (all four
+  sections: details, legal, marketing, parties). Never a client clock, and
+  never through `new Date()` — a millisecond rounding on one side would refuse
+  every save. `lib/services/optimistic-save.ts` is the pure half, tested and
+  mutation-proven.
+  (2) **Two checks, two windows.** The action compares the expectation with
+  the row it reads first and refuses before any work (the seconds or hours
+  between render and submit); the UPDATE is predicated on the same value
+  (`.eq("updated_at", expected)`) for the milliseconds between that read and
+  the write. Zero rows from a predicated UPDATE re-reads the timestamp once
+  to say which it was — moved (reload) or forbidden (RLS) — because the two
+  need different actions from the person. A form rendered before this
+  shipped carries no expectation and is not refused. `tests/e2e/optimistic-
+  save.spec.ts` drives the whole path through the real form and trigger: the
+  hidden value IS the row's timestamp; the other desk saves; the stale save
+  is refused before the publish gate and writes nothing; after a reload the
+  save proceeds into the gate.
+  (3) **"Saved — but the change could not be recorded."** The three events
+  after the UPDATE (`publish_override`, `updated`, `status_regression_override`)
+  go through one `record()` that catches an insert failure, logs it at error
+  level and lets the save report as saved with a notice — a warning toast and
+  a `role="status"` line — never as failed (which invites a retry of a write
+  that already happened) and never as clean. T-event-integrity counts this
+  action as the **fifteenth accepted instance** of "a write commits, its event
+  does not": accepted with the one difference that it now says so.
+
 - **2026-09-06 · T-forwarder-proof (no migration) — the site proves it is the
   forwarder; the fingerprint salt is a secret.** Audit A02, Next #1 of
   `AUDIT_2026-09-06_RESPONSE.md`. Two facts were pretending. The enquiry door
@@ -533,7 +569,10 @@ silent. Format: date · task · decision · rationale.
   first write is never reached (share links, price lists, media covers, the
   merge, the retention purge, viewing routes and slips). They need the same
   systematic treatment, not fourteen ad-hoc patches, and none of them
-  fabricates a record the way (2) did.
+  fabricates a record the way (2) did. *(2026-09-06: a fifteenth,
+  `updatePropertySection`, is ACCEPTED rather than left — with the difference
+  that it tells the person: "Saved — but the change could not be recorded in
+  the timeline". See T-optimistic-save (3).)*
 
 - **2026-09-02 · T-timeline-registry (no migration) — four events reached
   the log before the timeline learned to say them.** Diffing every

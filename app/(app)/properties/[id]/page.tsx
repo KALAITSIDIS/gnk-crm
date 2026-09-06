@@ -595,6 +595,7 @@ export default async function PropertyDetailPage({
                 }
                 agent={assignedAgent}
                 readOnly={!isAdminOrLM}
+                updatedAt={p.updated_at}
               />
             </div>
           </div>
