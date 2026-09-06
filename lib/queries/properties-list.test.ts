@@ -111,6 +111,39 @@ describe("applyPropertyListFilters", () => {
     expect(or?.args[0]).toBe("asking_price.gte.100000,rent_price_month.gte.100000");
   });
 
+  it("a ceiling alone also ORs across both columns", () => {
+    const { spy, calls } = spyBuilder();
+    applyPropertyListFilters(spy as never, base({ price_max: "500000" }), []);
+    const or = calls.find((c) => c.method === "or" && String(c.args[0]).includes("asking_price.lte"));
+    expect(or?.args[0]).toBe("asking_price.lte.500000,rent_price_month.lte.500000");
+  });
+
+  it("a bracket with no transaction is grouped PER PRICE — one figure must satisfy both bounds", () => {
+    // Audit A09. Two independent ORs let a listing for sale at 900,000 and to
+    // let at 500 a month match 100,000–500,000: the sale cleared the floor,
+    // the rent cleared the ceiling, and neither figure was in the range.
+    const { spy, calls } = spyBuilder();
+    applyPropertyListFilters(spy as never, base({ price_min: "100000", price_max: "500000" }), []);
+    const priceOrs = calls.filter((c) => c.method === "or" && /price/.test(String(c.args[0])));
+    expect(priceOrs).toHaveLength(1);
+    expect(priceOrs[0]!.args[0]).toBe(
+      "and(asking_price.gte.100000,asking_price.lte.500000),and(rent_price_month.gte.100000,rent_price_month.lte.500000)",
+    );
+    expect(methods(calls).filter((m) => m === "gte" || m === "lte")).toEqual([]);
+  });
+
+  it("the same bracket with sale_or_rent chosen is still grouped, because both prices are in play", () => {
+    const { spy, calls } = spyBuilder();
+    applyPropertyListFilters(
+      spy as never,
+      base({ transaction: "sale_or_rent", price_min: "100000", price_max: "500000" }),
+      [],
+    );
+    const priceOrs = calls.filter((c) => c.method === "or" && /price/.test(String(c.args[0])));
+    expect(priceOrs).toHaveLength(1);
+    expect(String(priceOrs[0]!.args[0])).toMatch(/^and\(asking_price/);
+  });
+
   it("excludes the pre-queried mandate ids for the 'none' filter", () => {
     const { spy, calls } = spyBuilder();
     applyPropertyListFilters(spy as never, base({ mandate: "none" }), ["id-1", "id-2"]);

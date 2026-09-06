@@ -151,22 +151,32 @@ export function applyPropertyListFilters<Q extends PropertyFilterBuilder<Q>>(
   if (filters.beds !== undefined) q = q.gte("bedrooms", filters.beds as never);
 
   // € bounds check the price that matters for the transaction context; with no
-  // transaction filter, either price may satisfy each bound.
+  // transaction filter, either price may satisfy the bracket — but ONE price
+  // must satisfy the WHOLE bracket. Until 2026-09-06 the two bounds went out as
+  // two independent ORs, so a listing for sale at 900,000 and to let at 500 a
+  // month sat inside a 100,000–500,000 bracket: its sale price cleared the
+  // floor and its rent cleared the ceiling, and no figure it had was in the
+  // range (the audit's A09). One bound alone is still a plain OR across the
+  // two columns; both bounds are grouped per column, and the list, the export
+  // and the map all read this one function.
   const priceCol =
     filters.transaction === "rent"
       ? "rent_price_month"
       : filters.transaction === "sale"
         ? "asking_price"
         : null;
-  if (filters.price_min !== undefined) {
-    q = priceCol
-      ? q.gte(priceCol, filters.price_min as never)
-      : q.or(`asking_price.gte.${filters.price_min},rent_price_month.gte.${filters.price_min}`);
-  }
-  if (filters.price_max !== undefined) {
-    q = priceCol
-      ? q.lte(priceCol, filters.price_max as never)
-      : q.or(`asking_price.lte.${filters.price_max},rent_price_month.lte.${filters.price_max}`);
+  const { price_min: min, price_max: max } = filters;
+  if (priceCol) {
+    if (min !== undefined) q = q.gte(priceCol, min as never);
+    if (max !== undefined) q = q.lte(priceCol, max as never);
+  } else if (min !== undefined && max !== undefined) {
+    q = q.or(
+      `and(asking_price.gte.${min},asking_price.lte.${max}),and(rent_price_month.gte.${min},rent_price_month.lte.${max})`,
+    );
+  } else if (min !== undefined) {
+    q = q.or(`asking_price.gte.${min},rent_price_month.gte.${min}`);
+  } else if (max !== undefined) {
+    q = q.or(`asking_price.lte.${max},rent_price_month.lte.${max}`);
   }
 
   if (filters.mandate === "active") q = q.eq("mandates.status", "active" as never);
