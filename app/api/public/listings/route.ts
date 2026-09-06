@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createPublicClient } from "@/lib/supabase/public";
 import { callerIpHash } from "@/lib/services/caller-ip";
+import { feedEtag } from "@/lib/services/feed-etag";
 import { absolutizeListingImages, parseFeedParams } from "@/lib/services/public-listings";
 
 /**
@@ -55,11 +56,12 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // The validator hashes the row COUNT as well as max(updated_at): unpublishing
-  // a listing lowers the count without moving the maximum, and a site polling
-  // on a max()-only ETag would keep serving something no longer for sale.
-  const etagRes = await supabase.rpc("public_listings_etag", { p_org_slug: org });
-  if (etagRes.error) {
+  // The snapshot names the feed as a whole (row count | max(updated_at) | photo
+  // fingerprint). It is NOT the validator any more — see feedEtag() — it is
+  // the segment gnk-web compares across pages to notice the feed moving under
+  // a multi-page read, so it still has to be there and still has to be SQL's.
+  const snapshot = await supabase.rpc("public_listings_etag", { p_org_slug: org });
+  if (snapshot.error) {
     return NextResponse.json(
       { error: "Feed unavailable." },
       { status: 503, headers: { "Cache-Control": "no-store" } },
@@ -67,18 +69,6 @@ export async function GET(request: NextRequest) {
   }
 
   const { limit, offset } = parseFeedParams(params);
-  // The page is part of the identity: two offsets of the same feed are not the
-  // same response, and an ETag that ignored them would let a cache serve page 1
-  // for a request for page 2.
-  const etag = `W/"${etagRes.data}-${limit}-${offset}"`;
-
-  if (request.headers.get("if-none-match") === etag) {
-    return new NextResponse(null, {
-      status: 304,
-      headers: { ETag: etag, "Cache-Control": "public, max-age=60" },
-    });
-  }
-
   const { data, error } = await supabase.rpc("public_listings", {
     p_org_slug: org,
     p_limit: limit,
@@ -98,22 +88,39 @@ export async function GET(request: NextRequest) {
     (data ?? []) as Array<{ images?: unknown }>,
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
   );
-  return NextResponse.json(
-    { org, count: Array.isArray(listings) ? listings.length : 0, limit, offset, listings },
-    {
-      status: 200,
-      headers: {
-        ETag: etag,
-        // Short and public: a marketing site may poll, and a stale minute costs
-        // nothing next to hammering the database.
-        "Cache-Control": "public, max-age=60",
-        // It is a feed of already-public data, so cross-origin reads are the
-        // intended use. GET only — there is no write surface to protect.
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, OPTIONS",
-      },
+
+  // Serialised ONCE: the validator is a digest of these bytes and these bytes
+  // are what goes out, so the ETag and the body cannot be two facts. Until
+  // 2026-09-06 the validator was SQL's snapshot alone, and twice a change to
+  // the body slipped past it (alt text — 0086; an area rename — DECISIONS
+  // T-deferred-sweep), each time answering If-None-Match with 304 and no body
+  // for text that had changed. A 304 now costs the feed query it used to skip;
+  // the site's cache never sends If-None-Match (it revalidates on time), and a
+  // validator that could lie was the dearer thing.
+  const body = JSON.stringify({ org, count: listings.length, limit, offset, listings });
+  const etag = feedEtag(String(snapshot.data), body);
+
+  if (request.headers.get("if-none-match") === etag) {
+    return new NextResponse(null, {
+      status: 304,
+      headers: { ETag: etag, "Cache-Control": "public, max-age=60" },
+    });
+  }
+
+  return new NextResponse(body, {
+    status: 200,
+    headers: {
+      "Content-Type": "application/json",
+      ETag: etag,
+      // Short and public: a marketing site may poll, and a stale minute costs
+      // nothing next to hammering the database.
+      "Cache-Control": "public, max-age=60",
+      // It is a feed of already-public data, so cross-origin reads are the
+      // intended use. GET only — there is no write surface to protect.
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, OPTIONS",
     },
-  );
+  });
 }
 
 export async function OPTIONS() {
