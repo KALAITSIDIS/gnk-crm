@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
-import { unwrapRows } from "@/lib/supabase/unwrap";
+import { fetchAll } from "@/lib/supabase/fetch-all";
 import {
   propertyFiltersSchema,
   resolvePropertyKindScope,
@@ -65,18 +65,29 @@ export function mandateEmbed(
  * Property ids to EXCLUDE for the "no mandate" / "expired (not active)" filters.
  * "none" = no active AND no expired mandate; "expired" excludes any with an
  * active mandate (an active mandate wins the badge). Returns [] when the filter
- * does not need it. Throws on query error via unwrapRows (fail loud).
+ * does not need it. Throws on query error (fail loud). Paged through fetchAll
+ * since 2026-09-06: a single select stops at PostgREST's 1,000 silently, and
+ * the 1,001st excluded id would have let its property back onto the list
+ * (the audit's A08a).
  */
 export async function fetchMandateExcludeIds(
   supabase: SupabaseClient<Database>,
   filters: PropertyFilters,
 ): Promise<string[]> {
   if (filters.mandate !== "none" && filters.mandate !== "expired") return [];
-  const res = await supabase
-    .from("mandates")
-    .select("property_id")
-    .in("status", filters.mandate === "none" ? ["active", "expired"] : ["active"]);
-  return [...new Set(unwrapRows(res, "mandates").map((m) => m.property_id))];
+  const statuses =
+    filters.mandate === "none" ? (["active", "expired"] as const) : (["active"] as const);
+  const rows = await fetchAll(
+    (from, to) =>
+      supabase
+        .from("mandates")
+        .select("property_id")
+        .in("status", statuses)
+        .order("id")
+        .range(from, to),
+    "mandates",
+  );
+  return [...new Set(rows.map((m) => m.property_id))];
 }
 
 /**

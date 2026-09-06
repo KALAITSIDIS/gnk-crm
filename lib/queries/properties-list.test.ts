@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   parsePropertyFilters,
   applyPropertyListFilters,
+  fetchMandateExcludeIds,
   mandateEmbed,
 } from "./properties-list";
+import { fakeClient } from "@/lib/testing/fake-client";
 import type { PropertyFilters } from "@/lib/validators/properties";
 
 /**
@@ -194,5 +196,43 @@ describe("applyPropertyListFilters — kind scope (audit finding 3)", () => {
     expect(k).toHaveLength(1);
     expect(k[0].method).toBe("eq");
     expect(k[0].args[1]).toBe("project");
+  });
+});
+
+describe("fetchMandateExcludeIds reads every excluded id, and fails loud (A08a)", () => {
+  type Client = Parameters<typeof fetchMandateExcludeIds>[0];
+  const ids = (from: number, n: number) =>
+    Array.from({ length: n }, (_, i) => ({ property_id: "p" + (from + i) }));
+
+  it("pages past the thousandth mandate — the 1,001st exclusion used to fall off the list", async () => {
+    const { client, served } = fakeClient({
+      mandates: [
+        { data: ids(0, 1000), error: null },
+        { data: ids(1000, 3), error: null },
+      ],
+    });
+    const out = await fetchMandateExcludeIds(client as unknown as Client, base({ mandate: "none" }));
+    expect(out).toHaveLength(1003);
+    expect(served.mandates).toBe(2);
+  });
+
+  it("dedupes ids across pages", async () => {
+    const { client } = fakeClient({
+      mandates: [{ data: [...ids(0, 2), ...ids(0, 2)], error: null }],
+    });
+    expect(await fetchMandateExcludeIds(client as unknown as Client, base({ mandate: "expired" }))).toEqual(["p0", "p1"]);
+  });
+
+  it("throws on a failed page rather than excluding nothing", async () => {
+    const { client } = fakeClient({ mandates: [{ data: null, error: { message: "boom" } }] });
+    await expect(
+      fetchMandateExcludeIds(client as unknown as Client, base({ mandate: "none" })),
+    ).rejects.toThrow("Query failed (mandates): boom");
+  });
+
+  it("reads nothing at all when the filter does not need it", async () => {
+    const { client, served } = fakeClient({});
+    expect(await fetchMandateExcludeIds(client as unknown as Client, base({ mandate: "active" }))).toEqual([]);
+    expect(served.mandates).toBeUndefined();
   });
 });

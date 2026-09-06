@@ -91,6 +91,9 @@ export async function findMatchingProperties(
     // a project or phase is a container, not a thing anyone buys
     .neq("kind", "project")
     .neq("kind", "phase")
+    // Ordered, so the cap is the SAME first 400 on every read: an unordered
+    // capped select is a different sample each time (2026-09-06, A08a).
+    .order("id")
     .limit(CANDIDATE_CAP);
 
   // The validator already restricts these to PROPERTY_TYPES, so the enum
@@ -165,6 +168,9 @@ export async function findMatchingBuyers(
     )
     .eq("is_active", true)
     .eq("contacts.is_archived", false)
+    // Ordered, so the cap is the SAME first 400 on every read: an unordered
+    // capped select is a different sample each time (2026-09-06, A08a).
+    .order("id")
     .limit(CANDIDATE_CAP);
 
   // `sale_or_rent` on the property satisfies every requirement type, so only a
