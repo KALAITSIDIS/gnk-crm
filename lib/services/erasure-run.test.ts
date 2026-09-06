@@ -81,7 +81,7 @@ describe("the order: dependants first, the contact last, the record after", () =
     ]);
     expect(h.payloads[0]).toMatchObject({
       leads_redacted: 2,
-      requirements_deleted: 1,
+      saved_searches_deleted: 1,
       documents_deleted: 1,
       documents_retained: 0,
     });
