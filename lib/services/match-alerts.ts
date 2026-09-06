@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import { logEvent } from "@/lib/services/events";
+import { fetchAll } from "@/lib/supabase/fetch-all";
 import {
   BUDGET_TOLERANCE_PCT,
   MATCHABLE_STATUSES,
@@ -150,15 +151,29 @@ export interface MatchAlertResult {
 
 const NONE: MatchAlertResult = { newlyMatching: 0, taskCreated: false };
 
+/**
+ * Every active requirement — EVERY one, and loudly or not at all.
+ *
+ * Until 2026-09-06 this was a single select that returned [] on error, so a
+ * failed read and "nobody is looking" were the same answer and the alert
+ * silently did nothing (the audit's A08a); and it was unpaged, so the 1,001st
+ * buyer would never have been told. fetchAll pages it and throws on a failed
+ * page; the callers already catch and log, best-effort, so a throw here is a
+ * line in the error log where there used to be nothing.
+ */
 async function activeRequirements(
   supabase: Client,
   opts: { budgetedOnly: boolean },
 ): Promise<RequirementRow[]> {
-  let q = supabase.from("buyer_requirements").select(REQUIREMENT_COLUMNS).eq("is_active", true);
-  if (opts.budgetedOnly) q = q.not("budget_max", "is", null);
-  const { data, error } = await q;
-  if (error || !data?.length) return [];
-  return data as unknown as RequirementRow[];
+  const rows = await fetchAll(
+    (from, to) => {
+      let q = supabase.from("buyer_requirements").select(REQUIREMENT_COLUMNS).eq("is_active", true);
+      if (opts.budgetedOnly) q = q.not("budget_max", "is", null);
+      return q.order("id").range(from, to);
+    },
+    "buyer_requirements",
+  );
+  return rows as unknown as RequirementRow[];
 }
 
 /**
@@ -417,11 +432,22 @@ export async function raiseBulkPriceDropAlert(
   const requirements = await activeRequirements(supabase, { budgetedOnly: true });
   if (requirements.length === 0) return none;
 
-  const { data: unitRows, error } = await supabase
-    .from("properties")
-    .select(UNIT_COLUMNS)
-    .in("id", drops.map((d) => d.id));
-  if (error || !unitRows?.length) return none;
+  // Paged and loud for the same reason activeRequirements is: a failed read
+  // here used to look exactly like "none of these units matched anyone".
+  const unitRows = await fetchAll(
+    (from, to) =>
+      supabase
+        .from("properties")
+        .select(UNIT_COLUMNS)
+        .in(
+          "id",
+          drops.map((d) => d.id),
+        )
+        .order("id")
+        .range(from, to),
+    "properties (repriced units)",
+  );
+  if (unitRows.length === 0) return none;
 
   const units = new Map<string, AlertProperty>(
     (unitRows as unknown as AlertProperty[]).map((u) => [u.id, u]),

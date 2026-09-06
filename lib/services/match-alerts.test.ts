@@ -1,8 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { fakeClient } from "@/lib/testing/fake-client";
 import { BUDGET_TOLERANCE_PCT } from "./matching";
 import {
   becameMatchable,
   bulkNewlyMatching,
+  raiseBulkPriceDropAlert,
+  raiseNewListingAlert,
   isAlertableDrop,
   priceFor,
   wasPricedOut,
@@ -269,5 +272,109 @@ describe("bulkNewlyMatching — a whole block, in memory", () => {
     const out = bulkNewlyMatching(changes, units, reqs);
     expect(out.unitIds).toHaveLength(60);
     expect(out.contactIds).toHaveLength(5);
+  });
+});
+
+// The event write is the one thing an alert does that is not a read; it has
+// its own tests. Here it is a no-op so the reads can be the subject.
+vi.mock("@/lib/services/events", () => ({ logEvent: vi.fn(async () => undefined) }));
+
+describe("the reads behind an alert are paged and loud (A08a)", () => {
+  const prop: AlertProperty = {
+    id: "p1",
+    reference: "PAF0099",
+    assigned_agent_id: null,
+    status: "available",
+    transaction_type: "sale",
+    property_type: "apartment",
+    district_id: "d1",
+    area_id: "a1",
+    asking_price: 300000,
+    rent_price_month: null,
+    bedrooms: 2,
+    bathrooms: 1,
+    covered_area_sqm: 80,
+    plot_area_sqm: null,
+    title_deed_status: "separate",
+    vat_status: "resale_no_vat",
+    sea_distance_m: 500,
+    delivery_date: null,
+    features: [],
+  };
+  const reqRow = (i: number): RequirementRow =>
+    ({
+      id: "r" + i,
+      contact_id: "c" + i,
+      transaction_type: "sale",
+      property_types: [],
+      district_ids: [],
+      area_ids: [],
+      budget_min: null,
+      budget_max: 300000,
+      bedrooms_min: null,
+      bedrooms_max: null,
+      bathrooms_min: null,
+      covered_area_min_sqm: null,
+      plot_area_min_sqm: null,
+      title_deed_required: false,
+      vat_preference: null,
+      max_sea_distance_m: null,
+      delivery_by: null,
+      features_required: [],
+    }) as RequirementRow;
+  const many = (from: number, n: number) => Array.from({ length: n }, (_, i) => reqRow(from + i));
+  type Client = Parameters<typeof raiseNewListingAlert>[0];
+
+  it("a failed requirements read THROWS — the caller logs it — instead of reporting no matches", async () => {
+    // Until 2026-09-06 this returned [] on error: a failed read and "nobody is
+    // looking" were the same answer, and the alert silently did nothing.
+    const { client } = fakeClient({
+      buyer_requirements: [{ data: null, error: { message: "statement timeout" } }],
+    });
+    await expect(
+      raiseNewListingAlert(client as unknown as Client, {
+        orgId: "o",
+        actorId: "u",
+        property: prop,
+        previousStatus: "draft",
+      }),
+    ).rejects.toThrow("Query failed (buyer_requirements): statement timeout");
+  });
+
+  it("reads EVERY active requirement, past the thousandth — the 1,001st buyer is told too", async () => {
+    const { client, served } = fakeClient({
+      buyer_requirements: [
+        { data: many(0, 1000), error: null },
+        { data: many(1000, 3), error: null },
+      ],
+      tasks: [
+        { data: null, error: null, count: 0 },
+        { data: { id: "t1" }, error: null },
+      ],
+    });
+    const res = await raiseNewListingAlert(client as unknown as Client, {
+      orgId: "o",
+      actorId: "u",
+      property: prop,
+      previousStatus: "draft",
+    });
+    expect(served.buyer_requirements, "two pages: a full one, then the short one").toBe(2);
+    expect(res.newlyMatching).toBe(1003);
+    expect(res.taskCreated).toBe(true);
+  });
+
+  it("a failed unit read on a block reprice THROWS for the same reason", async () => {
+    const { client } = fakeClient({
+      buyer_requirements: [{ data: [reqRow(1)], error: null }],
+      properties: [{ data: null, error: { message: "boom" } }],
+    });
+    await expect(
+      raiseBulkPriceDropAlert(client as unknown as Client, {
+        orgId: "o",
+        actorId: "u",
+        project: { id: "proj", reference: "PRJ", assigned_agent_id: null },
+        changes: [{ id: "u1", reference: "u1", from: 400000, to: 320000 }],
+      }),
+    ).rejects.toThrow("Query failed (properties (repriced units)): boom");
   });
 });
