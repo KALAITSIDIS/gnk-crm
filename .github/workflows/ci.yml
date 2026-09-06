@@ -18,6 +18,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Now #8 of docs/AUDIT_2026-09-06_RESPONSE.md (2026-09-06): production
+      # dependencies only, high and above. The two highs this step was born
+      # with (browserslist, fast-uri: build tooling under the @sentry/nextjs
+      # webpack plugin, which Turbopack never runs) were fixed the same day
+      # with a plain `npm audit fix`. That is the answer to a red step here;
+      # `npm audit fix --force` is not (it once proposed next@9.3.3).
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Typecheck
         run: npm run typecheck
 
