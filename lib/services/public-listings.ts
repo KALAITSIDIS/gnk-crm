@@ -54,6 +54,10 @@ export function parseFeedParams(params: {
  * a missing bucket segment) renders as broken images on somebody else's site
  * with nothing in our logs.
  */
+/**
+ * Mirrored by gnk-web lib/crm.ts ListingImage. The cover is element 0 of the
+ * array; there is deliberately no flag (RLS test 49 pins both).
+ */
 export interface FeedImage {
   thumb: string | null;
   card: string | null;

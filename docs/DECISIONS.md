@@ -3,6 +3,74 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-06 · T-deferred-sweep (no migration) — the findings two reviews
+  confirmed and dropped for slot budget, fixed as bindings.** Thirteen items,
+  each re-confirmed at HEAD by its own agent; twelve fixed, one recorded.
+
+  **gnk-web.** The bedroom filter's twin: the price ladder read
+  `rent ? rent_price_month : asking_price` inline, twice, so one €1,500/month
+  rental would have dragged "Up to €250k" back onto the bar and returned
+  itself alone beneath it — `salePrice` / `matchesMaxPrice` in lib/search.ts,
+  same shape as the bedroom pair. `floorLabel` read kind = "unit" as "occupies
+  a floor", re-opening the "villa on Floor 2 of 2" class for any villa unit
+  with typed floors: the CRM generates villa units on purpose, so only TYPE
+  decides now. The mobile contact bar was position: fixed with a hand-copied
+  pb-24 guarding the wrong end of the page and hid the footer's last line on
+  every phone — now sticky, a sibling after the article, and a test asserts
+  nothing else knows its height. The site read an `is_cover` the feed has
+  never sent (right by accident: the CRM orders the cover first) — the field
+  is gone and the contract is written where it is read. `PROPERTY_TYPES`
+  claimed "verbatim from the CRM, verified 2026-09-04" and lacked "hotel"; the
+  date became a pinned copy with its commit, and a test. AREAS claimed the
+  same and is nothing of the kind — the CRM's areas are operator-editable —
+  so the header says what it is, and `areasWithFeed` adds whatever the feed
+  publishes with, so the buyer picker can never lack a live listing's area.
+  README's "the only configuration is CRM_API_URL" against three env reads:
+  a table now, parsed by `lib/env.test.ts` against a scan of every
+  `process.env` read (which also proves no credential is read). The
+  organisation JSON-LD said "no address" beside a PostalAddress of its own
+  literals: it now derives from lib/site.ts's structured location, the same
+  fields the footer prints. `year_built` is withheld on a container — the CRM
+  does not inherit it to units; `energy_class` stays because it does.
+
+  **gnk-crm.** Two "Costs" tooltips read "Transfer fees & stamp duty" nine
+  months after the repeal; they name the destination now, and
+  `tests/unit/ui-names-no-repealed-tax.test.ts` lets a .tsx say "stamp duty"
+  only if it imports the calculators service — i.e. only if it renders what
+  `cyprus_config` says. `media_alt_set` wrote the text into the payload "so
+  the timeline shows it without a join" and the renderer ignored it; three
+  branches now (text / cleared / bare), all three locales, pinned. export.mjs
+  had missed 0084's `public_enquiry_attempts`; the one-line add is the
+  symptom — the binding is a test that replays every create/drop/rename
+  across the migrations and demands set-equality with TABLES in both
+  directions. RLS test 41 pins all 36 returned column names against the
+  generated types with a compile-time completeness check (0085's own block
+  names 14); test 49 binds the image keys to `FeedImage` the same way.
+
+  **Recorded, not fixed — the next migration must carry it.** Renaming an
+  area or district changes the feed body (0085 emits `d.name`, `a.name`) and
+  moves nothing in `public_listings_etag`: `renameArea` writes `areas.name`
+  only, `areas`/`districts` have no `updated_at` and no trigger, and 0086's
+  hash joins neither table. The exact class 0086 closed for alt, one join
+  further out. Spec for 0087: left-join districts and areas in the etag's
+  outer query; add a fourth hashed segment
+  `md5(string_agg(coalesce(d.name::text,'') || '/' || coalesce(a.name::text,''), ',' order by p.reference))`;
+  restate comment and grants; probe by renaming an area in a rolled-back
+  subtransaction and asserting the etag moved; RLS test 57 pins it. Not
+  applied alone: no consumer sends If-None-Match, a rename is rare, and the
+  hosted apply is the manual dashboard path.
+
+  **Two lessons from the sweep itself.** Both new source-scanning guards
+  first failed on their own explanatory comments — the CRM one on a `//`
+  line recalling the tax, the site one on the JSX comment saying why `pb-24`
+  went — the same trap as the restore pack's grep recipe the day before.
+  Guards now strip comments before matching: they read code, not
+  commentary. And a mutation-proof run chained on `&&` behind a step that
+  failed (`require("tsconfig.json")` on a JSONC file) skipped every later
+  step while its backups went to `/`; nothing was left mutated only because
+  the skips were total. Proof runs now back up, mutate, test and restore
+  inside one `finally`, never a shell chain.
+
 - **2026-09-05 · T-close-of-day (migration 0086) — a validator that would have
   lied, and a page that told a machine what it withheld from a person.** A
   six-lens adversarial review over everything shipped since the 08-29 audit:

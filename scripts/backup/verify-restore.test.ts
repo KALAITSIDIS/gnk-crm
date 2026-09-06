@@ -12,6 +12,9 @@ import { describe, expect, it } from "vitest";
  * within hours when 0079 merged, and the grants table missed 0074's
  * cron_health() ELEVEN MINUTES after being generated (2026-09-01 review).
  * The pack only runs at drill time, so CI is where the staleness must fail.
+ *
+ * export.mjs's TABLES list is pinned the same way: it lagged ten tables until
+ * REL-04 (2026-08-30) and missed 0084's counter five migrations later.
  */
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -66,6 +69,47 @@ describe("verify-restore.sql stays in lockstep with the repo", () => {
       unpinned,
       "every migration-created SECURITY DEFINER function needs a grants_expected row " +
         "(regenerate the table — the query is in verify-restore.sql's comment)",
+    ).toEqual([]);
+  });
+
+  it("export.mjs backs up every table the migrations create", () => {
+    // Same technique as the SECURITY DEFINER pin above: replay create / drop /
+    // rename in file order, so 0063's rename-then-recreate of `events` resolves
+    // the way Postgres did. `--` comments are stripped first (prose mentions
+    // CREATE TABLE), and the `(?![.\w])` guard rejects 0063's format string
+    // `create table events_parts.%I` — partitions live outside public and
+    // are not export targets anyway.
+    const live = new Set<string>();
+    const stmt =
+      /\b(create\s+(?:unlogged\s+)?table\s+(?:if\s+not\s+exists\s+)?|drop\s+table\s+(?:if\s+exists\s+)?|alter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?)(?:([a-z_][a-z_0-9]*)\.)?([a-z_][a-z_0-9]*)(?![.\w])(?:\s+rename\s+to\s+([a-z_][a-z_0-9]*))?/gi;
+    for (const file of [...migrationFiles].sort()) {
+      const sql = readFileSync(join(migrationsDir, file), "utf-8").replace(/--[^\n]*/g, "");
+      for (const m of sql.matchAll(stmt)) {
+        const [, verb, schema, name, renamed] = m;
+        if (schema && schema.toLowerCase() !== "public") continue;
+        const n = name.toLowerCase();
+        if (/^create/i.test(verb)) live.add(n);
+        else if (/^drop/i.test(verb)) live.delete(n);
+        else if (renamed) {
+          live.delete(n);
+          live.add(renamed.toLowerCase());
+        }
+      }
+    }
+    expect(live.size, "the scanner must find the known schema").toBeGreaterThan(30);
+
+    const src = readFileSync(join(here, "export.mjs"), "utf-8");
+    const start = src.indexOf("const TABLES = [");
+    const block = src.slice(start, src.indexOf("];", start));
+    const exported = new Set([...block.matchAll(/"([a-z_0-9]+)"/g)].map((m) => m[1]));
+
+    expect(
+      [...live].filter((t) => !exported.has(t)).sort(),
+      "created by a migration but absent from export.mjs TABLES — a restore would lose it",
+    ).toEqual([]);
+    expect(
+      [...exported].filter((t) => !live.has(t)).sort(),
+      "in export.mjs TABLES but no migration creates it — the nightly export would throw",
     ).toEqual([]);
   });
 });

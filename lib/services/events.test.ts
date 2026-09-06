@@ -101,6 +101,24 @@ describe("describeEvent registry (T3.5) — English parity", () => {
     );
   });
 
+  it("renders the photo description that was written, says cleared on a clear, bare without", () => {
+    // media.ts writes { media_id, alt: trimmed || null } "so the timeline shows
+    // what was written without a join" — this is the assertion behind that
+    // comment; the renderer ignored the payload for a day.
+    expect(
+      describeEvent(
+        ev("media_alt_set", { media_id: "x", alt: "Sea view from the terrace" }, "property"),
+        t,
+      ),
+    ).toBe("Photo description set — Sea view from the terrace");
+    expect(describeEvent(ev("media_alt_set", { media_id: "x", alt: null }, "property"), t)).toBe(
+      "Photo description cleared",
+    );
+    expect(describeEvent(ev("media_alt_set", { media_id: "x" }, "property"), t)).toBe(
+      "Photo description set",
+    );
+  });
+
   it("renders the corrected lead combinations", () => {
     expect(describeEvent(ev("corrected", {}, "lead"), t)).toBe("Lead corrected");
     expect(describeEvent(ev("corrected", { reopened: true }, "lead"), t)).toBe(

@@ -461,7 +461,7 @@ export default async function PropertyDetailPage({
             <Link
               href={`/calculators?price=${Number(p.asking_price)}`}
               className="inline-flex items-center gap-1 text-xs font-medium text-text-2 hover:text-brand-700"
-              title="Transfer fees & stamp duty at asking price"
+              title="Purchase-cost calculators at asking price"
             >
               <Calculator className="size-3.5" /> Costs
             </Link>

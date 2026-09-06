@@ -17,8 +17,9 @@ import { absolutizeListingImages, parseFeedParams } from "@/lib/services/public-
  * handler were rewritten to select whatever it liked, it would still get back
  * 36 columns of published listings and nothing else — 34 at 0066, plus
  * `images` (0073) and `adviser_view` (0085). The number is here for
- * orientation only; what enforces it is the allowlist in the migration, which
- * asserts its own columns BY NAME, and RLS test 41.
+ * orientation only; what enforces it is the allowlist in the migration — 0085
+ * names 14 of them at its own apply — and RLS test 41, which pins all 36
+ * against the generated types on every push.
  *
  * `?org=` is required and is a SLUG, because the feed is per-agency: without it
  * a multi-tenant deployment would blend two agencies' listings into one feed.
