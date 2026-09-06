@@ -47,6 +47,14 @@ the day after it is written.)*
 (investigated, no change warranted) and DEP-2 (upstream). Full detail with
 evidence is in `TEST_REPORT.md`.
 
+*(DEP-2 retired 2026-09-06. What sat inside Next's own tree cleared on Next's
+bumps; the last two highs on `npm audit --omit=dev` — browserslist and fast-uri,
+build tooling under `@sentry/nextjs`'s webpack plugin, which Turbopack never
+runs — went with a plain `npm audit fix`. The `checks` job now runs
+`npm audit --omit=dev --audit-level=high`, so a new high-or-worse production
+finding is a red push rather than a note. `npm audit fix --force` stays
+forbidden — it once proposed `next@9`. `AUDIT_2026-09-06_RESPONSE.md` Now #8.)*
+
 ---
 
 ## 2. Outstanding — all operator actions, none are code
