@@ -2,6 +2,8 @@
 
 **Status:** re-audited 2026-09-06 against current `main` (gnk-crm `c5b5b6f`, gnk-web `8239085`) and the live site and feed. The audit reviewed gnk-crm `66e1f8e` and gnk-web `5f7d17d`; both moved on 09-05/09-06 (DECISIONS `T-close-of-day`, `T-deferred-sweep`), and several of its findings were fixed before it arrived.
 
+**Progress (2026-09-06, evening).** Now #1 done (galleries removed through the CRM, evented, feed at 0 images on both). Now #2 done: 0087 merged, route deployed on the admin client, then applied on hosted and verified (anon refused, service_role kept, currency CHECK validated); 87/87. Now #3 shipped and live (one `<JsonLd>` sink, gnk-web `cc909c7`). Now #4 on branch `fix/erasure-a04` awaiting CI. Now #5–#8 not started.
+
 **Method.** Fourteen independent read-only verifications, one per claim group, each required to reproduce the claim at HEAD (grep, SQL, existing tests, public GETs), assign its own severity, and name the *binding* fix — one source, not a corrected copy — with effort and whether it needs a migration (the hosted apply is a manual path here). Then a synthesis. Nothing was written to production during the review.
 
 **Verdict.** Of 71 checkable claims: **21 agreed, 18 partially, 18 disagreed, 14 already done** before the audit landed. The audit is good on mechanisms and consistently overstates severity and remedy for a two-person firm with three published listings. Its most serious finding is not in its security section: **two live client mandates were publishing another property's photographs** (live-ui-1) — the project's recurring failure, on the public site. That was actioned the same day.
