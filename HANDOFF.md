@@ -1,6 +1,7 @@
 # HANDOFF — 2026-08-08
 
 Read `docs/HANDOVER.md` and `CLAUDE.md` first; this is the delta on top of them.
+**2026-09-06: an outside audit was re-verified claim by claim against current `main` and live — `docs/AUDIT_2026-09-06_RESPONSE.md` is the resulting plan (21 agreed / 18 partly / 18 disagreed / 14 already done). Start there for what is next; it supersedes the "next migration must carry 0087" note below with a route-side validator (its Now #7).**
 **History lives in `docs/DECISIONS.md` and git — this file is state, traps and
 what to do next. Keep it short; move narrative out rather than growing it.**
 
