@@ -203,6 +203,9 @@ SENTRY_DSN                       (server — was missing once; everything report
 NEXT_PUBLIC_SENTRY_DSN
 SENTRY_AUTH_TOKEN                (optional, source maps)
 RESEND_API_KEY                   (optional)
+ENQUIRY_ALERT_TO                 (with it; the desk address)
+ENQUIRY_FORWARD_KEY              (secret; = gnk-web's CRM_FORWARD_KEY — the site proves it is the forwarder, 2026-09-06)
+IP_HASH_SALT                     (secret; salts the rate-limit fingerprints — unset falls back to the public project URL and logs it)
 ```
 
 **Rotating a Supabase key requires a redeploy with the build cache OFF.** A

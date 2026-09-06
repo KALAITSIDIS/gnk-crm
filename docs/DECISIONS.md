@@ -3,6 +3,59 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-06 · T-forwarder-proof (no migration) — the site proves it is the
+  forwarder; the fingerprint salt is a secret.** Audit A02, Next #1 of
+  `AUDIT_2026-09-06_RESPONSE.md`. Two facts were pretending. The enquiry door
+  honoured `x-gnk-visitor-ip` from anyone: forging it never lifted the
+  transport ceiling of 60, but it bought a fresh personal budget of five per
+  value — one address as many times as it liked. And the rate-limit
+  fingerprint was salted with the public project URL, so a fingerprint plus
+  the URL named the address after an IPv4 sweep, while the site's legal page
+  said "it identifies nobody".
+
+  (1) **A static shared secret, not a signature.** The site sends
+  `x-gnk-forward-key` (its `CRM_FORWARD_KEY`); this side compares it with
+  `ENQUIRY_FORWARD_KEY` in constant time over sha256 digests
+  (`lib/services/forwarder.ts`). The audit proposed an HMAC over timestamp and
+  body. There is no capture point between two Vercel deployments over TLS,
+  and a replayed enquiry is a duplicate lead, not a breach — the response's
+  §2 said so; this is that decision made. The key decides ONE thing: whether
+  the visitor header is believed. It opens nothing.
+  (2) **Nothing trusted when unset — never everything.** No key on this
+  side, or the wrong one, means the caller is metered as itself, tightly.
+  For the site that is the pre-fix failure (every visitor sharing five), so
+  the site's README names its variable and says what unset means.
+  (3) **`budgetsFor` stays pure** and takes the verdict as a boolean. The
+  table is pinned in its test — unsigned ⇒ [5]; forged ⇒ [5]; signed ⇒
+  [visitor 5, transport 60]; signed-and-equal ⇒ one budget of 5 — and
+  `tests/unit/public-enquiries-route.test.ts` runs the real route over a faked
+  admin client to pin the header→trust binding the pure function cannot see
+  (429 on the visitor's budget before any write; 202 carries exactly what was
+  sent). Mutation-proven three ways here, two on the site.
+  (4) **`IP_HASH_SALT`**, server-only. Unset falls back to the project URL so
+  local and CI keep counting, and a production build logs the fallback once at
+  error level. Rotating it resets 15-minute counters and nothing else.
+  (5) **Both secrets were generated locally on 2026-09-06**, set as Hidden in
+  the production environment of both Vercel projects through the CLI — values
+  never in chat and never in a repo; this one is public — and recorded in
+  the operator's local secret file beside the deploy tokens.
+  (6) **The site's promise changed with its code.** README's "It holds no
+  credentials" became "It holds one secret, and that secret grants nothing",
+  `lib/env.test.ts` allows exactly that one secret-shaped name, and the legal
+  page's "It identifies nobody" became "made with a key that nobody outside
+  our own system holds" — what is true, and no more.
+
+  **Deploy order.** Env first (done before either merge), CRM second, site
+  third: between the two deploys the site sends no key and is metered as one
+  visitor — minutes, on a site with no traffic yet, recorded rather than
+  engineered around.
+
+  **Not verified live by posting.** A real POST writes a lead, and the
+  honeypot path would spend production counter budget to re-prove what the
+  route test proves. Live verification is both deployments READY with the
+  variables present and `OPTIONS /api/public/enquiries` 204; the next genuine
+  enquiry through the site is the first real proof.
+
 - **2026-09-06 · T-etag-from-body (no migration) — the feed's validator is a
   digest of the bytes it sends; SQL's snapshot stays as the name of the book.**
   Audit A10, Now #7 of `AUDIT_2026-09-06_RESPONSE.md`. `/api/public/listings`
