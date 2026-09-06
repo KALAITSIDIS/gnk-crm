@@ -267,6 +267,7 @@
     "contactLinked": "Contact linked",
     "contactLinkedName": "Contact linked — {name}",
     "corrected": "Lead corrected",
+    "redacted": "Enquiry redacted at the person's request",
     "correctedReopened": "Lead corrected — reopened",
     "correctedResetResponse": "Lead corrected — first-response reset",
     "correctedBoth": "Lead corrected — reopened, first-response reset",

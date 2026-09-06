@@ -267,6 +267,7 @@
     "contactLinked": "Контакт привязан",
     "contactLinkedName": "Контакт привязан — {name}",
     "corrected": "Лид исправлен",
+    "redacted": "Обращение обезличено по просьбе человека",
     "correctedReopened": "Лид исправлен — переоткрыт",
     "correctedResetResponse": "Лид исправлен — сброс первого ответа",
     "correctedBoth": "Лид исправлен — переоткрыт, сброс первого ответа",

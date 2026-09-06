@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import type { Database } from "@/lib/supabase/database.types";
 import { getCurrentProfile, type CurrentProfile } from "@/lib/services/auth";
+import { LEAD_MESSAGE_REDACTED } from "@/lib/services/erasure";
 import { logEvent } from "@/lib/services/events";
 import { createClient } from "@/lib/supabase/server";
 import { checkContactDuplicate, type DuplicateMatch } from "@/lib/actions/contacts";
@@ -302,6 +303,48 @@ export async function correctLead(
     entityId: leadId,
     eventType: "corrected",
     payload: { reset_response: Boolean(opts.resetResponse), reopened },
+  });
+  revalidatePath("/leads");
+}
+
+/**
+ * Article 17 for an enquiry nobody has linked to a contact.
+ *
+ * Contact erasure redacts every lead the contact holds — and reaches nothing
+ * else. A website enquiry arrives with `contact_id` null and the person's
+ * name, e-mail and phone inside `message`; until the desk links a contact it
+ * is invisible to erasure (0084 recorded that as a residual). Leads have no
+ * delete policy and no sweep, while the site promises deletion on request.
+ * This is that request, for that lead: the message becomes the same marker
+ * erasure writes, the shape-only `criteria` stays, and the event says only
+ * that it happened. Admin-only, irreversible. A linked lead is refused here
+ * and pointed at contact erasure, which is the one that knows about AML.
+ */
+export async function redactLead(leadId: string): Promise<void> {
+  const { supabase, profile, lead } = await getLead(leadId);
+  if (profile.role !== "admin") throw new Error("Admins only.");
+  if (lead.contact_id) {
+    throw new Error(
+      "This enquiry is linked to a contact — erase the contact instead; that redacts every lead it holds.",
+    );
+  }
+  if (lead.message === LEAD_MESSAGE_REDACTED) throw new Error("Already redacted.");
+
+  const { data, error } = await supabase
+    .from("leads")
+    .update({ message: LEAD_MESSAGE_REDACTED })
+    .eq("id", leadId)
+    .select("id");
+  if (error || !data?.length) throw new Error(error?.message ?? "Redaction blocked");
+
+  await logEvent(supabase, {
+    orgId: profile.orgId,
+    actorId: profile.id,
+    entityType: "lead",
+    entityId: leadId,
+    eventType: "redacted",
+    // nothing of what was redacted — an event cannot be erased
+    payload: {},
   });
   revalidatePath("/leads");
 }

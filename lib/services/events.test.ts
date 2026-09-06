@@ -119,6 +119,12 @@ describe("describeEvent registry (T3.5) — English parity", () => {
     );
   });
 
+  it("renders a redacted enquiry without any of what was redacted", () => {
+    expect(describeEvent(ev("redacted", {}, "lead"), t)).toBe(
+      "Enquiry redacted at the person's request",
+    );
+  });
+
   it("renders the corrected lead combinations", () => {
     expect(describeEvent(ev("corrected", {}, "lead"), t)).toBe("Lead corrected");
     expect(describeEvent(ev("corrected", { reopened: true }, "lead"), t)).toBe(

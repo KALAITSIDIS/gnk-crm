@@ -1,5 +1,6 @@
 "use server";
 
+import { removeObjectsBestEffort } from "@/lib/services/storage";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getCurrentProfile } from "@/lib/services/auth";
@@ -464,7 +465,7 @@ export async function uploadMandateDocument(
     .single();
   if (docErr) {
     // the row was rejected — don't orphan the uploaded object
-    await admin.storage.from("documents").remove([path]);
+    await removeObjectsBestEffort(admin.storage, "documents", [path], "mandate document: cleanup after a rejected row");
     return { error: docErr.message, savedAt: null };
   }
 

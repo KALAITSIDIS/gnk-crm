@@ -1,5 +1,6 @@
 "use server";
 
+import { removeObjectsBestEffort } from "@/lib/services/storage";
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { getCurrentProfile } from "@/lib/services/auth";
@@ -138,10 +139,8 @@ export async function uploadPropertyMedia(
       .single();
     if (insertErr) {
       // the row was rejected (RLS/validation) — don't strand the uploaded files
-      await admin.storage
-        .from("media")
-        .remove([renditionPath("thumb"), renditionPath("card"), renditionPath("full")]);
-      await admin.storage.from("documents").remove([originalPath]);
+      await removeObjectsBestEffort(admin.storage, "media", [renditionPath("thumb"), renditionPath("card"), renditionPath("full")], "media upload: cleanup after a rejected row");
+      await removeObjectsBestEffort(admin.storage, "documents", [originalPath], "media upload: cleanup after a rejected row");
       return {
         error: insertErr.message.includes("row-level security")
           ? "Upload not allowed — this property isn't assigned to you."
@@ -392,11 +391,11 @@ export async function deleteMediaBulk(
   const mediaPaths = deletedRows
     .flatMap((m) => [m.path_thumb, m.path_card, m.path_full])
     .filter((p): p is string => Boolean(p));
-  if (mediaPaths.length) await admin.storage.from("media").remove(mediaPaths);
+  await removeObjectsBestEffort(admin.storage, "media", mediaPaths, "media bulk delete: renditions");
   const originalPaths = deletedRows
     .map((m) => m.storage_path_original)
     .filter((p): p is string => Boolean(p));
-  if (originalPaths.length) await admin.storage.from("documents").remove(originalPaths);
+  await removeObjectsBestEffort(admin.storage, "documents", originalPaths, "media bulk delete: originals");
 
   // keep a cover: promote the first remaining PHOTO if the cover was deleted
   // (MEDIA-K: a floor plan must never become the cover — see the upload path)
