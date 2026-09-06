@@ -3,6 +3,50 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-06 · T-etag-from-body (no migration) — the feed's validator is a
+  digest of the bytes it sends; SQL's snapshot stays as the name of the book.**
+  Audit A10, Now #7 of `AUDIT_2026-09-06_RESPONSE.md`. `/api/public/listings`
+  answered If-None-Match from `public_listings_etag` alone, and twice a change
+  to the body slipped past it: alt text (0086, fixed in SQL) and an area rename
+  (T-deferred-sweep, recorded for "the next migration" as a fourth hashed
+  segment plus RLS test 57). Each fix taught the hash one more input; the class
+  stayed open because the validator and the body were two facts.
+
+  Now the route serialises the response ONCE, `feedEtag(snapshot, body)`
+  (`lib/services/feed-etag.ts`, the feed path's only `node:crypto` import)
+  puts sha256 of those bytes in the second segment, and the same string goes
+  out as the body. Any change to what the feed says moves the ETag whether or
+  not SQL saw it coming; two offsets never share one because limit and offset
+  are in the bytes. `tests/unit/public-listings-route.test.ts` runs the REAL
+  route over a faked client: the second segment is sha256 of `res.text()`,
+  304 with no body on a match, 200 on a stale one, moves on an alt edit / an
+  area rename / a withdrawn listing with the snapshot held still, holds still
+  otherwise, two pages share the snapshot segment and never the validator, 429
+  before any feed query, 503 on a snapshot error. Mutation-proven four ways
+  (snapshot-only validator; digest over the pre-absolutised rows; 304 on the
+  snapshot segment alone; feedEtag ignoring the body) inside one `finally`.
+
+  **Why `public_listings_etag` was not dropped, and the round-trip count did
+  not fall.** The plan said "three round trips to two". It cannot: gnk-web
+  (`lib/crm.ts readAllPages`, Now #5) reads pages one request at a time and
+  compares the ETag's first `-` segment across them to notice the feed moving
+  underneath a multi-page read. A per-page digest cannot name the book — two
+  pages of one snapshot have two bodies — so the snapshot segment stays, and
+  it stays SQL's. It is no longer consulted for freshness; its one job is that
+  cross-page check, for which count | max(updated_at) | photo fingerprint is
+  fit (a rename between pages moves no listing across a page boundary). A 304
+  now costs the feed query it used to skip; the only consumer never sends
+  If-None-Match (it revalidates on time). The function, its grants in
+  `verify-restore.sql` and RLS tests 43/56 are untouched. The "next migration
+  must carry" spec under T-deferred-sweep is struck, not built.
+
+  **The lesson, again.** 0073 wrote "every media mutation moves it"; 0086
+  found the sixth; the sweep found a seventh one join further out. A validator
+  computed from anything other than the thing it validates is a claim that has
+  to be re-proven after every feature; one computed from the bytes needs no
+  proof. Same shape as `isContainer`, `FEED_COLUMNS satisfies` and the
+  palette-parity test: bind the source, do not maintain the copy.
+
 - **2026-09-06 · T-enquiry-door (migration 0087) — the route is the only door,
   and the database now says so.** The first item of the audit response
   (docs/AUDIT_2026-09-06_RESPONSE.md, Now #2), closing A01 and A05 with one
@@ -89,7 +133,11 @@ silent. Format: date · task · decision · rationale.
   generated types with a compile-time completeness check (0085's own block
   names 14); test 49 binds the image keys to `FeedImage` the same way.
 
-  **Recorded, not fixed — the next migration must carry it.** Renaming an
+  **Recorded, not fixed — the next migration must carry it.** *(Discharged
+  2026-09-06 without SQL — T-etag-from-body above: the route's validator is
+  now a digest of the bytes it sends. The spec below was not built and RLS
+  test 57 was not written; the paragraph stays as the record of the gap.)*
+  Renaming an
   area or district changes the feed body (0085 emits `d.name`, `a.name`) and
   moves nothing in `public_listings_etag`: `renameArea` writes `areas.name`
   only, `areas`/`districts` have no `updated_at` and no trigger, and 0086's
