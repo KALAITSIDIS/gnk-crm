@@ -23,6 +23,8 @@ export type PropertyActionState = { error: string | null };
 export type UpdateSectionState = {
   error: string | null;
   savedAt: number | null;
+  /** set with savedAt when the write committed but its event did not (optimistic-save.ts) */
+  notice?: string | null;
 };
 
 /**
@@ -358,6 +360,16 @@ export async function updatePropertySection(
     .eq("id", propertyId)
     .maybeSingle();
   if (fetchErr || !current) return { error: "Property not found", savedAt: null };
+
+  // A06: the form carries the row's updated_at as rendered. If the row has
+  // moved since, this save would silently undo somebody else's — refused
+  // here, before any of the work below, and again on the UPDATE itself.
+  const { expectedUpdatedAt, staleMessage, NOT_RECORDED_NOTICE } = await import(
+    "@/lib/services/optimistic-save"
+  );
+  const expected = expectedUpdatedAt(formData);
+  const staleAtRead = staleMessage(expected, current.updated_at);
+  if (staleAtRead) return { error: staleAtRead, savedAt: null };
 
   const raw = Object.fromEntries(formData.entries());
   let updates: Database["public"]["Tables"]["properties"]["Update"];
@@ -701,13 +713,25 @@ export async function updatePropertySection(
   // RLS filters a forbidden update to 0 rows without an error — the returned
   // ids are the proof a row actually changed. Without this, agents saving a
   // property that isn't theirs got a "Saved" toast plus a phantom event.
-  const { data: updatedRows, error: updateErr } = await supabase
-    .from("properties")
-    .update(updates)
-    .eq("id", propertyId)
-    .select("id");
+  // Predicated on the expected updated_at too (A06): the read above closed
+  // the window between render and submit; this closes the one between that
+  // read and the write.
+  let write = supabase.from("properties").update(updates).eq("id", propertyId);
+  if (expected) write = write.eq("updated_at", expected);
+  const { data: updatedRows, error: updateErr } = await write.select("id");
   if (updateErr) return { error: updateErr.message, savedAt: null };
   if (!updatedRows || updatedRows.length === 0) {
+    // Zero rows is either RLS or the row moving underneath us. Read the
+    // timestamp once more to say which — the two need different actions.
+    if (expected) {
+      const { data: now } = await supabase
+        .from("properties")
+        .select("updated_at")
+        .eq("id", propertyId)
+        .maybeSingle();
+      const staleAtWrite = staleMessage(expected, now?.updated_at);
+      if (staleAtWrite) return { error: staleAtWrite, savedAt: null };
+    }
     return {
       error:
         "Nothing was saved — this property isn't assigned to you. Admins and listing managers can edit any property.",
@@ -715,11 +739,27 @@ export async function updatePropertySection(
     };
   }
 
+  // From here the write has committed. An event insert that fails now is the
+  // shape DECISIONS T-event-integrity describes — a write with no record —
+  // and this action is its fifteenth accepted instance, accepted because it
+  // says so: the save is reported as saved, with a notice, never as failed
+  // (which would invite a retry of a write that already happened) and never
+  // as a clean save (which would hide the hole in the timeline).
+  let recorded = true;
+  const record = async (params: Parameters<typeof logEvent>[1]) => {
+    try {
+      await logEvent(supabase, params);
+    } catch (err) {
+      recorded = false;
+      console.error("[updatePropertySection] saved but not recorded", { propertyId, section, err });
+    }
+  };
+
   // The override goes in FIRST, and only now that the publish it authorised
   // has actually changed a row: it is the authorisation for the write above,
   // and it must never stand alone (see where it is captured).
   if (overrideToLog) {
-    await logEvent(supabase, {
+    await record({
       orgId: profile.orgId,
       actorId: profile.id,
       entityType: "property",
@@ -729,7 +769,7 @@ export async function updatePropertySection(
     });
   }
 
-  await logEvent(supabase, {
+  await record({
     orgId: profile.orgId,
     actorId: profile.id,
     entityType: "property",
@@ -742,7 +782,7 @@ export async function updatePropertySection(
   // own event (the publish_override idiom), so "who put a sold listing back
   // on the market" is one query, not a diff excavation.
   if (changed.status && isStatusRegression(String(changed.status.from), String(changed.status.to))) {
-    await logEvent(supabase, {
+    await record({
       orgId: profile.orgId,
       actorId: profile.id,
       entityType: "property",
@@ -863,7 +903,7 @@ export async function updatePropertySection(
 
   revalidatePath(`/properties/${propertyId}`);
   revalidatePath("/properties");
-  return { error: null, savedAt: Date.now() };
+  return { error: null, savedAt: Date.now(), notice: recorded ? null : NOT_RECORDED_NOTICE };
 }
 
 /**
