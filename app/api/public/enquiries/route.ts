@@ -2,6 +2,7 @@ import { after, NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { callerIpHash } from "@/lib/services/caller-ip";
 import { budgetsFor } from "@/lib/services/enquiry-budget";
+import { isTrustedForwarder } from "@/lib/services/forwarder";
 import { enquiryCompleteness, publicEnquirySchema } from "@/lib/validators/public-enquiry";
 import { sendEnquiryAlert } from "@/lib/services/enquiry-alert";
 
@@ -30,12 +31,21 @@ import { sendEnquiryAlert } from "@/lib/services/enquiry-alert";
 export const dynamic = "force-dynamic";
 
 /**
- * Set by our own marketing site, which posts on a visitor's behalf. Trusted
+ * Set by our own marketing site, which posts on a visitor's behalf. Honoured
+ * only when the site has proved it is the sender (the key below), and then
  * only to make the limit STRICTER for that visitor, never to lift it — the
  * reasoning, the two limits and the no-double-count rule all live in
  * lib/services/enquiry-budget.ts, where they can be tested.
  */
 const VISITOR_IP_HEADER = "x-gnk-visitor-ip";
+
+/**
+ * The site's proof: a static shared secret, `ENQUIRY_FORWARD_KEY` here and
+ * `CRM_FORWARD_KEY` there, compared in constant time (lib/services/forwarder.ts).
+ * It decides ONE thing — whether the visitor header is believed. Without it,
+ * or with the wrong one, the caller is metered as itself; the door stays open.
+ */
+const FORWARD_KEY_HEADER = "x-gnk-forward-key";
 
 const CORS = {
   // A public contact form: any site may post one, exactly as any site may
@@ -79,6 +89,7 @@ export async function POST(request: NextRequest) {
   const budgets = budgetsFor(
     await callerIpHash(),
     request.headers.get(VISITOR_IP_HEADER),
+    isTrustedForwarder(request.headers.get(FORWARD_KEY_HEADER), process.env.ENQUIRY_FORWARD_KEY),
   );
   for (const b of budgets) {
     const check = await supabase.rpc("note_public_enquiry_hit", {
