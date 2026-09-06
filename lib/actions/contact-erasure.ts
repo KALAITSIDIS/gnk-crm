@@ -3,11 +3,19 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getCurrentProfile } from "@/lib/services/auth";
+import { LEAD_MESSAGE_REDACTED } from "@/lib/services/erasure";
+import { runContactErasure, type ErasureSteps } from "@/lib/services/erasure-run";
 import { logEvent } from "@/lib/services/events";
+import { removeObjectsOrFail } from "@/lib/services/storage";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
 export type ErasureState = { error: string | null; erasedAt: string | null };
+
+/** Turn a supabase result's error into a thrown one, so a step never half-succeeds silently. */
+function fail(r: { error: { message: string } | null }): void {
+  if (r.error) throw new Error(r.error.message);
+}
 
 /**
  * GDPR Article 17 erasure for a contact.
@@ -20,6 +28,14 @@ export type ErasureState = { error: string | null; erasedAt: string | null };
  * Admin-only, enforced HERE: the contacts UPDATE policy also admits the
  * assigned/creating agent, so hiding the button would not be a control.
  * Irreversible by design.
+ *
+ * THE ORDER AND THE FAILURE SEMANTICS LIVE IN lib/services/erasure-run.ts,
+ * where they are tested without a database. This file only says how each step
+ * touches Supabase. Until 2026-09-06 the contact patch went first and was the
+ * only checked write; everything after it discarded its error, a failed
+ * AML-basis read computed "no relationship" and destroyed documents the law
+ * requires the firm to keep, and a half-finished erasure could never be run
+ * again (audit A04).
  */
 export async function eraseContactPersonalData(
   contactId: string,
@@ -39,151 +55,157 @@ export async function eraseContactPersonalData(
     .eq("id", contactId)
     .maybeSingle();
   if (!contact) return { error: "Contact not found", erasedAt: null };
-  if (contact.erased_at) {
-    return { error: "This contact's personal data has already been erased.", erasedAt: null };
-  }
   // last stop before an irreversible write
   if (confirmName.trim() !== (contact.display_name ?? "").trim()) {
     return { error: "The typed name does not match this contact.", erasedAt: null };
   }
 
-  const { planContactErasure, buildErasureEventPayload, hasAmlRelationship, LEAD_MESSAGE_REDACTED } =
-    await import("@/lib/services/erasure");
+  const admin = createAdminClient();
 
-  // Does a customer due-diligence relationship exist? Counts are exact and
-  // read through the user's client, so RLS scoping applies. Viewing slips are
-  // reached through the contact's viewings — slips carry no contact_id.
-  // CY-03: the same reads now also carry the relationship END signals
-  // (won/lost, slip signature, mandate expiry) so the 5-year AML clock can
-  // anchor where the duty actually starts — rows instead of head-counts.
-  const [dealsRes, viewingsRes, mandatesRes] = await Promise.all([
-    supabase
-      .from("deals")
-      .select("id, won_at, lost_at")
-      .or(`buyer_contact_id.eq.${contactId},seller_contact_id.eq.${contactId}`),
-    supabase.from("viewings").select("id").eq("contact_id", contactId),
-    supabase
-      .from("mandates_safe")
-      .select("id, expiry_date")
-      .eq("owner_contact_id", contactId),
-  ]);
+  const steps: ErasureSteps = {
+    // Does a customer due-diligence relationship exist? Reads go through the
+    // user's client, so RLS scoping applies. Viewing slips are reached through
+    // the contact's viewings — slips carry no contact_id. CY-03: the same reads
+    // carry the relationship END signals so the 5-year AML clock can anchor.
+    // EVERY read is checked: a failed read is an error, never "no basis".
+    async readBasis() {
+      const [dealsRes, viewingsRes, mandatesRes] = await Promise.all([
+        supabase
+          .from("deals")
+          .select("id, won_at, lost_at")
+          .or(`buyer_contact_id.eq.${contactId},seller_contact_id.eq.${contactId}`),
+        supabase.from("viewings").select("id").eq("contact_id", contactId),
+        supabase.from("mandates_safe").select("id, expiry_date").eq("owner_contact_id", contactId),
+      ]);
+      fail(dealsRes);
+      fail(viewingsRes);
+      fail(mandatesRes);
+      const viewingIds = (viewingsRes.data ?? []).map((v) => v.id);
+      let slipRows: { signed_at: string | null }[] = [];
+      if (viewingIds.length > 0) {
+        const slipRes = await supabase
+          .from("viewing_slips")
+          .select("signed_at")
+          .in("viewing_id", viewingIds);
+        fail(slipRes);
+        slipRows = slipRes.data ?? [];
+      }
+      return {
+        dealCount: (dealsRes.data ?? []).length,
+        viewingSlipCount: slipRows.length,
+        mandateCount: (mandatesRes.data ?? []).length,
+        relationshipEndCandidates: [
+          ...(dealsRes.data ?? []).flatMap((d) => [d.won_at, d.lost_at]),
+          ...slipRows.map((v) => v.signed_at),
+          ...(mandatesRes.data ?? []).map((m) => m.expiry_date),
+        ],
+      };
+    },
 
-  const viewingIds = (viewingsRes.data ?? []).map((v) => v.id);
-  let slipRows: { signed_at: string | null }[] = [];
-  if (viewingIds.length > 0) {
-    const slipRes = await supabase
-      .from("viewing_slips")
-      .select("signed_at")
-      .in("viewing_id", viewingIds);
-    slipRows = slipRes.data ?? [];
-  }
+    async hasErasedEvent() {
+      const r = await supabase
+        .from("events")
+        .select("id")
+        .eq("entity_type", "contact")
+        .eq("entity_id", contactId)
+        .eq("event_type", "erased")
+        .limit(1);
+      fail(r);
+      return (r.data ?? []).length > 0;
+    },
 
-  const amlBasis = hasAmlRelationship({
-    dealCount: (dealsRes.data ?? []).length,
-    viewingSlipCount: slipRows.length,
-    mandateCount: (mandatesRes.data ?? []).length,
-  });
+    // The person's own words. Lead messages are ordinary columns, not
+    // hash-chained event payloads, so they can safely be rewritten. Only the
+    // ones not already redacted, so a re-run counts what it did, not what
+    // the first run did.
+    async redactLeads() {
+      const r = await supabase
+        .from("leads")
+        .update({ message: LEAD_MESSAGE_REDACTED })
+        .eq("contact_id", contactId)
+        .not("message", "is", null)
+        .neq("message", LEAD_MESSAGE_REDACTED)
+        .select("id");
+      fail(r);
+      return r.data?.length ?? 0;
+    },
 
-  const now = new Date().toISOString();
-  const plan = planContactErasure({
-    amlBasis,
+    // Saved searches — budget, areas, bedrooms — are personal data (0043 moved
+    // them out of contacts.preferences and erasure had not followed). Deleted
+    // rather than blanked: an emptied search matches nothing forever.
+    async deleteRequirements() {
+      const r = await supabase
+        .from("buyer_requirements")
+        .delete()
+        .eq("contact_id", contactId)
+        .select("id");
+      fail(r);
+      return r.data?.length ?? 0;
+    },
+
+    async listDocuments() {
+      const r = await supabase
+        .from("documents")
+        .select("id, storage_path")
+        .eq("entity_type", "contact")
+        .eq("entity_id", contactId);
+      fail(r);
+      return r.data ?? [];
+    },
+
+    // Proven, not assumed: every path must be absent afterwards.
+    async removeObjects(paths) {
+      await removeObjectsOrFail(admin.storage, "documents", paths);
+    },
+
+    async deleteDocumentRows() {
+      const r = await supabase
+        .from("documents")
+        .delete()
+        .eq("entity_type", "contact")
+        .eq("entity_id", contactId)
+        .select("id");
+      fail(r);
+      return r.data?.length ?? 0;
+    },
+
+    // Row-count guarded: an RLS-filtered no-op must not be reported as done.
+    async patchContact(patch) {
+      const r = await supabase
+        .from("contacts")
+        .update(patch)
+        .eq("id", contactId)
+        .is("erased_at", null)
+        .select("id");
+      fail(r);
+      return (r.data ?? []).length > 0;
+    },
+
+    async writeEvent(payload) {
+      await logEvent(supabase, {
+        orgId: contact.org_id,
+        actorId: profile.id,
+        entityType: "contact",
+        entityId: contactId,
+        eventType: "erased",
+        payload: JSON.parse(JSON.stringify(payload)),
+      });
+    },
+  };
+
+  const result = await runContactErasure({
+    alreadyErasedAt: contact.erased_at,
     actorId: profile.id,
-    now,
-    relationshipEndCandidates: [
-      ...(dealsRes.data ?? []).flatMap((d) => [d.won_at, d.lost_at]),
-      ...slipRows.map((v) => v.signed_at),
-      ...(mandatesRes.data ?? []).map((m) => m.expiry_date),
-    ],
+    now: new Date().toISOString(),
+    steps,
   });
 
-  // 1. Redact the contact row. Row-count guarded: an RLS-filtered no-op must
-  //    not go on to delete files and write an event claiming success.
-  const { data: updated, error: updateErr } = await supabase
-    .from("contacts")
-    .update(plan.patch)
-    .eq("id", contactId)
-    .is("erased_at", null)
-    .select("id");
-  if (updateErr) return { error: updateErr.message, erasedAt: null };
-  if (!updated || updated.length === 0) {
-    return { error: "You don't have permission to erase this contact.", erasedAt: null };
+  if (result.erasedAt) {
+    revalidatePath(`/contacts/${contactId}`);
+    revalidatePath("/contacts");
+    revalidatePath("/leads");
   }
-
-  // 2. Redact the person's own words. Lead messages are ordinary columns, not
-  //    hash-chained event payloads, so they can safely be rewritten.
-  const { data: redactedLeads } = await supabase
-    .from("leads")
-    .update({ message: LEAD_MESSAGE_REDACTED })
-    .eq("contact_id", contactId)
-    .not("message", "is", null)
-    .select("id");
-  const leadsRedacted = redactedLeads?.length ?? 0;
-
-  // 3. Documents: destroyed only when no AML basis exists to keep them.
-  let documentsDeleted = 0;
-  let documentsRetained = 0;
-  const { data: docs } = await supabase
-    .from("documents")
-    .select("id, storage_path")
-    .eq("entity_type", "contact")
-    .eq("entity_id", contactId);
-
-  if (plan.deleteDocuments && docs && docs.length > 0) {
-    const { data: deletedRows } = await supabase
-      .from("documents")
-      .delete()
-      .eq("entity_type", "contact")
-      .eq("entity_id", contactId)
-      .select("id, storage_path");
-    documentsDeleted = deletedRows?.length ?? 0;
-    // only remove files whose row the delete actually returned, so an
-    // RLS-filtered no-op cannot strand objects in the bucket
-    const paths = (deletedRows ?? []).map((d) => d.storage_path).filter(Boolean);
-    if (paths.length > 0) {
-      await createAdminClient().storage.from("documents").remove(paths);
-    }
-    documentsRetained = (docs.length ?? 0) - documentsDeleted;
-  } else {
-    documentsRetained = docs?.length ?? 0;
-  }
-
-  // 4. Saved searches. What someone is looking for — budget, areas, bedrooms —
-  //    is personal data, and before 0055 it lived in `contacts.preferences`
-  //    and was cleared by the patch above. 0043 moved it to rows and erasure
-  //    was never updated to follow, so it had been surviving Article 17.
-  //    Deleted rather than blanked: a saved search with every field emptied is
-  //    not a record of anything, and it would keep matching nothing forever.
-  const { data: deletedRequirements } = await supabase
-    .from("buyer_requirements")
-    .delete()
-    .eq("contact_id", contactId)
-    .select("id");
-  const requirementsDeleted = deletedRequirements?.length ?? 0;
-
-  await logEvent(supabase, {
-    orgId: contact.org_id,
-    actorId: profile.id,
-    entityType: "contact",
-    entityId: contactId,
-    eventType: "erased",
-    payload: JSON.parse(
-      JSON.stringify(
-        buildErasureEventPayload({
-          amlBasis,
-          retentionUntil: plan.retentionUntil,
-          leadsRedacted,
-          requirementsDeleted,
-          documentsDeleted,
-          documentsRetained,
-        }),
-      ),
-    ),
-  });
-
-  revalidatePath(`/contacts/${contactId}`);
-  revalidatePath("/contacts");
-  revalidatePath("/leads");
-  return { error: null, erasedAt: now };
+  return result;
 }
 
 export type RetentionPurgeState = { error: string | null; purgedAt: string | null };
@@ -202,6 +224,11 @@ export type RetentionPurgeState = { error: string | null; purgedAt: string | nul
  *
  * Admin-only, enforced here: the contacts UPDATE policy also admits the
  * assigned/creating agent. Irreversible.
+ *
+ * Objects BEFORE rows, and proven (2026-09-06): a storage failure leaves the
+ * rows, which are what a retry uses to find the objects again. The old order
+ * deleted rows first and ignored the storage result, so a failed removal left
+ * orphaned files nobody could find.
  */
 export async function purgeExpiredRetention(contactId: string): Promise<RetentionPurgeState> {
   if (!z.guid().safeParse(contactId).success) {
@@ -233,20 +260,33 @@ export async function purgeExpiredRetention(contactId: string): Promise<Retentio
     };
   }
 
-  // Documents first: only files whose row the delete actually returned are
-  // removed, so an RLS-filtered no-op cannot strand objects in the bucket.
+  const { data: docs, error: listErr } = await supabase
+    .from("documents")
+    .select("id, storage_path")
+    .eq("entity_type", "contact")
+    .eq("entity_id", contactId);
+  if (listErr) return { error: listErr.message, purgedAt: null };
+  const paths = (docs ?? []).map((d) => d.storage_path).filter((p): p is string => Boolean(p));
+  try {
+    await removeObjectsOrFail(createAdminClient().storage, "documents", paths);
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    return { error: `The retained files were NOT destroyed: ${why}. Nothing was changed — try again.`, purgedAt: null };
+  }
+
   const { data: deletedRows, error: deleteErr } = await supabase
     .from("documents")
     .delete()
     .eq("entity_type", "contact")
     .eq("entity_id", contactId)
-    .select("id, storage_path");
-  if (deleteErr) return { error: deleteErr.message, purgedAt: null };
-  const documentsDestroyed = deletedRows?.length ?? 0;
-  const paths = (deletedRows ?? []).map((d) => d.storage_path).filter(Boolean);
-  if (paths.length > 0) {
-    await createAdminClient().storage.from("documents").remove(paths);
+    .select("id");
+  if (deleteErr) {
+    return {
+      error: `The files are gone but their records were not deleted: ${deleteErr.message}. Run it again to finish.`,
+      purgedAt: null,
+    };
   }
+  const documentsDestroyed = deletedRows?.length ?? 0;
 
   // Clear the marker so the row leaves the retention surface. Row-count guarded
   // and re-checked against retention_until so two concurrent purges cannot both

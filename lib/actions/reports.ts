@@ -1,5 +1,6 @@
 "use server";
 
+import { removeObjectsBestEffort } from "@/lib/services/storage";
 import { revalidatePath } from "next/cache";
 import { getTranslations } from "next-intl/server";
 import { z } from "zod";
@@ -122,7 +123,7 @@ export async function generateEvidenceReport(
       .single());
   }
   if (docErr || !doc) {
-    await admin.storage.from("documents").remove([path]); // no orphaned file
+    await removeObjectsBestEffort(admin.storage, "documents", [path], "report: cleanup after a rejected row"); // no orphaned file
     return fail(docErr?.message ?? t("storeFailed"));
   }
 
@@ -146,7 +147,7 @@ export async function generateEvidenceReport(
   } catch (e) {
     // guardrail 1: no stored report without its event — roll the report back
     await admin.from("documents").delete().eq("id", doc.id);
-    await admin.storage.from("documents").remove([path]);
+    await removeObjectsBestEffort(admin.storage, "documents", [path], "report delete");
     return fail(t("rolledBack", { message: (e as Error).message }));
   }
 

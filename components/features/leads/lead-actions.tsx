@@ -4,6 +4,7 @@ import { useActionState, useEffect, useRef, useState, useTransition } from "reac
 import {
   ArrowRightCircle,
   Check,
+  Eraser,
   Hand,
   MessageSquarePlus,
   Phone,
@@ -23,6 +24,7 @@ import {
   markCalled,
   markContacted,
   reassignLead,
+  redactLead,
   type LeadActionState,
 } from "@/lib/actions/leads";
 import { EntityPicker } from "@/components/features/shared/entity-picker";
@@ -62,6 +64,7 @@ export function LeadRowActions({
   hasContact,
   isAdmin,
   status,
+  isRedacted,
 }: {
   leadId: string;
   isMine: boolean;
@@ -71,6 +74,7 @@ export function LeadRowActions({
   hasContact: boolean;
   isAdmin: boolean;
   status: string;
+  isRedacted: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
   const act = (fn: () => Promise<void>, success: string) =>
@@ -83,17 +87,45 @@ export function LeadRowActions({
       }
     });
 
+  // Article 17 for an enquiry nobody has linked: a linked lead is erased
+  // through its contact. Offered on closed leads too — a spam or lost
+  // enquiry still holds the person's details.
+  const redact =
+    isAdmin && !hasContact && !isRedacted ? (
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-7 text-xs"
+        disabled={isPending}
+        title="Replaces the person's message and contact details. Cannot be undone."
+        onClick={() => {
+          if (
+            !confirm(
+              "Redact this enquiry? The person's message and contact details are replaced and cannot be recovered.",
+            )
+          )
+            return;
+          act(() => redactLead(leadId), "Enquiry redacted");
+        }}
+      >
+        <Eraser className="size-3.5" /> Redact
+      </Button>
+    ) : null;
+
   // Closed leads carry no forward actions, but an admin can still reopen a
-  // lost/spam lead that was closed by mistake.
+  // lost/spam lead that was closed by mistake — and redact it.
   if (!isOpen) {
-    if (isAdmin && (status === "lost" || status === "spam")) {
-      return (
-        <div className="flex items-center gap-1">
-          <CorrectLeadDialog leadId={leadId} canReopen canReset={false} />
-        </div>
-      );
-    }
-    return null;
+    const correct =
+      isAdmin && (status === "lost" || status === "spam") ? (
+        <CorrectLeadDialog leadId={leadId} canReopen canReset={false} />
+      ) : null;
+    if (!correct && !redact) return null;
+    return (
+      <div className="flex items-center gap-1">
+        {correct}
+        {redact}
+      </div>
+    );
   }
 
   // Doc 04 lockdown, mirrored in the UI: only the assigned agent, an admin, or
@@ -146,6 +178,7 @@ export function LeadRowActions({
         <CorrectLeadDialog leadId={leadId} canReopen={false} canReset />
       ) : null}
       {canWork ? <CloseLeadDialog leadId={leadId} /> : null}
+      {redact}
     </div>
   );
 }

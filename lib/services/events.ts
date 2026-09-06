@@ -198,6 +198,9 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
     if (reset) return t("correctedResetResponse");
     return t("corrected");
   },
+  // Article 17 on an unlinked enquiry — the line says only that it happened;
+  // what was redacted is gone, and an event cannot be erased
+  redacted: (_p, t) => t("redacted"),
   contacted: (_p, t) => t("contacted"),
   called: (_p, t) => t("called"),
   conversation_logged: (p, t) => {

@@ -1,5 +1,6 @@
 "use server";
 
+import { removeObjectsBestEffort } from "@/lib/services/storage";
 import { revalidatePath } from "next/cache";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
@@ -124,7 +125,7 @@ export async function generateViewingConfirmation(
     .select("id")
     .single();
   if (docErr || !doc) {
-    await admin.storage.from("documents").remove([path]); // no orphaned file
+    await removeObjectsBestEffort(admin.storage, "documents", [path], "viewing document: cleanup after a rejected row"); // no orphaned file
     return fail(docErr?.message ?? "Could not file the confirmation");
   }
 
@@ -140,7 +141,7 @@ export async function generateViewingConfirmation(
   } catch (e) {
     // guardrail 1: no stored document without its event — roll both back
     await admin.from("documents").delete().eq("id", doc.id);
-    await admin.storage.from("documents").remove([path]);
+    await removeObjectsBestEffort(admin.storage, "documents", [path], "viewing document delete");
     return fail(`Rolled back: ${(e as Error).message}`);
   }
 

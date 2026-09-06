@@ -9,6 +9,7 @@ import { Pager } from "@/components/features/shared/pager";
 import { ResponseClock } from "@/components/features/shared/response-clock";
 import { StatusBadge } from "@/components/features/shared/status-badge";
 import { getCurrentProfile } from "@/lib/services/auth";
+import { LEAD_MESSAGE_REDACTED } from "@/lib/services/erasure";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTime } from "@/lib/utils/format";
 import { LEAD_OPEN_STATUSES } from "@/lib/validators/contacts";
@@ -233,6 +234,7 @@ export default async function LeadsPage({
                     hasContact={Boolean(contact)}
                     isAdmin={profile.role === "admin"}
                     status={lead.status}
+                    isRedacted={lead.message === LEAD_MESSAGE_REDACTED}
                   />
                 </div>
               </li>

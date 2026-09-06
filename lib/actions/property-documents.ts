@@ -1,5 +1,6 @@
 "use server";
 
+import { removeObjectsBestEffort } from "@/lib/services/storage";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getCurrentProfile } from "@/lib/services/auth";
@@ -72,7 +73,7 @@ export async function uploadPropertyDocument(
     .single();
   if (docErr) {
     // the row was rejected (RLS/validation) — don't orphan the uploaded object
-    await admin.storage.from("documents").remove([path]);
+    await removeObjectsBestEffort(admin.storage, "documents", [path], "property document: cleanup after a rejected row");
     return { error: docErr.message, savedAt: null };
   }
 
@@ -121,7 +122,9 @@ export async function deletePropertyDocument(
   }
 
   const admin = createAdminClient();
-  if (doc.storage_path) await admin.storage.from("documents").remove([doc.storage_path]);
+  if (doc.storage_path) {
+    await removeObjectsBestEffort(admin.storage, "documents", [doc.storage_path], "property document delete");
+  }
 
   await logEvent(supabase, {
     orgId: doc.org_id,
