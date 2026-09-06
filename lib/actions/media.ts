@@ -1,6 +1,7 @@
 "use server";
 
 import { removeObjectsBestEffort } from "@/lib/services/storage";
+import { mediaBucketFor } from "@/lib/services/media-bucket";
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { getCurrentProfile } from "@/lib/services/auth";
@@ -89,24 +90,28 @@ export async function uploadPropertyMedia(
     const originalPath = `properties/${propertyId}/original/${id}.${ext}`;
     const renditionPath = (r: string) => `properties/${propertyId}/${id}_${r}.webp`;
 
-    // original (with EXIF) → private documents bucket; renditions → public media bucket.
-    // Bodies wrapped via binaryBody() so Vercel doesn't UTF-8-corrupt them (see helper).
+    // original (with EXIF) → private documents bucket, always. Renditions →
+    // the bucket the KIND decides (media-bucket.ts): public for a photograph,
+    // private for a floor plan, which until 2026-09-06 sat in the public
+    // bucket under a guessable path (A07). Bodies wrapped via binaryBody() so
+    // Vercel doesn't UTF-8-corrupt them (see helper).
+    const renditionBucket = mediaBucketFor(kind);
     const uploads = [
       admin.storage
         .from("documents")
         .upload(originalPath, binaryBody(input, file.type), { contentType: file.type }),
       admin.storage
-        .from("media")
+        .from(renditionBucket)
         .upload(renditionPath("thumb"), binaryBody(processed.renditions.thumb, "image/webp"), {
           contentType: "image/webp",
         }),
       admin.storage
-        .from("media")
+        .from(renditionBucket)
         .upload(renditionPath("card"), binaryBody(processed.renditions.card, "image/webp"), {
           contentType: "image/webp",
         }),
       admin.storage
-        .from("media")
+        .from(renditionBucket)
         .upload(renditionPath("full"), binaryBody(processed.renditions.full, "image/webp"), {
           contentType: "image/webp",
         }),
@@ -139,7 +144,7 @@ export async function uploadPropertyMedia(
       .single();
     if (insertErr) {
       // the row was rejected (RLS/validation) — don't strand the uploaded files
-      await removeObjectsBestEffort(admin.storage, "media", [renditionPath("thumb"), renditionPath("card"), renditionPath("full")], "media upload: cleanup after a rejected row");
+      await removeObjectsBestEffort(admin.storage, renditionBucket, [renditionPath("thumb"), renditionPath("card"), renditionPath("full")], "media upload: cleanup after a rejected row");
       await removeObjectsBestEffort(admin.storage, "documents", [originalPath], "media upload: cleanup after a rejected row");
       return {
         error: insertErr.message.includes("row-level security")
@@ -377,7 +382,7 @@ export async function deleteMediaBulk(
     .delete()
     .eq("property_id", propertyId)
     .in("id", mediaIds)
-    .select("id, storage_path_original, path_thumb, path_card, path_full, is_cover");
+    .select("id, kind, storage_path_original, path_thumb, path_card, path_full, is_cover");
   if (error) return { error: error.message, deleted: 0 };
   if (!deletedRows || deletedRows.length === 0) {
     return {
@@ -388,10 +393,17 @@ export async function deleteMediaBulk(
   }
 
   const admin = createAdminClient();
-  const mediaPaths = deletedRows
-    .flatMap((m) => [m.path_thumb, m.path_card, m.path_full])
-    .filter((p): p is string => Boolean(p));
-  await removeObjectsBestEffort(admin.storage, "media", mediaPaths, "media bulk delete: renditions");
+  // Renditions live in the bucket their KIND decides (media-bucket.ts), so a
+  // mixed delete removes from each bucket what it holds.
+  for (const bucket of ["media", "documents"] as const) {
+    const paths = deletedRows
+      .filter((m) => mediaBucketFor(m.kind) === bucket)
+      .flatMap((m) => [m.path_thumb, m.path_card, m.path_full])
+      .filter((p): p is string => Boolean(p));
+    if (paths.length > 0) {
+      await removeObjectsBestEffort(admin.storage, bucket, paths, "media bulk delete: renditions");
+    }
+  }
   const originalPaths = deletedRows
     .map((m) => m.storage_path_original)
     .filter((p): p is string => Boolean(p));

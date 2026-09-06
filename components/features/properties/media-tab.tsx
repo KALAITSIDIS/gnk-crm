@@ -16,7 +16,6 @@ import {
 import { downscaleForUpload } from "@/lib/services/client-image";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { publicMediaUrl } from "@/lib/utils/storage";
 import { cn } from "@/lib/utils";
 
 export interface MediaItem {
@@ -24,6 +23,10 @@ export interface MediaItem {
   kind: string;
   path_thumb: string | null;
   path_card: string | null;
+  /** Where the card rendition can be fetched from — a public URL for a
+   *  photograph, a short-lived signed URL for anything else. Decided by the
+   *  page (mediaBucketFor); the tab never spells a bucket. */
+  card_url: string | null;
   is_cover: boolean;
   sort_order: number;
   watermarked: boolean;
@@ -245,9 +248,9 @@ export function MediaTab({
                     isSelected && "ring-2 ring-danger/60",
                   )}
                 >
-                  {item.path_card ? (
+                  {item.card_url ? (
                     <Image
-                      src={publicMediaUrl(item.path_card)}
+                      src={item.card_url}
                       alt=""
                       width={400}
                       height={280}

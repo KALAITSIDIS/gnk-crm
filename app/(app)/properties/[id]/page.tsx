@@ -31,6 +31,9 @@ import { QualityScoreRing } from "@/components/features/shared/quality-score-rin
 import { computeQualityScore } from "@/lib/services/quality-score";
 import { countContainerUnits, EMPTY_CONTAINER_FACTS } from "@/lib/services/container-units";
 import { getCurrentProfile } from "@/lib/services/auth";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { mediaBucketFor } from "@/lib/services/media-bucket";
+import { publicMediaUrl } from "@/lib/utils/storage";
 import { MandateBadge, type MandateBadgeState } from "@/components/features/shared/mandate-badge";
 import { StatusBadge } from "@/components/features/shared/status-badge";
 import { Button } from "@/components/ui/button";
@@ -97,6 +100,22 @@ export default async function PropertyDetailPage({
   const unitFacts = isContainerRow ? await countContainerUnits(supabase, id) : EMPTY_CONTAINER_FACTS;
   const areaRows = unwrapRows(areasRes, "areas");
   const mediaRows = unwrapRows(mediaRes, "property media");
+  // Where each card rendition can be fetched from, decided HERE by the row's
+  // kind (media-bucket.ts): a photograph's is a public URL; anything else
+  // lives in the private bucket and is signed for the hour, the same idiom
+  // the documents tab uses. The tab renders what it is given and never
+  // spells a bucket (A07, 2026-09-06).
+  const admin = createAdminClient();
+  const mediaItems = await Promise.all(
+    mediaRows.map(async (m) => {
+      if (!m.path_card) return { ...m, card_url: null };
+      if (mediaBucketFor(m.kind) === "media") return { ...m, card_url: publicMediaUrl(m.path_card) };
+      const { data: signed } = await admin.storage
+        .from("documents")
+        .createSignedUrl(m.path_card, 3600);
+      return { ...m, card_url: signed?.signedUrl ?? null };
+    }),
+  );
   const mandateSafeRows = unwrapRows(mandatesRes, "mandates");
   const keyRows = unwrapRows(keysRes, "property keys");
 
@@ -666,7 +685,7 @@ export default async function PropertyDetailPage({
           <div className="rounded-[10px] border border-border bg-surface p-6">
             <MediaTab
               propertyId={p.id}
-              items={mediaRows}
+              items={mediaItems}
               canUpload={canEditProperty}
               canManage={isAdminOrLM}
             />
