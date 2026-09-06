@@ -14,7 +14,7 @@ Professional, calm, high-density-capable interface for daily internal use. shadc
   --accent-500: #B08D57; /* bronze/gold — sparing: KPIs, VIP, score ring */
   --success: #1E7F4F; --warning: #B7791F; --danger: #B42318;
   --surface: #FFFFFF; --surface-2: #F6F8FB; --border: #E4E9F0;
-  --text-1: #101828; --text-2: #475467; --text-3: #98A2B3;
+  --text-1: #101828; --text-2: #475467; --text-3: #667085;
   --radius: 10px;
 }
 ```
