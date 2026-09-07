@@ -105,6 +105,16 @@ export async function mergeContacts(
   }
 
   // 2. repoint operational references (all idempotent — filter by duplicateId)
+  //
+  // THIS LIST IS THE SCHEMA'S, NOT A JUDGEMENT CALL: it must name every column
+  // that references `contacts`. A missing one does not error — the duplicate is
+  // archived, not deleted, so the row survives pointing at a contact no screen
+  // shows. buyer_requirements, reservations and share_links were missing until
+  // 2026-09-07, which meant merging a duplicate silently took the buyer's saved
+  // searches out of matching: they still existed, on the archived half, and the
+  // buyer simply stopped being proposed anything.
+  // `tests/unit/merge-repoints-every-fk.test.ts` re-derives the list from the
+  // migrations and fails if a new table is added and forgotten here.
   const repoints: Promise<{ error: { message: string } | null }>[] = [
     admin.from("leads").update({ contact_id: primaryId }).eq("contact_id", duplicateId),
     admin.from("deals").update({ buyer_contact_id: primaryId }).eq("buyer_contact_id", duplicateId),
@@ -113,6 +123,12 @@ export async function mergeContacts(
       .update({ seller_contact_id: primaryId })
       .eq("seller_contact_id", duplicateId),
     admin.from("viewings").update({ contact_id: primaryId }).eq("contact_id", duplicateId),
+    admin
+      .from("buyer_requirements")
+      .update({ contact_id: primaryId })
+      .eq("contact_id", duplicateId),
+    admin.from("reservations").update({ contact_id: primaryId }).eq("contact_id", duplicateId),
+    admin.from("share_links").update({ contact_id: primaryId }).eq("contact_id", duplicateId),
     admin.from("offers").update({ contact_id: primaryId }).eq("contact_id", duplicateId),
     admin.from("tasks").update({ contact_id: primaryId }).eq("contact_id", duplicateId),
     admin
