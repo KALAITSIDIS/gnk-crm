@@ -18,6 +18,7 @@ import {
   type OfferStatus,
 } from "@/lib/validators/deals";
 import { cyprusEndOfDay } from "@/lib/validators/reservations";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export type MoveDealResult = { error: string | null };
 
@@ -460,9 +461,17 @@ export async function markDealWon(
       .eq("id", deal.property_id)
       .maybeSingle();
     if (prop && ["available", "reserved", "under_offer"].includes(prop.status)) {
-      const { data: existing } = await supabase
+      /*
+       * ASKED OF THE DATABASE, NOT OF THE READER. `tasks_select` is scoped to
+       * admin, assignee OR creator, so on the caller's client "is a prompt
+       * already open on this property?" is answered from the subset THEY can
+       * see — and an actor blind to a colleague's prompt raises a second one.
+       * `org_id` is explicit because the admin client has no RLS to add it.
+       */
+      const { data: existing } = await createAdminClient()
         .from("tasks")
         .select("id")
+        .eq("org_id", deal.org_id)
         .eq("property_id", prop.id)
         .eq("kind", "listing_status_check")
         .eq("is_done", false)

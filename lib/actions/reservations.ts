@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import {
   RESERVATION_TRANSITIONS,
   createReservationSchema,
@@ -260,9 +261,17 @@ export async function transitionReservation(
       .eq("id", existing.property_id)
       .maybeSingle();
     if (prop && ["available", "reserved", "under_offer"].includes(prop.status)) {
-      const { data: open } = await supabase
+      /*
+       * ASKED OF THE DATABASE, NOT OF THE READER. `tasks_select` is scoped to
+       * admin, assignee OR creator, so on the caller's client "is a prompt
+       * already open on this property?" is answered from the subset THEY can
+       * see — and an actor blind to a colleague's prompt raises a second one.
+       * `org_id` is explicit because the admin client has no RLS to add it.
+       */
+      const { data: open } = await createAdminClient()
         .from("tasks")
         .select("id")
+        .eq("org_id", profile.orgId)
         .eq("property_id", prop.id)
         .eq("kind", "listing_status_check")
         .eq("is_done", false)

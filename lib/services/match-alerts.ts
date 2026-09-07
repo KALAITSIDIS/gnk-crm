@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import { logEvent } from "@/lib/services/events";
 import { fetchAll } from "@/lib/supabase/fetch-all";
+import { createAdminClient } from "@/lib/supabase/admin";
 import {
   BUDGET_TOLERANCE_PCT,
   MATCHABLE_STATUSES,
@@ -219,9 +220,23 @@ async function raiseOneTask(
 ): Promise<MatchAlertResult> {
   const { property, contactIds } = args;
 
-  const { count: openAlready } = await supabase
+  /*
+   * THE DUPLICATE GUARD READS AS THE SYSTEM.
+   *
+   * `tasks_select` is scoped to admin, assignee OR creator, so on the caller's
+   * client this question — "is there already an open prompt of this kind on
+   * this property?" — is answered from the subset of tasks THEY can see. An
+   * agent who cannot see the prompt a colleague is already holding gets the
+   * answer "none", and raises a second one for the same property and kind.
+   *
+   * The invariant this guard exists to keep is a property of the DATABASE, not
+   * of the reader, so it has to be asked of the database. `org_id` is filtered
+   * explicitly because the admin client has no RLS to do it.
+   */
+  const { count: openAlready } = await createAdminClient()
     .from("tasks")
     .select("id", { count: "exact", head: true })
+    .eq("org_id", args.orgId)
     .eq("property_id", property.id)
     .eq("kind", args.kind)
     .eq("is_done", false);
