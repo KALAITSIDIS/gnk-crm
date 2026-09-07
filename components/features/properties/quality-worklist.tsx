@@ -48,7 +48,7 @@ export function QualityWorklist({ worklist }: { worklist: Worklist }) {
     );
   }
 
-  if (w.categories.length === 0) {
+  if (w.categories.length === 0 && w.sharedPhotos.length === 0) {
     return (
       <section className="flex items-start gap-2 rounded-[10px] border border-success/30 bg-success/5 p-5">
         <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
@@ -131,6 +131,36 @@ export function QualityWorklist({ worklist }: { worklist: Worklist }) {
           );
         })}
       </div>
+
+      {/* 0088. Warnings, not points: the score does not move — a development's
+          units share exteriors — but a picture on two listings is something the
+          desk should decide about, not discover on the site. */}
+      {w.sharedPhotos.length > 0 ? (
+        <section className="rounded-[10px] border border-warning/40 bg-warning/5 p-5">
+          <h2 className="text-sm font-semibold text-text-1">
+            {w.sharedPhotos.length}{" "}
+            {w.sharedPhotos.length === 1 ? "listing carries" : "listings carry"} a photograph that
+            is also on another listing
+          </h2>
+          <p className="mt-1 text-xs text-text-3">
+            No points are withheld — a development&apos;s units share exteriors. Check that each
+            picture is the right one for each listing.
+          </p>
+          <ul className="mt-3 flex flex-col gap-1.5">
+            {w.sharedPhotos.map((s) => (
+              <li key={s.property.id} className="text-xs text-text-2">
+                <Link
+                  href={`/properties/${s.property.id}`}
+                  className="font-medium text-text-1 hover:underline"
+                >
+                  {s.property.reference}
+                </Link>{" "}
+                shares a photograph with {s.withReferences.join(", ")}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
     </div>
   );
 }

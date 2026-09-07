@@ -3,6 +3,70 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-06 · T-feed-reference (migration 0088) — the feed answers for one
+  reference, a media row belongs to its property's org by construction, and a
+  photograph carries a content hash.** Audit A03 plus the response's Next #4 —
+  the day's one schema change, kept last on purpose so it is one hosted apply.
+
+  (1) **`p_reference`.** Every view of a listing page read the WHOLE book —
+  every page of it, since gnk-web's paging — and searched it in memory. The
+  feed takes a fourth, DEFAULTED parameter and answers one row,
+  case-insensitively (the site matches that way and redirects to the canonical
+  spelling). DROP+CREATE because the signature changes; the returned column
+  list is the SAME 36-name allowlist, and 0085's prove-it block runs against
+  the new signature — by name, by count, by jsonb type, by grant — plus one
+  new assertion that the three-argument overload is GONE, because two
+  overloads would be two allowlists. The route passes `p_reference` only when
+  the caller asked, so a pre-0088 database still answers the plain feed.
+  gnk-web's `getListing` asks for the one reference and still runs `find()`
+  over the answer: a CRM that ignores the parameter can never hand back the
+  wrong row.
+
+  (2) **The composite tenant FK (A03).** `property_media.org_id` and
+  `property_id` were independent foreign keys, so a row could name org B and
+  org A's property and satisfy both — and RLS on that table keys on `org_id`,
+  so the row would be visible to the wrong tenant. Nothing writes it (every
+  insert copies `org_id` from the property it just read) and there is one
+  organization, but a guarantee resting on every future insert path being
+  careful is not one. `(org_id, property_id) → properties (org_id, id)` makes
+  the pair a fact the database checks; `properties (org_id, id)` UNIQUE is the
+  referenced side and costs an index. Preflight counts mismatched rows and
+  aborts rather than constraining over them. The nine sibling tables stay in
+  the response's Later section, gated on a second organization.
+
+  (3) **`content_sha256`, and a warning that moves no points.** The upload
+  hashes the ORIGINAL bytes, so "this photograph is already on PAF0003" is a
+  fact rather than something a buyer notices first. `lib/services/shared-
+  photos.ts` is the one definition, in two shapes: the worklist groups by hash
+  over the media it already loaded, the property page and `recomputeQualityScore`
+  ask the database for one listing's neighbours. It is a WARNING — a
+  `warnings` array on the score result, an amber section on the worklist, an
+  amber line in the ring's tooltip — and **never a point**: a development's
+  units share exteriors, a resale may reuse the developer's shot with
+  permission, and this score gates publishing, so a point withheld here would
+  block a listing somebody had every reason to publish. The mutation that
+  makes it cost 15 points fails the test that says so.
+
+  (4) **Proved in the migration and in the suite.** The FK probe inserts a
+  cross-org row inside a sub-block and the foreign-key violation it is looking
+  for is what rolls the probe's own inserts back; the hash probe does the same
+  with an ill-shaped value. Both skip with a notice on a database with no
+  organization, where RLS test 58 covers them instead. RLS test 57 pins
+  `p_reference`: found in lower case, whitespace trimmed, an unpublished
+  reference not found, and no reference still the feed.
+
+  **DEPLOY ORDER: ADDITIVE, so hosted BEFORE the merge.** Every deployed
+  caller works against this schema (a defaulted parameter, a wider FK, a
+  nullable column), and the route that will pass `p_reference` is in the same
+  merge — the other order answers a `?reference=` request 503 until the apply
+  lands. Applied and verified on hosted, then merged, then gnk-web.
+
+  **Backfills, both dry-run by default:** `scripts/media/backfill-hashes.mjs`
+  (hashes originals for rows uploaded before 0088) and, from T-plans-private,
+  `move-floor-plans.mjs`. Neither is needed on production today — 12 media
+  rows, all photographs, all uploaded before the hash existed, so the backfill
+  is the one with work to do.
+
 - **2026-09-06 · T-plans-private (no migration) — a floor plan's renditions
   live in the private bucket, and the bucket is decided in one place.** Audit
   A07, Next #7 of `AUDIT_2026-09-06_RESPONSE.md`. MEDIA-K (2026-09-02) let a
@@ -65,6 +129,17 @@ silent. Format: date · task · decision · rationale.
   hidden value IS the row's timestamp; the other desk saves; the stale save
   is refused before the publish gate and writes nothing; after a reload the
   save proceeds into the gate.
+  **AND IT WAS MERGED RED.** The branch's e2e failed twice on a strict-mode
+  locator — `page.getByRole("alert")` matched the form's refusal AND Next's
+  `__next-route-announcer__`, which is on every page — and the merge went
+  ahead on a watcher's exit code that had not been read. The refusal itself
+  rendered exactly as intended (the failure text quotes it), so this was a
+  locator defect, not a feature defect; but for one merge `main` was red and
+  the entry below claimed a proof that had never been green. Scoped to
+  `detailsForm(page)` in `d08dfd5`, green on the branch (run 34063372072) and
+  on main (`7af529ef`). **The lesson is the instrument again: an exit code is
+  not a result. Read the job line.**
+
   (3) **"Saved — but the change could not be recorded."** The three events
   after the UPDATE (`publish_override`, `updated`, `status_regression_override`)
   go through one `record()` that catches an insert failure, logs it at error

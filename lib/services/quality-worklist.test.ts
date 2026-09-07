@@ -176,3 +176,18 @@ describe("fixLocation turns a count into an instruction", () => {
     expect(fixLocation("not_a_criterion")).toBeNull();
   });
 });
+
+describe("shared photographs are listed beside the categories, not inside them (0088)", () => {
+  it("collects the warnings by reference and moves no points", () => {
+    const w = buildWorklist([
+      scored("A", { sharedPhotoWith: ["B"] }),
+      scored("B", { sharedPhotoWith: ["A"] }),
+      scored("C", {}),
+    ]);
+    expect(w.sharedPhotos.map((s) => [s.property.reference, s.withReferences])).toEqual([
+      ["A", ["B"]],
+      ["B", ["A"]],
+    ]);
+    expect(w.categories.map((c) => c.key)).not.toContain("shared_photo");
+  });
+});

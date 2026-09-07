@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
+import { fetchSharedPhotoReferences } from "@/lib/services/shared-photos";
 
 /**
  * Property Quality Score (doc 02 §A8 + §C1). Computed in app code on every
@@ -89,6 +90,13 @@ export interface QualityScoreInput {
   hasAssignedAgent: boolean;
   /** a private owner, a developer, or both */
   hasOwnerOrDeveloper: boolean;
+  /**
+   * 0088: OTHER listings (by reference) carrying one of this listing's
+   * photographs, by content hash. A WARNING, never points: a development's
+   * units share exteriors, and this score gates publishing — see
+   * lib/services/shared-photos.ts.
+   */
+  sharedPhotoWith?: readonly string[];
 }
 
 export interface QualityScoreItem {
@@ -98,10 +106,18 @@ export interface QualityScoreItem {
   earned: boolean;
 }
 
+/** Something the desk should know that moves no points. */
+export interface QualityScoreWarning {
+  key: "shared_photo";
+  label: string;
+  references: string[];
+}
+
 export interface QualityScoreResult {
   score: number;
   items: QualityScoreItem[];
   missing: QualityScoreItem[];
+  warnings: QualityScoreWarning[];
 }
 
 export function computeQualityScore(input: QualityScoreInput): QualityScoreResult {
@@ -181,7 +197,18 @@ export function computeQualityScore(input: QualityScoreInput): QualityScoreResul
   ];
 
   const score = items.reduce((sum, item) => sum + (item.earned ? item.points : 0), 0);
-  return { score, items, missing: items.filter((i) => !i.earned) };
+  // 0088: a shared photograph is said, never scored — see sharedPhotoWith.
+  const warnings: QualityScoreWarning[] =
+    input.sharedPhotoWith && input.sharedPhotoWith.length > 0
+      ? [
+          {
+            key: "shared_photo",
+            label: `A photograph also appears on ${input.sharedPhotoWith.join(", ")}`,
+            references: [...input.sharedPhotoWith],
+          },
+        ]
+      : [];
+  return { score, items, missing: items.filter((i) => !i.earned), warnings };
 }
 
 /**
@@ -231,6 +258,8 @@ export function buildQualityInput(
     unitCount?: number;
     /** …of which priced — only read for containers. */
     pricedUnitCount?: number;
+    /** 0088: other listings carrying one of this one's photographs, by reference. */
+    sharedPhotoWith?: readonly string[];
   },
 ): QualityScoreInput {
   const isLand = p.property_type === "land";
@@ -242,6 +271,7 @@ export function buildQualityInput(
     pricedUnitCount: facts.pricedUnitCount ?? 0,
     hasCoverPhoto: facts.hasCoverPhoto,
     photoCount: facts.photoCount,
+    sharedPhotoWith: facts.sharedPhotoWith ?? [],
     titleEn: (p.title as { en?: string } | null)?.en,
     publicDescriptionEn: (p.public_description as { en?: string } | null)?.en,
     hasPrice: p.asking_price !== null || p.rent_price_month !== null,
@@ -304,7 +334,7 @@ export async function recomputeQualityScore(
     // photos only (MEDIA-K): a floor plan must not inflate the photo score
     supabase
       .from("property_media")
-      .select("id, is_cover")
+      .select("id, is_cover, content_sha256")
       .eq("property_id", propertyId)
       .eq("kind", "photo"),
     // see `mandateSource` above — neither table is right for both callers.
@@ -332,6 +362,14 @@ export async function recomputeQualityScore(
     ? await countContainerUnits(supabase, propertyId)
     : { unitCount: 0, pricedUnitCount: 0 };
 
+  // 0088: other listings carrying one of these photographs — a warning on
+  // the result, never a point (shared-photos.ts).
+  const sharedPhotoWith = await fetchSharedPhotoReferences(
+    supabase,
+    propertyId,
+    (media ?? []).map((m) => m.content_sha256).filter((h): h is string => Boolean(h)),
+  );
+
   const result = computeQualityScore(
     buildQualityInput(p as unknown as QualityScoreSource, {
       hasCoverPhoto: (media ?? []).some((m) => m.is_cover),
@@ -339,6 +377,7 @@ export async function recomputeQualityScore(
       unitCount: units.unitCount,
       pricedUnitCount: units.pricedUnitCount,
       mandateActive: (mandates ?? []).length > 0,
+      sharedPhotoWith,
     }),
   );
 

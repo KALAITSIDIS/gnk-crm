@@ -5401,4 +5401,70 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     await svc.from("properties").delete().eq("id", prop.id);
   });
 
+  it("57. the feed answers for ONE reference, case-insensitively, and only a published one (0088)", async () => {
+    const anon = anonClient();
+    const a = `REF-${run}-A`;
+    const b = `REF-${run}-B`;
+    const hidden = `REF-${run}-H`;
+    const mk = async (ref: string, visibility: string) => {
+      const { data, error } = await svc
+        .from("properties")
+        .insert({ org_id: ORG_A, reference: ref, property_type: "apartment", visibility, status: "available" })
+        .select("id")
+        .single();
+      if (error) throw error;
+      return data.id as string;
+    };
+    const ids = [await mk(a, "public"), await mk(b, "public"), await mk(hidden, "private")];
+    try {
+      const refs = async (p_reference?: string) => {
+        const { data, error } = await anon.rpc("public_listings", {
+          p_org_slug: "test-org-a",
+          ...(p_reference !== undefined ? { p_reference } : {}),
+        });
+        expect(error, "anon still calls the feed after the DROP+CREATE").toBeNull();
+        return ((data ?? []) as unknown as Array<{ reference: string }>).map((r) => r.reference);
+      };
+      expect(await refs(a.toLowerCase()), "typed in lower case, found as published").toEqual([a]);
+      expect(await refs(`  ${a}  `), "whitespace is not part of a reference").toEqual([a]);
+      expect(await refs(hidden), "an unpublished listing is not found by reference either").toEqual([]);
+      const feed = await refs();
+      expect(feed, "no reference: the feed, as before").toEqual(expect.arrayContaining([a, b]));
+      expect(feed).not.toContain(hidden);
+    } finally {
+      await svc.from("properties").delete().in("id", ids);
+    }
+  });
+
+  it("58. a media row cannot name a different org than its property, and a hash has one shape (0088)", async () => {
+    const { data: prop, error } = await svc
+      .from("properties")
+      .insert({ org_id: ORG_A, reference: `FK-${run}`, property_type: "apartment", visibility: "private", status: "draft" })
+      .select("id")
+      .single();
+    if (error) throw error;
+    try {
+      // both single-column FKs would have accepted this: org B exists, the property exists
+      const cross = await svc
+        .from("property_media")
+        .insert({ org_id: ORG_B, property_id: prop.id, kind: "photo" });
+      expect(cross.error?.code, "foreign_key_violation").toBe("23503");
+      expect(cross.error?.message).toContain("property_media_org_property_fkey");
+
+      const ill = await svc
+        .from("property_media")
+        .insert({ org_id: ORG_A, property_id: prop.id, kind: "photo", content_sha256: "not-a-hash" });
+      expect(ill.error?.code, "check_violation").toBe("23514");
+
+      const ok = await svc
+        .from("property_media")
+        .insert({ org_id: ORG_A, property_id: prop.id, kind: "photo", content_sha256: "a".repeat(64) })
+        .select("id")
+        .single();
+      expect(ok.error, "the matching pair, with a well-formed hash, is accepted").toBeNull();
+    } finally {
+      await svc.from("properties").delete().eq("id", prop.id); // cascades the media row
+    }
+  });
+
 });

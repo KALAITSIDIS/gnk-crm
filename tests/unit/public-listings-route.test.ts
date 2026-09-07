@@ -36,7 +36,11 @@ vi.mock("@/lib/supabase/public", () => ({
       if (name === "public_listings") {
         const offset = Number(args.p_offset ?? 0);
         const limit = Number(args.p_limit ?? 50);
-        return { data: structuredClone(state.rows.slice(offset, offset + limit)), error: null };
+        const ref = typeof args.p_reference === "string" ? args.p_reference.toUpperCase() : null;
+        const rows = ref
+          ? state.rows.filter((r) => String(r.reference).toUpperCase() === ref)
+          : state.rows;
+        return { data: structuredClone(rows.slice(offset, offset + limit)), error: null };
       }
       throw new Error("unexpected rpc " + name);
     },
@@ -75,6 +79,33 @@ beforeEach(() => {
   state.snapshotError = false;
   state.overBudget = false;
   state.calls = [];
+});
+
+describe("one listing by reference (0088)", () => {
+  it("passes ?reference= to the function and echoes it, so the site can ask for one row", async () => {
+    const res = await get("org=gnk&reference=paf0002");
+    expect(res.status).toBe(200);
+    const body = JSON.parse(await res.text());
+    expect(body.reference).toBe("paf0002");
+    expect(body.count).toBe(1);
+    expect(body.listings.map((l: { reference: string }) => l.reference)).toEqual(["PAF0002"]);
+  });
+
+  it("omits p_reference entirely when none was asked for — a pre-0088 database still answers the feed", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const orig = state.rows;
+    state.rows = orig;
+    const res = await get("org=gnk");
+    expect(res.status).toBe(200);
+    const body = JSON.parse(await res.text());
+    expect(body).not.toHaveProperty("reference");
+    expect(body.count).toBe(2);
+    void calls;
+  });
+
+  it("two references are two validators", async () => {
+    expect(await etagOf("org=gnk&reference=PAF0001")).not.toBe(await etagOf("org=gnk&reference=PAF0002"));
+  });
 });
 
 describe("the feed's ETag is a digest of the bytes it sends", () => {

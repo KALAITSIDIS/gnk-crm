@@ -29,6 +29,7 @@ import {
 import { EventTimeline } from "@/components/features/shared/event-timeline";
 import { QualityScoreRing } from "@/components/features/shared/quality-score-ring";
 import { computeQualityScore } from "@/lib/services/quality-score";
+import { fetchSharedPhotoReferences } from "@/lib/services/shared-photos";
 import { countContainerUnits, EMPTY_CONTAINER_FACTS } from "@/lib/services/container-units";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -72,7 +73,7 @@ export default async function PropertyDetailPage({
     supabase.from("areas").select("id, district_id, name"),
     supabase
       .from("property_media")
-      .select("id, kind, path_thumb, path_card, is_cover, sort_order, watermarked, width, height, alt")
+      .select("id, kind, path_thumb, path_card, is_cover, sort_order, watermarked, width, height, alt, content_sha256")
       .eq("property_id", id)
       .order("sort_order"),
     supabase
@@ -259,7 +260,15 @@ export default async function PropertyDetailPage({
   const mandateRows = mandateSafeRows ?? [];
   // photos only for the score (MEDIA-K) — the tab still shows every kind
   const photos = media.filter((m) => m.kind === "photo");
+  // 0088: other listings carrying one of these photographs — a warning on
+  // the ring, never a point
+  const sharedPhotoWith = await fetchSharedPhotoReferences(
+    supabase,
+    id,
+    photos.map((m) => m.content_sha256).filter((h): h is string => Boolean(h)),
+  );
   const quality = computeQualityScore({
+    sharedPhotoWith,
     isLand,
     isContainer: isContainerRow,
     unitCount: unitFacts.unitCount,
@@ -460,7 +469,11 @@ export default async function PropertyDetailPage({
           </Link>
         </Button>
         <div className="flex flex-wrap items-center gap-3">
-          <QualityScoreRing score={quality.score} missing={quality.missing} />
+          <QualityScoreRing
+            score={quality.score}
+            missing={quality.missing}
+            warnings={quality.warnings}
+          />
           <h1 className="font-mono text-xl font-semibold text-text-1">{p.reference}</h1>
           <MandateBadge state={mandateState} />
           <StatusBadge status={p.status} />

@@ -219,3 +219,24 @@ describe("a container's price is its units' prices", () => {
     expect(computeQualityScore(without).items.find((i) => i.key === "price")?.earned).toBe(false);
   });
 });
+
+describe("a shared photograph is a warning, never a point (0088)", () => {
+  it("names the other listings and leaves the score exactly where it was", () => {
+    const alone = computeQualityScore(full);
+    const shared = computeQualityScore({ ...full, sharedPhotoWith: ["PAF0002", "PAF0003"] });
+    expect(shared.score).toBe(alone.score);
+    expect(shared.missing).toEqual(alone.missing);
+    expect(shared.warnings).toEqual([
+      {
+        key: "shared_photo",
+        label: "A photograph also appears on PAF0002, PAF0003",
+        references: ["PAF0002", "PAF0003"],
+      },
+    ]);
+  });
+
+  it("warns of nothing by default, and nothing for an empty list", () => {
+    expect(computeQualityScore(full).warnings).toEqual([]);
+    expect(computeQualityScore({ ...full, sharedPhotoWith: [] }).warnings).toEqual([]);
+  });
+});

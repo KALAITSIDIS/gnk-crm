@@ -1,7 +1,7 @@
 "use client";
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import type { QualityScoreItem } from "@/lib/services/quality-score";
+import type { QualityScoreItem, QualityScoreWarning } from "@/lib/services/quality-score";
 import { cn } from "@/lib/utils";
 
 /**
@@ -11,10 +11,13 @@ import { cn } from "@/lib/utils";
 export function QualityScoreRing({
   score,
   missing,
+  warnings = [],
   size = 40,
 }: {
   score: number;
   missing: Pick<QualityScoreItem, "key" | "label" | "points">[];
+  /** 0088: things to know that move no points (a shared photograph) */
+  warnings?: Pick<QualityScoreWarning, "key" | "label">[];
   size?: number;
 }) {
   const radius = (size - 6) / 2;
@@ -57,6 +60,13 @@ export function QualityScoreRing({
         </div>
       </TooltipTrigger>
       <TooltipContent side="right" className="max-w-64">
+        {warnings.length > 0 ? (
+          <ul className="mb-2 space-y-0.5 text-warning">
+            {warnings.map((w) => (
+              <li key={w.key}>{w.label}</li>
+            ))}
+          </ul>
+        ) : null}
         {missing.length === 0 ? (
           <p>All quality criteria met.</p>
         ) : (

@@ -2,7 +2,7 @@
 
 import { removeObjectsBestEffort } from "@/lib/services/storage";
 import { mediaBucketFor } from "@/lib/services/media-bucket";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
@@ -132,6 +132,10 @@ export async function uploadPropertyMedia(
         path_full: renditionPath("full"),
         width: processed.width,
         height: processed.height,
+        // 0088: the ORIGINAL bytes, so "this photograph is already on
+        // <reference>" is a fact the worklist can state (a warning, never a
+        // score change — a development's units share exteriors).
+        content_sha256: createHash("sha256").update(input).digest("hex"),
         sort_order: nextSort++,
         // only photos are cover-eligible: a floor-plan cover would score the
         // 5 cover points while the feed (photos-only) shows no cover at all
