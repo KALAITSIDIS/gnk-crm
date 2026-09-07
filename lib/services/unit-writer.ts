@@ -9,6 +9,13 @@ import {
   type ProjectRow,
 } from "@/lib/services/unit-inheritance";
 import type { PROPERTY_TYPES } from "@/lib/validators/properties";
+// Relatively, WITH the extension: this module is reachable from the
+// standalone scripts under plain Node (T-scripts-under-node).
+import {
+  buildQualityInput,
+  computeQualityScore,
+  type QualityScoreSource,
+} from "./quality-score.ts";
 
 /**
  * The one place generated units are WRITTEN (2026-09-02).
@@ -100,7 +107,7 @@ export async function writeGeneratedUnits(
         created_by: opts.actorId,
       })),
     )
-    .select("id, reference");
+    .select("*");
   if (insertErr) {
     // The pre-check above is not atomic: two people generating the same run
     // at once both pass it and the (org_id, reference) unique index refuses
@@ -115,6 +122,48 @@ export async function writeGeneratedUnits(
   }
   if (!created || created.length === 0) {
     return { error: "Nothing was created — only admins and listing managers manage units." };
+  }
+
+  /*
+   * Score what was just written, from the rows the database actually stored.
+   *
+   * `quality_score` is a stored column that the LIST and the CSV export read
+   * (the detail page and the worklist compute fresh). Nothing here set it, so
+   * every generated unit landed at the column's default of 0 while computing
+   * 60 — a red 0/100 ring on sixty units that are as complete as their project
+   * can make them, and a number that disagreed with the same number one click
+   * away. Found 2026-09-07 when `recompute:scores` reported 12 of 17 stored
+   * scores stale, all of them units.
+   *
+   * Computed from `created`, not from the object we sent, so column defaults
+   * and inherited values are the ones scored — there is no second opinion
+   * about what a unit is. No query: a unit one statement old has no photograph
+   * and no mandate by construction, which is the whole of what the scorer
+   * would otherwise go and read. Units generated in one run almost always
+   * score alike, so this is one UPDATE.
+   */
+  const idsByScore = new Map<number, string[]>();
+  for (const row of created) {
+    const { score } = computeQualityScore(
+      buildQualityInput(row as unknown as QualityScoreSource, {
+        hasCoverPhoto: false,
+        photoCount: 0,
+        mandateActive: false,
+      }),
+    );
+    idsByScore.set(score, [...(idsByScore.get(score) ?? []), row.id]);
+  }
+  for (const [score, ids] of idsByScore) {
+    const { error: scoreErr } = await supabase
+      .from("properties")
+      .update({ quality_score: score })
+      .in("id", ids);
+    if (scoreErr) {
+      // Never fails the run: the units exist and are correct, and the column
+      // is derived — `npm run recompute:scores` repairs it. Loud, though, or
+      // the list quietly shows zeroes again with nothing to point at.
+      console.error("unit scoring failed:", scoreErr.message);
+    }
   }
 
   // One event per unit, in ONE statement. Each unit is its own entity and owes
