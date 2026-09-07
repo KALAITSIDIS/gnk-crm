@@ -79,7 +79,54 @@ test("converting a reservation prompts the listing flip, never performs it", asy
       )
       .toBe("converted");
 
-    // the status is the desk's call — still reserved, never auto-flipped
+    /*
+     * WAIT FOR THE ACTION TO FINISH, NOT FOR ITS FIRST WRITE.
+     *
+     * The poll above proves the reservation transition committed — and that is
+     * the FIRST of this action's writes. It then reads the property, reads the
+     * open tasks, inserts the prompt and writes that prompt's event: four more
+     * round trips. Asserting on the task straight after the status poll raced
+     * them and lost on roughly a third of CI runs (first-attempt failure in 3
+     * of 8 sampled runs, 2026-09-07, passing on retry — which is worse than
+     * failing outright, because a suite that goes green on retry teaches the
+     * desk to ignore red).
+     *
+     * So each assertion waits for the thing it asserts. That also makes the
+     * "never auto-flipped" check below SOUND: read mid-action, it would have
+     * passed over a flip written a moment later — a test that cannot fail for
+     * the reason it exists. deal-close.spec gets this for free by waiting on
+     * its dialog to close, which only happens once the action has returned;
+     * this path has no dialog.
+     */
+    const promptTasks = async () => {
+      const { data } = await svc
+        .from("tasks")
+        .select("id, assignee_id, is_done, reservation_id")
+        .eq("property_id", prop!.id)
+        .eq("kind", "listing_status_check");
+      return data ?? [];
+    };
+    await expect
+      .poll(async () => (await promptTasks()).length, { timeout: opTimeout(15_000) })
+      .toBe(1);
+
+    // the raise is evented — the action's last write before it returns
+    const raiseEvents = async () => {
+      const { data } = await svc
+        .from("events")
+        .select("payload")
+        .eq("entity_id", prop!.id)
+        .eq("event_type", "followup_task_created");
+      return (data ?? []).filter(
+        (e) => (e.payload as { kind?: string }).kind === "listing_status_check",
+      );
+    };
+    await expect
+      .poll(async () => (await raiseEvents()).length, { timeout: opTimeout(15_000) })
+      .toBe(1);
+
+    // NOW the action has demonstrably finished, so this reads the status it
+    // left behind: the desk's call, never auto-flipped.
     const { data: still } = await svc
       .from("properties")
       .select("status")
@@ -90,26 +137,10 @@ test("converting a reservation prompts the listing flip, never performs it", asy
     // one open prompt, linked to the reservation, assigned to the closer
     // (no linked deal in this fixture — the deal.agent_id path is pinned by
     // deal-close.spec)
-    const { data: prompts } = await svc
-      .from("tasks")
-      .select("id, assignee_id, is_done, reservation_id")
-      .eq("property_id", prop!.id)
-      .eq("kind", "listing_status_check");
-    expect(prompts, "one open prompt task").toHaveLength(1);
-    expect(prompts![0].is_done).toBe(false);
-    expect(prompts![0].reservation_id, "linked to the reservation").not.toBeNull();
-    expect(prompts![0].assignee_id, "no linked deal → assigned to the closer").toBe(profileId);
-
-    // and the raise is evented
-    const { data: events } = await svc
-      .from("events")
-      .select("payload")
-      .eq("entity_id", prop!.id)
-      .eq("event_type", "followup_task_created");
-    const mine = (events ?? []).filter(
-      (e) => (e.payload as { kind?: string }).kind === "listing_status_check",
-    );
-    expect(mine, "the raise writes its event").toHaveLength(1);
+    const prompts = await promptTasks();
+    expect(prompts[0].is_done).toBe(false);
+    expect(prompts[0].reservation_id, "linked to the reservation").not.toBeNull();
+    expect(prompts[0].assignee_id, "no linked deal → assigned to the closer").toBe(profileId);
   } finally {
     await removeFixture(svc);
   }
