@@ -53,6 +53,7 @@ import type { MatchCandidate } from "@/lib/services/matching";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
 import { formatArea, formatDate, formatDateTime, formatMoney } from "@/lib/utils/format";
+import { readEntityTimeline } from "@/lib/services/entity-timeline";
 
 export default async function PropertyDetailPage({
   params,
@@ -94,6 +95,9 @@ export default async function PropertyDetailPage({
   }
   const p = propertyRes.data;
   if (!p) notFound();
+  // resolved here, not below: the timeline reads need the viewer's role to
+  // decide whether a document's title may be shown
+  const profile = await getCurrentProfile(supabase);
   // a container's units by the ONE definition (container-units.ts): kind =
   // unit, not archived, under this row or any of its phases — the gate, the
   // score and the worklist read the same. A phase is not a unit.
@@ -138,24 +142,29 @@ export default async function PropertyDetailPage({
       .eq("property_id", id)
       .order("changed_at", { ascending: false })
       .limit(50),
-    supabase
-      .from("events")
-      .select("id, occurred_at, event_type, entity_type, payload")
-      .eq("entity_type", "property")
-      .eq("entity_id", id)
-      .order("occurred_at", { ascending: false })
-      .limit(50),
+    // As the SYSTEM — see lib/services/entity-timeline.ts. The page has already
+    // read this property through RLS and notFound()s otherwise.
+    readEntityTimeline({
+      // the row's own org — the caller read it through RLS above, so this is
+      // provably their org, and it is available before `profile` is resolved
+      orgId: p.org_id as string,
+      viewerRole: profile.role,
+      entityType: "property",
+      entityIds: [id],
+      limit: 50,
+    }).then((data) => ({ data, error: null })),
     // this property's key movements belong on its activity trail (keys audit) —
     // key events carry the key's id, so they need their own fetch
     keyIds.length === 0
       ? Promise.resolve({ data: [], error: null })
-      : supabase
-          .from("events")
-          .select("id, occurred_at, event_type, entity_type, payload")
-          .eq("entity_type", "key")
-          .in("entity_id", keyIds)
-          .order("occurred_at", { ascending: false })
-          .limit(20),
+      : readEntityTimeline({
+          orgId: p.org_id as string,
+          viewerRole: profile.role,
+          entityType: "key",
+          // keyIds came from a keys read on the caller's own client
+          entityIds: keyIds,
+          limit: 20,
+        }).then((data) => ({ data, error: null })),
     supabase
       .from("viewings")
       .select("id, scheduled_at, duration_min, status, contacts(display_name), agent:profiles!agent_id(full_name)")
@@ -212,7 +221,6 @@ export default async function PropertyDetailPage({
   const viewingRows = unwrapRows(viewingsRes, "viewings");
   const documentRows = unwrapRows(documentsRes, "documents");
 
-  const profile = await getCurrentProfile(supabase);
   const isAdminOrLM = profile.role === "admin" || profile.role === "listing_manager";
   // mirrors properties_update RLS — forms render read-only when a save would no-op
   const canEditProperty =
