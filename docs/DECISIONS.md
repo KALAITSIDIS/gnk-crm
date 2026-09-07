@@ -5514,3 +5514,89 @@ were running at once, because a `ps aux | grep playwright` check in Git Bash
 cannot see Windows processes and reported zero. **On Windows, check for stray
 processes with PowerShell `Get-Process`, not `ps`** — the Unix check is not
 merely unreliable here, it is blind.
+
+## T-silent — three ways a write can be lost quietly, and one bug that was not there (2026-09-07)
+
+Four changes and one deliberate non-change, all from the same session. The
+thread joining them: **a thing that goes wrong without saying so.**
+
+**A set that must be complete cannot be maintained by hand alone.**
+`mergeContacts` repointed the duplicate's records onto the primary by naming
+tables one at a time. Of the twelve columns in the schema that reference
+`contacts`, it named nine. `buyer_requirements`, `reservations` and
+`share_links` were missing — and nothing errored, because the duplicate is
+ARCHIVED, not deleted, so the orphaned rows stayed valid while disappearing
+from every screen. A merged buyer's saved searches silently stopped matching:
+still `is_active`, still feeding alerts, invisible on the contact the desk
+kept, and out of reach of an Article 17 erasure that deletes by `contact_id`.
+
+It was found by deriving the list from the migrations rather than reading the
+action, which is now what `tests/unit/merge-repoints-every-fk.test.ts` does on
+every run: it re-derives the FK set and fails if a column is added and
+forgotten. The e2e can only assert about tables someone remembered to seed; the
+guard catches the next one nobody thought of. Mutation-proven against all four
+repoints, including a pre-existing one.
+
+**Retirement has two halves, and the matcher only knew one.** A listing is
+retired by `status = 'withdrawn'` OR by `visibility = 'archived'`.
+`findMatchingProperties` filtered status and kind and never visibility, so a
+listing the properties list, the quality worklist and the container-unit reader
+all refuse to show was still proposed to buyers. Measured on production: five
+archived units (PAF0005-V01..V05 — retired BECAUSE their data was fabricated in
+the 2026-09-04 rehearsal) sat in the live candidate set. Archiving them was the
+act meant to prevent exactly this. `matches.ts` had no test at all until now.
+
+**A write RLS refused is not a success.** RLS refuses an UPDATE by matching
+ZERO ROWS, with no error — measured, not assumed, in
+`supabase/tests/listing-manager-silent-writes.test.ts`, which creates a real
+listing manager and shows the shape: `error: null`, `data: []`, row unchanged,
+the row still READABLE (which is why the UI offers the button), and an agent's
+identical write landing (so the refusal is about the role, not the row).
+
+Three actions read that as something else. `updateViewingStatus` returned
+success and wrote a `status_changed` event, so a viewing stayed `scheduled`
+while its timeline said completed. `markContacted` read it as a lost stamp race
+unconditionally and toasted over a lead that never moved; `markCalled` went
+further and wrote a `called` event against a lead whose `first_call_at` was
+still null — a phone call in the timeline that nobody made.
+`saveViewingFeedback` published a buyer's words to a property's timeline
+without checking the row had taken them.
+
+All four now prove the write before they log one — the `markDealWon` idiom
+`rescheduleViewing` already used. The lead actions distinguish the race from
+the refusal by re-reading the stamp, the way `closeLead` already did: set by
+someone else is a genuine race and the winner's event covers it; still null
+means nothing was written and nobody wrote it.
+
+**And one P1 that did not exist.** The same review reported every money total
+on the reservation payment-schedule card rendering "—", on the premise that
+PostgREST sends `numeric` as a string, so the sums concatenated to NaN. One
+finder and two independent verifiers confirmed it with exact line numbers and a
+hand-worked reproduction. The premise is false:
+
+    GET /rest/v1/reservation_installments?select=amount
+      -> [{"amount":70000.00}, {"amount":280000.00}]
+    GET /rest/v1/properties?select=asking_price          (hosted)
+      -> [{"asking_price":800000.00}]
+
+Unquoted JSON numbers, on both the local stack and hosted; `reduce` over the
+raw rows returns a number. The coercions were written and then reverted —
+with the "fix" removed, the new e2e still passes, because there was nothing to
+fix. It stays as coverage (`tests/e2e/payment-schedule-totals.spec.ts`, the
+schedule had none) with the measurement in its header.
+
+What caught it was mutation-testing the fix before shipping it. **A confident
+multi-agent consensus is not evidence.** Reverting the change and watching the
+test stay green is the cheapest question you can ask, and it is the one that
+distinguishes a real defect from a plausible story about one.
+
+**A test of mine that could not fail, and a race of mine that could.** The same
+review noticed that the saved-search ownership guard was pinned by a test that
+seeded a requirement and asserted it still belonged to its buyer — without ever
+posting the forgery. Fair, and fixed: it now rewrites the hidden `contact_id`
+in the live form before submit, and removing the guard from the action fails
+it. Separately, `contact-merge.spec.ts` polled for the merge's FIRST write and
+then read relations written four steps later; it passed locally and failed in
+CI on a different column each run. Both tests now wait for the action's LAST
+write. Same lesson as `reservation-convert.spec.ts`: an assertion must wait for
+the thing it asserts, or it cannot fail for the reason it exists.
