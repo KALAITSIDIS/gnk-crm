@@ -297,6 +297,7 @@ export default async function DealDetailPage({
               <h2 className="text-sm font-semibold text-text-1">Viewings</h2>
               {deal.status === "open" ? (
                 <CreateViewingDialog
+                  role={profile.role}
                   defaultProperty={
                     property
                       ? { id: property.id, label: property.reference, sublabel: null }

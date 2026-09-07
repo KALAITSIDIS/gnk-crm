@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import {
   RESERVATION_TRANSITIONS,
   createReservationSchema,
@@ -141,6 +142,25 @@ export async function extendReservation(
   if (expiresAt.getTime() <= Date.now()) {
     return fail("That date has already passed — pick a later one.");
   }
+  /*
+   * AN EXTENSION MUST EXTEND.
+   *
+   * The only date check used to be "not in the past", so a hold expiring in
+   * January could be "extended" to next week: the write succeeded, the buyer
+   * silently lost weeks of their hold, and the timeline recorded it as
+   * `reservation_extended` with `from` LATER than `to`. A control labelled
+   * Extend that shortens a contractual hold, and a log that calls it an
+   * extension, are each worse than an error message.
+   *
+   * Shortening a hold is a different act with a different name — release it
+   * and take a new one, which is what the status transitions are for.
+   */
+  const current = existing.expires_at ? new Date(existing.expires_at).getTime() : null;
+  if (current !== null && expiresAt.getTime() <= current) {
+    return fail(
+      "That is not later than the current expiry — to shorten a hold, release it and take a new one.",
+    );
+  }
 
   const { data: updated, error } = await supabase
     .from("reservations")
@@ -241,9 +261,17 @@ export async function transitionReservation(
       .eq("id", existing.property_id)
       .maybeSingle();
     if (prop && ["available", "reserved", "under_offer"].includes(prop.status)) {
-      const { data: open } = await supabase
+      /*
+       * ASKED OF THE DATABASE, NOT OF THE READER. `tasks_select` is scoped to
+       * admin, assignee OR creator, so on the caller's client "is a prompt
+       * already open on this property?" is answered from the subset THEY can
+       * see — and an actor blind to a colleague's prompt raises a second one.
+       * `org_id` is explicit because the admin client has no RLS to add it.
+       */
+      const { data: open } = await createAdminClient()
         .from("tasks")
         .select("id")
+        .eq("org_id", profile.orgId)
         .eq("property_id", prop.id)
         .eq("kind", "listing_status_check")
         .eq("is_done", false)
@@ -264,7 +292,21 @@ export async function transitionReservation(
           .insert({
             org_id: profile.orgId,
             title: `Reservation converted — update listing status: ${prop.reference}`,
-            due_at: nowIso,
+            /*
+             * CYPRUS END OF DAY, not the current instant.
+             *
+             * `overdue` is `due_at < now` (app/(app)/tasks/page.tsx), so a
+             * prompt stamped with the moment it was raised renders OVERDUE on
+             * the very next paint — the desk sees red for something it has had
+             * no chance to do. The convention this repo already states in
+             * lib/actions/tasks.ts is end-of-day for exactly that reason: "due
+             * today" stays black until the working day actually ends.
+             *
+             * Today, not tomorrow: updating a listing after a deal is won or a
+             * hold converts is same-day work. `raiseOneTask` uses tomorrow
+             * because a match alert is not.
+             */
+            due_at: cyprusEndOfDay(nowIso.slice(0, 10)).toISOString(),
             assignee_id: assigneeId,
             property_id: prop.id,
             deal_id: existing.deal_id ?? null,

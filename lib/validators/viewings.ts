@@ -85,3 +85,19 @@ export const rescheduleViewingSchema = z.object({
     .min(5, "Too short")
     .max(480, "Too long"),
 });
+
+/**
+ * Who may book a viewing.
+ *
+ * Mirrors `viewings_insert` (migration 0030): admin or agent, and nothing else.
+ * A listing manager can READ every viewing, which is why the calendar, the
+ * property page and the deal page all rendered a "New viewing" button for
+ * them — and the insert then failed with a raw Postgres RLS message, on three
+ * different screens.
+ *
+ * The policy is deliberate: doc 04's matrix lists viewings INSERT as A/AG. So
+ * the fix is the app offering less, not the database allowing more.
+ */
+export function mayCreateViewing(role: string): boolean {
+  return role === "admin" || role === "agent";
+}

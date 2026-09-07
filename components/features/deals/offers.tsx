@@ -166,8 +166,13 @@ export function OffersCard({ dealId, offers }: { dealId: string; offers: OfferRo
       if (error) {
         toast.error(error);
       } else if (wonEligible) {
-        toast.success("Offer accepted — deal is now won-eligible", {
-          description: "Mark it Won from the guarded flow (arrives with T3.4).",
+        // The Won flow SHIPPED (T3.4 — `markDealWon`, reached by "Mark won" in
+        // outcome-actions.tsx and covered by deal-close.spec). This line still
+        // told the operator it had not, and named a ticket at them while doing
+        // it. A message that points at a control the desk can see is worth more
+        // than one that points at a milestone.
+        toast.success("Offer accepted — this deal can now be marked won", {
+          description: 'Use "Mark won" below to confirm the price and close it.',
         });
       } else {
         toast.success(`Offer ${next}`);

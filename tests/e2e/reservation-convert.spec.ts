@@ -101,7 +101,7 @@ test("converting a reservation prompts the listing flip, never performs it", asy
     const promptTasks = async () => {
       const { data } = await svc
         .from("tasks")
-        .select("id, assignee_id, is_done, reservation_id")
+        .select("id, assignee_id, is_done, reservation_id, due_at")
         .eq("property_id", prop!.id)
         .eq("kind", "listing_status_check");
       return data ?? [];
@@ -139,6 +139,24 @@ test("converting a reservation prompts the listing flip, never performs it", asy
     // deal-close.spec)
     const prompts = await promptTasks();
     expect(prompts[0].is_done).toBe(false);
+
+    /*
+     * A PROMPT MUST NOT BE BORN OVERDUE.
+     *
+     * The task list marks a row overdue when `due_at < now`
+     * (app/(app)/tasks/page.tsx), so a prompt stamped with the instant it was
+     * raised renders red on the very next paint — before the desk has had any
+     * chance to act. Red that arrives with the task teaches the desk to ignore
+     * red, which is the one thing the colour is for.
+     *
+     * The repo's own convention (lib/actions/tasks.ts) is Cyprus end-of-day:
+     * "due today" stays black until the working day actually ends.
+     */
+    expect(prompts[0].due_at, "the prompt carries a due date at all").not.toBeNull();
+    expect(
+      new Date(prompts[0].due_at as string).getTime(),
+      "due later today, not the moment it was raised",
+    ).toBeGreaterThan(Date.now());
     expect(prompts[0].reservation_id, "linked to the reservation").not.toBeNull();
     expect(prompts[0].assignee_id, "no linked deal → assigned to the closer").toBe(profileId);
   } finally {

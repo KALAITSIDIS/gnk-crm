@@ -2,14 +2,15 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import { logEvent } from "@/lib/services/events";
 import { fetchAll } from "@/lib/supabase/fetch-all";
+import { createAdminClient } from "@/lib/supabase/admin";
 import {
   BUDGET_TOLERANCE_PCT,
   MATCHABLE_STATUSES,
   matchProperty,
+  priceFor,
   type MatchCandidate,
   type MatchRequirement,
   type PropertyStatus,
-  type TransactionType,
 } from "@/lib/services/matching";
 import { cyprusEndOfDay } from "@/lib/validators/reservations";
 
@@ -116,16 +117,16 @@ export function becameMatchable(
   return !MATCHABLE_STATUSES.includes(from);
 }
 
-/** The price a requirement of this transaction type compares against. */
-export function priceFor(
-  transactionType: TransactionType,
-  p: { asking_price: number | null; rent_price_month: number | null },
-): number | null {
-  const raw = transactionType === "rent" ? p.rent_price_month : p.asking_price;
-  if (raw === null || raw === undefined) return null;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
-}
+/**
+ * The price a requirement of this transaction type compares against.
+ *
+ * Re-exported, not reimplemented: `lib/services/matching.ts` owns this rule
+ * because the matcher's budget check is what it exists for. A second copy here
+ * is how the matches card ended up with a third that was wrong.
+ */
+// Imported above for use below, and re-exported here so callers and tests
+// keep one name for one rule.
+export { priceFor };
 
 // ---------------------------------------------------------------- shared ----
 
@@ -133,7 +134,10 @@ const REQUIREMENT_COLUMNS =
   "id, contact_id, transaction_type, property_types, district_ids, area_ids, budget_min, " +
   "budget_max, bedrooms_min, bedrooms_max, bathrooms_min, covered_area_min_sqm, " +
   "plot_area_min_sqm, title_deed_required, vat_preference, max_sea_distance_m, " +
-  "delivery_by, features_required";
+  "delivery_by, features_required, " +
+  // Joined so the archived filter below can reach it — `!inner` also drops a
+  // requirement whose contact has gone, which no alert should carry anyway.
+  "contacts!inner(is_archived)";
 
 export type RequirementRow = MatchRequirement & { id: string; contact_id: string };
 
@@ -167,7 +171,22 @@ async function activeRequirements(
 ): Promise<RequirementRow[]> {
   const rows = await fetchAll(
     (from, to) => {
-      let q = supabase.from("buyer_requirements").select(REQUIREMENT_COLUMNS).eq("is_active", true);
+      /*
+       * ARCHIVED CONTACTS ARE NOT BUYERS ANY MORE.
+       *
+       * `findMatchingBuyers` — the property page's "Buyers looking for this" —
+       * filters `contacts.is_archived = false`. This did not, so an archived
+       * contact's still-active saved searches kept raising alert tasks: the
+       * task said N buyers, the page the agent then opened showed fewer, and
+       * the desk was prompted to ring someone the firm had archived.
+       *
+       * One fact, two readers; they now agree.
+       */
+      let q = supabase
+        .from("buyer_requirements")
+        .select(REQUIREMENT_COLUMNS)
+        .eq("is_active", true)
+        .eq("contacts.is_archived", false);
       if (opts.budgetedOnly) q = q.not("budget_max", "is", null);
       return q.order("id").range(from, to);
     },
@@ -201,9 +220,23 @@ async function raiseOneTask(
 ): Promise<MatchAlertResult> {
   const { property, contactIds } = args;
 
-  const { count: openAlready } = await supabase
+  /*
+   * THE DUPLICATE GUARD READS AS THE SYSTEM.
+   *
+   * `tasks_select` is scoped to admin, assignee OR creator, so on the caller's
+   * client this question — "is there already an open prompt of this kind on
+   * this property?" — is answered from the subset of tasks THEY can see. An
+   * agent who cannot see the prompt a colleague is already holding gets the
+   * answer "none", and raises a second one for the same property and kind.
+   *
+   * The invariant this guard exists to keep is a property of the DATABASE, not
+   * of the reader, so it has to be asked of the database. `org_id` is filtered
+   * explicitly because the admin client has no RLS to do it.
+   */
+  const { count: openAlready } = await createAdminClient()
     .from("tasks")
     .select("id", { count: "exact", head: true })
+    .eq("org_id", args.orgId)
     .eq("property_id", property.id)
     .eq("kind", args.kind)
     .eq("is_done", false);
@@ -273,7 +306,10 @@ export async function raisePriceDropAlert(
   const rows = await activeRequirements(supabase, { budgetedOnly: true });
   if (rows.length === 0) return NONE;
 
-  const contactIds: string[] = [];
+  // A SET, not a list: the loop runs once per REQUIREMENT, and one buyer may
+  // hold several saved searches. Counting rows made "2 buyers now in budget"
+  // out of one person who had recorded two briefs.
+  const contactIds = new Set<string>();
   for (const row of rows) {
     const oldPrice = row.transaction_type === "rent" ? args.oldRentPrice : args.oldAskingPrice;
     const newPrice = priceFor(row.transaction_type, property);
@@ -282,9 +318,9 @@ export async function raisePriceDropAlert(
     // Priced out before and in reach now — but everything ELSE must match too,
     // or a drop would alert a buyer who wanted a villa about an apartment.
     if (!matchProperty(row, property).eligible) continue;
-    contactIds.push(row.contact_id);
+    contactIds.add(row.contact_id);
   }
-  if (contactIds.length === 0) return NONE;
+  if (contactIds.size === 0) return NONE;
 
   return raiseOneTask(supabase, {
     orgId: args.orgId,
@@ -292,10 +328,10 @@ export async function raisePriceDropAlert(
     property,
     kind: PRICE_DROP_TASK_KIND,
     eventType: "price_drop_matched",
-    contactIds,
+    contactIds: [...contactIds],
     title:
-      `Price drop on ${property.reference}: ${contactIds.length} ` +
-      `buyer${contactIds.length === 1 ? "" : "s"} now in budget`,
+      `Price drop on ${property.reference}: ${contactIds.size} ` +
+      `buyer${contactIds.size === 1 ? "" : "s"} now in budget`,
   });
 }
 
@@ -324,12 +360,15 @@ export async function raiseNewListingAlert(
   const rows = await activeRequirements(supabase, { budgetedOnly: false });
   if (rows.length === 0) return NONE;
 
-  const contactIds: string[] = [];
+  // A SET, not a list: the loop runs once per REQUIREMENT, and one buyer may
+  // hold several saved searches. Counting rows made "2 buyers now in budget"
+  // out of one person who had recorded two briefs.
+  const contactIds = new Set<string>();
   for (const row of rows) {
     if (!matchProperty(row, property).eligible) continue;
-    contactIds.push(row.contact_id);
+    contactIds.add(row.contact_id);
   }
-  if (contactIds.length === 0) return NONE;
+  if (contactIds.size === 0) return NONE;
 
   return raiseOneTask(supabase, {
     orgId: args.orgId,
@@ -337,10 +376,10 @@ export async function raiseNewListingAlert(
     property,
     kind: NEW_LISTING_TASK_KIND,
     eventType: "new_listing_matched",
-    contactIds,
+    contactIds: [...contactIds],
     title:
-      `${property.reference} is on the market: ${contactIds.length} ` +
-      `matching buyer${contactIds.length === 1 ? "" : "s"}`,
+      `${property.reference} is on the market: ${contactIds.size} ` +
+      `matching buyer${contactIds.size === 1 ? "" : "s"}`,
   });
 }
 

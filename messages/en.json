@@ -369,6 +369,7 @@
     "followupViewingFeedback": "Follow-up task created — viewing feedback still missing after {hours, plural, one {# hour} other {# hours}}",
     "followupViewingNoShow": "Follow-up task created — the buyer did not show and has not been rebooked",
     "followupListingStatusCheck": "Follow-up task created — the deal was won but the listing still reads on-market",
+    "followupListingStatusCheckReservation": "Follow-up task created — the reservation converted to a sale but the listing still reads on-market",
     "followupRetentionExpired": "Follow-up task created — the AML retention window has closed, review for destruction",
     "followupTaskCreated": "Follow-up task created",
     "superseded": "Task superseded",

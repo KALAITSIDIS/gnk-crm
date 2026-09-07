@@ -53,7 +53,7 @@ export async function generateViewingConfirmation(
   const { data: v } = await supabase
     .from("viewings")
     .select(
-      `id, org_id, agent_id, scheduled_at, duration_min,
+      `id, org_id, agent_id, scheduled_at, duration_min, status,
        properties(reference, address),
        contacts(display_name),
        agent:profiles!agent_id(full_name, email, phone_e164)`,
@@ -61,6 +61,23 @@ export async function generateViewingConfirmation(
     .eq("id", viewingId)
     .maybeSingle();
   if (!v) return fail("Viewing not found");
+
+  /*
+   * A CONFIRMATION CONFIRMS SOMETHING THAT IS GOING TO HAPPEN.
+   *
+   * There was no status check, so a cancelled viewing would happily produce a
+   * PDF telling the attendee where to be and when — a document that is false
+   * on its face, addressed to a client, carrying the agency's name. The same
+   * went for one already completed or marked no-show.
+   *
+   * Only a scheduled viewing has anything to confirm. A cancelled one needs a
+   * different message, which is not this document's job.
+   */
+  if (v.status !== "scheduled") {
+    return fail(
+      `This viewing is ${v.status} — a confirmation can only be issued for a scheduled one.`,
+    );
+  }
 
   // Mirrors the slip's rule and the RLS policy: the viewing's agent or an admin.
   if (profile.role !== "admin" && v.agent_id !== profile.id) {

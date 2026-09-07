@@ -154,7 +154,7 @@ export default async function ViewingsPage({
               <Download className="size-4" /> Export CSV
             </a>
           </Button>
-          <CreateViewingDialog defaultAgent={defaultAgent} />
+          <CreateViewingDialog defaultAgent={defaultAgent} role={profile.role} />
         </div>
       </div>
 

@@ -6,7 +6,7 @@ import {
   ScoreBadge,
 } from "@/components/features/shared/match-list";
 import { findMatchingProperties } from "@/lib/queries/matches";
-import type { MatchRequirement } from "@/lib/services/matching";
+import { priceFor, type MatchRequirement } from "@/lib/services/matching";
 import { createClient } from "@/lib/supabase/server";
 import { formatMoney } from "@/lib/utils/format";
 
@@ -84,9 +84,22 @@ export async function MatchesCard({
                           </Link>
                           <p className="text-xs text-text-3">
                             {property.reference}
-                            {property.asking_price !== null
-                              ? ` · ${formatMoney(property.asking_price)}`
-                              : " · no price set"}
+                            {/*
+                              The price the SEARCH is about, not the sale price
+                              always. A rental brief compares against
+                              `rent_price_month`; printing `asking_price` here
+                              showed a rent match its sale figure — or "no price
+                              set" for a rent-only listing — directly beside the
+                              chip saying the rent was within budget. One rule,
+                              in lib/services/matching.ts, for the matcher and
+                              for what the desk reads.
+                            */}
+                            {(() => {
+                              const shown = priceFor(req.transaction_type, property);
+                              return shown !== null
+                                ? ` · ${formatMoney(shown)}${req.transaction_type === "rent" ? " / month" : ""}`
+                                : " · no price set";
+                            })()}
                             {property.bedrooms !== null ? ` · ${property.bedrooms} bed` : ""}
                           </p>
                           <MatchReasons verdict={verdict} />
