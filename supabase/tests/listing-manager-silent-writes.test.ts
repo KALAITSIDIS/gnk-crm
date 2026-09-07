@@ -134,6 +134,29 @@ describe("a listing manager's forbidden UPDATE is refused without saying so", ()
     expect(viewing?.id, "so is the viewing").toBe(viewingId);
   });
 
+  it("an INSERT they may not make ERRORS — which is why it needs a different fix", async () => {
+    /*
+     * The asymmetry that decides the remedy.
+     *
+     * A forbidden UPDATE is filtered to zero rows and says nothing, so the fix
+     * is server-side: prove the write before logging an event. A forbidden
+     * INSERT violates the WITH CHECK and RAISES — code 42501, straight through
+     * to the user as a raw Postgres message. No amount of checking the result
+     * helps, because the result is an exception; the fix is not to offer the
+     * button (mayCreateViewing).
+     */
+    const { error } = await lm.client.from("viewings").insert({
+      org_id: ORG_A,
+      property_id: propertyId,
+      contact_id: contactId,
+      agent_id: lm.id,
+      scheduled_at: new Date(Date.UTC(2027, 0, 7, 10, 0)).toISOString(),
+      status: "scheduled",
+    });
+    expect(error, "an INSERT they may not make is an ERROR, not a silent no-op").not.toBeNull();
+    expect(error!.code, "row-level security violation").toBe("42501");
+  });
+
   it("an agent CAN work an unassigned lead — so the refusal above is about the role", async () => {
     // The control. Without it, the two tests above are also satisfied by a
     // lead that simply cannot be updated by anyone.

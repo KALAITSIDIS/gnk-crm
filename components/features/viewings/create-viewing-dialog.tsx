@@ -28,7 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { VIEWING_DURATIONS } from "@/lib/validators/viewings";
+import { VIEWING_DURATIONS, mayCreateViewing } from "@/lib/validators/viewings";
 
 const initialState: ViewingActionState = { error: null, savedAt: null, viewingId: null };
 
@@ -38,6 +38,7 @@ export function CreateViewingDialog({
   defaultContact = null,
   defaultDealId = null,
   triggerLabel = "New viewing",
+  role,
 }: {
   defaultAgent?: EntityOption | null;
   defaultProperty?: EntityOption | null;
@@ -46,6 +47,9 @@ export function CreateViewingDialog({
   /** WF-3: the schema accepted deal_id since T4.1 — nothing ever sent it */
   defaultDealId?: string | null;
   triggerLabel?: string;
+  /** The caller's role. The gate lives HERE so a fourth call site cannot
+   *  forget it — see mayCreateViewing. */
+  role: string;
 }) {
   const [open, setOpen] = useState(false);
   const [state, formAction, pending] = useActionState(createViewing, initialState);
@@ -100,6 +104,18 @@ export function CreateViewingDialog({
       if (debounce.current) clearTimeout(debounce.current);
     };
   }, [agentId, propertyId, contactId, scheduledAt, durationMin]);
+
+  /*
+   * AFTER the hooks, never before — an early return above them would change
+   * the hook order between renders.
+   *
+   * A role the insert policy does not admit is offered nothing: the calendar,
+   * the property page and the deal page all rendered this button for a listing
+   * manager, and the submit then came back as a raw Postgres RLS message on
+   * three different screens. Hiding it is the app agreeing with the database
+   * rather than arguing with it.
+   */
+  if (!mayCreateViewing(role)) return null;
 
   return (
     <Dialog

@@ -575,6 +575,7 @@ export default async function PropertyDetailPage({
               <div className="flex items-center justify-between gap-3">
                 <h3 className="text-sm font-semibold text-text-1">Upcoming viewings</h3>
                 <CreateViewingDialog
+                  role={profile.role}
                   defaultProperty={{
                     id: p.id,
                     label: title || p.reference,
