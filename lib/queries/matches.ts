@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
+import { RETIRED_PROPERTY_VISIBILITY } from "@/lib/validators/properties";
 import {
   BUDGET_TOLERANCE_PCT,
   matchProperty,
@@ -91,6 +92,20 @@ export async function findMatchingProperties(
     // a project or phase is a container, not a thing anyone buys
     .neq("kind", "project")
     .neq("kind", "phase")
+    /*
+     * AND A RETIRED LISTING IS NOT INVENTORY.
+     *
+     * The status filter above already drops `withdrawn`, but retirement has a
+     * second half: `visibility = 'archived'`. The properties list, the quality
+     * worklist and the container-unit reader all exclude it; this query did
+     * not, so a listing the desk had deliberately taken off the books was
+     * still proposed to buyers — visible to the matcher and to nobody else.
+     *
+     * Measured on production 2026-09-07: five archived units (PAF0005-V01..V05,
+     * the ones retired BECAUSE their data was fabricated) sat in the candidate
+     * set. Archiving them was exactly the act meant to stop this.
+     */
+    .neq("visibility", RETIRED_PROPERTY_VISIBILITY)
     // Ordered, so the cap is the SAME first 400 on every read: an unordered
     // capped select is a different sample each time (2026-09-06, A08a).
     .order("id")

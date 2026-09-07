@@ -9,6 +9,7 @@ import {
 import { buildWorklist, type ScoredProperty, type Worklist } from "@/lib/services/quality-worklist";
 import { tallyContainerUnits } from "@/lib/services/container-units";
 import { sharedPhotoReferences } from "@/lib/services/shared-photos";
+import { RETIRED_PROPERTY_VISIBILITY } from "@/lib/validators/properties";
 
 /**
  * Score every live listing and aggregate what they are missing.
@@ -51,7 +52,7 @@ export async function fetchQualityWorklist(
         .select(
           "id, reference, title, quality_score, status, property_type, kind, parent_id, public_description, asking_price, rent_price_month, covered_area_sqm, plot_area_sqm, bedrooms, bathrooms, planning_zone_code, building_density_pct, location, location_approx, title_deed_status, permit_status, assigned_agent_id, owner_contact_id, developer_contact_id",
         )
-        .neq("visibility", "archived")
+        .neq("visibility", RETIRED_PROPERTY_VISIBILITY)
         .order("id")
         .range(from, to),
     "worklist properties",
