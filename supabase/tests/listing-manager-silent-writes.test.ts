@@ -210,6 +210,52 @@ describe("a listing manager's forbidden UPDATE is refused without saying so", ()
     await svc.from("buyer_requirements").delete().eq("id", made!.id);
   });
 
+  it("cannot complete a task assigned to someone else — the supersede's problem", async () => {
+    /*
+     * `tasks_update` is assignee-scoped: admin, or `assignee_id = auth.uid()`.
+     *
+     * `completeListingStatusChecks` runs on the CALLER's client, so when
+     * anyone but the assignee (or an admin) sets a listing to sold, the
+     * supersede matches zero rows, logs nothing and returns 0 — and the prompt
+     * that asked for exactly that change stays open. properties.ts says why
+     * that matters in its own comment: "a prompt that survives being obeyed
+     * teaches the desk to ignore prompts".
+     *
+     * Not a listing-manager problem specifically — it catches any non-admin
+     * who is not the assignee, an agent included.
+     */
+    const { data: task, error: taskErr } = await svc
+      .from("tasks")
+      .insert({
+        org_id: ORG_A,
+        title: `ZZTEST prompt ${run}`,
+        property_id: propertyId,
+        kind: "listing_status_check",
+        assignee_id: agent.id,
+        is_done: false,
+      })
+      .select("id")
+      .single();
+    if (taskErr) throw new Error(`seed task: ${taskErr.message}`);
+
+    const { data, error } = await lm.client
+      .from("tasks")
+      .update({ is_done: true })
+      .eq("id", task.id)
+      .select("id");
+    expect(error, "no error — the same silent shape as the rest").toBeNull();
+    expect(data, "and the prompt is not completed").toEqual([]);
+
+    const { data: after } = await svc
+      .from("tasks")
+      .select("is_done")
+      .eq("id", task.id)
+      .single();
+    expect(after!.is_done, "it stays open, having been obeyed").toBe(false);
+
+    await svc.from("tasks").delete().eq("id", task.id);
+  });
+
   it("an agent CAN work an unassigned lead — so the refusal above is about the role", async () => {
     // The control. Without it, the two tests above are also satisfied by a
     // lead that simply cannot be updated by anyone.
