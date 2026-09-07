@@ -120,7 +120,9 @@ test("a villa development is created WITH its villas and lands on the units matr
 
   const { data: villas } = await admin
     .from("properties")
-    .select("reference, unit_number, floor_number, bedrooms, plot_area_sqm, asking_price, kind")
+    .select(
+      "reference, unit_number, floor_number, bedrooms, plot_area_sqm, asking_price, kind, quality_score",
+    )
     .eq("parent_id", projectId)
     .order("unit_number");
   expect(villas!.map((v) => v.reference)).toEqual([
@@ -133,6 +135,17 @@ test("a villa development is created WITH its villas and lands on the units matr
   expect(villas!.every((v) => v.bedrooms === 4)).toBe(true);
   expect(villas!.every((v) => Number(v.plot_area_sqm) === 520)).toBe(true);
   expect(villas!.map((v) => Number(v.asking_price))).toEqual([800000, 825000, 850000]);
+  // …and each is SCORED as it is written. `quality_score` is a stored column
+  // the properties list and the CSV export read; the writer never set it, so
+  // every generated unit sat at the column default of 0 behind a red ring
+  // while the detail page computed a real score from the same row one click
+  // away (found 2026-09-07). Only an E2E can prove the REAL path does it — a
+  // fake client proves the arithmetic, not that the statement reaches the
+  // database, which is exactly the gap that hid this.
+  expect(
+    villas!.every((v) => (v.quality_score ?? 0) > 0),
+    "a generated unit is scored at birth, not left at the column default",
+  ).toBe(true);
 
   // the matrix shows them, and the empty-state warning is gone
   await expect(page.getByText(`${project!.reference}-V01`)).toBeVisible();

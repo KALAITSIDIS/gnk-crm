@@ -3,6 +3,39 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-07 · T-units-scored-at-birth (no migration) — sixty units could be
+  born with a red 0/100 ring, and the fake client could not have caught it.**
+  `writeGeneratedUnits` is the one place generated units are written, and it
+  never set `quality_score`. That column is stored: the properties LIST and the
+  CSV export read it, while the detail page and the worklist compute fresh. So
+  every generated unit sat at the column's default of 0 while the same row
+  scored 60 one click away — the same number with two answers, which is this
+  repo's recurring defect. Found only because `recompute:scores` was repaired
+  (T-scripts-under-node) and its dry run reported 12 of 17 stored scores stale,
+  all of them units.
+
+  **Scored from the row the database stored, not from the object we sent.**
+  The insert now `select("*")`s and the score is computed from what came back,
+  so column defaults and inherited values are what get scored and there is no
+  second opinion about what a unit is. It costs no query — a unit one statement
+  old has no photograph and no mandate by construction, which is the whole of
+  what the scorer would otherwise read — and units generated in one run score
+  alike, so it is normally ONE update. A failed update logs and never fails the
+  run: the units exist, the column is derived, and `recompute:scores` repairs
+  it.
+
+  **The verification is the lesson.** `lib/services/unit-writer.test.ts` (the
+  writer had NO unit test, which is how this survived) pins the arithmetic over
+  a scripted client — and it would have passed just as happily if the UPDATE
+  never reached a database. So the proof is in `create-wizard-project.spec.ts`,
+  against the real app and a real Postgres: remove the scoring block and that
+  spec fails naming the assertion; restore it and it passes. **A fake proves
+  the arithmetic, never that the statement lands.**
+
+  **Existing rows were NOT touched** — `npm run recompute:scores` would fix the
+  twelve stale ones, and it writes to real client rows, so it is the operator's
+  call.
+
 - **2026-09-07 · T-scripts-under-node (no migration) — I broke
   `recompute:scores` this morning, in the one place a comment already said not
   to.** `quality-score.ts` is loaded by `scripts/recompute-scores.mts` under
