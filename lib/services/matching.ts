@@ -163,14 +163,23 @@ function transactionCompatible(want: TransactionType, got: TransactionType): boo
 }
 
 /**
- * The price to compare against the budget.
+ * The price to compare against the budget — and the one to SHOW beside a match.
  *
  * A rental requirement must read `rent_price_month`. Reading `asking_price`
  * would compare €250.000 against a €1.500 budget and reject every rental in the
  * database — a whole transaction type silently returning nothing.
+ *
+ * Exported because the rule had three copies: this one, `priceFor` in
+ * match-alerts (now a re-export of this), and a third in the matches card that
+ * did not have it at all — it printed `asking_price` unconditionally, so a rent
+ * match showed the sale price, or "no price set" for a rent-only listing, right
+ * beside the chip saying the rent was within budget.
  */
-function priceFor(req: MatchRequirement, c: MatchCandidate): number | null {
-  const raw = req.transaction_type === "rent" ? c.rent_price_month : c.asking_price;
+export function priceFor(
+  transactionType: MatchRequirement["transaction_type"],
+  p: { asking_price: number | null; rent_price_month: number | null },
+): number | null {
+  const raw = transactionType === "rent" ? p.rent_price_month : p.asking_price;
   if (raw === null || raw === undefined) return null;
   const n = Number(raw);
   return Number.isFinite(n) ? n : null;
@@ -228,7 +237,7 @@ export function matchProperty(req: MatchRequirement, c: MatchCandidate): MatchVe
     blockers.push({ code: "title_deed", got: c.title_deed_status });
   }
 
-  const price = priceFor(req, c);
+  const price = priceFor(req.transaction_type, c);
   const budgetMax = num(req.budget_max);
   if (budgetMax !== null && price !== null) {
     const ceiling = budgetMax * (1 + BUDGET_TOLERANCE_PCT / 100);

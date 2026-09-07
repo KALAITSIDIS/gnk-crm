@@ -24,6 +24,8 @@ const REF = "E2EREQ01";
 const LABEL = "E2E sea-view villa, Paphos";
 const VILLA_TITLE = "E2E requirement fixture villa";
 const RETIRED_REF = "E2EREQ02";
+const RENT_REF = "E2EREQ03";
+const RENT_TITLE = "E2E requirement rental flat";
 const RETIRED_TITLE = "E2E requirement retired villa";
 
 /**
@@ -55,6 +57,7 @@ async function removeFixture(svc: SupabaseClient): Promise<void> {
   }
   await svc.from("properties").delete().eq("reference", REF);
   await svc.from("properties").delete().eq("reference", RETIRED_REF);
+  await svc.from("properties").delete().eq("reference", RENT_REF);
 }
 
 test.beforeEach(() => {
@@ -335,6 +338,89 @@ test("a requirement cannot be moved to another buyer by posting a different cont
       .select("id")
       .eq("contact_id", other.id);
     expect(strayed, "and no brief was created on the other buyer either").toHaveLength(0);
+  } finally {
+    await removeFixture(svc);
+  }
+});
+
+test("a rental match shows the RENT, not the sale price it does not have", async ({ page }) => {
+  /*
+   * The matcher compares a rental brief against `rent_price_month` — reading
+   * `asking_price` would measure €250.000 against a €1.500 budget and reject
+   * every rental in the database. The card did not share that rule: it printed
+   * `asking_price` unconditionally, so a rent-only listing (which has none)
+   * rendered "no price set" directly beside the chip saying the rent was
+   * within budget.
+   *
+   * One rule now, exported from lib/services/matching.ts, for the budget check
+   * and for what the desk reads.
+   */
+  const svc = serviceClient();
+  await removeFixture(svc);
+  const { orgId } = await fixtureProfile(svc);
+
+  const { data: district } = await svc
+    .from("districts")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("code", "PAF")
+    .single();
+  const { data: buyer, error: buyerErr } = await svc
+    .from("contacts")
+    .insert({ org_id: orgId, first_name: CONTACT_NAME, contact_types: ["buyer"] })
+    .select("id")
+    .single();
+  expect(buyerErr, "seeding the buyer").toBeNull();
+
+  // A LETTING: a monthly rent and no asking price at all.
+  const { error: flatErr } = await svc.from("properties").insert({
+    org_id: orgId,
+    reference: RENT_REF,
+    kind: "standalone",
+    property_type: "apartment",
+    transaction_type: "rent",
+    status: "available",
+    visibility: "private",
+    district_id: district!.id,
+    asking_price: null,
+    rent_price_month: 1500,
+    bedrooms: 2,
+    bathrooms: 1,
+    covered_area_sqm: 90,
+    title: { en: RENT_TITLE },
+  });
+  expect(flatErr, "seeding the rental").toBeNull();
+
+  const { error: reqErr } = await svc.from("buyer_requirements").insert({
+    org_id: orgId,
+    contact_id: buyer!.id,
+    label: "E2E rental brief",
+    transaction_type: "rent",
+    property_types: ["apartment"],
+    district_ids: [district!.id],
+    area_ids: [],
+    features_required: [],
+    title_deed_required: false,
+    budget_max: 2000,
+  });
+  expect(reqErr, "seeding the rental brief").toBeNull();
+
+  try {
+    await page.goto(`/contacts/${buyer!.id}`, { waitUntil: "networkidle" });
+    await openPreferences(page);
+
+    const match = page.locator("li").filter({ hasText: RENT_TITLE });
+    await expect(match, "the rental matches the rental brief").toBeVisible({
+      timeout: opTimeout(15_000),
+    });
+
+    const line = (await match.innerText()).replace(/\s+/g, " ");
+    expect(
+      line,
+      "the rent is what this brief is about — printing the (absent) sale price " +
+        "showed 'no price set' beside a chip saying it was within budget",
+    ).not.toMatch(/no price set/i);
+    expect(line.replace(/[^\d]/g, ""), "1.500, the monthly rent").toContain("1500");
   } finally {
     await removeFixture(svc);
   }

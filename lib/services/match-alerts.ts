@@ -6,6 +6,7 @@ import {
   BUDGET_TOLERANCE_PCT,
   MATCHABLE_STATUSES,
   matchProperty,
+  priceFor,
   type MatchCandidate,
   type MatchRequirement,
   type PropertyStatus,
@@ -116,16 +117,16 @@ export function becameMatchable(
   return !MATCHABLE_STATUSES.includes(from);
 }
 
-/** The price a requirement of this transaction type compares against. */
-export function priceFor(
-  transactionType: TransactionType,
-  p: { asking_price: number | null; rent_price_month: number | null },
-): number | null {
-  const raw = transactionType === "rent" ? p.rent_price_month : p.asking_price;
-  if (raw === null || raw === undefined) return null;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
-}
+/**
+ * The price a requirement of this transaction type compares against.
+ *
+ * Re-exported, not reimplemented: `lib/services/matching.ts` owns this rule
+ * because the matcher's budget check is what it exists for. A second copy here
+ * is how the matches card ended up with a third that was wrong.
+ */
+// Imported above for use below, and re-exported here so callers and tests
+// keep one name for one rule.
+export { priceFor };
 
 // ---------------------------------------------------------------- shared ----
 
