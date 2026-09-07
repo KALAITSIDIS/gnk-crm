@@ -23,6 +23,8 @@ const CONTACT_NAME = "E2EReqBuyer";
 const REF = "E2EREQ01";
 const LABEL = "E2E sea-view villa, Paphos";
 const VILLA_TITLE = "E2E requirement fixture villa";
+const RETIRED_REF = "E2EREQ02";
+const RETIRED_TITLE = "E2E requirement retired villa";
 
 /**
  * Saved searches and their matches live behind the Preferences tab, and the
@@ -52,6 +54,7 @@ async function removeFixture(svc: SupabaseClient): Promise<void> {
     await svc.from("contacts").delete().eq("id", c.id);
   }
   await svc.from("properties").delete().eq("reference", REF);
+  await svc.from("properties").delete().eq("reference", RETIRED_REF);
 }
 
 test.beforeEach(() => {
@@ -101,6 +104,34 @@ test("a saved search records what the buyer said, and the matcher reads exactly 
     .select("id")
     .single();
   expect(villaErr, "seeding the villa").toBeNull();
+
+  /*
+   * An identical villa that has been RETIRED. Same district, same price, same
+   * bedrooms — the only difference is `visibility: "archived"`, which is how a
+   * listing is taken off the books (the other half of `status: "withdrawn"`).
+   *
+   * It must never be proposed. Until 2026-09-07 it was: the matcher filtered
+   * status and kind but not visibility, so a listing the properties list, the
+   * quality worklist and the container-unit reader all refuse to show was
+   * still offered to buyers. On production that was five units archived
+   * precisely BECAUSE their data was fabricated.
+   */
+  const { error: retiredErr } = await svc.from("properties").insert({
+    org_id: orgId,
+    reference: RETIRED_REF,
+    kind: "standalone",
+    property_type: "villa",
+    transaction_type: "sale",
+    status: "available",
+    visibility: "archived",
+    district_id: district!.id,
+    asking_price: 450000,
+    bedrooms: 3,
+    bathrooms: 2,
+    covered_area_sqm: 185,
+    title: { en: RETIRED_TITLE },
+  });
+  expect(retiredErr, "seeding the retired villa").toBeNull();
 
   try {
     await page.goto(`/contacts/${buyer!.id}`, { waitUntil: "networkidle" });
@@ -184,6 +215,11 @@ test("a saved search records what the buyer said, and the matcher reads exactly 
       "the villa this search describes appears under it",
     ).toBeVisible({ timeout: opTimeout(15_000) });
     await expect(page.getByText(new RegExp(REF)).first()).toBeVisible();
+    // ...and the retired twin is not, though it fits the search exactly
+    await expect(
+      page.getByRole("link", { name: RETIRED_TITLE }),
+      "an archived listing is off the books — proposing it undoes the archiving",
+    ).toHaveCount(0);
 
     // ---------- archiving retires it, and the matches go with it ----------
     // SCOPED, not `.first()`: the contact header carries an "Archive" button of
@@ -214,10 +250,20 @@ test("a saved search records what the buyer said, and the matcher reads exactly 
   }
 });
 
-test("a requirement cannot be moved to another buyer by posting a different contact", async () => {
-  // Guarded in the action rather than by the form, because a form can post
-  // anything: reassigning a saved search would hand one buyer's brief to
-  // another, and the timeline would show it as an ordinary edit.
+test("a requirement cannot be moved to another buyer by posting a different contact", async ({
+  page,
+}) => {
+  /*
+   * THIS TEST POSTS THE FORGERY. An earlier version of it seeded a requirement
+   * and then asserted the requirement still belonged to the buyer it was
+   * seeded for — without ever attempting the reassignment. It could not fail,
+   * which is worse than not existing: it reported a guard as covered.
+   *
+   * The guard is the action's, not the form's, because a form can post
+   * anything: `contact_id` is a hidden input, and rewriting it before submit
+   * is the whole attack. Reassigning a saved search would hand one buyer's
+   * brief to another and the timeline would show it as an ordinary edit.
+   */
   const svc = serviceClient();
   await removeFixture(svc);
   const { orgId } = await fixtureProfile(svc);
@@ -229,12 +275,15 @@ test("a requirement cannot be moved to another buyer by posting a different cont
     ])
     .select("id");
   expect(pairErr, "seeding the pair").toBeNull();
+  const [owner, other] = pair!;
+
   try {
     const { data: req, error: reqErr } = await svc
       .from("buyer_requirements")
       .insert({
         org_id: orgId,
-        contact_id: pair![0].id,
+        contact_id: owner.id,
+        label: LABEL,
         transaction_type: "sale",
         property_types: [],
         district_ids: [],
@@ -246,15 +295,46 @@ test("a requirement cannot be moved to another buyer by posting a different cont
       .single();
     expect(reqErr, "seeding the requirement").toBeNull();
 
-    // The rule is the action's, so this asserts the DATA it protects: the
-    // requirement still belongs to the buyer it was created for.
+    await page.goto(`/contacts/${owner.id}`, { waitUntil: "networkidle" });
+    await openPreferences(page);
+    await savedSearches(page).getByRole("button", { name: /^edit$/i }).first().click();
+
+    const form = page.locator("form").filter({ has: page.getByLabel(/name this search/i) });
+    await expect(form).toBeVisible({ timeout: opTimeout(15_000) });
+
+    // Rewrite the hidden owner field, exactly as a tampered client would.
+    const rewritten = await form.locator('input[name="contact_id"]').evaluate(
+      (el, id) => {
+        (el as HTMLInputElement).value = id;
+        return (el as HTMLInputElement).value;
+      },
+      other.id,
+    );
+    expect(rewritten, "the forgery is in the form before submit").toBe(other.id);
+
+    await form.getByRole("button", { name: /^save/i }).click();
+
+    // the action REFUSES, in words, rather than silently reassigning
+    await expect(
+      form.getByRole("alert"),
+      "the refusal is shown to whoever tried it",
+    ).toHaveText(/cannot be moved to another contact/i, { timeout: opTimeout(15_000) });
+
+    // and the row did not move
     const { data: after } = await svc
       .from("buyer_requirements")
       .select("contact_id")
       .eq("id", req!.id)
       .single();
-    expect(after!.contact_id).toBe(pair![0].id);
-    expect(after!.contact_id).not.toBe(pair![1].id);
+    expect(after!.contact_id, "the brief still belongs to the buyer who gave it").toBe(owner.id);
+    expect(after!.contact_id).not.toBe(other.id);
+
+    // nor did it appear under the other buyer
+    const { data: strayed } = await svc
+      .from("buyer_requirements")
+      .select("id")
+      .eq("contact_id", other.id);
+    expect(strayed, "and no brief was created on the other buyer either").toHaveLength(0);
   } finally {
     await removeFixture(svc);
   }

@@ -1,5 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
+// WITH the extension and no "@/": this module is reachable from
+// scripts/recompute-scores.mts and the media importer, which run under
+// plain Node where neither the alias nor a missing extension resolves.
+import { RETIRED_PROPERTY_VISIBILITY } from "../validators/properties.ts";
 
 /**
  * What "a unit" means for a container (2026-09-02, post-merge review).
@@ -54,7 +58,7 @@ export async function countContainerUnits(
     .select("id")
     .eq("parent_id", containerId)
     .eq("kind", "phase")
-    .neq("visibility", "archived");
+    .neq("visibility", RETIRED_PROPERTY_VISIBILITY);
   if (phaseErr) throw new Error(`Container phase query failed: ${phaseErr.message}`);
 
   const parents = [containerId, ...(phases ?? []).map((p) => p.id)];
@@ -67,7 +71,7 @@ export async function countContainerUnits(
       .select("id", { count: "exact", head: true })
       .in("parent_id", parents)
       .eq("kind", "unit")
-      .neq("visibility", "archived");
+      .neq("visibility", RETIRED_PROPERTY_VISIBILITY);
   const [{ count: unitCount, error: unitErr }, { count: pricedCount, error: pricedErr }] =
     await Promise.all([
       base(),

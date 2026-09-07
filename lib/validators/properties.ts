@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { MAX_FLOOR, MAX_GENERATED_UNITS, MAX_PER_FLOOR } from "@/lib/services/unit-generator";
+// Relative and WITH the extension: this module is now reachable from the
+// standalone scripts (via lib/services/container-units.ts), which run under
+// plain Node where neither "@/" nor a missing extension resolves.
+import { MAX_FLOOR, MAX_GENERATED_UNITS, MAX_PER_FLOOR } from "../services/unit-generator.ts";
 
 export const PROPERTY_TYPES = [
   "apartment",
