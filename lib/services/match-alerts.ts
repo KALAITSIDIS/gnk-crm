@@ -10,7 +10,6 @@ import {
   type MatchCandidate,
   type MatchRequirement,
   type PropertyStatus,
-  type TransactionType,
 } from "@/lib/services/matching";
 import { cyprusEndOfDay } from "@/lib/validators/reservations";
 
