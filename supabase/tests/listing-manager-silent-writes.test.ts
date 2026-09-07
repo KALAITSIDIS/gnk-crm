@@ -30,6 +30,7 @@ let leadId: string;
 let viewingId: string;
 let propertyId: string;
 let contactId: string;
+let buyerContactId: string;
 
 beforeAll(async () => {
   await ensureTestOrg(svc, ORG_A, "Test Org A", "test-org-a");
@@ -64,6 +65,14 @@ beforeAll(async () => {
     .single();
   if (contactErr) throw new Error(`seed contact: ${contactErr.message}`);
   contactId = contact.id;
+
+  const { data: buyerContact, error: buyerErr } = await svc
+    .from("contacts")
+    .insert({ org_id: ORG_A, first_name: `ZZTESTLMB${run}`, contact_types: ["buyer"] })
+    .select("id")
+    .single();
+  if (buyerErr) throw new Error(`seed buyer: ${buyerErr.message}`);
+  buyerContactId = buyerContact.id;
 
   // owned by the AGENT, so the listing manager is not its owner either way
   const { data: viewing, error: viewingErr } = await svc
@@ -155,6 +164,50 @@ describe("a listing manager's forbidden UPDATE is refused without saying so", ()
     });
     expect(error, "an INSERT they may not make is an ERROR, not a silent no-op").not.toBeNull();
     expect(error!.code, "row-level security violation").toBe("42501");
+  });
+
+  it("CAN write a saved search — the app is stricter than the policy here", async () => {
+    /*
+     * The mirror image of everything above, and worth measuring for the same
+     * reason: `buyer_requirements` INSERT and UPDATE are org-scoped only, with
+     * no role test at all, and DELETE explicitly names `listing_manager`
+     * alongside admin. The schema plainly intends this role to manage saved
+     * searches.
+     *
+     * The contact page nevertheless renders the requirements card read-only
+     * for them, because its `canEdit` is derived from the CONTACTS update
+     * policy (admin, or the owning agent) rather than from the policy that
+     * actually governs the rows the card writes.
+     *
+     * So this is not a hole to close but a capability to restore — recorded
+     * here as a measurement rather than acted on, because widening a screen's
+     * permissions is a decision about who does the work, not a defect.
+     */
+    const { data: made, error: insErr } = await lm.client
+      .from("buyer_requirements")
+      .insert({
+        org_id: ORG_A,
+        contact_id: buyerContactId,
+        transaction_type: "sale",
+        property_types: [],
+        district_ids: [],
+        area_ids: [],
+        features_required: [],
+        title_deed_required: false,
+      })
+      .select("id")
+      .single();
+    expect(insErr, "the policy admits the insert").toBeNull();
+
+    const { data: edited, error: updErr } = await lm.client
+      .from("buyer_requirements")
+      .update({ label: "edited by a listing manager" })
+      .eq("id", made!.id)
+      .select("id");
+    expect(updErr).toBeNull();
+    expect(edited, "and the update lands, unlike leads and viewings").toHaveLength(1);
+
+    await svc.from("buyer_requirements").delete().eq("id", made!.id);
   });
 
   it("an agent CAN work an unassigned lead — so the refusal above is about the role", async () => {
