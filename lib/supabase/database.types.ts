@@ -1664,6 +1664,7 @@ export type Database = {
       property_media: {
         Row: {
           alt: Json
+          content_sha256: string | null
           created_at: string
           created_by: string | null
           exif_stripped: boolean
@@ -1684,6 +1685,7 @@ export type Database = {
         }
         Insert: {
           alt?: Json
+          content_sha256?: string | null
           created_at?: string
           created_by?: string | null
           exif_stripped?: boolean
@@ -1704,6 +1706,7 @@ export type Database = {
         }
         Update: {
           alt?: Json
+          content_sha256?: string | null
           created_at?: string
           created_by?: string | null
           exif_stripped?: boolean
@@ -1738,11 +1741,11 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "property_media_property_id_fkey"
-            columns: ["property_id"]
+            foreignKeyName: "property_media_org_property_fkey"
+            columns: ["org_id", "property_id"]
             isOneToOne: false
             referencedRelation: "properties"
-            referencedColumns: ["id"]
+            referencedColumns: ["org_id", "id"]
           },
         ]
       }
@@ -3105,7 +3108,12 @@ export type Database = {
       postgis_version: { Args: never; Returns: string }
       postgis_wagyu_version: { Args: never; Returns: string }
       public_listings: {
-        Args: { p_limit?: number; p_offset?: number; p_org_slug: string }
+        Args: {
+          p_limit?: number
+          p_offset?: number
+          p_org_slug: string
+          p_reference?: string
+        }
         Returns: {
           adviser_view: Json
           area: Json

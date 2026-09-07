@@ -68,11 +68,16 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const { limit, offset } = parseFeedParams(params);
+  const { limit, offset, reference } = parseFeedParams(params);
+  // 0088: `?reference=` asks for ONE listing (case-insensitive; the site
+  // matches that way and then redirects to the canonical spelling). Absent,
+  // the feed. Passed only when present so a pre-0088 database — which has no
+  // fourth parameter — still answers the plain feed during a rollout.
   const { data, error } = await supabase.rpc("public_listings", {
     p_org_slug: org,
     p_limit: limit,
     p_offset: offset,
+    ...(reference ? { p_reference: reference } : {}),
   });
   if (error) {
     return NextResponse.json(
@@ -97,7 +102,14 @@ export async function GET(request: NextRequest) {
   // for text that had changed. A 304 now costs the feed query it used to skip;
   // the site's cache never sends If-None-Match (it revalidates on time), and a
   // validator that could lie was the dearer thing.
-  const body = JSON.stringify({ org, count: listings.length, limit, offset, listings });
+  const body = JSON.stringify({
+    org,
+    count: listings.length,
+    limit,
+    offset,
+    ...(reference ? { reference } : {}),
+    listings,
+  });
   const etag = feedEtag(String(snapshot.data), body);
 
   if (request.headers.get("if-none-match") === etag) {

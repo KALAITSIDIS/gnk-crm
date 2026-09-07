@@ -8,6 +8,7 @@ import {
 } from "@/lib/services/quality-score";
 import { buildWorklist, type ScoredProperty, type Worklist } from "@/lib/services/quality-worklist";
 import { tallyContainerUnits } from "@/lib/services/container-units";
+import { sharedPhotoReferences } from "@/lib/services/shared-photos";
 
 /**
  * Score every live listing and aggregate what they are missing.
@@ -72,7 +73,7 @@ export async function fetchQualityWorklist(
     // photos only (MEDIA-K) — must agree with recomputeQualityScore's filter
     supabase
       .from("property_media")
-      .select("property_id, is_cover")
+      .select("property_id, is_cover, content_sha256")
       .in("property_id", ids)
       .eq("kind", "photo"),
     supabase.from("mandates_safe").select("property_id").eq("status", "active").in("property_id", ids),
@@ -94,6 +95,15 @@ export async function fetchQualityWorklist(
     (mandateRes.data ?? []).map((m) => m.property_id).filter((v): v is string => Boolean(v)),
   );
 
+  // 0088: which listings carry the same photograph — grouped here, in
+  // memory, over the media already loaded (shared-photos.ts is the one
+  // definition; the property page asks the database the same question).
+  const referenceOf = new Map(allRows.map((r) => [r.id, r.reference]));
+  const shared = sharedPhotoReferences(
+    (mediaRes.data ?? []).filter((m): m is typeof m & { property_id: string } => Boolean(m.property_id)),
+    referenceOf,
+  );
+
   // Unit counts WITHOUT a fourth query: units are properties, so a container's
   // units are already in `properties` unless they are sold/archived — and a
   // container whose every unit has sold is not one the worklist should chase.
@@ -110,6 +120,7 @@ export async function fetchQualityWorklist(
       buildQualityInput(p as unknown as QualityScoreSource, {
         hasCoverPhoto: hasCover.has(p.id),
         photoCount: photoCount.get(p.id) ?? 0,
+        sharedPhotoWith: shared.get(p.id) ?? [],
         unitCount: units.get(p.id)?.unitCount ?? 0,
         pricedUnitCount: units.get(p.id)?.pricedUnitCount ?? 0,
         mandateActive: mandated.has(p.id),

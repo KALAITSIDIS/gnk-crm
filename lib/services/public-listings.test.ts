@@ -14,7 +14,7 @@ describe("public listing feed params", () => {
     // The regression this file exists for. `Number(null)` is 0, so the first
     // version answered a plain `?org=gnk` with limit 0 — a 200 and an empty
     // feed, which is exactly the failure a marketing site cannot diagnose.
-    expect(parseFeedParams(q("org=gnk"))).toEqual({ limit: DEFAULT_LIMIT, offset: 0 });
+    expect(parseFeedParams(q("org=gnk"))).toEqual({ limit: DEFAULT_LIMIT, offset: 0, reference: null });
   });
 
   it("an EMPTY limit also takes the default", () => {
@@ -102,5 +102,22 @@ describe("feed image URLs (FEED-1, 0073)", () => {
   it("a row without an images array passes through untouched (pre-0073 database mid-rollout)", () => {
     const rows = [{ reference: "PAF0001" } as { reference: string; images?: unknown }];
     expect(absolutizeListingImages(rows, URL_BASE)).toEqual(rows);
+  });
+});
+
+describe("one listing by reference (0088)", () => {
+  it("is absent by default — the plain call is the feed", () => {
+    expect(parseFeedParams(q("org=gnk")).reference).toBeNull();
+  });
+
+  it("is passed through trimmed, as typed — the database matches case-insensitively", () => {
+    expect(parseFeedParams(q("org=gnk&reference=paf0001")).reference).toBe("paf0001");
+    expect(parseFeedParams(q("org=gnk&reference=%20PAF0001%20")).reference).toBe("PAF0001");
+  });
+
+  it("treats an empty or absurd value as absent rather than erroring", () => {
+    expect(parseFeedParams(q("org=gnk&reference=")).reference).toBeNull();
+    expect(parseFeedParams(q("org=gnk&reference=" + "X".repeat(41))).reference).toBeNull();
+    expect(parseFeedParams(q("org=gnk&reference=" + "X".repeat(40))).reference).toBe("X".repeat(40));
   });
 });

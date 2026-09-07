@@ -39,8 +39,17 @@ export interface WorklistCategory {
   properties: WorklistProperty[];
 }
 
+/** 0088: a listing carrying a photograph that another listing also carries. */
+export interface WorklistSharedPhoto {
+  property: WorklistProperty;
+  /** the other listings, by reference */
+  withReferences: string[];
+}
+
 export interface Worklist {
   categories: WorklistCategory[];
+  /** warnings, not points: listings whose photographs appear elsewhere (0088) */
+  sharedPhotos: WorklistSharedPhoto[];
   /** properties considered — the denominator behind every count */
   total: number;
   /** how many scored full marks and appear in no category at all */
@@ -122,8 +131,17 @@ export function buildWorklist(scored: ScoredProperty[]): Worklist {
   const total = scored.length;
   const complete = scored.filter((s) => s.result.missing.length === 0).length;
 
+  const sharedPhotos: WorklistSharedPhoto[] = scored
+    .flatMap(({ property, result }) =>
+      result.warnings
+        .filter((w) => w.key === "shared_photo")
+        .map((w) => ({ property, withReferences: w.references })),
+    )
+    .sort((a, b) => a.property.reference.localeCompare(b.property.reference));
+
   return {
     categories,
+    sharedPhotos,
     total,
     complete,
     recoverable: categories.reduce((sum, c) => sum + c.recoverable, 0),

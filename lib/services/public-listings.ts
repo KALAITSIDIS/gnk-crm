@@ -20,6 +20,8 @@ export const DEFAULT_LIMIT = 50;
 export interface FeedParams {
   limit: number;
   offset: number;
+  /** 0088: one listing by reference; null is the feed. Trimmed, capped at 40 (0033's shape allows no more). */
+  reference: string | null;
 }
 
 /**
@@ -37,9 +39,11 @@ function intParam(raw: string | null | undefined, fallback: number, max: number)
 export function parseFeedParams(params: {
   get(name: string): string | null;
 }): FeedParams {
+  const ref = (params.get("reference") ?? "").trim();
   return {
     limit: intParam(params.get("limit"), DEFAULT_LIMIT, MAX_LIMIT),
     offset: intParam(params.get("offset"), 0, Number.MAX_SAFE_INTEGER),
+    reference: ref !== "" && ref.length <= 40 ? ref : null,
   };
 }
 
