@@ -141,4 +141,4 @@ The "next migration must carry the area-rename ETag segment" obligation recorded
 
 ## 8. Operator-owned, unchanged by any of the above
 
-Real photographs for PAF0003 and PAF0004 (≥1600 px wide); PAF0002's title and description before it publishes; two principal names, roles, bios and portraits; the lawyer's view on Law 71(I)/2010 wording; the domain cut-over (`SITE_URL`); whether floor plans are held under confidentiality; the enquiry retention period.
+**PAF0001 and PAF0002 carry the same six photographs, byte for byte** (found by 0088's hash backfill, 2026-09-07 — see HANDOFF's operator row; the CRM warns about it on the worklist and on both listings). Whose they are is a question only the firm can answer, and it has to be answered before PAF0002 publishes. Real photographs for PAF0003 and PAF0004 (≥1600 px wide); PAF0002's title and description before it publishes; two principal names, roles, bios and portraits; the lawyer's view on Law 71(I)/2010 wording; the domain cut-over (`SITE_URL`); whether floor plans are held under confidentiality; the enquiry retention period.
