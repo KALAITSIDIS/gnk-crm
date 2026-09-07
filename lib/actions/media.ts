@@ -244,15 +244,22 @@ export async function setMediaCover(
  * photograph HAS one — a coverage count, a translation pass, the jsonb key test
  * — gets one answer instead of two that look different and mean the same.
  *
- * A cleared alt is a real change to what the feed publishes, so it moves the
- * feed's validator: 0086 folds alt into `public_listings_etag`, which until then
- * hashed only a photo's id, sort order and cover flag. This action is one of
- * two media paths that do NOT recompute the quality score (which is what
- * incidentally touches `properties.updated_at` for upload, set-cover and
- * delete); the other is moveMedia, whose sort_order was already in the
- * fingerprint — so before 0086 an edit here was the only media change the
- * validator could not see. 0086's own header says "the ONE"; that is the
- * overstatement, and it stays because an applied migration is never rewritten.
+ * A cleared alt is a real change to what the feed publishes, and since
+ * T-etag-from-body (2026-09-06) it CANNOT be missed: the feed's validator is
+ * sha256 of the bytes the route sends, so any change to what the feed says
+ * moves it whether or not a SQL-side hash saw it coming.
+ *
+ * The history is still worth carrying, because it is why the validator moved
+ * home. `public_listings_etag` — now only the SNAPSHOT segment, the name
+ * gnk-web compares across pages — hashed a photo's id, sort order and cover
+ * flag, and 0086 folded alt in after this action gave alt its first write path
+ * and 0085 put it in the feed body. This is one of two media paths that do NOT
+ * recompute the quality score (which is what incidentally touches
+ * `properties.updated_at` for upload, set-cover and delete); the other is
+ * moveMedia, whose sort_order was already in the fingerprint — so before 0086
+ * an edit here was the only media change that hash could not see. 0086's own
+ * header says "the ONE"; that is the overstatement, and it stays because an
+ * applied migration is never rewritten.
  */
 export async function setMediaAlt(
   propertyId: string,

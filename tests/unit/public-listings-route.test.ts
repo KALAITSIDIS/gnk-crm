@@ -139,6 +139,10 @@ describe("the feed's ETag is a digest of the bytes it sends", () => {
     expect(fresh.status).toBe(304);
     expect(fresh.headers.get("etag")).toBe(etag);
     expect(await fresh.text()).toBe("");
+    // the same TTL as the 200: gnk-web's README states this number as the
+    // first of the three caches behind the site's freshness, and the
+    // revalidation path is where a drift would go unnoticed
+    expect(fresh.headers.get("cache-control")).toBe("public, max-age=60");
 
     const stale = await get("org=gnk", {
       "if-none-match": 'W/"' + state.snapshot + "-" + "0".repeat(32) + '"',

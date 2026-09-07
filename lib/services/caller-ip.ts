@@ -10,9 +10,11 @@ import { hashIp } from "@/lib/services/ip-hash";
  * rate limiter keyed on a hash that changed shape silently stops limiting
  * anything — the counters would just never match an existing row.
  *
- * The salt is the project URL rather than a secret: the value only has to be
- * unguessable-in-aggregate and stable within a deployment. It is truncated to
- * 32 chars because that is what the counter tables were built for (0023).
+ * The salt is NOT described here. It was — "the project URL rather than a
+ * secret" — and on 2026-09-06 `IP_HASH_SALT` made that false while this
+ * paragraph went on asserting it: one fact in two places, one of them wrong,
+ * which is this project's recurring failure. ip-hash.ts is where the hash and
+ * its salt are defined and explained; there is nothing to repeat here.
  */
 export { hashIp };
 
