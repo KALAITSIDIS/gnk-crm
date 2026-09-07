@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
+import { createAdminClient } from "@/lib/supabase/admin";
 import {
   computeVelocity,
   soldAtFromEvents,
@@ -29,7 +30,9 @@ export async function fetchProjectVelocity(
 ): Promise<VelocityResult> {
   const { data: unitRows, error: unitErr } = await supabase
     .from("properties")
-    .select("id, status, asking_price")
+    // org_id comes back so the event read below (which runs as the system) has
+    // an explicit boundary taken from a row RLS already returned
+    .select("id, status, asking_price, org_id")
     .eq("parent_id", projectId)
     .eq("kind", "unit");
   if (unitErr) throw new Error(`Velocity unit query failed: ${unitErr.message}`);
@@ -44,9 +47,27 @@ export async function fetchProjectVelocity(
   const soldIds = units.filter((u) => u.status === "sold").map((u) => u.id);
   if (soldIds.length === 0) return computeVelocity(units, now);
 
-  const { data: eventRows, error: eventErr } = await supabase
+  /*
+   * READ AS THE SYSTEM — this is a METRIC, and a metric must not vary by reader.
+   *
+   * `events_select` (0063) shows a non-admin only the rows they authored, so on
+   * the caller's client "when did each unit sell" became "when did each unit
+   * sell BY MY HAND". A unit a colleague marked sold had no visible sale date,
+   * `soldAtFromEvents` returned null for it, and the card reported a different
+   * velocity to every person who opened it — a wrong number rather than an
+   * empty one, which is the worse failure of the two.
+   *
+   * Same contract as lib/services/entity-timeline.ts: the ids come from a units
+   * read on the CALLER's client, and org_id is filtered explicitly because the
+   * admin client has no RLS to do it.
+   */
+  const orgId = (unitRows ?? [])[0]?.org_id as string | undefined;
+  if (!orgId) return computeVelocity(units, now);
+
+  const { data: eventRows, error: eventErr } = await createAdminClient()
     .from("events")
     .select("entity_id, event_type, occurred_at, payload")
+    .eq("org_id", orgId)
     .eq("entity_type", "property")
     .in("entity_id", soldIds)
     // both shapes — the units grid writes status_changed, the details form
