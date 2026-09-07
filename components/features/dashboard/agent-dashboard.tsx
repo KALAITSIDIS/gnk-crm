@@ -16,6 +16,7 @@ import { unwrapRows } from "@/lib/supabase/unwrap";
 import { formatDate } from "@/lib/utils/format";
 import { zonedParts, zonedWallClockToUtc } from "@/lib/utils/tz";
 import { cn } from "@/lib/utils";
+import { readLastTouched } from "@/lib/services/entity-timeline";
 
 /**
  * Agent dashboard (T5.3, doc 05 — mobile-first 📱, usable at 380px). Every
@@ -97,7 +98,9 @@ export async function AgentDashboard({ profileId }: { profileId: string }) {
       .limit(8),
     supabase
       .from("contacts")
-      .select("id, display_name")
+      // org_id comes back so the last-touched read (which runs as the system)
+      // has an explicit org boundary taken from a row RLS already returned
+      .select("id, display_name, org_id")
       .eq("assigned_agent_id", profileId)
       .eq("temperature", "hot")
       .contains("contact_types", ["buyer"])
@@ -120,16 +123,24 @@ export async function AgentDashboard({ profileId }: { profileId: string }) {
   //      idle = no event or max(occurred_at) < now() - interval '3 days'
   //      (sampled over the 500 most recent events across the hot contacts)
   const hotIds = hotContacts.map((c) => c.id);
-  const hotEventsRes = hotIds.length
-    ? await supabase
-        .from("events")
-        .select("entity_id, occurred_at")
-        .eq("entity_type", "contact")
-        .in("entity_id", hotIds)
-        .order("occurred_at", { ascending: false })
-        .limit(500)
-    : { data: [], error: null };
-  const hotEvents = unwrapRows(hotEventsRes, "hot contact events");
+  /*
+   * "Last touched" means by ANYONE, so this asks the system.
+   *
+   * `events_select` shows a non-admin only the rows they authored, so on the
+   * caller's client this computed "when did I last touch them" — and a contact
+   * a colleague rang yesterday still read as idle for three days. The desk's
+   * own tool then told this agent to ring a buyer who had just been rung,
+   * which is the duplicate-call failure a CRM exists to prevent.
+   *
+   * The ids are contacts assigned to this agent and read on their own client;
+   * the org comes from those same rows.
+   */
+  const hotEvents = await readLastTouched({
+    orgId: (hotContacts[0]?.org_id as string | undefined) ?? "",
+    entityType: "contact",
+    entityIds: hotIds,
+    limit: 500,
+  });
   const lastTouch = new Map<string, string>();
   for (const e of hotEvents) {
     if (e.entity_id && !lastTouch.has(e.entity_id)) lastTouch.set(e.entity_id, e.occurred_at);

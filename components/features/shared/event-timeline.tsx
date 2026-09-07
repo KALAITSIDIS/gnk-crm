@@ -4,9 +4,17 @@ import { formatDateTime } from "@/lib/utils/format";
 
 /**
  * Org-scoped activity feed (T3.5). Server component — the parent fetches the
- * rows (RLS scopes them); lines come from the event_type registry in
- * lib/services/events.ts, translated into the request locale. `emptyText`
- * is already-localized text supplied by the caller.
+ * rows; lines come from the event_type registry in lib/services/events.ts,
+ * translated into the request locale. `emptyText` is already-localized text
+ * supplied by the caller.
+ *
+ * THE ROWS ARE NOT RLS-SCOPED, and this used to say they were. Timelines are
+ * read through `lib/services/entity-timeline.ts`, which runs as the system
+ * because `events_select` shows a non-admin only the rows they authored —
+ * on the caller's client this component rendered "what I did to this record"
+ * under the heading "what happened to it". The reader carries the org filter
+ * and the document-title redaction that RLS would otherwise have applied; if
+ * you add a caller, read its notes first.
  */
 export async function EventTimeline({
   events,

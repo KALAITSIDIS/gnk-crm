@@ -5763,3 +5763,69 @@ real, both mine:**
 Neither would have been caught by review-by-reading; both came from running the
 thing and from an adversarial pass whose only instruction was to disprove the
 recommendation.
+
+## T-timeline — a record's history is a fact about the record (2026-09-07)
+
+The operator asked what cross-agent visibility should be, and to build it. The
+answer is not a policy change; it is the half of the design that was never
+built.
+
+**MEASURED FIRST.** `events_select` (0063) is `org_id = current_org_id() AND
+(role = 'admin' OR actor_id = auth.uid())`. Three events were seeded on one
+contact — one by an agent, one by a colleague, one with `actor_id` NULL, which
+is what every cron and sweep writes — and that agent's own client returned ONE.
+So for every non-admin the timeline answered "what did I do to this record"
+under a heading that says "what happened to it". System events are invisible to
+all of them, because `null = auth.uid()` is NULL and never true: nudges, sweeps,
+price-drop alerts and reservation expiries appeared on no agent's screen. It
+went unnoticed because every e2e test signs in as the seed admin, for whom the
+policy filters nothing.
+
+**THE POLICY IS NOT WIDENED, AND THAT IS THE POINT.** doc 04 has said from the
+start what the rule should be — "`actor_id = uid` OR entity is a record they can
+read — implement pragmatically: A + AG/LM where `actor_id = uid`; timeline pages
+assemble via server actions with service role for cross-entity reads, still
+org-scoped". The narrow policy is the deliberate half and 0071 hardened its
+INSERT side so a session cannot append a row naming another user. Widening it
+would also leak: `lib/actions/mandates.ts` builds its `updated` payload from the
+changed columns, which include `commission_pct` and `commission_notes` — the two
+fields doc 04 masks from listing managers behind `mandates_safe`.
+
+So `lib/services/entity-timeline.ts` is the missing half: it reads as the system,
+filters `org_id` explicitly, and takes only ids the CALLER already read through
+RLS. Every caller `notFound()`s first — contacts page:101, properties page:97,
+deals page:44 — so an id reaching it is proof the caller may see the row it
+names. `entityType` is a union of the five types a screen renders, so adding a
+mandate timeline is a compile error rather than a silent commission leak.
+
+**THE IDLE LIST WAS WORSE THAN THE TIMELINE.** The agent dashboard's "hot buyers
+idle ≥3 days" computed last-touched from the same actor-scoped read, so a
+contact a colleague rang yesterday still read as untouched — and the desk's own
+tool told an agent to ring a buyer who had just been rung. That is the
+duplicate-call failure a CRM exists to prevent. `readLastTouched` fixes it.
+
+**AND THE LEAK THIS WOULD HAVE SHIPPED.** An adversarial pass caught what the
+design had aimed at the wrong target. The commission redaction guarded a path
+the reader cannot reach — mandate events are `entity_type = 'mandate'` and no
+caller passes it. The reachable leak was documents: `documents_select` is
+`admin OR visibility = 'internal'`, so `admin_only` CDD records — passports,
+proof of address, source of funds, "the most sensitive PII the desk holds",
+"enforced three deep" — are hidden from every agent and listing manager. But
+`contact-documents.ts` files the upload event on the CONTACT, carrying the
+title, and `describeEvent` prints it verbatim; the title defaults to the
+uploaded FILE NAME. Showing the whole history without redaction would have put
+"Document uploaded — passport_AB123456.pdf" on every agent's screen and undone
+all three layers with a line of prose.
+
+`redactDocumentTitles` withholds the name unless the viewer is an admin or the
+document is `internal`, decided from the payload's own `doc_type` (which the
+0072 CHECK binds to visibility from every path, and which still works for a
+`document_deleted` whose row is gone). It FAILS CLOSED: an unrecognised payload
+loses its title too, and the renderer's existing untitled branch keeps the event
+visible while withholding only the name. Mutation-proven, including the
+fail-open case.
+
+Two smaller honesty fixes came out of the same pass: a test here was named "a
+failed read is logged, not rendered as an empty history" while asserting that it
+IS rendered as one, and `event-timeline.tsx` still told the next reader that RLS
+scopes these rows. Both now say what is true.

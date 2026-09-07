@@ -51,6 +51,7 @@ import {
 import { formatPhone } from "@/lib/services/phone";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTime } from "@/lib/utils/format";
+import { readEntityTimeline } from "@/lib/services/entity-timeline";
 
 const TEMP_TONES: Record<string, string> = {
   hot: "bg-danger/10 text-danger",
@@ -109,14 +110,19 @@ export default async function ContactDetailPage({
     { data: absorber },
     { data: viewingRows },
   ] = await Promise.all([
-    // combined history: this contact + everything merged into it (DECISIONS T2.3)
-    supabase
-      .from("events")
-      .select("id, occurred_at, event_type, entity_type, entity_id, payload")
-      .eq("entity_type", "contact")
-      .in("entity_id", [id, ...(mergedRows ?? []).map((m) => m.id)])
-      .order("occurred_at", { ascending: false })
-      .limit(50),
+    // Combined history: this contact + everything merged into it (DECISIONS
+    // T2.3), read as the SYSTEM. `events_select` shows a non-admin only the
+    // rows they authored, so on the caller's client this answered "what did I
+    // do to this contact" — a colleague's edit and every cron's event were
+    // invisible. The ids are ones RLS already returned to this page, and the
+    // page notFound()s above when it cannot read the contact.
+    readEntityTimeline({
+      orgId: profile.orgId,
+      viewerRole: profile.role,
+      entityType: "contact",
+      entityIds: [id, ...(mergedRows ?? []).map((m) => m.id)],
+      limit: 50,
+    }).then((data) => ({ data, error: null })),
     supabase
       .from("deals")
       .select(

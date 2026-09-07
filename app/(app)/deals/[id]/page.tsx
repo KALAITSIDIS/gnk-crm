@@ -23,6 +23,7 @@ import { formatDateTime, formatMoney } from "@/lib/utils/format";
 import { zonedWallClockToUtc } from "@/lib/utils/tz";
 import { cn } from "@/lib/utils";
 import type { OfferStatus } from "@/lib/validators/deals";
+import { readEntityTimeline } from "@/lib/services/entity-timeline";
 
 const STATUS_TONES: Record<string, string> = {
   open: "bg-brand-100 text-brand-700",
@@ -84,22 +85,27 @@ export default async function DealDetailPage({
           .eq("id", deal.property_id)
           .maybeSingle()
       : Promise.resolve({ data: null }),
-    supabase
-      .from("events")
-      .select("id, occurred_at, event_type, entity_type, payload")
-      .eq("entity_type", "deal")
-      .eq("entity_id", id)
-      .order("occurred_at", { ascending: false })
-      .limit(50),
-    offerIds.length
-      ? supabase
-          .from("events")
-          .select("id, occurred_at, event_type, entity_type, payload")
-          .eq("entity_type", "offer")
-          .in("entity_id", offerIds)
-          .order("occurred_at", { ascending: false })
-          .limit(50)
-      : Promise.resolve({ data: [] as never[] }),
+    // As the SYSTEM — see lib/services/entity-timeline.ts. `events_select` shows
+    // a non-admin only rows they authored, so on the caller's client a deal's
+    // history was whatever THIS agent had done to it. The page notFound()s
+    // above when RLS withholds the deal, and `deals` SELECT is the narrowest of
+    // the three (admin, the deal's agent or its creator, LM read-only), so an
+    // id reaching here is proof the caller may see the deal.
+    readEntityTimeline({
+      orgId: profile.orgId,
+      viewerRole: profile.role,
+      entityType: "deal",
+      entityIds: [id],
+      limit: 50,
+    }).then((data) => ({ data })),
+    // offerIds came from an offers read on the caller's own client
+    readEntityTimeline({
+      orgId: profile.orgId,
+      viewerRole: profile.role,
+      entityType: "offer",
+      entityIds: offerIds,
+      limit: 50,
+    }).then((data) => ({ data })),
   ]);
 
   // WF-3: the viewing-deal link was dead plumbing — schema and action accept
