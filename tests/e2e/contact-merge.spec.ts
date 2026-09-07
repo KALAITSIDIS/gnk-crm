@@ -183,20 +183,43 @@ test("merging a duplicate moves every record that pointed at it", async ({ page 
     await dialog.getByRole("button", { name: new RegExp(DUPLICATE, "i") }).click();
     await dialog.getByRole("button", { name: new RegExp(`merge ".*${DUPLICATE}.*" into`, "i") }).click();
 
-    // the merge landed: the duplicate is archived and points at the primary
+    /*
+     * WAIT FOR THE ACTION TO FINISH, NOT FOR ITS FIRST WRITE.
+     *
+     * Archiving the duplicate is step ONE of five: the repoints, the backfill
+     * and both events all come after it. Polling on `merged_into_id` and then
+     * reading the relations races the repoints — and loses on a loaded runner.
+     * It did exactly that in CI on 2026-09-07, failing on
+     * properties.owner_contact_id one run and properties.developer_contact_id
+     * the next: a different column each time, which is the signature.
+     *
+     * The `archived` event on the duplicate is the action's LAST write, so once
+     * it exists every repoint has committed. (Same lesson as
+     * reservation-convert.spec.ts — each assertion must wait for the thing it
+     * asserts, or it cannot fail for the reason it exists.)
+     */
     await expect
       .poll(
         async () => {
           const { data } = await svc
-            .from("contacts")
-            .select("is_archived, merged_into_id")
-            .eq("id", duplicateId)
-            .single();
-          return data?.is_archived === true && data?.merged_into_id === primaryId;
+            .from("events")
+            .select("id")
+            .eq("entity_id", duplicateId)
+            .eq("event_type", "archived");
+          return data?.length ?? 0;
         },
         { timeout: opTimeout(20_000) },
       )
-      .toBe(true);
+      .toBe(1);
+
+    // and the merge itself landed the way it says it does
+    const { data: dup } = await svc
+      .from("contacts")
+      .select("is_archived, merged_into_id")
+      .eq("id", duplicateId)
+      .single();
+    expect(dup!.is_archived).toBe(true);
+    expect(dup!.merged_into_id).toBe(primaryId);
 
     // ---------- and NOTHING was left behind on the archived half ----------
     const stillOnDuplicate: string[] = [];
@@ -298,19 +321,21 @@ test("the saved searches of a merged buyer keep matching under the surviving con
     await dialog.getByRole("button", { name: new RegExp(DUPLICATE, "i") }).click();
     await dialog.getByRole("button", { name: new RegExp(`merge ".*${DUPLICATE}.*" into`, "i") }).click();
 
+    // the action's LAST write, so the requirement repoint has committed — see
+    // the note in the test above; polling on merged_into_id races it.
     await expect
       .poll(
         async () => {
           const { data } = await svc
-            .from("contacts")
-            .select("merged_into_id")
-            .eq("id", duplicate!.id)
-            .single();
-          return data?.merged_into_id;
+            .from("events")
+            .select("id")
+            .eq("entity_id", duplicate!.id)
+            .eq("event_type", "archived");
+          return data?.length ?? 0;
         },
         { timeout: opTimeout(20_000) },
       )
-      .toBe(primary!.id);
+      .toBe(1);
 
     await page.goto(`/contacts/${primary!.id}`, { waitUntil: "networkidle" });
     await page.getByRole("tab", { name: /^preferences$/i }).click();
