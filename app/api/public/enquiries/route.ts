@@ -2,7 +2,7 @@ import { after, NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { callerIpHash } from "@/lib/services/caller-ip";
 import { budgetsFor } from "@/lib/services/enquiry-budget";
-import { isTrustedForwarder } from "@/lib/services/forwarder";
+import { isTrustedForwarderLoudly } from "@/lib/services/forwarder";
 import { enquiryCompleteness, publicEnquirySchema } from "@/lib/validators/public-enquiry";
 import { sendEnquiryAlert } from "@/lib/services/enquiry-alert";
 
@@ -89,7 +89,7 @@ export async function POST(request: NextRequest) {
   const budgets = budgetsFor(
     await callerIpHash(),
     request.headers.get(VISITOR_IP_HEADER),
-    isTrustedForwarder(request.headers.get(FORWARD_KEY_HEADER), process.env.ENQUIRY_FORWARD_KEY),
+    isTrustedForwarderLoudly(request.headers.get(FORWARD_KEY_HEADER), process.env.ENQUIRY_FORWARD_KEY),
   );
   for (const b of budgets) {
     const check = await supabase.rpc("note_public_enquiry_hit", {

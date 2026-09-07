@@ -5312,7 +5312,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     await svc.from("properties").delete().in("id", [hidden!.id, published!.id]);
   });
 
-  it("56. the feed's validator moves when a photograph is redescribed (0086)", async () => {
+  it("56. the feed's SNAPSHOT segment moves when a photograph is redescribed (0086)", async () => {
     // A validator is a PROMISE: same etag, same body. The route answers a
     // matching If-None-Match with 304 and no body at all.
     //

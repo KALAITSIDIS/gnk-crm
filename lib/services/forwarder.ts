@@ -35,3 +35,42 @@ export function isTrustedForwarder(
   const b = createHash("sha256").update(expected).digest();
   return timingSafeEqual(a, b);
 }
+
+/** Whether a mismatch has already been reported by this instance. */
+let reportedMismatch = false;
+
+/**
+ * The same decision, but a key that was PRESENTED and rejected says so once.
+ *
+ * `isTrustedForwarder` answers false identically for "nobody presented a key"
+ * and "a key was presented and did not match", and the route logged neither —
+ * so a trailing newline from a piped `vercel env add`, or a rotation applied
+ * on one side only, would silently meter every visitor the site forwards on
+ * the site's single egress address, refusing the sixth genuine buyer in any
+ * quarter of an hour with a message about an address that is not theirs. That
+ * is the failure the header was added to end, wearing no symptom at all
+ * (2026-09-07 review).
+ *
+ * Once per instance, at error level, and NEVER the value — the point is that
+ * somebody looking at the logs can see a misconfiguration that otherwise only
+ * shows up as a buyer who could not reach the firm.
+ */
+export function isTrustedForwarderLoudly(
+  presented: string | null | undefined,
+  expected: string | null | undefined,
+): boolean {
+  const trusted = isTrustedForwarder(presented, expected);
+  if (!trusted && presented && expected && !reportedMismatch) {
+    reportedMismatch = true;
+    console.error(
+      "[enquiry] a forward key was presented and did not match ENQUIRY_FORWARD_KEY — " +
+        "forwarded visitors are being metered on the caller's own address",
+    );
+  }
+  return trusted;
+}
+
+/** Test seam: the once-per-instance latch. */
+export function resetForwarderMismatchLatch(): void {
+  reportedMismatch = false;
+}

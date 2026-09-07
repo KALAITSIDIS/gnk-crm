@@ -30,6 +30,18 @@ export const dynamic = "force-dynamic";
 /** Requests per IP per 15-minute window before the feed starts refusing. */
 const RATE_LIMIT = 120;
 
+/**
+ * How long the edge may hold a body. Short and public: a marketing site may
+ * poll, and a stale minute costs nothing next to hammering the database.
+ *
+ * ONE constant, used by the 200 and the 304 alike. It was a literal in both,
+ * and gnk-web's README states this number as the first of the three caches
+ * that make up the site's freshness — so a drift on the revalidation path
+ * would have made a published figure wrong with the suite green.
+ */
+const MAX_AGE_SECONDS = 60;
+const CACHE_CONTROL = `public, max-age=${MAX_AGE_SECONDS}`;
+
 export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
   const org = params.get("org")?.trim();
@@ -115,7 +127,7 @@ export async function GET(request: NextRequest) {
   if (request.headers.get("if-none-match") === etag) {
     return new NextResponse(null, {
       status: 304,
-      headers: { ETag: etag, "Cache-Control": "public, max-age=60" },
+      headers: { ETag: etag, "Cache-Control": CACHE_CONTROL },
     });
   }
 
@@ -124,9 +136,7 @@ export async function GET(request: NextRequest) {
     headers: {
       "Content-Type": "application/json",
       ETag: etag,
-      // Short and public: a marketing site may poll, and a stale minute costs
-      // nothing next to hammering the database.
-      "Cache-Control": "public, max-age=60",
+      "Cache-Control": CACHE_CONTROL,
       // It is a feed of already-public data, so cross-origin reads are the
       // intended use. GET only — there is no write surface to protect.
       "Access-Control-Allow-Origin": "*",

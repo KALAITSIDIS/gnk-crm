@@ -205,7 +205,7 @@ describe("fetchMandateExcludeIds reads every excluded id, and fails loud (A08a)"
     Array.from({ length: n }, (_, i) => ({ property_id: "p" + (from + i) }));
 
   it("pages past the thousandth mandate — the 1,001st exclusion used to fall off the list", async () => {
-    const { client, served } = fakeClient({
+    const { client, served, argsOf } = fakeClient({
       mandates: [
         { data: ids(0, 1000), error: null },
         { data: ids(1000, 3), error: null },
@@ -213,7 +213,14 @@ describe("fetchMandateExcludeIds reads every excluded id, and fails loud (A08a)"
     });
     const out = await fetchMandateExcludeIds(client as unknown as Client, base({ mandate: "none" }));
     expect(out).toHaveLength(1003);
-    expect(served.mandates).toBe(2);
+    expect(served.mandates, "two pages of rows, then the empty read that ends it").toBe(3);
+    // WHICH pages, and ordered: the count alone passed with .range() deleted
+    expect(argsOf("mandates", "range")).toEqual([
+      [0, 999],
+      [1000, 1999],
+      [1003, 2002],
+    ]);
+    expect(argsOf("mandates", "order")).toEqual([["id"], ["id"], ["id"]]);
   });
 
   it("dedupes ids across pages", async () => {
