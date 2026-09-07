@@ -5600,3 +5600,71 @@ then read relations written four steps later; it passed locally and failed in
 CI on a different column each run. Both tests now wait for the action's LAST
 write. Same lesson as `reservation-convert.spec.ts`: an assertion must wait for
 the thing it asserts, or it cannot fail for the reason it exists.
+
+### T-silent, continued — the rest of the same day
+
+Eight more, all the same shape: something the app said that was not so.
+
+**The alerts and the property page disagreed about who is a buyer.**
+`findMatchingBuyers` filters `contacts.is_archived = false`; the query feeding
+price-drop and new-listing alert tasks did not, so an archived contact's still
+active searches kept raising tasks — the task named N buyers and the page the
+agent then opened showed fewer. The same loop pushed a contact id per
+REQUIREMENT, so one person holding two briefs was announced as two buyers;
+`bulkNewlyMatching` had always deduped ("one phone call, not three") and the
+single-property paths had not.
+
+**A rental match showed the sale price.** The matcher compares a rental brief
+against `rent_price_month` — reading `asking_price` would measure €250.000
+against a €1.500 budget and reject every rental in the database. The card
+printed `asking_price` unconditionally, so a rent-only listing rendered "no
+price set" beside the chip saying the rent was within budget. The rule had
+three copies; it now has one, exported from `lib/services/matching.ts`.
+
+**Two prompts were born overdue.** `due_at` was stamped with the instant the
+task was raised, and the list marks a row overdue at `due_at < now`, so each
+rendered red on the next paint. Red that arrives with the task teaches the desk
+to ignore red. Both now use `cyprusEndOfDay(today)`, the convention
+`lib/actions/tasks.ts` already stated.
+
+**A booking was offered to a role that cannot book.** `viewings_insert` admits
+admin and agent; a listing manager can READ every viewing, so the calendar, the
+property page and the deal page all showed them "New viewing" and the submit
+came back as a raw Postgres message. The rule is `mayCreateViewing`, the gate
+lives inside the dialog, and `role` is a REQUIRED prop so tsc names every call
+site — which is how all three were found.
+
+**"Extend" could shorten.** The only date check was "not in the past", so a hold
+running to January could be moved to next week: the buyer lost weeks of a
+contractual hold and the timeline recorded it as `reservation_extended` with
+`from` later than `to`.
+
+**The timeline claimed a deal that never existed.** `listing_status_check` has
+two raisers, and the reservation one often has no deal at all — both rendered
+"the deal was won but the listing still reads on-market", in three languages.
+
+**A confirmation could be issued for a cancelled viewing** — a PDF telling the
+attendee where to be, false on its face, carrying the agency's name.
+
+**And the prompt survived being obeyed.** `completeListingStatusChecks` ran on
+the caller's client against an assignee-scoped policy, so whenever the person
+saving the status was not the person the prompt was assigned to — the ordinary
+case — the supersede matched zero rows and the prompt stayed open. It now runs
+as the system, with `org_id` filtered explicitly because the admin client has
+no RLS to do it, and that clause has its own test.
+
+**The asymmetry that decided which fix went where**, measured in
+`supabase/tests/listing-manager-silent-writes.test.ts`: a forbidden UPDATE is
+filtered to zero rows and says nothing, so the remedy is to prove the write; a
+forbidden INSERT raises 42501 straight through to the user, so the remedy is
+not to offer it. Two failure modes, two fixes, one measurement.
+
+**What is deliberately NOT fixed, because it is a decision and not a defect:**
+a listing manager may write `buyer_requirements` (the policies have no role
+test, and DELETE names the role explicitly) while the contact page renders that
+card read-only from the CONTACTS policy; a won deal never releases the
+property's live hold, so the nightly sweep later calls the sold unit's
+reservation "expired automatically"; and after a reschedule, Download still
+hands out the previously filed confirmation with the old time, which is either
+a correct record of what was sent or a stale document an agent may forward.
+Each is measured and recorded; none is silently chosen.
