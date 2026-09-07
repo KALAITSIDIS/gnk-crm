@@ -5829,3 +5829,69 @@ Two smaller honesty fixes came out of the same pass: a test here was named "a
 failed read is logged, not rendered as an empty history" while asserting that it
 IS rendered as one, and `event-timeline.tsx` still told the next reader that RLS
 scopes these rows. Both now say what is true.
+
+## T-review — what the adversarial pass over the same day's work found (2026-09-07, migration 0090)
+
+Six lenses over the two merges shipped hours earlier. Twenty-one findings, **14
+refuted**, seven survived verification — and one of those seven was still wrong.
+
+**The one that was wrong, and how.** A performance lens reported that
+`readEntityTimeline`'s array-only API had turned the deal and property pages
+into org-wide event scans, "6.3x more buffer reads", growing without bound. It
+is false: `EXPLAIN (analyze, buffers)` on the same data for `entity_id in ('x')`
+and `entity_id = 'x'` returns byte-identical plans — Merge Append over
+per-partition index scans, the full three-column `Index Cond`, 30 buffer hits
+each. Postgres normalises a single-element `IN` to `=`. The proposed fix
+(branching on cardinality) was not applied. Third confidently-argued-and-false
+finding of the day; the cure each time was to measure rather than reason.
+
+**The four real defects in what had just shipped, all mine:**
+
+*A hold expired by the sweep left its prompt open forever.*
+`completeLiveHoldChecks` closes `reservation_still_live` when a PERSON settles a
+hold through `transitionReservation`. The other exit is `expire_reservations()`
+at 03:45, which is SQL and knew nothing about the prompt. So the task sat open
+asking for an action an expired hold no longer has — and worse, the duplicate
+guard in `raiseLiveHoldCheck` then suppressed EVERY future live-hold prompt on
+that property, permanently. Migration 0090 closes it inside the same statement
+that expires the hold: no cron-ordering assumption, no window, and the supersede
+reason names the ignored case ("the hold lapsed before anyone settled it") so it
+stays countable and distinct from the answered one. `expire_reservations()`
+still references no `properties` column, so 0089's assertion — and the
+2026-08-26 independence it protects — holds.
+
+*The property timeline announced a won deal to agents who may not read it.*
+`properties_select` is org-wide; `deals_select` is not. `listing_status_check`
+is raised ONLY while the property still reads available/reserved/under_offer —
+so the row itself does not betray the sale — and `tasks_select` hides the
+prompt's title. Reading timelines as the system brought the event back as "the
+deal was won but the listing still reads on-market". The KIND is now withheld
+from anyone who is not admin or listing manager, and `describeEvent` falls back
+to its neutral line: the event stays, because a follow-up genuinely was raised;
+only the sentence naming a won deal goes.
+
+*Prompts were still born overdue between midnight and 03:00 Cyprus.* The
+earlier fix used `new Date().toISOString().slice(0, 10)` — the UTC day. Cyprus
+is UTC+2/+3, so in the small hours that is YESTERDAY, and `cyprusEndOfDay` of it
+is hours past. All three raisers had the hole, including the two "fixed" that
+morning. `cyprusEndOfToday` is now the one definition, and the test pins 01:30
+local in both summer and winter.
+
+*Two pages told users the timeline showed only their own actions.* It now shows
+everyone's. Both captions are gone: an access review takes a sentence like that
+at face value.
+
+*And the restore pack's `task_kinds` pin was still 12.* The migrations count was
+bumped for 0089 and this second pin beside it was not, so a DR drill would have
+reported `expected 12 actual 13` — which that file's own header calls "the worst
+possible signal mid-recovery". It is now DERIVED from the assertion every kind
+migration already carries, so the next kind cannot land without moving it. The
+guard immediately earned itself by catching 0090's own migration-count bump.
+
+**Refuted and deliberately left alone:** the document-title redaction was found
+complete (all four document-event writers enumerated; property documents cannot
+be `admin_only` — a trigger refuses the UPDATE; the mandate one is unreachable
+because `mandate` is not in `TimelineEntityType`); the saved-search guard held;
+and the commission evidence report's caller-scoped read is DELIBERATE, recorded
+in T-audit-reports (6): the PDF names its own scope, "events visible to this
+user". Changing it would have turned every agent's report into a full org record.

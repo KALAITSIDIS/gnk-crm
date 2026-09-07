@@ -217,3 +217,72 @@ describe("document titles: the one thing this reader must not hand over", () => 
     expect((row.payload as Record<string, unknown>).title).toBe("not a document");
   });
 });
+
+describe("a won deal is not announced to agents who may not read it", () => {
+  /*
+   * `properties_select` is org-wide; `deals_select` is not. A `listing_status_check`
+   * event is raised ONLY while the property still reads available/reserved/
+   * under_offer, so the property row does not betray the sale — and the task's
+   * own title is hidden by tasks_select. Rendering the kind would tell every
+   * agent that a colleague's deal closed on that listing.
+   */
+  const followup = (kind: string) => ({
+    id: 1,
+    occurred_at: "2026-09-07T10:00:00Z",
+    event_type: "followup_task_created",
+    entity_type: "property",
+    entity_id: "p1",
+    payload: { kind, task_id: "t1", deal_id: "d1" },
+  });
+
+  const read = async (viewerRole: string, rows: unknown[]) => {
+    const svc = fakeClient({ events: [{ data: rows, error: null }] });
+    admin.client = svc.client;
+    return readEntityTimeline({
+      orgId: "org-1",
+      entityType: "property",
+      entityIds: ["p1"],
+      limit: 50,
+      viewerRole,
+    });
+  };
+
+  it.each(["listing_status_check", "reservation_still_live"])(
+    "withholds %s from an agent, leaving the neutral follow-up line",
+    async (kind) => {
+      const [row] = await read("agent", [followup(kind)]);
+      const payload = row.payload as Record<string, unknown>;
+      expect(payload.kind, "describeEvent falls back to 'Follow-up task created'").toBeUndefined();
+      expect(payload.deal_id, "and the deal id goes with it").toBeUndefined();
+      expect(row.event_type, "the event itself stays — a follow-up WAS raised").toBe(
+        "followup_task_created",
+      );
+      expect(payload.task_id, "the rest of the payload is untouched").toBe("t1");
+    },
+  );
+
+  it("keeps it for a listing manager, who may read every deal anyway", async () => {
+    const [row] = await read("listing_manager", [followup("listing_status_check")]);
+    expect((row.payload as Record<string, unknown>).kind).toBe("listing_status_check");
+  });
+
+  it("keeps it for an admin", async () => {
+    const [row] = await read("admin", [followup("reservation_still_live")]);
+    expect((row.payload as Record<string, unknown>).kind).toBe("reservation_still_live");
+  });
+
+  it("leaves follow-up kinds that reveal no deal alone", async () => {
+    // viewing_no_show, retention_expired and the rest describe the record the
+    // viewer is already looking at — withholding them would cost the desk
+    // information for nothing.
+    const [row] = await read("agent", [followup("viewing_no_show")]);
+    expect((row.payload as Record<string, unknown>).kind).toBe("viewing_no_show");
+  });
+
+  it("leaves every other event type alone", async () => {
+    const [row] = await read("agent", [
+      { ...followup("listing_status_check"), event_type: "price_changed" },
+    ]);
+    expect((row.payload as Record<string, unknown>).kind).toBe("listing_status_check");
+  });
+});

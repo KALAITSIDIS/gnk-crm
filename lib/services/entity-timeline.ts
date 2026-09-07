@@ -105,7 +105,8 @@ export async function readEntityTimeline(opts: {
     });
     return [];
   }
-  return redactDocumentTitles((data ?? []) as unknown as TimelineRow[], opts.viewerRole);
+  const rows = (data ?? []) as unknown as TimelineRow[];
+  return redactWonDealKinds(redactDocumentTitles(rows, opts.viewerRole), opts.viewerRole);
 }
 
 /** The two event types whose payload carries a document's title. */
@@ -212,4 +213,53 @@ export async function readLastTouched(opts: {
     return [];
   }
   return (data ?? []) as { entity_id: string | null; occurred_at: string }[];
+}
+
+/**
+ * Follow-up kinds that say, on a PROPERTY, that a deal on it was won.
+ *
+ * `listing_status_check` is raised only while the property still reads
+ * available/reserved/under_offer — that is its whole trigger — so the property
+ * row itself does NOT betray the sale, and `reservation_still_live` says the
+ * same thing about the same win.
+ */
+const WON_DEAL_KINDS = new Set(["listing_status_check", "reservation_still_live"]);
+
+/**
+ * A property is readable by everyone in the org; a deal is not.
+ *
+ * `properties_select` is plain `org_id = current_org_id()`, so any staff member
+ * can open any listing. `deals_select` admits an admin, a listing manager, or
+ * the deal's own agent/creator — and `tasks_select` keeps the prompt's title
+ * ("Deal won — update listing status: PAF0001") hidden from everyone else too.
+ *
+ * Before timelines were read as the system, `events_select` hid these events
+ * from a non-owning agent as a side effect. Reading the whole history brought
+ * them back, rendered as "the deal was won but the listing still reads
+ * on-market" — telling an agent that a colleague's deal closed, on a property
+ * whose status still says available, which is precisely the fact deals_select
+ * withholds. Existence, outcome and timing; not amounts, and not counterparties
+ * — but on a small desk that is enough to infer a colleague's closed sale.
+ *
+ * So the KIND is withheld and `describeEvent` falls back to its neutral
+ * "Follow-up task created" line: the event stays on the timeline, because a
+ * follow-up was genuinely raised, and only the sentence that names a won deal
+ * goes. Listing managers keep it, because they may read every deal anyway.
+ *
+ * The owning agent loses the specific line here too — resolving per-row deal
+ * ownership would mean a second query per event, and they already see the whole
+ * prompt on their own task list and deal page.
+ */
+function redactWonDealKinds(rows: TimelineRow[], viewerRole: string): TimelineRow[] {
+  if (viewerRole === "admin" || viewerRole === "listing_manager") return rows;
+  return rows.map((r) => {
+    if (r.event_type !== "followup_task_created") return r;
+    const payload = (r.payload ?? {}) as Record<string, unknown>;
+    if (typeof payload.kind !== "string" || !WON_DEAL_KINDS.has(payload.kind)) return r;
+    const rest: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(payload)) {
+      if (k !== "kind" && k !== "deal_id") rest[k] = v;
+    }
+    return { ...r, payload: rest as TimelineRow["payload"] };
+  });
 }

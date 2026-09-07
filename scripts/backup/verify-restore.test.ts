@@ -31,6 +31,32 @@ describe("verify-restore.sql stays in lockstep with the repo", () => {
     );
   });
 
+  it("pins the task-kind count the migrations themselves assert", () => {
+    /*
+     * The migrations pin above was bumped for 0089 and this one was not, so a
+     * restore drill would have reported `seed: task_kinds expected 12 actual
+     * 13` — and this pack's own header calls a false failure "the worst
+     * possible signal mid-recovery".
+     *
+     * Derived from the migrations rather than hand-kept, and specifically from
+     * the assertion every kind migration already carries
+     * (`select count(*) into n from public.task_kinds; if n <> N then raise`).
+     * That is the discipline that governs the number, so tying the pack to it
+     * means the next kind cannot land without moving this line too.
+     */
+    const asserted = migrationFiles
+      .map((f) => readFileSync(join(migrationsDir, f), "utf-8"))
+      .flatMap((sql) => [...sql.matchAll(/from public\.task_kinds;\s*if n <> (\d+)/g)])
+      .map((m) => Number(m[1]));
+
+    expect(asserted.length, "the kind migrations assert their total").toBeGreaterThan(0);
+    const latest = Math.max(...asserted);
+
+    const pinned = pack.match(/(\d+)::bigint as task_kinds/);
+    expect(pinned, "the task_kinds pin must exist").not.toBeNull();
+    expect(Number(pinned![1]), "bump the task_kinds baseline when a kind lands").toBe(latest);
+  });
+
   it("pins every SECURITY DEFINER function the migrations create", () => {
     // Track create/drop in file order so functions later dropped (e.g. the
     // pre-partition helpers) don't fire. A function counts as secdef when the

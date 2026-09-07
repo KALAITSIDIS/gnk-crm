@@ -3,7 +3,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import { logEvent } from "@/lib/services/events";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
-  cyprusEndOfDay,
+  cyprusEndOfToday,
   isLiveReservation,
   type ReservationStatus,
 } from "@/lib/validators/reservations";
@@ -143,7 +143,6 @@ export async function raiseLiveHoldCheck(
     .limit(1);
   if (already?.length) return 0;
 
-  const today = new Date().toISOString().slice(0, 10);
   const { data: task, error } = await supabase
     .from("tasks")
     .insert({
@@ -152,7 +151,7 @@ export async function raiseLiveHoldCheck(
       // end of day, not the current instant: a prompt stamped "now" renders
       // OVERDUE on the next paint, and red that arrives with the task teaches
       // the desk to ignore red.
-      due_at: cyprusEndOfDay(today).toISOString(),
+      due_at: cyprusEndOfToday().toISOString(),
       assignee_id: params.assigneeId,
       property_id: params.propertyId,
       reservation_id: live.id,
