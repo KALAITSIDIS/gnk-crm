@@ -369,6 +369,7 @@
     "followupViewingFeedback": "Создано напоминание — отзыв о просмотре не внесён спустя {hours, plural, one {# час} few {# часа} many {# часов} other {# часа}}",
     "followupViewingNoShow": "Создано напоминание — покупатель не пришёл, новый просмотр не назначен",
     "followupListingStatusCheck": "Создано напоминание — сделка закрыта, но объект всё ещё числится в продаже",
+    "followupListingStatusCheckReservation": "Создано напоминание — бронь переведена в продажу, но объект всё ещё числится в продаже",
     "followupRetentionExpired": "Создано напоминание — срок хранения AML истёк, требуется решение об уничтожении",
     "followupTaskCreated": "Создано напоминание",
     "superseded": "Задача заменена",

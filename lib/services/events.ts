@@ -443,9 +443,20 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
       return t("followupViewingFeedback", { hours: Number(p.hours) || 48 });
     // 0075: the buyer who no-showed is the one most in need of a call
     if (kind === "viewing_no_show") return t("followupViewingNoShow");
-    // 0076: a won deal whose listing still reads on-market — a prompt, never
-    // an automatic flip (the declined reservation↔status coupling's boundary)
-    if (kind === "listing_status_check") return t("followupListingStatusCheck");
+    // 0076: a listing still reading on-market after the thing that should have
+    // moved it — a prompt, never an automatic flip (the declined
+    // reservation↔status coupling's boundary).
+    //
+    // TWO RAISERS, TWO SENTENCES. markDealWon raises this, and so does
+    // converting a reservation to a sale — and that second one often has no
+    // deal at all (`deal_id: existing.deal_id ?? null`). One message saying
+    // "the deal was won" put a won deal on the timeline of a sale that had
+    // none. The reservation raiser is the one that carries `reservation_id`.
+    if (kind === "listing_status_check") {
+      return p.reservation_id
+        ? t("followupListingStatusCheckReservation")
+        : t("followupListingStatusCheck");
+    }
     // 0078: the AML retention window closed — surfaced, never auto-purged
     if (kind === "retention_expired") return t("followupRetentionExpired");
     return t("followupTaskCreated");

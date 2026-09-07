@@ -141,6 +141,25 @@ export async function extendReservation(
   if (expiresAt.getTime() <= Date.now()) {
     return fail("That date has already passed — pick a later one.");
   }
+  /*
+   * AN EXTENSION MUST EXTEND.
+   *
+   * The only date check used to be "not in the past", so a hold expiring in
+   * January could be "extended" to next week: the write succeeded, the buyer
+   * silently lost weeks of their hold, and the timeline recorded it as
+   * `reservation_extended` with `from` LATER than `to`. A control labelled
+   * Extend that shortens a contractual hold, and a log that calls it an
+   * extension, are each worse than an error message.
+   *
+   * Shortening a hold is a different act with a different name — release it
+   * and take a new one, which is what the status transitions are for.
+   */
+  const current = existing.expires_at ? new Date(existing.expires_at).getTime() : null;
+  if (current !== null && expiresAt.getTime() <= current) {
+    return fail(
+      "That is not later than the current expiry — to shorten a hold, release it and take a new one.",
+    );
+  }
 
   const { data: updated, error } = await supabase
     .from("reservations")

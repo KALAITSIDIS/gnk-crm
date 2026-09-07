@@ -227,6 +227,40 @@ describe("describeEvent registry (T3.5) — English parity", () => {
     );
   });
 
+  it("does not put a won deal on the timeline of a sale that had no deal", () => {
+    /*
+     * `listing_status_check` has TWO raisers: markDealWon, and converting a
+     * reservation to a sale. The second often has no deal at all
+     * (`deal_id: existing.deal_id ?? null`), and one shared sentence — "the
+     * deal was won but the listing still reads on-market" — asserted one
+     * anyway, in all three languages.
+     *
+     * The reservation raiser is the one carrying `reservation_id`, so the line
+     * now says what actually happened.
+     */
+    expect(
+      describeEvent(
+        ev("followup_task_created", { kind: "listing_status_check", task_id: "t1" }, "property"),
+        t,
+      ),
+      "raised by a won deal",
+    ).toBe("Follow-up task created — the deal was won but the listing still reads on-market");
+
+    expect(
+      describeEvent(
+        ev(
+          "followup_task_created",
+          { kind: "listing_status_check", task_id: "t1", reservation_id: "r1" },
+          "property",
+        ),
+        t,
+      ),
+      "raised by a converted reservation — it must not claim a deal",
+    ).toBe(
+      "Follow-up task created — the reservation converted to a sale but the listing still reads on-market",
+    );
+  });
+
   it("renders supersede reasons, including 0012's, which was never registered", () => {
     expect(
       describeEvent(ev("superseded", { reason: "deal_contacted_or_closed" }, "task"), t),
