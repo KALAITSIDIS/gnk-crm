@@ -35,11 +35,19 @@ export async function fetchAll<T>(
   pageSize: number = FETCH_PAGE,
 ): Promise<T[]> {
   const rows: T[] = [];
-  for (let from = 0; ; from += pageSize) {
+  for (let from = 0; ; ) {
     const { data, error } = await page(from, from + pageSize - 1);
     if (error) throw new Error(`Query failed (${label}): ${error.message}`);
     const got = data ?? [];
     rows.push(...got);
-    if (got.length < pageSize) return rows;
+    // Stop on an EMPTY page, and advance by what actually arrived — not by
+    // the page size. PostgREST caps a response at the project's `max-rows`,
+    // which is 1000 by default but is a SETTING: lower it (a plausible
+    // hardening of a public anon key) and every page comes back short, which
+    // a `got.length < pageSize` stop would read as "that was the last one"
+    // and silently truncate every sweep in this codebase (2026-09-07 review).
+    // The cost of asking is one extra empty read per sweep.
+    if (got.length === 0) return rows;
+    from += got.length;
   }
 }

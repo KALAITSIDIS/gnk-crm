@@ -3,6 +3,106 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-07 · T-review-drift (no migration) — a twelve-lens review of the
+  day's work, and the eleven things it found.** Six finders (correctness,
+  security, claims, tests) over both repos' diffs for 2026-09-06, then two
+  refuters per finding on distinct lenses. Verification ran out of budget
+  twice, so every finding below was re-checked by hand against the code before
+  anything was changed, and every fix is mutation-proven. Twenty-nine raw, of
+  which these were real:
+
+  (1) **The write half of the optimistic save was covered by nothing.**
+  T-optimistic-save claims "two checks, two windows" and a moved-vs-forbidden
+  disambiguation; the E2E can only ever reach the FIRST window (its stale save
+  is refused before any work, its reloaded save stops at the publish gate,
+  which sits before the UPDATE) and the unit tests cover only the pure
+  predicate. Deleting `.eq("updated_at", expected)` left every suite green.
+  `lib/actions/properties-section.test.ts` drives the real action over a
+  scripted client; four mutations of that path now fail.
+
+  (2) **The fake client swallowed its arguments**, so the A08a paging tests
+  asserted "two pages were fetched" while a factory that never called
+  `.range()` — or never `.order("id")`, which is what makes a page a page
+  rather than a random sample — passed unchanged. It records `{method, args}`
+  now; three such mutations fail.
+
+  (3) **gnk-web's cross-page snapshot check had no test that could fail.**
+  Every fixture sent one constant ETag, so `moved` was never true — and this
+  is the mechanism the CRM keeps `public_listings_etag` alive FOR. The fixture
+  now sends the real `W/"<snapshot>-<digest>"` shape and can move mid-read;
+  five mutations fail, including comparing the whole ETag instead of its first
+  segment.
+
+  (4) **Sentry could have carried the visitor's raw address.**
+  `onRequestError = Sentry.captureRequestError` sends the request's headers,
+  `sendDefaultPii` strips only what the SDK knows about, and SENTRY_DSN is set
+  in production — so an uncaught error on the enquiry route would have sent
+  `x-gnk-visitor-ip` (the address itself) and `x-gnk-forward-key` (the shared
+  secret) to a third party. The address is the sharper of the two: gnk-web's
+  legal page tells that visitor "We never store the address itself". A
+  `beforeSend` redacts both (`lib/services/scrub-event.ts`), and a test binds
+  the scrub's list to the headers the route actually names.
+
+  (5) **A rejected forward key was silent.** `isTrustedForwarder` answers the
+  same `false` for "nobody presented one" and "one was presented and did not
+  match", so a trailing newline from a piped `vercel env add`, or a rotation
+  applied on one side only, would meter every forwarded visitor on the site's
+  egress address and refuse the sixth genuine buyer — the exact failure the
+  header was added to end, wearing no symptom at all.
+  `isTrustedForwarderLoudly` says so once per instance, at error level, and
+  never the value.
+
+  (6) **`fetchAll` stopped on any short page**, which is only "the last page"
+  if PostgREST's `max-rows` is at least our page size — and that is a project
+  SETTING. It stops on an EMPTY page now and advances by what arrived, at the
+  cost of one extra read per sweep; a server capping at 300 no longer
+  truncates every sweep in this codebase at 300 rows.
+
+  (7) **`.env.example` and `docs/10_INFRASTRUCTURE.md` were two hand-kept
+  lists**, and had already drifted: `ENQUIRY_ALERT_TO` and `ENQUIRY_ALERT_FROM`
+  are read by the alert and were listed in only one.
+  `tests/unit/env-names-documented.test.ts` binds the file to the code — and
+  its other half found `NEXT_PUBLIC_DEFAULT_LOCALE`, listed in BOTH and read
+  by nothing: an instruction to set a variable that does something in no code.
+  Struck from both.
+
+  (8) **Three comments described behaviour the code no longer has**:
+  `caller-ip.ts` still said the salt is "the project URL rather than a secret"
+  (`IP_HASH_SALT` made that false the same day), and `media.ts` plus RLS test
+  56 still called `public_listings_etag` "the feed's validator" (since
+  T-etag-from-body it is only the snapshot segment). The salt is described in
+  `ip-hash.ts` alone now.
+
+  (9) **The feed's 60s TTL was a literal in both the 200 and the 304 branch**
+  while gnk-web's README states it as one of the three caches behind the
+  site's freshness — one constant now, and the 304 test pins it too.
+
+  (10) **gnk-web's README called BOTH CRM endpoints "RLS-bound"**; since 0087
+  the enquiry door runs on the service-role client, which bypasses RLS by
+  design — what bounds it is the route's own controls. Said per leg now. Two
+  further comments still cited a README section renamed when it stopped being
+  true.
+
+  (11) **The card re-derived "Studio"** from `bedroomsOf`, a second copy of
+  the zero rule pinned by nothing; and the organisation JSON-LD's locality
+  test compared the output to the same constant the code reads, so a
+  hard-coded "Paphos" passed it. One `bedroomsSpec()` decides the chip now,
+  and the JSON-LD takes the SHAPE it reads (`FirmIdentity`) so a test can hand
+  it a different firm.
+
+  **Not built, recorded instead.** The JSON-LD types built commercial listings
+  as `Place` while emitting `Accommodation` properties (valid, less precise —
+  Later); `MAX_PAGES` promises a 2,500-listing book the feed's own
+  120-per-15-minute limit could not serve past roughly 400 (arithmetic, not a
+  defect at three listings); and `ip-hash`'s production fallback logs once
+  rather than refusing (a refusal on a public route is a bigger change than
+  the finding warrants).
+
+  **The lesson is the instrument, again.** Ten of the eleven are a test or a
+  sentence that could not fail. What found them was asking "what mutation
+  would this NOT catch" — which is how a test in this repo is finished now,
+  not how it is reviewed afterwards.
+
 - **2026-09-06 · T-feed-reference (migration 0088) — the feed answers for one
   reference, a media row belongs to its property's org by construction, and a
   photograph carries a content hash.** Audit A03 plus the response's Next #4 —

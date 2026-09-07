@@ -358,14 +358,19 @@ describe("the reads behind an alert are paged and loud (A08a)", () => {
       property: prop,
       previousStatus: "draft",
     });
-    expect(served.buyer_requirements, "two pages: a full one, then the short one").toBe(2);
+    expect(
+      served.buyer_requirements,
+      "a full page, the short one, and the empty read that ends the sweep",
+    ).toBe(3);
     // WHICH pages, and ordered — a factory that forgot .range() or .order("id")
-    // used to pass this test on the count alone
+    // used to pass this test on the count alone. Ranges advance by what
+    // ARRIVED (fetch-all.ts), so the third starts at 1003.
     expect(argsOf("buyer_requirements", "range")).toEqual([
       [0, 999],
       [1000, 1999],
+      [1003, 2002],
     ]);
-    expect(argsOf("buyer_requirements", "order")).toEqual([["id"], ["id"]]);
+    expect(argsOf("buyer_requirements", "order")).toEqual([["id"], ["id"], ["id"]]);
     expect(res.newlyMatching).toBe(1003);
     expect(res.taskCreated).toBe(true);
   });
