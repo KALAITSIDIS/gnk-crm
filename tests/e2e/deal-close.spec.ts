@@ -32,6 +32,8 @@ async function removeFixture(svc: SupabaseClient): Promise<void> {
   const { data: props } = await svc.from("properties").select("id").eq("reference", REF);
   for (const p of props ?? []) {
     await svc.from("tasks").delete().eq("property_id", p.id);
+    // reservations reference the property with ON DELETE RESTRICT (0044)
+    await svc.from("reservations").delete().eq("property_id", p.id);
     await svc.from("properties").delete().eq("id", p.id);
   }
   await svc.from("contacts").delete().eq("first_name", "E2EWonBuyer");
@@ -119,6 +121,25 @@ test("Mark won confirms the accepted price, stamps it, and prompts the listing f
   });
   expect(offerErr).toBeNull();
 
+  /*
+   * A LIVE HOLD on the same property, so this spec also covers the sibling ask
+   * (0089). Left alone after the sale, `expire_reservations()` would eventually
+   * record it as "expired automatically" — the buyer's hold quietly lapsing on
+   * the property they just bought.
+   */
+  const { data: hold, error: holdErr } = await svc
+    .from("reservations")
+    .insert({
+      org_id: orgId,
+      property_id: prop!.id,
+      contact_id: buyer!.id,
+      status: "held",
+      expires_at: new Date(Date.UTC(2027, 5, 30)).toISOString(),
+    })
+    .select("id")
+    .single();
+  expect(holdErr, "seeding the live hold").toBeNull();
+
   try {
     await page.goto(`/deals/${deal!.id}`, { waitUntil: "networkidle" });
 
@@ -188,6 +209,45 @@ test("Mark won confirms the accepted price, stamps it, and prompts the listing f
       prompts![0].assignee_id,
       "assigned to the DEAL'S AGENT, not the admin who clicked",
     ).toBe(agentId);
+
+    // ---------- the sibling ask: the hold is raised, never released ----------
+    const { data: holdPrompts } = await svc
+      .from("tasks")
+      .select("id, assignee_id, is_done, due_at, reservation_id, deal_id")
+      .eq("property_id", prop!.id)
+      .eq("kind", "reservation_still_live");
+    expect(holdPrompts, "one prompt about the live hold").toHaveLength(1);
+    expect(holdPrompts![0].is_done).toBe(false);
+    expect(holdPrompts![0].reservation_id, "linked, so the desk can open it").toBe(hold!.id);
+    expect(holdPrompts![0].deal_id).toBe(deal!.id);
+    expect(holdPrompts![0].assignee_id, "the deal's agent, like its sibling").toBe(agentId);
+    expect(
+      new Date(holdPrompts![0].due_at as string).getTime(),
+      "due later today, not born overdue",
+    ).toBeGreaterThan(Date.now());
+
+    // THE DECISION ITSELF: it ASKS. Auto-releasing the hold is the
+    // reservation↔status coupling declined 2026-08-26.
+    const { data: stillHeld } = await svc
+      .from("reservations")
+      .select("status, released_at, release_reason")
+      .eq("id", hold!.id)
+      .single();
+    expect(stillHeld!.status, "the hold is the desk's call, not the app's").toBe("held");
+    expect(stillHeld!.released_at).toBeNull();
+    expect(stillHeld!.release_reason).toBeNull();
+
+    const { data: holdEvents } = await svc
+      .from("events")
+      .select("payload")
+      .eq("entity_id", prop!.id)
+      .eq("event_type", "followup_task_created");
+    expect(
+      (holdEvents ?? []).filter(
+        (e) => (e.payload as { kind?: string }).kind === "reservation_still_live",
+      ),
+      "raising it is a state change, so it owes an event",
+    ).toHaveLength(1);
 
     // ---------- obeying the prompt completes it (2026-09-01 review) ----------
     // The task asks for a status update; making that exact update must close

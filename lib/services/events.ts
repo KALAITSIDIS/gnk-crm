@@ -457,6 +457,9 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
         ? t("followupListingStatusCheckReservation")
         : t("followupListingStatusCheck");
     }
+    // 0089: the won deal's OTHER leftover — a hold still live on the property.
+    // A prompt, never an automatic release (the 2026-08-26 coupling decision).
+    if (kind === "reservation_still_live") return t("followupReservationStillLive");
     // 0078: the AML retention window closed — surfaced, never auto-purged
     if (kind === "retention_expired") return t("followupRetentionExpired");
     return t("followupTaskCreated");

@@ -25,7 +25,12 @@ const logEvent = vi.hoisted(() =>
 vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => admin.client }));
 vi.mock("@/lib/services/events", () => ({ logEvent }));
 
-const { completeListingStatusChecks } = await import("./followup-tasks");
+const {
+  completeListingStatusChecks,
+  raiseLiveHoldCheck,
+  completeLiveHoldChecks,
+  LIVE_HOLD_TASK_KIND,
+} = await import("./followup-tasks");
 
 const params = {
   propertyId: "prop-1",
@@ -34,8 +39,11 @@ const params = {
   newStatus: "sold",
 };
 
+// file level, so BOTH describes get it — scoping this inside the first one let
+// the second block inherit calls from the first and fail on the count.
+beforeEach(() => logEvent.mockClear());
+
 describe("completeListingStatusChecks", () => {
-  beforeEach(() => logEvent.mockClear());
 
   it("scopes by org — the admin client has no RLS to do it", async () => {
     const svc = fakeClient({ tasks: [{ data: [{ id: "t1" }], error: null }] });
@@ -111,5 +119,157 @@ describe("completeListingStatusChecks", () => {
 
     expect(await completeListingStatusChecks(caller.client as never, params)).toBe(0);
     expect(logEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("raiseLiveHoldCheck — the won deal's other leftover", () => {
+  const args = {
+    propertyId: 'prop-1',
+    orgId: 'org-1',
+    actorId: 'actor-1',
+    dealId: 'deal-1',
+    assigneeId: 'agent-1',
+    propertyReference: 'PAF0001',
+  };
+
+  it("says nothing when there is no live hold", async () => {
+    const svc = fakeClient({ reservations: [{ data: null, error: null }] });
+    admin.client = svc.client;
+    const caller = fakeClient({});
+    expect(await raiseLiveHoldCheck(caller.client as never, args)).toBe(0);
+    expect(svc.served.tasks ?? 0, "it does not even ask about tasks").toBe(0);
+    expect(logEvent).not.toHaveBeenCalled();
+  });
+
+  it("only counts a hold that is still LIVE", async () => {
+    const svc = fakeClient({ reservations: [{ data: null, error: null }] });
+    admin.client = svc.client;
+    await raiseLiveHoldCheck(fakeClient({}).client as never, args);
+    expect(svc.argsOf("reservations", "in")).toEqual([
+      ["status", ["held", "confirmed"]],
+    ]);
+  });
+
+  it("raises the prompt, links the reservation, and events it", async () => {
+    const svc = fakeClient({
+      reservations: [{ data: { id: "res-1" }, error: null }],
+      tasks: [{ data: [], error: null }],
+    });
+    admin.client = svc.client;
+    const caller = fakeClient({ tasks: [{ data: { id: "t1" }, error: null }] });
+
+    expect(await raiseLiveHoldCheck(caller.client as never, args)).toBe(1);
+
+    const [insert] = caller.argsOf("tasks", "insert");
+    const row = insert[0] as Record<string, unknown>;
+    expect(row.kind).toBe(LIVE_HOLD_TASK_KIND);
+    expect(row.reservation_id, "the desk can open the hold from the task").toBe("res-1");
+    expect(row.deal_id).toBe("deal-1");
+    expect(row.title).toContain("PAF0001");
+    expect(
+      new Date(row.due_at as string).getTime(),
+      "due end of day, not the instant it was raised",
+    ).toBeGreaterThan(Date.now());
+
+    expect(logEvent).toHaveBeenCalledTimes(1);
+    expect(logEvent.mock.calls[0][1]).toMatchObject({
+      eventType: "followup_task_created",
+      entityType: "property",
+      payload: { kind: LIVE_HOLD_TASK_KIND, reservation_id: "res-1" },
+    });
+  });
+
+  it("does not raise a second one, and asks the DATABASE whether one is open", async () => {
+    const svc = fakeClient({
+      reservations: [{ data: { id: "res-1" }, error: null }],
+      tasks: [{ data: [{ id: "already" }], error: null }],
+    });
+    admin.client = svc.client;
+    const caller = fakeClient({});
+
+    expect(await raiseLiveHoldCheck(caller.client as never, args)).toBe(0);
+    expect(
+      svc.argsOf("tasks", "eq"),
+      "org-scoped explicitly — the admin client has no RLS to add it",
+    ).toEqual(
+      expect.arrayContaining([
+        ["org_id", "org-1"],
+        ["property_id", "prop-1"],
+        ["kind", LIVE_HOLD_TASK_KIND],
+        ["is_done", false],
+      ]),
+    );
+    expect(caller.served.tasks ?? 0, "and nothing was inserted").toBe(0);
+    expect(logEvent).not.toHaveBeenCalled();
+  });
+
+  it("never fails the win when the prompt cannot be filed", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const svc = fakeClient({
+      reservations: [{ data: { id: "res-1" }, error: null }],
+      tasks: [{ data: [], error: null }],
+    });
+    admin.client = svc.client;
+    const caller = fakeClient({ tasks: [{ data: null, error: { message: "kind not registered" } }] });
+
+    expect(
+      await raiseLiveHoldCheck(caller.client as never, args),
+      "the deal is won — a failed prompt must not undo that",
+    ).toBe(0);
+    expect(err, "but it is never silent").toHaveBeenCalledWith(
+      "reservation_still_live task failed:",
+      "kind not registered",
+    );
+    expect(logEvent).not.toHaveBeenCalled();
+    err.mockRestore();
+  });
+});
+
+describe("completeLiveHoldChecks — the prompt must not survive being obeyed", () => {
+  const base = { reservationId: "res-1", orgId: "org-1", actorId: "actor-1" };
+
+  it.each(["converted", "released", "expired"])(
+    "closes the prompt when the hold becomes %s",
+    async (newStatus) => {
+      const svc = fakeClient({ tasks: [{ data: [{ id: "t1" }], error: null }] });
+      admin.client = svc.client;
+      const caller = fakeClient({});
+      expect(await completeLiveHoldChecks(caller.client as never, { ...base, newStatus })).toBe(1);
+      expect(logEvent).toHaveBeenCalledTimes(1);
+      expect(logEvent.mock.calls[0][1]).toMatchObject({
+        eventType: "superseded",
+        entityType: "task",
+        entityId: "t1",
+      });
+    },
+  );
+
+  it.each(["held", "confirmed"])("does nothing while the hold is still %s", async (newStatus) => {
+    // `held → confirmed` is a step FORWARD in a live hold; the ask still stands.
+    const svc = fakeClient({ tasks: [] });
+    admin.client = svc.client;
+    const caller = fakeClient({});
+    expect(await completeLiveHoldChecks(caller.client as never, { ...base, newStatus })).toBe(0);
+    expect(svc.served.tasks ?? 0, "not even a query").toBe(0);
+    expect(logEvent).not.toHaveBeenCalled();
+  });
+
+  it("closes by RESERVATION and scopes by org, as the system", async () => {
+    const svc = fakeClient({ tasks: [{ data: [], error: null }] });
+    admin.client = svc.client;
+    const caller = fakeClient({});
+    await completeLiveHoldChecks(caller.client as never, { ...base, newStatus: "released" });
+    expect(svc.argsOf("tasks", "eq")).toEqual(
+      expect.arrayContaining([
+        ["org_id", "org-1"],
+        ["reservation_id", "res-1"],
+        ["kind", LIVE_HOLD_TASK_KIND],
+        ["is_done", false],
+      ]),
+    );
+    expect(
+      caller.served.tasks ?? 0,
+      "tasks_update is assignee-scoped, and whoever settles the hold is often not the assignee",
+    ).toBe(0);
   });
 });
