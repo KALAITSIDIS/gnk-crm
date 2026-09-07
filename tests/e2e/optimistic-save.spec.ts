@@ -91,9 +91,12 @@ test("a save from a page the row has moved under is refused, and goes through af
     // 1. refused — and refused BEFORE the publish gate, which would otherwise
     //    have answered "below 70" for this thin listing
     await savePublic(page, property.id);
-    await expect(page.getByRole("alert")).toContainText(/changed since you opened it/i, {
-      timeout: 15_000,
-    });
+    // scoped to the form: Next's route announcer is a second role="alert" on
+    // every page, and an unscoped locator is a strict-mode violation
+    await expect(detailsForm(page).getByRole("alert")).toContainText(
+      /changed since you opened it/i,
+      { timeout: 15_000 },
+    );
     await expect(page.getByText(/below 70/i)).toHaveCount(0);
     const { data: untouched } = await admin
       .from("properties")

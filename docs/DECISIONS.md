@@ -3,6 +3,41 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-06 · T-plans-private (no migration) — a floor plan's renditions
+  live in the private bucket, and the bucket is decided in one place.** Audit
+  A07, Next #7 of `AUDIT_2026-09-06_RESPONSE.md`. MEDIA-K (2026-09-02) let a
+  floor plan through the photograph pipeline, so its thumb/card/full went to
+  the PUBLIC `media` bucket under a guessable `properties/<id>/<uuid>_card.webp`
+  — never on the site (the feed and the share links select `kind = 'photo'`),
+  but readable by anyone holding the URL. A plan is the one thing about a
+  property a seller may hold under confidentiality; whether this firm's are
+  is the operator's question and decides how serious the exposure WAS, not
+  what the fix is.
+
+  (1) **`mediaBucketFor(kind)`** (`lib/services/media-bucket.ts`): a
+  photograph's renditions are public because publishing them is what they
+  are for; everything else — floor plans today, any kind nobody uploads yet —
+  goes to `documents`, beside the EXIF-bearing original that always lived
+  there. The upload, the rejected-row cleanup and the (bulk) delete read it;
+  the delete removes from each bucket what it holds. `lib/actions/media.ts`
+  now spells the public bucket exactly once, for the org watermark, and a
+  source scan holds it there.
+  (2) **The page decides the URL, the tab renders it.** `app/(app)/properties/
+  [id]/page.tsx` gives each row a `card_url`: a public URL for a photograph, a
+  one-hour signed URL from the admin client for anything else — the idiom
+  the documents tab has used since 0015. `MediaTab` lost its `publicMediaUrl`
+  import; the scan holds that too.
+  (3) **Nothing to move on production.** Read-only through PostgREST with
+  the service key on 2026-09-06: 12 `property_media` rows, all `photo`, zero
+  non-photo — so no plan rendition was ever public on the live stack.
+  `scripts/media/move-floor-plans.mjs` (dry run by default, `--apply` to
+  move, cross-bucket `copy` then `remove`, idempotent) exists for the day
+  there is, and for local stacks; its local dry run was the smoke test.
+  (4) **Not changed, deliberately:** the feed and share-link SQL (`kind =
+  'photo'` since 0023/0073/0085, pinned by RLS test 49), the storage policies
+  (both buckets as 0001 created them), and `property_media` (paths unchanged;
+  the bucket is a function of `kind`).
+
 - **2026-09-06 · T-optimistic-save (no migration) — a section save refuses
   when the row moved since the page rendered, and says so when it saved but
   could not record.** Audit A06, Next #6 of `AUDIT_2026-09-06_RESPONSE.md`.
