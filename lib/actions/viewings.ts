@@ -431,11 +431,22 @@ export async function saveViewingFeedback(
     comment: d.comment ?? null,
   };
 
-  const { error } = await supabase
+  /*
+   * The returned row is the proof, for the same reason as updateViewingStatus
+   * above: the policy is narrower than the guard, and RLS refuses an UPDATE by
+   * matching zero rows with no error. Without this, feedback could be reported
+   * saved, stored nowhere, and still published to the property's timeline —
+   * where it would read as the buyer's own words about a viewing.
+   */
+  const { data: saved, error } = await supabase
     .from("viewings")
     .update({ feedback })
-    .eq("id", d.viewing_id);
+    .eq("id", d.viewing_id)
+    .select("id");
   if (error) return { error: error.message, savedAt: null };
+  if (!saved?.length) {
+    return { error: "That feedback was refused — the viewing is not yours.", savedAt: null };
+  }
 
   await logEvent(supabase, {
     orgId: v.org_id,

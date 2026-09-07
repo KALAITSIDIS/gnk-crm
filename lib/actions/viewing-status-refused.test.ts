@@ -34,7 +34,7 @@ vi.mock("@/lib/services/auth", () => ({
 vi.mock("@/lib/services/events", () => ({ logEvent }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
-const { updateViewingStatus } = await import("@/lib/actions/viewings");
+const { updateViewingStatus, saveViewingFeedback } = await import("@/lib/actions/viewings");
 
 /** A scheduled viewing whose agent IS the actor — so the app guard lets them through. */
 const viewing = (over: Record<string, unknown> = {}) => ({
@@ -111,5 +111,58 @@ describe("updateViewingStatus proves its write before it logs one", () => {
     expect(res.error).toBeNull();
     expect(logEvent).toHaveBeenCalledTimes(1);
     state.role = "listing_manager";
+  });
+});
+
+describe("saveViewingFeedback proves its write too", () => {
+  /**
+   * The same shape one screen along. Feedback is a buyer's own words about a
+   * property, and it is published to that property's timeline — so reporting it
+   * saved when the row never took it puts words in the timeline that exist
+   * nowhere else, attributable to a viewing that does not carry them.
+   */
+  const completed = (over: Record<string, unknown> = {}) => ({
+    id: "viewing-1",
+    org_id: "org-1",
+    agent_id: "actor-1",
+    status: "completed",
+    property_id: "prop-1",
+    properties: { reference: "PAF0001" },
+    ...over,
+  });
+
+  const form = () => {
+    const fd = new FormData();
+    fd.set("viewing_id", "11111111-1111-4111-8111-111111111111");
+    fd.set("rating", "4");
+    fd.set("comment", "Liked the terrace");
+    return fd;
+  };
+
+  it("refuses instead of publishing feedback the row never took", async () => {
+    setup([
+      { data: completed(), error: null },
+      { data: [], error: null }, // the UPDATE — filtered away
+    ]);
+    const res = await saveViewingFeedback({ error: null, savedAt: null }, form());
+    expect(res.error).toMatch(/refused/i);
+    expect(
+      logEvent,
+      "no viewing_feedback event on the property for words that were not stored",
+    ).not.toHaveBeenCalled();
+  });
+
+  it("publishes when the write lands", async () => {
+    setup([
+      { data: completed(), error: null },
+      { data: [{ id: "viewing-1" }], error: null },
+    ]);
+    const res = await saveViewingFeedback({ error: null, savedAt: null }, form());
+    expect(res.error).toBeNull();
+    expect(logEvent).toHaveBeenCalledTimes(1);
+    expect(logEvent.mock.calls[0][1]).toMatchObject({
+      entityType: "property",
+      eventType: "viewing_feedback",
+    });
   });
 });
