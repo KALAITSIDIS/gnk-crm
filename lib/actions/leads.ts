@@ -378,6 +378,30 @@ export async function claimLead(leadId: string): Promise<void> {
   revalidatePath("/leads");
 }
 
+/**
+ * A zero-row UPDATE means one of two very different things, and the difference
+ * decides whether an event may be written.
+ *
+ * Either a concurrent stamp won the race — legitimate, and the winner's event
+ * already covers it — or the row policy filtered the write away. RLS refuses an
+ * UPDATE by matching zero rows, with NO error (proved in
+ * supabase/tests/listing-manager-silent-writes.test.ts), so the two are
+ * indistinguishable from the result alone.
+ *
+ * Re-reading settles it: if the stamp is now set, someone else set it. If it is
+ * still null, nothing was written and nobody wrote it — reporting success there
+ * toasts "Marked contacted" over a lead that never moved, and logging an event
+ * puts a line in the timeline for something that did not happen.
+ */
+async function stampLandedElsewhere(
+  supabase: Awaited<ReturnType<typeof getLead>>["supabase"],
+  leadId: string,
+  column: "first_response_at" | "first_call_at",
+): Promise<boolean> {
+  const { data } = await supabase.from("leads").select(column).eq("id", leadId).maybeSingle();
+  return Boolean((data as Record<string, string | null> | null)?.[column]);
+}
+
 /** Stamps first_response_at exactly once (doc 02 §C4). */
 export async function markContacted(leadId: string): Promise<void> {
   const { supabase, profile, lead } = await getLead(leadId);
@@ -397,8 +421,10 @@ export async function markContacted(leadId: string): Promise<void> {
   const { data, error } = await query.select("id");
   if (error) throw new Error(error.message);
   if (!data?.length) {
-    if (stamping) return; // lost the stamp race — the winner's event covers it
-    throw new Error("Update blocked");
+    if (stamping && (await stampLandedElsewhere(supabase, leadId, "first_response_at"))) {
+      return; // lost the stamp race — the winner's event covers it
+    }
+    throw new Error("That write was refused — you may not work this lead.");
   }
 
   await logEvent(supabase, {
@@ -433,7 +459,12 @@ export async function markCalled(leadId: string): Promise<void> {
     const { data, error } = await query.select("id");
     if (error) throw new Error(error.message);
     if (!data?.length) {
-      if (!stamping) throw new Error("Update blocked");
+      if (!stamping || !(await stampLandedElsewhere(supabase, leadId, "first_call_at"))) {
+        // Nothing was written and nobody else wrote it. Falling through here is
+        // what logged a `called` event against a lead whose first_call_at was
+        // still null — a phantom call in the timeline.
+        throw new Error("That write was refused — you may not work this lead.");
+      }
       firstCall = false; // lost the stamp race — still log the repeat call
     }
   }

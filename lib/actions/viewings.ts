@@ -174,8 +174,31 @@ export async function updateViewingStatus(
   }
   if (v.status !== "scheduled") return { error: `Viewing is already ${v.status}.` };
 
-  const { error } = await supabase.from("viewings").update({ status: next }).eq("id", viewingId);
+  /*
+   * THE RETURNED ROW IS THE PROOF THE WRITE HAPPENED — the markDealWon idiom,
+   * which `rescheduleViewing` below already uses for exactly this reason.
+   *
+   * The viewings UPDATE policy admits an admin, or an agent on their own
+   * viewing. A listing manager assigned as the agent passes the app guard above
+   * and is then filtered out by the policy — and RLS refuses an UPDATE by
+   * matching ZERO ROWS, with no error (proved in
+   * supabase/tests/listing-manager-silent-writes.test.ts). Without this check
+   * the action returned success and wrote a `status_changed` event, so the
+   * viewing stayed `scheduled` while the timeline said it had been completed.
+   *
+   * The `.eq("status", "scheduled")` also makes it a compare-and-set, so two
+   * people closing the same viewing cannot both log a transition from it.
+   */
+  const { data: moved, error } = await supabase
+    .from("viewings")
+    .update({ status: next })
+    .eq("id", viewingId)
+    .eq("status", "scheduled")
+    .select("id");
   if (error) return { error: error.message };
+  if (!moved?.length) {
+    return { error: "That change was refused — the viewing is not yours, or it moved under you." };
+  }
 
   await logEvent(supabase, {
     orgId: v.org_id,
