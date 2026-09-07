@@ -3,8 +3,7 @@ import {
   RESERVATION_TRANSITIONS,
   createReservationSchema,
   cyprusEndOfDay,
-  isLiveReservation,
-} from "./reservations";
+  isLiveReservation, cyprusEndOfToday} from "./reservations";
 
 describe("cyprusEndOfDay", () => {
   it("uses the REAL Cyprus offset, which changes with DST", () => {
@@ -78,6 +77,50 @@ describe("createReservationSchema", () => {
     );
     expect(createReservationSchema.safeParse({ ...base, expires_on: "2026-13-45" }).success).toBe(
       false,
+    );
+  });
+});
+
+describe("cyprusEndOfToday — the window a prompt is born overdue in", () => {
+  /*
+   * `new Date().toISOString().slice(0, 10)` is the UTC day, and Cyprus is
+   * UTC+2 in winter and UTC+3 in summer. Between local midnight and 03:00 the
+   * UTC date is still YESTERDAY, so that expression yields an end-of-day
+   * already hours past — and a task stamped with it renders OVERDUE on its
+   * first paint, in precisely the window the end-of-day rule exists for.
+   *
+   * Three prompt raisers had that hole, including the two "fixed" earlier the
+   * same day. This is the case that catches it.
+   */
+  it("is in the FUTURE at 01:30 Cyprus, when the UTC day is still yesterday", () => {
+    // 01:30 on 8 Sept Cyprus (UTC+3 in summer) is 22:30 on 7 Sept UTC
+    const smallHours = new Date("2026-09-07T22:30:00.000Z");
+    const due = cyprusEndOfToday(smallHours);
+    expect(
+      due.getTime(),
+      "the prompt must be due later TODAY in Cyprus, not yesterday",
+    ).toBeGreaterThan(smallHours.getTime());
+  });
+
+  it("the naive UTC-slice it replaces is in the PAST at that same instant", () => {
+    // the bug, stated as a test so the reason for the helper survives
+    const smallHours = new Date("2026-09-07T22:30:00.000Z");
+    const naive = cyprusEndOfDay(smallHours.toISOString().slice(0, 10));
+    expect(naive.getTime()).toBeLessThan(smallHours.getTime());
+  });
+
+  it("is still end of the SAME Cyprus day during working hours", () => {
+    const afternoon = new Date("2026-09-07T12:00:00.000Z"); // 15:00 Cyprus
+    const due = cyprusEndOfToday(afternoon);
+    expect(due.getTime()).toBeGreaterThan(afternoon.getTime());
+    expect(due.toISOString()).toBe(cyprusEndOfDay("2026-09-07").toISOString());
+  });
+
+  it("works in winter too, when Cyprus is UTC+2", () => {
+    // 01:30 on 8 Jan Cyprus (UTC+2) is 23:30 on 7 Jan UTC
+    const winterSmallHours = new Date("2026-01-07T23:30:00.000Z");
+    expect(cyprusEndOfToday(winterSmallHours).getTime()).toBeGreaterThan(
+      winterSmallHours.getTime(),
     );
   });
 });

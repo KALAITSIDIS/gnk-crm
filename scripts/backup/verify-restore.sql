@@ -45,12 +45,12 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 89::bigint as migrations,
+    2::bigint as auth_users, 90::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
     0::bigint as reservations, 0::bigint as reservation_installments,
-    12::bigint as task_kinds, 1::bigint as chain_checkpoints
+    13::bigint as task_kinds, 1::bigint as chain_checkpoints
     -- captured 2026-08-30 from hosted (yjgirvzgoiywdojnpkpd) via
     -- capture-baseline.sql, after the 08-29/30 audit-fix run (0070–0073,
     -- PAF0001 content fixes, test-photo deletion — which is why media

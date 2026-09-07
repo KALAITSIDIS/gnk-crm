@@ -422,11 +422,6 @@ export default async function ContactDetailPage({
             {events.length === 50 ? (
               <p className="mt-3 text-xs text-text-3">Showing the latest 50 events.</p>
             ) : null}
-            {profile.role !== "admin" ? (
-              <p className="mt-3 text-xs text-text-3">
-                You see events from your own actions — admins see everyone&apos;s.
-              </p>
-            ) : null}
           </div>
         </TabsContent>
 

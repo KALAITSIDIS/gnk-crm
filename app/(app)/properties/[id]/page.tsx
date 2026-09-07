@@ -813,11 +813,6 @@ export default async function PropertyDetailPage({
 
         <TabsContent value="activity" className="mt-4">
           <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-6">
-            {profile.role !== "admin" ? (
-              <p className="mb-3 text-xs text-text-3">
-                You see actions you performed — admins see the full history.
-              </p>
-            ) : null}
             <EventTimeline events={eventRows} />
           </div>
         </TabsContent>

@@ -17,7 +17,7 @@ import {
   saveOfferSchema,
   type OfferStatus,
 } from "@/lib/validators/deals";
-import { cyprusEndOfDay } from "@/lib/validators/reservations";
+import { cyprusEndOfToday } from "@/lib/validators/reservations";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export type MoveDealResult = { error: string | null };
@@ -496,7 +496,7 @@ export async function markDealWon(
              * hold converts is same-day work. `raiseOneTask` uses tomorrow
              * because a match alert is not.
              */
-            due_at: cyprusEndOfDay(now.slice(0, 10)).toISOString(),
+            due_at: cyprusEndOfToday().toISOString(),
             assignee_id: deal.agent_id ?? profile.id,
             property_id: prop.id,
             deal_id: dealId,

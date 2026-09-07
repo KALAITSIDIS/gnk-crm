@@ -9,6 +9,7 @@ import {
   RESERVATION_TRANSITIONS,
   createReservationSchema,
   cyprusEndOfDay,
+  cyprusEndOfToday,
   extendReservationSchema,
   isLiveReservation,
   transitionReservationSchema,
@@ -324,7 +325,7 @@ export async function transitionReservation(
              * hold converts is same-day work. `raiseOneTask` uses tomorrow
              * because a match alert is not.
              */
-            due_at: cyprusEndOfDay(nowIso.slice(0, 10)).toISOString(),
+            due_at: cyprusEndOfToday().toISOString(),
             assignee_id: assigneeId,
             property_id: prop.id,
             deal_id: existing.deal_id ?? null,

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { SELECT_NONE } from "@/lib/validators/contacts";
-import { zonedWallClockToUtc } from "@/lib/utils/tz";
+import { zonedWallClockToUtc, zonedParts} from "@/lib/utils/tz";
 
 /**
  * Reservations (0044, T-C3).
@@ -92,6 +92,21 @@ export const transitionReservationSchema = z.object({
  */
 export function cyprusEndOfDay(isoDate: string): Date {
   return zonedWallClockToUtc(`${isoDate}T23:59:59`);
+}
+
+/**
+ * End of the Cyprus day that is current NOW — what every "due today" prompt
+ * actually wants.
+ *
+ * `new Date().toISOString().slice(0, 10)` is the UTC day, and Cyprus is UTC+2/+3.
+ * Between midnight and 03:00 local the UTC date is still YESTERDAY, so that
+ * expression yields an end-of-day already two or three hours past, and a task
+ * stamped with it is born overdue — in exactly the window the end-of-day rule
+ * exists to protect. Three prompt raisers had that hole; this is the one
+ * definition they now share.
+ */
+export function cyprusEndOfToday(now: Date = new Date()): Date {
+  return cyprusEndOfDay(zonedParts(now).dayKey);
 }
 
 // ---------------------------------------------------------------- schedule --
