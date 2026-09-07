@@ -1,6 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
-import { fetchSharedPhotoReferences } from "@/lib/services/shared-photos";
 
 /**
  * Property Quality Score (doc 02 §A8 + §C1). Computed in app code on every
@@ -57,6 +56,7 @@ export const PUBLISH_THRESHOLD = 70;
 // importer load this file under plain Node, which resolves neither a
 // tsconfig alias nor an extensionless path — the alias broke both for a day.
 import { countContainerUnits } from "./container-units.ts";
+import { fetchSharedPhotoReferences } from "./shared-photos.ts";
 
 export interface QualityScoreInput {
   isLand: boolean;

@@ -3,6 +3,36 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-07 · T-scripts-under-node (no migration) — I broke
+  `recompute:scores` this morning, in the one place a comment already said not
+  to.** `quality-score.ts` is loaded by `scripts/recompute-scores.mts` under
+  PLAIN NODE, which resolves neither a tsconfig `@/` alias nor an
+  extensionless path. `d01b3ba` had already fixed exactly this once and left a
+  comment above the import saying so. 0088's shared-photograph lookup was
+  added directly ABOVE that comment — outside what it protects — and the
+  script died with `ERR_MODULE_NOT_FOUND: Cannot find package '@/lib'`.
+
+  Found only because the score staleness below made me run it. **Nothing in CI
+  runs these scripts, so a comment was the entire enforcement, and a comment
+  does not fail a build.** `tests/unit/scripts-run-under-node.test.ts` now
+  walks the real import graph from every `scripts/**/*.mts|mjs` entry point and
+  fails on any VALUE import through the alias; `import type` is allowed,
+  because TypeScript erases it before Node sees it. Proven both ways: it fails
+  on the exact line I shipped, and stays green on a type-only alias import.
+
+  **The pattern, for the third time today:** the rule existed, was written
+  down, and was enforced by nothing. A comment is documentation; a test is a
+  rule.
+
+  **Noticed while proving the fix, NOT acted on:** the dry run reports 12 of 17
+  stored `quality_score` values are stale — the six PAF0002 units read 0 and
+  compute 60 (units are created by the wizard's bulk writer, which never scores
+  them), and archived PAF0005 reads 75 and computes 50. The detail page and the
+  worklist compute fresh so they are right; the LIST and the CSV export read
+  the column, so they are wrong. `npm run recompute:scores` is the sanctioned
+  fix and its dry run is clean — left as an operator decision because it writes
+  to real client rows and nothing is blocked by it.
+
 - **2026-09-07 · T-convert-race (no migration) — the one flaky e2e, and why a
   green-on-retry suite is worse than a red one.** `reservation-convert.spec.ts`
   failed on its FIRST attempt in 3 of 8 sampled CI runs and passed on retry,
