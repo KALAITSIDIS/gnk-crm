@@ -5668,3 +5668,98 @@ reservation "expired automatically"; and after a reschedule, Download still
 hands out the previously filed confirmation with the old time, which is either
 a correct record of what was sent or a stale document an agent may forward.
 Each is measured and recorded; none is silently chosen.
+
+## T-three — the three open decisions, answered (2026-09-07, migration 0089)
+
+The operator delegated all three residuals from `T-silent` with "you are a
+professional, choose which one is correct and do it". Each was investigated
+independently and then adversarially challenged before anything was written;
+two of the three challenges found real defects in the first implementation,
+both recorded below because they are the reason the answers are trustworthy.
+
+**1. A listing manager — and any agent — may edit a buyer's saved searches.**
+
+The card was read-only for them because the page derived its `readOnly` from
+the CONTACTS policy (`admin any, agent own/created, LM none`) while the card
+writes `buyer_requirements`, whose 0043 policies are org-scoped with NO role
+test. 0043 says why in its own comment: "a requirement is CRM knowledge about a
+buyer, so any agent in the org may record and edit one", and its DELETE — the
+*narrower* policy — names `('admin','listing_manager')`, treating the listing
+manager as MORE trusted here, not less. `supabase/tests/rls.test.ts` test 30
+has asserted since 0043 that a second agent may edit another's requirement,
+with the note "`contacts` narrows UPDATE to the assigned agent, and this table
+does NOT".
+
+The root cause is not the page. `action-section-form.tsx` instructs the reader
+to set `readOnly` "whenever RLS would silently no-op the caller's update (doc
+04)" — and doc 04 has no `buyer_requirements` row at all, because the matrix
+stops at the 0002-era tables. The neighbouring `contacts` rule was the nearest
+thing to hand.
+
+`mayEditBuyerRequirements` (lib/validators/buyer-requirements.ts) is now the one
+definition: admin, agent, listing_manager; archived and erased contacts stay
+frozen for everyone, because those freezes are about the CONTACT's state and not
+about who is asking. The staff roles are NAMED rather than the check left open,
+which is deliberately stricter than a policy with no role test: 0078 makes
+portal-role profiles impossible with a CHECK and records the obligation to
+revisit contacts and buyer_requirements TOGETHER when portals are built.
+Defaulting a future portal role to "may edit" would quietly pre-empt that.
+
+**2. A won deal with a live hold raises a prompt. It does not release it.**
+
+`markDealWon` never touched the reservation, so a hold still live when the sale
+closed ran to its expiry and `expire_reservations()` recorded
+`release_reason = 'expired automatically'` — the buyer's hold reading as though
+it quietly lapsed on the property they had just bought.
+
+Releasing it automatically is the coupling DECLINED 2026-08-26 ("`properties.status`
+is not to be coupled to holds, now or later. Do not build the trigger"), and the
+reason given there holds unchanged: the desk's action and an automatic one are
+both legitimate and neither can know about the other. That same decision set the
+precedent — "the Won side got a task that ASKS" — so this is that task for the
+sibling case: `reservation_still_live`, the thirteenth kind (migration 0089).
+
+`expire_reservations()` is deliberately NOT changed. Teaching the sweep to
+consult `properties.status` would build the declined coupling inside the very
+function the 2026-08-26 entry cites as proof of independence. The prompt exists
+so a person settles the hold before the sweep reaches it; if nobody does, the
+open task is the record of the ask.
+
+**And the prompt has an exit.** `completeLiveHoldChecks` closes it the moment
+the hold leaves the live set, by `isLiveReservation` rather than by re-listing
+statuses. Raising a prompt with no exit would have shipped, one kind later, the
+exact defect the same day's work had just fixed for `listing_status_check`.
+
+**3. A rescheduled viewing's filed confirmation is kept, and marked out of date.**
+
+The PDF is a record of what was sent and its digest is chained into the event
+log, so it must not be rewritten, replaced or withheld. But Download offered it
+as the current document, so an agent could forward a client a sheet naming a
+time the viewing no longer had. Keeping the record and presenting it as current
+are different things; only the second was wrong.
+
+Staleness is derived at read time — a `rescheduled` event later than the
+document's `created_at` — so no migration and no new column. The card names the
+filed sheet's own title, promotes Regenerate, and relabels the download "the old
+one". The record stays reachable.
+
+**Two defects the adversarial pass caught in the first implementation, both
+real, both mine:**
+
+- The staleness read ran on the CALLER's client, and `events_select` (0063)
+  admits only an admin or the event's own actor. An admin rescheduling an
+  agent's viewing writes an event that agent cannot see — so the warning would
+  have vanished for precisely the person about to send the stale sheet. It is
+  the same "asked the reader instead of the database" fault this day's earlier
+  work was entirely about, reintroduced within hours. It now reads as the
+  system, org-scoped explicitly.
+- Migration 0089 broke `rls.test.ts` test 33, which pins the task-kind
+  vocabulary by EQUALITY and by count, and the header called the new kind the
+  twelfth when 0078 already asserts twelve. Every prior kind migration carries a
+  total-count assertion; 0089 lacked one. It has one now (13), and the test's
+  list and count were updated with it. `scripts/backup/verify-restore.sql` pins
+  the migration count too and was bumped 88 → 89.
+
+Neither would have been caught by review-by-reading; both came from running the
+thing and from an adversarial pass whose only instruction was to disprove the
+recommendation.

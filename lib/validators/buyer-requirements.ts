@@ -115,3 +115,33 @@ export const archiveBuyerRequirementSchema = z.object({
 export const deleteBuyerRequirementSchema = z.object({
   requirement_id: z.guid(),
 });
+
+/**
+ * Who may record, edit and retire a buyer's saved searches.
+ *
+ * MIRRORS `buyer_requirements`, NOT `contacts`. The 0043 policies are
+ * org-scoped with no role test, and DELETE deliberately names the NARROWER set
+ * ('admin','listing_manager') under the comment: "is_active = false is the
+ * normal way to retire a search and any agent can do it". So a saved search is
+ * staff-wide data — unlike the contact record it hangs off, whose UPDATE policy
+ * is admin-any / agent-own / LM-none.
+ *
+ * The contact detail page used the CONTACTS rule for this card, which locked
+ * listing managers, and any agent who did not own the contact, out of work the
+ * database grants them (proved against a real database in
+ * supabase/tests/listing-manager-silent-writes.test.ts).
+ *
+ * The staff roles are named rather than the check left open, because 0078 makes
+ * portal-role profiles impossible with a CHECK and records the obligation to
+ * revisit contacts and buyer_requirements TOGETHER when portals are built.
+ * Defaulting a future portal role to "may edit" would quietly pre-empt that.
+ */
+const STAFF_ROLES = ["admin", "agent", "listing_manager"] as const;
+
+export function mayEditBuyerRequirements(
+  role: string,
+  contact: { isArchived: boolean; isErased: boolean },
+): boolean {
+  if (contact.isErased || contact.isArchived) return false;
+  return (STAFF_ROLES as readonly string[]).includes(role);
+}

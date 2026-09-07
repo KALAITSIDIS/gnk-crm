@@ -59,6 +59,34 @@ test("converting a reservation prompts the listing flip, never performs it", asy
   });
   expect(resErr).toBeNull();
 
+  const { data: res } = await svc
+    .from("reservations")
+    .select("id")
+    .eq("property_id", prop!.id)
+    .single();
+
+  /*
+   * A live-hold prompt (0089) already open on this hold. Converting it is
+   * exactly the ask being obeyed, so the prompt must close — a prompt that
+   * survives being obeyed teaches the desk to ignore prompts, which is the
+   * failure `completeListingStatusChecks` exists to avoid and which raising a
+   * second kind could easily have reintroduced.
+   */
+  const { data: holdPrompt, error: holdTaskErr } = await svc
+    .from("tasks")
+    .insert({
+      org_id: orgId,
+      title: `Deal won — settle the hold on ${REF}`,
+      property_id: prop!.id,
+      reservation_id: res!.id,
+      kind: "reservation_still_live",
+      assignee_id: profileId,
+      is_done: false,
+    })
+    .select("id")
+    .single();
+  expect(holdTaskErr, "seeding the live-hold prompt").toBeNull();
+
   try {
     await page.goto(`/properties/${prop!.id}`, { waitUntil: "networkidle" });
     await page.getByRole("tab", { name: /^reservation$/i }).click();
@@ -159,6 +187,29 @@ test("converting a reservation prompts the listing flip, never performs it", asy
     ).toBeGreaterThan(Date.now());
     expect(prompts[0].reservation_id, "linked to the reservation").not.toBeNull();
     expect(prompts[0].assignee_id, "no linked deal → assigned to the closer").toBe(profileId);
+
+    // ---------- and the hold prompt closed, because it was obeyed ----------
+    await expect
+      .poll(
+        async () => {
+          const { data } = await svc
+            .from("tasks")
+            .select("is_done")
+            .eq("id", holdPrompt!.id)
+            .single();
+          return data?.is_done;
+        },
+        { timeout: opTimeout(15_000) },
+      )
+      .toBe(true);
+
+    const { data: supersede } = await svc
+      .from("events")
+      .select("payload")
+      .eq("entity_id", holdPrompt!.id)
+      .eq("event_type", "superseded");
+    expect(supersede, "closing it is a state change, so it owes an event").toHaveLength(1);
+    expect((supersede![0].payload as { reason?: string }).reason).toMatch(/converted/i);
   } finally {
     await removeFixture(svc);
   }

@@ -247,6 +247,24 @@ export async function transitionReservation(
     payload: { reservation_id, from, to, reason: release_reason ?? null },
   });
 
+  /*
+   * The live-hold prompt (0089) closes when the hold is settled — whichever way
+   * the desk settles it. A prompt that survives being obeyed teaches the desk
+   * to ignore prompts; raising one without an exit would have shipped that
+   * defect one kind later. `completeLiveHoldChecks` returns 0 while the status
+   * is still live, so this costs nothing on a `held → confirmed` step.
+   */
+  if (!isLiveReservation(to)) {
+    const { completeLiveHoldChecks } = await import("@/lib/services/followup-tasks");
+    const closed = await completeLiveHoldChecks(supabase, {
+      reservationId: reservation_id,
+      orgId: profile.orgId,
+      actorId: profile.id,
+      newStatus: to,
+    });
+    if (closed > 0) revalidatePath("/tasks");
+  }
+
   // DB-01, the leg the 2026-09-01 review found missing: a CONVERTED
   // reservation whose listing still reads on-market asks for the same status
   // update a won deal does — a prompt task, never an automatic flip (the

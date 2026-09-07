@@ -28,6 +28,7 @@ import {
 } from "@/components/features/contacts/matches-card";
 import { PartyDefaultsForm } from "@/components/features/contacts/party-defaults-form";
 import { getPartyDefaults } from "@/lib/actions/party-defaults";
+import { mayEditBuyerRequirements } from "@/lib/validators/buyer-requirements";
 import { isPartyContact, partyDefaultsSchema } from "@/lib/validators/party-defaults";
 import { buildPortfolio, PORTFOLIO_SELECT } from "@/lib/services/contact-portfolio";
 import { getCurrentProfile } from "@/lib/services/auth";
@@ -200,6 +201,41 @@ export default async function ContactDetailPage({
       ? "Read-only — this contact isn't assigned to you and you didn't create it."
       : "Read-only — listing managers can't edit contacts.";
 
+  /*
+   * SAVED SEARCHES ARE A DIFFERENT TABLE WITH A DIFFERENT POLICY.
+   *
+   * `canEdit` above mirrors the CONTACTS update policy (admin any, agent
+   * own/created, LM none) and is right for the contact's own fields. The
+   * requirements card writes `buyer_requirements`, whose policies (0043) are
+   * org-scoped with NO role test at all — and whose DELETE deliberately names
+   * ('admin','listing_manager') as the *narrower* set, with the comment:
+   * "is_active = false is the normal way to retire a search and any agent can
+   * do it". So the intent is plain: any staff member records and retires saved
+   * searches; only admin and the listing manager may hard-delete one.
+   *
+   * Passing `canEdit` here asked the wrong table's policy, and locked listing
+   * managers — and any agent who does not own the contact — out of work the
+   * database grants them. Measured in
+   * supabase/tests/listing-manager-silent-writes.test.ts: their insert and
+   * update both land.
+   *
+   * The roles are NAMED rather than left open, even though the policy has no
+   * role test, because 0078 makes portal-role profiles impossible with a CHECK
+   * and records a sunset obligation: "when those roles are built, contacts and
+   * buyer_requirements must be revisited TOGETHER". Naming them keeps that
+   * revisit honest instead of granting a future portal user access by default.
+   *
+   * The archived and erased freezes still apply — they are about the CONTACT,
+   * not about who is asking.
+   */
+  const mayEditRequirements = mayEditBuyerRequirements(profile.role, {
+    isArchived: Boolean(c.is_archived),
+    isErased,
+  });
+  const requirementsReadOnlyHint = isErased
+    ? "Personal data was erased under GDPR Art.17 — this contact is read-only."
+    : "Archived contact — unarchive it to edit its saved searches.";
+
   const kycPct = kycCompletion((c.kyc ?? {}) as KycState);
   const bankPct = bankingCompletion((c.banking_readiness ?? {}) as BankingReadinessState);
 
@@ -350,8 +386,8 @@ export default async function ContactDetailPage({
                 requirements={requirements}
                 districts={districtOptions}
                 areas={areaOptions}
-                readOnly={!canEdit}
-                readOnlyHint={readOnlyHint}
+                readOnly={!mayEditRequirements}
+                readOnlyHint={requirementsReadOnlyHint}
               />
             </section>
 

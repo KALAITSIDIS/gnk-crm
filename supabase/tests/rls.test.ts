@@ -2929,7 +2929,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       .from("task_kinds")
       .select("kind");
     expect(readErr, "an agent may read the vocabulary").toBeNull();
-    expect((kinds ?? []).length, "all twelve kinds are visible").toBe(12);
+    expect((kinds ?? []).length, "all thirteen kinds are visible").toBe(13);
 
     // The vocabulary is the system's: adding a kind is a code change, so not
     // even an admin edits it from the app.
@@ -2977,6 +2977,8 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       "viewing_no_show",
       "listing_status_check",
       "retention_expired",
+      // 0089 — a won deal whose property still carries a live hold
+      "reservation_still_live",
     ];
     expect((kinds ?? []).map((k) => k.kind).sort()).toEqual([...shipped].sort());
 

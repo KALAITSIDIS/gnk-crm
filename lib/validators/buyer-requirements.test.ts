@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { saveBuyerRequirementSchema } from "./buyer-requirements";
+import { saveBuyerRequirementSchema,
+  mayEditBuyerRequirements,
+} from "./buyer-requirements";
 import { SELECT_NONE } from "./contacts";
 
 const CONTACT = "11111111-1111-4111-8111-111111111111";
@@ -135,5 +137,46 @@ describe("saveBuyerRequirementSchema — checkboxes and defaults", () => {
   it("requires a contact — a requirement with no buyer is not a requirement", () => {
     const r = saveBuyerRequirementSchema.safeParse({});
     expect(r.success).toBe(false);
+  });
+});
+
+describe("mayEditBuyerRequirements — who may work a buyer's saved searches", () => {
+  const live = { isArchived: false, isErased: false };
+
+  it("admits the listing manager, whom the contacts rule wrongly excluded", () => {
+    // 0043's DELETE policy names ('admin','listing_manager') as the NARROWER
+    // set, so the role is trusted MORE here than a plain agent, not less. The
+    // page was asking the contacts policy, where LM is excluded outright.
+    expect(mayEditBuyerRequirements("listing_manager", live)).toBe(true);
+  });
+
+  it("admits any agent, not only the one who owns the contact", () => {
+    // "is_active = false is the normal way to retire a search and any agent
+    // can do it" — 0043, on why DELETE is narrower than UPDATE.
+    expect(mayEditBuyerRequirements("agent", live)).toBe(true);
+  });
+
+  it("admits an admin", () => {
+    expect(mayEditBuyerRequirements("admin", live)).toBe(true);
+  });
+
+  it("refuses a portal role rather than defaulting it open", () => {
+    // The policy itself has no role test, so this is deliberately STRICTER
+    // than the database — 0078 makes these profiles impossible with a CHECK
+    // and records the obligation to revisit contacts and buyer_requirements
+    // together when portals are built. Granting by default would pre-empt it.
+    for (const role of ["owner_portal", "developer_portal", "partner_portal"]) {
+      expect(mayEditBuyerRequirements(role, live), `${role} must not be offered edit`).toBe(false);
+    }
+    expect(mayEditBuyerRequirements("", live)).toBe(false);
+  });
+
+  it("freezes an erased contact for everyone, admin included", () => {
+    // Re-editing would re-create the personal data an Art.17 request removed.
+    expect(mayEditBuyerRequirements("admin", { isArchived: false, isErased: true })).toBe(false);
+  });
+
+  it("freezes an archived contact for everyone", () => {
+    expect(mayEditBuyerRequirements("admin", { isArchived: true, isErased: false })).toBe(false);
   });
 });

@@ -12,6 +12,7 @@ import { createClient } from "@/lib/supabase/server";
 import { formatDateTime } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import type { ViewingFeedback, ViewingStatus } from "@/lib/validators/viewings";
+import { confirmationFreshness } from "@/lib/services/viewing-confirmation-freshness";
 
 export const dynamic = "force-dynamic";
 
@@ -55,14 +56,11 @@ export default async function ViewingDetailPage({ params }: { params: Promise<{ 
     .eq("viewing_id", id)
     .maybeSingle();
 
-  // Head-only count: the card needs "is one already filed", not the row — so
-  // the Download button appears on first paint rather than after a regenerate.
-  const { count: confirmationCount } = await supabase
-    .from("documents")
-    .select("id", { count: "exact", head: true })
-    .eq("entity_type", "viewing")
-    .eq("entity_id", id)
-    .eq("doc_type", "viewing_confirmation");
+  // The card needs "is one already filed" on FIRST PAINT — so the Download
+  // button is there before any regenerate — and now also whether the filed one
+  // still describes this viewing. A confirmation issued before the viewing was
+  // rescheduled names the old time, and the agent is about to send it.
+  const confirmation = await confirmationFreshness(supabase, id);
 
   const property = v.properties as { id: string; reference: string; address: string | null } | null;
   const contact = v.contacts as { id: string; display_name: string | null; phone_e164: string | null } | null;
@@ -175,7 +173,12 @@ export default async function ViewingDetailPage({ params }: { params: Promise<{ 
       {/* Same gate as the slip: the viewing's agent or an admin. */}
       {canManage ? (
         <Card title="Confirmation">
-          <ConfirmationCard viewingId={v.id} hasExisting={(confirmationCount ?? 0) > 0} />
+          <ConfirmationCard
+            viewingId={v.id}
+            hasExisting={confirmation.hasDocument}
+            stale={confirmation.stale}
+            filedTitle={confirmation.filedTitle}
+          />
         </Card>
       ) : null}
 

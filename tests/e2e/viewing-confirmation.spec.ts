@@ -161,4 +161,90 @@ test.describe("Viewing confirmation PDF", () => {
     await page.reload();
     await expect(page.getByRole("button", { name: /download \(pdf\)/i })).toBeVisible();
   });
+
+  test("a reschedule marks the filed confirmation out of date, and keeps it", async ({ page }) => {
+    /*
+     * The filed PDF names the time it was issued for, and nothing in the
+     * reschedule path touches it — correctly, because its digest is chained
+     * into the event log above and rewriting a record of the past is what this
+     * app refuses to do everywhere else.
+     *
+     * But Download offered it as the CURRENT document, so an agent could
+     * forward a client a sheet naming a time the viewing no longer has. Keeping
+     * the record and presenting it as current are different things; only the
+     * second is wrong.
+     */
+    const svc = serviceClient();
+    const viewingId = await seedViewing(svc);
+
+    await page.goto(`/viewings/${viewingId}`);
+    await page.getByRole("button", { name: /generate confirmation/i }).click();
+    await expect
+      .poll(
+        async () => {
+          const { count } = await svc
+            .from("documents")
+            .select("id", { count: "exact", head: true })
+            .eq("entity_id", viewingId)
+            .eq("doc_type", "viewing_confirmation");
+          return count ?? 0;
+        },
+        { timeout: opTimeout(30_000) },
+      )
+      .toBe(1);
+
+    // nothing is out of date yet
+    await page.reload();
+    await expect(page.getByText(/rescheduled after the confirmation/i)).toHaveCount(0);
+
+    // Move the viewing. Through the service client rather than the form: this
+    // test is about what the CARD says afterwards, and viewing-reschedule.spec
+    // already drives the form itself.
+    const { data: before } = await svc
+      .from("viewings")
+      .select("org_id, scheduled_at")
+      .eq("id", viewingId)
+      .single();
+    const moved = new Date(new Date(before!.scheduled_at).getTime() + 86_400_000).toISOString();
+    const { error: updErr } = await svc
+      .from("viewings")
+      .update({ scheduled_at: moved })
+      .eq("id", viewingId);
+    expect(updErr, "moving the viewing").toBeNull();
+    const { error: evErr } = await svc.from("events").insert({
+      org_id: before!.org_id,
+      entity_type: "viewing",
+      entity_id: viewingId,
+      event_type: "rescheduled",
+      payload: { from: before!.scheduled_at, to: moved },
+    });
+    expect(evErr, "logging the reschedule").toBeNull();
+
+    await page.reload();
+    await expect(
+      page.getByText(/rescheduled after the confirmation on file was issued/i),
+      "the agent is warned BEFORE clicking, not after the PDF has opened",
+    ).toBeVisible({ timeout: opTimeout(15_000) });
+
+    // the record is kept and still reachable — it is what was sent
+    await expect(
+      page.getByRole("button", { name: /download the old one/i }),
+      "the filed sheet stays available, labelled for what it is",
+    ).toBeVisible();
+
+    // and the document really is still there
+    const { count: stillFiled } = await svc
+      .from("documents")
+      .select("id", { count: "exact", head: true })
+      .eq("entity_id", viewingId)
+      .eq("doc_type", "viewing_confirmation");
+    expect(stillFiled, "nothing was deleted or rewritten").toBe(1);
+
+    // regenerating clears the warning, because the new sheet names the new time
+    await page.getByRole("button", { name: /regenerate/i }).click();
+    await expect(
+      page.getByText(/rescheduled after the confirmation/i),
+      "the agent fixes it and is no longer told it is wrong",
+    ).toHaveCount(0, { timeout: opTimeout(30_000) });
+  });
 });

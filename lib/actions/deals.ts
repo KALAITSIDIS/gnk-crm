@@ -522,6 +522,34 @@ export async function markDealWon(
         }
       }
     }
+
+    /*
+     * THE SIBLING ASK — and NOT nested inside the status guard above.
+     *
+     * The listing status is one thing a won deal leaves stale; a live hold on
+     * the same property is the other, and they are independent. A hold can
+     * still be live on a listing someone has already flipped to `sold`, and
+     * that hold is exactly as wrong: left alone it runs to expiry and
+     * `expire_reservations()` records `release_reason = 'expired automatically'`
+     * — the buyer's hold quietly lapsing on a property they bought.
+     *
+     * A prompt, not a release, for the reason the block above gives: the
+     * reservation↔status coupling was DECLINED 2026-08-26, and the decision
+     * that declined it set this precedent — "the Won side got a task that
+     * ASKS". `raiseLiveHoldCheck` no-ops when there is no live hold.
+     */
+    if (prop) {
+      const { raiseLiveHoldCheck } = await import("@/lib/services/followup-tasks");
+      const raised = await raiseLiveHoldCheck(supabase, {
+        propertyId: prop.id,
+        orgId: deal.org_id,
+        actorId: profile.id,
+        dealId,
+        assigneeId: deal.agent_id ?? profile.id,
+        propertyReference: prop.reference,
+      });
+      if (raised > 0) revalidatePath("/tasks");
+    }
   }
 
   await recomputeDealHealth(supabase, dealId);
