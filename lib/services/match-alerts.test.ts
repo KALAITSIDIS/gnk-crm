@@ -69,12 +69,21 @@ describe("wasPricedOut — the crux of the feature", () => {
     expect(wasPricedOut(0, 100, 50)).toBe(false);
   });
 
-  it("accepts the STRING a numeric column actually arrives as", () => {
-    // THE BUG THIS GUARDS, found end-to-end and not by a unit test. Postgres
-    // `numeric` comes back from PostgREST as a string, so budget_max is
-    // "700000.00", and `Number.isFinite("700000.00")` is FALSE — it does not
-    // coerce. The first version bailed on every real row and the feature
-    // silently did nothing: no task, no event, no error.
+  it("accepts a numeric arriving as a string, whatever the driver does", () => {
+    // KEPT AS DEFENCE, but its premise no longer holds and the note that said
+    // otherwise cost real time. Measured 2026-09-07 against both the local
+    // stack and hosted, PostgREST serialises numeric as an UNQUOTED JSON
+    // number and supabase-js hands over a JS number:
+    //
+    //   GET /rest/v1/buyer_requirements?select=budget_max
+    //     -> [{"budget_max":700000.00}]
+    //
+    // The older note here claimed the opposite, and that claim — not the code —
+    // is what produced a confidently-argued P1 against the payment-schedule
+    // card that turned out not to exist (see DECISIONS T-silent). The coercion
+    // below is harmless and `wasPricedOut` is exported, so it stays; the story
+    // does not. `Number.isFinite("700000.00")` is indeed false, which is why
+    // the function coerces rather than tests the raw value.
     expect(wasPricedOut("700000.00" as unknown as number, 800000, 760000)).toBe(true);
     expect(wasPricedOut("700000.00" as unknown as number, 800000, 790000)).toBe(false);
   });
@@ -373,6 +382,62 @@ describe("the reads behind an alert are paged and loud (A08a)", () => {
     expect(argsOf("buyer_requirements", "order")).toEqual([["id"], ["id"], ["id"]]);
     expect(res.newlyMatching).toBe(1003);
     expect(res.taskCreated).toBe(true);
+  });
+
+  it("counts a BUYER once, not each of their saved searches", async () => {
+    /*
+     * The loop runs once per requirement, and one person may hold several
+     * briefs. Counting rows announced "2 buyers now in budget" for one buyer
+     * who had recorded two searches — and the task then named a number the
+     * property page would not agree with.
+     *
+     * `bulkNewlyMatching` has always deduped ("one phone call, not three");
+     * the single-property paths did not. One fact, two implementations.
+     */
+    const twice = [
+      { ...reqRow(1), id: "r1", contact_id: "same-buyer" },
+      { ...reqRow(2), id: "r2", contact_id: "same-buyer" },
+    ] as RequirementRow[];
+    const { client } = fakeClient({
+      buyer_requirements: [{ data: twice, error: null }, { data: [], error: null }],
+      tasks: [
+        { data: null, error: null, count: 0 },
+        { data: { id: "t1" }, error: null },
+      ],
+    });
+    const res = await raiseNewListingAlert(client as unknown as Client, {
+      orgId: "o",
+      actorId: "u",
+      property: prop,
+      previousStatus: "draft",
+    });
+    expect(res.newlyMatching, "one person, two briefs, one buyer").toBe(1);
+  });
+
+  it("never reads an archived contact's requirements", async () => {
+    /*
+     * `findMatchingBuyers` — the property page's "Buyers looking for this" —
+     * filters `contacts.is_archived = false`. This path did not, so an archived
+     * contact's still-active searches kept raising tasks: the task said N
+     * buyers, the page the agent opened showed fewer, and the desk was prompted
+     * to ring someone the firm had archived.
+     */
+    const { client, argsOf } = fakeClient({
+      buyer_requirements: [{ data: [reqRow(1)], error: null }, { data: [], error: null }],
+      tasks: [
+        { data: null, error: null, count: 0 },
+        { data: { id: "t1" }, error: null },
+      ],
+    });
+    await raiseNewListingAlert(client as unknown as Client, {
+      orgId: "o",
+      actorId: "u",
+      property: prop,
+      previousStatus: "draft",
+    });
+    expect(argsOf("buyer_requirements", "eq")).toEqual(
+      expect.arrayContaining([["contacts.is_archived", false]]),
+    );
   });
 
   it("a failed unit read on a block reprice THROWS for the same reason", async () => {
