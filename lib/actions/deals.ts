@@ -17,6 +17,7 @@ import {
   saveOfferSchema,
   type OfferStatus,
 } from "@/lib/validators/deals";
+import { cyprusEndOfDay } from "@/lib/validators/reservations";
 
 export type MoveDealResult = { error: string | null };
 
@@ -472,7 +473,21 @@ export async function markDealWon(
           .insert({
             org_id: deal.org_id,
             title: `Deal won — update listing status: ${prop.reference}`,
-            due_at: now,
+            /*
+             * CYPRUS END OF DAY, not the current instant.
+             *
+             * `overdue` is `due_at < now` (app/(app)/tasks/page.tsx), so a
+             * prompt stamped with the moment it was raised renders OVERDUE on
+             * the very next paint — the desk sees red for something it has had
+             * no chance to do. The convention this repo already states in
+             * lib/actions/tasks.ts is end-of-day for exactly that reason: "due
+             * today" stays black until the working day actually ends.
+             *
+             * Today, not tomorrow: updating a listing after a deal is won or a
+             * hold converts is same-day work. `raiseOneTask` uses tomorrow
+             * because a match alert is not.
+             */
+            due_at: cyprusEndOfDay(now.slice(0, 10)).toISOString(),
             assignee_id: deal.agent_id ?? profile.id,
             property_id: prop.id,
             deal_id: dealId,
