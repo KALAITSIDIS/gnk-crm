@@ -3,6 +3,43 @@
 Running log of implementation decisions made where the docs were ambiguous or
 silent. Format: date · task · decision · rationale.
 
+- **2026-09-07 · T-convert-race (no migration) — the one flaky e2e, and why a
+  green-on-retry suite is worse than a red one.** `reservation-convert.spec.ts`
+  failed on its FIRST attempt in 3 of 8 sampled CI runs and passed on retry,
+  always with the same message: `Error: one open prompt task — Expected length:
+  1, Received length: 0`. Playwright reported it as "1 flaky" and the run went
+  green, which is the corrosive part: a suite that recovers on retry teaches
+  the desk that red means nothing.
+
+  **The cause was a read racing the middle of a server action.**
+  `transitionReservation` commits the reservation status FIRST, then reads the
+  property, reads the open tasks, inserts the `listing_status_check` prompt and
+  writes that prompt's event — four more round trips. The spec polled until the
+  reservation read `converted`, which proves only that the FIRST write landed,
+  and then read `tasks` and `events` with no wait at all. On a loaded runner
+  the reads won.
+
+  **Reproduced before fixing, not guessed.** A 4-second delay injected before
+  the task insert made the pre-fix spec fail with CI's exact error and the
+  fixed spec pass; restored, it passes. Locally it is 5/5 with `--retries=0`,
+  which on its own proves nothing — the injected delay is the evidence.
+
+  **The fix also made an assertion sound that had not been.** "The convert must
+  ASK, not flip" read `properties.status` mid-action, so a future change that
+  DID flip the status a moment later would have passed it — a test that cannot
+  fail for the reason it exists, which is this repo's recurring defect. The
+  status is now read after the prompt AND its event exist, i.e. after the
+  action demonstrably finished.
+
+  `deal-close.spec.ts` has the same read-the-database-after-a-click shape and
+  is NOT flaky, for a reason worth writing down: it waits for the Won dialog to
+  be hidden, and that only happens once the action has returned. This path has
+  no dialog. A survey of the other six specs that read `tasks`/`events` found
+  every one already waits (a UI assertion or a poll) before reading.
+
+  **Rule: wait for the action to FINISH, never for its first write.** A poll on
+  one side-effect is not a barrier for the others.
+
 - **2026-09-07 · T-review-drift (no migration) — a twelve-lens review of the
   day's work, and the eleven things it found.** Six finders (correctness,
   security, claims, tests) over both repos' diffs for 2026-09-06, then two
