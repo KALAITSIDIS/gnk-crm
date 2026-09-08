@@ -6008,3 +6008,79 @@ which is indistinguishable from "never applied" — and had that been true, ever
 swallowed by a `console.error`. `migration list --linked` showed both applied,
 zero drift. The database was fine; the record was not, and the record is the part
 a future reader has.
+
+### T-visibility — infer a permission from the column the policy tests (2026-09-08)
+
+The review of the previous review. Thirteen findings survived two skeptics; seven
+were refuted. Two lenses independently found the same P1, which is the strongest
+signal this process has produced.
+
+**THE P1, AND IT WAS LIVE.** Renaming the properties-list mandate embed to
+`mandates_safe` left `applyPropertyListFilters` naming the relationship a second
+time — as the prefix of an embedded-resource filter — and that line was not
+renamed with it. PostgREST does not ignore a filter whose prefix is not embedded
+in the same select; it rejects the request with 400 PGRST108. So Mandate =
+Active and Mandate = Expired threw the page's error boundary for EVERY role and
+500'd the CSV export. The commit traded "a listing manager's badge reads none"
+for "nobody can use two of the three mandate filters".
+
+Nothing caught it because the two halves of the contract were each asserted, in
+separate mock-based tests, and never against each other. `tsc` is blind (the
+builder types the column as `string`), and no E2E sets a mandate list filter.
+Both sides now derive from one `MANDATE_REL`, and a test compares them. The MAP
+page — which shares the filter builder but never embedded a mandate at all, so
+those filters had been throwing there since long before this range — is fixed in
+the same change, because renaming alone would have left it broken with a
+different name in the error.
+
+**THE LESSON, which is the title.** `redactDocumentTitles` decided who may see a
+document's title from `doc_type`, justified by a docstring asserting that the
+0072 CHECK makes a non-KYC row incapable of being admin-only. The CHECK does not
+say that. It forbids a KYC contact row from being anything BUT admin_only, and
+says nothing about the other direction — and one writer produces exactly the
+excluded case: `lib/actions/reports.ts` inserts a commission evidence report as
+`doc_type: 'evidence_report'`, `visibility: 'admin_only'`. So the redactor waved
+through the title of a document `documents_select` forbids the reader to open,
+and that title reads "Commission evidence — <contact name> — <date>".
+
+The fix is not a longer list of doc types. It is to redact on `visibility` — the
+column the POLICY itself tests — carried in the payload from the same read, and
+to fail closed on anything that is not an explicit 'internal'. Measured before
+choosing that: production holds three `document_deleted` events, all predating
+the field, and zero `document_uploaded`, so failing closed costs three lines that
+were already anonymous.
+
+**Infer a permission from the column the policy tests, not from a second column
+that usually correlates with it.** This is the second time this function has been
+wrong about who may see a title.
+
+**THE GUARD WAS GREEN ON ITS OWN BUG.** `tests/unit/due-at-is-a-cyprus-day.test.ts`
+was written last round precisely because two raisers have no unit tests. An
+adversarial pass ran it against the real pre-fix sources and got `OFFENDER:
+false` for both of them. Three defects, all measured: the pattern required
+`toISOString()` ADJACENT to `.slice(0, 10)`, and half the real sites assigned the
+ISO string to a variable first; the `cyprusEndOfDay(...)` argument check used
+`\(([^)]*)\)`, which stops at the first close-paren, and every pattern it looked
+for contains one, so it could not fail for any input; and the `due_at:` gate ran
+on the comment-STRIPPED source, so a strip that eats real code removes a file
+from the rule (the old docstring argued a strip "can only ever remove text, so it
+cannot manufacture a false pass" — inverted).
+
+The structural remedy is the part worth keeping: the scanner is now a pure
+function, and it is run against the four real historical shapes as FIXTURES. A
+pattern that stops recognising the bugs the guard was built for now fails loudly
+instead of going quiet. **A guard with no regression suite of its own is a
+guard nobody has tested.**
+
+**Also fixed:** `gdpr_notes` stamped the UTC day three lines below a
+`retention_until` that had just moved to the Cyprus day — one record, two
+calendars; a media-delete fixture used a column name production never returns;
+a test named "and events it" had had its event assertions displaced into the next
+test by an insertion; and `docs/10_INFRASTRUCTURE.md` carried a second copy of
+the migration count, five behind — removed rather than corrected, since a second
+copy is a second thing to forget.
+
+**Refuted and recorded:** that `recomputeDealsFor` re-introduces the health-score
+class (it does not); that fail-open on an unrecognised doc_type rests on an
+unenforced invariant (true, but superseded by moving off doc_type entirely); and
+four smaller claims about test coverage and docstrings.

@@ -148,7 +148,9 @@ export function planContactErasure(input: {
 
   const patch: ErasurePatch = {
     notes: null,
-    gdpr_notes: `Personal data erased ${now.slice(0, 10)} under GDPR Art.17. See the contact's event log for the record of what was erased and retained.`,
+    // the CYPRUS day, like retention_until three lines up — the same record
+    // must not carry two calendars
+    gdpr_notes: `Personal data erased ${zonedParts(now).dayKey} under GDPR Art.17. See the contact's event log for the record of what was erased and retained.`,
     psychology: null,
     source_detail: null,
     telegram_username: null,

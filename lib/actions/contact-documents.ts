@@ -77,7 +77,9 @@ export async function uploadContactDocument(
       // the ordinary path set it right instead of erroring.
       visibility: contactDocVisibility(docType),
     })
-    .select("id")
+    // visibility comes back so the event can carry the fact that actually
+    // decides who may see the title — read from the ROW, never re-derived
+    .select("id, visibility")
     .single();
   if (docErr) {
     // the row was rejected (RLS/validation) — don't orphan the uploaded object
@@ -91,7 +93,7 @@ export async function uploadContactDocument(
     entityType: "contact",
     entityId: contactId,
     eventType: "document_uploaded",
-    payload: { document_id: doc.id, title, doc_type: docType },
+    payload: { document_id: doc.id, title, doc_type: docType, visibility: doc.visibility },
   });
 
   revalidatePath(`/contacts/${contactId}`);
@@ -113,7 +115,7 @@ export async function deleteContactDocument(
     // doc_type, and the row is gone by the time anyone reads the timeline, so
     // a payload without it is withheld forever (fail-closed, correctly — but
     // that means every deleted title deed lost its name too).
-    .select("id, org_id, title, doc_type, storage_path, entity_type, entity_id")
+    .select("id, org_id, title, doc_type, visibility, storage_path, entity_type, entity_id")
     .eq("id", documentId)
     .maybeSingle();
   if (!doc) return { error: "Document not found" };
@@ -145,7 +147,12 @@ export async function deleteContactDocument(
     entityType: "contact",
     entityId: doc.entity_id,
     eventType: "document_deleted",
-    payload: { document_id: documentId, title: doc.title, doc_type: doc.doc_type },
+    payload: {
+      document_id: documentId,
+      title: doc.title,
+      doc_type: doc.doc_type,
+      visibility: doc.visibility,
+    },
   });
 
   revalidatePath(`/contacts/${contactId}`);

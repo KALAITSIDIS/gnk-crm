@@ -50,7 +50,10 @@ const deleted = [
     path_thumb: null,
     path_card: null,
     path_full: null,
-    path_original: null,
+    // the column deleteMediaBulk actually selects and reads (media.ts:406/417);
+    // the fake client serves the scripted page whatever the select says, so a
+    // wrong name here is invisible rather than failing — a latent trap
+    storage_path_original: null,
   },
 ];
 

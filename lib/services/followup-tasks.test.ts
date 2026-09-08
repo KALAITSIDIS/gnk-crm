@@ -171,6 +171,17 @@ describe("raiseLiveHoldCheck — the won deal's other leftover", () => {
       new Date(row.due_at as string).getTime(),
       "due end of day, not the instant it was raised",
     ).toBeGreaterThan(Date.now());
+
+    // "and events it" — these belong to THIS test. Inserting the clock-frozen
+    // case below left them stranded after its `finally`, so they still ran but
+    // under a name that promised something else, while this test's name promised
+    // an assertion it no longer made.
+    expect(logEvent).toHaveBeenCalledTimes(1);
+    expect(logEvent.mock.calls[0][1]).toMatchObject({
+      eventType: "followup_task_created",
+      entityType: "property",
+      payload: { kind: LIVE_HOLD_TASK_KIND, reservation_id: "res-1" },
+    });
   });
 
   /*
@@ -213,13 +224,6 @@ describe("raiseLiveHoldCheck — the won deal's other leftover", () => {
     } finally {
       vi.useRealTimers();
     }
-
-    expect(logEvent).toHaveBeenCalledTimes(1);
-    expect(logEvent.mock.calls[0][1]).toMatchObject({
-      eventType: "followup_task_created",
-      entityType: "property",
-      payload: { kind: LIVE_HOLD_TASK_KIND, reservation_id: "res-1" },
-    });
   });
 
   it("does not raise a second one, and asks the DATABASE whether one is open", async () => {
