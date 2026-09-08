@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeClient } from "@/lib/testing/fake-client";
+import { cyprusEndOfToday } from "@/lib/validators/reservations";
 
 /**
  * Closing a `listing_status_check` prompt when the status it asked for is saved.
@@ -170,6 +171,48 @@ describe("raiseLiveHoldCheck — the won deal's other leftover", () => {
       new Date(row.due_at as string).getTime(),
       "due end of day, not the instant it was raised",
     ).toBeGreaterThan(Date.now());
+  });
+
+  /*
+   * THE ASSERTION ABOVE CANNOT FAIL DURING WORKING HOURS, which a mutation run
+   * proved: restoring the exact pre-fix expression
+   * `cyprusEndOfDay(new Date().toISOString().slice(0, 10))` left all 16 tests
+   * green at 13:05 Cyprus, because "greater than now" is only violated inside
+   * the 00:00–03:00 window the fix exists for. A test that passes with the fix
+   * removed is not covering the defect.
+   *
+   * So: freeze the clock INSIDE the window and compare against the helper's own
+   * output rather than against `Date.now()`. Equality is what pins adoption —
+   * the naive expression yields the previous Cyprus day's end here, three hours
+   * in the past, and that is the whole bug.
+   */
+  it("is due end of the CYPRUS day, even when raised at 01:30 local", async () => {
+    // 2026-07-15T22:30Z = 16 July 01:30 Cyprus (EEST, UTC+3). The UTC day is
+    // still the 15th, so the pre-fix code stamped 15 July 23:59:59 Cyprus.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-15T22:30:00.000Z"));
+    try {
+      const svc = fakeClient({
+        reservations: [{ data: { id: "res-1" }, error: null }],
+        tasks: [{ data: [], error: null }],
+      });
+      admin.client = svc.client;
+      const caller = fakeClient({ tasks: [{ data: { id: "t1" }, error: null }] });
+
+      await raiseLiveHoldCheck(caller.client as never, args);
+
+      const [insert] = caller.argsOf("tasks", "insert");
+      const row = insert[0] as Record<string, unknown>;
+      expect(row.due_at, "end of 16 July Cyprus, not of 15 July").toBe(
+        cyprusEndOfToday(new Date("2026-07-15T22:30:00.000Z")).toISOString(),
+      );
+      expect(
+        new Date(row.due_at as string).getTime(),
+        "and therefore still in the future — never born overdue",
+      ).toBeGreaterThan(Date.now());
+    } finally {
+      vi.useRealTimers();
+    }
 
     expect(logEvent).toHaveBeenCalledTimes(1);
     expect(logEvent.mock.calls[0][1]).toMatchObject({

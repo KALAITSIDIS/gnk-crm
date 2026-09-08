@@ -10,6 +10,7 @@
  * requires customer due-diligence records to outlive the relationship by five
  * years. See docs/superpowers/specs/2026-07-21-gdpr-contact-erasure-design.md.
  */
+import { zonedParts } from "@/lib/utils/tz";
 
 /** Cyprus AML: CDD records kept 5 years past the end of the relationship. */
 export const AML_RETENTION_YEARS = 5;
@@ -82,10 +83,27 @@ export interface ErasurePlan {
   retentionUntil: string | null;
 }
 
+/**
+ * Add years to an instant and return a CYPRUS calendar day key.
+ *
+ * `retention_until` is a calendar obligation, not an instant — lib/services/
+ * retention.ts says so in its own header, and both readers (the retention
+ * settings page and `purgeContact`'s guard) compare it against
+ * `zonedParts(new Date()).dayKey`. This used to take `toISOString().slice(0, 10)`,
+ * the UTC day, so an erasure between Cyprus midnight and 03:00 — or any anchor
+ * instant in that window, such as a deal won at 22:00Z — wrote a day key one
+ * short and unlocked the purge a day before the duty actually ended. One day out
+ * of 1826, on the destruction of KYC records; the reader and the writer now
+ * share one calendar.
+ *
+ * Feb 29 is stepped back to Feb 28: `setUTCFullYear` would roll it to Mar 1,
+ * which lengthens the duty rather than shortening it, but a retention date that
+ * is not the anniversary is a date nobody can explain to a regulator.
+ */
 function addYears(iso: string, years: number): string {
-  const d = new Date(iso);
-  d.setUTCFullYear(d.getUTCFullYear() + years);
-  return d.toISOString().slice(0, 10);
+  const [y, m, d] = zonedParts(iso).dayKey.split("-").map(Number);
+  const day = m === 2 && d === 29 ? 28 : d;
+  return `${y + years}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
 /**

@@ -39,17 +39,29 @@ describe("verify-restore.sql stays in lockstep with the repo", () => {
      * possible signal mid-recovery".
      *
      * Derived from the migrations rather than hand-kept, and specifically from
-     * the assertion every kind migration already carries
-     * (`select count(*) into n from public.task_kinds; if n <> N then raise`).
+     * the total-count assertion every kind migration already carries
+     * (`select count(*) into <var> from public.task_kinds; if <var> <> N then raise`).
      * That is the discipline that governs the number, so tying the pack to it
      * means the next kind cannot land without moving this line too.
+     *
+     * THE VARIABLE NAME IS NOT FIXED, and the first version of this regex hard-
+     * coded `n`. The repo uses two spellings — `n_kinds` in 0049/0051/0053 and
+     * `n` in 0075/0076/0078/0089 — so three of the seven assertions were
+     * invisible to it. It still read 13 today because the test takes the MAXIMUM,
+     * and the newest four happen to use `n`; but a fourteenth kind written in the
+     * older style would have contributed nothing, `latest` would have stayed 13,
+     * and the pin would have stayed green while a restored database held 14 —
+     * exactly the staleness 0089 caused and this test exists to prevent.
      */
     const asserted = migrationFiles
       .map((f) => readFileSync(join(migrationsDir, f), "utf-8"))
-      .flatMap((sql) => [...sql.matchAll(/from public\.task_kinds;\s*if n <> (\d+)/g)])
-      .map((m) => Number(m[1]));
+      .flatMap((sql) => [...sql.matchAll(/from public\.task_kinds;\s*if (\w+) <> (\d+)/g)])
+      .map((m) => Number(m[2]));
 
-    expect(asserted.length, "the kind migrations assert their total").toBeGreaterThan(0);
+    expect(
+      asserted.length,
+      "the kind migrations assert their total — both variable spellings",
+    ).toBeGreaterThanOrEqual(7);
     const latest = Math.max(...asserted);
 
     const pinned = pack.match(/(\d+)::bigint as task_kinds/);

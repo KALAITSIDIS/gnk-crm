@@ -12,7 +12,7 @@ import {
   type MatchRequirement,
   type PropertyStatus,
 } from "@/lib/services/matching";
-import { cyprusEndOfDay } from "@/lib/validators/reservations";
+import { cyprusEndOfTomorrow } from "@/lib/validators/reservations";
 
 /**
  * Match alerts — the PUSH side of the matching engine.
@@ -244,17 +244,21 @@ async function raiseOneTask(
     return { newlyMatching: contactIds.length, taskCreated: false };
   }
 
-  // Due end of tomorrow, Cyprus time. Worth acting on quickly but not a
+  // Due end of tomorrow, CYPRUS time. Worth acting on quickly but not a
   // same-hour emergency, and a midnight-UTC stamp would read "overdue" for the
   // whole of its final day (0012/0020's lesson).
-  const tomorrow = new Date(Date.now() + 864e5).toISOString().slice(0, 10);
+  //
+  // This used to be `new Date(Date.now() + 864e5).toISOString().slice(0, 10)`,
+  // which steps 24 hours and then takes the UTC day — so between Cyprus midnight
+  // and 03:00 it named today, and the alert was due tonight instead of tomorrow
+  // night. Same defect as the three prompt raisers, one file over.
 
   const { data: task, error: taskErr } = await supabase
     .from("tasks")
     .insert({
       org_id: args.orgId,
       title: args.title,
-      due_at: cyprusEndOfDay(tomorrow).toISOString(),
+      due_at: cyprusEndOfTomorrow().toISOString(),
       // the listing's agent; the actor is the fallback so it is never invisible
       assignee_id: property.assigned_agent_id ?? args.actorId,
       property_id: property.id,

@@ -43,7 +43,7 @@ export interface PropertyExportRow {
   owner: { display_name: string | null } | null;
   developer: { display_name: string | null } | null;
   agent: { full_name: string | null } | null;
-  mandates: MandateEmbedRow[] | null;
+  mandates_safe: MandateEmbedRow[] | null;
 }
 
 const en = (m: Multilang | undefined): string => (m?.en ?? "").trim();
@@ -83,7 +83,7 @@ export function propertyCsvColumns(): CsvColumn<PropertyExportRow>[] {
     { header: "Plot m²", value: (p) => num(p.plot_area_sqm) },
     { header: "Asking price", value: (p) => num(p.asking_price) },
     { header: "Rent/month", value: (p) => num(p.rent_price_month) },
-    { header: "Mandate", value: (p) => mandateState(p.mandates) },
+    { header: "Mandate", value: (p) => mandateState(p.mandates_safe) },
     // audit finding 14: an export that cannot be grouped by developer, or sent
     // to the agent who owns the listing, is not much use in either conversation
     { header: "Owner", value: (p) => p.owner?.display_name ?? "" },

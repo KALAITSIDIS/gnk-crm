@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { computeHealth, type HealthInputs } from "./health-score";
+import { fakeClient } from "@/lib/testing/fake-client";
+
+const admin = vi.hoisted(() => ({ client: null as unknown }));
+vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => admin.client }));
+
+const { recomputeDealHealth } = await import("./health-score");
 
 const NOW = new Date("2026-07-11T12:00:00Z");
 
@@ -86,5 +92,77 @@ describe("computeHealth", () => {
     expect(result.score).toBe(25 + 15 + 0 + 15 + 15);
     const activity = result.factors.find((f) => f.key === "activity");
     expect(activity?.detail).toBe("10d since last activity");
+  });
+});
+
+describe("recomputeDealHealth asks the SYSTEM whether the property has a mandate", () => {
+  /*
+   * "Does this property have an active mandate" is a fact about the PROPERTY,
+   * and the score built from it is STORED — `deals.health_score` plus the
+   * `health.factors` snapshot that the deal page and every kanban card render to
+   * everyone, admins included. A stored number must not depend on who last saved.
+   *
+   * On the caller's client it did. `mandates_insert` is admin-only, so
+   * `created_by` is always an admin and the agent arm `created_by = auth.uid()`
+   * can never fire; the only arm left is `properties.assigned_agent_id =
+   * auth.uid()`. Nothing in `deals_update_agent` ties a deal's agent to the
+   * property's assigned agent — so a buyer-side agent saving their own deal on a
+   * colleague's listing read zero mandates and persisted the 15-point factor as
+   * "none active", until someone who could see it saved and flipped it back.
+   *
+   * Measured through real PostgREST with minted role JWTs, on one mandated
+   * property: admin 1 row, assigned agent 1 row, OTHER AGENT 0 rows — on the base
+   * table AND through `mandates_safe`, which keeps the same agent arm. The view
+   * closes the listing-manager half only, and listing managers have no UPDATE on
+   * deals at all, so the view is not the fix here. Only the system can answer it.
+   */
+  const dealRow = {
+    id: "d1",
+    org_id: "org-1",
+    health: {},
+    buyer_contact_id: null,
+    property_id: "p1",
+    last_activity_at: null,
+  };
+
+  it("reads mandates as the system, scoped to the deal's org", async () => {
+    const svc = fakeClient({ mandates: [{ data: [{ id: "m1" }], error: null }] });
+    admin.client = svc.client;
+    const caller = fakeClient({
+      deals: [{ data: dealRow, error: null }, { data: null, error: null }],
+      properties: [{ data: { title_deed_status: "separate" }, error: null }],
+    });
+
+    await recomputeDealHealth(caller.client as never, "d1");
+
+    expect(svc.served.mandates, "the system answered it").toBe(1);
+    expect(
+      caller.served.mandates ?? 0,
+      "the caller's client, whose answer depends on which listing is theirs, was never asked",
+    ).toBe(0);
+    expect(svc.argsOf("mandates", "eq")).toEqual(
+      expect.arrayContaining([
+        ["org_id", "org-1"],
+        ["property_id", "p1"],
+        ["status", "active"],
+      ]),
+    );
+  });
+
+  it("scores the mandate factor from what the system found, not from the reader", async () => {
+    const svc = fakeClient({ mandates: [{ data: [{ id: "m1" }], error: null }] });
+    admin.client = svc.client;
+    const caller = fakeClient({
+      deals: [{ data: dealRow, error: null }, { data: null, error: null }],
+      properties: [{ data: { title_deed_status: "unknown" }, error: null }],
+    });
+
+    await recomputeDealHealth(caller.client as never, "d1");
+
+    const [update] = caller.argsOf("deals", "update");
+    const written = update[0] as { health_score: number; health: { factors: unknown } };
+    const factors = written.health.factors as { key: string; points: number }[];
+    const mandate = factors.find((f) => f.key === "mandate");
+    expect(mandate?.points, "15 points that used to vanish for a non-assigned agent").toBe(15);
   });
 });

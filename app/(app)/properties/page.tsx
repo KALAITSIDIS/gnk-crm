@@ -124,7 +124,7 @@ export default async function PropertiesPage({
       asking_price: p.asking_price === null ? null : Number(p.asking_price),
       rent_price_month: p.rent_price_month === null ? null : Number(p.rent_price_month),
       quality_score: p.quality_score,
-      mandate: deriveMandateState((p.mandates ?? []) as MandateEmbed[]),
+      mandate: deriveMandateState((p.mandates_safe ?? []) as MandateEmbed[]),
       thumb: cover?.path_thumb ?? null,
     };
   });

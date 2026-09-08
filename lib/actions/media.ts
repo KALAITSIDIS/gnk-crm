@@ -439,9 +439,21 @@ export async function deleteMediaBulk(
   // property_media never stored it, and "Photo deleted" alone tells the
   // timeline reader nothing (audit 2026-07-16). Best-effort: a miss just
   // renders the bare line, as before.
-  const { data: uploadEvents } = await supabase
+  //
+  // AS THE SYSTEM, because "what was this photo called" is a fact about the
+  // photo. On the caller's client `events_select` (0063) shows a non-admin only
+  // rows where `actor_id = auth.uid()`, while `property_media_delete` admits
+  // admin OR listing_manager — so a listing manager tidying a gallery somebody
+  // else filled found no upload event and wrote a permanent, hash-chained
+  // `media_deleted` with no filename, where the identical delete by an admin
+  // would have carried one. The event is append-only; there is no fixing it
+  // afterwards. org_id is filtered explicitly — the admin client has no RLS to
+  // do it — and the payload read is filenames only, so nothing here is widened
+  // beyond what the property timeline already shows the whole org.
+  const { data: uploadEvents } = await admin
     .from("events")
     .select("payload")
+    .eq("org_id", profile.orgId)
     .eq("entity_type", "property")
     .eq("entity_id", propertyId)
     .eq("event_type", "media_uploaded")
