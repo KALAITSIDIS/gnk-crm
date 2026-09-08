@@ -1,6 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { TimelineEvent } from "@/lib/services/events";
-import { contactDocVisibility, type DocType } from "@/lib/validators/documents";
 
 /**
  * A record's timeline — what happened to it, not what YOU did to it.
@@ -129,23 +128,35 @@ const DOCUMENT_EVENTS = new Set(["document_uploaded", "document_deleted"]);
  * passport_AB123456.pdf" on every agent's and listing manager's screen, and
  * undo three layers of enforcement with a line of prose.
  *
- * `doc_type` decides it, not a lookup: `contactDocVisibility` maps exactly the
- * KYC types to `admin_only` and the 0072 CHECK enforces that mapping in the
- * database from every path. A lookup would also fail for `document_deleted`,
- * where the row is gone.
+ * `visibility` decides it — the column the POLICY itself tests — carried in the
+ * payload, because a lookup would fail for `document_deleted` where the row is
+ * already gone.
  *
- * A MISSING doc_type FAILS CLOSED. A payload with no readable `doc_type` loses
- * its title — the renderer already has an untitled branch ("Document uploaded"),
- * so the event still appears and only the name is withheld. That is the case for
- * every `document_deleted` written before 2026-09-08, when the delete paths did
- * not carry `doc_type`; those titles stay withheld forever and correctly so,
- * because nothing left in the row can say what they were.
+ * IT USED TO INFER THIS FROM `doc_type`, AND THAT WAS WRONG. The argument was
+ * that `contactDocVisibility` maps exactly the KYC types to `admin_only` and the
+ * 0072 CHECK enforces it in the database, so a doc_type outside that list could
+ * not be an admin-only row. The CHECK does not say that. It forbids a KYC
+ * contact row from being anything BUT admin_only; it says nothing about other
+ * types. And one writer produces exactly the excluded case:
+ * `lib/actions/reports.ts` inserts a commission evidence report with
+ * `doc_type: 'evidence_report'` and `visibility: profile.role === 'admin' ?
+ * 'admin_only' : 'internal'`. `contactDocVisibility('evidence_report')` returns
+ * 'internal', so the redactor waved through the title of a document
+ * `documents_select` forbids the reader from opening — and that title is
+ * "Commission evidence — <contact name> — <date>".
  *
- * An unrecognised doc_type STRING is a different case and is treated as
- * `internal`, deliberately: `contactDocVisibility` names exactly the three KYC
- * types, the upload sets `visibility` from that same function, and the 0072
- * CHECK enforces KYC ⇒ `admin_only` from every path including service_role. So
- * a doc_type outside the list cannot be an admin-only row.
+ * The general lesson, since this is the second time on this function: infer a
+ * permission from the column the policy tests, not from a second column that
+ * usually correlates with it.
+ *
+ * ANYTHING BUT AN EXPLICIT 'internal' FAILS CLOSED, including a payload with no
+ * `visibility` at all — every document event written before 2026-09-08. The
+ * renderer has an untitled branch ("Document uploaded"), so those events still
+ * appear and only the name is withheld, permanently and correctly: the row is
+ * gone and nothing left can say what it was allowed to be. Measured before
+ * choosing this: production holds three `document_deleted` events, all predating
+ * the field, and zero `document_uploaded` — so failing closed costs three lines
+ * that were already anonymous.
  */
 function redactDocumentTitles(rows: TimelineRow[], viewerRole: string): TimelineRow[] {
   if (viewerRole === "admin") return rows;
@@ -153,9 +164,10 @@ function redactDocumentTitles(rows: TimelineRow[], viewerRole: string): Timeline
     if (!DOCUMENT_EVENTS.has(r.event_type)) return r;
     const payload = (r.payload ?? {}) as Record<string, unknown>;
     if (payload.title === undefined) return r;
-    const docType = typeof payload.doc_type === "string" ? payload.doc_type : null;
-    const visible = docType !== null && contactDocVisibility(docType as DocType) === "internal";
-    if (visible) return r;
+    // Only an explicit 'internal' proves the reader may see it. Anything else —
+    // 'admin_only', a shape we do not recognise, or an older payload that
+    // carries no visibility at all — withholds the title.
+    if (payload.visibility === "internal") return r;
     // rebuilt without `title`, rather than destructured — the eslint config has
     // no ignore pattern for a discarded binding, and a lint warning parked in
     // the redaction path is the last place to leave noise

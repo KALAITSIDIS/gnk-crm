@@ -136,13 +136,25 @@ describe("document titles: the one thing this reader must not hand over", () => 
    * "Document uploaded — passport_AB123456.pdf" on every agent's screen and
    * undo all three layers.
    */
-  const docEvent = (doc_type: string, title = "passport_AB123456.pdf") => ({
+  /*
+   * Mirrors what the upload actions actually write: `visibility` read back from
+   * the inserted ROW, alongside doc_type. The KYC mapping here is
+   * contactDocVisibility's, which is what contact-documents.ts inserts — the
+   * fixture is not free to invent a combination production cannot produce, and
+   * `evidence_report` below is a combination it CAN.
+   */
+  const KYC = ["id_document", "proof_of_address", "source_of_funds"];
+  const docEvent = (
+    doc_type: string,
+    title = "passport_AB123456.pdf",
+    visibility = KYC.includes(doc_type) ? "admin_only" : "internal",
+  ) => ({
     id: 1,
     occurred_at: "2026-09-07T10:00:00Z",
     event_type: "document_uploaded",
     entity_type: "contact",
     entity_id: "c1",
-    payload: { document_id: "d1", title, doc_type },
+    payload: { document_id: "d1", title, doc_type, visibility },
   });
 
   const read = async (viewerRole: string, rows: unknown[]) => {
@@ -240,7 +252,12 @@ describe("document titles: the one thing this reader must not hand over", () => 
         event_type: "document_deleted",
         entity_type: "property",
         entity_id: "p1",
-        payload: { document_id: "d2", title: "Title deed PAF0001.pdf", doc_type: "title_deed" },
+        payload: {
+          document_id: "d2",
+          title: "Title deed PAF0001.pdf",
+          doc_type: "title_deed",
+          visibility: "internal",
+        },
       },
     ]);
     expect(
@@ -257,10 +274,63 @@ describe("document titles: the one thing this reader must not hand over", () => 
         event_type: "document_deleted",
         entity_type: "contact",
         entity_id: "c1",
-        payload: { document_id: "d3", title: "passport.pdf", doc_type: "id_document" },
+        payload: {
+          document_id: "d3",
+          title: "passport.pdf",
+          doc_type: "id_document",
+          visibility: "admin_only",
+        },
       },
     ]);
     expect((row.payload as Record<string, unknown>).title).toBeUndefined();
+  });
+
+  /*
+   * THE CASE THAT BROKE THE doc_type INFERENCE.
+   *
+   * `lib/actions/reports.ts` inserts a commission evidence report as
+   * `doc_type: 'evidence_report'` with `visibility: 'admin_only'` when an admin
+   * generates it. `evidence_report` is not a KYC type, so the old rule —
+   * `contactDocVisibility(doc_type) === 'internal'` — called it internal and
+   * showed the title, which reads "Commission evidence — <contact> — <date>",
+   * to every agent. `documents_select` admits only an admin to that row.
+   *
+   * The 0072 CHECK that the old docstring cited forbids a KYC contact row from
+   * being anything but admin_only. It says nothing about the other direction,
+   * which is the direction that mattered.
+   */
+  it("withholds an admin-only report's title even though its doc_type is not KYC", async () => {
+    const [row] = await read("agent", [
+      docEvent("evidence_report", "Commission evidence — Maria Georgiou — 2026-09-08", "admin_only"),
+    ]);
+    expect(
+      (row.payload as Record<string, unknown>).title,
+      "documents_select admits only an admin to this row",
+    ).toBeUndefined();
+  });
+
+  it("still shows it to an admin, who may open the report", async () => {
+    const [row] = await read("admin", [
+      docEvent("evidence_report", "Commission evidence — Maria Georgiou — 2026-09-08", "admin_only"),
+    ]);
+    expect((row.payload as Record<string, unknown>).title).toBe(
+      "Commission evidence — Maria Georgiou — 2026-09-08",
+    );
+  });
+
+  it("fails CLOSED on a payload with no visibility at all", async () => {
+    // Every document event written before 2026-09-08. Measured on production:
+    // three document_deleted rows in this shape, zero document_uploaded.
+    const ev = docEvent("title_deed", "Title deed PAF0001.pdf");
+    const payload: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(ev.payload as Record<string, unknown>)) {
+      if (k !== "visibility") payload[k] = v;
+    }
+    const [row] = await read("agent", [{ ...ev, payload }]);
+    expect(
+      (row.payload as Record<string, unknown>).title,
+      "an org-readable doc_type is not proof the ROW was org-readable",
+    ).toBeUndefined();
   });
 
   it("leaves every other event's payload untouched", async () => {

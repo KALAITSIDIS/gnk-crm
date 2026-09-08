@@ -262,6 +262,21 @@ describe("retention_until is a CYPRUS calendar day, because its readers are", ()
     expect(plan.retentionUntil).toBe("2031-07-15");
   });
 
+  it("stamps gdpr_notes with the same calendar as retention_until", () => {
+    // The two sit in one object literal. `retention_until` moved to the Cyprus
+    // day and `gdpr_notes` was left on the UTC one, so a small-hours erasure
+    // wrote a note dated the day before the retention clock it explains.
+    const plan = planContactErasure({
+      amlBasis: true,
+      actorId: ACTOR,
+      now: "2026-07-15T21:30:00.000Z", // 16 July 00:30 Cyprus
+      relationshipEndCandidates: [],
+    });
+    expect(plan.patch.gdpr_notes, "one record, one calendar").toContain("2026-07-16");
+    expect(plan.patch.gdpr_notes).not.toContain("2026-07-15");
+    expect(plan.retentionUntil).toBe("2031-07-16");
+  });
+
   it("steps 29 February back to the 28th rather than forward into March", () => {
     // setUTCFullYear would roll it to 1 March, which lengthens the duty — but a
     // retention date that is not the anniversary is one nobody can explain.
