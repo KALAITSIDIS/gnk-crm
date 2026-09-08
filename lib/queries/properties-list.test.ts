@@ -4,6 +4,7 @@ import {
   applyPropertyListFilters,
   fetchMandateExcludeIds,
   mandateEmbed,
+  MANDATE_REL,
 } from "./properties-list";
 import { fakeClient } from "@/lib/testing/fake-client";
 import type { PropertyFilters } from "@/lib/validators/properties";
@@ -89,6 +90,44 @@ describe("mandateEmbed", () => {
     expect(embed.startsWith("mandates_safe"), "the base table is not a prefix match").toBe(true);
     expect(embed.includes("!inner")).toBe(inner);
   });
+
+  /*
+   * THE HALF NEITHER SIDE'S TEST WAS CHECKING.
+   *
+   * `mandateEmbed` names the relationship in the SELECT; `applyPropertyListFilters`
+   * names it again as the prefix of an embedded-resource filter. PostgREST
+   * requires them to be the same string — a filter on `<name>.<column>` whose
+   * `<name>` is not embedded in that same select is rejected 400 PGRST108, not
+   * ignored. When the embed moved to the view and the prefix stayed `mandates`,
+   * mandate=active and mandate=expired threw the page's error boundary for EVERY
+   * role and 500'd the CSV export, while both of the tests above still passed:
+   * one asserted the embed, the other asserted the filter, and nothing compared
+   * them. This is that comparison.
+   *
+   * Measured: `properties?select=...mandates_safe!inner(type,status)&mandates.status=eq.active`
+   * -> 400 PGRST108 "'mandates' is not an embedded resource in this request";
+   * with the prefix corrected -> 200, one row.
+   */
+  it.each(["active", "expired"] as const)(
+    "the mandate=%s filter names the relationship the select actually embeds",
+    (mandate) => {
+      const filters = base({ mandate });
+      const { spy, calls } = spyBuilder();
+      applyPropertyListFilters(spy as never, filters, []);
+
+      const mandateEq = calls.find(
+        (c) => c.method === "eq" && String(c.args[0]).includes("."),
+      );
+      expect(mandateEq, "the filter is emitted at all").toBeDefined();
+
+      const prefix = String(mandateEq!.args[0]).split(".")[0];
+      expect(prefix, "PostgREST rejects a prefix that is not embedded here").toBe(MANDATE_REL);
+      expect(
+        mandateEmbed(filters).startsWith(prefix),
+        `select embeds "${mandateEmbed(filters)}" but the filter prefixes "${prefix}"`,
+      ).toBe(true);
+    },
+  );
 });
 
 describe("applyPropertyListFilters", () => {

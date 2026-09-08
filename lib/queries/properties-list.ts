@@ -66,6 +66,26 @@ export function parsePropertyFilters(sp: PropertySearchParams): PropertyFilters 
  * exactly why doc 04 records the invariant that all UI mandate reads go through
  * it. The badge needs `type` and `status`; the view carries both.
  */
+/**
+ * The ONE name of the mandate relationship on a property query.
+ *
+ * A literal, not a variable, at every use site below — Supabase infers the row
+ * type from a LITERAL table name and a variable collapses it (the same trap
+ * `mandateSource` documents in quality-score.ts). What this constant buys is
+ * that the embed and the FILTER PREFIX cannot drift apart again: PostgREST
+ * rejects a filter on `<name>.<column>` unless an embed of exactly `<name>` is
+ * in the same select, with 400 PGRST108 — and renaming the embed to the view
+ * without renaming the prefix took the mandate=active and mandate=expired
+ * filters out for every role, admin included, on 2026-09-08. `mandateFilterKey`
+ * is what the filter builder must use, and `mandateEmbed` starts with it.
+ */
+export const MANDATE_REL = "mandates_safe" as const;
+
+/** The prefix an embedded-resource filter on the mandate must carry. */
+export function mandateFilterKey(column: "status" | "type"): string {
+  return `${MANDATE_REL}.${column}`;
+}
+
 export function mandateEmbed(
   filters: PropertyFilters,
 ): "mandates_safe!inner(type, status)" | "mandates_safe(type, status)" {
@@ -211,8 +231,14 @@ export function applyPropertyListFilters<Q extends PropertyFilterBuilder<Q>>(
     q = q.or(`asking_price.lte.${max},rent_price_month.lte.${max}`);
   }
 
-  if (filters.mandate === "active") q = q.eq("mandates.status", "active" as never);
-  if (filters.mandate === "expired") q = q.eq("mandates.status", "expired" as never);
+  // The prefix MUST name the embed in the same select — see MANDATE_REL. It said
+  // "mandates" while the select said "mandates_safe", and PostgREST answered 400
+  // PGRST108 rather than ignoring it, so both filters threw the page's error
+  // boundary for every role and 500'd the CSV export.
+  if (filters.mandate === "active")
+    q = q.eq(mandateFilterKey("status") as never, "active" as never);
+  if (filters.mandate === "expired")
+    q = q.eq(mandateFilterKey("status") as never, "expired" as never);
   if ((filters.mandate === "none" || filters.mandate === "expired") && excludeIds.length > 0) {
     q = q.not("id", "in", `(${excludeIds.join(",")})` as never);
   }
