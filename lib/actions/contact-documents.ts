@@ -108,7 +108,12 @@ export async function deleteContactDocument(
 
   const { data: doc } = await supabase
     .from("documents")
-    .select("id, org_id, title, storage_path, entity_type, entity_id")
+    // doc_type comes back so the deletion event can carry it: entity-timeline
+    // decides whether a non-admin may see a document TITLE from the payload's
+    // doc_type, and the row is gone by the time anyone reads the timeline, so
+    // a payload without it is withheld forever (fail-closed, correctly — but
+    // that means every deleted title deed lost its name too).
+    .select("id, org_id, title, doc_type, storage_path, entity_type, entity_id")
     .eq("id", documentId)
     .maybeSingle();
   if (!doc) return { error: "Document not found" };
@@ -140,7 +145,7 @@ export async function deleteContactDocument(
     entityType: "contact",
     entityId: doc.entity_id,
     eventType: "document_deleted",
-    payload: { document_id: documentId, title: doc.title },
+    payload: { document_id: documentId, title: doc.title, doc_type: doc.doc_type },
   });
 
   revalidatePath(`/contacts/${contactId}`);

@@ -33,8 +33,8 @@ import { contactDocVisibility, type DocType } from "@/lib/validators/documents";
  * renders, does not: no screen renders a mandate timeline.
  *
  * AUTHORISATION IS THE CALLER'S OWN READ. Every caller loads its parent row
- * through RLS first and `notFound()`s when RLS withholds it — contacts page:100,
- * properties page:96, deals page:43. So an id reaching `entityIds` is proof the
+ * through RLS first and `notFound()`s when RLS withholds it — the guard at the
+ * top of each of the three detail pages. So an id reaching `entityIds` is proof the
  * caller was allowed to see the row it names. This function must therefore only
  * ever be given ids that came back from a query on the CALLER's client; passing
  * an id from anywhere else would be asserting an authorisation nobody checked.
@@ -134,9 +134,18 @@ const DOCUMENT_EVENTS = new Set(["document_uploaded", "document_deleted"]);
  * database from every path. A lookup would also fail for `document_deleted`,
  * where the row is gone.
  *
- * UNKNOWN FAILS CLOSED. A payload with no readable `doc_type` loses its title
- * too — the renderer already has an untitled branch ("Document uploaded"), so
- * the event still appears and only the name is withheld.
+ * A MISSING doc_type FAILS CLOSED. A payload with no readable `doc_type` loses
+ * its title — the renderer already has an untitled branch ("Document uploaded"),
+ * so the event still appears and only the name is withheld. That is the case for
+ * every `document_deleted` written before 2026-09-08, when the delete paths did
+ * not carry `doc_type`; those titles stay withheld forever and correctly so,
+ * because nothing left in the row can say what they were.
+ *
+ * An unrecognised doc_type STRING is a different case and is treated as
+ * `internal`, deliberately: `contactDocVisibility` names exactly the three KYC
+ * types, the upload sets `visibility` from that same function, and the 0072
+ * CHECK enforces KYC ⇒ `admin_only` from every path including service_role. So
+ * a doc_type outside the list cannot be an admin-only row.
  */
 function redactDocumentTitles(rows: TimelineRow[], viewerRole: string): TimelineRow[] {
   if (viewerRole === "admin") return rows;
@@ -226,6 +235,32 @@ export async function readLastTouched(opts: {
 const WON_DEAL_KINDS = new Set(["listing_status_check", "reservation_still_live"]);
 
 /**
+ * ...but `listing_status_check` has TWO raisers and only one of them names a deal.
+ *
+ * `markDealWon` writes `{kind, task_id, deal_id}` and renders "the deal was won
+ * but the listing still reads on-market" — a `deals_select` fact, withheld.
+ * Converting a hold writes `{kind, task_id, reservation_id}` and renders "the
+ * reservation converted to a sale but the listing still reads on-market" — a
+ * `reservations_select` fact, and that policy is plain `org_id =
+ * current_org_id()` with no role arm, so every staff member may already read it.
+ * The SAME action also writes an unredacted `reservation_status_changed` event
+ * that prints "Reservation held → converted" one line above it. Withholding the
+ * second sentence therefore protects nothing and costs the desk the only line
+ * that says why the follow-up exists.
+ *
+ * `deal_id` is the discriminator, not `reservation_id`: `raiseLiveHoldCheck`
+ * carries BOTH, and `reservation_still_live` always names a won deal, so it stays
+ * withheld unconditionally. `describeEvent` splits the same two sentences on
+ * `p.reservation_id`; this splits on the field whose presence is what actually
+ * makes the line a disclosure.
+ */
+function namesAWonDeal(kind: string, payload: Record<string, unknown>): boolean {
+  if (!WON_DEAL_KINDS.has(kind)) return false;
+  if (kind === "listing_status_check") return payload.deal_id != null;
+  return true;
+}
+
+/**
  * A property is readable by everyone in the org; a deal is not.
  *
  * `properties_select` is plain `org_id = current_org_id()`, so any staff member
@@ -255,7 +290,7 @@ function redactWonDealKinds(rows: TimelineRow[], viewerRole: string): TimelineRo
   return rows.map((r) => {
     if (r.event_type !== "followup_task_created") return r;
     const payload = (r.payload ?? {}) as Record<string, unknown>;
-    if (typeof payload.kind !== "string" || !WON_DEAL_KINDS.has(payload.kind)) return r;
+    if (typeof payload.kind !== "string" || !namesAWonDeal(payload.kind, payload)) return r;
     const rest: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(payload)) {
       if (k !== "kind" && k !== "deal_id") rest[k] = v;

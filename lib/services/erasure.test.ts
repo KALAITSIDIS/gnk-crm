@@ -215,3 +215,62 @@ describe("buildErasureEventPayload", () => {
     expect(withoutAml.fields_cleared).toContain("kyc_checklist");
   });
 });
+
+describe("retention_until is a CYPRUS calendar day, because its readers are", () => {
+  /*
+   * `retention_until` is a `date` — a calendar obligation, not an instant.
+   * lib/services/retention.ts says so in its own header, and BOTH readers
+   * compare it against `zonedParts(new Date()).dayKey`: the retention settings
+   * page and `purgeContact`'s guard, which exists because "purging early would
+   * destroy records Cyprus AML still requires".
+   *
+   * The writer used `toISOString().slice(0, 10)` — the UTC day. Cyprus is
+   * UTC+2/+3, so an erasure between local midnight and 03:00, or any anchor
+   * instant in that window (a deal won at 22:00Z, a slip signed at 21:30Z),
+   * wrote a day key one short and unlocked the purge a day before the duty
+   * ended. One day in 1826, on the destruction of passport scans.
+   */
+  it("stamps the Cyprus day when the erasure happens at 00:30 local", () => {
+    // 2026-07-15T21:30Z = 16 July 00:30 Cyprus (EEST). UTC day is still the 15th.
+    const plan = planContactErasure({
+      amlBasis: true,
+      actorId: ACTOR,
+      now: "2026-07-15T21:30:00.000Z",
+      relationshipEndCandidates: [],
+    });
+    expect(plan.retentionUntil, "the reader's calendar, not the serialiser's").toBe("2031-07-16");
+  });
+
+  it("stamps the Cyprus day when the ANCHOR is a late-evening UTC instant", () => {
+    // A deal won at 22:00Z on 15 July is 01:00 Cyprus on the 16th.
+    const plan = planContactErasure({
+      amlBasis: true,
+      actorId: ACTOR,
+      now: "2026-08-01T09:00:00.000Z",
+      relationshipEndCandidates: ["2026-07-15T22:00:00.000Z"],
+    });
+    expect(plan.retentionUntil).toBe("2031-07-16");
+  });
+
+  it("is unchanged in the middle of the day, where the two calendars agree", () => {
+    const plan = planContactErasure({
+      amlBasis: true,
+      actorId: ACTOR,
+      now: "2026-07-15T09:00:00.000Z",
+      relationshipEndCandidates: [],
+    });
+    expect(plan.retentionUntil).toBe("2031-07-15");
+  });
+
+  it("steps 29 February back to the 28th rather than forward into March", () => {
+    // setUTCFullYear would roll it to 1 March, which lengthens the duty — but a
+    // retention date that is not the anniversary is one nobody can explain.
+    const plan = planContactErasure({
+      amlBasis: true,
+      actorId: ACTOR,
+      now: "2028-02-29T09:00:00.000Z",
+      relationshipEndCandidates: [],
+    });
+    expect(plan.retentionUntil).toBe("2033-02-28");
+  });
+});

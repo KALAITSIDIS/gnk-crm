@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { kycCompletion, type KycState } from "@/lib/constants/checklists";
 
 /**
@@ -132,7 +133,9 @@ type Client = SupabaseClient<Database>;
 export async function recomputeDealHealth(supabase: Client, dealId: string): Promise<void> {
   const { data: deal } = await supabase
     .from("deals")
-    .select("id, health, buyer_contact_id, property_id, last_activity_at")
+    // org_id comes back so the mandate read below (which runs as the system)
+    // has an explicit boundary taken from a row RLS already returned
+    .select("id, org_id, health, buyer_contact_id, property_id, last_activity_at")
     .eq("id", dealId)
     .maybeSingle();
   if (!deal) return;
@@ -148,10 +151,40 @@ export async function recomputeDealHealth(supabase: Client, dealId: string): Pro
           .eq("id", deal.property_id)
           .maybeSingle()
       : Promise.resolve({ data: null }),
+    /*
+     * READ AS THE SYSTEM — a stored score must not depend on who saved it.
+     *
+     * "Does this property have an active mandate" is a fact about the PROPERTY,
+     * but the answer was coming from the deal editor's own view of `mandates`.
+     * `mandates_insert` is admin-only, so `created_by` is always an admin and the
+     * agent arm `created_by = auth.uid()` can never fire; the only arm left is
+     * `properties.assigned_agent_id = auth.uid()`. Nothing in
+     * `deals_update_agent` ties a deal's agent to the property's assigned agent
+     * — so a buyer-side agent editing their own deal on someone else's listing
+     * read zero mandates and PERSISTED the 15-point factor as "none active", to
+     * `deals.health_score` and the `health.factors` snapshot that the deal page
+     * and every kanban card render to everyone, admins included, until the next
+     * save by someone who could see it flipped it back.
+     *
+     * `mandates_safe` is not the answer here (it is for the property LIST and
+     * for recomputeQualityScore, whose callers are all admin, listing manager or
+     * the ASSIGNED agent — `properties_update` guarantees that). The view keeps
+     * the agent arm, so it returns zero for exactly this caller too. Only the
+     * system can answer it, with org_id filtered explicitly because the admin
+     * client has no RLS to do it.
+     *
+     * WHAT THIS NEWLY EXPOSES, stated rather than assumed: the deal's agent can
+     * now infer from their own deal's health breakdown that the property carries
+     * an active mandate. Existence only — `commission_pct` and
+     * `commission_notes` are not read here and are not in the score — and it is
+     * the property they are already selling. The alternative was continuing to
+     * publish a wrong number to everybody, which is the worse of the two.
+     */
     deal.property_id
-      ? supabase
+      ? createAdminClient()
           .from("mandates")
           .select("id")
+          .eq("org_id", deal.org_id)
           .eq("property_id", deal.property_id)
           .eq("status", "active")
           .limit(1)

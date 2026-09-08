@@ -26,7 +26,7 @@ const base: PropertyExportRow = {
   agent: { full_name: "Maria Christodoulou" },
   districts: { name: { en: "Paphos" } },
   areas: { name: { en: "Kato Paphos" } },
-  mandates: [{ type: "exclusive", status: "active" }],
+  mandates_safe: [{ type: "exclusive", status: "active" }],
 };
 
 const line = (csv: string, i = 1) => csv.replace(/^﻿/, "").split("\r\n")[i];
@@ -51,16 +51,16 @@ describe("propertyCsvColumns", () => {
     expect(active).toContain(",exclusive,"); // active mandate → its type
 
     const expired = toCsv(propertyCsvColumns(), [
-      { ...base, mandates: [{ type: "open", status: "expired" }] },
+      { ...base, mandates_safe: [{ type: "open", status: "expired" }] },
     ]);
     expect(expired).toContain(",expired,");
 
-    const none = toCsv(propertyCsvColumns(), [{ ...base, mandates: [] }]);
+    const none = toCsv(propertyCsvColumns(), [{ ...base, mandates_safe: [] }]);
     expect(none).toContain(",none,");
 
     // an active mandate outranks an expired one on the same property
     const both = toCsv(propertyCsvColumns(), [
-      { ...base, mandates: [{ type: "open", status: "expired" }, { type: "exclusive", status: "active" }] },
+      { ...base, mandates_safe: [{ type: "open", status: "expired" }, { type: "exclusive", status: "active" }] },
     ]);
     expect(both).toContain(",exclusive,");
   });

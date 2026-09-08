@@ -60,6 +60,35 @@ describe("mandateEmbed", () => {
     expect(mandateEmbed(base({ mandate: "none" }))).not.toContain("!inner");
     expect(mandateEmbed(base())).not.toContain("!inner");
   });
+
+  /*
+   * THROUGH THE VIEW, ALWAYS.
+   *
+   * `mandates_select` has no listing_manager arm — measured against the live
+   * policy — so on the base table the embed came back empty on EVERY row for a
+   * listing manager: the list badge read "none" while the property's own detail
+   * page (which reads `mandates_safe`) showed the active mandate one click away,
+   * mandate=active returned nothing, mandate=none returned every mandated
+   * property as "needs a mandate", and the CSV wrote "none" down the column.
+   *
+   * Measured through real PostgREST with minted role JWTs, one mandated property:
+   *   role             base embed   view embed
+   *   admin            exclusive    exclusive
+   *   listing_manager  []           exclusive   <- the bug and the fix
+   *   assigned agent   exclusive    exclusive
+   *   other agent      []           []          <- and nothing widens
+   */
+  it.each([
+    ["active", true],
+    ["expired", true],
+    ["none", false],
+    [undefined, false],
+  ])("reads mandates_safe for mandate=%s", (mandate, inner) => {
+    const embed = mandateEmbed(base(mandate ? { mandate } : {}));
+    expect(embed, "doc 04: all UI mandate reads go through the view").toContain("mandates_safe");
+    expect(embed.startsWith("mandates_safe"), "the base table is not a prefix match").toBe(true);
+    expect(embed.includes("!inner")).toBe(inner);
+  });
 });
 
 describe("applyPropertyListFilters", () => {
@@ -206,35 +235,35 @@ describe("fetchMandateExcludeIds reads every excluded id, and fails loud (A08a)"
 
   it("pages past the thousandth mandate — the 1,001st exclusion used to fall off the list", async () => {
     const { client, served, argsOf } = fakeClient({
-      mandates: [
+      mandates_safe: [
         { data: ids(0, 1000), error: null },
         { data: ids(1000, 3), error: null },
       ],
     });
     const out = await fetchMandateExcludeIds(client as unknown as Client, base({ mandate: "none" }));
     expect(out).toHaveLength(1003);
-    expect(served.mandates, "two pages of rows, then the empty read that ends it").toBe(3);
+    expect(served.mandates_safe, "two pages of rows, then the empty read that ends it").toBe(3);
     // WHICH pages, and ordered: the count alone passed with .range() deleted
-    expect(argsOf("mandates", "range")).toEqual([
+    expect(argsOf("mandates_safe", "range")).toEqual([
       [0, 999],
       [1000, 1999],
       [1003, 2002],
     ]);
-    expect(argsOf("mandates", "order")).toEqual([["id"], ["id"], ["id"]]);
+    expect(argsOf("mandates_safe", "order")).toEqual([["id"], ["id"], ["id"]]);
   });
 
   it("dedupes ids across pages", async () => {
     const { client } = fakeClient({
-      mandates: [{ data: [...ids(0, 2), ...ids(0, 2)], error: null }],
+      mandates_safe: [{ data: [...ids(0, 2), ...ids(0, 2)], error: null }],
     });
     expect(await fetchMandateExcludeIds(client as unknown as Client, base({ mandate: "expired" }))).toEqual(["p0", "p1"]);
   });
 
   it("throws on a failed page rather than excluding nothing", async () => {
-    const { client } = fakeClient({ mandates: [{ data: null, error: { message: "boom" } }] });
+    const { client } = fakeClient({ mandates_safe: [{ data: null, error: { message: "boom" } }] });
     await expect(
       fetchMandateExcludeIds(client as unknown as Client, base({ mandate: "none" })),
-    ).rejects.toThrow("Query failed (mandates): boom");
+    ).rejects.toThrow("Query failed (mandates_safe): boom");
   });
 
   it("reads nothing at all when the filter does not need it", async () => {

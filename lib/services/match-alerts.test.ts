@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { fakeClient } from "@/lib/testing/fake-client";
+import { cyprusEndOfTomorrow } from "@/lib/validators/reservations";
 
 /*
  * The duplicate guard ("is a prompt of this kind already open on this
@@ -398,6 +399,45 @@ describe("the reads behind an alert are paged and loud (A08a)", () => {
     expect(argsOf("buyer_requirements", "order")).toEqual([["id"], ["id"], ["id"]]);
     expect(res.newlyMatching).toBe(1003);
     expect(res.taskCreated).toBe(true);
+  });
+
+  it("is due end of the CYPRUS tomorrow, even when raised at 01:30 local", async () => {
+    /*
+     * `const tomorrow = new Date(Date.now() + 864e5).toISOString().slice(0, 10)`
+     * steps 24 hours and then takes the UTC day of the result. Cyprus is UTC+3
+     * in summer, so at 01:30 local on 16 July that string was "2026-07-16" —
+     * TODAY — and the alert was due 23:59 tonight instead of tomorrow night,
+     * roughly a day short of the grace its own comment promises. It then
+     * appeared in the "due today" card the moment it was created and went red at
+     * midnight. Cyprus is always ahead of UTC, so the error only ran early.
+     *
+     * Frozen inside the window and asserted by EQUALITY against the helper: the
+     * previous assertion style ("later than now") cannot fail during working
+     * hours, which is how the same bug survived in three other raisers.
+     */
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-15T22:30:00.000Z")); // 16 July 01:30 Cyprus
+    try {
+      noOpenPrompt();
+      const { client, argsOf } = fakeClient({
+        buyer_requirements: [{ data: [reqRow(1)], error: null }, { data: [], error: null }],
+        tasks: [{ data: { id: "t1" }, error: null }],
+      });
+      await raiseNewListingAlert(client as unknown as Client, {
+        orgId: "o",
+        actorId: "u",
+        property: prop,
+        previousStatus: "draft",
+      });
+      const [insert] = argsOf("tasks", "insert");
+      const row = insert[0] as Record<string, unknown>;
+      expect(row.due_at, "end of 17 July Cyprus — not of the 16th, and not of the 15th").toBe(
+        cyprusEndOfTomorrow(new Date("2026-07-15T22:30:00.000Z")).toISOString(),
+      );
+      expect(String(row.due_at).slice(0, 10), "the day itself, spelled out").toBe("2026-07-17");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("counts a BUYER once, not each of their saved searches", async () => {

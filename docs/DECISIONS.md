@@ -5895,3 +5895,116 @@ because `mandate` is not in `TimelineEntityType`); the saved-search guard held;
 and the commission evidence report's caller-scoped read is DELIBERATE, recorded
 in T-audit-reports (6): the PDF names its own scope, "events visible to this
 user". Changing it would have turned every agent's report into a full org record.
+
+### T-reader — a stored number must not vary by who saved it (2026-09-08)
+
+The second adversarial pass over the 2026-09-07 timeline work. Seven lenses, two
+skeptics per finding; fourteen survived, six were refuted, and the refutations
+were worth as much as the findings.
+
+**1. Two STORED numbers were computed from the saver's view.** This is the
+`T-silent` class one step further on, and it is worse than the read-time version
+because the wrong answer is persisted and then shown to everyone.
+
+`recomputeDealHealth` asked "does this property have an active mandate" through
+the deal editor's own client. `mandates_insert` is admin-only, so `created_by` is
+always an admin and the agent arm `created_by = auth.uid()` can never fire; the
+only arm left is `properties.assigned_agent_id = auth.uid()`, and nothing in
+`deals_update_agent` ties a deal's agent to the property's assigned agent. A
+buyer-side agent saving their own deal on a colleague's listing therefore wrote
+the 15-point mandate factor as "none active", into `deals.health_score` and the
+`health.factors` snapshot the deal page and every kanban card render — until
+someone who could see it saved and flipped it back.
+
+**`mandates_safe` is NOT the fix here, and that is the interesting part.**
+Measured through real PostgREST with minted role JWTs: the view keeps the same
+agent arm, so it returns zero rows for exactly this caller. The view fixes the
+LISTING MANAGER, and listing managers have no UPDATE on deals at all. Only the
+system can answer it — admin client, `org_id` explicit.
+
+The properties LIST was the listing-manager half of the same fact and DID want
+the view: on the base table the embed came back empty on every row, so the badge
+read "none" org-wide while the detail page showed the mandate one click away,
+`mandate=none` listed every mandated property as needing one, `mandate=active`
+returned nothing, and the CSV wrote "none" down the column. Measured per role:
+listing manager `[]` → `exclusive`; NON-ASSIGNED AGENT `[]` → `[]`, so nothing
+widened. `recomputeQualityScore` was checked and is correct as it stands —
+`properties_update` requires assignment, so its callers are only ever admin,
+listing manager or the assigned agent, all of whom the view serves.
+
+**2. The timeline widening was wrong in BOTH directions at once.**
+
+Too closed: `document_deleted` payloads never carried `doc_type`, so the
+redactor's doc_type branch was dead for every deletion and it withheld the title
+of every deleted document from every non-admin — title deeds, plans, valuations,
+things nothing was protecting. The shipped test passed because it built its
+`document_deleted` row from a payload production never wrote: **the right answer
+for the wrong reason.** Both writers now carry the field; rows written before
+today have none and keep losing their titles, correctly, because nothing left in
+the record can say what they were.
+
+Too open, then too closed again: `redactWonDealKinds` keyed on `kind` alone, but
+`listing_status_check` has two raisers. `markDealWon` names a deal; converting a
+hold does not — and `reservations_select` is plain `org_id = current_org_id()`
+with no role arm (read from the live policy, not from prose), while the SAME
+action writes an unredacted "Reservation held → converted" one line above it. The
+redaction protected nothing and cost the desk the only line saying why the
+follow-up existed. `deal_id` is the discriminator, not `reservation_id`:
+`raiseLiveHoldCheck` carries both.
+
+**3. The day boundary had two more homes, and one was SQL.** Match alerts stepped
+24 hours and then took the UTC day of the result — due tonight instead of
+tomorrow night between Cyprus midnight and 03:00. `retention_until` was written
+on the UTC day while both its readers compare it against the Cyprus one,
+unlocking an AML purge a day early. And migration 0091: `raise_key_recall_tasks`
+anchors its seven-day grace on `current_date`, which is the UTC day — harmless in
+every other `current_date` sweep, because those are cron-only at 03:xx UTC where
+the calendars agree, but this one is invoked synchronously from a user action.
+
+**THE DISCRIMINATOR, because a refuted finding drew it.** A reviewer proposed
+"fixing" `mandate-renewal.ts`'s identical-looking expression. It is right as it
+stands: `start_date`/`expiry_date` are `date` columns compared against the
+database's `current_date`, the session runs in UTC, and six sweeps test
+`expiry_date < current_date`. Moving those to the Cyprus calendar would have
+introduced the mismatch, not removed it. So: **a `due_at` is an instant rendered
+against now on a screen in Cyprus and takes the Cyprus day; a `date` column
+compared against `current_date` belongs to the database's UTC calendar and stays
+there.** That sentence is now the header of
+`tests/unit/due-at-is-a-cyprus-day.test.ts`.
+
+**4. And the assertion that could not fail.** The only automated check that ANY
+raiser used `cyprusEndOfToday` was `expect(due_at).toBeGreaterThan(Date.now())` —
+violated only inside the very window the fix exists for, so a mutation run at
+13:05 local restored the bug and left all sixteen tests green. Two of the three
+raisers (`markDealWon`, `transitionReservation`) have no unit test at all.
+Replaced with a frozen clock and equality against the helper's own output, plus a
+class guard that scans the source, because behaviour cannot be pinned where no
+harness exists.
+
+The same shape bit the review's own tooling: the first mutation sweep reported
+all nine mutations as PASSED — A HOLE, which was a Windows codec error swallowing
+every subprocess result, not a finding. Reading a verdict out of parsed text
+rather than an exit code is the same defect as asserting `toBeGreaterThan(now)`.
+Rerun on exit codes: thirteen mutations, thirteen failing tests.
+
+**Also fixed:** `media_deleted` lost the photo's filename whenever the deleter
+was not the uploader (`events_select` is actor-scoped, `property_media_delete`
+admits listing managers) — hash-chained and append-only, so uncorrectable
+afterwards. And the restore pack's task-kind regex matched only one of the two
+variable spellings the migrations use, so three of seven assertions were
+invisible to it and a fourteenth kind in the older style would have left the pin
+silently stale.
+
+**Refuted, and recorded so they are not re-found:** the mandate-renewal calendar
+above; a claim that 0090 writes the supersede event before its cause (true of the
+ids, but no reader in the app places a `task` and a `property` event in one
+id-ordered list, and both rows carry the same `now()`); and a claim that 0090's
+`properties` guard is weaker than 0089's (0089 is untouched and still replays —
+nothing was replaced).
+
+**The ledger gap.** HANDOFF's Hosted DB row recorded nothing for 0089 or 0090,
+which is indistinguishable from "never applied" — and had that been true, every
+`reservation_still_live` insert would have failed its FK to `task_kinds` and been
+swallowed by a `console.error`. `migration list --linked` showed both applied,
+zero drift. The database was fine; the record was not, and the record is the part
+a future reader has.

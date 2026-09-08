@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { SELECT_NONE } from "@/lib/validators/contacts";
-import { zonedWallClockToUtc, zonedParts} from "@/lib/utils/tz";
+import { zonedWallClockToUtc, zonedParts } from "@/lib/utils/tz";
+import { addDayKey } from "@/lib/services/calendar-window";
 
 /**
  * Reservations (0044, T-C3).
@@ -107,6 +108,25 @@ export function cyprusEndOfDay(isoDate: string): Date {
  */
 export function cyprusEndOfToday(now: Date = new Date()): Date {
   return cyprusEndOfDay(zonedParts(now).dayKey);
+}
+
+/**
+ * End of the Cyprus day AFTER the current one — what a "worth acting on, but not
+ * today" prompt wants.
+ *
+ * The sibling of the bug above, and it was still open one file over:
+ * `new Date(Date.now() + 864e5).toISOString().slice(0, 10)` steps 24 hours and
+ * then takes the UTC day of the result, so between Cyprus midnight and 03:00 it
+ * names TODAY — and the task is due tonight instead of tomorrow night, born
+ * roughly a day short of the grace its own comment promises. Cyprus is always
+ * ahead of UTC, so the error only ever runs early, never late.
+ *
+ * Stepping the Cyprus DAY KEY rather than the instant also survives the DST
+ * changeover: `addDayKey` does its arithmetic at UTC noon, so the 23-hour and
+ * 25-hour days at the end of March and October still advance by exactly one day.
+ */
+export function cyprusEndOfTomorrow(now: Date = new Date()): Date {
+  return cyprusEndOfDay(addDayKey(zonedParts(now).dayKey, 1));
 }
 
 // ---------------------------------------------------------------- schedule --

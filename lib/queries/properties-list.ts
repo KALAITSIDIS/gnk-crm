@@ -53,12 +53,25 @@ export function parsePropertyFilters(sp: PropertySearchParams): PropertyFilters 
  * Returns the literal union (not `string`) so callers that pass it into a
  * template-literal `.select()` keep Supabase's typed row inference.
  */
+/*
+ * THROUGH THE VIEW, like every other UI mandate read.
+ *
+ * `mandates_select` has no listing_manager arm, so on the base table a listing
+ * manager's list embed came back empty on EVERY row: the badge read "none" while
+ * the property's own detail page (which reads `mandates_safe`) showed the active
+ * mandate two clicks away, the mandate=none filter returned every mandated
+ * property in the org as "needs a mandate", mandate=active returned nothing at
+ * all, and the CSV export wrote "none" down the column. `mandates_safe` admits
+ * listing managers with `commission_pct`/`commission_notes` masked — which is
+ * exactly why doc 04 records the invariant that all UI mandate reads go through
+ * it. The badge needs `type` and `status`; the view carries both.
+ */
 export function mandateEmbed(
   filters: PropertyFilters,
-): "mandates!inner(type, status)" | "mandates(type, status)" {
+): "mandates_safe!inner(type, status)" | "mandates_safe(type, status)" {
   return filters.mandate === "active" || filters.mandate === "expired"
-    ? "mandates!inner(type, status)"
-    : "mandates(type, status)";
+    ? "mandates_safe!inner(type, status)"
+    : "mandates_safe(type, status)";
 }
 
 /**
@@ -80,14 +93,22 @@ export async function fetchMandateExcludeIds(
   const rows = await fetchAll(
     (from, to) =>
       supabase
-        .from("mandates")
+        // the view, for the same reason as `mandateEmbed` above: on the base
+        // table this returned [] for a listing manager, so "no mandate" excluded
+        // nothing and listed every mandated property in the org
+        .from("mandates_safe")
         .select("property_id")
         .in("status", statuses)
         .order("id")
         .range(from, to),
-    "mandates",
+    // the label names what was actually queried, so a failure points at the view
+    "mandates_safe",
   );
-  return [...new Set(rows.map((m) => m.property_id))];
+  // the view's columns are nullable in the generated types (a view has no NOT
+  // NULL), so the narrowing is real, not ceremony
+  return [
+    ...new Set(rows.map((m) => m.property_id).filter((id): id is string => id !== null)),
+  ];
 }
 
 /**

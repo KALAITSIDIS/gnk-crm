@@ -203,6 +203,66 @@ describe("document titles: the one thing this reader must not hand over", () => 
     expect((row.payload as Record<string, unknown>).title).toBeUndefined();
   });
 
+  /*
+   * THE SHAPE PRODUCTION ACTUALLY WROTE, which the case above did not use.
+   *
+   * Until 2026-09-08 neither delete path put `doc_type` in the payload —
+   * `deleteContactDocument` and `deletePropertyDocument` both wrote
+   * `{ document_id, title }` — so the doc_type branch was DEAD for every
+   * `document_deleted` and the redactor was unconditionally strip-the-title for
+   * anyone who was not an admin. The test above passed on a payload the writers
+   * never produced, which is why it did not notice: it asserted the right answer
+   * for the wrong reason. Both writers now carry doc_type; these two cases pin
+   * both shapes so neither half can regress alone.
+   */
+  it("still withholds a deletion written before the payload carried doc_type", async () => {
+    const [row] = await read("agent", [
+      {
+        id: 9,
+        occurred_at: "2026-09-07T10:00:00Z",
+        event_type: "document_deleted",
+        entity_type: "contact",
+        entity_id: "c1",
+        payload: { document_id: "d1", title: "passport_AB123456.pdf" },
+      },
+    ]);
+    expect(
+      (row.payload as Record<string, unknown>).title,
+      "nothing left in the row can say what it was — withheld forever, correctly",
+    ).toBeUndefined();
+  });
+
+  it("gives back the name of a deleted document agents could read while it existed", async () => {
+    const [row] = await read("agent", [
+      {
+        id: 10,
+        occurred_at: "2026-09-08T10:00:00Z",
+        event_type: "document_deleted",
+        entity_type: "property",
+        entity_id: "p1",
+        payload: { document_id: "d2", title: "Title deed PAF0001.pdf", doc_type: "title_deed" },
+      },
+    ]);
+    expect(
+      (row.payload as Record<string, unknown>).title,
+      "an org-readable document loses nothing by being deleted",
+    ).toBe("Title deed PAF0001.pdf");
+  });
+
+  it("and still withholds a deleted KYC document's name", async () => {
+    const [row] = await read("agent", [
+      {
+        id: 11,
+        occurred_at: "2026-09-08T10:00:00Z",
+        event_type: "document_deleted",
+        entity_type: "contact",
+        entity_id: "c1",
+        payload: { document_id: "d3", title: "passport.pdf", doc_type: "id_document" },
+      },
+    ]);
+    expect((row.payload as Record<string, unknown>).title).toBeUndefined();
+  });
+
   it("leaves every other event's payload untouched", async () => {
     const [row] = await read("agent", [
       {
@@ -269,6 +329,52 @@ describe("a won deal is not announced to agents who may not read it", () => {
   it("keeps it for an admin", async () => {
     const [row] = await read("admin", [followup("reservation_still_live")]);
     expect((row.payload as Record<string, unknown>).kind).toBe("reservation_still_live");
+  });
+
+  /*
+   * `listing_status_check` HAS TWO RAISERS AND ONLY ONE NAMES A DEAL.
+   *
+   * markDealWon writes `{kind, task_id, deal_id}` — "the deal was won but the
+   * listing still reads on-market", a deals_select fact, withheld. Converting a
+   * hold writes `{kind, task_id, reservation_id}` — "the reservation converted to
+   * a sale…", and `reservations_select` is plain `org_id = current_org_id()` with
+   * no role arm (measured against the live policy). The same action also writes an
+   * unredacted `reservation_status_changed` that prints "Reservation held →
+   * converted" one line above it, so withholding the second sentence protected
+   * nothing and cost the desk the only line saying why the follow-up exists.
+   */
+  it("keeps the reservation-raised check for an agent — reservations_select is org-wide", async () => {
+    const [row] = await read("agent", [
+      {
+        ...followup("listing_status_check"),
+        payload: { kind: "listing_status_check", task_id: "t1", reservation_id: "r1" },
+      },
+    ]);
+    const payload = row.payload as Record<string, unknown>;
+    expect(payload.kind, "no deal is named, and the sale is already on the page").toBe(
+      "listing_status_check",
+    );
+    expect(payload.reservation_id).toBe("r1");
+  });
+
+  it("still withholds reservation_still_live, which carries a deal id as well", async () => {
+    // raiseLiveHoldCheck writes BOTH ids, so `reservation_id` is not the
+    // discriminator — `deal_id` is, and this kind always names a won deal.
+    const [row] = await read("agent", [
+      {
+        ...followup("reservation_still_live"),
+        payload: {
+          kind: "reservation_still_live",
+          task_id: "t1",
+          deal_id: "d1",
+          reservation_id: "r1",
+        },
+      },
+    ]);
+    const payload = row.payload as Record<string, unknown>;
+    expect(payload.kind).toBeUndefined();
+    expect(payload.deal_id).toBeUndefined();
+    expect(payload.reservation_id, "the hold itself is not the secret").toBe("r1");
   });
 
   it("leaves follow-up kinds that reveal no deal alone", async () => {

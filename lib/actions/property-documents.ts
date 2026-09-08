@@ -100,7 +100,10 @@ export async function deletePropertyDocument(
 
   const { data: doc } = await supabase
     .from("documents")
-    .select("id, org_id, title, storage_path, entity_type, entity_id")
+    // doc_type comes back so the deletion event can carry it — see the note in
+    // deleteContactDocument; without it entity-timeline withholds the title of
+    // every deleted document from every non-admin, forever.
+    .select("id, org_id, title, doc_type, storage_path, entity_type, entity_id")
     .eq("id", documentId)
     .maybeSingle();
   if (!doc) return { error: "Document not found" };
@@ -132,7 +135,7 @@ export async function deletePropertyDocument(
     entityType: "property",
     entityId: doc.entity_id,
     eventType: "document_deleted",
-    payload: { document_id: documentId, title: doc.title },
+    payload: { document_id: documentId, title: doc.title, doc_type: doc.doc_type },
   });
 
   revalidatePath(`/properties/${propertyId}`);
