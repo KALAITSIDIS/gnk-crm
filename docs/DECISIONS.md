@@ -6172,3 +6172,22 @@ had killed only the npm wrapper, the `next start` child kept port 3000, and
 Playwright's `reuseExistingServer: true` ran both the "dev" and the "prod"
 stage against that stale build (its own log said `EADDRINUSE`). Check the
 listener on 3000 before trusting any e2e result.
+
+## T-signup-closed — public sign-up was open, and only two null-returning helpers stood behind it (2026-09-13)
+
+Found by the 2026-09-13 whole-system audit (SEC-02): `GET /auth/v1/settings` on the
+hosted project answered `disable_signup: false`. The application never signs anyone
+up — `inviteUser` uses `auth.admin.createUser` — so a stranger who registered got an
+auth user with no `profiles` row, `current_org_id()` and `current_role_gnk()` returned
+null, and every policy denied. No data was reachable; the door was closed by the null
+semantics of two helper functions rather than by a setting, and the project paid the
+confirmation-email quota for every attempt.
+
+Closed on the hosted project through the Management API (`PATCH /v1/projects/{ref}/
+config/auth {"disable_signup": true}`), verified from outside: the public settings
+endpoint now says `true` and a probe `POST /auth/v1/signup` answers 422
+`signup_disabled`. Mirrored locally in `supabase/config.toml` (`[auth] enable_signup =
+false`) and pinned by `supabase/tests/signup-disabled.test.ts`, which was run RED
+against the old local setting (signUp returned a session) before the change and GREEN
+after a stack restart. The RLS fixtures are unaffected: they create users through the
+admin API. Recorded in docs/10 § Auth settings that are not code.
