@@ -38,7 +38,8 @@
  *     verifies against invented values (§5).
  *   - A dump can be truncated without erroring — so the event count inside
  *     data.sql is compared against the LIVE count.
- *   - A failed `db dump` still creates its -f file. Size floors catch it.
+ *   - A failed dump can still leave a file (the CLI did, as 0 bytes). Size floors
+ *     catch it.
  *   - The CLI emits NO `CREATE EXTENSION`, so the schema dump is given one and
  *     the result is checked: without it a restore into a fresh database dies on
  *     `type "public.geography" does not exist` (§4b.1, §4d).
@@ -51,6 +52,10 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
+import {
+  connEnvFromUrl, dataDumpArgs, resolvePgTools, rewriteDataDump, rewriteRolesDump, rewriteSchemaDump,
+  rolesDumpArgs, runPg, schemaDumpArgs,
+} from "./pg-native.mjs";
 
 const args = process.argv.slice(2);
 const arg = (n, d) => (args.indexOf(n) !== -1 ? args[args.indexOf(n) + 1] : d);
@@ -94,6 +99,27 @@ if (dbUrl.includes("pooler.supabase.com") && /:\/\/postgres:/.test(dbUrl)) {
   process.exit(2);
 }
 
+/**
+ * NATIVE pg_dump SINCE 2026-09-13. The dumps used to run inside a Docker
+ * container through `npx supabase db dump`; the 03:45 task runs under S4U and
+ * cannot start Docker Desktop, so every night after a reboot failed until a
+ * human signed in (five nights, 2026-09-09..13). pg-native.mjs reproduces the
+ * CLI's output byte for byte with a plain pg_dump. No tools -> exit 2, the
+ * "refused to start" code, with the fix named; the dead-man switch reports it.
+ */
+const pg = resolvePgTools();
+if (!pg.ok) {
+  console.error(pg.reason);
+  process.exit(2);
+}
+let connEnv;
+try {
+  connEnv = connEnvFromUrl(dbUrl);
+} catch (e) {
+  console.error(e.message);
+  process.exit(2);
+}
+
 const stamp = new Date().toISOString().slice(0, 10);
 const finalDir = join(outRoot, stamp);
 if (existsSync(finalDir) && !force) {
@@ -124,23 +150,10 @@ const log = (s) => console.log(s);
 /** Never let the connection string reach stdout, a log file or an exception. */
 const redact = (s) => String(s ?? "").split(dbUrl).join("[DB_URL REDACTED]");
 
-/**
- * The Supabase CLI is not a dependency here — `npx` fetches it — so it has to be
- * reached through the npx wrapper. On Windows that wrapper is `npx.cmd`, and Node
- * has refused to spawn `.cmd`/`.bat` directly since 18.20 (a command-injection
- * fix): it fails with status `null` and an EINVAL in `error`, which looks exactly
- * like the command not existing. `cmd.exe /c` with a real argument array works,
- * and because nothing is string-concatenated the quoting hazard stays out of it.
- *
- * The connection string is still an argv entry of the child, as it is when a
- * human types the command — so it is briefly visible to anything that can
- * enumerate process command lines on this machine.
- */
-function cliArgs(rest) {
-  return process.platform === "win32"
-    ? ["cmd.exe", ["/c", "npx.cmd", "supabase", ...rest]]
-    : ["npx", ["supabase", ...rest]];
-}
+// The Supabase CLI is no longer involved (see the startup check above). The
+// connection reaches pg_dump as PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE in
+// the child's environment — no cmd.exe, no npx, and nothing on a command line
+// that a process-list enumerator could read.
 
 /**
  * THE EXTENSIONS THE SCHEMA CANNOT LOAD WITHOUT, and the reason each is here.
@@ -241,21 +254,15 @@ function addExtensionPreamble(file) {
   log(`  schema: extension preamble added (${REQUIRED_EXTENSIONS.map(([n]) => n).join(", ")})`);
 }
 
-function dump(label, extraArgs, file) {
+function dump(label, cmd, cmdArgs, rewrite, file) {
   const target = join(stageDir, file);
-  const [cmd, base] = cliArgs(["db", "dump", "--db-url", dbUrl, ...extraArgs, "-f", target]);
-  const r = spawnSync(cmd, base, { encoding: "utf8", shell: false });
+  const r = runPg(cmd, cmdArgs, connEnv);
   if (r.status !== 0) {
-    // Keep enough stderr to diagnose. Two lines proved useless on 2026-08-06:
-    // the CLI's real cause sits above its generic "error running container"
-    // trailer, so truncating from the end threw away the only useful part.
-    const raw = r.error ? r.error.message : `${r.stderr ?? ""}\n${r.stdout ?? ""}`;
-    const why = redact(raw)
-      .replace(/\[[0-9;]*m/g, "")
-      .split("\n").map((l) => l.trim()).filter(Boolean).slice(-12).join("\n      ");
-    problems.push(`${label}: exit ${r.status}\n      ${why}`);
+    // Keep enough stderr to diagnose: pg_dump's real cause is its last lines.
+    problems.push(`${label}: exit ${r.status}\n      ${redact(r.stderrTail)}`);
     return null;
   }
+  writeFileSync(target, rewrite(r.stdout), { encoding: "utf8" });
   log(`  ${label.padEnd(8)} ${String(statSync(target).size).padStart(8)} bytes`);
   return target;
 }
@@ -263,6 +270,7 @@ function dump(label, extraArgs, file) {
 log(`capture ${stamp}  ->  ${finalDir}`);
 log(`staging in ${stagingRoot}\n`);
 log("dumps");
+log(`  via ${pg.source}`);
 /**
  * `events_parts` IS IN BOTH DUMPS SINCE 0063 (found 2026-08-29, the FIRST
  * capture against partitioned production). Migration 0063 moved the events
@@ -274,10 +282,10 @@ log("dumps");
  * ("missing COPY public.events" + count mismatch) and refused to promote,
  * which is the system working; this is the fix.
  */
-const schemaFile = dump("schema", ["--schema", "public,events_parts"], "pg_dump.sql");
+const schemaFile = dump("schema", pg.pgDump, schemaDumpArgs(["public", "events_parts"]), rewriteSchemaDump, "pg_dump.sql");
 addExtensionPreamble(schemaFile);
-const dataFile = dump("data", ["--schema", "public,events_parts,auth,storage", "--data-only", "--use-copy"], "data.sql");
-const rolesFile = dump("roles", ["--role-only"], "roles.sql");
+const dataFile = dump("data", pg.pgDump, dataDumpArgs(["public", "events_parts", "auth", "storage"]), rewriteDataDump, "data.sql");
+const rolesFile = dump("roles", pg.pgDumpall, rolesDumpArgs(), rewriteRolesDump, "roles.sql");
 
 if (!skipStorage) {
   log("\nstorage + table json (export.mjs)");
