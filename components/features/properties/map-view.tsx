@@ -169,6 +169,19 @@ function MapImpl({ data }: { data: PropertyFeatureCollection }) {
       const maplibre = await import("maplibre-gl");
       if (cancelled || !container.current) return;
 
+      // maplibre-gl 6 (2026-09-13) spawns a MODULE worker from a URL it derives
+      // from `import.meta.url`, and Turbopack gets that wrong in BOTH modes,
+      // silently: in `next dev` the value is not http(s), MapLibre's default
+      // becomes "" and `new Worker("")` fetches this page as its script; in
+      // `next build` the worker is emitted under /_next/static/media with a
+      // hashed name but imports `./maplibre-gl-shared.mjs` unhashed — a 404.
+      // Symptom either way: style and sprites load, zero tiles, no console
+      // error, and property-map.spec.ts fails twice. scripts/copy-maplibre-
+      // worker.mjs (predev/prebuild) places the two files under public/maplibre/
+      // so the worker is a plain same-origin URL inside `worker-src 'self'` and
+      // its relative import resolves next to it. DECISIONS T-deps-2026-09-13.
+      maplibre.setWorkerUrl("/maplibre/maplibre-gl-worker.mjs");
+
       const map = new maplibre.Map({
         container: container.current,
         style: "https://tiles.openfreemap.org/styles/liberty",
