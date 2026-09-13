@@ -6359,3 +6359,37 @@ with digest and no text, org isolation, anon refused, empty note and unknown
 entity refused, a session cannot redact and the service role can with the digest
 staying, and the sweep blanks the notes it should). Pins moved: verify-restore's
 migrations 93→94, export.mjs's TABLES gains the table, docs/04 gains the row.
+
+## T-ops-01-create-path — the create path never throws after its row commits (2026-09-13, no migration)
+
+The audit's OPS-01: `createProperty` inserted, then logged, then wrote units,
+then redirected, with no transaction. Its suggested fix was a
+`create_property_with_event` RPC. Not built, and the reason is recorded here.
+The insert carries some twenty-five columns plus the party's standard terms, so
+an RPC either takes a jsonb row — and then needs dynamic SQL to keep column
+defaults, because `jsonb_populate_record` yields NULL for every absent key and
+an `INSERT … SELECT` would write those over `id`, `status` and `visibility` —
+or repeats the column list in SQL, the TS-vs-SQL drift 0052 taught. The failure
+it would prevent is rare (an events insert failing right after a properties
+insert succeeded on the same connection), and its harm was entirely in what the
+action DID about it: it threw, the wizard showed a failure, and the natural
+resubmit made a second listing with a second reference.
+
+So the create path takes the shape the repo already accepts — T-event-
+integrity's sixteenth instance, after updatePropertySection's fifteenth. The
+row is the result. A failed `created` event is a notice: the action lands on
+the record it made with `?recorded=failed`, and the property page and the units
+page render NOT_RECORDED_NOTICE. The unit writer no longer throws out of both
+its callers when the units' events fail after their insert; it returns
+`recorded: false`, the wizard folds that into the same flag, and the units
+page generator carries it in its own state as `notice`. Loud in the server log
+every time.
+
+Tests, red then green: `lib/actions/properties-create.test.ts` (the redirect
+carries the flag when the event insert fails; a clean URL when it was written;
+a failed insert still refuses before anything is written) and two in
+`unit-writer.test.ts` (written-but-not-recorded is not an error; recorded is
+true when the events landed). The remaining "write commits, later step fails"
+gaps the 2026-09-03 sweep counted stay as counted — each is an absence in a
+timeline, none fabricates a record, and each takes this same notice shape when
+it is next touched.

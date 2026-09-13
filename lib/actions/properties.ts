@@ -264,27 +264,41 @@ export async function createProperty(
     return { error: insertErr?.message ?? "Insert failed" };
   }
 
-  await logEvent(supabase, {
-    orgId: profile.orgId,
-    actorId: profile.id,
-    entityType: "property",
-    entityId: created.id,
-    eventType: "created",
-    payload: {
-      reference,
-      kind: input.kind,
-      property_type: input.property_type,
-      // what was written from the party's standard terms, so the timeline
-      // explains values nobody typed
-      ...(partyId
-        ? {
-            source: input.source,
-            party: partyId,
-            applied_defaults: Object.keys(partyTerms),
-          }
-        : {}),
-    },
-  });
+  // From here the row has committed and its reference is burned. An event
+  // insert that fails now is the shape DECISIONS T-event-integrity describes
+  // — a write with no record — and this is its sixteenth accepted instance,
+  // the one where a THROWN error costs the most: the wizard showed a failure
+  // and the natural resubmit made a second listing with a second reference
+  // (audit 2026-09-13, OPS-01). The action lands on the record it made, with
+  // `?recorded=failed` so the page says the timeline has a hole — never with
+  // an error, and never as a clean save.
+  let recorded = true;
+  try {
+    await logEvent(supabase, {
+      orgId: profile.orgId,
+      actorId: profile.id,
+      entityType: "property",
+      entityId: created.id,
+      eventType: "created",
+      payload: {
+        reference,
+        kind: input.kind,
+        property_type: input.property_type,
+        // what was written from the party's standard terms, so the timeline
+        // explains values nobody typed
+        ...(partyId
+          ? {
+              source: input.source,
+              party: partyId,
+              applied_defaults: Object.keys(partyTerms),
+            }
+          : {}),
+      },
+    });
+  } catch (err) {
+    recorded = false;
+    console.error("[createProperty] saved but not recorded", { propertyId: created.id, reference, err });
+  }
 
   let unitsFailure: string | null = null;
   if (generated.length > 0) {
@@ -321,6 +335,10 @@ export async function createProperty(
       // the page says what happened and the generator is right below it.
       console.error(`[createProperty] units did not land for ${reference}:`, written.error);
       unitsFailure = written.error;
+    } else if (!written.recorded) {
+      // the units exist; only their events are missing — the parent's notice covers it
+      recorded = false;
+      console.error(`[createProperty] units written but not recorded for ${reference}`);
     }
   }
 
@@ -334,12 +352,12 @@ export async function createProperty(
   const { recomputeQuietly } = await import("@/lib/services/quality-score");
   await recomputeQuietly(supabase, created.id);
 
-  redirect(
-    isContainer
-      ? `/properties/${created.id}/units` +
-          (unitsFailure ? `?units=failed&reason=${encodeURIComponent(unitsFailure)}` : "")
-      : `/properties/${created.id}`,
-  );
+  const flags = [
+    ...(unitsFailure ? [`units=failed&reason=${encodeURIComponent(unitsFailure)}`] : []),
+    ...(recorded ? [] : ["recorded=failed"]),
+  ];
+  const query = flags.length > 0 ? `?${flags.join("&")}` : "";
+  redirect(isContainer ? `/properties/${created.id}/units${query}` : `/properties/${created.id}${query}`);
 }
 
 export async function updatePropertySection(

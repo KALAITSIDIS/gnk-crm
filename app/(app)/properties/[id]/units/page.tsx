@@ -33,6 +33,7 @@ import { countContainerUnits } from "@/lib/services/container-units";
 import { Button } from "@/components/ui/button";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { fetchProjectVelocity } from "@/lib/queries/sales-velocity";
+import { NOT_RECORDED_NOTICE } from "@/lib/services/optimistic-save";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
 
@@ -47,12 +48,17 @@ export default async function ProjectUnitsPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  /** `?units=failed&reason=…` — the wizard created the project but not its units */
-  searchParams: Promise<{ units?: string; reason?: string }>;
+  /**
+   * `?units=failed&reason=…` — the wizard created the project but not its
+   * units; `?recorded=failed` — it created them but could not write the
+   * event (OPS-01)
+   */
+  searchParams: Promise<{ units?: string; reason?: string; recorded?: string }>;
 }) {
   const { id } = await params;
-  const { units: unitsParam, reason: unitsReason } = await searchParams;
+  const { units: unitsParam, reason: unitsReason, recorded } = await searchParams;
   const unitsFailed = unitsParam === "failed";
+  const notRecorded = recorded === "failed";
   const supabase = await createClient();
 
   // the full inheritable set, because the drift panel compares every one of them
@@ -259,6 +265,14 @@ export default async function ProjectUnitsPage({
             Nothing else was lost: describe the layout again in the generator below and it will
             create them now.
           </p>
+        </div>
+      ) : null}
+      {notRecorded ? (
+        <div
+          role="alert"
+          className="rounded-[10px] border border-warning/40 bg-warning/10 p-4 text-sm text-text-2"
+        >
+          {NOT_RECORDED_NOTICE}
         </div>
       ) : null}
 

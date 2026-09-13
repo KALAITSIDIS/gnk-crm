@@ -55,13 +55,18 @@ import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
 import { formatArea, formatDate, formatDateTime, formatMoney } from "@/lib/utils/format";
 import { readEntityTimeline } from "@/lib/services/entity-timeline";
+import { NOT_RECORDED_NOTICE } from "@/lib/services/optimistic-save";
 
 export default async function PropertyDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  /** `?recorded=failed` — the wizard created the listing but could not write its event (OPS-01) */
+  searchParams: Promise<{ recorded?: string }>;
 }) {
   const { id } = await params;
+  const notRecorded = (await searchParams).recorded === "failed";
   const supabase = await createClient();
 
   // mandates via mandates_safe, NOT the base table: LM has no base-table
@@ -474,6 +479,14 @@ export default async function PropertyDetailPage({
 
   return (
     <div className="flex flex-col gap-4">
+      {notRecorded ? (
+        <div
+          role="alert"
+          className="rounded-[10px] border border-warning/40 bg-warning/10 p-4 text-sm text-text-2"
+        >
+          {NOT_RECORDED_NOTICE}
+        </div>
+      ) : null}
       <div>
         <Button asChild variant="ghost" size="sm" className="-ml-2 mb-2 text-text-2">
           <Link href="/properties">

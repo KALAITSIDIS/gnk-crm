@@ -42,8 +42,13 @@ import {
 export type UnitParent = ProjectRow & { id: string; org_id: string; reference: string };
 
 export type WriteUnitsResult =
-  | { error: string; created?: undefined }
-  | { error: null; created: { id: string; reference: string }[] };
+  | { error: string; created?: undefined; recorded?: undefined }
+  | {
+      error: null;
+      created: { id: string; reference: string }[];
+      /** false when the units exist but their `created` events could not be written (OPS-01) */
+      recorded: boolean;
+    };
 
 export async function writeGeneratedUnits(
   supabase: SupabaseClient<Database>,
@@ -169,23 +174,34 @@ export async function writeGeneratedUnits(
   // One event per unit, in ONE statement. Each unit is its own entity and owes
   // its own `created` row; the chain survives a multi-row insert (see logEvents).
   const inheritedNames = inheritedFieldsWithValues(project);
-  await logEvents(
-    supabase,
-    created.map((row) => ({
-      orgId: project.org_id,
-      actorId: opts.actorId,
-      entityType: "property" as const,
-      entityId: row.id,
-      eventType: "created",
-      payload: {
-        reference: row.reference,
-        kind: "unit",
-        parent: project.reference,
-        inherited: inheritedNames,
-        generated: true,
-      },
-    })),
-  );
+  //
+  // If THIS fails the units still exist: an error here used to throw out of
+  // both callers, and the wizard's resubmit would have made a second project
+  // (audit 2026-09-13, OPS-01). Reported as written-but-not-recorded, loudly;
+  // the callers carry the notice to the person.
+  let recorded = true;
+  try {
+    await logEvents(
+      supabase,
+      created.map((row) => ({
+        orgId: project.org_id,
+        actorId: opts.actorId,
+        entityType: "property" as const,
+        entityId: row.id,
+        eventType: "created",
+        payload: {
+          reference: row.reference,
+          kind: "unit",
+          parent: project.reference,
+          inherited: inheritedNames,
+          generated: true,
+        },
+      })),
+    );
+  } catch (err) {
+    recorded = false;
+    console.error("[writeGeneratedUnits] units written but not recorded", { parent: project.reference, err });
+  }
 
-  return { error: null, created };
+  return { error: null, created, recorded };
 }
