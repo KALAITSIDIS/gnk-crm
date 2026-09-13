@@ -230,11 +230,16 @@ export default async function PropertiesPage({
            this is a server component and the viewport is not known here; an
            explicit ?view= shows one everywhere. */
         <>
-          <div className="md:hidden">
-            <PropertiesCards rows={rows} />
-          </div>
+          {/* The table comes FIRST in the DOM. Both layouts are present and one
+              is display:none, so a locator's first match for a title is the
+              table's on a desktop — where the happy-path e2e looks (run
+              34767615456 failed on the hidden card). A phone never sees the
+              table, so its order costs nothing there. */}
           <div className="hidden md:block">
             <PropertiesTable rows={rows} />
+          </div>
+          <div className="md:hidden">
+            <PropertiesCards rows={rows} />
           </div>
         </>
       )}
