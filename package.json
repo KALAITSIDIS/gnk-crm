@@ -20,7 +20,8 @@
     "import:properties": "node --env-file=.env.local scripts/import/properties.mts",
     "check:static-routes": "node scripts/check-static-routes.mjs",
     "check:csp-nonce": "node scripts/check-csp-nonce.mjs",
-    "recompute:scores": "node --env-file=.env.local scripts/recompute-scores.mts"
+    "recompute:scores": "node --env-file=.env.local scripts/recompute-scores.mts",
+    "backup:fetch-pg-tools": "node scripts/backup/fetch-pg-tools.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

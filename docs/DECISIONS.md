@@ -6084,3 +6084,59 @@ copy is a second thing to forget.
 class (it does not); that fail-open on an unrecognised doc_type rests on an
 unenforced invariant (true, but superseded by moving off doc_type entirely); and
 four smaller claims about test coverage and docstrings.
+
+## T-native-dump — the nightly dump no longer needs a container (2026-09-13)
+
+**What was found.** `~/.gnk-crm/backup.log` showed five consecutive `exit=1`
+nights, 2026-09-09 to 09-13, each `notify: pinged FAIL`, each with the same
+cause: `failed to connect to the docker API at
+npipe:////./pipe/dockerDesktopLinuxEngine`. The machine had rebooted 09-09
+04:54; nobody started Docker Desktop again until 09-13 13:45. `capture.mjs`
+produced its dumps through `npx supabase db dump`, which runs pg_dump inside
+a container, and the 03:45 task runs under S4U — a logon type that cannot
+start a per-user GUI app. The dead-man switch did its job (healthchecks.io
+DOWN from 09-09); it cannot do the backup's. The same signature had appeared
+08-08 and 08-19/20 and been read as Docker flakiness.
+
+**What was done.** `scripts/backup/pg-native.mjs` reproduces the CLI's
+output with a plain `pg_dump`/`pg_dumpall`. Not "roughly": the CLI's
+`dump_schema.sh`, `dump_data.sh` and `dump_role.sh` were extracted from the
+2.115.0 binary, including the two lists the launcher fills in (reserved
+roles, allowed per-role configs) and the fact that `--keep-comments` off
+means every comment line is deleted from schema and role dumps but kept in
+data dumps, and reproduced rule for rule as pure functions with a
+real-shape test suite (20 tests). Proof: the CLI dumps and the native dumps
+of production were taken back to back and diffed — `pg_dump.sql` and
+`roles.sql` byte-identical, `data.sql` differing in exactly three lines: the
+two random `\restrict` tokens and `Dumped by pg_dump version 17.6` → `17.11`.
+Then Docker Desktop was stopped (`docker ps` failing with the exact
+named-pipe error from the failed nights) and `run-backup.cmd` ran: every
+check passed, off-site copied, ping OK, exit 0.
+
+**Where pg_dump comes from, and the wrong turn.** The first choice was the
+npm package `@embedded-postgres/windows-x64` (reproducible, CI-skippable).
+Installed and inspected, it ships `initdb`, `pg_ctl` and `postgres` only —
+no client tools; the recommendation had been made before that was checked.
+The one npm package that bundles a Windows `pg_dump` bundles PostgreSQL 14,
+which refuses to dump a 17.6 server. So: the theseus-rs `postgresql-binaries`
+17.11.0 Windows zip, which is EnterpriseDB's official build with pgAdmin and
+docs stripped (their build.yml downloads get.enterprisedb.com and deletes
+those folders), 49 MB, SHA-256 published. `fetch-pg-tools.mjs` downloads it,
+hashes it while streaming, refuses on mismatch, and extracts the client tools
+with bsdtar into `~/.gnk-crm/pgsql/17.11.0/bin` — next to `backup.env`,
+outside the repo and outside OneDrive (60 MB on disk). The pin is one
+constant, `PG_TOOLS`. A wrong `PG_BIN` or no tools at all is exit 2, the
+refused-to-start code, with the fix named.
+
+**Smaller facts worth keeping.** The CLI passes the connection as
+`PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE`, never as a URL on the command
+line; so does the native path now, which closes the "briefly visible to
+anything that enumerates process command lines" wart the old comment owned
+up to. `pg_dump.exe` on Windows writes CRLF to a stdout pipe — the rewrite
+functions normalise it, and without that the files would not have matched.
+`spawnSync`'s default `maxBuffer` is 1 MiB and would have truncated
+`data.sql` silently; it is 1 GiB here. The `tar` on PATH under Git Bash is
+GNU tar and cannot read zip; `C:\Windows\System32\tar.exe` is bsdtar and can.
+Suffix byte ranges (`-r -N`) are refused by GitHub's release CDN with 501;
+an explicit `start-end` range works, which is how the zip's directory was
+listed without downloading it.
