@@ -40,6 +40,7 @@ function harness(opts: {
     readBasis: step("readBasis", opts.basis ?? NO_BASIS),
     hasErasedEvent: step("hasErasedEvent", opts.erasedEventExists ?? false),
     redactLeads: step("redactLeads", 2),
+    redactNotes: step("redactNotes", 1),
     deleteRequirements: step("deleteRequirements", 1),
     listDocuments: step("listDocuments", docs),
     removeObjects: async (paths) => {
@@ -72,6 +73,7 @@ describe("the order: dependants first, the contact last, the record after", () =
     expect(h.calls).toEqual([
       "readBasis",
       "redactLeads",
+      "redactNotes",
       "deleteRequirements",
       "listDocuments",
       "removeObjects:kyc/d1.pdf",
@@ -108,7 +110,7 @@ describe("a failed basis read is an error, never 'no relationship'", () => {
 });
 
 describe("each write failure stops before the contact is marked erased", () => {
-  for (const at of ["redactLeads", "deleteRequirements", "listDocuments", "removeObjects", "deleteDocumentRows"] as const) {
+  for (const at of ["redactLeads", "redactNotes", "deleteRequirements", "listDocuments", "removeObjects", "deleteDocumentRows"] as const) {
     it(`${at} failing leaves erased_at unset and names the step`, async () => {
       const h = harness({ failAt: at });
       const r = await run(h);

@@ -81,6 +81,15 @@ export function judgeAll(jobs: CronJobFacts[], now: Date): CronVerdict[] {
  *  plus a full day of nobody noticing. */
 export const CHAIN_CHECK_STALE_MS = 48 * HOUR;
 
+/**
+ * How many scheduled jobs the migrations define — the number the dashboard's
+ * banner compares against. ONE place, pinned to the migrations by
+ * tests/unit/cron-jobs-pinned.test.ts, because the literal that used to live in
+ * the component went stale the day 0092 scheduled the ninth job and production
+ * read "expected 8 jobs, found 9" on the card whose purpose is to be believed.
+ */
+export const EXPECTED_CRON_JOBS = 9;
+
 export function chainCheckIsStale(checkedAt: string | null, now: Date): boolean {
   if (!checkedAt) return true;
   return now.getTime() - new Date(checkedAt).getTime() > CHAIN_CHECK_STALE_MS;

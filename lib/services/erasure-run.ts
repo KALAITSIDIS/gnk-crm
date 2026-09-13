@@ -24,7 +24,7 @@ import {
  *   1. the basis is established or nothing happens — a failed read is an error,
  *      never "no basis";
  *   2. every write runs in an order where a failure leaves a state the next
- *      run can finish: leads → requirements → storage objects → document rows
+ *      run can finish: leads → notes → requirements → storage objects → document rows
  *      → the contact patch (with erased_at) LAST → the event;
  *   3. every step is idempotent, so a re-run is safe, and a contact with
  *      `erased_at` set but no `erased` event is exactly the half-finished case
@@ -47,6 +47,8 @@ export interface ErasureSteps {
   hasErasedEvent(): Promise<boolean>;
   /** Rewrites messages not already redacted; returns how many. */
   redactLeads(): Promise<number>;
+  /** 0094: blanks the notes on the contact and on its leads; returns how many. */
+  redactNotes(): Promise<number>;
   deleteRequirements(): Promise<number>;
   listDocuments(): Promise<{ id: string; storage_path: string | null }[]>;
   /** Must throw unless every path is absent afterwards. */
@@ -109,11 +111,13 @@ export async function runContactErasure(input: {
 
   // 2. The writes, each propagating, in an order a re-run can finish.
   let leadsRedacted = 0;
+  let notesRedacted = 0;
   let requirementsDeleted = 0;
   let documentsDeleted = 0;
   let documentsRetained = 0;
   try {
     leadsRedacted = await attempt("redacting lead messages", () => steps.redactLeads());
+    notesRedacted = await attempt("redacting notes", () => steps.redactNotes());
     requirementsDeleted = await attempt("deleting saved searches", () => steps.deleteRequirements());
     const docs = await attempt("listing documents", () => steps.listDocuments());
     if (plan.deleteDocuments && docs.length > 0) {
@@ -158,6 +162,7 @@ export async function runContactErasure(input: {
     amlBasis,
     retentionUntil: plan.retentionUntil,
     leadsRedacted,
+    notesRedacted,
     requirementsDeleted,
     documentsDeleted,
     documentsRetained,

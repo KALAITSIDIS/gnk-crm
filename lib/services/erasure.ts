@@ -181,6 +181,8 @@ export function buildErasureEventPayload(input: {
   amlBasis: boolean;
   retentionUntil: string | null;
   leadsRedacted: number;
+  /** 0094: conversation notes blanked — on the contact and on its leads */
+  notesRedacted: number;
   /** 0055: saved searches removed — counted so the audit says how many */
   requirementsDeleted: number;
   documentsDeleted: number;
@@ -194,6 +196,7 @@ export function buildErasureEventPayload(input: {
     aml_basis: input.amlBasis,
     retention_until: input.retentionUntil,
     leads_redacted: input.leadsRedacted,
+    notes_redacted: input.notesRedacted,
     saved_searches_deleted: input.requirementsDeleted,
     documents_deleted: input.documentsDeleted,
     documents_retained: input.documentsRetained,

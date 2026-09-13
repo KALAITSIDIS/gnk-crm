@@ -44,6 +44,7 @@ Legend: ✅ full · 🔒 restricted (condition in Notes) · ❌ denied
 | mandates | A ✅ · AG 🔒 rows where `assigned_agent` on property = uid OR created_by = uid · LM 🔒 (row visible but **commission_pct, commission_notes** masked via view for LM) | A | A | ❌ (status terminated) | Commission figures = admin + property's assigned agent only. Implement mask with `mandates_safe` view; LM/others select from view. |
 | property_keys / key_movements | A AG LM | A AG LM (movements) · A LM (keys) | A LM (keys meta) · movements ❌ | ❌ | Movements are append-only like events |
 | leads | A AG LM | A AG LM (+ service role for website later) | A ✅ · AG 🔒 (`assigned_agent_id = uid` or unassigned→claim) | ❌ (status spam/lost) | |
+| interaction_notes | A AG LM | A AG LM (`created_by = uid`, through `log_conversation`) | ❌ session — service role only (contact erasure, the retention sweep) | ❌ | 0094 (audit SEC-03): a logged conversation's text. The `conversation_logged` event carries the row's id + SHA-256, never the text. Immutable except to be blanked (trigger); the AFTER INSERT trigger writes the event, so no note exists the chain does not know about. |
 | deal_stages | A AG LM | A | A | A 🔒 (only if no deals reference) | |
 | deals | A ✅ · AG 🔒 (`agent_id = uid` OR created_by = uid) · LM 🔒 read-only all | A AG | A ✅ · AG 🔒 own | ❌ (status lost) | Admin sees all commission notes; agents only own deals' |
 | offers | follows parent deal visibility | A AG (own deals) | A ✅ · AG 🔒 own deals | ❌ (status withdrawn) | |

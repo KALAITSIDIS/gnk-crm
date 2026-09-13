@@ -671,14 +671,27 @@ export async function logDealContact(
   if (updateErr) return { error: updateErr.message, savedAt: null };
   if (!updated) return { error: "You do not have permission to update this deal", savedAt: null };
 
-  await logEvent(supabase, {
-    orgId: deal.org_id,
-    actorId: profile.id,
-    entityType: "deal",
-    entityId: dealId,
-    eventType: "conversation_logged",
-    payload: { channel, ...(note ? { note } : {}) },
-  });
+  if (note) {
+    // The words go to interaction_notes and the chain gets their digest
+    // (0094, audit SEC-03): erasure can blank a row, never an event. The
+    // database writes the conversation_logged event from the note's insert.
+    const { error: noteErr } = await supabase.rpc("log_conversation", {
+      p_entity_type: "deal",
+      p_entity_id: dealId,
+      p_channel: channel,
+      p_note: note,
+    });
+    if (noteErr) return { error: noteErr.message, savedAt: null };
+  } else {
+    await logEvent(supabase, {
+      orgId: deal.org_id,
+      actorId: profile.id,
+      entityType: "deal",
+      entityId: dealId,
+      eventType: "conversation_logged",
+      payload: { channel },
+    });
+  }
 
   await recomputeDealHealth(supabase, dealId);
   revalidatePath(`/deals/${dealId}`);

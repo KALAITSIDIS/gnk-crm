@@ -105,7 +105,9 @@ export async function createPartyContact(input: {
     entityType: "contact",
     entityId: created.id,
     eventType: "created",
-    payload: { phone: phoneE164, email: d.email ?? null, via: "property_wizard" },
+    // shape only (audit SEC-03): the identifiers live on the row, which
+    // erasure can blank; an event cannot be
+    payload: { has_phone: Boolean(phoneE164), has_email: Boolean(d.email), via: "property_wizard" },
   });
 
   return {

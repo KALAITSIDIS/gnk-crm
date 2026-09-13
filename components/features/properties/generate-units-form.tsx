@@ -348,6 +348,11 @@ export function GenerateUnitsForm({
           {state.error}
         </p>
       ) : null}
+      {state.notice ? (
+        <p role="status" className="text-sm text-warning">
+          {state.notice}
+        </p>
+      ) : null}
       <div>
         <Button type="submit" size="sm" disabled={pending || tooMany || count === 0}>
           <Rows3 className="size-4" />

@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { NOT_RECORDED_NOTICE } from "@/lib/services/optimistic-save";
 import { z } from "zod";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { logEvent, logEvents } from "@/lib/services/events";
@@ -31,7 +32,12 @@ import {
 import { inScope, previewUplift, type UpliftMode } from "@/lib/services/price-uplift";
 import { stampOf, type UnitType } from "@/lib/services/unit-type";
 
-export type UnitActionState = { error: string | null; savedAt: number | null };
+export type UnitActionState = {
+  error: string | null;
+  savedAt: number | null;
+  /** a save that happened but could not be recorded in the timeline (OPS-01) */
+  notice?: string | null;
+};
 
 const createUnitSchema = z.object({
   project_id: z.string().uuid(),
@@ -349,7 +355,9 @@ export async function generateProjectUnits(
 
   revalidatePath(`/properties/${project.id}/units`);
   revalidatePath("/properties");
-  return { error: null, savedAt: Date.now() };
+  // Written but not recorded is a SAVE with a notice (OPS-01): an error would
+  // invite a resubmit the unique reference index would refuse anyway.
+  return { error: null, savedAt: Date.now(), notice: written.recorded ? null : NOT_RECORDED_NOTICE };
 }
 
 const createPhaseSchema = z.object({

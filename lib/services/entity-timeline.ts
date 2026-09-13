@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { TimelineEvent } from "@/lib/services/events";
+import { NOTE_ERASED_LABEL } from "@/lib/services/notes";
 
 /**
  * A record's timeline — what happened to it, not what YOU did to it.
@@ -104,8 +105,57 @@ export async function readEntityTimeline(opts: {
     });
     return [];
   }
-  const rows = (data ?? []) as unknown as TimelineRow[];
+  const rows = await attachNotes((data ?? []) as unknown as TimelineRow[], opts.orgId);
   return redactWonDealKinds(redactDocumentTitles(rows, opts.viewerRole), opts.viewerRole);
+}
+
+/**
+ * A logged conversation's words come from `interaction_notes`, not the event
+ * (0094, audit SEC-03).
+ *
+ * Until 2026-09-13 the note went into the hash-chained, never-updated event
+ * payload verbatim — so an Article 17 erasure left every word the desk had
+ * written about the person readable for ever — and nothing rendered it: the
+ * line said "Conversation logged (phone)" and the text sat in the chain unseen.
+ * The event now carries `note_id` and a digest; this joins the row, org-bound
+ * because the admin client has no other boundary, and attaches the body as the
+ * line's `note`. A blanked row says so rather than showing nothing, and an
+ * event written before 0094 still carries its note inline and renders as it
+ * did. No lookup at all when nothing on the page references a note.
+ */
+async function attachNotes(rows: TimelineRow[], orgId: string): Promise<TimelineRow[]> {
+  const ids = new Set<string>();
+  for (const r of rows) {
+    if (r.event_type !== "conversation_logged") continue;
+    const p = (r.payload ?? {}) as Record<string, unknown>;
+    if (typeof p.note_id === "string") ids.add(p.note_id);
+  }
+  const bodies = new Map<string, string | null>();
+  if (ids.size > 0) {
+    const { data, error } = await createAdminClient()
+      .from("interaction_notes")
+      .select("id, body, redacted_at")
+      // EXPLICIT — the admin client bypasses RLS, so this is the only org boundary
+      .eq("org_id", orgId)
+      .in("id", [...ids]);
+    if (error) {
+      console.error("timeline notes read failed:", { count: ids.size, error: error.message });
+    }
+    for (const n of data ?? []) {
+      bodies.set(n.id, n.body ?? (n.redacted_at ? NOTE_ERASED_LABEL : null));
+    }
+  }
+  return rows.map((r) => {
+    if (r.event_type !== "conversation_logged") return r;
+    const p = (r.payload ?? {}) as Record<string, unknown>;
+    const note =
+      typeof p.note_id === "string"
+        ? (bodies.get(p.note_id) ?? null)
+        : typeof p.note === "string"
+          ? p.note
+          : null;
+    return note ? { ...r, note } : r;
+  });
 }
 
 /** The two event types whose payload carries a document's title. */

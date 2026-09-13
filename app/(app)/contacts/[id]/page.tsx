@@ -157,7 +157,11 @@ export default async function ContactDetailPage({
   const mergedName = new Map((mergedRows ?? []).map((m) => [m.id, m.display_name]));
   const events = (eventRows ?? []).map((e) => ({
     ...e,
-    note: e.entity_id !== id ? (mergedName.get(e.entity_id ?? "") ?? "merged contact") : null,
+    // the merged-away source's name, and/or the conversation note the reader attached (0094)
+    note:
+      e.entity_id !== id
+        ? [mergedName.get(e.entity_id ?? "") ?? "merged contact", e.note].filter(Boolean).join(" · ")
+        : (e.note ?? null),
   }));
 
   const areaOptions = (areaRows ?? []).map((a) => ({

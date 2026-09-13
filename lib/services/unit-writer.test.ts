@@ -168,4 +168,40 @@ describe("a generated unit is scored the moment it is written", () => {
     );
     err.mockRestore();
   });
+
+  it("reports the units as written but NOT recorded when their events fail — never as a failed run (OPS-01)", async () => {
+    const { logEvents } = await import("@/lib/services/events");
+    vi.mocked(logEvents).mockImplementationOnce(async () => {
+      throw new Error("events insert failed");
+    });
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const fake = setup([
+      { data: [], error: null },
+      { data: [storedRow("u1")], error: null },
+      { data: null, error: null },
+    ]);
+    const res = await writeGeneratedUnits(fake.client as never, project, [unit()], {
+      propertyType: "villa",
+      actorId: "actor-1",
+    });
+    expect(res.error, "the units exist — an error would invite a resubmit").toBeNull();
+    expect(res.created).toHaveLength(1);
+    expect(res.recorded).toBe(false);
+    expect(err).toHaveBeenCalledWith(expect.stringContaining("not recorded"), expect.anything());
+    err.mockRestore();
+  });
+
+  it("says recorded when the events were written", async () => {
+    const fake = setup([
+      { data: [], error: null },
+      { data: [storedRow("u1")], error: null },
+      { data: null, error: null },
+    ]);
+    const res = await writeGeneratedUnits(fake.client as never, project, [unit()], {
+      propertyType: "villa",
+      actorId: "actor-1",
+    });
+    expect(res.error).toBeNull();
+    expect(res.recorded).toBe(true);
+  });
 });
