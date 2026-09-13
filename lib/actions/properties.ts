@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import type { Database } from "@/lib/supabase/database.types";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
+import { notifySiteAfter } from "@/lib/services/site-revalidate";
 import {
   generateUnits,
   generateVillaUnits,
@@ -903,6 +904,12 @@ export async function updatePropertySection(
 
   revalidatePath(`/properties/${propertyId}`);
   revalidatePath("/properties");
+  // The public site rebuilds the pages this row can have moved — after the
+  // response, never failing it. Before OR after: a listing that just went
+  // private has to vanish as promptly as one that just went public appears.
+  if (current.visibility === "public" || updates.visibility === "public") {
+    notifySiteAfter(current.reference);
+  }
   return { error: null, savedAt: Date.now(), notice: recorded ? null : NOT_RECORDED_NOTICE };
 }
 
@@ -927,7 +934,7 @@ export async function archiveProperty(propertyId: string): Promise<PropertyActio
 
   const { data: current } = await supabase
     .from("properties")
-    .select("id, visibility, parent_id")
+    .select("id, reference, visibility, parent_id")
     .eq("id", propertyId)
     .maybeSingle();
   if (!current) return { error: "Property not found" };
@@ -958,6 +965,7 @@ export async function archiveProperty(propertyId: string): Promise<PropertyActio
   const { refreshContainerScores } = await import("@/lib/services/quality-score");
   await refreshContainerScores(supabase, current.parent_id);
 
+  notifySiteAfter(current.reference);
   revalidatePath(`/properties/${propertyId}`);
   revalidatePath("/properties");
   return { error: null };
@@ -982,7 +990,7 @@ export async function restoreProperty(propertyId: string): Promise<PropertyActio
 
   const { data: current } = await supabase
     .from("properties")
-    .select("id, status, visibility, parent_id")
+    .select("id, reference, status, visibility, parent_id")
     .eq("id", propertyId)
     .maybeSingle();
   if (!current) return { error: "Property not found" };
@@ -1026,6 +1034,7 @@ export async function restoreProperty(propertyId: string): Promise<PropertyActio
   await recomputeQuietly(supabase, propertyId);
   await refreshContainerScores(supabase, current.parent_id);
 
+  notifySiteAfter(current.reference);
   revalidatePath(`/properties/${propertyId}`);
   revalidatePath("/properties");
   return { error: null };

@@ -216,6 +216,8 @@ RESEND_API_KEY                   (optional)
 ENQUIRY_ALERT_TO                 (with it; the desk address)
 ENQUIRY_FORWARD_KEY              (secret; = gnk-web's CRM_FORWARD_KEY — the site proves it is the forwarder, 2026-09-06)
 IP_HASH_SALT                     (secret; salts the rate-limit fingerprints — unset falls back to the public project URL and logs it)
+SITE_REVALIDATE_URL              (the site's revalidate door, https://gnk-web.vercel.app/api/revalidate — 2026-09-13, REL-01)
+SITE_REVALIDATE_KEY              (secret; = gnk-web's SITE_REVALIDATE_KEY — the CRM proves a knock is its own; unset = the site refreshes on its timers alone, logged once)
 ```
 
 **Rotating a Supabase key requires a redeploy with the build cache OFF.** A

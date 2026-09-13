@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { NextRequest } from "next/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET } from "@/app/api/public/listings/route";
 
 /**
@@ -21,13 +21,17 @@ const state = vi.hoisted(() => ({
   snapshotError: false,
   overBudget: false,
   calls: [] as string[],
+  hits: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock("@/lib/supabase/public", () => ({
   createPublicClient: () => ({
     rpc: async (name: string, args: Record<string, unknown> = {}) => {
       state.calls.push(name);
-      if (name === "note_public_listing_hit") return { data: state.overBudget, error: null };
+      if (name === "note_public_listing_hit") {
+        state.hits.push(args);
+        return { data: state.overBudget, error: null };
+      }
       if (name === "public_listings_etag") {
         return state.snapshotError
           ? { data: null, error: { message: "snapshot failed" } }
@@ -46,7 +50,11 @@ vi.mock("@/lib/supabase/public", () => ({
     },
   }),
 }));
-vi.mock("@/lib/services/caller-ip", () => ({ callerIpHash: async () => "ip-hash" }));
+// The scope argument is what keeps a proven site's counter apart from a
+// stranger's at the same address (REL-03); the fake keeps the shape visible.
+vi.mock("@/lib/services/caller-ip", () => ({
+  callerIpHash: async (scope?: string) => (scope ? `${scope}:ip-hash` : "ip-hash"),
+}));
 
 process.env.NEXT_PUBLIC_SUPABASE_URL = "https://example.supabase.co";
 
@@ -79,6 +87,45 @@ beforeEach(() => {
   state.snapshotError = false;
   state.overBudget = false;
   state.calls = [];
+  state.hits = [];
+});
+
+describe("a proven forwarder reads on its own budget (audit REL-03)", () => {
+  // The marketing site reads the feed from ONE egress address: every ISR
+  // regeneration, every by-reference lookup, every sitemap render. Metered as
+  // a stranger at 120 per quarter hour, a crawler sweeping a growing book
+  // would spend that in a minute and every page would fall back to its last
+  // good copy. The same key the enquiry door already believes buys the site a
+  // separate counter with a larger budget — and nothing else.
+  const KEY = "site-key-long-enough-to-be-real";
+  beforeEach(() => {
+    process.env.ENQUIRY_FORWARD_KEY = KEY;
+  });
+  afterEach(() => {
+    delete process.env.ENQUIRY_FORWARD_KEY;
+  });
+
+  it("meters a stranger at 120 on the address hash", async () => {
+    expect((await get()).status).toBe(200);
+    expect(state.hits).toEqual([{ p_ip_hash: "ip-hash", p_limit: 120 }]);
+  });
+
+  it("meters the site on a site-scoped hash with the larger budget when the key matches", async () => {
+    expect((await get("org=gnk", { "x-gnk-forward-key": KEY })).status).toBe(200);
+    expect(state.hits).toEqual([{ p_ip_hash: "site:ip-hash", p_limit: 1200 }]);
+  });
+
+  it("treats a wrong key as a stranger, never as a refusal", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await get("org=gnk", { "x-gnk-forward-key": "not-the-key" })).status).toBe(200);
+    expect(state.hits).toEqual([{ p_ip_hash: "ip-hash", p_limit: 120 }]);
+  });
+
+  it("trusts nothing when the CRM has no key configured", async () => {
+    delete process.env.ENQUIRY_FORWARD_KEY;
+    expect((await get("org=gnk", { "x-gnk-forward-key": KEY })).status).toBe(200);
+    expect(state.hits).toEqual([{ p_ip_hash: "ip-hash", p_limit: 120 }]);
+  });
 });
 
 describe("one listing by reference (0088)", () => {

@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createPublicClient } from "@/lib/supabase/public";
 import { callerIpHash } from "@/lib/services/caller-ip";
+import { isTrustedForwarderLoudly } from "@/lib/services/forwarder";
 import { feedEtag } from "@/lib/services/feed-etag";
 import { absolutizeListingImages, parseFeedParams } from "@/lib/services/public-listings";
 
@@ -31,6 +32,20 @@ export const dynamic = "force-dynamic";
 const RATE_LIMIT = 120;
 
 /**
+ * Requests per 15-minute window for OUR marketing site, which reads the feed
+ * from one egress address: every ISR regeneration, every by-reference lookup,
+ * every sitemap render. Metered as a stranger, a crawler sweeping a growing
+ * book spent the 120 in a minute and every page fell back to its last good
+ * copy (audit REL-03). The site proves itself with the same key the enquiry
+ * door already believes (`x-gnk-forward-key`, lib/services/forwarder.ts) and
+ * is metered on a site-scoped hash, so a stranger at the same address cannot
+ * spend this budget and the site cannot spend theirs. The key buys budget and
+ * nothing else; the feed is public either way.
+ */
+const SITE_RATE_LIMIT = 1200;
+const FORWARD_KEY_HEADER = "x-gnk-forward-key";
+
+/**
  * How long the edge may hold a body. Short and public: a marketing site may
  * poll, and a stale minute costs nothing next to hammering the database.
  *
@@ -57,9 +72,13 @@ export async function GET(request: NextRequest) {
   // Rate limit first, so a flood costs one counter round trip rather than a
   // full feed query. Reuses the 0023 idiom against its own counter table —
   // sharing one would let this exhaust a buyer's share-link budget.
+  const trusted = isTrustedForwarderLoudly(
+    request.headers.get(FORWARD_KEY_HEADER),
+    process.env.ENQUIRY_FORWARD_KEY,
+  );
   const overBudget = await supabase.rpc("note_public_listing_hit", {
-    p_ip_hash: await callerIpHash(),
-    p_limit: RATE_LIMIT,
+    p_ip_hash: await callerIpHash(trusted ? "site" : undefined),
+    p_limit: trusted ? SITE_RATE_LIMIT : RATE_LIMIT,
   });
   if (overBudget.data === true) {
     return NextResponse.json(
