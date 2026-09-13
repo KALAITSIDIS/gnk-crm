@@ -176,7 +176,11 @@ export const propertyFiltersSchema = z.object({
   view: z
     .string()
     .optional()
-    .transform((v) => (v === "cards" ? "cards" : "table")),
+    // Absent means AUTO (audit CRM-06): cards on a phone, the table from the
+    // tablet breakpoint up. A phone used to get the twelve-column table with
+    // everything past the title off the right edge. An explicit value is
+    // honoured on every screen.
+    .transform((v) => (v === "cards" ? "cards" : v === "table" ? "table" : "auto")),
   page: z
     .string()
     .optional()

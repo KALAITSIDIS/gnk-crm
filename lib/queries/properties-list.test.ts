@@ -39,10 +39,10 @@ const base = (over: Record<string, string> = {}): PropertyFilters =>
   parsePropertyFilters(over);
 
 describe("parsePropertyFilters", () => {
-  it("defaults scope to active, view to table, page to 1", () => {
+  it("defaults scope to active, view to auto (cards on a phone, table above — CRM-06), page to 1", () => {
     const f = parsePropertyFilters({});
     expect(f.scope).toBe("active");
-    expect(f.view).toBe("table");
+    expect(f.view).toBe("auto");
     expect(f.page).toBe(1);
   });
 

@@ -30,6 +30,7 @@ import {
 import { EntityPicker } from "@/components/features/shared/entity-picker";
 import type { EntityOption } from "@/lib/actions/entity-search";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import {
   Dialog,
   DialogContent,
@@ -77,6 +78,10 @@ export function LeadRowActions({
   isRedacted: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
+  // Audit CRM-06: eight buttons wrapped to three rows on a phone, with the
+  // two that matter on the move — Called and Log — lost among six that do
+  // not. Below the tablet breakpoint the secondary actions sit behind "More".
+  const [more, setMore] = useState(false);
   const act = (fn: () => Promise<void>, success: string) =>
     startTransition(async () => {
       try {
@@ -159,7 +164,6 @@ export function LeadRowActions({
           <Check className="size-3.5" /> Contacted
         </Button>
       ) : null}
-      {canLinkContact ? <LinkContactDialog leadId={leadId} /> : null}
       {canWork ? (
         <Button
           variant="outline"
@@ -173,12 +177,25 @@ export function LeadRowActions({
       ) : null}
       {canWork ? <LogConversationDialog leadId={leadId} /> : null}
       {canWork ? <ConvertLeadDialog leadId={leadId} hasContact={hasContact} /> : null}
-      {isAdmin ? <ReassignDialog leadId={leadId} /> : null}
-      {isAdmin && hasResponse ? (
-        <CorrectLeadDialog leadId={leadId} canReopen={false} canReset />
-      ) : null}
-      {canWork ? <CloseLeadDialog leadId={leadId} /> : null}
-      {redact}
+      <div className={cn("contents", !more && "max-md:hidden")}>
+        {canLinkContact ? <LinkContactDialog leadId={leadId} /> : null}
+        {isAdmin ? <ReassignDialog leadId={leadId} /> : null}
+        {isAdmin && hasResponse ? (
+          <CorrectLeadDialog leadId={leadId} canReopen={false} canReset />
+        ) : null}
+        {canWork ? <CloseLeadDialog leadId={leadId} /> : null}
+        {redact}
+      </div>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-7 text-xs md:hidden"
+        aria-expanded={more}
+        onClick={() => setMore((v) => !v)}
+      >
+        {more ? "Less" : "More…"}
+      </Button>
     </div>
   );
 }

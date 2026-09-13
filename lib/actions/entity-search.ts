@@ -60,9 +60,16 @@ export async function searchEntities(
   }
 
   if (kind === "property") {
+    // Live listings only. On 2026-09-13 the palette offered PAF0005-V04 and
+    // -V05 — archived on 4 September with invented data — as "available",
+    // because nothing here filtered and the sublabel prints status. A retired
+    // record is reachable from the archived scope of the list, deliberately,
+    // and from nowhere a viewing or a hold could be booked against it.
     const { data } = await supabase
       .from("properties")
       .select("id, reference, title, status")
+      .neq("visibility", "archived")
+      .neq("status", "withdrawn")
       .or(`reference.ilike.%${q}%,title->>en.ilike.%${q}%`)
       .limit(8);
     return (data ?? []).map((p) => ({

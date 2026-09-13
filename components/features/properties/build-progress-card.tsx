@@ -35,11 +35,13 @@ function timeToDelivery(months: number): string {
 export function BuildProgressCard({
   constructionStatus,
   deliveryDate,
+  yearBuilt = null,
 }: {
   constructionStatus: string | null;
   deliveryDate: string | null;
+  yearBuilt?: number | null;
 }) {
-  const b = buildProgress(constructionStatus, deliveryDate);
+  const b = buildProgress(constructionStatus, deliveryDate, new Date(), yearBuilt);
   if (!hasBuildInfo(b)) return null;
 
   return (

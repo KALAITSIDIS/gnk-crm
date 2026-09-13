@@ -222,8 +222,26 @@ export default async function PropertiesPage({
         </div>
       ) : filters.view === "cards" ? (
         <PropertiesCards rows={rows} />
-      ) : (
+      ) : filters.view === "table" ? (
         <PropertiesTable rows={rows} />
+      ) : (
+        /* auto (audit CRM-06): cards on a phone, the table from the tablet
+           breakpoint up. Both are rendered and one is hidden by CSS, because
+           this is a server component and the viewport is not known here; an
+           explicit ?view= shows one everywhere. */
+        <>
+          {/* The table comes FIRST in the DOM. Both layouts are present and one
+              is display:none, so a locator's first match for a title is the
+              table's on a desktop — where the happy-path e2e looks (run
+              34767615456 failed on the hidden card). A phone never sees the
+              table, so its order costs nothing there. */}
+          <div className="hidden md:block">
+            <PropertiesTable rows={rows} />
+          </div>
+          <div className="md:hidden">
+            <PropertiesCards rows={rows} />
+          </div>
+        </>
       )}
 
       {totalPages > 1 ? (

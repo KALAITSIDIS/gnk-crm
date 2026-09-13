@@ -55,6 +55,7 @@ export const PUBLISH_THRESHOLD = 70;
 // WITH the extension, not "@/": scripts/recompute-scores.mts and the media
 // importer load this file under plain Node, which resolves neither a
 // tsconfig alias nor an extensionless path — the alias broke both for a day.
+import { buildProgress } from "./construction.ts";
 import { countContainerUnits } from "./container-units.ts";
 import { fetchSharedPhotoReferences } from "./shared-photos.ts";
 
@@ -97,6 +98,8 @@ export interface QualityScoreInput {
    * lib/services/shared-photos.ts.
    */
   sharedPhotoWith?: readonly string[];
+  /** A contradiction in the build declaration (lib/services/construction.ts); a warning, never points. */
+  buildConflict?: string | null;
 }
 
 export interface QualityScoreItem {
@@ -108,7 +111,7 @@ export interface QualityScoreItem {
 
 /** Something the desk should know that moves no points. */
 export interface QualityScoreWarning {
-  key: "shared_photo";
+  key: "shared_photo" | "build_conflict";
   label: string;
   references: string[];
 }
@@ -208,6 +211,11 @@ export function computeQualityScore(input: QualityScoreInput): QualityScoreResul
           },
         ]
       : [];
+  // Audit CRM-05: a build year that contradicts the build status or a pending
+  // delivery date. Costs nothing — something is wrong, not missing.
+  if (input.buildConflict) {
+    warnings.push({ key: "build_conflict", label: input.buildConflict, references: [] });
+  }
   return { score, items, missing: items.filter((i) => !i.earned), warnings };
 }
 
@@ -236,6 +244,10 @@ export interface QualityScoreSource {
   assigned_agent_id: string | null;
   owner_contact_id: string | null;
   developer_contact_id: string | null;
+  /** Optional: a source that carries these gets the build-conflict warning. */
+  year_built?: number | null;
+  construction_status?: string | null;
+  delivery_date?: string | null;
 }
 
 /**
@@ -287,6 +299,12 @@ export function buildQualityInput(
     mandateActive: facts.mandateActive,
     hasAssignedAgent: p.assigned_agent_id !== null,
     hasOwnerOrDeveloper: p.owner_contact_id !== null || p.developer_contact_id !== null,
+    buildConflict: buildProgress(
+      p.construction_status ?? null,
+      p.delivery_date ?? null,
+      new Date(),
+      p.year_built ?? null,
+    ).mismatch,
   };
 }
 
@@ -327,7 +345,8 @@ export async function recomputeQualityScore(
         `property_type, kind, title, public_description, asking_price, rent_price_month,
          covered_area_sqm, plot_area_sqm, bedrooms, bathrooms, planning_zone_code,
          building_density_pct, location, location_approx, title_deed_status, permit_status, quality_score,
-         assigned_agent_id, owner_contact_id, developer_contact_id`,
+         assigned_agent_id, owner_contact_id, developer_contact_id,
+         year_built, construction_status, delivery_date`,
       )
       .eq("id", propertyId)
       .maybeSingle(),

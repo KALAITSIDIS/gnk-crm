@@ -48,7 +48,7 @@ export function QualityWorklist({ worklist }: { worklist: Worklist }) {
     );
   }
 
-  if (w.categories.length === 0 && w.sharedPhotos.length === 0) {
+  if (w.categories.length === 0 && w.sharedPhotos.length === 0 && w.buildConflicts.length === 0) {
     return (
       <section className="flex items-start gap-2 rounded-[10px] border border-success/30 bg-success/5 p-5">
         <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
@@ -156,6 +156,36 @@ export function QualityWorklist({ worklist }: { worklist: Worklist }) {
                   {s.property.reference}
                 </Link>{" "}
                 shares a photograph with {s.withReferences.join(", ")}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {/* Audit CRM-05. A build year beside a pre-completion status or a
+          pending delivery date: the public site withholds the construction
+          fields when a year settles them, and the record should say why. */}
+      {w.buildConflicts.length > 0 ? (
+        <section className="rounded-[10px] border border-warning/40 bg-warning/5 p-5">
+          <h2 className="text-sm font-semibold text-text-1">
+            {w.buildConflicts.length}{" "}
+            {w.buildConflicts.length === 1 ? "listing declares" : "listings declare"} build details
+            that contradict each other
+          </h2>
+          <p className="mt-1 text-xs text-text-3">
+            No points are withheld. Fixed on the Details tab: correct the year built, the
+            construction status or the delivery date — whichever is not true.
+          </p>
+          <ul className="mt-3 flex flex-col gap-1.5">
+            {w.buildConflicts.map((c) => (
+              <li key={c.property.id} className="text-xs text-text-2">
+                <Link
+                  href={`/properties/${c.property.id}`}
+                  className="font-medium text-text-1 hover:underline"
+                >
+                  {c.property.reference}
+                </Link>{" "}
+                {c.label}
               </li>
             ))}
           </ul>

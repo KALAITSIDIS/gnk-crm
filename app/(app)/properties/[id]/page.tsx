@@ -29,6 +29,7 @@ import {
 import { EventTimeline } from "@/components/features/shared/event-timeline";
 import { QualityScoreRing } from "@/components/features/shared/quality-score-ring";
 import { computeQualityScore } from "@/lib/services/quality-score";
+import { buildProgress } from "@/lib/services/construction";
 import { fetchSharedPhotoReferences } from "@/lib/services/shared-photos";
 import { countContainerUnits, EMPTY_CONTAINER_FACTS } from "@/lib/services/container-units";
 import { getCurrentProfile } from "@/lib/services/auth";
@@ -296,6 +297,9 @@ export default async function PropertyDetailPage({
     mandateActive: mandateRows.some((m) => m.status === "active"),
     hasAssignedAgent: p.assigned_agent_id !== null,
     hasOwnerOrDeveloper: p.owner_contact_id !== null || p.developer_contact_id !== null,
+    // Audit CRM-05: a build year that contradicts the status or a pending
+    // delivery date — the ring's warning list, alongside shared photographs.
+    buildConflict: buildProgress(p.construction_status, p.delivery_date, new Date(), p.year_built).mismatch,
   });
 
   const changerIds = [...new Set((priceRows ?? []).map((r) => r.changed_by).filter(Boolean))];
@@ -571,6 +575,7 @@ export default async function PropertyDetailPage({
               <BuildProgressCard
                 constructionStatus={p.construction_status}
                 deliveryDate={p.delivery_date}
+                yearBuilt={p.year_built}
               />
             </div>
 

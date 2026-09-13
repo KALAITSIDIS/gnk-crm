@@ -6263,3 +6263,41 @@ derived now, email winning when both are given), nine indexes the advisor listed
 index for the sweep), and the pins a ninth cron job touches: RLS test 50, the
 restore pack's job list and count, docs/10's cron table, HANDOFF §0, and the
 dashboard's hard-coded eight in cron-health.tsx.
+
+## T-audit-open-items — four small things the 2026-09-13 live pass found, closed together (2026-09-13, migration 0093)
+
+CRM-07. The ⌘K palette and every EntityPicker offered archived properties as
+"available": entity-search.ts's property branch filtered on nothing while the
+contact branch excluded archived rows. Typing "PAF00" listed PAF0005-V04/-V05,
+archived on 4 September with invented data. Now `visibility <> archived` and
+`status <> withdrawn`; lib/actions/entity-search.test.ts pins the query shape.
+
+CRM-04. The dashboard's "Listings by status" counted archived rows (16 available
+against 10 live): admin_dashboard_stats grouped by status with no visibility
+predicate, and an archived listing keeps its status for restore. 0093 replaces
+the function with 0057's body plus `where visibility <> archived`, self-checks
+the shape, the predicate and the ACL; supabase/tests/dashboard-archived.test.ts
+seeds a live and an archived row and was RED (26 vs 25) before, GREEN after.
+
+CRM-05. PAF0001 stood at year built 2007, construction "finishing", delivery
+29 Nov 2026, score 85, no warning — while the site withheld the two construction
+fields because the year settles them. buildProgress() takes the year built and
+names the contradiction (a past year beside a pre-completion status, or beside a
+pending delivery date; a year at or after the current one is a planned
+completion and contradicts nothing). It WARNS: the score's warnings list (with
+shared photographs), the property page's ring and build card, and a worklist
+group of its own, fixed on the Details tab. Never blocks — the desk may be
+recording a rebuild. Three test files, red then green.
+
+CRM-06. A phone got the twelve-column table (reference and title, the rest off
+the edge) and a lead card with eight actions over three rows. `view` absent now
+means AUTO — cards below the tablet breakpoint, the table above, both rendered
+and one hidden by CSS because the page is a server component; an explicit
+?view= is honoured everywhere and the toggle lights only an explicit choice.
+The lead card keeps Claim, Contacted, Called, Log and Convert visible on a phone
+and folds Link contact, Assign, Correct, Close and Redact behind "More…".
+
+Two fallouts worth recording: the list-filter test pinned the old table default
+(updated), and construction.ts reached tz through `@/`, which the script-
+runnability guard refuses the moment quality-score.ts imports it — relative
+import, as ENGINEERING_NOTES says for anything a script can reach.
