@@ -1,5 +1,5 @@
 import { AlarmClockCheck, AlarmClockMinus } from "lucide-react";
-import { judgeAll, type CronJobFacts } from "@/lib/services/cron-health";
+import { judgeAll, type CronJobFacts, EXPECTED_CRON_JOBS } from "@/lib/services/cron-health";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { cn } from "@/lib/utils";
 
@@ -55,7 +55,9 @@ export async function CronHealth() {
         <span>
           Scheduled sweeps: {failing.length} of {verdicts.length} unhealthy —{" "}
           {failing.map((f) => `${f.jobname} (${f.reason})`).join("; ")}
-          {verdicts.length !== 8 ? ` · expected 8 jobs, found ${verdicts.length}` : ""}
+          {verdicts.length !== EXPECTED_CRON_JOBS
+            ? ` · expected ${EXPECTED_CRON_JOBS} jobs, found ${verdicts.length}`
+            : ""}
         </span>
       )}
     </div>

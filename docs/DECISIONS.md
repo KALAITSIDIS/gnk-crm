@@ -6393,3 +6393,20 @@ true when the events landed). The remaining "write commits, later step fails"
 gaps the 2026-09-03 sweep counted stay as counted — each is an absence in a
 timeline, none fabricates a record, and each takes this same notice shape when
 it is next touched.
+
+### Addendum to T-audit-open-items (2026-09-13, late): two things the production check found
+
+Verifying the merge on production showed the dashboard's cron-health banner
+reading "expected 8 jobs, found 9": the ninth job (0092, the morning of the
+same day) moved every pin of that count except the literal on the screen.
+`EXPECTED_CRON_JOBS` now lives once in lib/services/cron-health.ts, the
+component reads it, and tests/unit/cron-jobs-pinned.test.ts derives the truth
+from the migrations (distinct `cron.schedule` names) and refuses a literal in
+the component. The same banner also says redact-stale-enquiries "has never
+run" — correct until its first 03:10 UTC, and the card is doing its job.
+
+And the phone layout could not be checked by hand: Claude in Chrome could not
+shrink a maximised window (resize_window reported success and innerWidth
+stayed 1920). `tests/e2e/phone-layout.spec.ts` checks it instead, under both
+projects with inverse assertions — cards and the fold on the Pixel 5, the
+table and no fold on the desktop — and `?view=` honoured everywhere.
