@@ -80,9 +80,12 @@ session_replication_role statement_timeout track_io_timing`); comment out
 ## Proof
 
 1. **Equivalence run** (one-off, 2026-09-13, Docker up): the CLI dumps and
-   the native dumps of production taken back to back and diffed. Expected
-   difference: only the random `\restrict` token in `data.sql`. Recorded in
-   DECISIONS.
+   the native dumps of production taken back to back and diffed. **Measured:**
+   `pg_dump.sql` byte-identical (288,284 bytes both), `roles.sql` identical,
+   `data.sql` differing in exactly three lines — the two random
+   `\restrict`/`\unrestrict` tokens and `-- Dumped by pg_dump version 17.6`
+   → `17.11`. pg_dump.exe emitted CRLF on stdout; the rewrite functions'
+   normalisation is what made the files identical. Recorded in DECISIONS.
 2. **Full capture** through `run-backup.cmd` exits 0 and promotes a verified
    set, with Docker Desktop **stopped**, which is the case that failed for
    five nights.

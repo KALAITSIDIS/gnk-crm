@@ -185,10 +185,27 @@ call it a backup unless it verifies.**
 SUPABASE_DB_URL=... SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... node scripts/backup/capture.mjs
 ```
 
-Schema (`--schema public`), data (`--schema public,auth,storage --data-only
---use-copy`), roles, Storage objects and table JSON, into
+Schema (`--schema public,events_parts`), data (`--schema
+public,events_parts,auth,storage --data-only --use-copy`), roles, Storage
+objects and table JSON, into
 `../gnk-backups/<date>/`, plus `SHA256SUMS` and a `manifest.json`. Flags:
 `--out`, `--force` (replace today's set), `--skip-storage`, `--keep N` (retention).
+
+**Native `pg_dump` since 2026-09-13 — Docker is not involved.** The three
+SQL files come from `pg_dump`/`pg_dumpall` spawned directly
+(`scripts/backup/pg-native.mjs`), reproducing `supabase db dump`'s output byte
+for byte (its `dump_*.sh` rewrite rules were extracted from the 2.115.0 binary
+and are unit-tested against the real shapes; measured against the CLI on
+production the same day: schema and roles identical, data differing only in
+the random `\restrict` tokens and the `Dumped by` version line). The binaries
+are the pinned PostgreSQL 17.11 Windows client tools in
+`~/.gnk-crm/pgsql/17.11.0/bin`, installed by `npm run backup:fetch-pg-tools`
+(SHA-256 verified; the pin is `PG_TOOLS` in `pg-native.mjs`). `PG_BIN` in
+`backup.env` overrides. No tools → exit 2 with the fix named. Why: the 03:45
+task runs under S4U and cannot start Docker Desktop, so after the 2026-09-09
+reboot five nights in a row failed with `failed to connect to the docker API`
+(DECISIONS T-native-dump). Proven the same day with Docker Desktop stopped:
+`run-backup.cmd` exit 0, every check passed.
 
 **Exit codes are meaningful, because a scheduler only sees the number:**
 `0` verified · `1` produced but NOT trustworthy · `2` refused to start
@@ -242,6 +259,7 @@ Which is : capture.mjs --out …\gnk-backups --force --keep 14
                                            hash-verified; skips until GH_TOKEN is set)
            ;  notify.mjs --rc <final>     (REL-02: healthchecks ping, never fails the run)
 Log      : C:\Users\user\.gnk-crm\backup.log   (exit=N appended per run)
+Tools    : C:\Users\user\.gnk-crm\pgsql\17.11.0\bin  (pg_dump 17.11, native since 2026-09-13; no Docker)
 REPO     : D:\dev\TSOPOZIDIS\gnk-crm        (repointed 2026-08-07)
 DEST     : D:\dev\TSOPOZIDIS\gnk-backups    (repointed 2026-08-07)
 ```
@@ -407,6 +425,12 @@ your own password manager.** Do not paste either into this repo or into a chat �
 > Also confirmed on the dashboard the same day: **"Free Plan does not include
 > project backups"** — so §1.1's analysis still holds and self-export is the only
 > path.
+
+> **The `npx.cmd supabase db dump` commands below need Docker Desktop
+> running.** They remain correct for a hand-taken set, but the automated path
+> no longer uses them (§3.0). A hand-taken set without Docker:
+> `node --env-file=$HOME/.gnk-crm/backup.env scripts/backup/capture.mjs --out ../gnk-backups --force`
+> — same files, same verification, same tools directory.
 
 Three dumps, because they cover different things and no single invocation
 covers all three.
