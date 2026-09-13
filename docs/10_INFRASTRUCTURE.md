@@ -106,10 +106,11 @@ npm run db:types        # regenerate lib/supabase/database.types.ts
 Run `npm run dev:2fa` to enrol one and print the TOTP secret. That script
 refuses any non-local URL, deliberately.
 
-### pg_cron — 8 scheduled jobs (all live)
+### pg_cron — 9 scheduled jobs (all live)
 
 ```
 0  3 * * *   expire-mandates              select expire_mandates()
+10 3 * * *   redact-stale-enquiries       select redact_stale_enquiries()
 15 3 * * *   followup-nudges              select create_followup_nudges()
 20 3 1 * *   ensure-events-partitions     select ensure_events_partitions()
 30 3 * * *   verify-events-chain          select run_chain_checks()

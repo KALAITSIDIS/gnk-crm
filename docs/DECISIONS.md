@@ -6228,3 +6228,38 @@ Both keys were set on both Vercel projects through the CLI on 2026-09-13 and
 recorded in the operator's local secret file; SITE_REVALIDATE_URL names the door.
 Verified end to end after the deploys by editing a test listing and watching the
 site's render date move within a minute with no visitor in between.
+
+## T-enquiry-retention — the privacy page promised a deletion nothing performed (2026-09-13, migration 0092)
+
+Audit DATA-01. gnk-web/app/legal said an enquiry that does not lead to work is
+deleted within two years. No job did that: a website lead with no linked contact
+could only be redacted by hand through redactLead, and the 2026-09-06 response had
+parked "an enquiry retention arm" as gated on the firm confirming the period —
+while the page had already stated it publicly. The operator confirmed 24 months.
+
+redact_stale_enquiries(p_months default 24), nightly at 03:10 (after expire-
+mandates, before followup-nudges so a nudge is never raised on a row just
+emptied): website leads with no contact, not converted, received more than 24
+months ago, get leads.message set to the app's own LEAD_MESSAGE_REDACTED — the one
+column a website enquiry's personal data lives in (0084/0087 build name, email,
+phone and text into it; criteria and the event carry shape only) — and one
+`redacted` event with a null actor and {reason: retention, months: 24}. A lead
+WITH a contact is left to the contact's erasure (0017). Idempotent; p_months < 1
+is refused. supabase/tests/enquiry-retention.test.ts seeds the five shapes (due,
+one month short, linked, converted, desk-typed) and asserts exactly one is
+redacted, one event, no second event on a rerun, anon refused. Run RED against
+the local database before the migration (PGRST202) and GREEN after.
+
+The 24 is a MATCHED PAIR across repositories, like nudge_threshold: the site
+states ENQUIRY_RETENTION_MONTHS (lib/site.ts) on the page and pins it with
+app/legal/page.test.ts; this migration's self-check reads pg_get_functiondef and
+refuses a default other than 24. Change both or neither. The first apply failed
+that self-check on its own case-sensitivity (pg_get_functiondef prints
+"integer DEFAULT 24"), which is the check working.
+
+Rode along: DATA-02 (every website lead was channel email, even phone-only —
+derived now, email winning when both are given), nine indexes the advisor listed
+(eight foreign keys the inbox, task buckets and detail pages walk, plus a partial
+index for the sweep), and the pins a ninth cron job touches: RLS test 50, the
+restore pack's job list and count, docs/10's cron table, HANDOFF §0, and the
+dashboard's hard-coded eight in cron-health.tsx.

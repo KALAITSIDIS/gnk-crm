@@ -32,7 +32,8 @@ export async function CronHealth() {
 
   const verdicts = judgeAll(data as CronJobFacts[], new Date());
   const failing = verdicts.filter((v) => !v.healthy);
-  const healthy = failing.length === 0 && verdicts.length === 8;
+  // Nine since 0092 (redact-stale-enquiries); docs/10 § pg_cron is the list.
+  const healthy = failing.length === 0 && verdicts.length === 9;
 
   return (
     <div
