@@ -66,7 +66,7 @@ const TABLES = [
   "organizations", "profiles", "districts", "areas", "cyprus_config",
   "deal_stages", "reference_counters", "task_kinds", "unit_types", "contacts",
   "buyer_requirements", "properties", "property_media", "property_keys",
-  "key_movements", "mandates", "leads", "deals", "offers", "viewings",
+  "key_movements", "mandates", "leads", "interaction_notes", "deals", "offers", "viewings",
   "viewing_slips", "documents", "tasks", "price_lists", "price_list_items",
   "payment_plans", "price_history", "reservations", "reservation_installments",
   "share_links", "share_link_properties", "share_link_attempts",

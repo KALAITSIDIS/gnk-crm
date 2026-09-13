@@ -734,6 +734,60 @@ export type Database = {
           },
         ]
       }
+      interaction_notes: {
+        Row: {
+          body: string | null
+          body_sha256: string
+          channel: Database["public"]["Enums"]["comm_channel"]
+          created_at: string
+          created_by: string | null
+          entity_id: string
+          entity_type: string
+          id: string
+          org_id: string
+          redacted_at: string | null
+        }
+        Insert: {
+          body?: string | null
+          body_sha256: string
+          channel: Database["public"]["Enums"]["comm_channel"]
+          created_at?: string
+          created_by?: string | null
+          entity_id: string
+          entity_type: string
+          id?: string
+          org_id: string
+          redacted_at?: string | null
+        }
+        Update: {
+          body?: string | null
+          body_sha256?: string
+          channel?: Database["public"]["Enums"]["comm_channel"]
+          created_at?: string
+          created_by?: string | null
+          entity_id?: string
+          entity_type?: string
+          id?: string
+          org_id?: string
+          redacted_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "interaction_notes_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "interaction_notes_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       key_movements: {
         Row: {
           action: Database["public"]["Enums"]["key_action"]
@@ -3034,6 +3088,15 @@ export type Database = {
       }
       geomfromewkt: { Args: { "": string }; Returns: unknown }
       gettransactionid: { Args: never; Returns: unknown }
+      log_conversation: {
+        Args: {
+          p_channel: Database["public"]["Enums"]["comm_channel"]
+          p_entity_id: string
+          p_entity_type: string
+          p_note: string
+        }
+        Returns: string
+      }
       longtransactionsenabled: { Args: never; Returns: boolean }
       mfa_satisfied: { Args: never; Returns: boolean }
       move_deal_to_stage: {
@@ -3177,6 +3240,7 @@ export type Database = {
         }
         Returns: undefined
       }
+      redact_stale_enquiries: { Args: { p_months?: number }; Returns: number }
       remind_due_installments: { Args: { p_org?: string }; Returns: undefined }
       reorder_stage: {
         Args: { p_direction: string; p_stage_id: string }

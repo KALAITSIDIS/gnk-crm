@@ -130,6 +130,42 @@ export async function eraseContactPersonalData(
       return r.data?.length ?? 0;
     },
 
+    // The desk's own words about the person (0094, audit SEC-03): the notes
+    // on the contact and on the leads that became this contact — the same
+    // leads whose messages the step above rewrote. A session cannot update
+    // notes (redaction is the service role's), so this runs as the system,
+    // bounded by the org and by the contact the admin check above covered.
+    // Only rows not already redacted, so a re-run counts what it did.
+    async redactNotes() {
+      const leads = await supabase.from("leads").select("id").eq("contact_id", contactId);
+      fail(leads);
+      const redaction = { body: null, redacted_at: new Date().toISOString() };
+      const own = await admin
+        .from("interaction_notes")
+        .update(redaction)
+        .eq("org_id", contact.org_id)
+        .eq("entity_type", "contact")
+        .eq("entity_id", contactId)
+        .is("redacted_at", null)
+        .select("id");
+      fail(own);
+      let count = own.data?.length ?? 0;
+      const leadIds = (leads.data ?? []).map((l) => l.id);
+      if (leadIds.length > 0) {
+        const theirs = await admin
+          .from("interaction_notes")
+          .update(redaction)
+          .eq("org_id", contact.org_id)
+          .eq("entity_type", "lead")
+          .in("entity_id", leadIds)
+          .is("redacted_at", null)
+          .select("id");
+        fail(theirs);
+        count += theirs.data?.length ?? 0;
+      }
+      return count;
+    },
+
     // Saved searches — budget, areas, bedrooms — are personal data (0043 moved
     // them out of contacts.preferences and erasure had not followed). Deleted
     // rather than blanked: an emptied search matches nothing forever.

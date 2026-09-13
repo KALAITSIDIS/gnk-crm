@@ -149,7 +149,9 @@ export async function createContact(
     entityType: "contact",
     entityId: created.id,
     eventType: "created",
-    payload: { phone: phoneE164, email: input.email ?? null },
+    // shape only (audit SEC-03): the identifiers live on the row, which
+    // erasure can blank; an event cannot be
+    payload: { has_phone: Boolean(phoneE164), has_email: Boolean(input.email) },
   });
 
   // SEC-06: an initial grant is consent too — the trail is complete from
@@ -522,14 +524,27 @@ export async function logContactConversation(
     return { error: "This contact was erased — no new records may be added.", savedAt: null };
   }
 
-  await logEvent(supabase, {
-    orgId: profile.orgId,
-    actorId: profile.id,
-    entityType: "contact",
-    entityId: contactId,
-    eventType: "conversation_logged",
-    payload: { channel, ...(note ? { note } : {}) },
-  });
+  if (note) {
+    // The words go to interaction_notes and the chain gets their digest
+    // (0094, audit SEC-03): erasure can blank a row, never an event. The
+    // database writes the conversation_logged event from the note's insert.
+    const { error: noteErr } = await supabase.rpc("log_conversation", {
+      p_entity_type: "contact",
+      p_entity_id: contactId,
+      p_channel: channel,
+      p_note: note,
+    });
+    if (noteErr) return { error: noteErr.message, savedAt: null };
+  } else {
+    await logEvent(supabase, {
+      orgId: profile.orgId,
+      actorId: profile.id,
+      entityType: "contact",
+      entityId: contactId,
+      eventType: "conversation_logged",
+      payload: { channel },
+    });
+  }
 
   revalidatePath(`/contacts/${contactId}`);
   revalidatePath("/contacts");

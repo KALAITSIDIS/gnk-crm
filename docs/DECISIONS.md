@@ -6301,3 +6301,61 @@ Two fallouts worth recording: the list-filter test pinned the old table default
 (updated), and construction.ts reached tz through `@/`, which the script-
 runnability guard refuses the moment quality-score.ts imports it — relative
 import, as ENGINEERING_NOTES says for anything a script can reach.
+
+## T-sec-03-notes — a conversation's words leave the chain (2026-09-13, migration 0094)
+
+The audit's SEC-03: three actions wrote a logged conversation's text into the
+hash-chained, never-updated `events` table verbatim, a contact's phone and
+e-mail went into its `created` event, and a linked contact's name into
+`contact_linked`. Erasure (0017) leaves events alone by design, so an Article 17
+request blanked the contact row and the lead messages and left the person's
+number, address and every note the desk had written about them readable for
+ever. And nothing rendered the note: the timeline line said "Conversation
+logged (phone)" and the words sat in the chain unseen — the most personal text
+in the system, held where it could not be removed and shown to nobody.
+
+What 0094 does. `interaction_notes` holds the text, org-scoped, SELECT and
+INSERT for a session and nothing else; the event carries the note's id and
+SHA-256, never the words, so the chain still proves what was written and when.
+The digest is the database's (a BEFORE INSERT trigger computes it from the
+stored text — a caller cannot supply one), the event is mandatory (an AFTER
+INSERT trigger writes it, so no insert path can add a note the chain does not
+know about), and the text is immutable except to be blanked (the same BEFORE
+trigger refuses any UPDATE that is not body→null with redacted_at). Because the
+triggers run as the caller and `events_insert` (0071) binds actor_id to
+auth.uid(), a session cannot file a note — or its event — under anyone else's
+name. `log_conversation(entity_type, entity_id, channel, note)` is the API,
+SECURITY INVOKER: it finds the entity's org through the caller's OWN read, so a
+lead another org holds, or one this agent may not see, is "not found".
+
+Who blanks. Contact erasure gains a `redactNotes` step right after the lead
+messages — the notes on the contact and on the leads that became it — as the
+system, bounded by org and contact, counted in the `erased` event as
+`notes_redacted`. `redact_stale_enquiries` blanks the notes on the enquiries it
+redacts in the same statement (a data-modifying CTE runs once whether or not
+anything reads it). Both leave the digest, so `verify_events_chain` is
+unaffected.
+
+The reader. `readEntityTimeline` joins the rows for the events on the page —
+org-bound, because the admin client has no other boundary — and attaches the
+body as the line's `note`, which the renderer already printed for merged
+contacts; a blanked row shows `[note erased]` rather than nothing; an event
+written before 0094 carries its note inline and renders as it did; no lookup
+when nothing on the page references a note. The contact page used to overwrite
+`note` with the merged-source label; it now keeps both.
+
+Payloads. `created` carries `has_phone`/`has_email` (shape, not value);
+`contact_linked` carries the id only. `lib/actions/event-payload-privacy.test.ts`
+scans every `payload: {…}` literal under lib/actions for note/phone/email/
+contact_name/display_name/message and was RED on three files before the change.
+Staff are not clients: settings.ts (invites, assignment names) is out of scope,
+and a merged-away contact's name stays in `merged` because erasure retains
+identity by design (`identity_retained: true`).
+
+Tests, red then green: the payload scan; `entity-timeline-notes.test.ts` (join,
+erased label, legacy inline, no lookup); `erasure-run-notes.test.ts` (order and
+the failure message); `supabase/tests/interaction-notes.test.ts` (row + event
+with digest and no text, org isolation, anon refused, empty note and unknown
+entity refused, a session cannot redact and the service role can with the digest
+staying, and the sweep blanks the notes it should). Pins moved: verify-restore's
+migrations 93→94, export.mjs's TABLES gains the table, docs/04 gains the row.

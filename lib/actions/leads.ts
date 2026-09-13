@@ -137,7 +137,9 @@ export async function createLead(
       entityType: "contact",
       entityId: contactId,
       eventType: "created",
-      payload: { phone: phoneE164, email: d.new_contact_email ?? null, via: "lead" },
+      // shape only (audit SEC-03): the identifiers live on the contact row,
+      // which erasure can blank; an event cannot be
+      payload: { has_phone: Boolean(phoneE164), has_email: Boolean(d.new_contact_email), via: "lead" },
     });
   }
 
@@ -190,10 +192,11 @@ export async function linkLeadContact(leadId: string, contactId: string): Promis
   const guardErr = canWorkError(profile, lead);
   if (guardErr) throw new Error(guardErr);
 
-  // org-scoped by RLS; confirms the contact exists and gives a name for the event
+  // org-scoped by RLS; confirms the contact exists. The event names it by id
+  // only (audit SEC-03): the chain is immutable, and a page can look a name up.
   const { data: contact } = await supabase
     .from("contacts")
-    .select("display_name")
+    .select("id")
     .eq("id", contactId)
     .maybeSingle();
   if (!contact) throw new Error("Contact not found.");
@@ -211,7 +214,7 @@ export async function linkLeadContact(leadId: string, contactId: string): Promis
     entityType: "lead",
     entityId: leadId,
     eventType: "contact_linked",
-    payload: { contact_id: contactId, contact_name: contact.display_name ?? null },
+    payload: { contact_id: contactId },
   });
   revalidatePath("/leads");
 }
@@ -510,14 +513,16 @@ export async function logConversation(
     if (error) return { error: error.message, savedAt: null };
   }
 
-  await logEvent(supabase, {
-    orgId: profile.orgId,
-    actorId: profile.id,
-    entityType: "lead",
-    entityId: lead.id,
-    eventType: "conversation_logged",
-    payload: { channel: parsed.data.channel, note: parsed.data.note },
+  // The words go to interaction_notes and the chain gets their digest (0094,
+  // audit SEC-03): erasure can blank a row, never an event. The database
+  // writes the conversation_logged event from the note's insert trigger.
+  const { error: noteErr } = await supabase.rpc("log_conversation", {
+    p_entity_type: "lead",
+    p_entity_id: lead.id,
+    p_channel: parsed.data.channel,
+    p_note: parsed.data.note,
   });
+  if (noteErr) return { error: noteErr.message, savedAt: null };
 
   // Conversations count as deal activity once the lead is converted — the
   // health activity factor decays from last_activity_at (doc 02 §C5, T3.3).
