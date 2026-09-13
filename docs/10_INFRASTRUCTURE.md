@@ -80,6 +80,17 @@ in this repo:
 `HANDOFF.md` §2b. Current keys are `sb_publishable_…` and `sb_secret_…`.
 `lib/supabase/key-health.ts` detects the legacy shape and says so.
 
+
+### Auth settings that are not code
+
+* **Public sign-up is OFF** (`disable_signup: true`, set through the Management API on
+  2026-09-13 — audit SEC-02). The app never calls `auth.signUp`; every account comes
+  from `inviteUser` → `auth.admin.createUser`. Anyone can confirm the posture without
+  a login: `GET {SUPABASE_URL}/auth/v1/settings` with the publishable key must show
+  `"disable_signup":true`. The local stack mirrors it in `supabase/config.toml`
+  (`[auth] enable_signup = false`) and `supabase/tests/signup-disabled.test.ts` fails
+  if that line drifts back. Turning it on again is a decision, not a convenience.
+
 ### Local stack
 
 `supabase/config.toml`, `project_id = "gnk-crm"`. Ports: API **54321**, DB
