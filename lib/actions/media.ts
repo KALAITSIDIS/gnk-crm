@@ -6,6 +6,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
+import { notifySiteIfPublic } from "@/lib/services/site-revalidate";
 import {
   ACCEPTED_MIME,
   MAX_UPLOAD_BYTES,
@@ -170,6 +171,7 @@ export async function uploadPropertyMedia(
   }
 
   await recomputeQualityScore(supabase, propertyId);
+  await notifySiteIfPublic(supabase, propertyId);
   revalidatePath(`/properties/${propertyId}`);
   revalidatePath("/properties");
   return { error: null, savedAt: Date.now() };
@@ -217,6 +219,7 @@ export async function setMediaCover(
     payload: { media_id: mediaId },
   });
   await recomputeQualityScore(supabase, propertyId);
+  await notifySiteIfPublic(supabase, propertyId);
   revalidatePath(`/properties/${propertyId}`);
   revalidatePath("/properties");
   return { error: null };
@@ -311,6 +314,7 @@ export async function setMediaAlt(
     // the text itself, so the timeline shows what was written without a join
     payload: { media_id: mediaId, alt: trimmed || null },
   });
+  await notifySiteIfPublic(supabase, propertyId);
   revalidatePath(`/properties/${propertyId}`);
   return { error: null };
 }
@@ -365,6 +369,7 @@ export async function moveMedia(
     eventType: "media_reordered",
     payload: { media_id: mediaId, direction },
   });
+  await notifySiteIfPublic(supabase, propertyId);
   revalidatePath(`/properties/${propertyId}`);
   return { error: null };
 }
@@ -484,6 +489,7 @@ export async function deleteMediaBulk(
   }
 
   await recomputeQualityScore(supabase, propertyId);
+  await notifySiteIfPublic(supabase, propertyId);
   revalidatePath(`/properties/${propertyId}`);
   revalidatePath("/properties");
   return { error: null, deleted: deletedRows.length };

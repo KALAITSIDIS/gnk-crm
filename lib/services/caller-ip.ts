@@ -18,9 +18,14 @@ import { hashIp } from "@/lib/services/ip-hash";
  */
 export { hashIp };
 
-export async function callerIpHash(): Promise<string> {
+/**
+ * `scope` keeps two counters apart at the same address: the feed meters a
+ * proven forwarder (our marketing site) as "site:<ip>" on its own budget, so a
+ * stranger behind the same address cannot spend it, and vice versa (REL-03).
+ */
+export async function callerIpHash(scope?: string): Promise<string> {
   const h = await headers();
   const ip =
     h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || "unknown";
-  return hashIp(ip);
+  return hashIp(scope ? `${scope}:${ip}` : ip);
 }

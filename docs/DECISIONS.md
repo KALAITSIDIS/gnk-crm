@@ -6191,3 +6191,40 @@ false`) and pinned by `supabase/tests/signup-disabled.test.ts`, which was run RE
 against the old local setting (signUp returned a session) before the change and GREEN
 after a stack restart. The RLS fixtures are unaffected: they create users through the
 admin API. Recorded in docs/10 § Auth settings that are not code.
+
+## T-site-revalidate — the site rebuilds when told, not when a visitor happens by (2026-09-13)
+
+Audit REL-01 measured the public site serving its home page with a render dated
+five days earlier: every page is ISR at 60 s, and Next defaults the stale ceiling
+to a year, so on a quiet site the first visitor after a lull got whatever the last
+visitor left. The site bounded the ceiling to an hour the same day (expireTime).
+This entry is the other half.
+
+The site exposes POST /api/revalidate, guarded by SITE_REVALIDATE_KEY compared in
+constant time; it marks the home page, the list and the named listing stale.
+lib/services/site-revalidate.ts is the hand that knocks: notifySite() posts the
+reference with the key in a header and a 5 s timeout, returns sent | skipped |
+failed and never throws; notifySiteAfter() runs it in Next after() so the desk
+is answered first, and sends inline when there is no request scope; notify-
+SiteIfPublic() serves the media actions, which hold only a property id. Unset
+configuration skips loudly once. The key never appears in a log line.
+
+Eight writes knock, each AFTER its own write: updatePropertySection (when the
+listing was or becomes public), archiveProperty, restoreProperty, and the five
+media actions. lib/actions/site-revalidate-callsites.test.ts pins that list and
+the placement by source scan, so a new action that changes a public face is
+added there or fails CI. Unit-level actions do not knock yet: a container is not
+publishable until its computed facts reach the feed (F3), and that is where a
+unit price will start mattering to the site.
+
+REL-03 rode along: the feed route now honours the same x-gnk-forward-key the
+enquiry door believes, metering a proven forwarder on a site-scoped hash at
+1,200 per quarter hour instead of the stranger's 120 on the address hash;
+callerIpHash() grew a scope argument for that. tests/unit/public-listings-
+route.test.ts pins both budgets and that a wrong or missing key is a stranger,
+never a refusal.
+
+Both keys were set on both Vercel projects through the CLI on 2026-09-13 and
+recorded in the operator's local secret file; SITE_REVALIDATE_URL names the door.
+Verified end to end after the deploys by editing a test listing and watching the
+site's render date move within a minute with no visitor in between.
