@@ -6140,3 +6140,35 @@ GNU tar and cannot read zip; `C:\Windows\System32\tar.exe` is bsdtar and can.
 Suffix byte ranges (`-r -N`) are refused by GitHub's release CDN with 501;
 an explicit `start-end` range works, which is how the zip's directory was
 listed without downloading it.
+
+## T-deps-2026-09-13 — three advisories turned CI red, and the fix needed a fix (2026-09-13)
+
+**What happened.** The first CI run of `feat/backup-native-pg-dump` stopped at
+the production-dependency audit, which runs before typecheck, lint, unit and
+build: three advisories had been published since main's last green run on
+2026-09-08 — Next.js 16.0.0–16.3.2 (two critical RCEs, GHSA-p293-qw3h-jr36
+and GHSA-2xp9-vwfh-vxw4), maplibre-gl ≤6.4.0 (critical XSS sanitizer bypass,
+GHSA-jrc7-96c5-q579), sharp <0.35.4 (high, libheif). None introduced by the
+branch; main was equally red. The operator chose to merge the backup fix
+first on local evidence (unit 1392, typecheck, lint, build, plus CI's rls and
+e2e which ran green), then fix the advisories on their own branch.
+
+**What was done.** `next` 16.3.1 → 16.3.5 (exact), `maplibre-gl` ^5.24 → ^6.9.0,
+`sharp` 0.35.4 via the lockfile. Audit: 0 vulnerabilities. Unit, typecheck,
+lint and build passed at once; e2e failed the two property-map tests, locally
+AND on CI (237 others passed) — the maplibre major was not free. The cause and
+the remedy are in ENGINEERING_NOTES §2 ("maplibre-gl 6 spawns a module worker
+that Turbopack mislocates"): worker served from `public/maplibre/`, copied by
+`scripts/copy-maplibre-worker.mjs` on `predev`/`prebuild`, `setWorkerUrl()` in
+`map-view.tsx`. Measured after the fix: property-map + csp 40/40 in dev mode
+and 40/40 against `next start`.
+
+**Two things that cost time and are now written down.** The XSS advisory did
+not actually reach this app — `map-view.tsx` builds popups with DOM APIs and
+`setDOMContent`, never `innerHTML` — but an audit gate cannot know that, and
+the upgrade it forced is what broke the map. And the first verification of the
+worker fix reported the OLD failures: stopping the background `npm run start`
+had killed only the npm wrapper, the `next start` child kept port 3000, and
+Playwright's `reuseExistingServer: true` ran both the "dev" and the "prod"
+stage against that stale build (its own log said `EADDRINUSE`). Check the
+listener on 3000 before trusting any e2e result.

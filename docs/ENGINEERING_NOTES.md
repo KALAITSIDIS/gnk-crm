@@ -166,6 +166,32 @@ convention** for anything called from a client component. (2026-07-16)
 
 ---
 
+### maplibre-gl 6 spawns a module worker that Turbopack mislocates (2026-09-13)
+
+maplibre-gl 6 (ESM-only) derives its web-worker URL from `import.meta.url`.
+Under Turbopack that is wrong in BOTH modes, and the failure is silent: in
+`next dev` the value is not an http(s) URL, MapLibre's default worker URL
+becomes `""` and `new Worker("")` fetches the page itself as its script; in
+`next build` the worker is emitted under `/_next/static/media` with a hashed
+name but imports `./maplibre-gl-shared.mjs` **unhashed**, which is a 404.
+Either way the style, the tile index and the sprites all load, **zero tiles
+are ever requested, and nothing reaches the console** — the worker's failure
+stays inside the worker (§7.2 again). `property-map.spec.ts` catches it twice.
+
+The fix is to stop relying on the bundler: `scripts/copy-maplibre-worker.mjs`
+(`predev` and `prebuild`) copies `maplibre-gl-worker.mjs` and
+`maplibre-gl-shared.mjs` into `public/maplibre/` (gitignored — node_modules
+content that must follow the lockfile) and `map-view.tsx` calls
+`setWorkerUrl("/maplibre/maplibre-gl-worker.mjs")` before `new Map()`. A plain
+same-origin URL sits inside `worker-src 'self'`, and the worker's relative
+import resolves next to it. Measured: property-map + csp specs 40/40 in dev
+mode and 40/40 against `next start`. The worker file passes through the
+proxy's auth gate and carries the page CSP (the matcher excludes only images,
+`sw.js` and the manifest); it works as is, so the matcher was left alone —
+if that ever changes, the B8 precedent (name the file in the matcher) is the
+remedy. If maplibre is upgraded again, check `dist/` still ships those two
+files under those names: the copy script names them explicitly.
+
 ## 3. Data and correctness rules
 
 **Never change production state with raw SQL when an action would write an
