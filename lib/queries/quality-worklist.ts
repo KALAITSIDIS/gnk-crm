@@ -50,7 +50,7 @@ export async function fetchQualityWorklist(
       supabase
         .from("properties")
         .select(
-          "id, reference, title, quality_score, status, property_type, kind, parent_id, public_description, asking_price, rent_price_month, covered_area_sqm, plot_area_sqm, bedrooms, bathrooms, planning_zone_code, building_density_pct, location, location_approx, title_deed_status, permit_status, assigned_agent_id, owner_contact_id, developer_contact_id",
+          "id, reference, title, quality_score, status, property_type, kind, parent_id, public_description, asking_price, rent_price_month, covered_area_sqm, plot_area_sqm, bedrooms, bathrooms, planning_zone_code, building_density_pct, location, location_approx, title_deed_status, permit_status, assigned_agent_id, owner_contact_id, developer_contact_id, year_built, construction_status, delivery_date",
         )
         .neq("visibility", RETIRED_PROPERTY_VISIBILITY)
         .order("id")

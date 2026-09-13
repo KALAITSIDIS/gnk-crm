@@ -46,8 +46,16 @@ export interface WorklistSharedPhoto {
   withReferences: string[];
 }
 
+/** A listing whose build declaration contradicts itself (audit CRM-05). */
+export interface WorklistBuildConflict {
+  property: WorklistProperty;
+  label: string;
+}
+
 export interface Worklist {
   categories: WorklistCategory[];
+  /** warnings, not points: a build year that contradicts the status or a pending delivery (CRM-05) */
+  buildConflicts: WorklistBuildConflict[];
   /** warnings, not points: listings whose photographs appear elsewhere (0088) */
   sharedPhotos: WorklistSharedPhoto[];
   /** properties considered — the denominator behind every count */
@@ -139,9 +147,17 @@ export function buildWorklist(scored: ScoredProperty[]): Worklist {
     )
     .sort((a, b) => a.property.reference.localeCompare(b.property.reference));
 
+  const buildConflicts: WorklistBuildConflict[] = scored
+    .flatMap(({ property, result }) =>
+      result.warnings
+        .filter((w) => w.key === "build_conflict")
+        .map((w) => ({ property, label: w.label })),
+    )
+    .sort((a, b) => a.property.reference.localeCompare(b.property.reference));
   return {
     categories,
     sharedPhotos,
+    buildConflicts,
     total,
     complete,
     recoverable: categories.reduce((sum, c) => sum + c.recoverable, 0),

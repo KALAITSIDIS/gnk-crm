@@ -222,8 +222,21 @@ export default async function PropertiesPage({
         </div>
       ) : filters.view === "cards" ? (
         <PropertiesCards rows={rows} />
-      ) : (
+      ) : filters.view === "table" ? (
         <PropertiesTable rows={rows} />
+      ) : (
+        /* auto (audit CRM-06): cards on a phone, the table from the tablet
+           breakpoint up. Both are rendered and one is hidden by CSS, because
+           this is a server component and the viewport is not known here; an
+           explicit ?view= shows one everywhere. */
+        <>
+          <div className="md:hidden">
+            <PropertiesCards rows={rows} />
+          </div>
+          <div className="hidden md:block">
+            <PropertiesTable rows={rows} />
+          </div>
+        </>
       )}
 
       {totalPages > 1 ? (

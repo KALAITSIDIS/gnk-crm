@@ -1,4 +1,7 @@
-import { zonedParts } from "@/lib/utils/tz";
+// A relative import, not `@/`: lib/services/quality-score.ts imports this file
+// and is loaded by scripts/recompute-scores.mts under plain Node, which cannot
+// resolve the alias (tests/unit/scripts-run-under-node.test.ts).
+import { zonedParts } from "../utils/tz.ts";
 
 /**
  * Where a build has got to, and when it is due
@@ -96,10 +99,21 @@ function monthsBetween(fromDay: string, toDay: string): number {
   return months;
 }
 
+/**
+ * `yearBuilt` (0093-era, audit CRM-05): a build year in the past beside a
+ * pre-completion status, or beside a delivery date still to come, is a
+ * contradiction — PAF0001 sat at "built 2007, finishing, delivery Nov 2026"
+ * with a score of 85 and no warning, while the public site quietly withheld
+ * the two construction fields because the year settles them. The rule warns
+ * and never blocks: the desk may be recording a rebuild, and the warning is
+ * where it says so. A year equal to or after the current one is a planned
+ * completion year and contradicts nothing.
+ */
 export function buildProgress(
   status: string | null | undefined,
   deliveryDate: string | null | undefined,
   now: Date = new Date(),
+  yearBuilt: number | null | undefined = null,
 ): BuildProgress {
   const raw = status?.trim() ? status.trim() : null;
   const idx = raw === null ? -1 : CONSTRUCTION_MILESTONES.findIndex((m) => m.key === raw);
@@ -121,6 +135,14 @@ export function buildProgress(
       mismatch = "Marked delivered, but the delivery date is still in the future.";
     } else if (!finished && monthsToDelivery !== null && monthsToDelivery < 0) {
       mismatch = "The delivery date has passed and the build is not recorded as finished.";
+    }
+  }
+  if (mismatch === null && typeof yearBuilt === "number" && yearBuilt < Number(today.slice(0, 4))) {
+    if (raw !== null && !finished) {
+      const stage = (known ? milestone!.label : humanise(raw)).toLowerCase();
+      mismatch = `Built in ${yearBuilt}, but the build is recorded as ${stage} — one of these is not true.`;
+    } else if (raw === null && delivery !== null) {
+      mismatch = `Built in ${yearBuilt}, but a delivery date is set — a finished building has no delivery to come.`;
     }
   }
 

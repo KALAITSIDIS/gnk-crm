@@ -78,7 +78,10 @@ export function PropertiesFilters({
 
   const district = searchParams.get("district") ?? ALL;
   const districtAreas = areas.filter((a) => a.districtId === district);
-  const view = searchParams.get("view") === "cards" ? "cards" : "table";
+  // null is AUTO — cards on a phone, the table above it — so neither toggle
+  // is lit until the person chooses; an explicit choice is kept everywhere.
+  const rawView = searchParams.get("view");
+  const view = rawView === "cards" || rawView === "table" ? rawView : null;
   const hasFilters = [
     "q",
     "district",
@@ -298,7 +301,7 @@ export function PropertiesFilters({
             onClick={() => {
               setSearch("");
               // the view toggle is a preference, not a filter — keep it
-              router.replace(view === "cards" ? `${pathname}?view=cards` : pathname);
+              router.replace(view ? `${pathname}?view=${view}` : pathname);
             }}
             className="h-9 text-text-2"
           >
@@ -311,7 +314,7 @@ export function PropertiesFilters({
             variant={view === "table" ? "secondary" : "ghost"}
             size="icon"
             className="size-8"
-            onClick={() => setParams({ view: undefined })}
+            onClick={() => setParams({ view: "table" })}
             title="Table view"
           >
             <TableProperties className="size-4" />
