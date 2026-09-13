@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 91::bigint as migrations,
+    2::bigint as auth_users, 92::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -161,6 +161,7 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   ('warn_expiring_reservations', true, false, false, true),
   ('remind_due_installments',    true, false, false, true),
   ('raise_key_recall_tasks',     true, false, false, true),
+  ('redact_stale_enquiries',     true, false, false, true),
   ('nudge_threshold',            true, false, false, true),
   -- RLS helpers and the 2FA gate. mfa_satisfied is pinned to the
   -- MIGRATION-BUILT value; hosted historically carries an extra service_role
@@ -274,8 +275,9 @@ misc as (
   select 'migrations: non_filename_versions', '0',
          (select count(*)::text from supabase_migrations.schema_migrations where version !~ '^[0-9]{4}$')
   union all
-  -- ALL EIGHT cron jobs (the previous pack checked three, so a restore that
-  -- lost the other five verified green — audit REL-04). pg_cron jobs are in
+  -- ALL NINE cron jobs (the previous pack checked three, so a restore that
+  -- lost the other five verified green — audit REL-04; the ninth is 0092's
+  -- retention sweep). pg_cron jobs are in
   -- NO dump; after a restore every one must be recreated from the migrations
   -- (§4b.4), and this is the list that proves it happened.
   select 'cron: ' || j.jobname || ' active', 'true',
@@ -283,9 +285,9 @@ misc as (
   from (values ('expire-mandates'), ('followup-nudges'), ('verify-events-chain'),
                ('verify-events-chain-full'), ('expire-reservations'),
                ('warn-expiring-reservations'), ('remind-due-installments'),
-               ('ensure-events-partitions')) as j(jobname)
+               ('ensure-events-partitions'), ('redact-stale-enquiries')) as j(jobname)
   union all
-  select 'cron: exactly 8 jobs, none extra', '8',
+  select 'cron: exactly 9 jobs, none extra', '9',
          (select count(*)::text from cron.job)
   union all
   select 'storage: media bucket is public (migration 0008)', 'true',
