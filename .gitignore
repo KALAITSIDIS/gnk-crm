@@ -48,3 +48,6 @@ next-env.d.ts
 
 # operator photo folders for scripts/import/media.mts - NEVER commit (public repo)
 import-media/
+
+# MapLibre worker files copied from node_modules by scripts/copy-maplibre-worker.mjs (predev/prebuild)
+public/maplibre/
