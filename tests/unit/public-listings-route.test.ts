@@ -90,13 +90,15 @@ beforeEach(() => {
   state.hits = [];
 });
 
-describe("a proven forwarder reads on its own budget (audit REL-03)", () => {
+describe("a proven forwarder is not metered (audit REL-03, second pass)", () => {
   // The marketing site reads the feed from ONE egress address: every ISR
-  // regeneration, every by-reference lookup, every sitemap render. Metered as
-  // a stranger at 120 per quarter hour, a crawler sweeping a growing book
-  // would spend that in a minute and every page would fall back to its last
-  // good copy. The same key the enquiry door already believes buys the site a
-  // separate counter with a larger budget — and nothing else.
+  // regeneration, every by-reference lookup, every sitemap render, every page
+  // of a build. Metered as a stranger at 120 per quarter hour, a crawler
+  // sweeping a growing book spent that in a minute; metered on its own larger
+  // budget, every request of a build serialised on ONE counter row and two
+  // calls came back 504 (Supabase logs, 2026-09-13). The key the enquiry door
+  // already believes now buys the site exactly one thing on the feed: no
+  // counter round trip at all. Everyone else is metered as before.
   const KEY = "site-key-long-enough-to-be-real";
   beforeEach(() => {
     process.env.ENQUIRY_FORWARD_KEY = KEY;
@@ -110,9 +112,19 @@ describe("a proven forwarder reads on its own budget (audit REL-03)", () => {
     expect(state.hits).toEqual([{ p_ip_hash: "ip-hash", p_limit: 120 }]);
   });
 
-  it("meters the site on a site-scoped hash with the larger budget when the key matches", async () => {
+  it("does not meter the site at all when the key matches — no counter round trip", async () => {
     expect((await get("org=gnk", { "x-gnk-forward-key": KEY })).status).toBe(200);
-    expect(state.hits).toEqual([{ p_ip_hash: "site:ip-hash", p_limit: 1200 }]);
+    expect(state.hits).toEqual([]);
+    expect(state.calls).not.toContain("note_public_listing_hit");
+  });
+
+  it("cannot refuse the site as over budget, whatever the counter would say", async () => {
+    state.overBudget = true;
+    try {
+      expect((await get("org=gnk", { "x-gnk-forward-key": KEY })).status).toBe(200);
+    } finally {
+      state.overBudget = false;
+    }
   });
 
   it("treats a wrong key as a stranger, never as a refusal", async () => {

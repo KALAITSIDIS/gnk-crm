@@ -6410,3 +6410,29 @@ shrink a maximised window (resize_window reported success and innerWidth
 stayed 1920). `tests/e2e/phone-layout.spec.ts` checks it instead, under both
 projects with inverse assertions — cards and the fold on the Pixel 5, the
 table and no fold on the desktop — and `?view=` honoured everywhere.
+
+## T-feed-forwarder-unmetered — the site is not metered on the feed (2026-09-13, late; no migration)
+
+REL-03's second pass gave the marketing site a 1200-per-quarter-hour budget on
+a site-scoped hash so a crawler sweeping the book could not starve it. The
+Supabase logs for the same evening showed what that costs: the budget is ONE
+counter row (`public_listing_attempts` for `callerIpHash("site")`), every
+feed request updates it inside `note_public_listing_hit`, and a gnk-web build
+fetches each listing page twice (generateMetadata and the page) on top of the
+whole-feed read for generateStaticParams. Ten concurrent calls per RPC in the
+minute of a deploy serialised on the row lock: the counter averaged 740 ms
+and peaked at 3.3 s, `public_listings` waited behind it to 5.4 s, and three
+calls came back 504 from the gateway — 14:08 and 14:10 UTC, exactly the
+minutes of a preview and a production build. Three of ~2,880 requests, and
+ISR healed each within a minute, but it is a ceiling that lowers as the book
+grows.
+
+The meter bought nothing the key does not already settle. The feed is public
+data; the key opens nothing; a stranger holding it could read a public feed
+faster, which is the whole of the exposure. So a proven forwarder now skips
+the counter entirely. A stranger, a wrong key, or a CRM without a key
+configured is metered at 120 exactly as before — the route test pins all
+four cases, and the site's README and lib/crm.ts no longer claim a "larger
+budget" the CRM does not grant. The site's own build shape (two fetches per
+page) is the remaining lever, left alone: without the row lock the burst is
+just concurrent reads of a small function.

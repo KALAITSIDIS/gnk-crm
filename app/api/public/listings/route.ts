@@ -32,17 +32,23 @@ export const dynamic = "force-dynamic";
 const RATE_LIMIT = 120;
 
 /**
- * Requests per 15-minute window for OUR marketing site, which reads the feed
- * from one egress address: every ISR regeneration, every by-reference lookup,
- * every sitemap render. Metered as a stranger, a crawler sweeping a growing
- * book spent the 120 in a minute and every page fell back to its last good
- * copy (audit REL-03). The site proves itself with the same key the enquiry
- * door already believes (`x-gnk-forward-key`, lib/services/forwarder.ts) and
- * is metered on a site-scoped hash, so a stranger at the same address cannot
- * spend this budget and the site cannot spend theirs. The key buys budget and
- * nothing else; the feed is public either way.
+ * OUR marketing site is NOT metered (2026-09-13, second pass on audit REL-03).
+ *
+ * It reads the feed from one egress address — every ISR regeneration, every
+ * by-reference lookup, every sitemap render, and every page of a build — and
+ * proves itself with the same key the enquiry door already believes
+ * (`x-gnk-forward-key`, lib/services/forwarder.ts). The first pass metered it
+ * as a stranger at 120 and a crawler sweeping the book spent that in a minute;
+ * the second gave it 1200 on a site-scoped hash. Measured against the
+ * Supabase logs the same evening: that counter is ONE row, every request of a
+ * site build updates it, and a build fetches each listing page twice — ten
+ * concurrent calls serialised on the row lock, the counter took 3 s, two calls
+ * passed the gateway's 5 s and came back 504 in the minute of a deploy.
+ * Metering the site bought nothing the key does not already settle (the feed
+ * is public; the key opens nothing) and cost the one thing the feed exists to
+ * do. So a proven forwarder skips the counter entirely; a stranger, a wrong
+ * key, or a CRM with no key configured is metered exactly as before.
  */
-const SITE_RATE_LIMIT = 1200;
 const FORWARD_KEY_HEADER = "x-gnk-forward-key";
 
 /**
@@ -76,15 +82,17 @@ export async function GET(request: NextRequest) {
     request.headers.get(FORWARD_KEY_HEADER),
     process.env.ENQUIRY_FORWARD_KEY,
   );
-  const overBudget = await supabase.rpc("note_public_listing_hit", {
-    p_ip_hash: await callerIpHash(trusted ? "site" : undefined),
-    p_limit: trusted ? SITE_RATE_LIMIT : RATE_LIMIT,
-  });
-  if (overBudget.data === true) {
-    return NextResponse.json(
-      { error: "Too many requests." },
-      { status: 429, headers: { "Cache-Control": "no-store", "Retry-After": "900" } },
-    );
+  if (!trusted) {
+    const overBudget = await supabase.rpc("note_public_listing_hit", {
+      p_ip_hash: await callerIpHash(),
+      p_limit: RATE_LIMIT,
+    });
+    if (overBudget.data === true) {
+      return NextResponse.json(
+        { error: "Too many requests." },
+        { status: 429, headers: { "Cache-Control": "no-store", "Retry-After": "900" } },
+      );
+    }
   }
 
   // The snapshot names the feed as a whole (row count | max(updated_at) | photo
