@@ -287,6 +287,14 @@ leads list gains a portal filter.
 
 ### Operator runbook (outside the code)
 
+**Order, without exception: apply 0095 → run `scripts/media/backfill-jpeg.mts`
+→ only then hand any portal its feed URL.** Every registry entry has
+`minPhotos ≥ 1`, `portal_supplement` aggregates only `path_jpeg is not null`
+rows and `assemblePortalFeed` filters by eligibility, so until the backfill
+completes every listing fails `too_few_photos` and every feed is the EMPTY
+document, which a pull portal reads as "remove everything"; `/settings/portals`
+warns while any photo lacks its JPEG.
+
 1. **JamesEdition**: buy a membership; ask the account manager to connect a
    Kyero-format feed at the CRM's URL; run their "Validate your feed" page on
    it; take the Leads API token from the Seller Dashboard into Vercel.

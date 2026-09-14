@@ -6461,19 +6461,30 @@ Marketing tab, nothing is auto-included, and a new listing reaches no portal
 until someone chooses it. (3) The portal feed is a PROJECTION of
 `public_listings()`: the route reads the site's own feed and keeps the
 selected references, so "on a portal" ⊆ "on the site" holds structurally
-rather than by a second eligibility check — a listing the site withholds
-cannot reach a portal through any path. `supabase/tests/portals.test.ts`
-proves it in both directions: `portal_supplement` returns nothing for a
+rather than by a second gate — a listing the site withholds cannot reach a
+portal through any path. `portal_supplement` does re-state the site's
+predicate in SQL, but that copy is a pinned duplicate and not a second gate:
+`supabase/tests/portals.test.ts` pins the two together and proves the
+containment in both directions — `portal_supplement` returns nothing for a
 selected-but-not-public listing and nothing for a public-but-unselected one.
 (4) Coordinates leave through `portal_supplement` only, for selected rows,
-and an approximate location is never emitted as an exact point — the Kyero
-dialect drops the `<location>` node for an approximate listing; the RERA
-dialect (milestone 2) will carry its approximate flag instead. (5) A disabled
+and an approximate location is never emitted as an exact point. The
+withholding lives in the SQL: `portal_supplement` returns null lat/lng when
+`location_approx` is set and still returns the flag, and every renderer
+double-checks the flag it receives (`dialects/approx-guard.test.ts` iterates
+the live renderer table, so a milestone-2 dialect is covered the moment it
+is registered; the Kyero dialect drops its `<location>` node). The RERA
+dialect (milestone 2) wants an approximate pin WITH its
+`show_approximate_location` flag, and with the point withheld at the SQL
+boundary it must take a centroid from `areas`/`districts` — the backlog's
+M2 entry carries that consequence. (5) A disabled
 portal answers its dialect's EMPTY document with a 200, never a 404: every
 pull portal treats absence as removal, so an empty feed clears our listings
 there while a 404 would leave them stale; for the same reason a failed
-assembly is a 503, never an empty document. An unknown portal or a wrong token
-answers 404 before a single round trip, with nothing to tell the two apart.
+assembly is a 503, never an empty document. An unknown portal or a
+mis-shaped token answers 404 before a single round trip; a well-formed wrong
+token costs one indexed lookup and the same 404, with nothing to tell the two
+apart.
 The token is not metered — `proxy.ts` exempts `/api/portals/` and the route
 never touches the public-listing counter; a portal pulling three times a day
 is not a stranger, and the data behind the URL is public anyway, so the token
@@ -6483,7 +6494,19 @@ watermark policy, alpha flattened to white — because RERA takes JPEG/PNG only
 and four other portals leave the format undocumented.
 `scripts/media/backfill-jpeg.mts` writes it for every existing photo from the
 stored full rendition, idempotently, and must run once against hosted after
-0095 is applied there. Bazaraki and Prian stay `spec: "pending"` in the
+0095 is applied there and BEFORE any portal is handed its feed URL: every
+registry entry has `minPhotos ≥ 1`, `portal_supplement` aggregates only
+`path_jpeg is not null` rows and `assemblePortalFeed` filters by eligibility,
+so until the backfill completes every listing fails `too_few_photos` and
+every feed is the EMPTY document, which a pull portal reads as "remove
+everything". On hosted today `property_media` holds ZERO rows (measured
+through the connector on 2026-09-14), so the first hosted backfill is a
+no-op; the ordering matters for any photo that reaches hosted before 0095
+does, and for any later restore or import that lands rows without the
+rendition. The UI half of the guard is `/settings/portals`, which since
+`5ae3631` warns how many photos are not yet prepared for portals and tells
+the admin to run the backfill before giving any portal its URL. Bazaraki and
+Prian stay `spec: "pending"` in the
 registry — visible on `/settings/portals` with a badge and no switch — until
 the operator obtains their formats; the RERA and Thribee dialects are
 milestone 2 and the JamesEdition leads pull is milestone 3, both on the
@@ -6499,7 +6522,8 @@ URLs out, and the remedy is **Regenerate** on `/settings/portals`
 is given the new one); `docs/BACKUP_RESTORE.md`'s sensitive-archive box says
 the same.
 
-Two defects the end-to-end spec found, and how they were fixed.
+Two defects the end-to-end spec found and how they were fixed, one finding
+of the final review, and one thing observed and not investigated.
 
 (A) The settings page handed the full registry entry — zod schema included —
 to a client component. React refuses to serialise a zod schema across the RSC
@@ -6512,7 +6536,9 @@ with a serialisability test whose detector is proven against a Date, a
 function and a zod schema.
 
 (B) PRE-EXISTING: the property page's ten-tab strip was 913 px wide at phone
-width and widened the page, which made the Marketing tab's cards — the
+width — the STRIP's width; the DOCUMENT it widened measured 937 px in a
+390 px viewport, the figure `components/ui/tabs.tsx` quotes — which made
+the Marketing tab's cards — the
 Portals card among them — unclickable on a phone. Fixed on this branch first
 at the call site (`07c53c7`) and then once, in the `TabsList` primitive
 (`64fe4ab`: `max-w-full overflow-x-auto justify-start` in the base), because
@@ -6528,6 +6554,24 @@ back), and no horizontal overflow on the Marketing tab. Accepted cost of the
 primitive change, named in its comment: `overflow-x-auto` clips a trigger's
 3 px focus ring and would clip the unused `line` variant's underline, which
 sits 5 px below the content box.
+
+(C) The final review's finding, fixed in `4ce0799`: `portal_supplement` had
+returned the stored point for an approximate listing and left every renderer
+to drop it. 0054 says `location_approx` is TRUE when `location` holds an
+area or district centroid, and the app's only path that sets it is the "Use
+the area centre" button — but the schema does not prevent an import or a
+direct write from flagging a surveyed point, and the function is reachable
+by anyone holding the token over PostgREST without the route, so the
+renderer's check alone was not the gate. The function now returns null
+lat/lng for such a row and still returns the flag; an RLS test in
+`supabase/tests/portals.test.ts` proves the withholding and
+`approx-guard.test.ts` keeps every renderer's double-check.
+
+Observed, not investigated: during the desktop e2e run the dev server logged
+`logEvent failed (export.exported): canceling statement due to statement
+timeout` from the properties CSV export route
+(`app/(app)/properties/export/route.ts`) — not portal code, and the suite
+stayed green at 243/243. Recorded so the next reader does not rediscover it.
 
 The coverage lesson is the one to carry. A settings sub-page is reachable by
 no existing suite — `MODULES` in `tests/e2e/helpers.ts` ends at `/settings` —

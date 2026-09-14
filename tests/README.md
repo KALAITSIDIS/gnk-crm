@@ -27,10 +27,14 @@ tests/
 ## Running
 
 ```bash
-npm run test          # unit — 1640 tests across 148 files (measured 2026-09-14), no external deps
-npm run test:rls      # RLS  — 135 tests across 12 files (measured 2026-09-14), needs the local Supabase stack up
+npm run test          # unit — 1644 tests across 149 files (measured 2026-09-14), no external deps
+npm run test:rls      # RLS  — 136 tests across 12 files (measured 2026-09-14), needs the local Supabase stack up
 npm run test:e2e      # E2E  — 243 desktop + 221 mobile specs listed (measured 2026-09-14), desktop 1280px + mobile 390px
 ```
+
+`HANDOFF.md` §0's Tests row is the measured source for these counts; this
+block is a readable copy dated the same day, and when the two disagree the
+row is right and this block is stale.
 
 Useful subsets:
 

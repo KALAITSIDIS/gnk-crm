@@ -2187,6 +2187,13 @@ Every VERIFY line in this section was RUN on 2026-09-14 before it was written.
   - **A `<url>` back-link to the listing on gnk-web** for the Kyero-family
     portals — needs the same `site_listing_url_template` setting; is the public
     listing URL shape final enough to hand to portals?
+  - **RERA needs a centroid pair of its own** — the RERA dialect (spec
+    §Dialects) expects lat/lng WITH `show_approximate_location=1` for an
+    approximate listing, but `portal_supplement` withholds the point at the SQL
+    boundary since `4ce0799`, so those rows arrive with no coordinates. Before
+    RERA ships, `portal_supplement` must grow a separate centroid pair sourced
+    from `areas`/`districts` (never `properties.location`), or approximate
+    listings stay ineligible for RERA.
   **VERIFY:** `ls lib/services/portals/dialects/rera.ts lib/services/portals/dialects/trovit.ts` — either present means started. *(neither on 2026-09-14; the directory holds `kyero.ts`, `xml.ts`, `types.ts`, `index.ts` and the fixtures.)*
 
 - **Portal syndication milestone 3, M.** The JamesEdition leads pull — spec

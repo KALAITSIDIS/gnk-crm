@@ -513,9 +513,9 @@ production, and it is **verified, not assumed**:
 
 > **Those object counts are the 2026-08-06 snapshot, kept as taken.** They are
 > what that drill compared — §2's rule ("re-capture immediately before a
-> drill; they will have moved"), not a maintained inventory — and no migration
-> since has moved them; the production column of the derived-file table below
-> is the same snapshot. For scale, MEASURED on the LOCAL database at migration
+> drill; they will have moved"), not a maintained inventory; the production
+> column of the derived-file table below is the same snapshot. For scale,
+> MEASURED on the LOCAL database at migration
 > 0095 on 2026-09-14, extension-owned objects excluded (PostGIS lives in
 > `public` and contributes 775 functions of its own): 40 tables (41 with
 > `spatial_ref_sys`) · 1 view (3 with PostGIS's two) · 154 policies · 59
