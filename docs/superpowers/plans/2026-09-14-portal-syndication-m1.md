@@ -2816,6 +2816,15 @@ git add lib/actions/portals.ts lib/validators/portals.ts lib/validators/portals.
 git commit -m "portals: actions — enable/disable, settings, token rotation, select/deselect; every write counted, every success an event" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
+**Amendments applied at implementation (2026-09-14; the committed files are the authority, not the block above):**
+- The validator test's e-mail fixture is `a@b.co`: zod 4's `z.email()` refuses a one-letter top-level domain, and the registry's schema validates the address.
+- A refused-writes test in the repo's own idiom (`lib/actions/portals-refused-writes.test.ts`, fakes for `createClient`, `getCurrentProfile`, `revalidatePath`, a spy on `logEvent`) pins the rules the actions live by: a zero-row insert or delete reports refusal and logs nothing; `23505` on select is success without an event; an unenabled portal refuses before any insert; a non-admin is refused before any write; a pending portal cannot be enabled; a toggle is an INSERT or an UPDATE whose payload never carries `feed_token`, so the token cannot be rotated by accident.
+- Six timeline lines and their EN/EL/RU messages, placed after `publishOverride` (the `events` object tracks `EVENT_LINES` order). The pin that caught them is `lib/services/messages.test.ts`, which compiles every message in all three locales against a parameter superset; it needed one `portal` entry in `SAMPLE_PARAMS`.
+
+- `setPortalEnabled` reads the existing row once (`id, settings`) for both the required-settings gate and the insert-versus-update decision; the id, admin and pending gates still run before any round trip.
+- `savePortalSettings` creates the connection row (disabled) when absent, so a settings save mints the feed token through the database default; only `regeneratePortalToken` rotates it afterwards. The `requiredSettings` refusal is written but unreachable until a portal declares a required key (none does in milestone 1).
+- 4 validator tests + 14 refused-writes tests (the eight required plus landing-path tests so a refusal cannot pass by the action never working); `npm test` 1607.
+
 ---
 
 ### Task 12: Settings → Portals
