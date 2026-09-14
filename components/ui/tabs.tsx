@@ -39,8 +39,12 @@ function Tabs({
  * centred strip that OVERFLOWS hides its own first tab at scrollLeft 0, and
  * no amount of scrolling right brings it back.
  *
- * Accepted cosmetic cost: `overflow-x-auto` forces `overflow-y` to `auto`,
- * so a trigger's 3px focus ring is clipped by the list's own p-[3px].
+ * Accepted cosmetic cost: `overflow-x-auto` forces `overflow-y` to `auto`, so
+ * anything a trigger paints outside the list's own p-[3px] is clipped — its
+ * 3px focus ring, and the `variant="line"` active underline, which sits 5px
+ * below the content box (`after:bottom-[-5px]`). No call site uses `line`
+ * today; that underline must be moved inside the box before one does, or the
+ * variant's only visual cue will be invisible.
  */
 const tabsListVariants = cva(
   "group/tabs-list inline-flex w-fit max-w-full items-center justify-start overflow-x-auto rounded-lg p-[3px] text-muted-foreground group-data-horizontal/tabs:h-9 group-data-vertical/tabs:h-fit group-data-vertical/tabs:flex-col data-[variant=line]:rounded-none",

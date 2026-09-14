@@ -137,10 +137,13 @@ test("enable → select → feed → remove → gone", async ({ page }) => {
     .eq("portal", PORTAL_ID);
   if (preErr) throw new Error(`could not put ${PORTAL_ID} back to disabled: ${preErr.message}`);
 
+  // BEFORE the seed, and outside the `try` so the `finally` can dispose it
+  // however the test ends. Before, because nothing here needs the listing and
+  // a throw after the seed would strand a public, published, available row
+  // with no `finally` yet in scope to take it away.
+  const api = await pwRequest.newContext({ baseURL: baseUrl() });
   const listing = await seedPublicListing(svc, orgId, tag);
   const problems = watchForProblems(page);
-  // Out here so the `finally` can dispose it however the test ends.
-  const api = await pwRequest.newContext({ baseURL: baseUrl() });
 
   try {
     // 1. Settings → Portals: enable JamesEdition. UNCONDITIONAL, because the
@@ -210,11 +213,12 @@ test("enable → select → feed → remove → gone", async ({ page }) => {
 
     assertNoProblems(problems, "portals loop");
   } finally {
-    await api.dispose();
-    // Both cleanups always run and both report: one failing must not leave the
-    // other undone. A zero-row write is a refusal, not success — the house rule
-    // in lib/actions/portals.ts:16-18.
+    // EVERY cleanup runs and every cleanup reports: one failing must not leave
+    // another undone, which is why the disposal is caught rather than allowed
+    // to throw past the two database writes below. A zero-row write is a
+    // refusal, not success — the house rule in lib/actions/portals.ts:16-18.
     const faults: string[] = [];
+    await api.dispose().catch((e: unknown) => faults.push(`api.dispose: ${String(e)}`));
 
     // Switching the connection back off costs nothing: setPortalEnabled's
     // update branch never re-mints feed_token (lib/actions/portals.ts:103-107),
