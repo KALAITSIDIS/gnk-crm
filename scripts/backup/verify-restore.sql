@@ -219,8 +219,10 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   -- the portal feed (0095): a portal PULLS over a tokenised URL, so these
   -- three are anon-callable and the 64-hex feed_token is the whole gate.
   -- note_portal_pull WRITES (the last_pull* columns) and is still anon —
-  -- unlike the 0084 door it takes no caller data, touches one row already
-  -- named by the token, and the route needs no service key to record a pull.
+  -- unlike the 0084 door it takes only two harmless caller values (a
+  -- user-agent string cut to 200 chars, a count clamped at 0), touches only
+  -- the one row named by the token, and the route needs no service key to
+  -- record a pull.
   -- portal_supplement is the only place coordinates leave the database.
   ('portal_connection_by_token', true, true, true, true),
   ('portal_supplement',          true, true, true, true),
