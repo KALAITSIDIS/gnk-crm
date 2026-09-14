@@ -1,6 +1,9 @@
+import type { Database } from "@/lib/supabase/database.types";
 import { DIALECT_CURRENCIES, DIALECT_TYPE_MAPS } from "./dialects";
 import { feedPrice, textIn, type FeedCoords, type FeedListing } from "./feed-listing";
 import type { PortalDefinition } from "./registry";
+
+type PropertyRow = Database["public"]["Tables"]["properties"]["Row"];
 
 /**
  * Why a listing may or may not go to a portal (spec §Eligibility). ONE
@@ -20,7 +23,7 @@ export type EligibilityReason =
   | "city_unmapped";
 
 export interface EligibilityInput {
-  /** would the site feed show it: visibility public AND status available */
+  /** visibility public AND status available — would the site feed show it */
   isPublic: boolean;
   hasPrice: boolean;
   currency: string;
@@ -40,12 +43,25 @@ export const REASON_TEXT: Record<EligibilityReason, string> = {
   no_price: "No asking price, or no monthly rent for a rental.",
   currency_unsupported: "This portal cannot show the listing's currency.",
   no_description_en: "No English public description.",
-  too_few_photos: "Too few photos with a JPEG rendition for this portal.",
+  too_few_photos: "Not enough photos available in the format this portal accepts (JPEG).",
   no_coords: "This portal requires map coordinates.",
   type_unmapped: "This portal has no category for this property type.",
   no_location_text: "No district or area name to give the portal as the town.",
   city_unmapped: "This portal does not recognise the listing's town.",
 };
+
+/** Desk text with the portal's own numbers filled in, for the two reasons that have them. */
+export function reasonText(portal: PortalDefinition, reason: EligibilityReason): string {
+  if (reason === "too_few_photos") {
+    const n = portal.requirements.minPhotos;
+    return `Fewer than ${n} photo${n === 1 ? "" : "s"} available in the format this portal accepts (JPEG).`;
+  }
+  if (reason === "currency_unsupported") {
+    const c = DIALECT_CURRENCIES[portal.dialect];
+    return c ? `This portal shows prices only in ${c.join(", ")}.` : REASON_TEXT[reason];
+  }
+  return REASON_TEXT[reason];
+}
 
 const blank = (s: string | null | undefined) => !s || s.trim() === "";
 
@@ -80,29 +96,27 @@ export function eligibilityInputFromFeed(l: FeedListing): EligibilityInput {
   };
 }
 
-/** The property page's adapter — from the row the page already holds. */
-export function eligibilityInputFromProperty(p: {
-  visibility: string;
-  status: string;
-  transaction_type: string;
-  asking_price: number | null;
-  rent_price_month: number | null;
-  currency: string;
-  public_description: unknown;
-  property_type: string;
-  districtName: unknown;
-  areaName: unknown;
-  jpegPhotoCount: number;
-  coords: FeedCoords | null;
-}): EligibilityInput {
+/** What `eligibilityInputFromProperty` reads: a slice of `properties.Row` plus what the page computes from it. */
+export type PropertyEligibilityInput = Pick<
+  PropertyRow,
+  | "visibility"
+  | "status"
+  | "transaction_type"
+  | "asking_price"
+  | "rent_price_month"
+  | "currency"
+  | "public_description"
+  | "property_type"
+> & { districtName: unknown; areaName: unknown; jpegPhotoCount: number; coords: FeedCoords | null };
+
+/** The property page's adapter — from the row the page already holds, plus what it computes. */
+export function eligibilityInputFromProperty(p: PropertyEligibilityInput): EligibilityInput {
   return {
+    // A deliberate second copy of THE PREDICATE in public_listings (0088, lines 128-132) and
+    // portal_supplement (0095): the toggle must answer for rows the feed never sees.
+    // supabase/tests/portals.test.ts compares the two against the same row.
     isPublic: p.visibility === "public" && p.status === "available",
-    hasPrice:
-      feedPrice({
-        transaction_type: p.transaction_type,
-        asking_price: p.asking_price,
-        rent_price_month: p.rent_price_month,
-      } as Parameters<typeof feedPrice>[0]) != null,
+    hasPrice: feedPrice(p) != null,
     currency: p.currency,
     descriptionEn: textIn(p.public_description, "en"),
     photoCount: p.jpegPhotoCount,

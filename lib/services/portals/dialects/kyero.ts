@@ -65,7 +65,7 @@ function renderProperty(l: FeedListing, s: KyeroSettings): string {
     tag("type", KYERO_TYPES[r.property_type] ?? null),
     // location — an approximate point is never emitted as coordinates
     tag("town", textIn(r.area, "en") || textIn(r.district, "en")),
-    tag("province", textIn(r.district, "en")),
+    tag("province", textIn(r.district, "en") || textIn(r.area, "en")),
     tag("country", "Cyprus"),
     l.coords && !l.coords.approx
       ? tag("location", [tag("latitude", l.coords.lat), tag("longitude", l.coords.lng)])

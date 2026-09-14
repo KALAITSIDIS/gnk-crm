@@ -5,9 +5,11 @@ import {
   eligibilityFor,
   eligibilityInputFromFeed,
   eligibilityInputFromProperty,
+  reasonText,
   REASON_TEXT,
   type EligibilityInput,
   type EligibilityReason,
+  type PropertyEligibilityInput,
 } from "./eligibility";
 import { PORTALS, portalById } from "./registry";
 
@@ -95,6 +97,52 @@ describe("eligibilityFor", () => {
       expect(DIALECT_RENDERERS[p.dialect] !== null, `${p.id}: spec=${p.spec}`).toBe(p.spec === "public");
     }
   });
+
+  it("reports every reason it can, in a fixed order, when everything fails (JamesEdition needs no coords)", () => {
+    const allBad: EligibilityInput = {
+      isPublic: false,
+      hasPrice: false,
+      currency: "RUB",
+      descriptionEn: "",
+      photoCount: 0,
+      coords: null,
+      propertyType: "mixed_use",
+      districtEn: null,
+      areaEn: null,
+    };
+    const r = eligibilityFor(je, allBad);
+    if (r.ok) throw new Error("expected failure");
+    expect(r.reasons).toEqual([
+      "not_public",
+      "no_price",
+      "currency_unsupported",
+      "no_description_en",
+      "too_few_photos",
+      "type_unmapped",
+      "no_location_text",
+    ]);
+  });
+
+  it("a dialect with no currency restriction never reports currency_unsupported", () => {
+    const r = eligibilityFor(portalById("thribee")!, { ...ok, currency: "RUB" });
+    if (r.ok) throw new Error("expected failure");
+    expect(r.reasons).not.toContain("currency_unsupported");
+    expect(r.reasons).toContain("type_unmapped");
+  });
+});
+
+describe("reasonText", () => {
+  it("fills in the portal's own photo threshold", () => {
+    expect(reasonText(je, "too_few_photos")).toContain("2 photos");
+  });
+
+  it("fills in the dialect's supported currencies", () => {
+    expect(reasonText(je, "currency_unsupported")).toContain("EUR, GBP, USD");
+  });
+
+  it("falls back to the base text for a reason with no numbers", () => {
+    expect(reasonText(je, "no_price")).toBe(REASON_TEXT.no_price);
+  });
 });
 
 describe("eligibilityInputFromFeed", () => {
@@ -125,7 +173,7 @@ describe("eligibilityInputFromFeed", () => {
 });
 
 describe("eligibilityInputFromProperty", () => {
-  const base = {
+  const base: PropertyEligibilityInput = {
     visibility: "public",
     status: "available",
     transaction_type: "sale",
@@ -156,5 +204,21 @@ describe("eligibilityInputFromProperty", () => {
     expect(i.districtEn).toBe("Paphos");
     expect(i.areaEn).toBe("Tala");
     expect(eligibilityInputFromProperty(base).areaEn).toBeNull();
+  });
+
+  it("passes through what it doesn't compute: photo count, currency, type and coords", () => {
+    expect(
+      eligibilityInputFromProperty({ ...base, coords: { lat: 34.7, lng: 32.4, approx: true } }),
+    ).toEqual({
+      isPublic: true,
+      hasPrice: true,
+      currency: "EUR",
+      descriptionEn: "Text",
+      photoCount: 3,
+      coords: { lat: 34.7, lng: 32.4, approx: true },
+      propertyType: "apartment",
+      districtEn: "Paphos",
+      areaEn: null,
+    });
   });
 });

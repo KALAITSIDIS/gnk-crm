@@ -88,6 +88,13 @@ describe("kyero dialect", () => {
     expect(approx.location).toBeUndefined();
   });
 
+  it("a listing with an area but no district still carries town and province", () => {
+    const areaOnly = { ...SALE_VILLA, row: { ...SALE_VILLA.row, district: null } };
+    const p = parse(kyero.render([areaOnly], KYERO_SETTINGS)).root.property[0];
+    expect(p.town).toBe("Peyia");
+    expect(p.province).toBe("Peyia");
+  });
+
   it("emits en and ru descriptions, never el (Kyero has no Greek node)", () => {
     const xml = kyero.render([SALE_VILLA], KYERO_SETTINGS);
     expect(xml).toContain("<desc><en>");
