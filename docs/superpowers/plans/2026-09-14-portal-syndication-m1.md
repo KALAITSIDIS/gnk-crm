@@ -3325,6 +3325,14 @@ git commit -m "property page: Portals card on the Marketing tab — toggles with
 - Spreading the page's row into the intersection type type-checks (spread properties are exempt from excess-property checks), so no column pick was needed. The 'Selected …' and 'last pulled …' facts are two lines; the card paints the house card chrome because it sits beside the form's bordered box, not inside it.
 - One `useTransition` per card: while one toggle is in flight every row's button is disabled; Task 14 must wait between two clicks.
 
+**Quality-review follow-ups (second commit on 2026-09-14):**
+- The row building moved out of the page into `lib/services/portals/property-portals.ts` (`buildPropertyPortalRows`), the only portal logic that had no colocated test; its test pins registry order, the switched-off cases, the photo note, selector names and the throwing read.
+- Rows come in registry order (the connection rows have no stable order — a pull rewrites `last_pulled_at` and reshuffles the heap), and a selection on a portal that was later switched off stays visible and removable, labelled "Portal is switched off — this listing goes out again if it is switched back on"; before, it vanished from the card while persisting and would have republished on re-enable.
+- A `photoNote` under the intro says how many photos lack a JPEG rendition, because the media tab can show twenty photos while the portal sees none until the backfill runs — the reason text was true but unactionable.
+- One transition per card still, but only the busy row's button reads "Working…"; the reasons list is associated with its button by `aria-describedby`; `router.refresh()` runs on failure too and before the success toast; padding matches the sibling box.
+
+- The helper types the property row as the twelve fields it reads (`PortalPropertyRow`), so the test fixture is meaningful rather than a ninety-field cast; a selection whose portal has no connection row at all is also shown. 10 helper tests; `npm test` 1632; the inclusion rule was mutated and two tests went red.
+
 ---
 
 ### Task 14: End-to-end
