@@ -1276,6 +1276,12 @@ git add lib/services/portals/eligibility.ts lib/services/portals/eligibility.tes
 git commit -m "portals: eligibility — one rule for the feed and the toggles" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
+**Amendments applied at implementation (2026-09-14; the committed files are the authority, not the block above):**
+- `hasPrice` in both adapters comes from `feedPrice()` in `feed-listing.ts`; there is no third copy of the rent/sale rule.
+- A new reason, `no_location_text`: Kyero's mandatory `<town>` and `<province>` come from `area.en` and `district.en`, so a listing with both blank is ineligible for every portal. One of the two suffices.
+- Type-map membership uses `Object.hasOwn`, never `in` (which answers true for `"constructor"`); a test pins it.
+- Fixture names follow Task 4: `KYERO_SETTINGS`, and `SHOP_UNIT` (one photo) is the JamesEdition `too_few_photos` case. 21 tests. The property-page adapter feeds `feedPrice()` through an `as Parameters<typeof feedPrice>[0]` cast because the page row types `transaction_type` as a plain string.
+
 ---
 
 ### Task 6: Migration 0095
