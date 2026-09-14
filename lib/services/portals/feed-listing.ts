@@ -1,8 +1,48 @@
+/**
+ * The shape every dialect renderer consumes: a `public_listings()` row joined
+ * to its `portal_supplement()` row, with absolute JPEG URLs.
+ *
+ * The row is kept as-is — the site feed's own row — rather than re-mapped
+ * into a portal-specific DTO. That is deliberate: a listing being ON a
+ * portal feed is then structurally a subset of a listing being on the site
+ * feed (the same 36 public columns, nothing more), instead of a rule a
+ * renderer author has to remember and could get wrong. The supplement adds
+ * only what a portal may see beyond the site feed — coordinates, and only
+ * for listings selected for that portal, plus JPEG image paths (the site
+ * feed serves WebP).
+ */
 import type { Database } from "@/lib/supabase/database.types";
 import { publicMediaUrl } from "@/lib/services/public-listings";
 
 /** One row of `public_listings()` as `npm run db:types` last wrote it — the site feed's shape. */
 export type PublicListingRow = Database["public"]["Functions"]["public_listings"]["Returns"][number];
+
+/** Columns `public_listings()` never returns null for (NOT NULL on `properties`, or coalesced in SQL). */
+type NonNullFeedKey =
+  | "reference"
+  | "kind"
+  | "property_type"
+  | "transaction_type"
+  | "title"
+  | "short_description"
+  | "adviser_view"
+  | "public_description"
+  | "currency"
+  | "vat_status"
+  | "features"
+  | "title_deed_status"
+  | "updated_at"
+  | "images";
+
+/**
+ * A feed row with honest nullability. The generated type marks every column
+ * non-null because the codegen cannot see NOT NULL through a setof function;
+ * in SQL (0066 lines 154-190) every column outside NonNullFeedKey is nullable —
+ * `asking_price` on a rental, `bedrooms` on land, `district` when unset.
+ */
+export type FeedRow = {
+  [K in keyof PublicListingRow]: K extends NonNullFeedKey ? PublicListingRow[K] : PublicListingRow[K] | null;
+};
 
 /** One row of `portal_supplement()` (0095): what a portal may see beyond the public feed. */
 export interface SupplementRow {
@@ -27,7 +67,7 @@ export interface PortalFeedImage {
 
 /** What every dialect renders from. Nothing here is not already public or selected. */
 export interface FeedListing {
-  row: PublicListingRow;
+  row: FeedRow;
   coords: FeedCoords | null;
   images: PortalFeedImage[];
 }
@@ -42,7 +82,7 @@ export function textIn(json: unknown, lang: Lang): string {
 }
 
 export function buildFeedListings(
-  rows: readonly PublicListingRow[],
+  rows: readonly FeedRow[],
   supplements: readonly SupplementRow[],
   supabaseUrl: string,
 ): FeedListing[] {
@@ -56,9 +96,9 @@ export function buildFeedListings(
         ? { lat: s.lat, lng: s.lng, approx: s.location_approx }
         : null;
     const images: PortalFeedImage[] = [];
-    for (const img of s.images ?? []) {
+    for (const img of s.images) {
       const url = publicMediaUrl(supabaseUrl, img.jpeg);
-      if (url) images.push({ url, alt: textIn(img.alt, "en") || null });
+      if (url) images.push({ url, alt: textIn(img.alt, "en") || textIn(img.alt, "ru") || null });
     }
     out.push({ row, coords, images });
   }
