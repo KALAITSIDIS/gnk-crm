@@ -2261,7 +2261,7 @@ git commit -m "portals: feed assembly — a projection of the site feed, never e
 - Distinct references: a `seen` set keeps a reference that a window shift between page fetches returned twice from being emitted twice, and the early stop counts distinct references, not rows.
 - Truncation is an error (`{ ok: false, error: "feed truncated at the page ceiling" }`), derived after the loop only when the ceiling was hit with references still missing — the same reasoning that makes a failed page an error: a partial document would delist the rest. A COMPLETE scan that misses a reference (the listing went non-public between the supplement call and the paging) is served, with `missing` reported.
 - The result carries `count`, `selected` and `missing` (no `truncated`); `maxPages` is an optional argument for tests.
-- Tests pin feed order with two survivors, the multi-page join, the duplicate-across-pages case, truncation as an error, and the missing count. 8 tests.
+- Tests pin feed order with two survivors, the multi-page join, the duplicate-across-pages case, truncation as an error, the missing count, and (a ninth, from the re-review) that a set completed on the final allowed page is not truncation. 9 tests.
 
 ---
 
