@@ -53,6 +53,16 @@ export interface SupplementRow {
   images: { jpeg: string | null; alt: unknown }[];
 }
 
+// Keep SupplementRow hand-declared (honest nullability, typed images); this only pins its KEYS to the generated function.
+type GeneratedSupplement = Database["public"]["Functions"]["portal_supplement"]["Returns"][number];
+type _SupplementKeysMatch = [keyof SupplementRow] extends [keyof GeneratedSupplement]
+  ? [keyof GeneratedSupplement] extends [keyof SupplementRow]
+    ? true
+    : never
+  : never;
+const _supplementKeysMatch: _SupplementKeysMatch = true;
+void _supplementKeysMatch;
+
 export interface FeedCoords {
   lat: number;
   lng: number;

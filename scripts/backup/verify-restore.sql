@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 94::bigint as migrations,
+    2::bigint as auth_users, 95::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -194,14 +194,16 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   ('report_citation',          false, false, true, true),
   ('published_below_threshold',false, false, true, true),
   -- the deliberate anon surface: share links (0023/0041, + the 0081
-  -- read-only budget peek) and the public listing feed (0066/0073/0086).
-  -- anon = TRUE is unique to these SIX rows, and nothing else in the
+  -- read-only budget peek), the public listing feed (0066/0073/0086) and
+  -- the portal feed (0095, the three rows below the enquiry door).
+  -- anon = TRUE is unique to these NINE rows, and nothing else in the
   -- database — which is the point: a restore that DROPS these grants kills
-  -- every live proposal link and the marketing feed silently, which is why
-  -- they are pinned. (The count is stated because it is checkable: grep this
-  -- file for ^  \('.*true, true, true, true\) — the row form, so this
-  -- sentence is not itself a hit — and it must return six. It was eight
-  -- from 0084 to 0087, while the enquiry door was anon-callable.)
+  -- every live proposal link, the marketing feed and every portal pull
+  -- silently, which is why they are pinned. (The count is stated because it
+  -- is checkable: grep this file for ^  \('.*true, true, true, true\) — the
+  -- row form, so this sentence is not itself a hit — and it must return
+  -- nine. It was six from 0088 to 0094; eight from 0084 to 0087, while the
+  -- enquiry door was anon-callable.)
   ('resolve_share_link',      true, true, true, true),
   ('share_link_over_budget',  true, true, true, true),
   ('note_share_link_miss',    true, true, true, true),
@@ -214,6 +216,15 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   -- three (audit A01). A restore that re-grants anon here re-opens that.
   ('submit_public_enquiry',   true, false, false, true),
   ('note_public_enquiry_hit', true, false, false, true),
+  -- the portal feed (0095): a portal PULLS over a tokenised URL, so these
+  -- three are anon-callable and the 64-hex feed_token is the whole gate.
+  -- note_portal_pull WRITES (the last_pull* columns) and is still anon —
+  -- unlike the 0084 door it takes no caller data, touches one row already
+  -- named by the token, and the route needs no service key to record a pull.
+  -- portal_supplement is the only place coordinates leave the database.
+  ('portal_connection_by_token', true, true, true, true),
+  ('portal_supplement',          true, true, true, true),
+  ('note_portal_pull',           true, true, true, true),
   -- trigger bodies: callable by nobody over PostgREST (0007/0021)
   ('trg_events_hash',              true, false, false, false),
   -- + the two invoker trigger bodies 0080 brought into the same posture,

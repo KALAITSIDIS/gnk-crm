@@ -1196,6 +1196,115 @@ export type Database = {
           },
         ]
       }
+      portal_connections: {
+        Row: {
+          created_at: string
+          enabled: boolean
+          feed_token: string
+          id: string
+          last_pull_count: number | null
+          last_pulled_at: string | null
+          last_pulled_ua: string | null
+          leads_pulled_to: string | null
+          org_id: string
+          portal: string
+          settings: Json
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          enabled?: boolean
+          feed_token?: string
+          id?: string
+          last_pull_count?: number | null
+          last_pulled_at?: string | null
+          last_pulled_ua?: string | null
+          leads_pulled_to?: string | null
+          org_id: string
+          portal: string
+          settings?: Json
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          enabled?: boolean
+          feed_token?: string
+          id?: string
+          last_pull_count?: number | null
+          last_pulled_at?: string | null
+          last_pulled_ua?: string | null
+          leads_pulled_to?: string | null
+          org_id?: string
+          portal?: string
+          settings?: Json
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "portal_connections_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "portal_connections_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      portal_listings: {
+        Row: {
+          org_id: string
+          portal: string
+          property_id: string
+          selected_at: string
+          selected_by: string | null
+        }
+        Insert: {
+          org_id: string
+          portal: string
+          property_id: string
+          selected_at?: string
+          selected_by?: string | null
+        }
+        Update: {
+          org_id?: string
+          portal?: string
+          property_id?: string
+          selected_at?: string
+          selected_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "portal_listings_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "portal_listings_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "portal_listings_selected_by_fkey"
+            columns: ["selected_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       price_history: {
         Row: {
           changed_at: string
@@ -1730,6 +1839,7 @@ export type Database = {
           org_id: string
           path_card: string | null
           path_full: string | null
+          path_jpeg: string | null
           path_thumb: string | null
           property_id: string
           sort_order: number
@@ -1751,6 +1861,7 @@ export type Database = {
           org_id: string
           path_card?: string | null
           path_full?: string | null
+          path_jpeg?: string | null
           path_thumb?: string | null
           property_id: string
           sort_order?: number
@@ -1772,6 +1883,7 @@ export type Database = {
           org_id?: string
           path_card?: string | null
           path_full?: string | null
+          path_jpeg?: string | null
           path_thumb?: string | null
           property_id?: string
           sort_order?: number
@@ -3107,6 +3219,10 @@ export type Database = {
         Args: { p_district_code: string; p_org: string }
         Returns: string
       }
+      note_portal_pull: {
+        Args: { p_count: number; p_token: string; p_ua: string }
+        Returns: undefined
+      }
       note_public_enquiry_hit: {
         Args: { p_ip_hash: string; p_limit?: number }
         Returns: boolean
@@ -3133,6 +3249,24 @@ export type Database = {
       populate_geometry_columns:
         | { Args: { tbl_oid: unknown; use_typmod?: boolean }; Returns: number }
         | { Args: { use_typmod?: boolean }; Returns: string }
+      portal_connection_by_token: {
+        Args: { p_portal: string; p_token: string }
+        Returns: {
+          enabled: boolean
+          org_slug: string
+          settings: Json
+        }[]
+      }
+      portal_supplement: {
+        Args: { p_token: string }
+        Returns: {
+          images: Json
+          lat: number
+          lng: number
+          location_approx: boolean
+          reference: string
+        }[]
+      }
       postgis_constraint_dims: {
         Args: { geomcolumn: string; geomschema: string; geomtable: string }
         Returns: number
