@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { toPortalCardDefinition } from "./card-definition";
 import { PORTALS } from "./registry";
 
@@ -39,6 +40,34 @@ function findNonPlain(value: unknown, path: string): string | null {
   }
   return null;
 }
+
+/**
+ * The detector above only ever returns null for today's registry, so on its
+ * own it is an assertion that cannot fail — it would go on passing if someone
+ * simplified it into `() => null`. These three are the shapes it exists to
+ * catch, including the exact one that put the settings page behind its error
+ * boundary.
+ */
+describe("the plain-data detector", () => {
+  it("names a Date, however deeply nested", () => {
+    expect(findNonPlain({ a: { when: new Date() } }, "x")).toMatch(/Date/);
+    expect(findNonPlain({ a: { when: new Date() } }, "x")).toContain("x.a.when");
+  });
+
+  it("names a function", () => {
+    expect(findNonPlain({ render: () => "hi" }, "x")).toBe("x.render is a function");
+  });
+
+  it("names a zod schema — the field that actually broke the settings page", () => {
+    const bad = findNonPlain({ settingsSchema: z.object({}) }, "x");
+    expect(bad).toContain("x.settingsSchema");
+    expect(bad).toMatch(/instance/);
+  });
+
+  it("passes plain data through, including arrays and null", () => {
+    expect(findNonPlain({ a: 1, b: "two", c: null, d: [{ e: true }] }, "x")).toBeNull();
+  });
+});
 
 describe("portal card definition", () => {
   it("survives a JSON round trip unchanged, so it can cross the RSC boundary", () => {

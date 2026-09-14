@@ -24,8 +24,26 @@ function Tabs({
   )
 }
 
+/**
+ * `max-w-full overflow-x-auto justify-start` is in the BASE, not on a caller.
+ *
+ * A strip wider than its container otherwise widens the whole page: the
+ * property page's ten tabs made `/properties/<id>` 937px wide in a 390px
+ * viewport, and the contact page's nine made it 980px — the same defect,
+ * found once (tests/e2e/portals.spec.ts) and fixable in one place. Putting it
+ * on the property page alone would have left the contact page broken and
+ * created a second definition of how a tab strip behaves.
+ *
+ * `justify-start` replaces `justify-center`: with `w-fit` a strip that FITS
+ * has no free space to distribute, so the two are identical there — but a
+ * centred strip that OVERFLOWS hides its own first tab at scrollLeft 0, and
+ * no amount of scrolling right brings it back.
+ *
+ * Accepted cosmetic cost: `overflow-x-auto` forces `overflow-y` to `auto`,
+ * so a trigger's 3px focus ring is clipped by the list's own p-[3px].
+ */
 const tabsListVariants = cva(
-  "group/tabs-list inline-flex w-fit items-center justify-center rounded-lg p-[3px] text-muted-foreground group-data-horizontal/tabs:h-9 group-data-vertical/tabs:h-fit group-data-vertical/tabs:flex-col data-[variant=line]:rounded-none",
+  "group/tabs-list inline-flex w-fit max-w-full items-center justify-start overflow-x-auto rounded-lg p-[3px] text-muted-foreground group-data-horizontal/tabs:h-9 group-data-vertical/tabs:h-fit group-data-vertical/tabs:flex-col data-[variant=line]:rounded-none",
   {
     variants: {
       variant: {
