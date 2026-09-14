@@ -2143,3 +2143,24 @@ developer.
   03:50 so it supersedes the stale warning of anything the 03:45 expiry closed.
   EXECUTE was locked down in the migration rather than after an advisor run —
   the first application of T-C4's lesson at write time.
+
+## Phone layouts — audit 2026-09-13 (CRM-06), the contact page
+
+- ~~**Contact detail header overflows a phone, S.**~~ ✅ **SHIPPED 2026-09-14**
+  (`ad00581` fix, `afdafc4` test, `578a053` prerequisite). Measured by a
+  throwaway Playwright probe in the mobile project: `/contacts/<id>` was
+  631px wide in a 390px viewport. The offender was the header's action
+  group — an admin's five buttons (Log contact · Add task · Archive · Merge ·
+  Erase personal data) are 607px in a row that could not wrap. `flex-wrap`
+  on the group, and the same class on the property header so there is ONE
+  idiom for header actions rather than a wrapping one and a non-wrapping one
+  that fits today only because an admin sees three buttons there.
+  `tests/e2e/phone-layout.spec.ts` now seeds a live contact, proves the fifth
+  button is on the page and calls `assertNoHorizontalOverflow` in both
+  projects — watched to FAIL first (received 241 against a ceiling of 1),
+  then pass. The prerequisite is the `TabsList` primitive from
+  `feat/portal-syndication-m1`, taken verbatim (`max-w-full justify-start
+  overflow-x-auto`): on `main` the nine-tab strip alone made the page 980px
+  wide, which would have hidden the header behind the strip's own number.
+  **No entry existed for this before it shipped** — it is recorded in its
+  struck form so the next person does not re-propose it.
