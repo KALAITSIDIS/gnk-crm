@@ -1832,6 +1832,13 @@ git commit -m "rls: portals — admin-only connections, edit-rights selection, w
 
 - Two fixture facts the plan had wrong: `media_kind` has no `plan` value (it is `floor_plan`), and `property_media.alt` is NOT NULL with a default that PostgREST bypasses on a multi-row insert, so every media row names its `alt`.
 
+**Quality-review follow-ups (second commit on 2026-09-14):**
+- Selection itself is pinned: a third fixture, public and available but never selected, is on the site and NOT on the portal — the one assertion that fails if the `portal_listings` join is dropped from `portal_supplement`.
+- The delete policy's edit-rights arm is exercised by an org-A agent (0 rows on a listing not assigned to them), and `portal_listings` SELECT is shown org-scoped; the earlier cross-org delete test is named as such.
+- The site/portal helpers (`onSite`, `onPortal`) refuse an RPC error instead of swallowing it, and the site lookup uses `p_reference`, so the 100-row cap and `published_at` ordering cannot fail the test for unrelated reasons.
+- The token block restores the shared row and the connection in an unconditional `afterEach`; the pull test disables the connection deliberately to prove pulls are still recorded.
+- Four media rows pin cover-first ordering AND JPEG-only; `location_approx` is asserted in both directions; `portal_connection_by_token`'s `settings` column is asserted; the `zz_probe` row is deleted in a `finally`; anon refusals are strict `42501`; `readRow` is typed against the table's Row so `PropertyEligibilityInput` is checked. 18 tests; suite 135.
+
 ---
 
 ### Task 8: The JPEG rendition
