@@ -1282,6 +1282,13 @@ git commit -m "portals: eligibility — one rule for the feed and the toggles" -
 - Type-map membership uses `Object.hasOwn`, never `in` (which answers true for `"constructor"`); a test pins it.
 - Fixture names follow Task 4: `KYERO_SETTINGS`, and `SHOP_UNIT` (one photo) is the JamesEdition `too_few_photos` case. 21 tests. The property-page adapter feeds `feedPrice()` through an `as Parameters<typeof feedPrice>[0]` cast because the page row types `transaction_type` as a plain string.
 
+**Quality-review follow-ups (second commit on 2026-09-14):**
+- The property-page adapter's parameter is typed against the table's own row (`Pick<PropertyRow, …> & {…}`, exported as `PropertyEligibilityInput`), so the four enums are checked by the compiler and `feedPrice(p)` needs no cast.
+- `reasonText(portal, reason)` fills the portal's numbers into the two reasons that have them (photo minimum, accepted currencies); `REASON_TEXT` stays the base. Task 13 renders `reasonText`.
+- `isPublic` is documented as a deliberate second copy of THE PREDICATE in `public_listings` (0088) and `portal_supplement` (0095); Task 7's RLS suite compares the two against the same row.
+- Kyero's `<province>` falls back to the area name as `<town>` already did, so an area-only listing that eligibility accepts still carries both mandatory nodes; a test pins it without touching the golden.
+- Tests pin reason order and uniqueness over an all-failing input, the null-currencies branch, and the property adapter's passthroughs. 27 eligibility tests, 18 Kyero tests.
+
 ---
 
 ### Task 6: Migration 0095
