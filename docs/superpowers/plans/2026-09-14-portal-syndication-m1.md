@@ -3331,7 +3331,7 @@ git commit -m "property page: Portals card on the Marketing tab — toggles with
 - A `photoNote` under the intro says how many photos lack a JPEG rendition, because the media tab can show twenty photos while the portal sees none until the backfill runs — the reason text was true but unactionable.
 - One transition per card still, but only the busy row's button reads "Working…"; the reasons list is associated with its button by `aria-describedby`; `router.refresh()` runs on failure too and before the success toast; padding matches the sibling box.
 
-- The helper types the property row as the twelve fields it reads (`PortalPropertyRow`), so the test fixture is meaningful rather than a ninety-field cast; a selection whose portal has no connection row at all is also shown. 10 helper tests; `npm test` 1632; the inclusion rule was mutated and two tests went red.
+- The helper types the property row as the twelve fields it reads (`PortalPropertyRow`), so the test fixture is meaningful rather than a ninety-field cast; a selection whose portal has no connection row at all is also shown. 10 helper tests; `npm test` 1632; the inclusion rule was mutated and two tests went red. Third commit: the helper is started right after the media rows are known so its reads overlap the page's main batch (a no-op `.catch` marks the early promise observed; the later `await` still throws), the card's dead `PortalRow` re-export is gone, and the photo note is agent-facing ("N of M photos are not yet prepared for portals."), with the remedy in a code comment.
 
 ---
 
