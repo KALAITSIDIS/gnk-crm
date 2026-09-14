@@ -6467,7 +6467,10 @@ predicate in SQL, but that copy is a pinned duplicate and not a second gate:
 `supabase/tests/portals.test.ts` pins the two together and proves the
 containment in both directions — `portal_supplement` returns nothing for a
 selected-but-not-public listing and nothing for a public-but-unselected one.
-(4) Coordinates leave through `portal_supplement` only, for selected rows,
+(4) Coordinates leave through `portal_supplement` only, for selected rows —
+and one token reaches every listing the org has selected for that portal,
+which is why the org-wide read of `feed_token` is a recorded decision in
+`docs/04_RLS_POLICY_MATRIX.md` and rotation is the remedy for a leak —
 and an approximate location is never emitted as an exact point. The
 withholding lives in the SQL: `portal_supplement` returns null lat/lng when
 `location_approx` is set and still returns the flag, and every renderer
