@@ -29,4 +29,40 @@ describe("xml builder", () => {
   it("header declares UTF-8", () => {
     expect(XML_HEADER).toBe('<?xml version="1.0" encoding="UTF-8"?>\n');
   });
+
+  it("keeps tab, LF and CR — the only C0 characters XML allows", () => {
+    expect(escapeXml("a\tb\nc\rd")).toBe("a\tb\nc\rd");
+  });
+
+  it("drops the non-characters and lone surrogate halves, keeps a proper pair", () => {
+    expect(escapeXml("x\uFFFEy\uFFFFz")).toBe("xyz");
+    expect(escapeXml("a\uD83Db")).toBe("ab");
+    expect(escapeXml("a\uDE00b")).toBe("ab");
+    expect(escapeXml("a\uD83D\uDE00b")).toBe("a\uD83D\uDE00b");
+  });
+
+  it("an empty scalar renders nothing; an empty container renders an empty element", () => {
+    expect(tag("town", "")).toBe("");
+    expect(tag("images", [])).toBe("<images></images>");
+    expect(tag("surface_area", [tag("built", null), tag("plot", null)])).toBe("<surface_area></surface_area>");
+  });
+
+  it("drops null, undefined and empty children and keeps the rest in order", () => {
+    expect(tag("surface_area", [tag("built", null), tag("plot", 1200), undefined, ""])).toBe(
+      "<surface_area><plot>1200</plot></surface_area>",
+    );
+  });
+
+  it("skips a null or undefined attribute and keeps the others", () => {
+    expect(tag("image", "u", { id: null, n: 1, alt: undefined })).toBe('<image n="1">u</image>');
+  });
+
+  it("renders a decimal number as JavaScript prints it, unrounded", () => {
+    expect(tag("latitude", 34.8821)).toBe("<latitude>34.8821</latitude>");
+  });
+
+  it("throws on a non-finite number instead of emitting it", () => {
+    expect(() => tag("price", Number.NaN)).toThrow(/non-finite/);
+    expect(() => tag("price", Number.POSITIVE_INFINITY)).toThrow(/non-finite/);
+  });
 });
