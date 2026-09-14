@@ -1,3 +1,4 @@
+import { ShieldAlert } from "lucide-react";
 import { PortalCard, type PortalCardConnection } from "@/components/features/settings/portal-card";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { toPortalCardDefinition } from "@/lib/services/portals/card-definition";
@@ -41,6 +42,22 @@ export default async function PortalsSettingsPage() {
   if (error) throw new Error(`portal connections: ${error.message}`);
   const byPortal = new Map((rows ?? []).map((r) => [r.portal, r]));
 
+  // The JPEG backfill is what stands between a migrated database and an empty
+  // feed: `portal_supplement` (0095) returns only photos that have a JPEG
+  // rendition, `path_jpeg` is null on every row that predates the migration
+  // until `scripts/media/backfill-jpeg.mts` runs, and a listing left with no
+  // such photo fails `too_few_photos` — so the feed is the empty document,
+  // which a pull portal reads as "remove everything". A count is the cheapest
+  // honest signal; it is org-scoped by RLS like every read on this page, and
+  // it fails like the read above for the same reason: a silent 0 is the
+  // reassuring direction and the wrong one.
+  const { count: unpreparedPhotos, error: photosError } = await supabase
+    .from("property_media")
+    .select("id", { count: "exact", head: true })
+    .eq("kind", "photo")
+    .is("path_jpeg", null);
+  if (photosError) throw new Error(`portal photos: ${photosError.message}`);
+
   return (
     <div className="flex flex-col gap-4">
       <p className="text-sm text-text-2">
@@ -48,6 +65,20 @@ export default async function PortalsSettingsPage() {
         pull; nothing goes out until an agent ticks a listing for that portal on its Marketing tab.
         The website never depends on any of this. Every change here is an event.
       </p>
+      {/* Same notice idiom as the invite form's 2FA warning (users-panel.tsx). */}
+      {unpreparedPhotos ? (
+        <p
+          data-testid="portal-photos-unprepared"
+          className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-text-2"
+        >
+          <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-warning" />
+          <span>
+            {unpreparedPhotos} {unpreparedPhotos === 1 ? "photo is" : "photos are"} not yet prepared
+            for portals — run <code>npm run media:backfill-jpeg</code> before giving any portal its
+            feed URL; until then those photos are invisible to every portal.
+          </span>
+        </p>
+      ) : null}
       {/* `toPortalCardDefinition`, never `def` itself: a registry entry carries
           `settingsSchema`, a zod object, and React refuses to serialise a class
           instance into a "use client" component — passing the whole definition
