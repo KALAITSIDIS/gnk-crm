@@ -2143,3 +2143,87 @@ developer.
   03:50 so it supersedes the stale warning of anything the 03:45 expiry closed.
   EXECUTE was locked down in the migration rather than after an advisor run —
   the first application of T-C4's lesson at write time.
+
+## Portal syndication — 2026-09-14
+
+External portal feeds were on doc 01 §10's Do-Not-Build list (Phase 5) and the
+operator pulled them forward on 2026-09-14 — the record is DECISIONS
+`T-portal-syndication-m1`, the design is
+`docs/superpowers/specs/2026-09-14-portal-syndication-design.md`. Milestone 1
+is struck below; milestones 2 and 3 are the next buildable items in this file.
+Every VERIFY line in this section was RUN on 2026-09-14 before it was written.
+
+- ~~**Portal syndication milestone 1, M.**~~ **SHIPPED 2026-09-14 on
+  `feat/portal-syndication-m1` (`4f584dd`…`66860ca` plus the docs commit that
+  closes the branch; migration `0095`)** — the registry (one definition per
+  portal), the XML builder and the Kyero dialect with a golden file,
+  eligibility with the feed's own reasons, the pull route
+  `/api/portals/[portal]/[token]` (unknown portal or token 404, a disabled
+  portal the empty document, unmetered), the JPEG rendition with its backfill,
+  `/settings/portals`, the Portals card on the property Marketing tab, RLS
+  tests, and an e2e that runs its write loop in both Playwright projects. Ships
+  JamesEdition, A Place in the Sun, Properstar and the UK feed provider; RERA
+  and Thribee are registered but pending (milestone 2), Bazaraki and Prian
+  pending on their formats. The e2e found two defects, one pre-existing —
+  DECISIONS carries both. **Hosted 0095 and the one-off backfill run are the
+  controller's ship steps; HANDOFF §0's Hosted DB row says when they happened.**
+  **VERIFY:** `ls supabase/migrations/0095_portal_syndication.sql lib/services/portals/registry.ts "app/api/portals/[portal]/[token]/route.ts"` — all three present means shipped. *(all three on 2026-09-14.)*
+
+- **Portal syndication milestone 2, M.** The RERA v2 and Thribee (Trovit)
+  dialects — spec §Dialects: RERA is EUR only, EN/EL/RU, cities enumerated,
+  coordinates required with the approximate flag; Trovit is one free XML in
+  Thribee's format with `<latitude>/<longitude>` only when not approximate —
+  turning the two registry entries from `spec: "pending"` to `"public"` with
+  their renderers; producing the reserved `city_unmapped` reason (declared with
+  its message in `lib/services/portals/eligibility.ts`, produced by nothing
+  yet) when `district.en`/`area.en` resolves to none of RERA's seven cities; the
+  `site_listing_url_template` setting in Thribee's `requiredSettings` (nothing
+  declares it today); and the RERA validator once it exists — "coming soon" on
+  their side, so the golden test is the check until then. Spec §Dialects and
+  §Milestones. Two operator questions to settle with it:
+  - **`<new_build>` from `construction_status`** — today every development
+    unit presents as a resale in the Kyero feed. Which statuses count as a new
+    build, and does the desk want the flag at all?
+  - **A `<url>` back-link to the listing on gnk-web** for the Kyero-family
+    portals — needs the same `site_listing_url_template` setting; is the public
+    listing URL shape final enough to hand to portals?
+  **VERIFY:** `ls lib/services/portals/dialects/rera.ts lib/services/portals/dialects/trovit.ts` — either present means started. *(neither on 2026-09-14; the directory holds `kyero.ts`, `xml.ts`, `types.ts`, `index.ts` and the fixtures.)*
+
+- **Portal syndication milestone 3, M.** The JamesEdition leads pull — spec
+  §Leads: migration 0096 with `leads.portal` and `leads.external_ref` (unique
+  on `(org_id, portal, external_ref)` where not null), the four DEFAULTED
+  parameters on `submit_public_enquiry` (`p_source`, `p_portal`,
+  `p_external_ref`, `p_received_at`; a duplicate returns `false` instead of
+  raising), `leads-jamesedition.ts` pulling the Leads API in ≤3-month windows
+  from `leads_pulled_to − 1 day` (a second pull of the same window creates zero
+  leads; a lead naming an unknown reference lands without a property; an unset
+  token means skipped, loud once), `app/api/cron/portal-leads` behind
+  `CRON_SECRET` with the `vercel.json` cron, the pull button on the leads page,
+  and the manual Portal select and filter on a lead. `CRON_SECRET` and
+  `JAMESEDITION_LEADS_TOKEN` go in the Vercel env only (the repo is public);
+  redeploy after setting them, because Vercel binds env at build time.
+  **VERIFY:** `grep -l external_ref supabase/migrations/*.sql` — a hit means started. *(no hit on 2026-09-14; `app/api/cron/portal-leads` does not exist.)*
+
+- **Contact page header widens a phone, S.** At 390 px a contact detail page
+  still widens the document to 631 px after the tab-strip fix (`64fe4ab`): the
+  header's `ml-auto` button group in `app/(app)/contacts/[id]/page.tsx` (Log
+  conversation and Add task, measured 607 px wide) does not wrap. Found by the
+  portals task's probe on 2026-09-14 — 980 px of document before the strip
+  fix, 631 after, and the remaining 241 px is this group — and unmeasured by
+  any suite: no e2e visits a contact detail page at phone width (the module
+  suite's `/contacts` is the list). Fix: wrap or fold the group the way the lead
+  card folds behind "More…" (CRM-06), plus a phone-width overflow assertion on
+  a contact detail page so it stays fixed.
+  **VERIFY:** `grep -c 'ml-auto flex items-center gap-2' "app/(app)/contacts/[id]/page.tsx"` — 1 means the group is as it was. *(1 on 2026-09-14.)*
+
+- **Kyero-family vocabulary and contact nodes — NEEDS AN OPERATOR DECISION.**
+  Before the first JamesEdition / A Place in the Sun pull, run the CRM's feed
+  through the portal's validator (JamesEdition's "Validate your feed" page; the
+  spec's operator runbook) and check the `<type>` vocabulary — "Land" (Kyero may
+  spell it "Plot") and "Building" are the uncertain values in the Kyero
+  dialect's `PROPERTY_TYPES` — and confirm whether `contact_number`,
+  `whatsapp_number` and `email` are honoured per property or taken from the
+  account. Each answer is a one-line change in
+  `lib/services/portals/dialects/kyero.ts` or a settings decision; none of it
+  can be settled without a portal account, which only the operator can open.
+  **VERIFY:** `grep -n 'land: "Land"\|building: "Building"' lib/services/portals/dialects/kyero.ts` — the two values as shipped. *(both present on 2026-09-14.)*

@@ -27,9 +27,9 @@ tests/
 ## Running
 
 ```bash
-npm run test          # unit — 283 tests, no external deps
-npm run test:rls      # RLS  — 25 tests, needs the local Supabase stack up
-npm run test:e2e      # E2E  — 150 specs, desktop 1280px + mobile 390px
+npm run test          # unit — 1640 tests across 148 files (measured 2026-09-14), no external deps
+npm run test:rls      # RLS  — 135 tests across 12 files (measured 2026-09-14), needs the local Supabase stack up
+npm run test:e2e      # E2E  — 243 desktop + 221 mobile specs listed (measured 2026-09-14), desktop 1280px + mobile 390px
 ```
 
 Useful subsets:

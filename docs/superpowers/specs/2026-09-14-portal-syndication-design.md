@@ -198,7 +198,7 @@ stable per photo, which is what JamesEdition's crawler requires.
 Each is a pure `(listings: FeedListing[], connection: Connection) => string`,
 with its own `PROPERTY_TYPES` map and an `EMPTY` document. Common rules:
 
-- UTF-8, the five XML specials escaped, all output through one `xml()` builder
+- UTF-8, the five XML specials escaped, all output through one `tag()` builder
   so no dialect concatenates strings.
 - `id` = the listing `reference` (stable, unique per org, what the desk says on the phone).
 - `date`/`lastmodified` = `updated_at`.

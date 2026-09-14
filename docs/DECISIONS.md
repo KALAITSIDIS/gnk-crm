@@ -6436,3 +6436,112 @@ four cases, and the site's README and lib/crm.ts no longer claim a "larger
 budget" the CRM does not grant. The site's own build shape (two fetches per
 page) is the remaining lever, left alone: without the row lock the burst is
 just concurrent reads of a small function.
+
+## T-portal-syndication-m1 — a listing is chosen, per listing, for external portals; the CRM publishes pull feeds and holds no certificate (2026-09-14, migration 0095)
+
+Doc 01 §10 placed external portal XML feeds in Phase 5, and CLAUDE.md
+guardrail 7 made that Do-Not-Build list binding. The operator pulled the item
+forward on 2026-09-14, after the market research in the appendix of
+`docs/superpowers/specs/2026-09-14-portal-syndication-design.md`: which
+portals Cyprus agencies actually use (JamesEdition, A Place in the Sun,
+Properstar, the Rightmove/Zoopla/OnTheMarket family through a feed provider,
+RERA.cy, Thribee, Bazaraki, Prian) and how each one takes listings. Nearly all
+of them PULL an XML document from a URL the agency hands them, Kyero's format
+is the lingua franca among them, and the two that push (Rightmove, Zoopla)
+are reached through a registered feed provider that itself accepts Kyero XML.
+The rest of guardrail 7's list stays binding; CLAUDE.md and doc 01 say so in
+place.
+
+What was decided, and why. (1) Pull feeds only. Rightmove and Zoopla are
+reached through a feed provider fed by the CRM's own Kyero feed; the CRM holds
+no certificate and registers with nobody. No push adapters, no outbox, no
+inbound e-mail parsing for the portals that only e-mail their leads. (2)
+Per-listing selection, no rules: an agent ticks a listing for a portal on its
+Marketing tab, nothing is auto-included, and a new listing reaches no portal
+until someone chooses it. (3) The portal feed is a PROJECTION of
+`public_listings()`: the route reads the site's own feed and keeps the
+selected references, so "on a portal" ⊆ "on the site" holds structurally
+rather than by a second eligibility check — a listing the site withholds
+cannot reach a portal through any path. `supabase/tests/portals.test.ts`
+proves it in both directions: `portal_supplement` returns nothing for a
+selected-but-not-public listing and nothing for a public-but-unselected one.
+(4) Coordinates leave through `portal_supplement` only, for selected rows,
+and an approximate location is never emitted as an exact point — the Kyero
+dialect drops the `<location>` node for an approximate listing; the RERA
+dialect (milestone 2) will carry its approximate flag instead. (5) A disabled
+portal answers its dialect's EMPTY document with a 200, never a 404: every
+pull portal treats absence as removal, so an empty feed clears our listings
+there while a 404 would leave them stale; for the same reason a failed
+assembly is a 503, never an empty document. An unknown portal or a wrong token
+answers 404 before a single round trip, with nothing to tell the two apart.
+The token is not metered — `proxy.ts` exempts `/api/portals/` and the route
+never touches the public-listing counter; a portal pulling three times a day
+is not a stranger, and the data behind the URL is public anyway, so the token
+only makes the URL unguessable. (6) Photographs go out as a fourth rendition,
+`property_media.path_jpeg` — 1600 px JPEG beside the WebP full, same
+watermark policy, alpha flattened to white — because RERA takes JPEG/PNG only
+and four other portals leave the format undocumented.
+`scripts/media/backfill-jpeg.mts` writes it for every existing photo from the
+stored full rendition, idempotently, and must run once against hosted after
+0095 is applied there. Bazaraki and Prian stay `spec: "pending"` in the
+registry — visible on `/settings/portals` with a badge and no switch — until
+the operator obtains their formats; the RERA and Thribee dialects are
+milestone 2 and the JamesEdition leads pull is milestone 3, both on the
+backlog with their VERIFY lines.
+
+The nightly backup now carries `portal_connections` — so every feed token —
+and `portal_listings` (`scripts/backup/export.mjs`), and
+`verify-restore.sql` expects 95 migrations. A restore therefore preserves the
+portal URLs, which is the point: a portal that was pointed at a URL keeps
+pulling it after an incident. The cost is that a leaked archive hands those
+URLs out, and the remedy is **Regenerate** on `/settings/portals`
+(`regeneratePortalToken`: a new token, the old URL stops answering, the portal
+is given the new one); `docs/BACKUP_RESTORE.md`'s sensitive-archive box says
+the same.
+
+Two defects the end-to-end spec found, and how they were fixed.
+
+(A) The settings page handed the full registry entry — zod schema included —
+to a client component. React refuses to serialise a zod schema across the RSC
+boundary, so `/settings/portals` rendered the error boundary for every admin.
+Every earlier review missed it because nothing rendered the card: the unit
+tests exercise the registry and the actions, and the module suite stops at
+`/settings`. Fixed in `f322e52` by a plain-data projection
+(`toPortalCardDefinition` in `lib/services/portals/card-definition.ts`),
+with a serialisability test whose detector is proven against a Date, a
+function and a zod schema.
+
+(B) PRE-EXISTING: the property page's ten-tab strip was 913 px wide at phone
+width and widened the page, which made the Marketing tab's cards — the
+Portals card among them — unclickable on a phone. Fixed on this branch first
+at the call site (`07c53c7`) and then once, in the `TabsList` primitive
+(`64fe4ab`: `max-w-full overflow-x-auto justify-start` in the base), because
+the contact page had the same nine-tab strip — measured there at 980 px of
+document for a 390 px viewport before and 631 px after. The remaining 241 px
+on the contact page is a different, pre-existing offender (the page header's
+`ml-auto` button group, 607 px wide), NOT fixed on this branch; it is on the
+backlog with the measurement. The mobile run of `tests/e2e/portals.spec.ts`
+proves the strip fix: the Overview tab is fully in the viewport before any
+click (`justify-start` is what keeps a scrolling strip's first tab reachable —
+a centred overflowing strip hides its own start and scrolling never brings it
+back), and no horizontal overflow on the Marketing tab. Accepted cost of the
+primitive change, named in its comment: `overflow-x-auto` clips a trigger's
+3 px focus ring and would clip the unused `line` variant's underline, which
+sits 5 px below the content box.
+
+The coverage lesson is the one to carry. A settings sub-page is reachable by
+no existing suite — `MODULES` in `tests/e2e/helpers.ts` ends at `/settings` —
+so the portals spec is the only phone-width measurement of `/settings/portals`
+and of the property Marketing tab, and any future settings page needs its own
+spec or a `MODULES`-style entry or it ships unrendered, as this one nearly did.
+
+Storage. The JPEG is the largest object per photograph on anything
+photograph-shaped: through the pipeline's own encoders
+(`processPropertyImage` — WebP q80 against mozjpeg q85 at 1600 px) a smooth
+synthetic gradient came out 1.93× the WebP full and the same gradient with
+mild noise 2.27× (measured 2026-09-14), so the media bucket should roughly
+double; real photographs are expected to land lower, around 1.3–1.6×, which
+is an expectation and not a measurement. The one shape where the order flips
+is pure noise (0.80×), which no photograph is. Backfilled JPEGs re-encode the
+stored WebP full rather than the original and come out smaller than freshly
+uploaded ones: expected, not a defect.
