@@ -37,7 +37,7 @@ type NonNullFeedKey =
 /**
  * A feed row with honest nullability. The generated type marks every column
  * non-null because the codegen cannot see NOT NULL through a setof function;
- * in SQL (0066 lines 154-190) every column outside NonNullFeedKey is nullable —
+ * in SQL (0088_feed_reference_media_fk_hash.sql lines 57-92, the live definition; images coalesced at line 116) every column outside NonNullFeedKey is nullable —
  * `asking_price` on a rental, `bedrooms` on land, `district` when unset.
  */
 export type FeedRow = {
