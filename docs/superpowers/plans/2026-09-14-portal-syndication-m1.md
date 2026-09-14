@@ -391,6 +391,14 @@ git add lib/services/portals/dialects/xml.ts lib/services/portals/dialects/xml.t
 git commit -m "portals: xml builder — escaping lives in one place" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
+**Post-review amendments (two follow-up commits on 2026-09-14; the committed files are the authority, not the block above):**
+- `tag()`'s contract, now stated in its docstring: a blank scalar (empty or whitespace-only) renders nothing while `0` renders; a non-finite number throws a `TypeError` on both the element and the attribute path, so NaN can never reach a public feed as text; booleans are not accepted — each dialect spells yes/no itself as a string; array children may contain `null`/`undefined`/`""`, which are dropped, and an empty container still renders `<name></name>` because a container is structural.
+- `escapeXml` also strips U+FFFE, U+FFFF and lone surrogate halves; tab, LF and CR survive, and a test pins that.
+- Element names and attribute keys are code literals and are not escaped; the docstring says so.
+- The unused `eslint-disable` directive is gone (the rule is not enabled here).
+- Consequence for Task 4: the `x || null` idioms in the Kyero renderer are harmless but unnecessary, and `cond ? tag(...) : ""` may be written `cond ? tag(...) : null`. The spec's "one `xml()` builder" is `tag()`.
+- 15 tests.
+
 ---
 
 ### Task 3: The feed listing shape
