@@ -24,6 +24,12 @@ export const PORTAL_IDS = [
 ] as const;
 export type PortalId = (typeof PORTAL_IDS)[number];
 
+/**
+ * Migration 0095 pins the same regex as a CHECK constraint; the RLS suite
+ * cross-checks the two.
+ */
+export const PORTAL_ID_PATTERN = /^[a-z_]{2,40}$/;
+
 export interface PortalSettingField {
   key: string;
   label: string;
@@ -31,26 +37,30 @@ export interface PortalSettingField {
 }
 
 export interface PortalDefinition {
-  id: PortalId;
-  name: string;
-  dialect: Dialect;
+  readonly id: PortalId;
+  readonly name: string;
+  readonly dialect: Dialect;
   /** one line for the settings page */
-  audience: string;
-  /** `pending`: the portal's format is not public; no renderer, cannot be enabled */
-  spec: "public" | "pending";
-  requirements: {
-    minPhotos: number;
-    needsCoords: boolean;
+  readonly audience: string;
+  /**
+   * `pending`: no renderer exists in this build, so the enable switch
+   * refuses it — either the portal's format is not public (Bazaraki, Prian)
+   * or its renderer is scheduled for a later milestone (RERA, Thribee).
+   */
+  readonly spec: "public" | "pending";
+  readonly requirements: {
+    readonly minPhotos: number;
+    readonly needsCoords: boolean;
     /** which of the CRM's three languages the dialect can carry */
-    languages: readonly ("en" | "el" | "ru")[];
+    readonly languages: readonly ("en" | "el" | "ru")[];
   };
   /** setting keys without which the enable switch refuses */
-  requiredSettings: readonly string[];
-  settingsFields: readonly PortalSettingField[];
-  settingsSchema: z.ZodType<Record<string, string>>;
+  readonly requiredSettings: readonly string[];
+  readonly settingsFields: readonly PortalSettingField[];
+  readonly settingsSchema: z.ZodObject<Record<string, z.ZodType<string>>>;
   /** words for the desk, not a schedule the CRM runs */
-  pullCadence: string;
-  docsUrl: string;
+  readonly pullCadence: string;
+  readonly docsUrl: string;
 }
 
 const optionalText = (max: number) => z.string().trim().max(max).optional().default("");
@@ -64,85 +74,129 @@ const KYERO_CONTACT_FIELDS: readonly PortalSettingField[] = [
 const kyeroSettingsSchema = z.object({
   contact_number: optionalText(40),
   whatsapp_number: optionalText(40),
-  email: optionalText(200),
+  email: z
+    .string()
+    .trim()
+    .max(200)
+    .refine((v) => v === "" || z.email().safeParse(v).success, "Enter a valid e-mail address or leave it blank")
+    .optional()
+    .default(""),
 });
 
-const kyeroPortal = (
-  id: PortalId,
-  name: string,
-  audience: string,
-  pullCadence: string,
-  docsUrl: string,
-  minPhotos = 1,
-): PortalDefinition => ({
-  id,
-  name,
+/** No settings to fill in for a portal whose enable switch can never be flipped. */
+const EMPTY_SETTINGS = z.object({} as Record<string, z.ZodType<string>>);
+
+const kyeroPortal = (o: {
+  id: PortalId;
+  name: string;
+  audience: string;
+  pullCadence: string;
+  docsUrl: string;
+  minPhotos?: number;
+}): PortalDefinition => ({
+  id: o.id,
+  name: o.name,
   dialect: "kyero",
-  audience,
+  audience: o.audience,
   spec: "public",
-  requirements: { minPhotos, needsCoords: false, languages: ["en", "ru"] },
+  requirements: { minPhotos: o.minPhotos ?? 1, needsCoords: false, languages: ["en", "ru"] },
   requiredSettings: [],
   settingsFields: KYERO_CONTACT_FIELDS,
   settingsSchema: kyeroSettingsSchema,
-  pullCadence,
-  docsUrl,
+  pullCadence: o.pullCadence,
+  docsUrl: o.docsUrl,
 });
 
-const pendingPortal = (
-  id: PortalId,
-  name: string,
-  dialect: Dialect,
-  audience: string,
-  docsUrl: string,
-): PortalDefinition => ({
-  id,
-  name,
-  dialect,
-  audience,
+const pendingPortal = (o: {
+  id: PortalId;
+  name: string;
+  dialect: Dialect;
+  audience: string;
+  docsUrl: string;
+  requirements: PortalDefinition["requirements"];
+}): PortalDefinition => ({
+  id: o.id,
+  name: o.name,
+  dialect: o.dialect,
+  audience: o.audience,
   spec: "pending",
-  requirements: { minPhotos: 1, needsCoords: false, languages: ["en"] },
+  requirements: o.requirements,
   requiredSettings: [],
   settingsFields: [],
-  settingsSchema: z.object({}),
-  pullCadence: "unknown until the portal's specification arrives",
-  docsUrl,
+  settingsSchema: EMPTY_SETTINGS,
+  pullCadence: "unknown until the portal's renderer exists",
+  docsUrl: o.docsUrl,
 });
 
 export const PORTALS: readonly PortalDefinition[] = [
-  kyeroPortal(
-    "jamesedition",
-    "JamesEdition",
-    "Luxury buyers worldwide. Quality review on price and imagery; at least two photos.",
-    "three times a day (00:11, 08:11, 16:11 UTC)",
-    "https://docs.jamesedition.com/docs/",
-    2,
-  ),
-  kyeroPortal(
-    "aplaceinthesun",
-    "A Place in the Sun",
-    "British buyers of holiday and retirement homes.",
-    "daily",
-    "https://www.aplaceinthesun.com/advertise/website/list-your-properties",
-  ),
-  kyeroPortal(
-    "properstar",
-    "Properstar (ListGlobally)",
-    "Syndicated to 100+ portals in 60+ countries.",
-    "daily",
-    "https://help.properstar.com/knowledge/our-crms-compatibility",
-  ),
-  kyeroPortal(
-    "uk_provider",
-    "Rightmove, Zoopla & OnTheMarket (via feed provider)",
-    "British buyers. One feed to a registered provider, which pushes to whichever UK memberships you hold — the CRM cannot pick one of them per listing.",
-    "the provider's own schedule",
-    "https://www.rightmove.co.uk/overseas-property/advertise/estate-agent.html",
-  ),
+  kyeroPortal({
+    id: "jamesedition",
+    name: "JamesEdition",
+    audience: "Luxury buyers worldwide. Quality review on price and imagery.",
+    pullCadence: "three times a day (00:11, 08:11, 16:11 UTC)",
+    docsUrl: "https://docs.jamesedition.com/docs/",
+    minPhotos: 2,
+  }),
+  kyeroPortal({
+    id: "aplaceinthesun",
+    name: "A Place in the Sun",
+    audience: "British buyers of holiday and retirement homes.",
+    pullCadence: "daily",
+    docsUrl: "https://www.aplaceinthesun.com/advertise/website/list-your-properties",
+  }),
+  kyeroPortal({
+    id: "properstar",
+    name: "Properstar (ListGlobally)",
+    audience: "Syndicated to 100+ portals in 60+ countries.",
+    pullCadence: "daily",
+    docsUrl: "https://help.properstar.com/knowledge/our-crms-compatibility",
+  }),
+  kyeroPortal({
+    id: "uk_provider",
+    name: "Rightmove, Zoopla & OnTheMarket (via feed provider)",
+    audience:
+      "British buyers. One feed to a registered provider, which pushes to whichever UK memberships you hold — the CRM cannot pick one of them per listing.",
+    pullCadence: "the provider's own schedule",
+    docsUrl: "https://www.rightmove.co.uk/overseas-property/advertise/estate-agent.html",
+  }),
   // Milestone 2 turns these two into `spec: "public"` with their renderers.
-  pendingPortal("rera", "RERA.cy", "rera", "Cyprus domestic (a private marketplace).", "https://xml.rera.cy/import-specification.html"),
-  pendingPortal("thribee", "Thribee (Trovit, Mitula, Nestoria, Nuroa)", "trovit", "Property search engines; free.", "https://help.thribee.com/"),
-  pendingPortal("bazaraki", "Bazaraki Pro", "bazaraki", "Cyprus domestic. XML spec is given to Pro accounts only.", "https://pro.bazaraki.com/"),
-  pendingPortal("prian", "Prian.ru", "prian", "Russian-speaking buyers. Format on request from adv@prian.ru.", "https://prian.ru/about/"),
+  pendingPortal({
+    id: "rera",
+    name: "RERA.cy",
+    dialect: "rera",
+    audience: "Cyprus domestic (a private marketplace).",
+    docsUrl: "https://xml.rera.cy/import-specification.html",
+    // RERA requires pin_map coordinates and takes English, translating itself
+    requirements: { minPhotos: 1, needsCoords: true, languages: ["en"] },
+  }),
+  pendingPortal({
+    id: "thribee",
+    name: "Thribee (Trovit, Mitula, Nestoria, Nuroa)",
+    dialect: "trovit",
+    audience: "Property search engines; free.",
+    docsUrl: "https://help.thribee.com/",
+    // the CRM's floor, not the portal's rule; replaced when its renderer arrives
+    requirements: { minPhotos: 1, needsCoords: false, languages: ["en"] },
+  }),
+  // Format arrives from the portal; see docsUrl.
+  pendingPortal({
+    id: "bazaraki",
+    name: "Bazaraki Pro",
+    dialect: "bazaraki",
+    audience: "Cyprus domestic. XML spec is given to Pro accounts only.",
+    docsUrl: "https://pro.bazaraki.com/",
+    // the CRM's floor, not the portal's rule; replaced when its format arrives
+    requirements: { minPhotos: 1, needsCoords: false, languages: ["en"] },
+  }),
+  pendingPortal({
+    id: "prian",
+    name: "Prian.ru",
+    dialect: "prian",
+    audience: "Russian-speaking buyers. Format on request from adv@prian.ru.",
+    docsUrl: "https://prian.ru/about/",
+    // the CRM's floor, not the portal's rule; replaced when its format arrives
+    requirements: { minPhotos: 1, needsCoords: false, languages: ["en"] },
+  }),
 ];
 
 export function portalById(id: string): PortalDefinition | null {
