@@ -6436,3 +6436,91 @@ four cases, and the site's README and lib/crm.ts no longer claim a "larger
 budget" the CRM does not grant. The site's own build shape (two fetches per
 page) is the remaining lever, left alone: without the row lock the burst is
 just concurrent reads of a small function.
+
+## T-rls-mfa-transient-5xx — the harness names a 5xx and retries it (2026-09-14, no migration)
+
+The `rls` job of CI run 34872951408 (PR #1, `92c3276` — four lines of ESLint
+config that touch neither vitest nor the stack) fell in `beforeAll` with
+`Error: mfa.challenge: {}` from lib/testing/mfa.ts, and all 65 tests in
+rls.test.ts were skipped. The push-event twin of the same commit
+(34872946110) had passed 117/117 a minute earlier. Measured from the two
+logs: the failing run printed `Started supabase local development setup` at
+17:10:43.0, vitest started at :43.9, and the file was down at :45.2 — 832 ms
+into the file, about two seconds after the stack said it was up. There is no
+`console.error` in that log, so it was not auth-js's status-0 path (a fetch
+that fails outright logs before it throws); it was a 5xx that came back FAST,
+unlike the 2026-09-07 sighting in T-mfa-mandatory (`mfa.enroll: {}`, which
+the auth log resolved to `POST /factors → 504, context deadline exceeded,
+11.1s`). Which 5xx, the log cannot say, and that is the first defect.
+
+**Why the message is literally `{}`.** auth-js 2.110.2 (`lib/fetch.js`,
+`handleError`) turns any 500–504 or 520–530 response into an
+`AuthRetryableFetchError` whose message is `_getErrorMessage(response)`. A
+Response has no `msg`, `message`, `error_description` or `error`, so that
+falls through to `JSON.stringify(response)`, which renders a Response as
+`{}`. The status survives on `error.status` and is dropped from the text, and
+the harness threw the text. The same shape twice, a week apart.
+
+**Where the load comes from.** rls.test.ts's `beforeAll` creates five fixture
+users under `Promise.all`, and each `createTestUser` signs in and then
+enrols, challenges and verifies a TOTP factor: roughly fifteen auth requests
+inside one second, against an auth container that finished starting seconds
+earlier on a 2-vCPU runner beside ten other containers.
+
+**What was built, in the order the evidence supported.** (1) The status is
+in the message: every throw in lib/testing/mfa.ts goes through
+`describeAuthError`, so the next occurrence reads `mfa.challenge:
+AuthRetryableFetchError status=502: {}` — or `mfa.verify: AuthApiError
+status=422 code=mfa_verification_failed: Invalid TOTP code entered` — rather
+than `{}`. (2) Enrol and challenge are retried through `retryTransientAuth`
+(lib/testing/auth-retry.ts) on exactly what auth-js itself labels retryable:
+`isAuthRetryableFetchError`, the library's own classifier, which covers
+status 0 and 500–504/520–530 — wider than the 502/503/504 first proposed,
+and a definition that moves with the dependency instead of being a list kept
+here. Three retries at 500, 1000 and 2000 ms, so a call waits 3.5 s at most;
+each retry is a fresh request; each prints a `console.warn` naming the status
+and the wait, so a run that healed still says so in the log. When the
+challenge is retried the TOTP code is generated after the challenge that
+succeeded, as before. `passChallenge` — the E2E login path, which runs
+against the same freshly started stack — takes the same retry on its
+challenge. (3) Concurrency in `beforeAll` stays at five: with the retry in
+place there is no evidence that serialising the users buys anything, and it
+would add up to four times the setup latency to every run to guard against a
+failure now handled. It is the next lever if a 5xx ever outlives three
+retries.
+
+**Verify is deliberately not retried.** A wrong code is a wrong code: the
+same code fails the same way, and a retry across a 30-second step boundary
+would hide a real defect in the harness's TOTP. A 5xx on verify is
+ambiguous: a gateway timeout can follow a verify GoTrue has already applied,
+and a second answer to the same challenge then fails for a reason unrelated
+to the first. So verify reports its status and stops. The tests pin this as
+a choice (`a 5xx on verify is NOT retried either`), so relaxing it is a
+decision rather than an accident.
+
+**Proof.** tests/unit/mfa-harness-retries-transient-5xx.test.ts, 17 tests,
+red before the module existed and green after. They use the REAL auth-js
+error classes — the classifier checks a private marker as well as the name,
+so a lookalike `{ name }` object would prove the wrong thing — and a scripted
+`client.auth.mfa` for the wiring: a 502 on the challenge is retried and
+verify answers the SECOND challenge's id; a 503 on enrol the same; the retry
+is announced with its status; a wrong code and a 5xx on verify each reach
+verify exactly once; a challenge that keeps failing gives up after the table
+with the LAST status in the throw. Mutation-checked four ways: challenge
+taken out of the retry (3 red), the wrapper never retrying (12 red),
+`describeAuthError` dropping the status (6 red), verify put inside the retry
+(1 red). The first attempt at that fourth mutation did not install — a bare
+`\n` in the pattern against a CRLF working copy — and reported 17 green;
+whether a mutation actually landed is checked before its result is believed.
+Then `npm test` 1489/1489 (136 files, +17/+1) and `npm run test:rls` 117/117
+against the local stack (0094 applied): unchanged behaviour on a healthy
+stack.
+
+**What this does not do.** It does not make CI capture the auth container's
+log on failure. The status in the message is the fact the 2026-09-07 entry
+had to open the auth log to learn, and it separates a gateway 502 from a
+GoTrue 504 deadline; if a status alone ever proves insufficient, log capture
+on failure is the next step and belongs in the workflow, not the harness. It
+does not touch lib/actions/mfa.ts: the app shows the person the error and
+lets them try again, and a silent retry there would hide an outage from the
+one place it should be visible.

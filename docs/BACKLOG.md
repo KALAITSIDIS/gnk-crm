@@ -2104,6 +2104,24 @@ developer.
   this looks like transient Docker networking rather than a real collision. If
   it becomes frequent, the cheap fix is a retry around `supabase start`. Written
   down so a recurrence costs minutes rather than an afternoon.
+- **NOTE — CI: `rls` (and E2E setup, by the same helper) can fall in `beforeAll`
+  with `mfa.enroll: … status=5xx` or `mfa.challenge: … status=5xx`.** Seen
+  2026-09-07 (`mfa.enroll: {}` — a 504 GoTrue deadline under two Playwright
+  suites at once) and 2026-09-14 (`mfa.challenge: {}`, run 34872951408 — a
+  fast 5xx two seconds after `supabase start` returned, while the push-event
+  twin of the same commit passed 117/117). The bare `{}` was auth-js
+  discarding the status of any 5xx. Since DECISIONS `T-rls-mfa-transient-5xx`
+  the harness retries enrol and challenge three times (3.5 s of waiting at
+  most) on what auth-js itself labels retryable, prints each retry with its
+  status, and every throw carries the status — so `{}` cannot recur as a
+  message, and a green run that needed a retry says so in the log
+  (`[mfa harness] … retrying in …`). **If it still fails after the retries,
+  the status in the message says which service answered** (a 504 after ~10 s
+  is GoTrue's own per-request deadline; a fast 502/503 is the gateway failing
+  to reach it); `gh run rerun <id> --failed` clears it, and the next lever is
+  serialising the five fixture users in rls.test.ts's `beforeAll`, deliberately
+  not done yet. **Not the port-54322 flake above** — that one dies inside
+  `supabase start`; this one starts vitest first.
 - ~~**Reservation deposits against `payment_plans`.**~~ ✅ **DONE 2026-08-24**
   (`264786a`, migration 0050). **This line said `payment_plans` had "nothing
   reading them", which was wrong** — the units page lists them. The gap was
