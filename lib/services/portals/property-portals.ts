@@ -130,12 +130,15 @@ export async function buildPropertyPortalRows(
       : null;
 
   const point = parseLocationPoint(p.location);
+  // The SQL withholds the point of an approximate listing (0095
+  // portal_supplement), so the feed's adapter gets `coords: null` for it; this
+  // one must not promise the card what the pull will never carry.
   const portalInput = eligibilityInputFromProperty({
     ...p,
     districtName: p.districts?.name ?? null,
     areaName: p.areas?.name ?? null,
     jpegPhotoCount,
-    coords: point ? { lat: point.lat, lng: point.lng, approx: p.location_approx } : null,
+    coords: point && !p.location_approx ? { lat: point.lat, lng: point.lng, approx: false } : null,
   });
 
   const connectionByPortal = new Map((connections ?? []).map((c) => [c.portal, c]));

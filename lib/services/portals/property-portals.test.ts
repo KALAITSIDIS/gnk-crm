@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fakeClient, type FakePage } from "@/lib/testing/fake-client";
-import { PORTALS } from "@/lib/services/portals/registry";
+import { PORTALS, portalById } from "@/lib/services/portals/registry";
 import {
   buildPropertyPortalRows,
   type PortalMediaRow,
   type PortalPropertyRow,
 } from "@/lib/services/portals/property-portals";
+import { parseLocationPoint } from "@/lib/utils/geo";
 
 /**
  * What the property page's Portals card is told, and — more to the point —
@@ -172,6 +173,37 @@ describe("buildPropertyPortalRows", () => {
 
     expect(photoNote).toBeNull();
     expect(rows[0].eligibility).toEqual({ ok: true });
+  });
+
+  // The SQL withholds the point of an approximate listing (0095,
+  // portal_supplement), so the feed's adapter sees `coords: null` for such a
+  // row. This adapter must say the same: otherwise a needsCoords portal would
+  // read "eligible" on the card and drop the listing with no_coords at the
+  // pull — one predicate, two adapters, two answers.
+  it("withholds an approximate point the way the SQL does: a needsCoords portal reports no_coords", async () => {
+    // EWKB of a real point (the value geo.test.ts parses); asserted to parse
+    // so a null coords below cannot come from an unparseable fixture
+    const POINT = "0101000020E6100000AC8BDB6800374040894160E5D0624140";
+    expect(parseLocationPoint(POINT)).not.toBeNull();
+    // RERA is the registry's one needsCoords portal — pinned, so this test
+    // fails loudly rather than vacuously if that requirement ever moves
+    expect(portalById("rera")?.requirements.needsCoords).toBe(true);
+    const NO_COORDS = "This portal requires map coordinates.";
+    const reasonsOf = (row: { eligibility: { ok: true } | { ok: false; reasons: string[] } }) =>
+      row.eligibility.ok ? [] : row.eligibility.reasons;
+    const pages = () => ({
+      portal_connections: [{ data: [conn("rera", true)], error: null }],
+      portal_listings: [{ data: [], error: null }],
+    });
+
+    const approx = await build(pages(), property({ location: POINT, location_approx: true }));
+    expect(approx.rows[0].id).toBe("rera");
+    expect(reasonsOf(approx.rows[0])).toContain(NO_COORDS);
+
+    // the same point, exact: the coordinate reason goes away (RERA still
+    // fails on other grounds today — its type map is empty until milestone 2)
+    const exact = await build(pages(), property({ location: POINT, location_approx: false }));
+    expect(reasonsOf(exact.rows[0])).not.toContain(NO_COORDS);
   });
 
   it("names who selected the listing", async () => {
