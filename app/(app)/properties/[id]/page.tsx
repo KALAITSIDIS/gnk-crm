@@ -41,7 +41,7 @@ import { StatusBadge } from "@/components/features/shared/status-badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MatchingBuyersCard } from "@/components/features/properties/matching-buyers-card";
-import { PortalsCard, type PortalRow } from "@/components/features/properties/portals-card";
+import { PortalsCard } from "@/components/features/properties/portals-card";
 import {
   ReservationCard,
   type ReservationRow,
@@ -52,16 +52,10 @@ import {
   type PlanOption,
 } from "@/components/features/properties/payment-schedule-card";
 import type { MatchCandidate } from "@/lib/services/matching";
-import {
-  eligibilityFor,
-  eligibilityInputFromProperty,
-  reasonText,
-} from "@/lib/services/portals/eligibility";
-import { portalById, type PortalDefinition } from "@/lib/services/portals/registry";
+import { buildPropertyPortalRows } from "@/lib/services/portals/property-portals";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
 import { formatArea, formatDate, formatDateTime, formatMoney } from "@/lib/utils/format";
-import { parseLocationPoint } from "@/lib/utils/geo";
 import { readEntityTimeline } from "@/lib/services/entity-timeline";
 import { NOT_RECORDED_NOTICE } from "@/lib/services/optimistic-save";
 
@@ -240,58 +234,15 @@ export default async function PropertyDetailPage({
   const canEditProperty =
     isAdminOrLM || (profile.role === "agent" && p.assigned_agent_id === profile.id);
 
-  // The Marketing tab's Portals card (0095). A failed read must NOT fall
-  // through to an empty list: that renders "No portal is enabled", which is
-  // the reassuring direction and the wrong one — the same reasoning as the
-  // settings page's throwing read.
-  const [
-    { data: portalConnections, error: portalConnErr },
-    { data: portalSelections, error: portalSelErr },
-  ] = await Promise.all([
-    supabase.from("portal_connections").select("portal, enabled, last_pulled_at").eq("enabled", true),
-    supabase.from("portal_listings").select("portal, selected_at, selected_by").eq("property_id", id),
-  ]);
-  if (portalConnErr) throw new Error(`portal connections: ${portalConnErr.message}`);
-  if (portalSelErr) throw new Error(`portal selections: ${portalSelErr.message}`);
-
-  const selectorIds = [
-    ...new Set((portalSelections ?? []).map((s) => s.selected_by).filter(Boolean)),
-  ] as string[];
-  const { data: selectorProfiles } = selectorIds.length
-    ? await supabase.from("profiles").select("id, full_name").in("id", selectorIds)
-    : { data: [] };
-  const selectorName = new Map((selectorProfiles ?? []).map((s) => [s.id, s.full_name]));
-
-  // What the portal will actually receive: a photograph with no JPEG
-  // rendition is not a photo as far as a portal that only takes JPEG is
-  // concerned, so the count the eligibility rule reads is that one.
-  const jpegPhotoCount = (mediaRows ?? []).filter((m) => m.kind === "photo" && m.path_jpeg).length;
-  const point = parseLocationPoint(p.location);
-  const portalInput = eligibilityInputFromProperty({
-    ...p,
-    districtName: p.districts?.name ?? null,
-    areaName: p.areas?.name ?? null,
-    jpegPhotoCount,
-    coords: point ? { lat: point.lat, lng: point.lng, approx: p.location_approx } : null,
-  });
-
-  type PortalConn = NonNullable<typeof portalConnections>[number];
-  const portalRows: PortalRow[] = (portalConnections ?? [])
-    .map((c) => ({ c, def: portalById(c.portal) }))
-    .filter((x): x is { c: PortalConn; def: PortalDefinition } => x.def !== null)
-    .map(({ c, def }) => {
-      const e = eligibilityFor(def, portalInput);
-      const sel = (portalSelections ?? []).find((s) => s.portal === c.portal);
-      return {
-        id: def.id,
-        name: def.name,
-        eligibility: e.ok ? { ok: true } : { ok: false, reasons: e.reasons.map((r) => reasonText(def, r)) },
-        selected: sel
-          ? { at: sel.selected_at, byName: sel.selected_by ? (selectorName.get(sel.selected_by) ?? null) : null }
-          : null,
-        lastPulledAt: c.last_pulled_at,
-      };
-    });
+  // The Marketing tab's Portals card (0095). Which portals appear, in what
+  // order, and which of them can still be removed are judgements — so they
+  // live in a service with a test around them rather than inline here.
+  const { rows: portalRows, photoNote: portalPhotoNote } = await buildPropertyPortalRows(
+    supabase,
+    p,
+    mediaRows,
+    id,
+  );
 
   const reservations: ReservationRow[] = (reservationsRes.data ?? []).map((r) => {
     const joined = r.contacts as { display_name: string } | { display_name: string }[] | null;
@@ -826,7 +777,12 @@ export default async function PropertyDetailPage({
             {/* Every kind gets the card: the site feed shows any public and
                 available listing whatever its kind, and eligibility says the
                 rest rather than the page guessing. */}
-            <PortalsCard propertyId={p.id} portals={portalRows} readOnly={!canEditProperty} />
+            <PortalsCard
+              propertyId={p.id}
+              portals={portalRows}
+              photoNote={portalPhotoNote}
+              readOnly={!canEditProperty}
+            />
           </div>
         </TabsContent>
 
