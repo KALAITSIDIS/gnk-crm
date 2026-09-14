@@ -2424,6 +2424,17 @@ git add proxy.ts "app/api/portals/[portal]/[token]/route.ts"
 git commit -m "portals: the feed route — token in the path, empty document when disabled, pull noted after the response" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
+**Amendments applied at implementation (2026-09-14; the committed files are the authority, not the block above):**
+- The assembler's contract changed in Task 9: the route's `fetchPage(offset, limit)` passes `p_limit: limit, p_offset: offset` verbatim, and a truncated assembly is a 503 like a failed page — never a partial document.
+- `portal_supplement` is read in pages of 1,000 (PostgREST's `max_rows`) with `.range()` until a short page, so more than a thousand selections never truncate silently.
+- Nothing the database says reaches an error body: the route logs `[portal-feed] <portal>: …` server-side and answers the generic "Feed unavailable."
+- Two warnings the desk can act on: `selected > 0 && count === 0` (a stalled JPEG backfill zeroes every photo count and would delist a whole portal by design) and `missing > 0` (a selected reference the site feed did not return).
+- The pull is noted BEFORE the 304 check, so a conditional pull is recorded too, and a DISABLED connection's pull is noted with count 0 (0095's intent: a portal still hitting an empty feed is worth seeing on the settings page); `after()` falls back to inline outside a request scope, as `site-revalidate.ts` does, and the note is an `async` function because Next's `after` refuses a bare `PromiseLike`.
+- The dev-server curl smoke in the plan is replaced by `tests/unit/portal-feed-route.test.ts` (the site feed's route test lives in `tests/unit/`, not colocated), a unit test over a faked anon client in the same idiom: 404 paths without a database call, the empty document when disabled, the ETag/304 pair, the pull note, supplement paging, the three 503 paths with generic bodies, the zero-count warning, and that `note_public_listing_hit` is never called. The e2e (Task 14) covers the real HTTP path.
+
+- A failing connection LOOKUP answers 404, not 503, so a guesser cannot tell a near-miss token from a sick database; it is logged with the portal id.
+- `npm run check:static-routes` needs a build (`.next/server/app`); the route appears as dynamic, as intended. 16 route tests; `npm test` 1579.
+
 ---
 
 ### Task 11: Server actions and timeline lines
