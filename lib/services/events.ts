@@ -576,6 +576,18 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
   },
   publish_override: (p, t) =>
     t("publishOverride", { score: Number(p.score) || 0, threshold: Number(p.threshold) || 0 }),
+  // 0095 portal syndication. The first two sit on the property — its timeline
+  // is where "who put this on JamesEdition, and when" is asked; the other four
+  // are org-level, because a connection belongs to the organisation and every
+  // settings edit writes an event.
+  portal_selected: (p, t) => t("portalSelected", { portal: String(p.portal ?? "") }),
+  portal_removed: (p, t) => t("portalRemoved", { portal: String(p.portal ?? "") }),
+  portal_enabled: (p, t) => t("portalEnabled", { portal: String(p.portal ?? "") }),
+  portal_disabled: (p, t) => t("portalDisabled", { portal: String(p.portal ?? "") }),
+  portal_settings_updated: (p, t) =>
+    t("portalSettingsUpdated", { portal: String(p.portal ?? "") }),
+  portal_token_regenerated: (p, t) =>
+    t("portalTokenRegenerated", { portal: String(p.portal ?? "") }),
   payment_plan_created: (_p, t) => t("paymentPlanCreated"),
   price_list_created: (_p, t) => t("priceListCreated"),
   // bulk CSV export of a list; `list` is the list slug (stays as stored, like
