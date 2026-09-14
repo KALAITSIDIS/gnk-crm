@@ -1,14 +1,7 @@
 "use client";
 
-import {
-  useActionState,
-  useEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  useTransition,
-} from "react";
-import { Check, Copy, RefreshCw } from "lucide-react";
+import { useActionState, useEffect, useRef, useSyncExternalStore, useTransition } from "react";
+import { Copy, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import {
   regeneratePortalToken,
@@ -20,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { DIALECT_CURRENCIES } from "@/lib/services/portals/dialects";
 import type { PortalDefinition } from "@/lib/services/portals/registry";
 import { formatDateTime } from "@/lib/utils/format";
 
@@ -48,8 +42,6 @@ export interface PortalCardConnection {
 
 const initialState: PortalActionState = { error: null, savedAt: null };
 
-const COPIED_MS = 1500;
-
 /**
  * The origin, read as what it is: a value owned by the browser and absent on
  * the server. `useSyncExternalStore` gives the server pass `""` and the client
@@ -63,6 +55,12 @@ const subscribeToNothing = () => () => {};
 const readOrigin = () => window.location.origin;
 const noOrigin = () => "";
 
+/** "EUR", "EUR or GBP", "EUR, GBP or USD" */
+function listOr(items: readonly string[]): string {
+  if (items.length < 2) return items[0] ?? "";
+  return `${items.slice(0, -1).join(", ")} or ${items[items.length - 1]}`;
+}
+
 export function PortalCard({
   portal,
   connection,
@@ -73,11 +71,21 @@ export function PortalCard({
   const enabled = connection?.enabled ?? false;
   const [toggling, startToggle] = useTransition();
   const [rotating, startRotate] = useTransition();
-  const [copied, setCopied] = useState(false);
 
   // The server renders the path; the client swaps in the origin once hydrated.
   const origin = useSyncExternalStore(subscribeToNothing, readOrigin, noOrigin);
   const feedUrl = connection ? `${origin}${connection.feedPath}` : "";
+
+  // `setPortalEnabled` refuses an enable while a required setting is blank.
+  // Saying so here — and declining to send the click — is what makes the
+  // asterisk on the field an honest mark rather than decoration. Every portal
+  // in this build has `requiredSettings: []`, so nothing reaches it yet.
+  const missingRequired = portal.requiredSettings.filter(
+    (k) => !(connection?.settings[k] ?? "").trim(),
+  );
+  const blockedByMissing = !enabled && missingRequired.length > 0;
+
+  const currencies = DIALECT_CURRENCIES[portal.dialect];
 
   const [state, formAction, saving] = useActionState(savePortalSettings, initialState);
   // Two saves inside one millisecond would share a `savedAt` and the second
@@ -139,21 +147,34 @@ export function PortalCard({
           </p>
         </div>
         {portal.spec === "pending" ? (
-          <Badge variant="secondary">not available in this build — cannot be enabled yet</Badge>
+          <Badge variant="secondary">Not available yet</Badge>
         ) : (
-          <Button
-            type="button"
-            variant={enabled ? "secondary" : "default"}
-            size="sm"
-            aria-pressed={enabled}
-            data-testid={`portal-toggle-${portal.id}`}
-            disabled={toggling}
-            onClick={toggle}
-          >
-            {toggling ? "Working…" : enabled ? "Disable" : "Enable"}
-          </Button>
+          <div className="flex flex-col items-end gap-1">
+            <Button
+              type="button"
+              variant={enabled ? "secondary" : "default"}
+              size="sm"
+              data-testid={`portal-toggle-${portal.id}`}
+              disabled={toggling || blockedByMissing}
+              title={blockedByMissing ? `Fill in ${missingRequired.join(", ")} first` : undefined}
+              onClick={toggle}
+            >
+              {toggling ? "Working…" : enabled ? "Disable" : "Enable"}
+            </Button>
+            {blockedByMissing ? (
+              <p className="text-xs text-warning">Fill in {missingRequired.join(", ")} first</p>
+            ) : null}
+          </div>
         )}
       </div>
+
+      {/* The badge has to stay short enough to sit on a 390px card, so the
+          reason goes here rather than inside it. */}
+      {portal.spec === "pending" ? (
+        <p className="mt-2 text-xs text-text-3">
+          No renderer in this build, so it cannot be enabled yet.
+        </p>
+      ) : null}
 
       {connection && portal.spec === "public" ? (
         <div className="mt-4 flex flex-col gap-1.5">
@@ -170,32 +191,40 @@ export function PortalCard({
               type="button"
               variant="outline"
               size="sm"
-              aria-label="Copy feed URL"
+              // While a rotation is in flight the field still shows the OLD
+              // token; copying it would hand the portal a URL that is about
+              // to stop answering.
+              disabled={rotating}
               onClick={async () => {
-                await navigator.clipboard.writeText(feedUrl || connection.feedPath);
-                setCopied(true);
-                setTimeout(() => setCopied(false), COPIED_MS);
+                try {
+                  await navigator.clipboard.writeText(feedUrl || connection.feedPath);
+                  toast.success("Feed URL copied");
+                } catch {
+                  toast.error("Could not copy — select the field and copy it by hand");
+                }
               }}
             >
-              {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-              {copied ? "Copied" : "Copy"}
+              <Copy className="size-4" />
+              Copy
             </Button>
             <Button
               type="button"
-              variant="outline"
-              size="icon-sm"
-              aria-label="Regenerate feed URL"
+              variant="secondary"
+              size="sm"
               disabled={rotating}
               onClick={regenerate}
             >
               <RefreshCw className="size-4" />
+              Regenerate
             </Button>
           </div>
         </div>
       ) : null}
 
       {portal.spec === "public" ? (
-        <p className="mt-3 text-sm text-text-2">
+        // The user-agent is up to 200 characters chosen by the crawler, not by
+        // us: one unbroken token would otherwise push the card past the viewport.
+        <p className="mt-3 text-sm break-words text-text-2">
           {connection ? (
             <>
               {enabled
@@ -213,15 +242,24 @@ export function PortalCard({
         </p>
       ) : null}
 
-      <ul className="mt-3 list-disc pl-5 text-xs text-text-3">
-        <li>
-          at least {portal.requirements.minPhotos} photo
-          {portal.requirements.minPhotos === 1 ? "" : "s"} with a JPEG rendition
-        </li>
-        <li>an English public description and a price</li>
-        {portal.requirements.needsCoords ? <li>map coordinates</li> : null}
-        <li>languages carried: {portal.requirements.languages.join(", ")}</li>
-      </ul>
+      {/* Only for a portal this build can write: naming the bar a listing must
+          clear implies that clearing it puts the listing on the portal, which
+          is not true while there is no renderer. */}
+      {portal.spec === "public" ? (
+        <>
+          <p className="mt-3 text-xs text-text-3">Each listing needs:</p>
+          <ul className="mt-1 list-disc pl-5 text-xs text-text-3">
+            <li>
+              at least {portal.requirements.minPhotos} photo
+              {portal.requirements.minPhotos === 1 ? "" : "s"} with a JPEG rendition
+            </li>
+            <li>an English public description</li>
+            <li>{currencies ? `a price in ${listOr(currencies)}` : "a price"}</li>
+            {portal.requirements.needsCoords ? <li>map coordinates</li> : null}
+            <li>languages carried: {portal.requirements.languages.join(", ")}</li>
+          </ul>
+        </>
+      ) : null}
 
       {portal.settingsFields.length ? (
         <form action={formAction} className="mt-4 flex flex-col gap-3">

@@ -28,9 +28,15 @@ export default async function PortalsSettingsPage() {
   // pages render in parallel with the layout's admin gate — stop here too
   if (profile.role !== "admin") return null;
 
-  const { data: rows } = await supabase
+  // A failed read must not fall through to `rows ?? []`: that renders every
+  // portal as "Not connected", which is the reassuring direction and the wrong
+  // one — an admin would enable a portal that is already enabled, and the
+  // organisation's timeline would carry a `portal_enabled` event for a change
+  // that did not happen.
+  const { data: rows, error } = await supabase
     .from("portal_connections")
     .select("portal, enabled, feed_token, settings, last_pulled_at, last_pulled_ua, last_pull_count");
+  if (error) throw new Error(`portal connections: ${error.message}`);
   const byPortal = new Map((rows ?? []).map((r) => [r.portal, r]));
 
   return (
