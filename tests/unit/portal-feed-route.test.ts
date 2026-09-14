@@ -228,7 +228,10 @@ describe("a disabled portal gets an empty document, never a 404", () => {
     expect(res.headers.get("content-type")).toBe("application/xml; charset=utf-8");
     expect(res.headers.get("cache-control")).toBe("no-store");
     // an empty feed is the whole answer: no supplement, no listings, no snapshot
-    expect(state.calls).toEqual(["portal_connection_by_token"]);
+    expect(state.calls).toEqual(["portal_connection_by_token", "note_portal_pull"]);
+    // 0095 records it deliberately: a frozen "last pulled" would read as "the
+    // portal stopped calling", when in fact it is calling and getting nothing.
+    expect(state.pulls).toEqual([{ p_token: TOKEN, p_ua: UA, p_count: 0 }]);
   });
 });
 

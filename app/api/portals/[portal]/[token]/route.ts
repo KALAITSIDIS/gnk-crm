@@ -22,7 +22,9 @@ import { portalById } from "@/lib/services/portals/registry";
  * A DISABLED portal answers 200 with the dialect's EMPTY document, never 404:
  * every pull portal treats absence as removal, so an empty feed clears our
  * listings there and a 404 would leave them stale. For the same reason a
- * failed or truncated assembly is a 503, never an empty document.
+ * failed or truncated assembly is a 503, never an empty document. A disabled
+ * connection's pull is still noted (count 0): that a portal keeps hitting an
+ * empty feed is worth seeing on the settings page.
  *
  * Nothing the database says reaches the body of an error: a raw Postgres
  * message would land in a third party's logs. Errors are logged here and the
@@ -70,10 +72,46 @@ export async function GET(
   const row = (connection.data ?? [])[0];
   if (!row) return notFound();
 
+  /**
+   * Note the pull AFTER the response has gone out, and never fail the pull
+   * with it — the portal already has its bytes.
+   *
+   * Registered before the answer is decided, so "last pulled" on the settings
+   * page means when the portal last ASKED: a 304 counts, and so does a pull
+   * on a DISABLED connection, which 0095 records with a count of 0 rather
+   * than leaving the desk looking at a frozen timestamp.
+   */
+  const notePull = (count: number) => {
+    const note = async (): Promise<void> => {
+      try {
+        const noted = await supabase.rpc("note_portal_pull", {
+          p_token: token,
+          p_ua: request.headers.get("user-agent") ?? "",
+          p_count: count,
+        });
+        if (noted.error) {
+          console.warn(`[portal-feed] ${portalId}: pull not noted — ${noted.error.message}`);
+        }
+      } catch (err) {
+        console.warn(
+          `[portal-feed] ${portalId}: pull not noted — ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    };
+    try {
+      after(note);
+    } catch {
+      // no request scope (a unit test, a script): send it inline, fire-and-
+      // forget — the same fallback as lib/services/site-revalidate.ts
+      void note();
+    }
+  };
+
   // Disabled is a VALID feed with nothing in it — see the header. It must be
   // a document rather than an error, and it must never be cached: the desk
   // flips the switch back and the next pull has to see the listings again.
   if (!row.enabled) {
+    notePull(0);
     return new NextResponse(renderer.empty(), {
       status: 200,
       headers: { "Content-Type": renderer.contentType, ...NO_STORE },
@@ -150,32 +188,9 @@ export async function GET(
 
   const etag = feedEtag(String(snapshot.data), result.body);
 
-  // Registered BEFORE the 304 check, so "last pulled" on the settings page is
-  // when the portal last asked and not when it last got bytes. It runs after
-  // the response and can never fail the pull.
-  const note = async (): Promise<void> => {
-    try {
-      const noted = await supabase.rpc("note_portal_pull", {
-        p_token: token,
-        p_ua: request.headers.get("user-agent") ?? "",
-        p_count: result.count,
-      });
-      if (noted.error) {
-        console.warn(`[portal-feed] ${portalId}: pull not noted — ${noted.error.message}`);
-      }
-    } catch (err) {
-      console.warn(
-        `[portal-feed] ${portalId}: pull not noted — ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  };
-  try {
-    after(note);
-  } catch {
-    // no request scope (a unit test, a script): send it inline, fire-and-
-    // forget — the same fallback as lib/services/site-revalidate.ts
-    void note();
-  }
+  // Before the 304 check: a portal that revalidates and is told "unchanged"
+  // has still pulled.
+  notePull(result.count);
 
   if (request.headers.get("if-none-match") === etag) {
     return new NextResponse(null, {
