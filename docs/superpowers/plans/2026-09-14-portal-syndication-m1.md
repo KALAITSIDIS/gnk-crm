@@ -1825,6 +1825,13 @@ git add supabase/tests/portals.test.ts
 git commit -m "rls: portals — admin-only connections, edit-rights selection, what a token reveals" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
+**Amendments applied at implementation (2026-09-14; the committed file is the authority, not the block above):**
+- Four pins added by the reviews of Tasks 1, 5 and 6: the registry's `PORTAL_ID_PATTERN` against 0095's CHECK (23514 / accepted), the composite tenant FK outside RLS (a service-role insert naming another org's property is 23503), the publish predicate in BOTH directions (a listing made private leaves `public_listings` and `portal_supplement` together and returns to both when made public again), and `eligibilityInputFromProperty(...).isPublic` compared with `public_listings` on the same row (reserved → both say no).
+- The coordinate assertion is exact (`lat ≈ 34.88`, `lng ≈ 32.38` from `POINT(32.38 34.88)`), so a swapped `st_x`/`st_y` fails; the implementer proved it red by swapping the expectations and reverting.
+- `note_portal_pull` is fed `-5` to pin the clamp to `0`. 16 tests; the suite grows from 117 to 133.
+
+- Two fixture facts the plan had wrong: `media_kind` has no `plan` value (it is `floor_plan`), and `property_media.alt` is NOT NULL with a default that PostgREST bypasses on a multi-row insert, so every media row names its `alt`.
+
 ---
 
 ### Task 8: The JPEG rendition
