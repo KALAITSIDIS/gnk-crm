@@ -584,6 +584,13 @@ git add lib/services/portals/feed-listing.ts lib/services/portals/feed-listing.t
 git commit -m "portals: the feed listing shape — public row + selected-only supplement" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
+**Post-review amendments (follow-up commit on 2026-09-14; the committed files are the authority, not the block above):**
+- The image type is `PortalFeedImage`, not `FeedImage`, which already names the SITE feed's image shape in `public-listings.ts`.
+- `FeedRow` is the renderers' input: `PublicListingRow` with honest nullability, because the codegen cannot see NOT NULL through a set-returning function and marks every column non-null while 0066 declares most of them nullable. `FeedListing.row` and `buildFeedListings` take `FeedRow`; a `PublicListingRow[]` from the route assigns to it without a cast. Fixtures are typed `FeedRow` and typecheck structurally — no `as unknown as` cast.
+- `SupplementRow` stays hand-declared even after 0095 regenerates the types (the generated type would say `lat: number` and `images: Json`, both worse); Task 6 adds a key-parity type assertion against the generated `portal_supplement` return so a renamed column breaks the build.
+- Alt text falls back en → ru → null. Tests pin `approx: false`, half a coordinate, image order, JPEG-less images dropped, and the alt fallback (7 tests).
+- File header states why the raw row is kept rather than mapped into a DTO.
+
 ---
 
 ### Task 4: Kyero dialect with a golden file
