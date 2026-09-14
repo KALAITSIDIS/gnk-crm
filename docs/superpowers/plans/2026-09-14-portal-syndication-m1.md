@@ -2256,6 +2256,13 @@ git commit -m "portals: feed assembly — a projection of the site feed, never e
 - Two tests beyond the plan: an empty selection renders the empty document WITHOUT calling `fetchPage` (no selection, no query), and a selection with nothing eligible also renders the empty document. 6 tests.
 - The mutation check was run and reverted: dropping the eligibility filter turns count 1 into 3 as expected; dropping the assembler's `wanted.has` filter is caught by the paging test (three page calls instead of one), NOT by the output test — `buildFeedListings` matches rows to supplements by reference on its own, so selection is enforced twice, and the assembler's filter exists for early stopping.
 
+**Quality-review follow-ups (second commit on 2026-09-14):**
+- `fetchPage(offset, limit)`: the assembler dictates the page size, because a short page means the last page and a route choosing its own limit would silently stop after one page.
+- Distinct references: a `seen` set keeps a reference that a window shift between page fetches returned twice from being emitted twice, and the early stop counts distinct references, not rows.
+- Truncation is an error (`{ ok: false, error: "feed truncated at the page ceiling" }`), derived after the loop only when the ceiling was hit with references still missing — the same reasoning that makes a failed page an error: a partial document would delist the rest. A COMPLETE scan that misses a reference (the listing went non-public between the supplement call and the paging) is served, with `missing` reported.
+- The result carries `count`, `selected` and `missing` (no `truncated`); `maxPages` is an optional argument for tests.
+- Tests pin feed order with two survivors, the multi-page join, the duplicate-across-pages case, truncation as an error, and the missing count. 8 tests.
+
 ---
 
 ### Task 10: The feed route
