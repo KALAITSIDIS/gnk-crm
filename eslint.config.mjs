@@ -18,6 +18,10 @@ const eslintConfig = defineConfig([
     // local stack artifacts written by `supabase start` (bundled edge runtime).
     // Already git-ignored; linting vendored, minified output is noise.
     "supabase/.temp/**",
+    // MapLibre worker + shared chunk copied from node_modules by
+    // scripts/copy-maplibre-worker.mjs (predev/prebuild). Git-ignored; linting
+    // that vendored, minified output produced ~1,100 warnings after every build.
+    "public/maplibre/**",
     // Playwright's generated HTML report and per-test output (traces,
     // screenshots, its bundled trace viewer). Git-ignored, and the viewer alone
     // produced ~2,800 lint warnings once a test had failed.
