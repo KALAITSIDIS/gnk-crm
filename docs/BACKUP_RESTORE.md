@@ -741,7 +741,11 @@ sha256sum -c gnk-backups-offsite-<date>.tar.gz.sha256
 >
 > `data.sql` and `pg_dump.sql` contain `auth.users` rows including
 > **`encrypted_password` bcrypt hashes**, and the Storage export contains signed
-> viewing slips and evidence PDFs. **Never put it in the repo** — `gnk-crm` is a
+> viewing slips and evidence PDFs. Since 0095 the archive also carries live
+> **`portal_connections.feed_token`** values — each one *is* an enabled portal's
+> pull URL, so a leaked archive hands those out; the remedy is to rotate the
+> token (an `update` of `feed_token`) and re-point the portal at the new URL.
+> **Never put it in the repo** — `gnk-crm` is a
 > **public** GitHub repository — and never in a public bucket, a pastebin, a chat
 > or an issue. Acceptable destinations are a personal cloud account that is not
 > the Supabase one, an encrypted USB drive, or another machine. **The PRIVATE

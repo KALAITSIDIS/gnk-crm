@@ -66,6 +66,8 @@ comment on table public.portal_connections is
   'route on every pull. Secrets (a leads API token) live in the Vercel '
   'environment, never here.';
 
+-- note_portal_pull fires this too, so updated_at means 'last touched,
+-- including by a pull', not 'last edited by the desk'.
 drop trigger if exists portal_connections_updated_at on public.portal_connections;
 create trigger portal_connections_updated_at
   before update on public.portal_connections
@@ -102,12 +104,18 @@ create policy require_aal2 on public.portal_connections
 -- 2. portal_listings
 -- ---------------------------------------------------------------------------
 create table if not exists public.portal_listings (
-  property_id  uuid not null references public.properties(id) on delete cascade,
+  property_id  uuid not null,
   portal       text not null check (portal ~ '^[a-z_]{2,40}$'),
   org_id       uuid not null references public.organizations(id) on delete cascade,
   selected_at  timestamptz not null default now(),
   selected_by  uuid references public.profiles(id) on delete set null,
-  primary key (property_id, portal)
+  primary key (property_id, portal),
+  -- the tenant guard 0088 gave property_media: a row cannot name a property of
+  -- another org, so a token can never reach foreign coordinates even outside
+  -- RLS (service role, a restore). The unique index it references,
+  -- properties_org_id_id_key (org_id, id), is 0088's.
+  constraint portal_listings_org_property_fkey
+    foreign key (org_id, property_id) references public.properties (org_id, id) on delete cascade
 );
 create index if not exists portal_listings_org_portal_idx
   on public.portal_listings (org_id, portal);
@@ -204,7 +212,10 @@ language sql stable security definer set search_path = public as $$
          ), '[]'::jsonb)
     from portal_connections c
     join portal_listings pl on pl.org_id = c.org_id and pl.portal = c.portal
-    join properties p on p.id = pl.property_id
+    -- belt to the composite FK's braces: the org is re-checked on the way out,
+    -- so this function cannot serve another tenant's property even if the
+    -- constraint were ever dropped
+    join properties p on p.id = pl.property_id and p.org_id = c.org_id
    where c.feed_token = p_token
      and c.enabled
      -- the site feed's predicate (0088 public_listings), pinned together by portals.test.ts
@@ -215,10 +226,12 @@ $$;
 create or replace function public.note_portal_pull(p_token text, p_ua text, p_count int)
 returns void
 language sql volatile security definer set search_path = public as $$
+  -- No `and enabled`: a disabled connection still records pulls — that the
+  -- portal keeps hitting an empty feed is worth seeing on the settings page.
   update portal_connections
      set last_pulled_at  = now(),
          last_pulled_ua  = left(coalesce(p_ua, ''), 200),
-         last_pull_count = p_count
+         last_pull_count = greatest(0, coalesce(p_count, 0))
    where feed_token = p_token
 $$;
 

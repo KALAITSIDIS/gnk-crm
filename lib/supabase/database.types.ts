@@ -1290,11 +1290,11 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "portal_listings_property_id_fkey"
-            columns: ["property_id"]
+            foreignKeyName: "portal_listings_org_property_fkey"
+            columns: ["org_id", "property_id"]
             isOneToOne: false
             referencedRelation: "properties"
-            referencedColumns: ["id"]
+            referencedColumns: ["org_id", "id"]
           },
           {
             foreignKeyName: "portal_listings_selected_by_fkey"
