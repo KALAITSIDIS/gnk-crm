@@ -41,15 +41,88 @@ describe("processPropertyImage (T1.4)", () => {
     }
   });
 
-  it("produces WebP renditions at the spec widths", async () => {
+  it("produces renditions at the spec widths in the spec formats", async () => {
     const { renditions, width, height } = await processPropertyImage(gpsJpeg);
     expect(width).toBe(2400);
     expect(height).toBe(1600);
-    for (const { name, width: target } of RENDITIONS) {
+    for (const { name, width: target, format } of RENDITIONS) {
       const meta = await sharp(renditions[name]).metadata();
-      expect(meta.format).toBe("webp");
-      expect(meta.width).toBe(target);
+      expect(meta.format, name).toBe(format);
+      expect(meta.width, name).toBe(target);
     }
+  });
+
+  it("the JPEG rendition is the full rendition's twin: same width, JPEG, watermarked together", async () => {
+    const watermark = await sharp({
+      create: { width: 600, height: 200, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 0.6 } },
+    })
+      .png()
+      .toBuffer();
+    const { renditions, watermarked } = await processPropertyImage(gpsJpeg, { watermark });
+    expect(watermarked).toBe(true);
+    const full = await sharp(renditions.full).metadata();
+    const jpeg = await sharp(renditions.jpeg).metadata();
+    expect(jpeg.format).toBe("jpeg");
+    expect(jpeg.width).toBe(full.width);
+    expect(jpeg.exif).toBeUndefined();
+  });
+
+  /**
+   * `watermarked: true` is a CLAIM. This reads the pixels of the JPEG
+   * rendition itself: the bottom-right corner (where the mark is composited)
+   * must differ between the watermarked and un-watermarked runs, and the
+   * top-left — the same source bytes either way — must not. Without the
+   * composite on the jpeg branch the first assertion fails.
+   */
+  it("really composites the watermark onto the JPEG rendition's pixels", async () => {
+    const watermark = await sharp({
+      create: { width: 600, height: 200, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 0.6 } },
+    })
+      .png()
+      .toBuffer();
+    const withWm = (await processPropertyImage(gpsJpeg, { watermark })).renditions.jpeg;
+    const without = (await processPropertyImage(gpsJpeg)).renditions.jpeg;
+
+    const meta = await sharp(without).metadata();
+    const w = meta.width!;
+    const h = meta.height!;
+    const corner = (buf: Buffer, left: number, top: number) =>
+      sharp(buf).extract({ left, top, width: 50, height: 50 }).raw().toBuffer();
+
+    const [brWm, brPlain] = await Promise.all([
+      corner(withWm, w - 50, h - 50),
+      corner(without, w - 50, h - 50),
+    ]);
+    expect(brWm.equals(brPlain), "bottom-right must carry the mark").toBe(false);
+
+    const [tlWm, tlPlain] = await Promise.all([corner(withWm, 0, 0), corner(without, 0, 0)]);
+    expect(tlWm.equals(tlPlain), "top-left must be untouched").toBe(true);
+  });
+
+  /**
+   * JPEG has no alpha. Sharp's default flatten colour is BLACK, so a
+   * transparent PNG — a rendered plan, a cut-out, anything exported with a
+   * clear background — would reach a portal as a photograph on black. The
+   * WebP renditions keep their transparency; only the JPEG is flattened.
+   */
+  it("flattens a transparent PNG to white for the JPEG, and only for the JPEG", async () => {
+    const transparent = await sharp({
+      create: { width: 1200, height: 800, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+    })
+      .png()
+      .toBuffer();
+    const { renditions } = await processPropertyImage(transparent);
+
+    const pixel = await sharp(renditions.jpeg)
+      .extract({ left: 0, top: 0, width: 1, height: 1 })
+      .raw()
+      .toBuffer();
+    expect([...pixel], "the JPEG's background must be white, not sharp's default black").toEqual([
+      255, 255, 255,
+    ]);
+
+    const full = await sharp(renditions.full).metadata();
+    expect(full.hasAlpha, "the WebP full keeps its transparency").toBe(true);
   });
 
   it("does not enlarge small images", async () => {

@@ -81,6 +81,8 @@ const SAMPLE_PARAMS = {
   expiry: "2027-06-30",
   // media alt text (2026-09-06): the description itself is interpolated
   alt: "Sea view from the terrace",
+  // portal syndication (0095): all six portal lines name the portal
+  portal: "JamesEdition",
 };
 
 describe("locale message files", () => {

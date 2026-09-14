@@ -28,7 +28,7 @@
 | WhatsApp Business API in MVP | Deferred to Phase 3 (Meta template approval friction + per-conversation cost). MVP = click-to-chat links + manual conversation logging. |
 | Lead-source ROI reporting | Deferred to Phase 3+. Requires marketing-spend tracking that will not exist at launch. Lead-source **counting** stays in MVP; ROI does not. |
 | AI voice-note transcription | Confirmed removed (was already deprioritized in v1). |
-| External portal XML/CSV feeds in early phases | Confirmed deferred to Phase 5 (was already deprioritized in v1). |
+| External portal XML/CSV feeds in early phases | Confirmed deferred to Phase 5 (was already deprioritized in v1). **Pulled forward 2026-09-14 by the operator** — pull feeds only, per-listing selection; milestone 1 shipped (migration 0095, DECISIONS `T-portal-syndication-m1`, spec `docs/superpowers/specs/2026-09-14-portal-syndication-design.md`), milestones 2 and 3 on the backlog. |
 | Lawyer/bank platform logins | Confirmed removed. Replaced by secure expiring download links (v1 got this right — kept). |
 
 ### 0.2 ADDED in v2
@@ -260,7 +260,7 @@ M10 full generators (proposals, reservation agreements) · M9 investment calcula
 M13 owner/developer portals · M15 closed-circuit partner network · M19 comparables engine · antiparoxi deal templates · full M18 reporting.
 
 **Phase 5 — Feeds & Scaling**
-External portal XML/CSV feeds · advanced accounting/commission automation · SaaS multi-tenancy activation (org onboarding, billing).
+External portal XML/CSV feeds (pulled forward to 2026-09-14 — milestone 1 shipped; see §10 and DECISIONS `T-portal-syndication-m1`) · advanced accounting/commission automation · SaaS multi-tenancy activation (org onboarding, billing).
 
 ---
 
@@ -293,7 +293,7 @@ Website listing engine + SEO · magic-link proposal pages · document generators
 |---|---|
 | Complex automated commission splits | Manual text fields until Phase 5 |
 | AI voice-note transcription | Out of scope |
-| External portal XML feeds | Phase 5 |
+| External portal XML feeds | ~~Phase 5~~ — pulled forward 2026-09-14 by the operator: pull feeds only, per-listing selection (milestone 1 shipped, migration 0095, DECISIONS `T-portal-syndication-m1`; M2/M3 on the backlog). The rest of this list stays binding |
 | Lawyer/bank logins | Expiring links only |
 | Buyer/investor logins | Magic-link pages only |
 | KYC API | Manual checklist until Phase 3 |

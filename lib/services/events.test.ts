@@ -514,3 +514,73 @@ describe("an instalment's due date moving", () => {
   });
 });
 
+/**
+ * Portal syndication lines (0095).
+ *
+ * The payload carries the registry ID — `uk_provider`, `aplaceinthesun` —
+ * because that is the stable fact, and an id is what the feed route and the
+ * connection row are keyed by. It is not, however, what an agent scanning a
+ * property's timeline should have to decode: `uk_provider` is one feed that
+ * reaches Rightmove, Zoopla and OnTheMarket, and no amount of staring at the
+ * id says so. The line resolves the name through the registry at render time,
+ * so the timeline reads like the settings page the desk enabled it on.
+ */
+describe("portal lines name the portal, not its id", () => {
+  const PORTAL_VERBS = [
+    "portal_selected",
+    "portal_removed",
+    "portal_enabled",
+    "portal_disabled",
+    "portal_settings_updated",
+    "portal_token_regenerated",
+  ] as const;
+
+  it("spells out the id that hides three portals behind it", () => {
+    expect(describeEvent(ev("portal_selected", { portal: "uk_provider" }, "property"), t)).toBe(
+      "Selected for portal Rightmove, Zoopla & OnTheMarket (via feed provider)",
+    );
+  });
+
+  it("falls back to the id for a portal the registry no longer carries", () => {
+    // A row written before a portal was retired still has to read.
+    const line = describeEvent(ev("portal_removed", { portal: "deadportal" }, "property"), t);
+    expect(line).toBe("Removed from portal deadportal");
+  });
+
+  it("survives a payload with no portal at all", () => {
+    expect(String(describeEvent(ev("portal_enabled", {}, "organization"), t))).not.toMatch(
+      /\{|undefined|null/,
+    );
+  });
+
+  /**
+   * THE BINDING between the six registry entries and the six message keys.
+   *
+   * `describeEvent` swallows a missing entry (it falls back to the spaced
+   * verb) and next-intl swallows a missing key (it falls back to the key
+   * path), so a line whose message was never added renders something
+   * plausible in both directions and nobody notices until a timeline is read
+   * in Greek. This translator refuses both: an absent `events.*` key throws,
+   * and so does a placeholder left unresolved.
+   */
+  const EVENT_MESSAGES = (en as { events: Record<string, string> }).events;
+  const strict: EventTranslator = (key, values) => {
+    const template = EVENT_MESSAGES[key];
+    if (template === undefined) throw new Error(`events.${key} is missing from messages/en.json`);
+    return template.replace(/\{(\w+)\}/g, (_whole, name: string) => {
+      const value = values?.[name];
+      if (value === undefined) throw new Error(`events.${key} left {${name}} unresolved`);
+      return String(value);
+    });
+  };
+
+  for (const verb of PORTAL_VERBS) {
+    it(`${verb} resolves to a real message that names the portal`, () => {
+      const line = describeEvent(ev(verb, { portal: "jamesedition" }, "property"), strict);
+      expect(line, `${verb} must render through its own message key`).toContain("JamesEdition");
+      // the fallback path prints the spaced verb — that is not a line
+      expect(line, `${verb} fell through to the raw verb`).not.toBe(verb.replace(/_/g, " "));
+    });
+  }
+});
+

@@ -24,8 +24,37 @@ function Tabs({
   )
 }
 
+/**
+ * `max-w-full overflow-x-auto justify-start` is in the BASE, not on a caller.
+ *
+ * A strip wider than its container otherwise widens the whole page: the
+ * property page's ten tabs made `/properties/<id>` 937px wide in a 390px
+ * viewport, and the contact page's nine made it 980px — the same defect,
+ * found once (tests/e2e/portals.spec.ts) and fixable in one place. Putting it
+ * on the property page alone would have left the contact page broken and
+ * created a second definition of how a tab strip behaves.
+ *
+ * `justify-start` replaces `justify-center`: with `w-fit` a strip that FITS
+ * has no free space to distribute, so the two are identical there — but a
+ * centred strip that OVERFLOWS hides its own first tab at scrollLeft 0, and
+ * no amount of scrolling right brings it back.
+ *
+ * The focus ring is NOT clipped, even though `overflow-x-auto` forces
+ * `overflow-y` to `auto`. The list clips at its padding-box edge, 3px outside
+ * its content box (`p-[3px]`). A trigger's `focus-visible:ring-[3px]` is a
+ * box-shadow painted 3px beyond its border box: horizontally a trigger sits
+ * flush with the content box, so the ring's 3px is exactly the padding and
+ * fits; vertically the trigger is `h-[calc(100%-1px)]` centred by
+ * `items-center`, so it has 3.5px of room against the ring's 3px. Only
+ * something painted farther than 3px outside a trigger is clipped, and the
+ * one such thing is the `variant="line"` active underline, whose 2px sit
+ * 3–5px below the border box (`after:bottom-[-5px]`; `after:-right-1` in the
+ * vertical orientation). No call site uses `line` today; that underline must
+ * move inside the box before one does, or the variant's only visual cue will
+ * be invisible.
+ */
 const tabsListVariants = cva(
-  "group/tabs-list inline-flex w-fit items-center justify-center rounded-lg p-[3px] text-muted-foreground group-data-horizontal/tabs:h-9 group-data-vertical/tabs:h-fit group-data-vertical/tabs:flex-col data-[variant=line]:rounded-none",
+  "group/tabs-list inline-flex w-fit max-w-full items-center justify-start overflow-x-auto rounded-lg p-[3px] text-muted-foreground group-data-horizontal/tabs:h-9 group-data-vertical/tabs:h-fit group-data-vertical/tabs:flex-col data-[variant=line]:rounded-none",
   {
     variants: {
       variant: {
