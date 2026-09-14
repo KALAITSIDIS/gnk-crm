@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import type { PortalDefinition } from "@/lib/services/portals/registry";
+import type { PortalCardDefinition } from "@/lib/services/portals/card-definition";
 import { formatDateTime } from "@/lib/utils/format";
 
 /**
@@ -65,7 +65,12 @@ export function PortalCard({
   connection,
   acceptedCurrencies,
 }: {
-  portal: PortalDefinition;
+  /**
+   * The registry entry's plain-data projection, NOT the entry: its
+   * `settingsSchema` is a zod object and React will not serialise a class
+   * instance across the RSC boundary. See `card-definition.ts`.
+   */
+  portal: PortalCardDefinition;
   connection: PortalCardConnection | null;
   /**
    * `DIALECT_CURRENCIES[portal.dialect]`, resolved by the page. `null` = any.

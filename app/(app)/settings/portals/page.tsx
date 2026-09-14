@@ -1,5 +1,6 @@
 import { PortalCard, type PortalCardConnection } from "@/components/features/settings/portal-card";
 import { getCurrentProfile } from "@/lib/services/auth";
+import { toPortalCardDefinition } from "@/lib/services/portals/card-definition";
 import { DIALECT_CURRENCIES } from "@/lib/services/portals/dialects";
 import { PORTALS } from "@/lib/services/portals/registry";
 import type { Json } from "@/lib/supabase/database.types";
@@ -47,6 +48,11 @@ export default async function PortalsSettingsPage() {
         pull; nothing goes out until an agent ticks a listing for that portal on its Marketing tab.
         The website never depends on any of this. Every change here is an event.
       </p>
+      {/* `toPortalCardDefinition`, never `def` itself: a registry entry carries
+          `settingsSchema`, a zod object, and React refuses to serialise a class
+          instance into a "use client" component — passing the whole definition
+          put this page behind its error boundary, which the e2e caught. The
+          schema is a server concern: `savePortalSettings` parses with it. */}
       {PORTALS.map((def) => {
         const r = byPortal.get(def.id);
         const connection: PortalCardConnection | null = r
@@ -64,7 +70,7 @@ export default async function PortalsSettingsPage() {
         return (
           <PortalCard
             key={def.id}
-            portal={def}
+            portal={toPortalCardDefinition(def)}
             connection={connection}
             // resolved here, not in the card: the `dialects` barrel also
             // exports `DIALECT_RENDERERS`, so importing it from a "use client"
