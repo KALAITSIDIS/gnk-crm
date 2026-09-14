@@ -65,4 +65,14 @@ describe("xml builder", () => {
     expect(() => tag("price", Number.NaN)).toThrow(/non-finite/);
     expect(() => tag("price", Number.POSITIVE_INFINITY)).toThrow(/non-finite/);
   });
+
+  it("a non-finite attribute throws like a non-finite element", () => {
+    expect(() => tag("image", "u", { lat: Number.NaN })).toThrow(/non-finite/);
+    expect(tag("image", "u", { alt: "" })).toBe('<image alt="">u</image>');
+  });
+
+  it("a whitespace-only scalar renders nothing; padded text is kept as is", () => {
+    expect(tag("town", "   ")).toBe("");
+    expect(tag("town", " Peyia ")).toBe("<town> Peyia </town>");
+  });
 });

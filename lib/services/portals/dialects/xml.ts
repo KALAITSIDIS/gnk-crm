@@ -8,8 +8,9 @@
  * in a dialect file, never listing data, and are not escaped. Values are.
  *
  * Contract of `tag()`:
- *  - `null`, `undefined` and the empty string render NOTHING, so an optional
- *    or blank field is one line at the call site, not an `if`; `0` renders.
+ *  - `null`, `undefined` and the empty (or whitespace-only) string render
+ *    NOTHING, so an optional or blank field is one line at the call site, not
+ *    an `if`; `0` renders.
  *  - a number must be finite: NaN or ±Infinity is a programming error and
  *    throws rather than reaching a public feed as text.
  *  - booleans are not accepted: every portal spells yes/no differently, so a
@@ -43,7 +44,7 @@ function renderScalar(name: string, value: Scalar): string | null {
     if (!Number.isFinite(value)) throw new TypeError(`xml tag <${name}>: non-finite number ${value}`);
     return String(value);
   }
-  return value === "" ? null : escapeXml(value);
+  return value.trim() === "" ? null : escapeXml(value);
 }
 
 export function tag(
@@ -54,7 +55,7 @@ export function tag(
   if (value === null || value === undefined) return "";
   const attrText = Object.entries(attrs)
     .filter(([, v]) => v !== null && v !== undefined)
-    .map(([k, v]) => ` ${k}="${escapeXml(String(v))}"`)
+    .map(([k, v]) => ` ${k}="${renderScalar(`${name} @${k}`, v as Scalar) ?? ""}"`)
     .join("");
   const inner = Array.isArray(value)
     ? (value as readonly Child[]).filter((c): c is string => typeof c === "string" && c !== "").join("")
