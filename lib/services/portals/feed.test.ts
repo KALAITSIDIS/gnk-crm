@@ -99,6 +99,20 @@ describe("assemblePortalFeed", () => {
     expect(MAX_PAGES).toBe(25);
   });
 
+  it("a set completed on the final allowed page is not truncation", async () => {
+    const filler = (prefix: string, n: number) =>
+      Array.from({ length: n }, (_, i) => ({ ...LAND_PLOT.row, reference: `${prefix}${i}` })) as unknown as PublicListingRow[];
+    const lastPage = [SALE_VILLA.row as unknown as PublicListingRow, ...filler("V", MAX_LIMIT - 1)];
+    const r = await assemblePortalFeed({
+      portal: je, renderer: kyero, settings: KYERO_SETTINGS, supabaseUrl: "https://p", maxPages: 2,
+      supplements: [sup(SALE_VILLA)],
+      fetchPage: async (offset, limit) => (offset === 0 ? filler("U", limit) : lastPage),
+    });
+    if (!r.ok) throw new Error(r.error);
+    expect(r.count).toBe(1);
+    expect(r.missing).toBe(0);
+  });
+
   it("a reference not found after a complete scan is reported missing, not an error", async () => {
     const r = await assemblePortalFeed({
       portal: je, renderer: kyero, settings: KYERO_SETTINGS, supabaseUrl: "https://p",
