@@ -89,8 +89,18 @@ export default async function proxy(request: NextRequest) {
    * there that is not meant for the open internet. The route itself holds only
    * the ANON key, so its reach is whatever migration 0066 grants `anon` by
    * name — nothing in this file can widen that.
+   *
+   * `/api/portals/` (0095) is the PORTAL feed: an external portal pulls it by
+   * a 64-hex token in the path. Same construction as `/api/public/` — anon
+   * key only, so its reach is what 0095 grants `anon` by name — and the same
+   * rule: nothing goes under it that is not meant for the open internet.
    */
-  if (path.startsWith("/p/") || path.startsWith("/api/public/") || path === "/offline") {
+  if (
+    path.startsWith("/p/") ||
+    path.startsWith("/api/public/") ||
+    path.startsWith("/api/portals/") ||
+    path === "/offline"
+  ) {
     const publicResponse = withNonce();
     publicResponse.headers.set(CSP_HEADER, csp);
     publicResponse.headers.set(

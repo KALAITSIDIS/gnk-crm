@@ -41,6 +41,7 @@ import { StatusBadge } from "@/components/features/shared/status-badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MatchingBuyersCard } from "@/components/features/properties/matching-buyers-card";
+import { PortalsCard } from "@/components/features/properties/portals-card";
 import {
   ReservationCard,
   type ReservationRow,
@@ -51,6 +52,7 @@ import {
   type PlanOption,
 } from "@/components/features/properties/payment-schedule-card";
 import type { MatchCandidate } from "@/lib/services/matching";
+import { buildPropertyPortalRows } from "@/lib/services/portals/property-portals";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
 import { formatArea, formatDate, formatDateTime, formatMoney } from "@/lib/utils/format";
@@ -80,7 +82,7 @@ export default async function PropertyDetailPage({
     supabase.from("areas").select("id, district_id, name"),
     supabase
       .from("property_media")
-      .select("id, kind, path_thumb, path_card, is_cover, sort_order, watermarked, width, height, alt, content_sha256")
+      .select("id, kind, path_thumb, path_card, path_jpeg, is_cover, sort_order, watermarked, width, height, alt, content_sha256")
       .eq("property_id", id)
       .order("sort_order"),
     supabase
@@ -111,6 +113,14 @@ export default async function PropertyDetailPage({
   const unitFacts = isContainerRow ? await countContainerUnits(supabase, id) : EMPTY_CONTAINER_FACTS;
   const areaRows = unwrapRows(areasRes, "areas");
   const mediaRows = unwrapRows(mediaRes, "property media");
+  // Started here and awaited far below, so the Portals card's two reads run
+  // alongside the media signing and the main batch instead of queueing after
+  // them — nothing between here and the await needs their answer.
+  const portalsPromise = buildPropertyPortalRows(supabase, p, mediaRows, id);
+  // A handler, attached now, so a read failure in that window is delivered at
+  // the await (where it renders the error boundary) rather than surfacing
+  // first as an unhandled rejection with no page to attach it to.
+  portalsPromise.catch(() => {});
   // Where each card rendition can be fetched from, decided HERE by the row's
   // kind (media-bucket.ts): a photograph's is a public URL; anything else
   // lives in the private bucket and is signed for the hour, the same idiom
@@ -231,6 +241,12 @@ export default async function PropertyDetailPage({
   // mirrors properties_update RLS — forms render read-only when a save would no-op
   const canEditProperty =
     isAdminOrLM || (profile.role === "agent" && p.assigned_agent_id === profile.id);
+
+  // The Marketing tab's Portals card (0095), started above. Which portals
+  // appear, in what order, and which of them can still be removed are
+  // judgements — so they live in a service with a test around them rather
+  // than inline here.
+  const { rows: portalRows, photoNote: portalPhotoNote } = await portalsPromise;
 
   const reservations: ReservationRow[] = (reservationsRes.data ?? []).map((r) => {
     const joined = r.contacts as { display_name: string } | { display_name: string }[] | null;
@@ -760,8 +776,19 @@ export default async function PropertyDetailPage({
         </TabsContent>
 
         <TabsContent value="marketing" className="mt-4">
-          <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-6">
-            <MarketingForm property={p} readOnly={!canEditProperty} />
+          <div className="flex max-w-3xl flex-col gap-4">
+            <div className="rounded-[10px] border border-border bg-surface p-6">
+              <MarketingForm property={p} readOnly={!canEditProperty} />
+            </div>
+            {/* Every kind gets the card: the site feed shows any public and
+                available listing whatever its kind, and eligibility says the
+                rest rather than the page guessing. */}
+            <PortalsCard
+              propertyId={p.id}
+              portals={portalRows}
+              photoNote={portalPhotoNote}
+              readOnly={!canEditProperty}
+            />
           </div>
         </TabsContent>
 

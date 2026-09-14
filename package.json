@@ -21,6 +21,7 @@
     "check:static-routes": "node scripts/check-static-routes.mjs",
     "check:csp-nonce": "node scripts/check-csp-nonce.mjs",
     "recompute:scores": "node --env-file=.env.local scripts/recompute-scores.mts",
+    "media:backfill-jpeg": "node --env-file=.env.local scripts/media/backfill-jpeg.mts",
     "backup:fetch-pg-tools": "node scripts/backup/fetch-pg-tools.mjs",
     "predev": "node scripts/copy-maplibre-worker.mjs",
     "prebuild": "node scripts/copy-maplibre-worker.mjs"
@@ -59,6 +60,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.1",
+    "fast-xml-parser": "4.5.7",
     "shadcn": "^4.13.0",
     "supabase": "2.115.0",
     "tailwindcss": "^4",

@@ -6436,3 +6436,325 @@ four cases, and the site's README and lib/crm.ts no longer claim a "larger
 budget" the CRM does not grant. The site's own build shape (two fetches per
 page) is the remaining lever, left alone: without the row lock the burst is
 just concurrent reads of a small function.
+
+## T-rls-mfa-transient-5xx — the harness names a 5xx and retries it (2026-09-14, no migration)
+
+The `rls` job of CI run 34872951408 (PR #1, `92c3276` — four lines of ESLint
+config that touch neither vitest nor the stack) fell in `beforeAll` with
+`Error: mfa.challenge: {}` from lib/testing/mfa.ts, and all 65 tests in
+rls.test.ts were skipped. The push-event twin of the same commit
+(34872946110) had passed 117/117 a minute earlier. Measured from the two
+logs: the failing run printed `Started supabase local development setup` at
+17:10:43.0, vitest started at :43.9, and the file was down at :45.2 — 832 ms
+into the file, about two seconds after the stack said it was up. There is no
+`console.error` in that log, so it was not auth-js's status-0 path (a fetch
+that fails outright logs before it throws); it was a 5xx that came back FAST,
+unlike the 2026-09-07 sighting in T-mfa-mandatory (`mfa.enroll: {}`, which
+the auth log resolved to `POST /factors → 504, context deadline exceeded,
+11.1s`). Which 5xx, the log cannot say, and that is the first defect.
+
+**Why the message is literally `{}`.** auth-js 2.110.2 (`lib/fetch.js`,
+`handleError`) turns any 500–504 or 520–530 response into an
+`AuthRetryableFetchError` whose message is `_getErrorMessage(response)`. A
+Response has no `msg`, `message`, `error_description` or `error`, so that
+falls through to `JSON.stringify(response)`, which renders a Response as
+`{}`. The status survives on `error.status` and is dropped from the text, and
+the harness threw the text. The same shape twice, a week apart.
+
+**Where the load comes from.** rls.test.ts's `beforeAll` creates five fixture
+users under `Promise.all`, and each `createTestUser` signs in and then
+enrols, challenges and verifies a TOTP factor: roughly fifteen auth requests
+inside one second, against an auth container that finished starting seconds
+earlier on a 2-vCPU runner beside ten other containers.
+
+**What was built, in the order the evidence supported.** (1) The status is
+in the message: every throw in lib/testing/mfa.ts goes through
+`describeAuthError`, so the next occurrence reads `mfa.challenge:
+AuthRetryableFetchError status=502: {}` — or `mfa.verify: AuthApiError
+status=422 code=mfa_verification_failed: Invalid TOTP code entered` — rather
+than `{}`. (2) Enrol and challenge are retried through `retryTransientAuth`
+(lib/testing/auth-retry.ts) on exactly what auth-js itself labels retryable:
+`isAuthRetryableFetchError`, the library's own classifier, which covers
+status 0 and 500–504/520–530 — wider than the 502/503/504 first proposed,
+and a definition that moves with the dependency instead of being a list kept
+here. Three retries at 500, 1000 and 2000 ms, so a call waits 3.5 s at most;
+each retry is a fresh request; each prints a `console.warn` naming the status
+and the wait, so a run that healed still says so in the log. When the
+challenge is retried the TOTP code is generated after the challenge that
+succeeded, as before. `passChallenge` — the E2E login path, which runs
+against the same freshly started stack — takes the same retry on its
+challenge. (3) Concurrency in `beforeAll` stays at five: with the retry in
+place there is no evidence that serialising the users buys anything, and it
+would add up to four times the setup latency to every run to guard against a
+failure now handled. It is the next lever if a 5xx ever outlives three
+retries.
+
+**Verify is deliberately not retried.** A wrong code is a wrong code: the
+same code fails the same way, and a retry across a 30-second step boundary
+would hide a real defect in the harness's TOTP. A 5xx on verify is
+ambiguous: a gateway timeout can follow a verify GoTrue has already applied,
+and a second answer to the same challenge then fails for a reason unrelated
+to the first. So verify reports its status and stops. The tests pin this as
+a choice (`a 5xx on verify is NOT retried either`), so relaxing it is a
+decision rather than an accident.
+
+**Proof.** tests/unit/mfa-harness-retries-transient-5xx.test.ts, 17 tests,
+red before the module existed and green after. They use the REAL auth-js
+error classes — the classifier checks a private marker as well as the name,
+so a lookalike `{ name }` object would prove the wrong thing — and a scripted
+`client.auth.mfa` for the wiring: a 502 on the challenge is retried and
+verify answers the SECOND challenge's id; a 503 on enrol the same; the retry
+is announced with its status; a wrong code and a 5xx on verify each reach
+verify exactly once; a challenge that keeps failing gives up after the table
+with the LAST status in the throw. Mutation-checked four ways: challenge
+taken out of the retry (3 red), the wrapper never retrying (12 red),
+`describeAuthError` dropping the status (6 red), verify put inside the retry
+(1 red). The first attempt at that fourth mutation did not install — a bare
+`\n` in the pattern against a CRLF working copy — and reported 17 green;
+whether a mutation actually landed is checked before its result is believed.
+Then `npm test` 1489/1489 (136 files, +17/+1) and `npm run test:rls` 117/117
+against the local stack (0094 applied): unchanged behaviour on a healthy
+stack.
+
+**What this does not do.** It does not make CI capture the auth container's
+log on failure. The status in the message is the fact the 2026-09-07 entry
+had to open the auth log to learn, and it separates a gateway 502 from a
+GoTrue 504 deadline; if a status alone ever proves insufficient, log capture
+on failure is the next step and belongs in the workflow, not the harness. It
+does not touch lib/actions/mfa.ts: the app shows the person the error and
+lets them try again, and a silent retry there would hide an outage from the
+one place it should be visible.
+
+## T-ci-one-run-per-commit — the first pull request ran CI twice on one commit (2026-09-14, no migration)
+
+`ci.yml` has said `on: push` and `on: pull_request`, neither filtered, since the
+scaffold. It never mattered: this repo had not opened a pull request before
+2026-09-14. The rhythm is branch → push → watch CI → merge locally → push
+`main`, so every commit ran exactly once and the second trigger lay dormant.
+PR #1 (`chore/eslint-ignore-maplibre`, 92c3276) woke it. One commit ran the
+whole workflow twice, three seconds apart — run 34872946110 on `push`, run
+34872951408 on `pull_request` — six jobs where three were due, four local
+Supabase stacks pulling images at once instead of two, and both logs show ECR
+Public refusing pulls (`toomanyrequests: Rate exceeded`), the CLI retrying, and
+in one job falling back to ghcr.io. It also doubled the exposure to the RLS
+suite's transient MFA setup failure (the separate task on `lib/testing/mfa.ts`).
+
+Three ways to make it one.
+
+**The conventional shape — `push: branches: [main]` plus an unfiltered
+`pull_request:` — was not taken.** Under it a branch push with no open PR runs
+nothing, and the branch push IS the working agreement: the free rehearsal a
+session watches while it writes the HANDOFF row, before the hosted migration
+and before the merge. Keeping the rehearsal under that shape means opening a PR
+the moment every branch is pushed — a PR that exists only to trigger CI, in a
+repo that merges locally with a merge commit and had never needed one. HANDOFF
+names this shape as the lever if CI's ~8 min ever becomes a problem; it is a
+lever for cost, not for this.
+
+**A concurrency group keyed on the head SHA does not dedupe.** GitHub has no
+dedupe; a group either cancels the older run (`cancel-in-progress: true` — the
+`push` run, three seconds older, dies and the commit wears a cancelled run) or
+queues the newer one and then runs it in full. And in the order this repo
+actually works — push, watch it go green, THEN open the PR — the push run has
+finished before the pull_request run starts, so there is nothing to cancel and
+both run anyway.
+
+**Chosen: `push:` stays unfiltered, and a `pull_request` run skips itself when
+the PR's head branch lives in this repository.** Every job carries
+
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+
+A push here already ran that commit. A PR from a fork — the one case a push
+here cannot cover, because a fork's push runs in the fork's Actions — still
+runs. The repo is public with zero forks, so the event could have been dropped
+outright; three lines keep the case. There is no workflow-level `if`, so the
+line is repeated on all three jobs, and the comment above `jobs:` says to keep
+the three identical. On a PR the skipped run shows beside the push run's green;
+it takes no runner minutes and pulls no image.
+
+What is given up: a `pull_request` run builds `refs/pull/N/merge` — the PR
+merged into its base — where a `push` run builds the branch head alone. Here
+the merge is made locally and pushed, and `main` runs on that push, so the
+merged tree gets its own run exactly as it did before any PR existed.
+
+Docs moved with it: `docs/10_INFRASTRUCTURE.md` §1 (which said "every push and
+pull request") and HANDOFF §0's CI row, which had not mentioned the `e2e` job
+since it was added on 2026-08-04; the "lever" sentence in HANDOFF's test
+section now points here first.
+
+Verification: the file parses (`js-yaml`), the three `if:` lines are
+byte-identical, and this branch's own push runs once. The skip arm is proven by
+the next PR opened from an in-repo branch — its `pull_request` run should show
+all three jobs skipped and the push run green; the fork arm stays unexercised
+until a fork exists.
+
+How it reached GitHub — and why the next workflow edit hits the same wall. A
+push that creates or changes a file under `.github/workflows/` needs the
+`workflow` OAuth scope, and neither credential on this machine has it: `gh`
+holds `gist, read:org, repo`, and `git push` does not even use `gh` — it
+authenticates through Git Credential Manager, whose stored OAuth token GitHub
+refused with `refusing to allow an OAuth App to create or update workflow
+.github/workflows/ci.yml without workflow scope`. gnk-web met the same wall
+(its note reads "workflow-file edits need the web editor"). So this branch
+went up in two pushes: the docs commit alone from the agent's shell, then the
+workflow commit by the operator — either with a refreshed `gh` token
+(`gh auth refresh -h github.com -s workflow`, then one push with `gh` as the
+credential helper) or by pasting the file into GitHub's web editor on this
+branch. The branch's own push run is the check that the file on GitHub is the
+one this entry describes.
+
+## T-portal-syndication-m1 — a listing is chosen, per listing, for external portals; the CRM publishes pull feeds and holds no certificate (2026-09-14, migration 0095)
+
+Doc 01 §10 placed external portal XML feeds in Phase 5, and CLAUDE.md
+guardrail 7 made that Do-Not-Build list binding. The operator pulled the item
+forward on 2026-09-14, after the market research in the appendix of
+`docs/superpowers/specs/2026-09-14-portal-syndication-design.md`: which
+portals Cyprus agencies actually use (JamesEdition, A Place in the Sun,
+Properstar, the Rightmove/Zoopla/OnTheMarket family through a feed provider,
+RERA.cy, Thribee, Bazaraki, Prian) and how each one takes listings. Nearly all
+of them PULL an XML document from a URL the agency hands them, Kyero's format
+is the lingua franca among them, and the two that push (Rightmove, Zoopla)
+are reached through a registered feed provider that itself accepts Kyero XML.
+The rest of guardrail 7's list stays binding; CLAUDE.md and doc 01 say so in
+place.
+
+What was decided, and why. (1) Pull feeds only. Rightmove and Zoopla are
+reached through a feed provider fed by the CRM's own Kyero feed; the CRM holds
+no certificate and registers with nobody. No push adapters, no outbox, no
+inbound e-mail parsing for the portals that only e-mail their leads. (2)
+Per-listing selection, no rules: an agent ticks a listing for a portal on its
+Marketing tab, nothing is auto-included, and a new listing reaches no portal
+until someone chooses it. (3) The portal feed is a PROJECTION of
+`public_listings()`: the route reads the site's own feed and keeps the
+selected references, so "on a portal" ⊆ "on the site" holds structurally
+rather than by a second gate — a listing the site withholds cannot reach a
+portal through any path. `portal_supplement` does re-state the site's
+predicate in SQL, but that copy is a pinned duplicate and not a second gate:
+`supabase/tests/portals.test.ts` pins the two together and proves the
+containment in both directions — `portal_supplement` returns nothing for a
+selected-but-not-public listing and nothing for a public-but-unselected one.
+(4) Coordinates leave through `portal_supplement` only, for selected rows —
+and one token reaches every listing the org has selected for that portal,
+which is why the org-wide read of `feed_token` is a recorded decision in
+`docs/04_RLS_POLICY_MATRIX.md` and rotation is the remedy for a leak —
+and an approximate location is never emitted as an exact point. The
+withholding lives in the SQL: `portal_supplement` returns null lat/lng when
+`location_approx` is set and still returns the flag, and every renderer
+double-checks the flag it receives (`dialects/approx-guard.test.ts` iterates
+the live renderer table, so a milestone-2 dialect is covered the moment it
+is registered; the Kyero dialect drops its `<location>` node). The RERA
+dialect (milestone 2) wants an approximate pin WITH its
+`show_approximate_location` flag, and with the point withheld at the SQL
+boundary it must take a centroid from `areas`/`districts` — the backlog's
+M2 entry carries that consequence. (5) A disabled
+portal answers its dialect's EMPTY document with a 200, never a 404: every
+pull portal treats absence as removal, so an empty feed clears our listings
+there while a 404 would leave them stale; for the same reason a failed
+assembly is a 503, never an empty document. An unknown portal or a
+mis-shaped token answers 404 before a single round trip; a well-formed wrong
+token costs one indexed lookup and the same 404, with nothing to tell the two
+apart.
+The token is not metered — `proxy.ts` exempts `/api/portals/` and the route
+never touches the public-listing counter; a portal pulling three times a day
+is not a stranger, and the data behind the URL is public anyway, so the token
+only makes the URL unguessable. (6) Photographs go out as a fourth rendition,
+`property_media.path_jpeg` — 1600 px JPEG beside the WebP full, same
+watermark policy, alpha flattened to white — because RERA takes JPEG/PNG only
+and four other portals leave the format undocumented.
+`scripts/media/backfill-jpeg.mts` writes it for every existing photo from the
+stored full rendition, idempotently, and must run once against hosted after
+0095 is applied there and BEFORE any portal is handed its feed URL: every
+registry entry has `minPhotos ≥ 1`, `portal_supplement` aggregates only
+`path_jpeg is not null` rows and `assemblePortalFeed` filters by eligibility,
+so until the backfill completes every listing fails `too_few_photos` and
+every feed is the EMPTY document, which a pull portal reads as "remove
+everything". On hosted today `property_media` holds ZERO rows (measured
+through the connector on 2026-09-14), so the first hosted backfill is a
+no-op; the ordering matters for any photo that reaches hosted before 0095
+does, and for any later restore or import that lands rows without the
+rendition. The UI half of the guard is `/settings/portals`, which since
+`5ae3631` warns how many photos are not yet prepared for portals and tells
+the admin to run the backfill before giving any portal its URL. Bazaraki and
+Prian stay `spec: "pending"` in the
+registry — visible on `/settings/portals` with a badge and no switch — until
+the operator obtains their formats; the RERA and Thribee dialects are
+milestone 2 and the JamesEdition leads pull is milestone 3, both on the
+backlog with their VERIFY lines.
+
+The nightly backup now carries `portal_connections` — so every feed token —
+and `portal_listings` (`scripts/backup/export.mjs`), and
+`verify-restore.sql` expects 95 migrations. A restore therefore preserves the
+portal URLs, which is the point: a portal that was pointed at a URL keeps
+pulling it after an incident. The cost is that a leaked archive hands those
+URLs out, and the remedy is **Regenerate** on `/settings/portals`
+(`regeneratePortalToken`: a new token, the old URL stops answering, the portal
+is given the new one); `docs/BACKUP_RESTORE.md`'s sensitive-archive box says
+the same.
+
+Two defects the end-to-end spec found and how they were fixed, one finding
+of the final review, and one thing observed and not investigated.
+
+(A) The settings page handed the full registry entry — zod schema included —
+to a client component. React refuses to serialise a zod schema across the RSC
+boundary, so `/settings/portals` rendered the error boundary for every admin.
+Every earlier review missed it because nothing rendered the card: the unit
+tests exercise the registry and the actions, and the module suite stops at
+`/settings`. Fixed in `f322e52` by a plain-data projection
+(`toPortalCardDefinition` in `lib/services/portals/card-definition.ts`),
+with a serialisability test whose detector is proven against a Date, a
+function and a zod schema.
+
+(B) PRE-EXISTING: the property page's ten-tab strip was 913 px wide at phone
+width — the STRIP's width; the DOCUMENT it widened measured 937 px in a
+390 px viewport, the figure `components/ui/tabs.tsx` quotes — which made
+the Marketing tab's cards — the
+Portals card among them — unclickable on a phone. Fixed on this branch first
+at the call site (`07c53c7`) and then once, in the `TabsList` primitive
+(`64fe4ab`: `max-w-full overflow-x-auto justify-start` in the base), because
+the contact page had the same nine-tab strip — measured there at 980 px of
+document for a 390 px viewport before and 631 px after. The remaining 241 px
+on the contact page is a different, pre-existing offender (the page header's
+`ml-auto` button group, 607 px wide), NOT fixed on this branch; it is on the
+backlog with the measurement. The mobile run of `tests/e2e/portals.spec.ts`
+proves the strip fix: the Overview tab is fully in the viewport before any
+click (`justify-start` is what keeps a scrolling strip's first tab reachable —
+a centred overflowing strip hides its own start and scrolling never brings it
+back), and no horizontal overflow on the Marketing tab. Accepted cost of the
+primitive change, named in its comment: `overflow-x-auto` clips a trigger's
+3 px focus ring and would clip the unused `line` variant's underline, which
+sits 5 px below the content box.
+
+(C) The final review's finding, fixed in `4ce0799`: `portal_supplement` had
+returned the stored point for an approximate listing and left every renderer
+to drop it. 0054 says `location_approx` is TRUE when `location` holds an
+area or district centroid, and the app's only path that sets it is the "Use
+the area centre" button — but the schema does not prevent an import or a
+direct write from flagging a surveyed point, and the function is reachable
+by anyone holding the token over PostgREST without the route, so the
+renderer's check alone was not the gate. The function now returns null
+lat/lng for such a row and still returns the flag; an RLS test in
+`supabase/tests/portals.test.ts` proves the withholding and
+`approx-guard.test.ts` keeps every renderer's double-check.
+
+Observed, not investigated: during the desktop e2e run the dev server logged
+`logEvent failed (export.exported): canceling statement due to statement
+timeout` from the properties CSV export route
+(`app/(app)/properties/export/route.ts`) — not portal code, and the suite
+stayed green at 243/243. Recorded so the next reader does not rediscover it.
+
+The coverage lesson is the one to carry. A settings sub-page is reachable by
+no existing suite — `MODULES` in `tests/e2e/helpers.ts` ends at `/settings` —
+so the portals spec is the only phone-width measurement of `/settings/portals`
+and of the property Marketing tab, and any future settings page needs its own
+spec or a `MODULES`-style entry or it ships unrendered, as this one nearly did.
+
+Storage. The JPEG is the largest object per photograph on anything
+photograph-shaped: through the pipeline's own encoders
+(`processPropertyImage` — WebP q80 against mozjpeg q85 at 1600 px) a smooth
+synthetic gradient came out 1.93× the WebP full and the same gradient with
+mild noise 2.27× (measured 2026-09-14), so the media bucket should roughly
+double; real photographs are expected to land lower, around 1.3–1.6×, which
+is an expectation and not a measurement. The one shape where the order flips
+is pure noise (0.80×), which no photograph is. Backfilled JPEGs re-encode the
+stored WebP full rather than the original and come out smaller than freshly
+uploaded ones: expected, not a defect.

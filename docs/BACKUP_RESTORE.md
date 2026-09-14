@@ -511,6 +511,22 @@ production, and it is **verified, not assumed**:
 - object counts identical to production: **30** tables · 3 views · **86** policies
   · 22 functions · 13 triggers · 62 indexes · 25 enums · 86 FKs
 
+> **Those object counts are the 2026-08-06 snapshot, kept as taken.** They are
+> what that drill compared — §2's rule ("re-capture immediately before a
+> drill; they will have moved"), not a maintained inventory; the production
+> column of the derived-file table below is the same snapshot. For scale,
+> MEASURED on the LOCAL database at migration
+> 0095 on 2026-09-14, extension-owned objects excluded (PostGIS lives in
+> `public` and contributes 775 functions of its own): 40 tables (41 with
+> `spatial_ref_sys`) · 1 view (3 with PostGIS's two) · 154 policies · 59
+> functions · 16 triggers · 123 indexes · 26 enums · 115 FKs. Of those, 0095
+> alone adds 2 tables (`portal_connections`, `portal_listings`), 8 policies, 3
+> functions (`portal_connection_by_token`, `portal_supplement`,
+> `note_portal_pull`), 1 trigger, 1 index of its own (5 counting primary-key and
+> unique indexes), 5 FKs and one column (`property_media.path_jpeg`).
+> `scripts/backup/verify-restore.sql` pins 95 migrations and `export.mjs`
+> carries both tables.
+
 **Use this file.** The 2026-08-04 `pg_dump.sql` is kept only as the historical
 artefact that exposed the defect.
 
@@ -741,7 +757,12 @@ sha256sum -c gnk-backups-offsite-<date>.tar.gz.sha256
 >
 > `data.sql` and `pg_dump.sql` contain `auth.users` rows including
 > **`encrypted_password` bcrypt hashes**, and the Storage export contains signed
-> viewing slips and evidence PDFs. **Never put it in the repo** — `gnk-crm` is a
+> viewing slips and evidence PDFs. Since 0095 the archive also carries live
+> **`portal_connections.feed_token`** values — each one *is* an enabled portal's
+> pull URL, so a leaked archive hands those out; the remedy is **Regenerate** on
+> `/settings/portals` (`regeneratePortalToken`: a new `feed_token`, the old URL
+> stops answering) and then re-pointing the portal at the new URL.
+> **Never put it in the repo** — `gnk-crm` is a
 > **public** GitHub repository — and never in a public bucket, a pastebin, a chat
 > or an issue. Acceptable destinations are a personal cloud account that is not
 > the Supabase one, an encrypted USB drive, or another machine. **The PRIVATE

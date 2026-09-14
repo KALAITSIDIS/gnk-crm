@@ -50,7 +50,7 @@ npm run db:types         # regenerate types from local DB
 4. **No buyer logins. No lawyer/bank logins.** Ever. External access = tokenized expiring links only (Phase 2+).
 5. **Cyprus rates live in `cyprus_config`**, never hardcoded. Calculators read config.
 6. **Three fixed dashboards** (Admin, Agent, Owner/Developer-later). Do not build dashboard customization.
-7. **Do-Not-Build list in doc 01 §10 is binding.** No WhatsApp API, no KYC API, no portal feeds, no automated commission splits in Phase 1.
+7. **Do-Not-Build list in doc 01 §10 is binding.** No WhatsApp API, no KYC API, no automated commission splits in Phase 1. Portal feeds were on that list and were pulled forward on 2026-09-14 by the operator — pull feeds only, per-listing selection (`docs/superpowers/specs/2026-09-14-portal-syndication-design.md`, DECISIONS `T-portal-syndication-m1`); the rest of the list stays binding.
 8. **Manual commission splits** = plain text fields on deals.
 9. **Complete files only.** When modifying, output/write the entire file — no fragments, no "rest unchanged".
 10. **Verify before claiming done.** Run typecheck, lint, tests, and the task's acceptance checklist from the playbook before marking any task complete. Paste actual command output in your summary.

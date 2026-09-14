@@ -11,6 +11,7 @@ const SECTIONS = [
   { href: "/settings/locations", label: "Locations" },
   { href: "/settings/nudges", label: "Nudges" },
   { href: "/settings/cyprus-config", label: "Cyprus config" },
+  { href: "/settings/portals", label: "Portals" },
   { href: "/settings/retention", label: "Data retention" },
 ];
 

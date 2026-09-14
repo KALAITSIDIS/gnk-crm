@@ -2104,6 +2104,24 @@ developer.
   this looks like transient Docker networking rather than a real collision. If
   it becomes frequent, the cheap fix is a retry around `supabase start`. Written
   down so a recurrence costs minutes rather than an afternoon.
+- **NOTE — CI: `rls` (and E2E setup, by the same helper) can fall in `beforeAll`
+  with `mfa.enroll: … status=5xx` or `mfa.challenge: … status=5xx`.** Seen
+  2026-09-07 (`mfa.enroll: {}` — a 504 GoTrue deadline under two Playwright
+  suites at once) and 2026-09-14 (`mfa.challenge: {}`, run 34872951408 — a
+  fast 5xx two seconds after `supabase start` returned, while the push-event
+  twin of the same commit passed 117/117). The bare `{}` was auth-js
+  discarding the status of any 5xx. Since DECISIONS `T-rls-mfa-transient-5xx`
+  the harness retries enrol and challenge three times (3.5 s of waiting at
+  most) on what auth-js itself labels retryable, prints each retry with its
+  status, and every throw carries the status — so `{}` cannot recur as a
+  message, and a green run that needed a retry says so in the log
+  (`[mfa harness] … retrying in …`). **If it still fails after the retries,
+  the status in the message says which service answered** (a 504 after ~10 s
+  is GoTrue's own per-request deadline; a fast 502/503 is the gateway failing
+  to reach it); `gh run rerun <id> --failed` clears it, and the next lever is
+  serialising the five fixture users in rls.test.ts's `beforeAll`, deliberately
+  not done yet. **Not the port-54322 flake above** — that one dies inside
+  `supabase start`; this one starts vitest first.
 - ~~**Reservation deposits against `payment_plans`.**~~ ✅ **DONE 2026-08-24**
   (`264786a`, migration 0050). **This line said `payment_plans` had "nothing
   reading them", which was wrong** — the units page lists them. The gap was
@@ -2144,6 +2162,85 @@ developer.
   EXECUTE was locked down in the migration rather than after an advisor run —
   the first application of T-C4's lesson at write time.
 
+## Portal syndication — 2026-09-14
+
+External portal feeds were on doc 01 §10's Do-Not-Build list (Phase 5) and the
+operator pulled them forward on 2026-09-14 — the record is DECISIONS
+`T-portal-syndication-m1`, the design is
+`docs/superpowers/specs/2026-09-14-portal-syndication-design.md`. Milestone 1
+is struck below; milestones 2 and 3 are the next buildable items in this file.
+Every VERIFY line in this section was RUN on 2026-09-14 before it was written.
+
+- ~~**Portal syndication milestone 1, M.**~~ **SHIPPED 2026-09-14 on
+  `feat/portal-syndication-m1` (`4f584dd`…`66860ca` plus the docs commit that
+  closes the branch; migration `0095`)** — the registry (one definition per
+  portal), the XML builder and the Kyero dialect with a golden file,
+  eligibility with the feed's own reasons, the pull route
+  `/api/portals/[portal]/[token]` (unknown portal or token 404, a disabled
+  portal the empty document, unmetered), the JPEG rendition with its backfill,
+  `/settings/portals`, the Portals card on the property Marketing tab, RLS
+  tests, and an e2e that runs its write loop in both Playwright projects. Ships
+  JamesEdition, A Place in the Sun, Properstar and the UK feed provider; RERA
+  and Thribee are registered but pending (milestone 2), Bazaraki and Prian
+  pending on their formats. The e2e found two defects, one pre-existing —
+  DECISIONS carries both. **Hosted 0095 and the one-off backfill run are the
+  controller's ship steps; HANDOFF §0's Hosted DB row says when they happened.**
+  **VERIFY:** `ls supabase/migrations/0095_portal_syndication.sql lib/services/portals/registry.ts "app/api/portals/[portal]/[token]/route.ts"` — all three present means shipped. *(all three on 2026-09-14.)*
+
+- **Portal syndication milestone 2, M.** The RERA v2 and Thribee (Trovit)
+  dialects — spec §Dialects: RERA is EUR only, EN/EL/RU, cities enumerated,
+  coordinates required with the approximate flag; Trovit is one free XML in
+  Thribee's format with `<latitude>/<longitude>` only when not approximate —
+  turning the two registry entries from `spec: "pending"` to `"public"` with
+  their renderers; producing the reserved `city_unmapped` reason (declared with
+  its message in `lib/services/portals/eligibility.ts`, produced by nothing
+  yet) when `district.en`/`area.en` resolves to none of RERA's seven cities; the
+  `site_listing_url_template` setting in Thribee's `requiredSettings` (nothing
+  declares it today); and the RERA validator once it exists — "coming soon" on
+  their side, so the golden test is the check until then. Spec §Dialects and
+  §Milestones. Two operator questions to settle with it:
+  - **`<new_build>` from `construction_status`** — today every development
+    unit presents as a resale in the Kyero feed. Which statuses count as a new
+    build, and does the desk want the flag at all?
+  - **A `<url>` back-link to the listing on gnk-web** for the Kyero-family
+    portals — needs the same `site_listing_url_template` setting; is the public
+    listing URL shape final enough to hand to portals?
+  - **RERA needs a centroid pair of its own** — the RERA dialect (spec
+    §Dialects) expects lat/lng WITH `show_approximate_location=1` for an
+    approximate listing, but `portal_supplement` withholds the point at the SQL
+    boundary since `4ce0799`, so those rows arrive with no coordinates. Before
+    RERA ships, `portal_supplement` must grow a separate centroid pair sourced
+    from `areas`/`districts` (never `properties.location`), or approximate
+    listings stay ineligible for RERA.
+  **VERIFY:** `ls lib/services/portals/dialects/rera.ts lib/services/portals/dialects/trovit.ts` — either present means started. *(neither on 2026-09-14; the directory holds `kyero.ts`, `xml.ts`, `types.ts`, `index.ts` and the fixtures.)*
+
+- **Portal syndication milestone 3, M.** The JamesEdition leads pull — spec
+  §Leads: migration 0096 with `leads.portal` and `leads.external_ref` (unique
+  on `(org_id, portal, external_ref)` where not null), the four DEFAULTED
+  parameters on `submit_public_enquiry` (`p_source`, `p_portal`,
+  `p_external_ref`, `p_received_at`; a duplicate returns `false` instead of
+  raising), `leads-jamesedition.ts` pulling the Leads API in ≤3-month windows
+  from `leads_pulled_to − 1 day` (a second pull of the same window creates zero
+  leads; a lead naming an unknown reference lands without a property; an unset
+  token means skipped, loud once), `app/api/cron/portal-leads` behind
+  `CRON_SECRET` with the `vercel.json` cron, the pull button on the leads page,
+  and the manual Portal select and filter on a lead. `CRON_SECRET` and
+  `JAMESEDITION_LEADS_TOKEN` go in the Vercel env only (the repo is public);
+  redeploy after setting them, because Vercel binds env at build time.
+  **VERIFY:** `grep -l external_ref supabase/migrations/*.sql` — a hit means started. *(no hit on 2026-09-14; `app/api/cron/portal-leads` does not exist.)*
+
+- **Kyero-family vocabulary and contact nodes — NEEDS AN OPERATOR DECISION.**
+  Before the first JamesEdition / A Place in the Sun pull, run the CRM's feed
+  through the portal's validator (JamesEdition's "Validate your feed" page; the
+  spec's operator runbook) and check the `<type>` vocabulary — "Land" (Kyero may
+  spell it "Plot") and "Building" are the uncertain values in the Kyero
+  dialect's `PROPERTY_TYPES` — and confirm whether `contact_number`,
+  `whatsapp_number` and `email` are honoured per property or taken from the
+  account. Each answer is a one-line change in
+  `lib/services/portals/dialects/kyero.ts` or a settings decision; none of it
+  can be settled without a portal account, which only the operator can open.
+  **VERIFY:** `grep -n 'land: "Land"\|building: "Building"' lib/services/portals/dialects/kyero.ts` — the two values as shipped. *(both present on 2026-09-14.)*
+
 ## Phone layouts — audit 2026-09-13 (CRM-06), the contact page
 
 - ~~**Contact detail header overflows a phone, S.**~~ ✅ **SHIPPED 2026-09-14**
@@ -2162,5 +2259,7 @@ developer.
   `feat/portal-syndication-m1`, taken verbatim (`max-w-full justify-start
   overflow-x-auto`): on `main` the nine-tab strip alone made the page 980px
   wide, which would have hidden the header behind the strip's own number.
-  **No entry existed for this before it shipped** — it is recorded in its
-  struck form so the next person does not re-propose it.
+  **The portal task had logged this as an outstanding S item** ("Contact page
+  header widens a phone", found by its probe on 2026-09-14, in its own section
+  above); that item was removed when this branch merged `origin/main`, so the
+  fact lives once — here, struck — and the next person does not re-propose it.
