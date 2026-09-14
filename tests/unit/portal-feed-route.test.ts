@@ -39,6 +39,10 @@ const state = vi.hoisted(() => ({
   connectionError: null as { message: string } | null,
   supplements: [] as Array<Record<string, unknown>>,
   supplementError: null as { message: string } | null,
+  /** every page full, no short page ever — a selection larger than the scan budget */
+  supplementInfinite: false,
+  /** the column the route ordered the last supplement page by */
+  supplementOrder: null as string | null,
   listings: [] as Array<Record<string, unknown>>,
   /** every page full of rows nobody selected — what a scan that cannot finish looks like */
   listingsInfinite: false,
@@ -57,15 +61,26 @@ vi.mock("@/lib/supabase/public", () => ({
       state.calls.push(name);
       state.rpcs.push({ name, args });
       if (name === "portal_supplement") {
-        // the real builder is not a promise until `.range()` narrows it
-        return {
-          range: async (from: number, to: number) => {
-            state.ranges.push([from, to]);
-            return state.supplementError
-              ? { data: null, error: state.supplementError }
-              : { data: state.supplements.slice(from, to + 1), error: null };
-          },
+        state.supplementOrder = null;
+        const range = async (from: number, to: number) => {
+          state.ranges.push([from, to]);
+          // portal_supplement has no ORDER BY of its own, so paging it
+          // unordered repeats and skips rows above one page. Dropping the
+          // `.order()` has to break the suite, not the feed.
+          if (state.supplementOrder !== "reference") {
+            throw new Error("portal_supplement was paged without .order(\"reference\")");
+          }
+          if (state.supplementError) return { data: null, error: state.supplementError };
+          if (state.supplementInfinite) {
+            const page = Array.from({ length: to - from + 1 }, (_, i) =>
+              supplement({ reference: `SEL${from + i}` }),
+            );
+            return { data: page, error: null };
+          }
+          return { data: state.supplements.slice(from, to + 1), error: null };
         };
+        // the real builder is not a promise until `.range()` narrows it
+        return { range, order: (col: string) => ((state.supplementOrder = col), { range }) };
       }
       if (name === "portal_connection_by_token") {
         return Promise.resolve(
@@ -153,6 +168,8 @@ beforeEach(() => {
   state.connectionError = null;
   state.supplements = [supplement()];
   state.supplementError = null;
+  state.supplementInfinite = false;
+  state.supplementOrder = null;
   state.listings = [listingRow()];
   state.listingsInfinite = false;
   state.listingsError = null;
@@ -250,6 +267,8 @@ describe("an enabled portal gets the listings selected for it", () => {
     // page can mean "the last page"
     expect(rpcArgs("public_listings")).toEqual({ p_org_slug: "gnk", p_limit: 100, p_offset: 0 });
     expect(state.ranges).toEqual([[0, 999]]);
+    // paging portal_supplement, which has no ORDER BY, is only stable ordered
+    expect(state.supplementOrder).toBe("reference");
     expect(state.pulls).toEqual([{ p_token: TOKEN, p_ua: UA, p_count: 1 }]);
   });
 
@@ -286,6 +305,23 @@ describe("an enabled portal gets the listings selected for it", () => {
   });
 });
 
+describe("an enabled portal with nothing selected", () => {
+  it("serves the empty document — cacheable, and without asking for a single listing", async () => {
+    state.supplements = [];
+    const res = await get();
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(kyero.empty());
+    // NOT no-store: unlike a disabled portal this is a live feed that happens
+    // to be empty, and the ETag is what tells the portal it has not changed
+    expect(res.headers.get("cache-control")).toBe("public, max-age=300");
+    // no selection means no query — the assembler never pages the site feed
+    expect(state.calls).not.toContain("public_listings");
+    expect(state.pulls).toEqual([{ p_token: TOKEN, p_ua: UA, p_count: 0 }]);
+    // nothing was selected, so nothing is wrong: no "nothing eligible" warning
+    expect(logged(console.warn)).toBe("");
+  });
+});
+
 describe("a failure is a 503 and says nothing about the database", () => {
   const assertUnavailable = async (res: Response, secret: string) => {
     expect(res.status).toBe(503);
@@ -312,6 +348,36 @@ describe("a failure is a 503 and says nothing about the database", () => {
   it("when the snapshot cannot be computed", async () => {
     state.snapshotError = { message: "snapshot boom" };
     await assertUnavailable(await get(), "snapshot boom");
+    expect(state.pulls).toEqual([]);
+  });
+
+  it("when the selection is larger than the scan that would have to find it", async () => {
+    // 2,500 = the assembler's MAX_PAGES x MAX_LIMIT. A selection past it can
+    // never be fully scanned, so it is refused after three pages rather than
+    // after every round trip needed to prove the same thing.
+    state.supplementInfinite = true;
+    const res = await get();
+    expect(res.status).toBe(503);
+    expect(JSON.parse(await res.text())).toEqual({ error: "Feed unavailable." });
+    expect(state.ranges).toEqual([
+      [0, 999],
+      [1000, 1999],
+      [2000, 2999],
+    ]);
+    expect(logged(console.error)).toContain("selection exceeds 2500 rows");
+    expect(state.pulls).toEqual([]);
+  });
+
+  it("when the desk's settings would not survive the portal's own schema", async () => {
+    // the dialect renders `email` into a live contact node; an unreplyable
+    // address is worse for the desk than a feed that is briefly unavailable
+    state.connection = [{ org_slug: "gnk", enabled: true, settings: { email: "nope" } }];
+    const res = await get();
+    expect(res.status).toBe(503);
+    expect(JSON.parse(await res.text())).toEqual({ error: "Feed unavailable." });
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(logged(console.error)).toContain("jamesedition");
+    expect(logged(console.error)).toContain("settings invalid");
     expect(state.pulls).toEqual([]);
   });
 

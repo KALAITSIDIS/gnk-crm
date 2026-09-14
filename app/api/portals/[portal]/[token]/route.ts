@@ -1,10 +1,12 @@
-import { after, NextResponse, type NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { createPublicClient } from "@/lib/supabase/public";
 import { feedEtag } from "@/lib/services/feed-etag";
 import { DIALECT_RENDERERS } from "@/lib/services/portals/dialects";
-import { assemblePortalFeed } from "@/lib/services/portals/feed";
+import { assemblePortalFeed, MAX_PAGES } from "@/lib/services/portals/feed";
 import type { SupplementRow } from "@/lib/services/portals/feed-listing";
+import { notePortalPullAfter } from "@/lib/services/portals/pull-note";
 import { portalById } from "@/lib/services/portals/registry";
+import { MAX_LIMIT } from "@/lib/services/public-listings";
 
 /**
  * The portal feed (spec 2026-09-14 §The feed route; migration 0095).
@@ -29,6 +31,21 @@ import { portalById } from "@/lib/services/portals/registry";
  * Nothing the database says reaches the body of an error: a raw Postgres
  * message would land in a third party's logs. Errors are logged here and the
  * body is generic.
+ *
+ * THE TOKEN IS IN THE PATH, so it is in Vercel's access log by construction —
+ * a URL is not a secret store. That is accepted rather than engineered
+ * around: a portal's crawler configuration takes a URL and nothing else, so
+ * there is no header to move it to. Regenerating the token in Settings →
+ * Portals is the mitigation, and the token opens nothing but this feed of
+ * already-public listings.
+ *
+ * No CORS headers and no OPTIONS handler, unlike /api/public/listings beside
+ * it: a portal's crawler is server-to-server, so no browser ever preflights
+ * this and an `Access-Control-Allow-Origin` would only invite one to try.
+ *
+ * `max-age` is 300 against the site feed's 60. A portal pulls between once and
+ * three times a day, so five minutes of edge cache costs a portal nothing it
+ * would notice and spares the database the burst when several pull together.
  */
 export const dynamic = "force-dynamic";
 
@@ -38,6 +55,8 @@ const NO_STORE = { "Cache-Control": "no-store" } as const;
 const TOKEN = /^[0-9a-f]{64}$/;
 /** PostgREST answers at most `max_rows` (1000, supabase/config.toml) per call; the supplement is read in pages of this size until a short page. */
 const SUPPLEMENT_PAGE = 1000;
+/** The assembler's own budget, shared: a selection it could never finish scanning is refused before the round trips, not after. */
+const SUPPLEMENT_CEILING = MAX_PAGES * MAX_LIMIT;
 
 const notFound = () => NextResponse.json({ error: "Not found." }, { status: 404, headers: NO_STORE });
 const unavailable = () =>
@@ -72,40 +91,11 @@ export async function GET(
   const row = (connection.data ?? [])[0];
   if (!row) return notFound();
 
-  /**
-   * Note the pull AFTER the response has gone out, and never fail the pull
-   * with it — the portal already has its bytes.
-   *
-   * Registered before the answer is decided, so "last pulled" on the settings
-   * page means when the portal last ASKED: a 304 counts, and so does a pull
-   * on a DISABLED connection, which 0095 records with a count of 0 rather
-   * than leaving the desk looking at a frozen timestamp.
-   */
-  const notePull = (count: number) => {
-    const note = async (): Promise<void> => {
-      try {
-        const noted = await supabase.rpc("note_portal_pull", {
-          p_token: token,
-          p_ua: request.headers.get("user-agent") ?? "",
-          p_count: count,
-        });
-        if (noted.error) {
-          console.warn(`[portal-feed] ${portalId}: pull not noted — ${noted.error.message}`);
-        }
-      } catch (err) {
-        console.warn(
-          `[portal-feed] ${portalId}: pull not noted — ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    };
-    try {
-      after(note);
-    } catch {
-      // no request scope (a unit test, a script): send it inline, fire-and-
-      // forget — the same fallback as lib/services/site-revalidate.ts
-      void note();
-    }
-  };
+  // Read at the top, never inside the deferred note: the request's headers are
+  // the request's, and the note runs after the response has gone.
+  const userAgent = request.headers.get("user-agent") ?? "";
+  const notePull = (count: number) =>
+    notePortalPullAfter(supabase, { token, userAgent, count, portalId });
 
   // Disabled is a VALID feed with nothing in it — see the header. It must be
   // a document rather than an error, and it must never be cached: the desk
@@ -118,8 +108,16 @@ export async function GET(
     });
   }
 
+  // `.order("reference")` is NOT decoration: portal_supplement has no ORDER BY
+  // of its own, and `.range()` over an unordered set is only stable while the
+  // whole selection fits in one page. Above 1000 rows an unordered second page
+  // can repeat a row and skip another, which is a listing silently missing
+  // from the feed. Order first, then page.
   const supplementPage = (from: number) =>
-    supabase.rpc("portal_supplement", { p_token: token }).range(from, from + SUPPLEMENT_PAGE - 1);
+    supabase
+      .rpc("portal_supplement", { p_token: token })
+      .order("reference")
+      .range(from, from + SUPPLEMENT_PAGE - 1);
 
   // The snapshot names the site feed as a whole and is the first segment of
   // the validator, exactly as on /api/public/listings. It needs nothing from
@@ -143,16 +141,36 @@ export async function GET(
       console.error(`[portal-feed] ${portalId}: supplement failed — ${page.error.message}`);
       return unavailable();
     }
+    // The generated type says `images: Json` because the codegen cannot see
+    // through jsonb_agg; feed-listing.ts declares SupplementRow by hand and
+    // pins its KEYS against that generated row, which is what makes this safe.
     const batch = (page.data ?? []) as unknown as SupplementRow[];
     supplements.push(...batch);
     if (batch.length < SUPPLEMENT_PAGE) break;
+    if (supplements.length >= SUPPLEMENT_CEILING) {
+      // The assembler would refuse a selection this size anyway (it scans at
+      // most MAX_PAGES pages of MAX_LIMIT), so stop here rather than pay the
+      // round trips to reach the same 503.
+      console.error(`[portal-feed] ${portalId}: selection exceeds ${SUPPLEMENT_CEILING} rows`);
+      return unavailable();
+    }
     page = await supplementPage(supplements.length);
+  }
+
+  // Parsed, not cast: `settings` is jsonb the desk typed into a form, and the
+  // dialect renders it straight into the document. A bad e-mail address would
+  // otherwise reach the portal as a live contact node nobody can reply to,
+  // and the registry's schema is the one place that says what is valid.
+  const settings = portal.settingsSchema.safeParse(row.settings ?? {});
+  if (!settings.success) {
+    console.error(`[portal-feed] ${portalId}: settings invalid — ${settings.error.issues[0]?.message}`);
+    return unavailable();
   }
 
   const result = await assemblePortalFeed({
     portal,
     renderer,
-    settings: (row.settings ?? {}) as Record<string, string>,
+    settings: settings.data,
     supplements,
     supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL!,
     // The assembler owns the page size; a short page is how it learns the scan
@@ -188,8 +206,10 @@ export async function GET(
 
   const etag = feedEtag(String(snapshot.data), result.body);
 
-  // Before the 304 check: a portal that revalidates and is told "unchanged"
-  // has still pulled.
+  // Before the 304 check: a portal told "unchanged" has still pulled, and
+  // "last pulled" on the settings page means when it last ASKED. A 503 above
+  // records NOTHING, deliberately — the desk should see the timestamp freeze,
+  // and a note of 0 there would read exactly like a delisting.
   notePull(result.count);
 
   if (request.headers.get("if-none-match") === etag) {
