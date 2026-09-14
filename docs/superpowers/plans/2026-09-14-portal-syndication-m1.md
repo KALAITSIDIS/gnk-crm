@@ -2250,6 +2250,12 @@ git add lib/services/portals/feed.ts lib/services/portals/feed.test.ts
 git commit -m "portals: feed assembly — a projection of the site feed, never empty by accident" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
+**Amendments applied at implementation (2026-09-14; the committed files are the authority, not the block above):**
+- Fixture names follow Task 4 (`KYERO_SETTINGS`; `SHOP_UNIT` joins `LAND_PLOT` as a one-photo drop case for JamesEdition). The `as unknown as PublicListingRow[]` casts sit on the fixture side only, because fixtures are typed `FeedRow` while `fetchPage` returns the raw row type; the assembler casts nothing.
+- `DialectRenderer` is imported from `dialects/types.ts`.
+- Two tests beyond the plan: an empty selection renders the empty document WITHOUT calling `fetchPage` (no selection, no query), and a selection with nothing eligible also renders the empty document. 6 tests.
+- The mutation check was run and reverted: dropping the eligibility filter turns count 1 into 3 as expected; dropping the assembler's `wanted.has` filter is caught by the paging test (three page calls instead of one), NOT by the output test — `buildFeedListings` matches rows to supplements by reference on its own, so selection is enforced twice, and the assembler's filter exists for early stopping.
+
 ---
 
 ### Task 10: The feed route
