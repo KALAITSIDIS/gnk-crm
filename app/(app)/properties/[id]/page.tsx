@@ -570,7 +570,8 @@ export default async function PropertyDetailPage({
       </div>
 
       <Tabs defaultValue="overview">
-        <TabsList>
+        {/* ten tabs are wider than a phone; the strip scrolls rather than widening the page (found by tests/e2e/portals.spec.ts) */}
+        <TabsList className="max-w-full justify-start overflow-x-auto">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="details">Details</TabsTrigger>
           <TabsTrigger value="legal">Legal</TabsTrigger>
