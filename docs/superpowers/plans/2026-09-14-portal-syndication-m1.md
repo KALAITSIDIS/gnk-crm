@@ -1034,6 +1034,16 @@ git commit -m "portals: Kyero v3.9 dialect with a golden document" -m "Co-Author
 - The test-side parser/validator is `fast-xml-parser` on the self-contained **v4** line, pinned exactly (v5 pulled seven small transitive dev packages).
 - Not pinned by the golden: a listing with both areas null renders `<surface_area></surface_area>`, and one with no images `<images></images>`, both by `tag()`'s container rule.
 
+**Quality-review follow-ups (third commit on 2026-09-14):**
+- `DialectRenderer` lives in `dialects/types.ts`; `index.ts` re-exports it and states why the dialect tables are tables rather than renderer fields (eligibility must answer for dialects with no renderer yet).
+- `feedPrice(row)` in `feed-listing.ts` is the one definition of the price a portal shows; the renderer and both eligibility adapters (Task 5) use it.
+- Energy class goes through `KYERO_ENERGY`: Cyprus's `B+` folds to `B`; anything outside A–G is omitted.
+- `surface_area` and `images` are gated like `features`: nothing inside, no element.
+- A fifth fixture, `SHOP_UNIT` (commercial, energy B+, one photo), joins `ALL`; `SETTINGS` is `KYERO_SETTINGS`; the golden was regenerated deliberately and its diff read.
+- The golden is written only under `UPDATE_GOLDEN=1`; a missing golden throws instead of blessing whatever the code produced.
+- The type map is pinned against `PROPERTY_TYPES` from `lib/validators/properties.ts` (every CRM type maps except `mixed_use` and `other`; shop/office/warehouse fold to Commercial). 17 tests.
+- Not changed, noted for the runbook and milestone 2: Kyero's `<type>` vocabulary for "Land" and "Building" is unverified until the validator run; `<new_build>` and a `<url>` back-link are operator questions.
+
 ---
 
 ### Task 5: Eligibility, one definition
