@@ -2825,6 +2825,14 @@ git commit -m "portals: actions — enable/disable, settings, token rotation, se
 - `savePortalSettings` creates the connection row (disabled) when absent, so a settings save mints the feed token through the database default; only `regeneratePortalToken` rotates it afterwards. The `requiredSettings` refusal is written but unreachable until a portal declares a required key (none does in milestone 1).
 - 4 validator tests + 14 refused-writes tests (the eight required plus landing-path tests so a refusal cannot pass by the action never working); `npm test` 1607.
 
+**Quality-review follow-ups (second commit on 2026-09-14):**
+- The timeline renders the portal's NAME through the registry at render time (the payload keeps the stable id), so the desk reads "Rightmove, Zoopla & OnTheMarket (via feed provider)" rather than `uk_provider`; a test pins it and the fallback to the id.
+- The six `EVENT_LINES` entries are bound to their EN message keys by a test whose translator throws on a missing key — the pin the plan assumed existed did not.
+- `savePortalSettings` is tested: the row-count guard, the insert payload without `feed_token`, and the privacy claim that the event carries key NAMES only (no submitted value appears anywhere in it).
+- `setPortalEnabled(portal, false)` on an absent connection is a no-op (no insert, no `portal_disabled` line for a portal never enabled); the `23505` branch of `selectPortal` revalidates like the success branch; property events log the record's `org_id`; the "no renderer" test's comment names the gate that actually fires.
+
+- Two of the new tests use a fixture whose listing org differs from the reader's — a state RLS makes impossible in production — solely to tell `listing.org_id` from `profile.orgId`; the test pins WHICH expression the code evaluates, not a reachable state, and its comment says so. 82 tests across the four files; `npm test` 1622.
+
 ---
 
 ### Task 12: Settings → Portals
