@@ -1576,6 +1576,12 @@ git commit -m "0095: portal_connections, portal_listings, path_jpeg, three anon 
 - After the reset, `supabase/dev-fixtures.sql` is applied by hand with psql from `~/.gnk-crm/pgsql/17.11.0/bin`; the sanity probe (three functions `prosecdef = t`, `rls_aal2_coverage()` = 0, 95 migrations) is part of the task's evidence.
 - Pre-write checks: `properties.location` is `geography(point, 4326)` (the `::geometry` cast is required); triggers name `set_updated_at()` bare, as 0001 does.
 
+**Quality-review follow-ups (amended in place before the hosted apply, 2026-09-14):**
+- `portal_listings` carries the tenant guard 0088 gave `property_media`: `portal_listings_org_property_fkey foreign key (org_id, property_id) references properties (org_id, id)` replaces the single-column property FK, and `portal_supplement` also checks `p.org_id = c.org_id`. A row can never name another org's property, so a token cannot reach foreign coordinates even outside RLS (service role, a restore). The RLS suite probes it (23503).
+- `note_portal_pull` clamps the count (`greatest(0, coalesce(p_count, 0))`) as it already clamped the user agent; it deliberately records pulls on a disabled connection, and `updated_at` therefore means "last touched, including by a pull".
+- `docs/BACKUP_RESTORE.md`'s sensitive-archive box names the feed tokens and the rotation remedy.
+- Not changed: `feed_token` is readable by every authenticated role in the org (the matrix row says so; the data behind it is public).
+
 ---
 
 ### Task 7: RLS tests for 0095
