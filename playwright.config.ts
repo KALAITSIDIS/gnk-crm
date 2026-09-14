@@ -181,7 +181,8 @@ export default defineConfig({
         storageState: "tests/.auth/admin.json",
       },
       dependencies: ["setup"],
-      // Mobile run is a layout/navigability check, not a second write pass.
+      // Mobile run is a layout/navigability check, not a second write pass —
+      // except portals.spec.ts, whose write loop runs in both projects.
       testIgnore: [/happy-path\.spec\.ts/, /calculators\.spec\.ts/],
     },
   ],
