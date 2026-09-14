@@ -3110,7 +3110,7 @@ git commit -m "settings: Portals — enable, feed URL, settings, last pull, spec
 - The Enable button is disabled with the reason when a required setting is blank (the spec's second gate; unreachable in milestone 1, but the marker is now honest); the requirements list renders only for renderable portals, has a lead-in, and names the currencies the dialect accepts.
 - Not taken: building the URL on the server from request headers — the client read is correct and reviewed; the one-load flash of the path before the origin is accepted.
 
-- The requirements list splits the description and the price into two lines so the currency-limited price line is not a second price claim; Task 14 must not assert the old combined string.
+- The requirements list splits the description and the price into two lines so the currency-limited price line is not a second price claim; Task 14 must not assert the old combined string. The accepted currencies reach the card as a prop from the server page, so the client bundle never imports the dialects barrel (whose renderer table references the Kyero renderer).
 
 ---
 
