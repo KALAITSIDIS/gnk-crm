@@ -301,7 +301,7 @@ describe("xml builder", () => {
   });
 
   it("drops control characters XML 1.0 forbids", () => {
-    expect(escapeXml("ok bad")).toBe("okbad");
+    expect(escapeXml("ok\u0000\u0008bad")).toBe("okbad");
   });
 
   it("renders a tag with escaped text and attributes", () => {
@@ -345,7 +345,7 @@ export const XML_HEADER = '<?xml version="1.0" encoding="UTF-8"?>\n';
 
 // XML 1.0 forbids C0 controls except tab, LF, CR.
 // eslint-disable-next-line no-control-regex
-const FORBIDDEN = /[ --]/g;
+const FORBIDDEN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g;
 
 export function escapeXml(value: string): string {
   return value
@@ -3451,6 +3451,19 @@ Expected: 1 passed. If the Marketing tab's Select stays disabled, the seed is mi
 git add tests/e2e/portals.spec.ts
 git commit -m "e2e: portals — enable, select, the feed carries it, remove, gone" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
+
+**Amendments applied at implementation (2026-09-14; the committed file is the authority, not the block above):**
+- The seeded media rows carry `alt: {}` and `path_jpeg`; only `path_full` (site-feed inclusion) and `path_jpeg` + `alt` (portal images) are load-bearing, and the rest of the production shape is deliberately absent — the comment on the rows says so. The photo count comes from the registry's `minPhotos`, not a literal.
+- The spec runs in the desktop AND mobile projects and asserts no horizontal overflow on `/settings/portals` and on the property's Marketing tab — the only phone-width measurement those two routes get (the earlier claim that existing suites covered them was wrong). On mobile it also asserts the Overview tab is fully in the viewport before any click: the proof that a scrolling strip keeps its leftmost tab reachable.
+- Beyond the plan's loop: the pending badge and the absence of a toggle on Bazaraki are asserted; the Activity tab is checked for "Selected for portal JamesEdition" (the timeline names the portal, not its id); the feed body is checked for the JPEG rendition path, for the Kyero root after the removal (a 200 that is not the live document cannot pass), and for the absence of a Greek node — the seed carries a Greek description so that assertion can fail.
+- Every tab switch goes through one `openTab` helper with the Radix `mousedown` fallback (HANDOFF §7); Regenerate (a bare `confirm()`) is deliberately not exercised.
+- The enable path runs on every run: the `finally` restores `enabled = false` on the connection (a toggle never re-mints the token), deletes the seed with `count: "exact"` and throws on zero rows (a silently surviving seed is a permanent public listing), and disposes the anonymous request context; a failed media insert deletes the property before it throws. The count check was proven to fail with a wrong filter, then reverted.
+- The dev server is Playwright's own (`webServer` in `playwright.config.ts`); the login setup enrols a factor every run; the config's comment now says the portals spec runs its write loop under `mobile` too.
+
+- The spec's first run found two defects and stopped rather than bending: (A) the settings page handed the full registry entry, zod schema included, to a client component, which React refuses to serialise across the RSC boundary — `/settings/portals` rendered the error boundary for every admin, unseen by any earlier review because nothing rendered the card and the module suite stops at `/settings`; fixed in f322e52 by a plain-data projection (`toPortalCardDefinition`, whose detector is proven against a Date, a function and a zod schema). (B) the property page already overflowed at phone width (a ten-tab strip 913 px wide) before any portal UI existed, which made the Portals card unclickable on a phone; fixed first at the call site (07c53c7) and then moved into the `TabsList` primitive (64fe4ab) because the contact page had the same nine-tab strip — measured there at 980 px of document for a 390 px viewport before and 631 px after — the strip is fixed, and the remaining 241 px is a different, pre-existing offender (the page header's `ml-auto` button group, 607 px wide), left for the backlog. Accepted cost: `overflow-x-auto` clips the 3 px keyboard focus ring on a trigger and would clip the unused `line` variant's underline, which the primitive's comment names.
+- A throwaway probe with the connection enabled in SQL proved steps 2–6 on desktop before the fixes: select, feed with the JPEG path and no Greek node, the timeline line, remove, 404.
+- No `[portal-feed]` log line appeared during the runs — the positive result: no snapshot, supplement or settings failure and no warning.
+- Fix round: ee157cf (spec), 64fe4ab (primitive + detector tests) and a96b022 (context order, disposal in the fault list, the line variant named); portals spec 4 passed in setup + desktop + mobile; phone-layout + property-map unchanged.
 
 ---
 
