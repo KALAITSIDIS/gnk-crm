@@ -1569,6 +1569,13 @@ git add supabase/migrations/0095_portal_syndication.sql lib/supabase/database.ty
 git commit -m "0095: portal_connections, portal_listings, path_jpeg, three anon feed functions" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
+**Amendments applied at implementation (2026-09-14; the committed files are the authority, not the block above):**
+- The plan's file list was short by one: `scripts/backup/export.mjs` carries the `TABLES` list the backup walks, and `verify-restore.test.ts` refuses a migration-created table absent from it. Both tables were added (parents-first, after `public_enquiry_attempts`). This matters: `feed_token` IS the portal's pull URL, so a restore that lost `portal_connections` would point every enabled portal at a dead link. Consequence for the DECISIONS entry: the backup artifact now holds the feed tokens.
+- The prose above the function-grants table in `verify-restore.sql` counts the anon-callable rows and makes the count grep-checkable; it went from SIX to NINE with the three new functions.
+- `feed-listing.ts` pins `SupplementRow`'s keys to the generated `portal_supplement` return with a conditional type and `void _supplementKeysMatch;` (the repo's existing convention for a type-only assertion); the hand-declared interface stays because the generated one says `lat: number` and `images: Json`.
+- After the reset, `supabase/dev-fixtures.sql` is applied by hand with psql from `~/.gnk-crm/pgsql/17.11.0/bin`; the sanity probe (three functions `prosecdef = t`, `rls_aal2_coverage()` = 0, 95 migrations) is part of the task's evidence.
+- Pre-write checks: `properties.location` is `geography(point, 4326)` (the `::geometry` cast is required); triggers name `set_updated_at()` bare, as 0001 does.
+
 ---
 
 ### Task 7: RLS tests for 0095
