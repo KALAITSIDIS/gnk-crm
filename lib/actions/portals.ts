@@ -93,6 +93,13 @@ export async function setPortalEnabled(
     if (missing.length) return fail(`Fill in ${missing.join(", ")} before enabling ${def.name}.`);
   }
 
+  // Disabling a portal that was never connected is already true. Inserting a
+  // disabled row would mint a feed token nobody asked for, and the
+  // `portal_disabled` event would put a line on the organisation's timeline
+  // for a portal that was never enabled — an entry in an append-only log
+  // describing something that did not happen.
+  if (!existing && !enabled) return ok();
+
   const { data: written, error } = existing
     ? await supabase
         .from("portal_connections")
@@ -246,7 +253,11 @@ export async function selectPortal(
     // (property_id, portal) is the primary key: someone already selected it,
     // so the desk's intent is met. Not an error, and not a second event — the
     // first selection's event is the one that happened.
-    if (error.code === "23505") return ok();
+    if (error.code === "23505") {
+      // already selected, but the page may be stale
+      revalidatePath(`/properties/${propertyId}`);
+      return ok();
+    }
     if (error.code === "42501") return fail("Your role cannot put this listing on a portal.");
     return fail(error.message);
   }
@@ -254,8 +265,12 @@ export async function selectPortal(
     return fail("Nothing changed — your role may not put this listing on a portal.");
   }
 
+  // The org of the RECORD, not of the reader. They are the same today — RLS
+  // saw to that on the way in — but an event is a fact about the listing, and
+  // taking its tenant from whoever happened to be looking is the defect class
+  // this codebase keeps re-growing.
   await logEvent(supabase, {
-    orgId: profile.orgId,
+    orgId: listing.org_id,
     actorId: profile.id,
     entityType: "property",
     entityId: propertyId,
@@ -296,7 +311,8 @@ export async function deselectPortal(
   }
 
   await logEvent(supabase, {
-    orgId: profile.orgId,
+    // the org of the record, as above
+    orgId: listing.org_id,
     actorId: profile.id,
     entityType: "property",
     entityId: propertyId,

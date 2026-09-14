@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Json } from "@/lib/supabase/database.types";
+import { portalById } from "@/lib/services/portals/registry";
 import { formatDateTime } from "@/lib/utils/format";
 
 /**
@@ -116,6 +117,16 @@ const asObject = (payload: Json | null | undefined): P =>
 
 const asText = (v: unknown): string | null =>
   typeof v === "string" && v.trim() ? v : null;
+
+/**
+ * The registry's name for a portal id, falling back to the id itself — a row
+ * written before a portal was renamed, or for an id the registry no longer
+ * carries, still reads rather than rendering blank.
+ */
+const portalName = (p: P): string => {
+  const id = String(p.portal ?? "");
+  return portalById(id)?.name ?? id;
+};
 
 const asMoney = (v: unknown): string | null => {
   if (v === null || v === undefined || v === "") return null;
@@ -580,14 +591,17 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
   // is where "who put this on JamesEdition, and when" is asked; the other four
   // are org-level, because a connection belongs to the organisation and every
   // settings edit writes an event.
-  portal_selected: (p, t) => t("portalSelected", { portal: String(p.portal ?? "") }),
-  portal_removed: (p, t) => t("portalRemoved", { portal: String(p.portal ?? "") }),
-  portal_enabled: (p, t) => t("portalEnabled", { portal: String(p.portal ?? "") }),
-  portal_disabled: (p, t) => t("portalDisabled", { portal: String(p.portal ?? "") }),
-  portal_settings_updated: (p, t) =>
-    t("portalSettingsUpdated", { portal: String(p.portal ?? "") }),
-  portal_token_regenerated: (p, t) =>
-    t("portalTokenRegenerated", { portal: String(p.portal ?? "") }),
+  //
+  // The payload stores the stable id and the LINE resolves the name, so
+  // `uk_provider` reads as the three portals it actually feeds. Renaming a
+  // portal in the registry therefore re-reads every line already written,
+  // which is right: the id is the fact, the name is presentation.
+  portal_selected: (p, t) => t("portalSelected", { portal: portalName(p) }),
+  portal_removed: (p, t) => t("portalRemoved", { portal: portalName(p) }),
+  portal_enabled: (p, t) => t("portalEnabled", { portal: portalName(p) }),
+  portal_disabled: (p, t) => t("portalDisabled", { portal: portalName(p) }),
+  portal_settings_updated: (p, t) => t("portalSettingsUpdated", { portal: portalName(p) }),
+  portal_token_regenerated: (p, t) => t("portalTokenRegenerated", { portal: portalName(p) }),
   payment_plan_created: (_p, t) => t("paymentPlanCreated"),
   price_list_created: (_p, t) => t("priceListCreated"),
   // bulk CSV export of a list; `list` is the list slug (stays as stored, like

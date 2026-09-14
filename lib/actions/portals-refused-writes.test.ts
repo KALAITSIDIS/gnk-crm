@@ -42,11 +42,13 @@ vi.mock("@/lib/services/auth", () => ({
   }),
 }));
 vi.mock("@/lib/services/events", () => ({ logEvent }));
-vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+const revalidatePath = vi.hoisted(() => vi.fn<(path: string) => void>());
+vi.mock("next/cache", () => ({ revalidatePath }));
 
 const {
   deselectPortal,
   regeneratePortalToken,
+  savePortalSettings,
   selectPortal,
   setPortalEnabled,
 } = await import("@/lib/actions/portals");
@@ -58,6 +60,7 @@ function setup(pages: Record<string, FakePage[]>, role = "admin") {
   state.client = fake.client;
   state.role = role;
   logEvent.mockClear();
+  revalidatePath.mockClear();
   return fake;
 }
 
@@ -98,6 +101,10 @@ describe("selectPortal", () => {
     expect(res.error).toBeNull();
     expect(res.savedAt).not.toBeNull();
     expect(logEvent, "the first selection already logged it").not.toHaveBeenCalled();
+    expect(
+      revalidatePath,
+      "the row is there but this page thought otherwise — refresh it",
+    ).toHaveBeenCalledWith("/properties/prop-1");
   });
 
   it("names the policy refusal when RLS raises it", async () => {
@@ -144,6 +151,25 @@ describe("selectPortal", () => {
       payload: { portal: "jamesedition", reference: "PAF0001" },
     });
   });
+
+  it("takes the event's org from the LISTING, not from whoever is looking", async () => {
+    /*
+     * The two orgs are the same in production — RLS saw to that before the row
+     * was ever returned — so this fixture is deliberately impossible. Its job
+     * is not to simulate a reachable state but to tell two sources of the same
+     * value apart: with `profile.orgId` the event would file itself under the
+     * reader's tenant, and the assertion below is the only thing that can see
+     * the difference. It is the "ask the database, not the reader" defect in
+     * its smallest form.
+     */
+    setup({
+      properties: [{ data: { ...listing(), org_id: "org-of-the-record" }, error: null }],
+      portal_connections: [{ data: { enabled: true }, error: null }],
+      portal_listings: [{ data: [{ portal: "jamesedition" }], error: null }],
+    });
+    await selectPortal("prop-1", "jamesedition");
+    expect(logEvent.mock.calls[0][1]).toMatchObject({ orgId: "org-of-the-record" });
+  });
 });
 
 describe("deselectPortal", () => {
@@ -174,6 +200,17 @@ describe("deselectPortal", () => {
       payload: { portal: "jamesedition", reference: "PAF0001" },
     });
   });
+
+  it("files the removal under the listing's org too", async () => {
+    // Same deliberately-impossible fixture as the selection side, for the
+    // same reason: it is the only way to see which source the value came from.
+    setup({
+      properties: [{ data: { ...listing(), org_id: "org-of-the-record" }, error: null }],
+      portal_listings: [{ data: [{ portal: "jamesedition" }], error: null }],
+    });
+    await deselectPortal("prop-1", "jamesedition");
+    expect(logEvent.mock.calls[0][1]).toMatchObject({ orgId: "org-of-the-record" });
+  });
 });
 
 describe("setPortalEnabled", () => {
@@ -185,10 +222,16 @@ describe("setPortalEnabled", () => {
     expect(logEvent).not.toHaveBeenCalled();
   });
 
-  it("refuses a portal this build has no renderer for, before any round trip", async () => {
-    // Bazaraki's XML spec is Pro-accounts-only, so DIALECT_RENDERERS.bazaraki
-    // is null. Enabled, it would serve the empty document — which every pull
-    // portal reads as "withdraw everything".
+  it("refuses a portal whose feed format this build cannot write, before any round trip", async () => {
+    // Bazaraki's XML spec is given to Pro accounts only, so the registry marks
+    // it `spec: "pending"` — and THAT is the clause that fires here. The
+    // `!DIALECT_RENDERERS[dialect]` half of the gate is unreachable while the
+    // two tables agree (eligibility.test.ts pins that they do); it is kept as
+    // defence in depth, so a renderer pulled without its registry entry being
+    // demoted cannot leave the switch flippable.
+    //
+    // Enabled by either route, the portal would serve the empty document —
+    // which every pull portal reads as "withdraw everything".
     const fake = setup({ portal_connections: [{ data: null, error: null }] });
     const res = await setPortalEnabled("bazaraki", true);
     expect(res.error).toMatch(/cannot be enabled yet/i);
@@ -201,6 +244,19 @@ describe("setPortalEnabled", () => {
     const res = await setPortalEnabled("nope", true);
     expect(res.error).toBe("Unknown portal.");
     expect(fake.calls).toHaveLength(0);
+  });
+
+  it("treats disabling a portal that was never connected as already true", async () => {
+    // There is nothing to switch off. Inserting a disabled row would mint a
+    // feed token nobody asked for, and the event would put `portal_disabled`
+    // on the organisation's timeline for a portal that was never enabled — a
+    // line in an append-only log describing something that did not happen.
+    const fake = setup({ portal_connections: [{ data: null, error: null }] });
+    const res = await setPortalEnabled("jamesedition", false);
+    expect(res.error, "nothing to do is not a failure").toBeNull();
+    expect(res.savedAt).not.toBeNull();
+    expect(writesTo(fake, "portal_connections"), "and nothing is written").toHaveLength(0);
+    expect(logEvent).not.toHaveBeenCalled();
   });
 
   it("reports the refusal when the write matched no row", async () => {
@@ -256,6 +312,96 @@ describe("setPortalEnabled", () => {
       eventType: "portal_disabled",
       payload: { portal: "jamesedition" },
     });
+  });
+});
+
+describe("savePortalSettings", () => {
+  const EMAIL = "sales@example.com";
+  const PHONE = "+357 26 000000";
+
+  const form = () => {
+    const fd = new FormData();
+    fd.set("portal", "jamesedition");
+    fd.set("contact_number", PHONE);
+    fd.set("email", EMAIL);
+    return fd;
+  };
+
+  const blank = { error: null, savedAt: null };
+
+  it("refuses instead of reporting a save the row never took", async () => {
+    setup({
+      portal_connections: [
+        { data: { id: "conn-1" }, error: null }, // the read
+        { data: [], error: null }, // the UPDATE — filtered away
+      ],
+    });
+    const res = await savePortalSettings(blank, form());
+    expect(res.error).toMatch(/nothing saved/i);
+    expect(res.savedAt).toBeNull();
+    expect(
+      logEvent,
+      "no settings event for contact details the connection does not carry",
+    ).not.toHaveBeenCalled();
+  });
+
+  it("creates the connection when there is none, still without naming feed_token", async () => {
+    // Filling in the contact details before flipping the switch is the
+    // ordinary order of work, so this is an INSERT — and the token is the
+    // database's to mint here exactly as it is on the enable path.
+    const fake = setup({
+      portal_connections: [
+        { data: null, error: null }, // no row yet
+        { data: [{ id: "conn-1" }], error: null }, // the INSERT
+      ],
+    });
+    const res = await savePortalSettings(blank, form());
+    expect(res.error).toBeNull();
+    const inserts = fake.argsOf("portal_connections", "insert");
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0]![0]).toEqual({
+      org_id: "org-1",
+      portal: "jamesedition",
+      settings: { contact_number: PHONE, whatsapp_number: "", email: EMAIL },
+      updated_by: "actor-1",
+    });
+    expect(Object.keys(inserts[0]![0] as object)).not.toContain("feed_token");
+    expect(fake.argsOf("portal_connections", "upsert")).toHaveLength(0);
+  });
+
+  it("logs the key NAMES and none of the values", async () => {
+    /*
+     * The event chain is append-only and hash-linked, and erasure cannot reach
+     * it (0017). A contact e-mail written into a payload by value is therefore
+     * written for ever, in the one table an Article 17 request cannot touch —
+     * which is why the settings themselves live in a mutable `jsonb` column
+     * and the event records only which fields were edited.
+     */
+    setup({
+      portal_connections: [
+        { data: { id: "conn-1" }, error: null },
+        { data: [{ id: "conn-1" }], error: null },
+      ],
+    });
+    const res = await savePortalSettings(blank, form());
+    expect(res.error).toBeNull();
+    expect(logEvent).toHaveBeenCalledTimes(1);
+
+    const event = logEvent.mock.calls[0][1];
+    expect(event).toMatchObject({
+      entityType: "organization",
+      entityId: "org-1",
+      eventType: "portal_settings_updated",
+    });
+    const payload = (event as { payload: { portal: string; keys: string[] } }).payload;
+    expect(payload.portal).toBe("jamesedition");
+    expect([...payload.keys].sort()).toEqual(["contact_number", "email", "whatsapp_number"]);
+
+    // The claim, tested rather than asserted in a comment: no submitted VALUE
+    // reaches the chain anywhere in the payload, however nested.
+    const serialized = JSON.stringify(payload);
+    expect(serialized, "the e-mail address entered the event log").not.toContain(EMAIL);
+    expect(serialized, "the phone number entered the event log").not.toContain(PHONE);
   });
 });
 
