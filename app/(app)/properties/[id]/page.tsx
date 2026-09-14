@@ -113,6 +113,14 @@ export default async function PropertyDetailPage({
   const unitFacts = isContainerRow ? await countContainerUnits(supabase, id) : EMPTY_CONTAINER_FACTS;
   const areaRows = unwrapRows(areasRes, "areas");
   const mediaRows = unwrapRows(mediaRes, "property media");
+  // Started here and awaited far below, so the Portals card's two reads run
+  // alongside the media signing and the main batch instead of queueing after
+  // them — nothing between here and the await needs their answer.
+  const portalsPromise = buildPropertyPortalRows(supabase, p, mediaRows, id);
+  // A handler, attached now, so a read failure in that window is delivered at
+  // the await (where it renders the error boundary) rather than surfacing
+  // first as an unhandled rejection with no page to attach it to.
+  portalsPromise.catch(() => {});
   // Where each card rendition can be fetched from, decided HERE by the row's
   // kind (media-bucket.ts): a photograph's is a public URL; anything else
   // lives in the private bucket and is signed for the hour, the same idiom
@@ -234,15 +242,11 @@ export default async function PropertyDetailPage({
   const canEditProperty =
     isAdminOrLM || (profile.role === "agent" && p.assigned_agent_id === profile.id);
 
-  // The Marketing tab's Portals card (0095). Which portals appear, in what
-  // order, and which of them can still be removed are judgements — so they
-  // live in a service with a test around them rather than inline here.
-  const { rows: portalRows, photoNote: portalPhotoNote } = await buildPropertyPortalRows(
-    supabase,
-    p,
-    mediaRows,
-    id,
-  );
+  // The Marketing tab's Portals card (0095), started above. Which portals
+  // appear, in what order, and which of them can still be removed are
+  // judgements — so they live in a service with a test around them rather
+  // than inline here.
+  const { rows: portalRows, photoNote: portalPhotoNote } = await portalsPromise;
 
   const reservations: ReservationRow[] = (reservationsRes.data ?? []).map((r) => {
     const joined = r.contacts as { display_name: string } | { display_name: string }[] | null;

@@ -32,8 +32,6 @@ import type { PortalRow } from "@/lib/services/portals/property-portals";
  * a button that can no longer do anything.
  */
 
-export type { PortalRow };
-
 export function PortalsCard({
   propertyId,
   portals,

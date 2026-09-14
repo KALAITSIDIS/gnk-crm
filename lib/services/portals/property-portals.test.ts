@@ -152,9 +152,7 @@ describe("buildPropertyPortalRows", () => {
       photos(3, 1),
     );
 
-    expect(photoNote).toBe(
-      "2 of 3 photos are not yet prepared for portals (JPEG rendition missing — run the backfill or re-upload).",
-    );
+    expect(photoNote).toBe("2 of 3 photos are not yet prepared for portals.");
     // JamesEdition asks for two; one JPEG is not two, however full the gallery looks
     expect(rows[0].eligibility.ok).toBe(false);
     expect(rows[0].eligibility.ok === false && rows[0].eligibility.reasons).toContain(

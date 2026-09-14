@@ -119,9 +119,14 @@ export async function buildPropertyPortalRows(
 
   const photoCount = mediaRows.filter((m) => m.kind === "photo").length;
   const jpegPhotoCount = mediaRows.filter((m) => m.kind === "photo" && m.path_jpeg).length;
+  // The remedy — `npm run media:backfill-jpeg`, or re-uploading the
+  // photograph — is nothing an agent can do from this page, so it stays here
+  // rather than in the sentence they read. The sentence's whole job is to
+  // stop the gallery and the portal's photo count looking like a
+  // contradiction.
   const photoNote =
     jpegPhotoCount < photoCount
-      ? `${photoCount - jpegPhotoCount} of ${photoCount} photos are not yet prepared for portals (JPEG rendition missing — run the backfill or re-upload).`
+      ? `${photoCount - jpegPhotoCount} of ${photoCount} photos are not yet prepared for portals.`
       : null;
 
   const point = parseLocationPoint(p.location);
