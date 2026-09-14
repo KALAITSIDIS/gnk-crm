@@ -99,6 +99,14 @@ describe("kyero dialect", () => {
     expect(p.date).toBe("2026-09-12 09:00:00");
   });
 
+  it("all-blank features emit no features element; blanks among real ones are dropped", () => {
+    const blank = { ...SALE_VILLA, row: { ...SALE_VILLA.row, features: ["  ", ""] } };
+    expect(kyero.render([blank], SETTINGS)).not.toContain("<features>");
+    const mixed = { ...SALE_VILLA, row: { ...SALE_VILLA.row, features: ["Private pool", " "] } };
+    const doc = parse(kyero.render([mixed], SETTINGS));
+    expect(doc.root.property[0].features.feature).toEqual(["Private pool"]);
+  });
+
   it("caps images at fifty", () => {
     const many = {
       ...SALE_VILLA,

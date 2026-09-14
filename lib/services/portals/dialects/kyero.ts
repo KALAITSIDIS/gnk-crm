@@ -35,6 +35,9 @@ function renderProperty(l: FeedListing, s: KyeroSettings): string {
   const r = l.row;
   const isRent = r.transaction_type === "rent";
   const price = isRent ? r.rent_price_month : r.asking_price;
+  // filter first, then gate: a features array holding only blanks is no feature
+  // at all, and `<features></features>` would be a container with no children.
+  const features = r.features.filter((f) => f.trim());
   const children = [
     tag("id", r.reference),
     tag("date", kyeroDate(r.updated_at)),
@@ -57,7 +60,7 @@ function renderProperty(l: FeedListing, s: KyeroSettings): string {
     ]),
     r.energy_class ? tag("energy_rating", [tag("consumption", r.energy_class)]) : null,
     tag("desc", [tag("en", textIn(r.public_description, "en")), tag("ru", textIn(r.public_description, "ru"))]),
-    r.features.length ? tag("features", r.features.filter((f) => f.trim()).map((f) => tag("feature", f))) : null,
+    features.length ? tag("features", features.map((f) => tag("feature", f))) : null,
     tag(
       "images",
       l.images.slice(0, MAX_IMAGES).map((img, i) => tag("image", [tag("url", img.url)], { id: i + 1 })),
