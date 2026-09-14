@@ -1026,6 +1026,14 @@ git add package.json package-lock.json lib/services/portals/dialects/
 git commit -m "portals: Kyero v3.9 dialect with a golden document" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
+**Amendments applied at implementation and after review (2026-09-14; the committed files are the authority, not the block above):**
+- `registry.ts` exports `kyeroSettingsSchema` and `KyeroSettings`; `kyero.render` parses its settings with the schema first, so defaults apply and a typo'd key is a compile error. A test pins that `{}` emits no contact nodes and a malformed e-mail throws.
+- Fixtures are typed `(over: Partial<FeedRow>): FeedRow` with no cast and use `PortalFeedImage`; all 36 columns present.
+- Blank text is left to `tag()` (no `|| null`), optional children are `cond ? tag(...) : null`, and prices/areas are rounded without a `Number()` wrapper — PostgREST numeric is a JS number here.
+- Features are filtered for blanks BEFORE the element is gated, so an all-blank array emits no `<features>` element; a test pins it (14 tests).
+- The test-side parser/validator is `fast-xml-parser` on the self-contained **v4** line, pinned exactly (v5 pulled seven small transitive dev packages).
+- Not pinned by the golden: a listing with both areas null renders `<surface_area></surface_area>`, and one with no images `<images></images>`, both by `tag()`'s container rule.
+
 ---
 
 ### Task 5: Eligibility, one definition
