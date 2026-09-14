@@ -523,7 +523,9 @@ export default async function PropertyDetailPage({
               <Calculator className="size-3.5" /> Costs
             </Link>
           ) : null}
-          <div className="ml-auto flex items-center gap-2">
+          {/* the same action group as the contact header: it wraps at phone
+              width rather than widening the page (the reason is written there) */}
+          <div className="ml-auto flex flex-wrap items-center gap-2">
             <AddTaskDialog entity={{ property_id: p.id }} entityLabel={p.reference} />
             {p.kind === "project" || p.kind === "phase" ? (
               <Button asChild variant="outline" size="sm">
