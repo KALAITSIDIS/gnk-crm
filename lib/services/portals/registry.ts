@@ -71,7 +71,7 @@ const KYERO_CONTACT_FIELDS: readonly PortalSettingField[] = [
   { key: "whatsapp_number", label: "WhatsApp number", placeholder: "+357 99 000000" },
   { key: "email", label: "Enquiry e-mail", placeholder: "sales@example.com" },
 ];
-const kyeroSettingsSchema = z.object({
+export const kyeroSettingsSchema = z.object({
   contact_number: optionalText(40),
   whatsapp_number: optionalText(40),
   email: z
@@ -82,6 +82,7 @@ const kyeroSettingsSchema = z.object({
     .optional()
     .default(""),
 });
+export type KyeroSettings = z.infer<typeof kyeroSettingsSchema>;
 
 /** No settings to fill in for a portal whose enable switch can never be flipped. */
 const EMPTY_SETTINGS = z.object({} as Record<string, z.ZodType<string>>);
