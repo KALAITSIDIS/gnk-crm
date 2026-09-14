@@ -2435,6 +2435,16 @@ git commit -m "portals: the feed route — token in the path, empty document whe
 - A failing connection LOOKUP answers 404, not 503, so a guesser cannot tell a near-miss token from a sick database; it is logged with the portal id.
 - `npm run check:static-routes` needs a build (`.next/server/app`); the route appears as dynamic, as intended. 16 route tests; `npm test` 1579.
 
+**Quality-review follow-ups (third commit on 2026-09-14):**
+- Supplement pages are ordered by `reference` before `.range()` — `portal_supplement` has no ORDER BY, and unordered offset paging above a thousand rows can skip a listing silently; the test fake refuses `.range()` without the order.
+- The supplement read shares the assembler's ceiling (25 × 100 rows): a selection that size would fail downstream anyway, so the route stops at the ceiling with a 503 and a log line instead of paying the round trips first.
+- The pull note lives in `lib/services/portals/pull-note.ts` (`notePortalPull`, `notePortalPullAfter`) with its own tests for the failed note, the thrown note and the inline fallback when `after()` has no request scope — the two branches the route test could not reach. The user agent is read before the response, never inside the deferred closure.
+- `row.settings` is parsed through the portal's `settingsSchema` at the route boundary; invalid settings are a logged 503, not a bare 500 from the renderer's own parse.
+- New tests: an enabled portal with nothing selected answers the empty document with max-age 300 and no `public_listings` call, and notes a pull of 0; invalid settings → 503; the supplement ceiling → 503 after exactly three pages.
+- Header comments now state the trade-offs a reader will ask about: the token sits in the platform's access log by construction (regeneration is the remedy); no CORS or OPTIONS because crawlers are server-to-server; max-age 300 against the site feed's 60; a 503 records no pull.
+
+- 19 route tests and 6 pull-note tests; `npm test` 1588; mutation checks: dropping the order fails 13 tests, changing the ceiling fails two, restoring the cast fails the settings test.
+
 ---
 
 ### Task 11: Server actions and timeline lines
