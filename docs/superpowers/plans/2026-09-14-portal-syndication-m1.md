@@ -3102,6 +3102,16 @@ git commit -m "settings: Portals — enable, feed URL, settings, last pull, spec
 - `settings` is `Json`: the page narrows it with a local `settingsStrings()` (object → string-valued keys only, else `{}`) rather than a cast; the actions' own `asSettings` cannot be imported from a "use server" module.
 - A public portal with no connection row reads "Not connected — enabling it mints the feed URL to give the portal" instead of the disabled sentence, which would be untrue; pending portals show no status line. The required-key marker is `aria-hidden` with an sr-only "(required before enabling)", since `requiredSettings` gates enabling, not saving. Build: `ƒ /settings/portals`.
 
+**Quality-review follow-ups (second commit on 2026-09-14):**
+- The pending badge is short ("Not available yet") with the sentence on its own line beneath the header — the `Badge` primitive cannot wrap, and the long text overflowed a phone-width card on four of eight cards, on a route no suite measured (the earlier note's claim that the existing suites constrain this page was wrong; Task 14 adds the overflow assertion).
+- The page throws on a read error (the retention page's idiom): a failed read must not render every portal as "Not connected", which would invite a second Enable and a false event line.
+- Accessibility: no `aria-pressed` on a button whose label flips; Copy has no `aria-label` and announces through a toast (the "Copied" swap and its timer are gone); a clipboard failure is a toast, not a silent rejection; Regenerate has its visible word back; the crawler-controlled user-agent text wraps.
+- Copy is disabled while a token rotates, so the desk cannot copy a URL that has just stopped answering.
+- The Enable button is disabled with the reason when a required setting is blank (the spec's second gate; unreachable in milestone 1, but the marker is now honest); the requirements list renders only for renderable portals, has a lead-in, and names the currencies the dialect accepts.
+- Not taken: building the URL on the server from request headers — the client read is correct and reviewed; the one-load flash of the path before the origin is accepted.
+
+- The requirements list splits the description and the price into two lines so the currency-limited price line is not a second price claim; Task 14 must not assert the old combined string.
+
 ---
 
 ### Task 13: The Portals card on the property page
