@@ -272,6 +272,14 @@ git add lib/services/portals/registry.ts lib/services/portals/registry.test.ts
 git commit -m "portals: the registry — one definition per portal, pinned by test" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
+**Post-review amendments (applied in a second commit on 2026-09-14; the committed files are the authority, not the block above):**
+- `PortalDefinition` fields are `readonly`; `settingsSchema` is typed `z.ZodObject<Record<string, z.ZodType<string>>>` so `.shape` stays visible and a test pins `settingsFields` keys ⇔ schema shape keys both ways.
+- `email` is blank-or-valid (`refine` with `z.email()`), not free text.
+- `PORTAL_ID_PATTERN` is exported; 0095 pins the same regex and the RLS suite (Task 7) cross-checks them.
+- The helpers take options objects; pending portals declare their `requirements` explicitly (RERA `needsCoords: true`; Bazaraki and Prian carry the CRM's floor with a comment saying so).
+- `spec: "pending"` is documented as "no renderer in this build, so it cannot be enabled" — covering both "format not public" (Bazaraki, Prian) and "renderer scheduled for milestone 2" (RERA, Thribee). Task 12's badge wording follows.
+- JamesEdition's `audience` no longer repeats the two-photo rule; the settings page renders it from `requirements`.
+
 ---
 
 ### Task 2: XML builder
@@ -1728,8 +1736,21 @@ describe("the token functions (anon)", () => {
     const a = await anon.from("portal_listings").select("portal");
     expect(a.error?.code ?? "42501").toBe("42501");
   });
+
+  it("the database's portal-id check agrees with the registry's PORTAL_ID_PATTERN", async () => {
+    // one id the regex rejects must be refused by 0095's CHECK, and one it accepts must not be
+    expect(PORTAL_ID_PATTERN.test("Not-Valid")).toBe(false);
+    const bad = await svc.from("portal_connections").insert({ org_id: ORG_A, portal: "Not-Valid" });
+    expect(bad.error?.code).toBe("23514");
+    expect(PORTAL_ID_PATTERN.test("zz_probe")).toBe(true);
+    const good = await svc.from("portal_connections").insert({ org_id: ORG_A, portal: "zz_probe" }).select("id").single();
+    expect(good.error).toBeNull();
+    await svc.from("portal_connections").delete().eq("id", good.data!.id);
+  });
 });
 ```
+
+(add `import { PORTAL_ID_PATTERN } from "@/lib/services/portals/registry";` at the top; the RLS vitest config resolves `@`.)
 
 - [ ] **Step 2: Run the RLS suite**
 
@@ -2835,7 +2856,7 @@ export function PortalCard({
         </div>
         {pendingSpec ? (
           <span className="rounded-md bg-surface-2 px-2 py-1 text-xs font-medium text-text-2">
-            spec pending — cannot be enabled yet
+            not available in this build — cannot be enabled yet
           </span>
         ) : (
           <Button
