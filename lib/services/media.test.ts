@@ -99,6 +99,32 @@ describe("processPropertyImage (T1.4)", () => {
     expect(tlWm.equals(tlPlain), "top-left must be untouched").toBe(true);
   });
 
+  /**
+   * JPEG has no alpha. Sharp's default flatten colour is BLACK, so a
+   * transparent PNG — a rendered plan, a cut-out, anything exported with a
+   * clear background — would reach a portal as a photograph on black. The
+   * WebP renditions keep their transparency; only the JPEG is flattened.
+   */
+  it("flattens a transparent PNG to white for the JPEG, and only for the JPEG", async () => {
+    const transparent = await sharp({
+      create: { width: 1200, height: 800, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+    })
+      .png()
+      .toBuffer();
+    const { renditions } = await processPropertyImage(transparent);
+
+    const pixel = await sharp(renditions.jpeg)
+      .extract({ left: 0, top: 0, width: 1, height: 1 })
+      .raw()
+      .toBuffer();
+    expect([...pixel], "the JPEG's background must be white, not sharp's default black").toEqual([
+      255, 255, 255,
+    ]);
+
+    const full = await sharp(renditions.full).metadata();
+    expect(full.hasAlpha, "the WebP full keeps its transparency").toBe(true);
+  });
+
   it("does not enlarge small images", async () => {
     const small = await sharp({
       create: { width: 500, height: 400, channels: 3, background: { r: 10, g: 10, b: 10 } },

@@ -102,11 +102,15 @@ export async function uploadPropertyMedia(
     // bucket under a guessable path (A07). Bodies wrapped via binaryBody() so
     // Vercel doesn't UTF-8-corrupt them (see helper).
     const renditionBucket = mediaBucketFor(kind);
+    // ...and only a PHOTOGRAPH gets the portal JPEG: every other kind's
+    // renditions live in the private bucket, where nothing — no portal feed,
+    // no public page — ever reads one.
+    const stored = RENDITIONS.filter((r) => r.name !== "jpeg" || kind === "photo");
     const uploads = [
       admin.storage
         .from("documents")
         .upload(originalPath, binaryBody(input, file.type), { contentType: file.type }),
-      ...RENDITIONS.map(({ name }) =>
+      ...stored.map(({ name }) =>
         admin.storage
           .from(renditionBucket)
           .upload(renditionPath(name), binaryBody(processed.renditions[name], renditionMime(name)), {
@@ -129,8 +133,8 @@ export async function uploadPropertyMedia(
         path_card: renditionPath("card"),
         path_full: renditionPath("full"),
         // 0095: the portal feed's own copy — portal_supplement() returns only
-        // photos that have one
-        path_jpeg: renditionPath("jpeg"),
+        // photos that have one, and only a photo has one at all
+        path_jpeg: kind === "photo" ? renditionPath("jpeg") : null,
         width: processed.width,
         height: processed.height,
         // 0088: the ORIGINAL bytes, so "this photograph is already on

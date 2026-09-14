@@ -198,6 +198,10 @@ for (const { row, line } of withPhotos) {
     const renditionPath = (r: RenditionName) =>
       `properties/${property.id}/${id}_${r}.${renditionExt(r)}`;
 
+    // Every rendition, the portal JPEG included: this importer creates
+    // PHOTOGRAPHS and nothing else (`kind: "photo"` below, the public `media`
+    // bucket above). The upload action, which can be handed a floor plan,
+    // gates the JPEG on the kind — here there is no other kind to gate on.
     const uploads = await Promise.all([
       supabase.storage.from("documents").upload(originalPath, input, { contentType: mime }),
       ...RENDITIONS.map(({ name }) =>
