@@ -3315,6 +3315,16 @@ git add components/features/properties/portals-card.tsx "app/(app)/properties/[i
 git commit -m "property page: Portals card on the Marketing tab — toggles with the feed's own reasons" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
+**Amendments applied at implementation (2026-09-14; the committed files are the authority, not the block above):**
+- Reasons are rendered through `reasonText(portal, reason)` (the portal's own numbers filled in) rather than `REASON_TEXT`, and the card receives them as sentences, so it imports nothing from the eligibility module.
+- The eligibility input is built as a `PropertyEligibilityInput` from the page's own row (the enum-typed columns are checked by the compiler) plus the JPEG photo count, the joined district and area names, and coordinates decoded with `parseLocationPoint` (`{ lat, lng }`) together with `location_approx`.
+- The two portal reads throw on error, as the settings page does — a silent empty would render "no portal is enabled" for a broken read.
+- No `aria-pressed` on a button whose label flips (Select/Remove); `data-testid`s `portals-card`, `portal-row-<id>`, `portal-select-<id>`.
+- The card renders on every property page's Marketing tab regardless of kind; eligibility says the rest.
+
+- Spreading the page's row into the intersection type type-checks (spread properties are exempt from excess-property checks), so no column pick was needed. The 'Selected …' and 'last pulled …' facts are two lines; the card paints the house card chrome because it sits beside the form's bordered box, not inside it.
+- One `useTransition` per card: while one toggle is in flight every row's button is disabled; Task 14 must wait between two clicks.
+
 ---
 
 ### Task 14: End-to-end
