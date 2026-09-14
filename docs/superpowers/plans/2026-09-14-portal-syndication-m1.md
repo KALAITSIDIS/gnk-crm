@@ -3091,6 +3091,17 @@ git add "app/(app)/settings/portals/page.tsx" components/features/settings/porta
 git commit -m "settings: Portals — enable, feed URL, settings, last pull, spec-pending badge" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
+**Amendments applied at implementation (2026-09-14; the committed files are the authority, not the block above):**
+- The page passes a `feedPath` (`/api/portals/<id>/<token>`), and the card builds the full URL on the client from `window.location.origin` — the idiom of `minted-link.tsx` — so there is no `NEXT_PUBLIC_APP_URL` dependency and no hydration mismatch (the path renders until mounted).
+- The pending badge reads "not available in this build — cannot be enabled yet" (Task 1's `spec` semantics), rendered with the `Badge` primitive.
+- The existing suites constrain the page: every input has a label, icon-only buttons carry `aria-label`, nothing overflows at phone width.
+- With no dev server available, the verification was `npm run build` (the route appears as dynamic) plus typecheck and lint; the desk-facing look is checked by the e2e in Task 14.
+
+- The origin is read with `useSyncExternalStore` (server pass: empty, client: `window.location.origin`): the mount-effect-plus-setState form is a `react-hooks/set-state-in-effect` lint error here.
+- Destructive confirmation mirrors `properties/archive-button.tsx`: a bare `confirm(...)` guard (eight precedents; the Dialog primitive is used only for create/edit flows).
+- `settings` is `Json`: the page narrows it with a local `settingsStrings()` (object → string-valued keys only, else `{}`) rather than a cast; the actions' own `asSettings` cannot be imported from a "use server" module.
+- A public portal with no connection row reads "Not connected — enabling it mints the feed URL to give the portal" instead of the disabled sentence, which would be untrue; pending portals show no status line. The required-key marker is `aria-hidden` with an sr-only "(required before enabling)", since `requiredSettings` gates enabling, not saving. Build: `ƒ /settings/portals`.
+
 ---
 
 ### Task 13: The Portals card on the property page
