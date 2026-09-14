@@ -35,7 +35,11 @@ rehearse → apply the hosted migration in the order the change requires → mer
 
 ### CI — `.github/workflows/ci.yml`
 
-Runs on every push and pull request. Three jobs:
+Runs **once per commit**: on every push, and on a pull request only when the
+PR's head branch lives in a fork. A PR from a branch in this repository already
+ran on its push, so its `pull_request` run skips at every job — the `if:` each
+job carries; DECISIONS `T-ci-one-run-per-commit` (2026-09-14, when the first PR
+ever opened here ran the workflow twice on one commit). Three jobs:
 
 | job | what it does |
 |---|---|

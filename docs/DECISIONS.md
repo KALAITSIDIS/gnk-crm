@@ -6436,3 +6436,81 @@ four cases, and the site's README and lib/crm.ts no longer claim a "larger
 budget" the CRM does not grant. The site's own build shape (two fetches per
 page) is the remaining lever, left alone: without the row lock the burst is
 just concurrent reads of a small function.
+
+## T-ci-one-run-per-commit — the first pull request ran CI twice on one commit (2026-09-14, no migration)
+
+`ci.yml` has said `on: push` and `on: pull_request`, neither filtered, since the
+scaffold. It never mattered: this repo had not opened a pull request before
+2026-09-14. The rhythm is branch → push → watch CI → merge locally → push
+`main`, so every commit ran exactly once and the second trigger lay dormant.
+PR #1 (`chore/eslint-ignore-maplibre`, 92c3276) woke it. One commit ran the
+whole workflow twice, three seconds apart — run 34872946110 on `push`, run
+34872951408 on `pull_request` — six jobs where three were due, four local
+Supabase stacks pulling images at once instead of two, and both logs show ECR
+Public refusing pulls (`toomanyrequests: Rate exceeded`), the CLI retrying, and
+in one job falling back to ghcr.io. It also doubled the exposure to the RLS
+suite's transient MFA setup failure (the separate task on `lib/testing/mfa.ts`).
+
+Three ways to make it one.
+
+**The conventional shape — `push: branches: [main]` plus an unfiltered
+`pull_request:` — was not taken.** Under it a branch push with no open PR runs
+nothing, and the branch push IS the working agreement: the free rehearsal a
+session watches while it writes the HANDOFF row, before the hosted migration
+and before the merge. Keeping the rehearsal under that shape means opening a PR
+the moment every branch is pushed — a PR that exists only to trigger CI, in a
+repo that merges locally with a merge commit and had never needed one. HANDOFF
+names this shape as the lever if CI's ~8 min ever becomes a problem; it is a
+lever for cost, not for this.
+
+**A concurrency group keyed on the head SHA does not dedupe.** GitHub has no
+dedupe; a group either cancels the older run (`cancel-in-progress: true` — the
+`push` run, three seconds older, dies and the commit wears a cancelled run) or
+queues the newer one and then runs it in full. And in the order this repo
+actually works — push, watch it go green, THEN open the PR — the push run has
+finished before the pull_request run starts, so there is nothing to cancel and
+both run anyway.
+
+**Chosen: `push:` stays unfiltered, and a `pull_request` run skips itself when
+the PR's head branch lives in this repository.** Every job carries
+
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+
+A push here already ran that commit. A PR from a fork — the one case a push
+here cannot cover, because a fork's push runs in the fork's Actions — still
+runs. The repo is public with zero forks, so the event could have been dropped
+outright; three lines keep the case. There is no workflow-level `if`, so the
+line is repeated on all three jobs, and the comment above `jobs:` says to keep
+the three identical. On a PR the skipped run shows beside the push run's green;
+it takes no runner minutes and pulls no image.
+
+What is given up: a `pull_request` run builds `refs/pull/N/merge` — the PR
+merged into its base — where a `push` run builds the branch head alone. Here
+the merge is made locally and pushed, and `main` runs on that push, so the
+merged tree gets its own run exactly as it did before any PR existed.
+
+Docs moved with it: `docs/10_INFRASTRUCTURE.md` §1 (which said "every push and
+pull request") and HANDOFF §0's CI row, which had not mentioned the `e2e` job
+since it was added on 2026-08-04; the "lever" sentence in HANDOFF's test
+section now points here first.
+
+Verification: the file parses (`js-yaml`), the three `if:` lines are
+byte-identical, and this branch's own push runs once. The skip arm is proven by
+the next PR opened from an in-repo branch — its `pull_request` run should show
+all three jobs skipped and the push run green; the fork arm stays unexercised
+until a fork exists.
+
+How it reached GitHub — and why the next workflow edit hits the same wall. A
+push that creates or changes a file under `.github/workflows/` needs the
+`workflow` OAuth scope, and neither credential on this machine has it: `gh`
+holds `gist, read:org, repo`, and `git push` does not even use `gh` — it
+authenticates through Git Credential Manager, whose stored OAuth token GitHub
+refused with `refusing to allow an OAuth App to create or update workflow
+.github/workflows/ci.yml without workflow scope`. gnk-web met the same wall
+(its note reads "workflow-file edits need the web editor"). So this branch
+went up in two pushes: the docs commit alone from the agent's shell, then the
+workflow commit by the operator — either with a refreshed `gh` token
+(`gh auth refresh -h github.com -s workflow`, then one push with `gh` as the
+credential helper) or by pasting the file into GitHub's web editor on this
+branch. The branch's own push run is the check that the file on GitHub is the
+one this entry describes.
