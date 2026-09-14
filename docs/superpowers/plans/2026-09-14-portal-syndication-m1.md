@@ -2073,6 +2073,16 @@ git commit -m "media: a JPEG rendition beside the WebP full, for portal feeds (0
 - `tsconfig.json` excludes `scripts/**` and ESLint ignores it, so `npm run typecheck`/`lint` do not cover the two `.mts` scripts; they were checked ad hoc.
 - Backfill evidence: fixture rows recreated by a `db reset` have no objects (six `download failed` skips, exit 1 — expected locally); a probe object uploaded to the bucket was backfilled to a 1600 px JPEG, no longer a candidate on the next run, and cleaned up. `npm test` 1551.
 
+**Quality-review follow-ups (second commit on 2026-09-14):**
+- The JPEG rendition flattens alpha to WHITE (sharp's JPEG default is black); a transparent-PNG test pins it while the WebP `full` keeps its alpha. `JPEG_ENCODE` is exported once and shared with the backfill.
+- The watermark is composited on the same pipeline pass instead of through an intermediate encode/decode (measured: ~7% smaller output, no extra lossy generation); the scaled mark is memoized by target width.
+- `RENDITIONS` entries are self-describing (`format`, `ext`, `mime`, `watermark`); the helpers are lookups, so "jpeg is special" is spelled once.
+- Non-photo kinds (floor plans, in the private bucket) get no JPEG; `path_jpeg` is null for them.
+- Correction to the note above: the two upload paths had NO automated coverage (there is no e2e media upload); a unit test over the fake client now pins the four uploads, their content types, `path_jpeg` in the insert, and the floor-plan exception (`lib/actions/media-upload-renditions.test.ts`, a 14-line storage fake in the idiom of `document-events-carry-visibility.test.ts`).
+- The backfill re-queries until a pass returns no row it has not already attempted (PostgREST caps a page at 1000 rows; a `Set` of attempted ids keeps known-bad rows from being re-downloaded and the tally honest), catches a corrupt object per row instead of dying without its tally, logs skips to stderr with a progress line every 25 rows, imports the encode options and the bucket name instead of re-spelling them, and types its client.
+
+- The importer inserts only `kind: "photo"`, so its upload list is unconditional by construction; a comment says the gate lives in the action.
+
 ---
 
 ### Task 9: Feed assembly
