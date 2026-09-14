@@ -43,12 +43,13 @@ import { MAX_LIMIT } from "@/lib/services/public-listings";
  * withholds: `portal_supplement` (0095) returns `st_y/st_x(p.location)` for
  * selected rows, which `public_listings()` deliberately never does (0054
  * `location_approx`; the RLS suite pins `location` in the withheld list by
- * name). Never as an exact point for an approximate location: the function
- * carries `location_approx` beside the point — for such a row that point is
- * an area or district centroid, not the property — and every renderer drops
- * the point when the flag is set (dialects/approx-guard.test.ts). A leaked
- * URL therefore hands an anonymous reader the exact points of the selected
- * listings until Regenerate.
+ * name). Never the point of an approximate location: the SQL itself returns
+ * null lat/lng when `location_approx` is set (RLS test in portals.test.ts),
+ * because the function is reachable by token over PostgREST without this
+ * route — and every renderer double-checks the flag it still receives
+ * (dialects/approx-guard.test.ts). A leaked URL therefore hands an anonymous
+ * reader the exact points of the selected, exactly-located listings until
+ * Regenerate.
  *
  * No CORS headers and no OPTIONS handler, unlike /api/public/listings beside
  * it: a portal's crawler is server-to-server, so no browser ever preflights

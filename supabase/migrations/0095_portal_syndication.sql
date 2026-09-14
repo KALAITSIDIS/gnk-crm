@@ -198,9 +198,18 @@ returns table (
   images          jsonb
 )
 language sql stable security definer set search_path = public as $$
+  -- The point of an approximate listing is withheld HERE, not left to a
+  -- renderer: 0054's flag means "never publish this as the property's
+  -- location" (the app stores an area centroid under it, but nothing in the
+  -- schema stops an import or a direct write from flagging a surveyed point),
+  -- and this function is reachable by anyone holding the token over
+  -- PostgREST, so a renderer's own check is belt-and-braces. The flag still
+  -- goes out so the assembler and the UI know why. A dialect that wants an
+  -- approximate pin (RERA's show_approximate_location) must take the centroid
+  -- from areas/districts, never this column.
   select p.reference,
-         st_y(p.location::geometry),
-         st_x(p.location::geometry),
+         case when p.location_approx then null else st_y(p.location::geometry) end,
+         case when p.location_approx then null else st_x(p.location::geometry) end,
          p.location_approx,
          coalesce((
            select jsonb_agg(jsonb_build_object('jpeg', m.path_jpeg, 'alt', m.alt)

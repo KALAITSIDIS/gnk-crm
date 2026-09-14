@@ -278,6 +278,31 @@ describe("the token functions (anon)", () => {
     expect(approxRow.location_approx).toBe(true);
   });
 
+  // ADDED (whole-branch review): the withholding must live in the SQL, not
+  // in a renderer. This function is reachable by anyone holding the token
+  // over PostgREST, skipping the XML route entirely, and 0054's flag means
+  // "never publish this as the property's location" — the app stores an area
+  // centroid under it, but a direct write (this test, an import) can flag a
+  // surveyed point, so a red here is a token holder getting the exact point
+  // of a listing the desk marked approximate.
+  it("portal_supplement withholds the point of an approximate listing and hands it back once exact again", async () => {
+    await svc.from("properties").update({ location_approx: true }).eq("id", publicId);
+    const approx = await anon.rpc("portal_supplement", { p_token: token });
+    expect(approx.error).toBeNull();
+    const withheld = (approx.data ?? []).find((r: { reference: string }) => r.reference === ref("P"))!;
+    expect(withheld.location_approx).toBe(true);
+    expect(withheld.lat).toBeNull();
+    expect(withheld.lng).toBeNull();
+
+    await svc.from("properties").update({ location_approx: false }).eq("id", publicId);
+    const exact = await anon.rpc("portal_supplement", { p_token: token });
+    expect(exact.error).toBeNull();
+    const returned = (exact.data ?? []).find((r: { reference: string }) => r.reference === ref("P"))!;
+    expect(returned.location_approx).toBe(false);
+    expect(returned.lat).toBeCloseTo(34.88, 5);
+    expect(returned.lng).toBeCloseTo(32.38, 5);
+  });
+
   // ADDED (Task 7 review): without this, deleting the portal_listings join from
   // portal_supplement would leave every other test in this file green.
   it("a public listing that nobody selected is on the site and NOT on the portal — selection is the gate", async () => {

@@ -89,6 +89,15 @@ describe("buildFeedListings", () => {
     expect(none.coords).toBeNull();
   });
 
+  it("what portal_supplement actually sends for an approximate listing (0095 withholds the point): approx=true with null lat/lng yields no coords", () => {
+    const [withheld] = buildFeedListings(
+      [row("A")],
+      [sup("A", { lat: null, lng: null, location_approx: true })],
+      "https://p",
+    );
+    expect(withheld.coords).toBeNull();
+  });
+
   it("an exact location yields approx=false — the coordinate-privacy rule's other half", () => {
     const [exact] = buildFeedListings([row("A")], [sup("A", { location_approx: false })], "https://p");
     expect(exact.coords).toEqual({ lat: 34.88, lng: 32.38, approx: false });
