@@ -11,7 +11,8 @@
  * already imports quality-score.ts (their runtime imports are alias-free, so
  * node's type stripping runs them without a build step):
  *
- *   EXIF/GPS stripped, thumb/card/full WebP renditions, watermark on `full`
+ *   EXIF/GPS stripped, thumb/card/full WebP renditions plus the `jpeg` one
+ *   the portal feeds take (0095), watermark on `full` and `jpeg`
  *   for public/partner listings, original (with EXIF) into the PRIVATE
  *   documents bucket, renditions into the public media bucket, a
  *   property_media row per photo, one `media_uploaded` event per photo
@@ -42,7 +43,11 @@ import {
   ACCEPTED_MIME,
   MAX_UPLOAD_BYTES,
   processPropertyImage,
+  RENDITIONS,
+  renditionExt,
+  renditionMime,
   shouldWatermark,
+  type RenditionName,
 } from "../../lib/services/media.ts";
 import { recomputeQualityScore } from "../../lib/services/quality-score.ts";
 import { Report, parseCsv, resolveOrg, serviceClient } from "./_shared.mts";
@@ -190,19 +195,18 @@ for (const { row, line } of withPhotos) {
     const id = randomUUID();
     const ext = mime === "image/png" ? "png" : mime === "image/webp" ? "webp" : "jpg";
     const originalPath = `properties/${property.id}/original/${id}.${ext}`;
-    const renditionPath = (r: string) => `properties/${property.id}/${id}_${r}.webp`;
+    const renditionPath = (r: RenditionName) =>
+      `properties/${property.id}/${id}_${r}.${renditionExt(r)}`;
 
     const uploads = await Promise.all([
       supabase.storage.from("documents").upload(originalPath, input, { contentType: mime }),
-      supabase.storage
-        .from("media")
-        .upload(renditionPath("thumb"), processed.renditions.thumb, { contentType: "image/webp" }),
-      supabase.storage
-        .from("media")
-        .upload(renditionPath("card"), processed.renditions.card, { contentType: "image/webp" }),
-      supabase.storage
-        .from("media")
-        .upload(renditionPath("full"), processed.renditions.full, { contentType: "image/webp" }),
+      ...RENDITIONS.map(({ name }) =>
+        supabase.storage
+          .from("media")
+          .upload(renditionPath(name), processed.renditions[name], {
+            contentType: renditionMime(name),
+          }),
+      ),
     ]);
     const uploadErr = uploads.find((r) => r.error)?.error;
     if (uploadErr) {
@@ -220,6 +224,7 @@ for (const { row, line } of withPhotos) {
         path_thumb: renditionPath("thumb"),
         path_card: renditionPath("card"),
         path_full: renditionPath("full"),
+        path_jpeg: renditionPath("jpeg"), // 0095: the portal feed's copy
         width: processed.width,
         height: processed.height,
         sort_order: nextSort++,
@@ -232,9 +237,7 @@ for (const { row, line } of withPhotos) {
       .single();
     if (insertErr) {
       // don't strand the uploaded files — mirror the action's cleanup
-      await supabase.storage
-        .from("media")
-        .remove([renditionPath("thumb"), renditionPath("card"), renditionPath("full")]);
+      await supabase.storage.from("media").remove(RENDITIONS.map(({ name }) => renditionPath(name)));
       await supabase.storage.from("documents").remove([originalPath]);
       failed = `${name}: ${insertErr.message}`;
       break;

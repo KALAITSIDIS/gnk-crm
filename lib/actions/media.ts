@@ -11,7 +11,11 @@ import {
   ACCEPTED_MIME,
   MAX_UPLOAD_BYTES,
   processPropertyImage,
+  RENDITIONS,
+  renditionExt,
+  renditionMime,
   shouldWatermark,
+  type RenditionName,
 } from "@/lib/services/media";
 import { recomputeQualityScore } from "@/lib/services/quality-score";
 import { UPLOADABLE_MEDIA_KINDS } from "@/lib/validators/media";
@@ -89,7 +93,8 @@ export async function uploadPropertyMedia(
     const id = randomUUID();
     const ext = file.type === "image/png" ? "png" : file.type === "image/webp" ? "webp" : "jpg";
     const originalPath = `properties/${propertyId}/original/${id}.${ext}`;
-    const renditionPath = (r: string) => `properties/${propertyId}/${id}_${r}.webp`;
+    const renditionPath = (r: RenditionName) =>
+      `properties/${propertyId}/${id}_${r}.${renditionExt(r)}`;
 
     // original (with EXIF) → private documents bucket, always. Renditions →
     // the bucket the KIND decides (media-bucket.ts): public for a photograph,
@@ -101,21 +106,13 @@ export async function uploadPropertyMedia(
       admin.storage
         .from("documents")
         .upload(originalPath, binaryBody(input, file.type), { contentType: file.type }),
-      admin.storage
-        .from(renditionBucket)
-        .upload(renditionPath("thumb"), binaryBody(processed.renditions.thumb, "image/webp"), {
-          contentType: "image/webp",
-        }),
-      admin.storage
-        .from(renditionBucket)
-        .upload(renditionPath("card"), binaryBody(processed.renditions.card, "image/webp"), {
-          contentType: "image/webp",
-        }),
-      admin.storage
-        .from(renditionBucket)
-        .upload(renditionPath("full"), binaryBody(processed.renditions.full, "image/webp"), {
-          contentType: "image/webp",
-        }),
+      ...RENDITIONS.map(({ name }) =>
+        admin.storage
+          .from(renditionBucket)
+          .upload(renditionPath(name), binaryBody(processed.renditions[name], renditionMime(name)), {
+            contentType: renditionMime(name),
+          }),
+      ),
     ];
     const results = await Promise.all(uploads);
     const failed = results.find((r) => r.error);
@@ -131,6 +128,9 @@ export async function uploadPropertyMedia(
         path_thumb: renditionPath("thumb"),
         path_card: renditionPath("card"),
         path_full: renditionPath("full"),
+        // 0095: the portal feed's own copy — portal_supplement() returns only
+        // photos that have one
+        path_jpeg: renditionPath("jpeg"),
         width: processed.width,
         height: processed.height,
         // 0088: the ORIGINAL bytes, so "this photograph is already on
@@ -149,7 +149,7 @@ export async function uploadPropertyMedia(
       .single();
     if (insertErr) {
       // the row was rejected (RLS/validation) — don't strand the uploaded files
-      await removeObjectsBestEffort(admin.storage, renditionBucket, [renditionPath("thumb"), renditionPath("card"), renditionPath("full")], "media upload: cleanup after a rejected row");
+      await removeObjectsBestEffort(admin.storage, renditionBucket, RENDITIONS.map(({ name }) => renditionPath(name)), "media upload: cleanup after a rejected row");
       await removeObjectsBestEffort(admin.storage, "documents", [originalPath], "media upload: cleanup after a rejected row");
       return {
         error: insertErr.message.includes("row-level security")
@@ -398,7 +398,7 @@ export async function deleteMediaBulk(
     .delete()
     .eq("property_id", propertyId)
     .in("id", mediaIds)
-    .select("id, kind, storage_path_original, path_thumb, path_card, path_full, is_cover");
+    .select("id, kind, storage_path_original, path_thumb, path_card, path_full, path_jpeg, is_cover");
   if (error) return { error: error.message, deleted: 0 };
   if (!deletedRows || deletedRows.length === 0) {
     return {
@@ -414,7 +414,7 @@ export async function deleteMediaBulk(
   for (const bucket of ["media", "documents"] as const) {
     const paths = deletedRows
       .filter((m) => mediaBucketFor(m.kind) === bucket)
-      .flatMap((m) => [m.path_thumb, m.path_card, m.path_full])
+      .flatMap((m) => [m.path_thumb, m.path_card, m.path_full, m.path_jpeg])
       .filter((p): p is string => Boolean(p));
     if (paths.length > 0) {
       await removeObjectsBestEffort(admin.storage, bucket, paths, "media bulk delete: renditions");
