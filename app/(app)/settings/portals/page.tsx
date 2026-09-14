@@ -1,5 +1,6 @@
 import { PortalCard, type PortalCardConnection } from "@/components/features/settings/portal-card";
 import { getCurrentProfile } from "@/lib/services/auth";
+import { DIALECT_CURRENCIES } from "@/lib/services/portals/dialects";
 import { PORTALS } from "@/lib/services/portals/registry";
 import type { Json } from "@/lib/supabase/database.types";
 import { createClient } from "@/lib/supabase/server";
@@ -60,7 +61,17 @@ export default async function PortalsSettingsPage() {
               lastPullCount: r.last_pull_count,
             }
           : null;
-        return <PortalCard key={def.id} portal={def} connection={connection} />;
+        return (
+          <PortalCard
+            key={def.id}
+            portal={def}
+            connection={connection}
+            // resolved here, not in the card: the `dialects` barrel also
+            // exports `DIALECT_RENDERERS`, so importing it from a "use client"
+            // file would pull the Kyero renderer into the browser bundle
+            acceptedCurrencies={DIALECT_CURRENCIES[def.dialect]}
+          />
+        );
       })}
     </div>
   );

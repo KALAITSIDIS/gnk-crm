@@ -13,7 +13,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { DIALECT_CURRENCIES } from "@/lib/services/portals/dialects";
 import type { PortalDefinition } from "@/lib/services/portals/registry";
 import { formatDateTime } from "@/lib/utils/format";
 
@@ -64,9 +63,17 @@ function listOr(items: readonly string[]): string {
 export function PortalCard({
   portal,
   connection,
+  acceptedCurrencies,
 }: {
   portal: PortalDefinition;
   connection: PortalCardConnection | null;
+  /**
+   * `DIALECT_CURRENCIES[portal.dialect]`, resolved by the page. `null` = any.
+   * Passed rather than looked up here so the `dialects` barrel — which holds
+   * `DIALECT_RENDERERS`, and through it the whole Kyero renderer — stays out
+   * of the client bundle.
+   */
+  acceptedCurrencies: readonly string[] | null;
 }) {
   const enabled = connection?.enabled ?? false;
   const [toggling, startToggle] = useTransition();
@@ -84,8 +91,6 @@ export function PortalCard({
     (k) => !(connection?.settings[k] ?? "").trim(),
   );
   const blockedByMissing = !enabled && missingRequired.length > 0;
-
-  const currencies = DIALECT_CURRENCIES[portal.dialect];
 
   const [state, formAction, saving] = useActionState(savePortalSettings, initialState);
   // Two saves inside one millisecond would share a `savedAt` and the second
@@ -254,7 +259,9 @@ export function PortalCard({
               {portal.requirements.minPhotos === 1 ? "" : "s"} with a JPEG rendition
             </li>
             <li>an English public description</li>
-            <li>{currencies ? `a price in ${listOr(currencies)}` : "a price"}</li>
+            <li>
+              {acceptedCurrencies ? `a price in ${listOr(acceptedCurrencies)}` : "a price"}
+            </li>
             {portal.requirements.needsCoords ? <li>map coordinates</li> : null}
             <li>languages carried: {portal.requirements.languages.join(", ")}</li>
           </ul>
