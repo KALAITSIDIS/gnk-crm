@@ -94,13 +94,20 @@ async function seedPublicListing(svc: SupabaseClient, orgId: string, tag: string
   // content_sha256, created_by — is absent on purpose: this fixture exists to
   // be SELECTED by those two functions, and a column neither of them reads
   // would only prove the seed writer had read the table.
+  //
+  // ONE ROW MORE THAN THE MINIMUM, and the extra one has NO `path_jpeg`. That
+  // last row is the whole of what the settings page's backfill warning counts,
+  // and it has to be a third photo rather than one of the two: the listing
+  // must still clear JamesEdition's minimum, so the warning is measured
+  // without changing what the feed is entitled to carry. `portal_supplement`
+  // filters `path_jpeg is not null`, so this row must be absent from the XML.
   const { error: mErr } = await svc.from("property_media").insert(
-    Array.from({ length: MIN_PHOTOS }, (_, i) => ({
+    Array.from({ length: MIN_PHOTOS + 1 }, (_, i) => ({
       org_id: orgId,
       property_id: prop.id,
       kind: "photo",
       path_full: `e2e/${tag}_${i + 1}_full.webp`,
-      path_jpeg: `e2e/${tag}_${i + 1}_jpeg.jpg`,
+      path_jpeg: i === MIN_PHOTOS ? null : `e2e/${tag}_${i + 1}_jpeg.jpg`,
       is_cover: i === 0,
       sort_order: i,
       alt: {},
@@ -116,7 +123,12 @@ async function seedPublicListing(svc: SupabaseClient, orgId: string, tag: string
         (rollback ? ` — AND the property survived: ${rollback.message}` : ""),
     );
   }
-  return { id: prop.id as string, reference };
+  return {
+    id: prop.id as string,
+    reference,
+    /** the photo with no JPEG rendition: counted by the settings page, absent from the feed */
+    unpreparedStem: `${tag}_${MIN_PHOTOS + 1}`,
+  };
 }
 
 test("enable → select → feed → remove → gone", async ({ page }) => {
@@ -142,6 +154,23 @@ test("enable → select → feed → remove → gone", async ({ page }) => {
   // a throw after the seed would strand a public, published, available row
   // with no `finally` yet in scope to take it away.
   const api = await pwRequest.newContext({ baseURL: baseUrl() });
+
+  // The settings page counts the org's photos that have no JPEG rendition, so
+  // the number it shows is a DELTA over whatever this database already holds —
+  // test residue elsewhere would otherwise make a hardcoded "1" fail for a
+  // reason that has nothing to do with portals. Measured before the seed, with
+  // the same filter the page's RLS-scoped read uses (0002_rls_policies.sql:171
+  // scopes property_media SELECT to the org and nothing narrower).
+  const { count: unpreparedBefore, error: countErr } = await svc
+    .from("property_media")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", orgId)
+    .eq("kind", "photo")
+    .is("path_jpeg", null);
+  if (countErr) throw new Error(`counting unprepared photos: ${countErr.message}`);
+  // The seed adds exactly one such photo — see seedPublicListing.
+  const expectedUnprepared = (unpreparedBefore ?? 0) + 1;
+
   const listing = await seedPublicListing(svc, orgId, tag);
   const problems = watchForProblems(page);
 
@@ -152,6 +181,17 @@ test("enable → select → feed → remove → gone", async ({ page }) => {
     await page.goto("/settings/portals");
     await expect(page.getByTestId(`portal-card-${PORTAL_ID}`)).toBeVisible();
     await assertNoHorizontalOverflow(page, "settings/portals");
+
+    // The backfill warning. It stands between a migrated database and an empty
+    // feed — a photo with no JPEG is invisible to every portal — and this is
+    // the only suite that renders the page it lives on.
+    const unprepared = page.getByTestId("portal-photos-unprepared");
+    await expect(unprepared).toBeVisible();
+    await expect(unprepared).toContainText(
+      `${expectedUnprepared} ${expectedUnprepared === 1 ? "photo is" : "photos are"} not yet prepared`,
+    );
+    await expect(unprepared).toContainText("media:backfill-jpeg");
+
     const toggle = page.getByTestId(`portal-toggle-${PORTAL_ID}`);
     await expect(toggle).toHaveText("Enable");
     await toggle.click();
@@ -188,6 +228,9 @@ test("enable → select → feed → remove → gone", async ({ page }) => {
     const xml = await res.text();
     expect(xml).toContain(`<ref>${listing.reference}</ref>`);
     expect(xml).toContain(`/media/e2e/${tag}_1_jpeg.jpg`);
+    // …and the photo with no JPEG rendition is invisible to the portal: neither
+    // its jpeg (there is none) nor its webp reaches the document.
+    expect(xml).not.toContain(listing.unpreparedStem);
     expect(xml).not.toContain("<el>");
 
     // 4. The timeline names the portal, not its id
