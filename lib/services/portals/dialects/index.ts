@@ -1,18 +1,15 @@
-import type { FeedListing } from "@/lib/services/portals/feed-listing";
 import type { Dialect } from "@/lib/services/portals/registry";
 import { kyero, KYERO_CURRENCIES, KYERO_TYPES } from "./kyero";
+import type { DialectRenderer } from "./types";
+
+export type { DialectRenderer } from "./types";
 
 /**
- * A dialect is a pure function from listings to a document. This interface is
- * the seam the spec names: a push adapter (not planned) would implement a
- * sibling interface reading the same `FeedListing`.
+ * Tables keyed by dialect, deliberately NOT fields on the renderer: eligibility
+ * must answer for dialects that have no renderer yet (`DIALECT_CURRENCIES.rera`
+ * exists while `DIALECT_RENDERERS.rera` is null), and `Record<Dialect, …>` makes
+ * a missing entry a compile error.
  */
-export interface DialectRenderer {
-  render(listings: readonly FeedListing[], settings: Record<string, string>): string;
-  /** what a DISABLED portal's URL answers: valid, and empty, so the portal clears its copy */
-  empty(): string;
-  contentType: string;
-}
 
 /** `null` = no renderer yet (spec pending). The registry's `spec` field and this table must agree — eligibility.test pins it. */
 export const DIALECT_RENDERERS: Record<Dialect, DialectRenderer | null> = {

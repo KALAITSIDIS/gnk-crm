@@ -127,9 +127,40 @@ export const SALE_OR_RENT: FeedListing = {
   images: [img(1), img(2)],
 };
 
-export const ALL = [SALE_VILLA, RENT_FLAT, LAND_PLOT, SALE_OR_RENT];
+/** Commercial unit: shop with covered area only, no bedrooms, energy class B+ (folds to B), one photo. */
+export const SHOP_UNIT: FeedListing = {
+  row: base({
+    reference: "PAF0005",
+    property_type: "shop",
+    title: { en: "Corner shop, Kato Paphos" },
+    public_description: { en: "Ground-floor retail unit with frontage." },
+    area: { en: "Kato Paphos" },
+    asking_price: 240000,
+    covered_area_sqm: 60,
+    plot_area_sqm: null,
+    veranda_sqm: null,
+    bedrooms: null,
+    bathrooms: null,
+    wc: 1,
+    parking_spaces: null,
+    has_storage: null,
+    total_floors: null,
+    year_built: 2001,
+    energy_class: "B+",
+    features: [],
+    updated_at: "2026-09-12T11:00:00+00:00",
+  }),
+  coords: { lat: 34.76, lng: 32.42, approx: false },
+  images: [img(1)],
+};
 
-export const SETTINGS = {
+/**
+ * Order and length are pinned by the Kyero golden; appending a fixture means
+ * regenerating it with UPDATE_GOLDEN=1 and reading the diff.
+ */
+export const ALL = [SALE_VILLA, RENT_FLAT, LAND_PLOT, SALE_OR_RENT, SHOP_UNIT];
+
+export const KYERO_SETTINGS = {
   contact_number: "+357 26 000000",
   whatsapp_number: "+357 99 000000",
   email: "sales@example.com",

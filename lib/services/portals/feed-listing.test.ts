@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildFeedListings, textIn, type FeedRow, type SupplementRow } from "./feed-listing";
+import { buildFeedListings, feedPrice, textIn, type FeedRow, type SupplementRow } from "./feed-listing";
 
 const row = (reference: string): FeedRow => ({
   reference,
@@ -55,6 +55,16 @@ describe("textIn", () => {
     expect(textIn({ en: "Hi" }, "ru")).toBe("");
     expect(textIn(null, "en")).toBe("");
     expect(textIn("not an object", "en")).toBe("");
+  });
+});
+
+describe("feedPrice", () => {
+  it("takes the monthly rent for a rental and the asking price otherwise, sale-or-rent included", () => {
+    const priced = (over: Partial<FeedRow>) => feedPrice({ ...row("A"), ...over });
+    expect(priced({ transaction_type: "rent", asking_price: 450000, rent_price_month: 1400 })).toBe(1400);
+    expect(priced({ transaction_type: "sale", asking_price: 450000, rent_price_month: 1400 })).toBe(450000);
+    expect(priced({ transaction_type: "sale_or_rent", asking_price: 450000, rent_price_month: 1400 })).toBe(450000);
+    expect(priced({ transaction_type: "rent", asking_price: 450000, rent_price_month: null })).toBeNull();
   });
 });
 

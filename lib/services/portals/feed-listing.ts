@@ -81,6 +81,13 @@ export function textIn(json: unknown, lang: Lang): string {
   return typeof v === "string" ? v.trim() : "";
 }
 
+/** The one definition of "the price a portal shows": monthly rent for a rental, the asking price otherwise (sale-or-rent goes out as a sale). */
+export function feedPrice(
+  row: Pick<FeedRow, "transaction_type" | "asking_price" | "rent_price_month">,
+): number | null {
+  return row.transaction_type === "rent" ? row.rent_price_month : row.asking_price;
+}
+
 export function buildFeedListings(
   rows: readonly FeedRow[],
   supplements: readonly SupplementRow[],
