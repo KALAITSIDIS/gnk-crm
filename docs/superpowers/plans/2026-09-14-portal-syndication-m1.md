@@ -2066,6 +2066,13 @@ git add lib/services/media.ts lib/services/media.test.ts lib/actions/media.ts sc
 git commit -m "media: a JPEG rendition beside the WebP full, for portal feeds (0095), with a backfill" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
+**Amendments applied at implementation (2026-09-14; the committed files are the authority, not the block above):**
+- `sharp` is `export =`, so the helper's parameter is typed with `import sharp, { type Sharp } from "sharp"` rather than `sharp.Sharp`.
+- A third media test reads pixels: the bottom-right of the JPEG rendition differs between a watermarked and a plain run while the top-left is byte-identical; proven red by watermarking `full` only, then restored.
+- Both rollback paths (the action's rejected-row cleanup and the importer's `remove([...])` after a failed insert) map `RENDITIONS`, so a failed insert never strands the new JPEG object.
+- `tsconfig.json` excludes `scripts/**` and ESLint ignores it, so `npm run typecheck`/`lint` do not cover the two `.mts` scripts; they were checked ad hoc.
+- Backfill evidence: fixture rows recreated by a `db reset` have no objects (six `download failed` skips, exit 1 — expected locally); a probe object uploaded to the bucket was backfilled to a 1600 px JPEG, no longer a candidate on the next run, and cleaned up. `npm test` 1551.
+
 ---
 
 ### Task 9: Feed assembly
