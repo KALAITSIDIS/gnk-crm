@@ -4,8 +4,23 @@ on:
   push:
   pull_request:
 
+# ONE RUN PER COMMIT. `push:` is unfiltered on purpose: a branch push is this
+# repo's free CI rehearsal (HANDOFF working agreements) and `main` runs after
+# every merge. `pull_request:` stays for the one case a push here cannot
+# cover — a PR from a FORK, whose push runs in the fork's Actions, not ours.
+# A PR whose head branch lives in THIS repository already ran on its push, so
+# every job below skips the pull_request run with the same `if:`. There is
+# no workflow-level `if`; the line is repeated on purpose — keep the three
+# identical. Before 2026-09-14 no PR had ever been opened here; the first one
+# ran the whole workflow twice on one commit, four Supabase stacks pulling
+# images at once, and both runs hit ECR Public's rate limit. A concurrency
+# group is not a fix: it cancels or queues, and when the PR is opened after
+# the push run has finished there is nothing left to cancel.
+# See docs/DECISIONS.md, T-ci-one-run-per-commit.
+
 jobs:
   checks:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -58,6 +73,7 @@ jobs:
         run: npm run check:static-routes
 
   rls:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -103,6 +119,7 @@ jobs:
   # playwright.config.ts has `reuseExistingServer: true`, so starting the server
   # here means Playwright reuses it instead of running `npm run dev`.
   e2e:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

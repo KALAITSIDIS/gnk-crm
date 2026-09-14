@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { describeAuthError, retryTransientAuth } from "@/lib/testing/auth-retry";
 import { totp } from "@/lib/testing/totp";
 
 /**
@@ -42,27 +43,36 @@ export interface EnrolledFactor {
  * Returns the secret as well as the id, which the caller needs when the same
  * user has to pass a SECOND challenge later — a browser login, for instance,
  * where the session that enrolled is not the session that signs in.
+ *
+ * Enrol and challenge go through `retryTransientAuth`: on a fresh CI stack one
+ * of the suite's concurrent auth calls has twice come back 5xx and taken the
+ * whole run down in setup (see lib/testing/auth-retry.ts). Verify does not —
+ * see the comment above it.
  */
 export async function enrolAndVerify(client: SupabaseClient): Promise<EnrolledFactor> {
-  const { data: enrolled, error: enrolErr } = await client.auth.mfa.enroll({
-    factorType: "totp",
-  });
-  if (enrolErr) throw new Error(`mfa.enroll: ${enrolErr.message}`);
+  const { data: enrolled, error: enrolErr } = await retryTransientAuth("mfa.enroll", () =>
+    client.auth.mfa.enroll({ factorType: "totp" }),
+  );
+  if (enrolErr) throw new Error(`mfa.enroll: ${describeAuthError(enrolErr)}`);
 
-  const { data: ch, error: chErr } = await client.auth.mfa.challenge({
-    factorId: enrolled.id,
-  });
-  if (chErr) throw new Error(`mfa.challenge: ${chErr.message}`);
+  const { data: ch, error: chErr } = await retryTransientAuth("mfa.challenge", () =>
+    client.auth.mfa.challenge({ factorId: enrolled.id }),
+  );
+  if (chErr) throw new Error(`mfa.challenge: ${describeAuthError(chErr)}`);
 
-  // Generated immediately before verify() to minimise the chance of straddling
-  // a 30-second TOTP step boundary; GoTrue's clock-skew tolerance covers the
-  // rest, which is why there is no retry loop here.
+  // Generated immediately before verify() — after the challenge that succeeded,
+  // whether that was the first attempt or a retry — to minimise the chance of
+  // straddling a 30-second TOTP step boundary; GoTrue's clock-skew tolerance
+  // covers the rest. Verify is deliberately NOT retried: a wrong code is a
+  // wrong code, and a 5xx here is ambiguous (a gateway timeout may follow a
+  // verify the server already applied), so it is reported with its status
+  // rather than answered again.
   const { error: verifyErr } = await client.auth.mfa.verify({
     factorId: enrolled.id,
     challengeId: ch.id,
     code: totp(enrolled.totp.secret),
   });
-  if (verifyErr) throw new Error(`mfa.verify: ${verifyErr.message}`);
+  if (verifyErr) throw new Error(`mfa.verify: ${describeAuthError(verifyErr)}`);
 
   return { factorId: enrolled.id, secret: enrolled.totp.secret };
 }
@@ -84,12 +94,12 @@ export async function enrolAndVerify(client: SupabaseClient): Promise<EnrolledFa
  */
 export async function clearFactors(admin: SupabaseClient, userId: string): Promise<number> {
   const { data, error } = await admin.auth.admin.mfa.listFactors({ userId });
-  if (error) throw new Error(`admin.mfa.listFactors: ${error.message}`);
+  if (error) throw new Error(`admin.mfa.listFactors: ${describeAuthError(error)}`);
 
   const factors = data?.factors ?? [];
   for (const f of factors) {
     const { error: delErr } = await admin.auth.admin.mfa.deleteFactor({ userId, id: f.id });
-    if (delErr) throw new Error(`admin.mfa.deleteFactor ${f.id}: ${delErr.message}`);
+    if (delErr) throw new Error(`admin.mfa.deleteFactor ${f.id}: ${describeAuthError(delErr)}`);
   }
   return factors.length;
 }
@@ -99,15 +109,15 @@ export async function clearFactors(admin: SupabaseClient, userId: string): Promi
  * case, where enrolment happened in a different session.
  */
 export async function passChallenge(client: SupabaseClient, factor: EnrolledFactor): Promise<void> {
-  const { data: ch, error: chErr } = await client.auth.mfa.challenge({
-    factorId: factor.factorId,
-  });
-  if (chErr) throw new Error(`mfa.challenge: ${chErr.message}`);
+  const { data: ch, error: chErr } = await retryTransientAuth("mfa.challenge", () =>
+    client.auth.mfa.challenge({ factorId: factor.factorId }),
+  );
+  if (chErr) throw new Error(`mfa.challenge: ${describeAuthError(chErr)}`);
 
   const { error } = await client.auth.mfa.verify({
     factorId: factor.factorId,
     challengeId: ch.id,
     code: totp(factor.secret),
   });
-  if (error) throw new Error(`mfa.verify: ${error.message}`);
+  if (error) throw new Error(`mfa.verify: ${describeAuthError(error)}`);
 }

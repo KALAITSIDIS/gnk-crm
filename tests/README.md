@@ -27,8 +27,8 @@ tests/
 ## Running
 
 ```bash
-npm run test          # unit — 1644 tests across 149 files (measured 2026-09-14), no external deps
-npm run test:rls      # RLS  — 136 tests across 12 files (measured 2026-09-14), needs the local Supabase stack up
+npm run test          # unit — 1662 tests across 150 files (measured 2026-09-14 on the merged tree), no external deps
+npm run test:rls      # RLS  — 136 tests across 12 files (measured 2026-09-14 on the merged tree), needs the local Supabase stack up
 npm run test:e2e      # E2E  — 243 desktop + 221 mobile specs listed (measured 2026-09-14), desktop 1280px + mobile 390px
 ```
 

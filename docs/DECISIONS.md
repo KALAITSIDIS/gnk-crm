@@ -6437,6 +6437,172 @@ budget" the CRM does not grant. The site's own build shape (two fetches per
 page) is the remaining lever, left alone: without the row lock the burst is
 just concurrent reads of a small function.
 
+## T-rls-mfa-transient-5xx — the harness names a 5xx and retries it (2026-09-14, no migration)
+
+The `rls` job of CI run 34872951408 (PR #1, `92c3276` — four lines of ESLint
+config that touch neither vitest nor the stack) fell in `beforeAll` with
+`Error: mfa.challenge: {}` from lib/testing/mfa.ts, and all 65 tests in
+rls.test.ts were skipped. The push-event twin of the same commit
+(34872946110) had passed 117/117 a minute earlier. Measured from the two
+logs: the failing run printed `Started supabase local development setup` at
+17:10:43.0, vitest started at :43.9, and the file was down at :45.2 — 832 ms
+into the file, about two seconds after the stack said it was up. There is no
+`console.error` in that log, so it was not auth-js's status-0 path (a fetch
+that fails outright logs before it throws); it was a 5xx that came back FAST,
+unlike the 2026-09-07 sighting in T-mfa-mandatory (`mfa.enroll: {}`, which
+the auth log resolved to `POST /factors → 504, context deadline exceeded,
+11.1s`). Which 5xx, the log cannot say, and that is the first defect.
+
+**Why the message is literally `{}`.** auth-js 2.110.2 (`lib/fetch.js`,
+`handleError`) turns any 500–504 or 520–530 response into an
+`AuthRetryableFetchError` whose message is `_getErrorMessage(response)`. A
+Response has no `msg`, `message`, `error_description` or `error`, so that
+falls through to `JSON.stringify(response)`, which renders a Response as
+`{}`. The status survives on `error.status` and is dropped from the text, and
+the harness threw the text. The same shape twice, a week apart.
+
+**Where the load comes from.** rls.test.ts's `beforeAll` creates five fixture
+users under `Promise.all`, and each `createTestUser` signs in and then
+enrols, challenges and verifies a TOTP factor: roughly fifteen auth requests
+inside one second, against an auth container that finished starting seconds
+earlier on a 2-vCPU runner beside ten other containers.
+
+**What was built, in the order the evidence supported.** (1) The status is
+in the message: every throw in lib/testing/mfa.ts goes through
+`describeAuthError`, so the next occurrence reads `mfa.challenge:
+AuthRetryableFetchError status=502: {}` — or `mfa.verify: AuthApiError
+status=422 code=mfa_verification_failed: Invalid TOTP code entered` — rather
+than `{}`. (2) Enrol and challenge are retried through `retryTransientAuth`
+(lib/testing/auth-retry.ts) on exactly what auth-js itself labels retryable:
+`isAuthRetryableFetchError`, the library's own classifier, which covers
+status 0 and 500–504/520–530 — wider than the 502/503/504 first proposed,
+and a definition that moves with the dependency instead of being a list kept
+here. Three retries at 500, 1000 and 2000 ms, so a call waits 3.5 s at most;
+each retry is a fresh request; each prints a `console.warn` naming the status
+and the wait, so a run that healed still says so in the log. When the
+challenge is retried the TOTP code is generated after the challenge that
+succeeded, as before. `passChallenge` — the E2E login path, which runs
+against the same freshly started stack — takes the same retry on its
+challenge. (3) Concurrency in `beforeAll` stays at five: with the retry in
+place there is no evidence that serialising the users buys anything, and it
+would add up to four times the setup latency to every run to guard against a
+failure now handled. It is the next lever if a 5xx ever outlives three
+retries.
+
+**Verify is deliberately not retried.** A wrong code is a wrong code: the
+same code fails the same way, and a retry across a 30-second step boundary
+would hide a real defect in the harness's TOTP. A 5xx on verify is
+ambiguous: a gateway timeout can follow a verify GoTrue has already applied,
+and a second answer to the same challenge then fails for a reason unrelated
+to the first. So verify reports its status and stops. The tests pin this as
+a choice (`a 5xx on verify is NOT retried either`), so relaxing it is a
+decision rather than an accident.
+
+**Proof.** tests/unit/mfa-harness-retries-transient-5xx.test.ts, 17 tests,
+red before the module existed and green after. They use the REAL auth-js
+error classes — the classifier checks a private marker as well as the name,
+so a lookalike `{ name }` object would prove the wrong thing — and a scripted
+`client.auth.mfa` for the wiring: a 502 on the challenge is retried and
+verify answers the SECOND challenge's id; a 503 on enrol the same; the retry
+is announced with its status; a wrong code and a 5xx on verify each reach
+verify exactly once; a challenge that keeps failing gives up after the table
+with the LAST status in the throw. Mutation-checked four ways: challenge
+taken out of the retry (3 red), the wrapper never retrying (12 red),
+`describeAuthError` dropping the status (6 red), verify put inside the retry
+(1 red). The first attempt at that fourth mutation did not install — a bare
+`\n` in the pattern against a CRLF working copy — and reported 17 green;
+whether a mutation actually landed is checked before its result is believed.
+Then `npm test` 1489/1489 (136 files, +17/+1) and `npm run test:rls` 117/117
+against the local stack (0094 applied): unchanged behaviour on a healthy
+stack.
+
+**What this does not do.** It does not make CI capture the auth container's
+log on failure. The status in the message is the fact the 2026-09-07 entry
+had to open the auth log to learn, and it separates a gateway 502 from a
+GoTrue 504 deadline; if a status alone ever proves insufficient, log capture
+on failure is the next step and belongs in the workflow, not the harness. It
+does not touch lib/actions/mfa.ts: the app shows the person the error and
+lets them try again, and a silent retry there would hide an outage from the
+one place it should be visible.
+
+## T-ci-one-run-per-commit — the first pull request ran CI twice on one commit (2026-09-14, no migration)
+
+`ci.yml` has said `on: push` and `on: pull_request`, neither filtered, since the
+scaffold. It never mattered: this repo had not opened a pull request before
+2026-09-14. The rhythm is branch → push → watch CI → merge locally → push
+`main`, so every commit ran exactly once and the second trigger lay dormant.
+PR #1 (`chore/eslint-ignore-maplibre`, 92c3276) woke it. One commit ran the
+whole workflow twice, three seconds apart — run 34872946110 on `push`, run
+34872951408 on `pull_request` — six jobs where three were due, four local
+Supabase stacks pulling images at once instead of two, and both logs show ECR
+Public refusing pulls (`toomanyrequests: Rate exceeded`), the CLI retrying, and
+in one job falling back to ghcr.io. It also doubled the exposure to the RLS
+suite's transient MFA setup failure (the separate task on `lib/testing/mfa.ts`).
+
+Three ways to make it one.
+
+**The conventional shape — `push: branches: [main]` plus an unfiltered
+`pull_request:` — was not taken.** Under it a branch push with no open PR runs
+nothing, and the branch push IS the working agreement: the free rehearsal a
+session watches while it writes the HANDOFF row, before the hosted migration
+and before the merge. Keeping the rehearsal under that shape means opening a PR
+the moment every branch is pushed — a PR that exists only to trigger CI, in a
+repo that merges locally with a merge commit and had never needed one. HANDOFF
+names this shape as the lever if CI's ~8 min ever becomes a problem; it is a
+lever for cost, not for this.
+
+**A concurrency group keyed on the head SHA does not dedupe.** GitHub has no
+dedupe; a group either cancels the older run (`cancel-in-progress: true` — the
+`push` run, three seconds older, dies and the commit wears a cancelled run) or
+queues the newer one and then runs it in full. And in the order this repo
+actually works — push, watch it go green, THEN open the PR — the push run has
+finished before the pull_request run starts, so there is nothing to cancel and
+both run anyway.
+
+**Chosen: `push:` stays unfiltered, and a `pull_request` run skips itself when
+the PR's head branch lives in this repository.** Every job carries
+
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+
+A push here already ran that commit. A PR from a fork — the one case a push
+here cannot cover, because a fork's push runs in the fork's Actions — still
+runs. The repo is public with zero forks, so the event could have been dropped
+outright; three lines keep the case. There is no workflow-level `if`, so the
+line is repeated on all three jobs, and the comment above `jobs:` says to keep
+the three identical. On a PR the skipped run shows beside the push run's green;
+it takes no runner minutes and pulls no image.
+
+What is given up: a `pull_request` run builds `refs/pull/N/merge` — the PR
+merged into its base — where a `push` run builds the branch head alone. Here
+the merge is made locally and pushed, and `main` runs on that push, so the
+merged tree gets its own run exactly as it did before any PR existed.
+
+Docs moved with it: `docs/10_INFRASTRUCTURE.md` §1 (which said "every push and
+pull request") and HANDOFF §0's CI row, which had not mentioned the `e2e` job
+since it was added on 2026-08-04; the "lever" sentence in HANDOFF's test
+section now points here first.
+
+Verification: the file parses (`js-yaml`), the three `if:` lines are
+byte-identical, and this branch's own push runs once. The skip arm is proven by
+the next PR opened from an in-repo branch — its `pull_request` run should show
+all three jobs skipped and the push run green; the fork arm stays unexercised
+until a fork exists.
+
+How it reached GitHub — and why the next workflow edit hits the same wall. A
+push that creates or changes a file under `.github/workflows/` needs the
+`workflow` OAuth scope, and neither credential on this machine has it: `gh`
+holds `gist, read:org, repo`, and `git push` does not even use `gh` — it
+authenticates through Git Credential Manager, whose stored OAuth token GitHub
+refused with `refusing to allow an OAuth App to create or update workflow
+.github/workflows/ci.yml without workflow scope`. gnk-web met the same wall
+(its note reads "workflow-file edits need the web editor"). So this branch
+went up in two pushes: the docs commit alone from the agent's shell, then the
+workflow commit by the operator — either with a refreshed `gh` token
+(`gh auth refresh -h github.com -s workflow`, then one push with `gh` as the
+credential helper) or by pasting the file into GitHub's web editor on this
+branch. The branch's own push run is the check that the file on GitHub is the
+one this entry describes.
+
 ## T-portal-syndication-m1 — a listing is chosen, per listing, for external portals; the CRM publishes pull feeds and holds no certificate (2026-09-14, migration 0095)
 
 Doc 01 §10 placed external portal XML feeds in Phase 5, and CLAUDE.md
