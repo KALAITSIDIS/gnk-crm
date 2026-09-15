@@ -23,8 +23,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { EntityPicker } from "@/components/features/shared/entity-picker";
 import { COMM_CHANNELS, LEAD_SOURCES } from "@/lib/validators/contacts";
 import { formatPhone } from "@/lib/services/phone";
+import { utcToDatetimeLocal } from "@/lib/utils/tz";
 import { cn } from "@/lib/utils";
 
 const initialState: LeadActionState = { error: null, savedAt: null, duplicate: null };
@@ -34,9 +36,25 @@ function labelize(value: string) {
 }
 
 type LinkedContact = { id: string; display_name: string };
+type LeadSource = (typeof LEAD_SOURCES)[number];
+type CommChannel = (typeof COMM_CHANNELS)[number];
 
-export function AddLeadDialog() {
-  const [open, setOpen] = useState(false);
+/**
+ * `defaultOpen` / `defaultSource` / `defaultChannel` (0098, audit LR-04): the
+ * dashboard's "Log a call" lands on /leads?add=phone with the dialog already
+ * open and the source set, so a call or a WhatsApp is two taps to record -
+ * the two routes off the listing page that the CRM never heard about.
+ */
+export function AddLeadDialog({
+  defaultOpen = false,
+  defaultSource,
+  defaultChannel,
+}: {
+  defaultOpen?: boolean;
+  defaultSource?: LeadSource;
+  defaultChannel?: CommChannel;
+} = {}) {
+  const [open, setOpen] = useState(defaultOpen);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -51,14 +69,30 @@ export function AddLeadDialog() {
         </DialogHeader>
         {/* mounted only while open so a reopened dialog never shows the
             previous attempt's error or search results (audit fix) */}
-        {open ? <AddLeadForm onDone={() => setOpen(false)} /> : null}
+        {open ? (
+          <AddLeadForm
+            onDone={() => setOpen(false)}
+            defaultSource={defaultSource}
+            defaultChannel={defaultChannel}
+          />
+        ) : null}
       </DialogContent>
     </Dialog>
   );
 }
 
-function AddLeadForm({ onDone }: { onDone: () => void }) {
+function AddLeadForm({
+  onDone,
+  defaultSource,
+  defaultChannel,
+}: {
+  onDone: () => void;
+  defaultSource?: LeadSource;
+  defaultChannel?: CommChannel;
+}) {
   const [state, formAction, pending] = useActionState(createLead, initialState);
+  // the latest a lead can have arrived: now, on the desk's clock
+  const [maxReceived] = useState(() => utcToDatetimeLocal(new Date()));
   const [query, setQuery] = useState("");
   const [candidates, setCandidates] = useState<MergeCandidate[]>([]);
   const [contact, setContact] = useState<LinkedContact | null>(null);
@@ -99,7 +133,7 @@ function AddLeadForm({ onDone }: { onDone: () => void }) {
       <div className="grid grid-cols-2 gap-3">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="lead-source">Source</Label>
-          <Select name="source" defaultValue="phone">
+          <Select name="source" defaultValue={defaultSource ?? "phone"}>
             <SelectTrigger id="lead-source">
               <SelectValue />
             </SelectTrigger>
@@ -114,7 +148,7 @@ function AddLeadForm({ onDone }: { onDone: () => void }) {
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="lead-channel">Channel</Label>
-          <Select name="channel" defaultValue="">
+          <Select name="channel" defaultValue={defaultChannel ?? ""}>
             <SelectTrigger id="lead-channel">
               <SelectValue placeholder="Optional" />
             </SelectTrigger>
@@ -200,6 +234,31 @@ function AddLeadForm({ onDone }: { onDone: () => void }) {
           </div>
         </fieldset>
       ) : null}
+
+      {/* 0098 (audit LR-04): the listing a call was about, and when it came in.
+          The schema and the action accepted both since T2; the form never sent them. */}
+      <EntityPicker
+        name="property_id"
+        kind="property"
+        label="Property (optional)"
+        placeholder="Search by reference or title…"
+        hint="The listing the enquiry is about, if any."
+      />
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="lead-received-at">Received (leave blank for now)</Label>
+        {/* max is computed on whichever side renders first; a minute of drift is
+            harmless and the schema is the real guard */}
+        <Input
+          id="lead-received-at"
+          name="received_at"
+          type="datetime-local"
+          max={maxReceived}
+          suppressHydrationWarning
+        />
+        <p className="text-xs text-text-3">
+          For a call or message logged after the fact — the response clock runs from here, not from now.
+        </p>
+      </div>
 
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="lead-message">Message / request</Label>

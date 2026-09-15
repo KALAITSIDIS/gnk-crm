@@ -1400,7 +1400,8 @@ explicit direction.
   `viewings.notes` are free text that may name the data subject; both are
   retained today under the legal-claims basis. If a data subject disputes that,
   they need a review path. Also `leads.lost_reason` is left intact.
-- Add-lead dialog: optional property link (schema + createLead already accept
+- ~~**Add-lead dialog: optional property link + backdated received_at.**~~ **SHIPPED 2026-09-15 (Sprint A, audit LR-04):** the dialog carries a property picker and a `datetime-local` Received field (Cyprus wall clock, the future refused, `backdated` in the event), and the agent dashboard's first quick action is "Log a call" → `/leads?add=phone` with the dialog open and preset.
+  - **Add-lead dialog (original).** optional property link (schema + createLead already accept
   `property_id`; the form never sends it) and an optional backdated
   `received_at` for leads entered after the fact, so the response-time KPI
   reflects reality.

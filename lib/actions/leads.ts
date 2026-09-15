@@ -21,7 +21,9 @@ import {
   splitEnquirerName,
 } from "@/lib/services/lead-contact";
 import { normalizePhone } from "@/lib/services/phone";
-import { COMM_CHANNELS, LEAD_OPEN_STATUSES, LEAD_SOURCES } from "@/lib/validators/contacts";
+import { zonedWallClockToUtc } from "@/lib/utils/tz";
+import { COMM_CHANNELS, LEAD_OPEN_STATUSES } from "@/lib/validators/contacts";
+import { createLeadSchema } from "@/lib/validators/leads";
 
 // `duplicate` is set when creating a NEW contact from the lead hits an existing
 // one (doc 02 §C4 dedup): the form surfaces it and offers to link instead.
@@ -36,8 +38,6 @@ export type LeadActionState = {
 type LeadRow = Database["public"]["Tables"]["leads"]["Row"];
 type LeadUpdate = Database["public"]["Tables"]["leads"]["Update"];
 
-const emptyToUndefined = (v: unknown) => (v === "" || v === null || v === "none" ? undefined : v);
-
 const isOpen = (lead: LeadRow) =>
   (LEAD_OPEN_STATUSES as readonly string[]).includes(lead.status);
 
@@ -51,20 +51,6 @@ const canWorkError = (profile: CurrentProfile, lead: LeadRow): string | null =>
   profile.role !== "admin" && lead.assigned_agent_id && lead.assigned_agent_id !== profile.id
     ? "Lead is assigned to another agent."
     : null;
-
-// z.guid(), not z.uuid() — Zod 4 uuid() rejects seeded fixture ids (T3.2)
-const createLeadSchema = z.object({
-  source: z.enum(LEAD_SOURCES),
-  channel: z.preprocess(emptyToUndefined, z.enum(COMM_CHANNELS).optional()),
-  message: z.preprocess(emptyToUndefined, z.string().max(5000).optional()),
-  contact_id: z.preprocess(emptyToUndefined, z.guid().optional()),
-  property_id: z.preprocess(emptyToUndefined, z.guid().optional()),
-  // New-enquirer capture (doc 02 §C4 "create contact"): a name plus optional
-  // phone/email. Ignored when an existing contact_id is picked.
-  new_contact_name: z.preprocess(emptyToUndefined, z.string().max(200).optional()),
-  new_contact_phone: z.preprocess(emptyToUndefined, z.string().max(40).optional()),
-  new_contact_email: z.preprocess(emptyToUndefined, z.string().email().max(200).optional()),
-});
 
 export async function createLead(
   _prev: LeadActionState,
@@ -165,6 +151,11 @@ export async function createLead(
       message: d.message ?? null,
       contact_id: contactId,
       property_id: d.property_id ?? null,
+      // 0098 (audit LR-04): a call logged after the fact keeps its real arrival
+      // time (Cyprus wall clock -> UTC), so the response clock measures the desk
+      ...(d.received_at
+        ? { received_at: zonedWallClockToUtc(d.received_at).toISOString() }
+        : {}),
     })
     .select("id")
     .single();
@@ -176,7 +167,13 @@ export async function createLead(
     entityType: "lead",
     entityId: created.id,
     eventType: "created",
-    payload: { source: d.source, channel: d.channel ?? null, contact_id: contactId },
+    payload: {
+      source: d.source,
+      channel: d.channel ?? null,
+      contact_id: contactId,
+      property_id: d.property_id ?? null,
+      backdated: Boolean(d.received_at),
+    },
   });
 
   revalidatePath("/leads");

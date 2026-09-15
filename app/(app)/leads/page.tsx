@@ -38,6 +38,9 @@ export default async function LeadsPage({
   const sp = await searchParams;
   const filters = parseLeadFilters(sp);
   const page = pageSchema.parse(first(sp.page));
+  // ?add=phone|whatsapp: the dashboard's "Log a call" opens the dialog preset (0098, LR-04)
+  const add = first(sp.add);
+  const preset = add === "phone" || add === "whatsapp" ? add : undefined;
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
 
@@ -116,7 +119,12 @@ export default async function LeadsPage({
               </a>
             </Button>
           ) : null}
-          <AddLeadDialog />
+          <AddLeadDialog
+            key={preset ?? "manual"}
+            defaultOpen={preset !== undefined}
+            defaultSource={preset}
+            defaultChannel={preset}
+          />
         </div>
       </div>
 

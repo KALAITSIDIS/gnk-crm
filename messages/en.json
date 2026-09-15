@@ -61,6 +61,7 @@
     "agent": {
       "quick": {
         "addLead": "Add lead",
+        "logCall": "Log a call",
         "viewings": "Viewings",
         "contacts": "Contacts",
         "calculators": "Calculators"
