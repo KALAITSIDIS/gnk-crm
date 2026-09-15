@@ -6,6 +6,7 @@ import { isTrustedForwarderLoudly } from "@/lib/services/forwarder";
 import { enquiryCompleteness, publicEnquirySchema } from "@/lib/validators/public-enquiry";
 import { sendEnquiryAlert } from "@/lib/services/enquiry-alert";
 import { recordEnquiryAlert } from "@/lib/services/enquiry-alert-event";
+import { sendEnquiryAck } from "@/lib/services/enquiry-ack";
 
 /**
  * The public enquiry door (WF-4, migration 0084) — the first place anything
@@ -174,6 +175,29 @@ export async function POST(request: NextRequest) {
       leadId: row.lead_id,
       outcome,
     });
+
+    // 0098 (audit LR-06): the enquirer is acknowledged too — once per fresh
+    // enquiry (a replay and a honeypot hit return above), from the firm's own
+    // address, only when they left one. The firm's name comes from the org
+    // row the door named; without it the acknowledgement is skipped rather
+    // than signed by a literal.
+    if (input.email) {
+      const { data: org } = await supabase
+        .from("organizations")
+        .select("name")
+        .eq("id", row.lead_org_id)
+        .maybeSingle();
+      if (org?.name) {
+        await sendEnquiryAck({
+          name: input.name,
+          email: input.email,
+          propertyReference: input.property_reference ?? null,
+          orgName: org.name,
+        });
+      } else {
+        console.warn("[enquiry-ack] SKIPPED — the organisation row could not be read.");
+      }
+    }
   });
 
   // 202, not 201: the desk decides what this becomes, and the caller gets no

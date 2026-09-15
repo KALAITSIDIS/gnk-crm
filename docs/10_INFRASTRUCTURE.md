@@ -219,7 +219,8 @@ SENTRY_DSN                       (server — was missing once; everything report
 NEXT_PUBLIC_SENTRY_DSN
 SENTRY_AUTH_TOKEN                (optional, source maps)
 RESEND_API_KEY                   (optional)
-ENQUIRY_ALERT_TO                 (with it; the desk address)
+ENQUIRY_ALERT_TO                 (with it; the desk address — comma-separated for more than one)
+ENQUIRY_ALERT_FROM               (optional; the alert's From. Set to a verified sending address to also arm the visitor acknowledgement, 0098 — never resend.dev for that)
 ENQUIRY_FORWARD_KEY              (secret; = gnk-web's CRM_FORWARD_KEY — the site proves it is the forwarder, 2026-09-06)
 IP_HASH_SALT                     (secret; salts the rate-limit fingerprints — unset falls back to the public project URL and logs it)
 SITE_REVALIDATE_URL              (the site's revalidate door, https://gnk-web.vercel.app/api/revalidate — 2026-09-13, REL-01)

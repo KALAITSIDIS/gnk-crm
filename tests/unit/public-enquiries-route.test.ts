@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hashIp } from "@/lib/services/ip-hash";
 import { ORIGIN_RATE_LIMIT, RATE_LIMIT } from "@/lib/services/enquiry-budget";
 import { sendEnquiryAlert } from "@/lib/services/enquiry-alert";
+import { sendEnquiryAck } from "@/lib/services/enquiry-ack";
 import { POST } from "@/app/api/public/enquiries/route";
 
 /**
@@ -25,6 +26,15 @@ const state = vi.hoisted(() => ({
   replay: false,
   /** every row the route wrote through the admin client, by table */
   writes: [] as Array<{ table: string; row: Record<string, unknown> }>,
+  /**
+   * The work the route hands to `after()`. The mock below runs it inline but
+   * an async callback still settles over several microtask hops, and an
+   * assertion made straight after `await POST()` raced them — it saw the
+   * alert (first in the callback) and missed the acknowledgement (last).
+   * `post()` awaits every callback before answering, so a test asserts on a
+   * finished request rather than on how many hops it happened to wait.
+   */
+  afters: [] as Promise<unknown>[],
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
@@ -48,9 +58,19 @@ vi.mock("@/lib/supabase/admin", () => ({
         state.writes.push({ table, row });
         return { error: null };
       },
+      // 0098: the acknowledgement names the firm, read by the org id the door returned
+      select: () => ({
+        eq: () => ({
+          maybeSingle: async () =>
+            table === "organizations"
+              ? { data: { name: "GN Kalaitsidis Capital" }, error: null }
+              : { data: null, error: null },
+        }),
+      }),
     }),
   }),
 }));
+vi.mock("@/lib/services/enquiry-ack", () => ({ sendEnquiryAck: vi.fn(async () => "skipped") }));
 vi.mock("@/lib/services/caller-ip", async () => {
   const { hashIp } = await import("@/lib/services/ip-hash");
   return { callerIpHash: async () => hashIp("203.0.113.7") };
@@ -58,15 +78,20 @@ vi.mock("@/lib/services/caller-ip", async () => {
 vi.mock("@/lib/services/enquiry-alert", () => ({ sendEnquiryAlert: vi.fn(async () => "skipped") }));
 vi.mock("next/server", async (importOriginal) => {
   const original = await importOriginal<typeof import("next/server")>();
-  return { ...original, after: (fn: () => unknown) => void fn() };
+  return {
+    ...original,
+    after: (fn: () => unknown) => {
+      state.afters.push(Promise.resolve().then(fn));
+    },
+  };
 });
 
 const KEY = "0b7d4c6e8a9f0b1c2d3e4f505f1c9e2a";
 const TRANSPORT = hashIp("203.0.113.7");
 const VISITOR = "198.51.100.22";
 
-const post = (headers: Record<string, string> = {}, body: Record<string, unknown> = {}) =>
-  POST(
+const post = async (headers: Record<string, string> = {}, body: Record<string, unknown> = {}) => {
+  const res = await POST(
     new NextRequest("https://crm.example/api/public/enquiries", {
       method: "POST",
       headers: { "content-type": "application/json", ...headers },
@@ -79,6 +104,9 @@ const post = (headers: Record<string, string> = {}, body: Record<string, unknown
       }),
     }),
   );
+  await Promise.all(state.afters.splice(0));
+  return res;
+};
 
 beforeEach(() => {
   state.hits = [];
@@ -86,7 +114,9 @@ beforeEach(() => {
   state.submits = [];
   state.replay = false;
   state.writes = [];
+  state.afters = [];
   vi.mocked(sendEnquiryAlert).mockClear();
+  vi.mocked(sendEnquiryAck).mockClear();
   process.env.ENQUIRY_FORWARD_KEY = KEY;
 });
 afterEach(() => {
@@ -177,6 +207,38 @@ describe("the brief travels as data", () => {
     await post({ "x-gnk-forward-key": KEY });
     expect(state.submits[0]!.p_meta).toBeNull();
     expect(sendEnquiryAlert).toHaveBeenCalledWith(expect.objectContaining({ meta: null }));
+  });
+});
+
+/**
+ * 0098 (audit LR-06): the enquirer is acknowledged, after the answer, from
+ * the firm's own address — once per enquiry, never for a bot and never for a
+ * replay, and only when they left an e-mail to write to.
+ */
+describe("the enquirer is acknowledged", () => {
+  it("after a fresh enquiry with an e-mail, naming the firm and the listing", async () => {
+    await post({ "x-gnk-forward-key": KEY }, { property_reference: "PAF0001" });
+    expect(sendEnquiryAck).toHaveBeenCalledTimes(1);
+    expect(sendEnquiryAck).toHaveBeenCalledWith({
+      name: "A Buyer",
+      email: "buyer@example.invalid",
+      propertyReference: "PAF0001",
+      orgName: "GN Kalaitsidis Capital",
+    });
+  });
+
+  it("not when the enquirer gave only a phone", async () => {
+    await post({ "x-gnk-forward-key": KEY }, { email: "", phone: "+357 99 123456" });
+    expect(sendEnquiryAck).not.toHaveBeenCalled();
+    expect(sendEnquiryAlert).toHaveBeenCalledTimes(1);
+  });
+
+  it("not on a replay, and not on a honeypot hit", async () => {
+    state.replay = true;
+    await post({ "x-gnk-forward-key": KEY }, { idempotency_key: "3f2a9c1e-0b7d-4c6e-8a9f-0b1c2d3e4f50" });
+    state.replay = false;
+    await post({ "x-gnk-forward-key": KEY }, { website: "http://spam.example" });
+    expect(sendEnquiryAck).not.toHaveBeenCalled();
   });
 });
 
