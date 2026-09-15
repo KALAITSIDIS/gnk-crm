@@ -12,10 +12,13 @@
 
 # testing
 /coverage
-# Playwright: keep the specs and the module screenshots, drop the run artifacts
+# Playwright: keep the specs; the run artifacts AND the module screenshots are report
+# output (modules.spec.ts rewrites every PNG on every run; nothing compares them —
+# T-repo-hygiene-2026-09-15), so none of it is tracked
 /tests/.auth
 /tests/.playwright-output
 /tests/.playwright-report
+/tests/screenshots
 /test-results
 
 # next.js
@@ -28,6 +31,8 @@
 # misc
 .DS_Store
 *.pem
+# Claude Code per-machine settings (never commit)
+.claude/settings.local.json
 
 # debug
 npm-debug.log*

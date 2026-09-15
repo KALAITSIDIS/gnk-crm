@@ -1420,18 +1420,14 @@ tables 0030 excluded on purpose.
     skipped) with `.next` at 2.29 GB and `C:` never moving off ~22 GB free. A
     local `supabase db reset` cycle is affordable again too — which is how the
     `csp.spec.ts` run-1 proof finally got taken (DECISIONS 2026-08-08).
-  - **`git status` after a local full run: `tests/screenshots/*.png` are TRACKED
-    and `modules.spec.ts` overwrites all 12 with whatever your local database
-    looked like.** Run the suite right after a `db reset` and they silently
-    become pictures of an empty app — `leads-desktop.png` halved, 207 KB → 102 KB
-    — which is a downgrade, not a change, and it will ride along in your next
-    `git add -A`. **It goes the other way just as easily**: on 2026-08-10, run
-    against a stack that had been up two days, the same file went 207 KB →
-    525 KB. Bigger is not better here either — both directions are unintended
-    churn in tracked files from a run you did for some other reason. They are
-    report artifacts, not a `toHaveScreenshot` baseline, so nothing fails; just
-    `git checkout HEAD -- tests/screenshots/` unless you deliberately want to
-    refresh them.
+  - **`tests/screenshots/*.png` are git-ignored since 2026-09-15
+    (T-repo-hygiene-2026-09-15).** `modules.spec.ts` still writes one per module
+    and project for the report, but they were never a `toHaveScreenshot`
+    baseline and nothing reads them, while every local run rewrote 25 tracked
+    PNGs (`leads-desktop.png` 207 KB → 102 KB after a `db reset`, → 525 KB after
+    two days up) and the churn rode along in the next `git add -A`. Untracked,
+    so `git status` stays clean after a run and no `git checkout HEAD --
+    tests/screenshots/` is needed any more.
   - **Killing a backgrounded `npm run dev` leaves `next dev` alive, and Playwright
     will then reuse the wreckage.** `playwright.config.ts` sets
     `reuseExistingServer: true` against `npm run dev`, so a half-orphaned server

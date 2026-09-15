@@ -11,7 +11,8 @@ import {
  * Per-module smoke (audit brief Phase 2). For every sidebar module:
  * page loads with no 4xx/5xx, no console errors, no unhandled network
  * failure, the shell renders, the layout does not overflow sideways, and a
- * screenshot lands in tests/screenshots/ for the report.
+ * screenshot lands in tests/screenshots/ for the report (git-ignored since
+ * 2026-09-15 — report output, not a toHaveScreenshot baseline).
  *
  * Runs on both the desktop and mobile projects, so the 390px column of the
  * evidence set comes from the same assertions as the 1280px one.

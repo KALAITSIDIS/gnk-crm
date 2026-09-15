@@ -350,8 +350,8 @@ practice:
   in flight.
 - Duplicate commits dedupe by patch-id on `git rebase origin/main`
   ("skipped previously applied commit").
-- Unit-test counts and `tests/screenshots/` churn between runs for reasons that
-  are not your change.
+- Unit-test counts churn between runs for reasons that are not your change
+  (`tests/screenshots/` no longer does — git-ignored since 2026-09-15).
 
 ---
 
