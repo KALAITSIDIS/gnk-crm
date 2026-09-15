@@ -6767,6 +6767,50 @@ A tracked-file audit (`git ls-files`, blob sizes, a `knip` scan, `npm audit --om
 
 What the scan flagged and was deliberately NOT touched: every `scripts/backup/*.mjs` (run by the nightly task and by each other, not by `package.json`), the operator scripts under `scripts/import`, `scripts/maintenance`, `scripts/media` and `scripts/fonts` (run by hand, documented in their headers), `tests/e2e/auth.setup.ts` (Playwright's setup project), `public/sw.js` (served at runtime) and `lib/testing/server-only-stub.ts` (a vitest alias); on the web repo the scan listed its 34 unit-test files, which is the scanner not knowing the vitest layout. Unused *exports* (constants kept for tests and documentation) were left alone: removing them is churn with no benefit. The pack size of `gnk-crm` (about 67 MB, most of it the screenshots' history) is not reduced — that would need a history rewrite, which is out of bounds.
 
+## T-audit-r06-postgis — the PostGIS catalog was anon-writable, and only a trigger could close it (2026-09-15, migration 0099)
+
+The 2026-09-15 security & compliance audit (artifact
+`claude.ai/artifact/8tYzgYtY7n11N52DxXNVfM`, finding AC-04) measured that the
+PostGIS install grants the `anon` and `authenticated` API roles full DML on
+`public.spatial_ref_sys`, and PostgREST exposes it. Proven on hosted with only
+the publishable key: an anon `DELETE` and an anon `UPDATE` each answered **204**.
+The rows are the public EPSG registry (8,500 of them), so nothing confidential
+leaks, but anyone on the internet could wipe them and break every geography
+operation — the map, area centroids, the approximate-location feed.
+
+**The obvious fix does not work.** `REVOKE ... FROM anon` is a silent no-op from
+`postgres`: the table is owned by `supabase_admin`, every grant was made BY
+`supabase_admin`, and `postgres` — the role every migration and the management
+tooling run as — is neither the owner, a member of `supabase_admin`, nor a
+superuser (`pg_has_role(postgres, supabase_admin, MEMBER)` = false, measured).
+Running the revoke changed the ACL by zero bytes and raised no error, which is
+exactly the false-green trap: a migration that "revokes" and does nothing.
+
+**What postgres CAN do is add a trigger** — it holds `TRIGGER` on the table even
+though it cannot alter the grant. So 0099 installs `forbid_srs_api_writes()` and
+a statement-level `BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE` trigger that
+raises `insufficient_privilege` when `current_user` is `anon` or `authenticated`,
+and lets `postgres`, `supabase_admin` and `service_role` through. Reads are
+untouched. Applied to hosted 2026-09-15 via `execute_sql` and re-probed: the same
+anon `DELETE`/`UPDATE` now answer **401** with the guard's message, the 8,500
+rows are intact, and an anon `SELECT` still answers 200. The migration
+self-verifies on every apply by assuming the `anon` role (postgres holds ADMIN on
+it) and asserting the write is refused, so a fresh CI or local reset proves it
+too. `supabase/tests/postgis-catalog-guard.test.ts` pins it in the RLS suite.
+
+The two siblings `public.geometry_columns` and `public.geography_columns` are
+VIEWS over the system catalogs and are not updatable (anon `DELETE` answers
+SQLSTATE `0A000`), so they carry no write hole and need no guard; anon keeps
+`SELECT` on all three, unchanged.
+
+**Residual, for the operator.** The grants themselves still sit in the ACL and
+can only be revoked by `supabase_admin`, which no customer role can assume — so
+the trigger is the enforcing control, not belt-and-braces. Raise a Supabase
+support request to revoke the default PostGIS grants (or confirm it is handled on
+newer project templates); until then the guard stands in front of them. The
+`spatial_ref_sys` "RLS disabled in public" advisor line is the same object and
+stays for the same reason — a customer cannot enable RLS on a supabase_admin
+table — and is low-risk public reference data.
 ## T-int-phase-1 — integrations audit, phase 1: the enquiry door records and dedupes, slip signing retries, portal tokens become digests (2026-09-15, migrations 0096 + 0097)
 
 The 2026-09-15 integrations & third-party API audit (a private artifact held
