@@ -6766,3 +6766,62 @@ After milestone 1 of portal syndication shipped, both repositories got a hygiene
 A tracked-file audit (`git ls-files`, blob sizes, a `knip` scan, `npm audit --omit=dev` — 0 vulnerabilities in both repos) found three things worth changing and nothing else. (1) `components/ui/card.tsx` and `components/ui/skeleton.tsx` had no importer anywhere in `app/`, `components/`, `lib/`, `tests/` or `scripts/` — shadcn primitives added and never used — and are deleted; typecheck, lint and the unit suite prove nothing referenced them. (2) The 25 PNGs under `tests/screenshots/` were report output of `modules.spec.ts`, rewritten on every local run and compared by nothing (no `toHaveScreenshot`, no reader), so every full run dirtied the tree with binary churn that HANDOFF §7 had to warn about; they are now git-ignored and untracked, the spec still writes them, and the five places that described the old behaviour (`.gitignore`, the spec's comment, HANDOFF §7, `tests/README.md`, `docs/ENGINEERING_NOTES.md`) say so. (3) `.claude/settings.local.json` — per-machine Claude Code state — is ignored in both repositories (gnk-web PR #2, merged as `e4befba`).
 
 What the scan flagged and was deliberately NOT touched: every `scripts/backup/*.mjs` (run by the nightly task and by each other, not by `package.json`), the operator scripts under `scripts/import`, `scripts/maintenance`, `scripts/media` and `scripts/fonts` (run by hand, documented in their headers), `tests/e2e/auth.setup.ts` (Playwright's setup project), `public/sw.js` (served at runtime) and `lib/testing/server-only-stub.ts` (a vitest alias); on the web repo the scan listed its 34 unit-test files, which is the scanner not knowing the vitest layout. Unused *exports* (constants kept for tests and documentation) were left alone: removing them is churn with no benefit. The pack size of `gnk-crm` (about 67 MB, most of it the screenshots' history) is not reduced — that would need a history rewrite, which is out of bounds.
+
+## T-int-phase-1 — integrations audit, phase 1: the enquiry door records and dedupes, slip signing retries, portal tokens become digests (2026-09-15, migrations 0096 + 0097)
+
+The 2026-09-15 integrations & third-party API audit (a private artifact held
+by the operator; finding ids `INT-01…INT-18`) found the platform's live state
+healthy and its exposure in what happens when a hop fails silently. Phase 1
+of its plan — the five items that need no vendor and no operator account —
+shipped on `fix/int-phase-1`, built in a worktree because two other sessions
+were running against the main checkout at the time. The plan is
+`docs/superpowers/plans/2026-09-15-int-phase-1.md`.
+
+**INT-01 — the desk alert had no timeout and no record.** `sendEnquiryAlert`
+now passes `AbortSignal.timeout` (8 s, `ALERT_TIMEOUT_MS`) to the Resend
+call, and the route writes its outcome — `sent`, `skipped`, `failed` — as an
+`enquiry_alert` event on the lead (`lib/services/enquiry-alert-event.ts`;
+outcome and provider only, never an address, SEC-03). Until now the word came
+back and was dropped, so a failed or skipped alert was a console line and
+nothing else.
+
+**INT-02 — no idempotency, so a slow save invited a duplicate.** Migration
+**0096** gives `submit_public_enquiry` a `p_idempotency_key` and makes it
+return one row `(lead_id, lead_org_id, replayed)`; a refusal is zero rows.
+The site mints a key per form (`enquiry_key`, filled by the browser after
+mount so the server's render and the client's agree), forwards it as
+`idempotency_key`, and retries a LOST answer exactly once with the same key —
+never without one, never on a status code. The return-shape change is why the
+function is dropped and recreated (a return type survives no
+`create or replace`), and why the 0087 lockdown is restated and asserted.
+
+**INT-08 — slip signing was not retry-safe.** The PNG went up first with
+`upsert: false`; a PDF failure stranded it and every retry was refused by
+Storage. The PDF is now rendered before anything is stored, a fresh signing
+removes whatever an earlier attempt left at its two paths, and a failure after
+an upload takes the upload back out.
+
+**INT-10 — portal feed tokens were stored in clear.** Migration **0097**
+replaces `feed_token` with `feed_token_sha256` (nullable: a row created by
+saving contact details first has no token until the switch is flipped), the
+three anon functions take `p_token_sha256`, the route hashes the path token
+once, and the app mints (`lib/services/portals/token.ts`) on the first enable,
+on an enable of a token-less row, and on Regenerate — returning the plaintext
+once for the card's copy-it-now panel. The settings page can say THAT a URL
+exists and never what it is. The portals e2e now removes the connection before
+and after the run so its Enable is a first enable and shows a URL.
+
+**What moved and why it is recorded here.** The BACKLOG's milestone-3 note
+reserved "0096" for the leads pull; that was a note, not a ledger, and M3
+takes the next free number. The restore pack's migration count pin moved 95 →
+97. The audit's step 1 — regenerating the JamesEdition token the audit's own
+database read had seen — is superseded by 0097 on hosted: the stored value
+becomes a digest, and the next Regenerate mints a token nobody has read.
+
+**Observed on the shared local stack, not a defect of this branch:** while the
+full RLS suite ran, the local database also carried another session's
+migration `0098 enquiry_meta_routing_sla` (a `lead-sla` cron job every ten
+minutes and a `lead_unanswered` task kind), so rls.test.ts 33 and 50 counted
+14 kinds and 10 jobs against pins of 13 and 9, and test 38's synthetic figures
+doubled under two suites running at once. CI applies only this branch's
+migrations to a fresh stack and is the check that counts.

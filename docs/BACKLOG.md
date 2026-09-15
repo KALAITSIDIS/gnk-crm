@@ -2215,7 +2215,7 @@ Every VERIFY line in this section was RUN on 2026-09-14 before it was written.
   **VERIFY:** `ls lib/services/portals/dialects/rera.ts lib/services/portals/dialects/trovit.ts` — either present means started. *(neither on 2026-09-14; the directory holds `kyero.ts`, `xml.ts`, `types.ts`, `index.ts` and the fixtures.)*
 
 - **Portal syndication milestone 3, M.** The JamesEdition leads pull — spec
-  §Leads: migration 0096 with `leads.portal` and `leads.external_ref` (unique
+  §Leads: a migration at the next free number (0096 and 0097 went to the integrations audit phase 1 on 2026-09-15, DECISIONS T-int-phase-1) with `leads.portal` and `leads.external_ref` (unique
   on `(org_id, portal, external_ref)` where not null), the four DEFAULTED
   parameters on `submit_public_enquiry` (`p_source`, `p_portal`,
   `p_external_ref`, `p_received_at`; a duplicate returns `false` instead of
