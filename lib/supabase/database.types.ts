@@ -857,6 +857,7 @@ export type Database = {
           first_call_at: string | null
           first_response_at: string | null
           id: string
+          idempotency_key: string | null
           lost_reason: string | null
           message: string | null
           org_id: string
@@ -876,6 +877,7 @@ export type Database = {
           first_call_at?: string | null
           first_response_at?: string | null
           id?: string
+          idempotency_key?: string | null
           lost_reason?: string | null
           message?: string | null
           org_id: string
@@ -895,6 +897,7 @@ export type Database = {
           first_call_at?: string | null
           first_response_at?: string | null
           id?: string
+          idempotency_key?: string | null
           lost_reason?: string | null
           message?: string | null
           org_id?: string
@@ -4015,13 +4018,18 @@ export type Database = {
       submit_public_enquiry: {
         Args: {
           p_email: string
+          p_idempotency_key?: string
           p_message: string
           p_name: string
           p_org_slug: string
           p_phone: string
           p_property_ref?: string
         }
-        Returns: boolean
+        Returns: {
+          lead_id: string
+          lead_org_id: string
+          replayed: boolean
+        }[]
       }
       unlockrows: { Args: { "": string }; Returns: number }
       updategeometrysrid: {
