@@ -2371,6 +2371,7 @@ export type Database = {
           installment_id: string | null
           is_done: boolean
           kind: string | null
+          lead_id: string | null
           mandate_id: string | null
           org_id: string
           property_id: string | null
@@ -2390,6 +2391,7 @@ export type Database = {
           installment_id?: string | null
           is_done?: boolean
           kind?: string | null
+          lead_id?: string | null
           mandate_id?: string | null
           org_id: string
           property_id?: string | null
@@ -2409,6 +2411,7 @@ export type Database = {
           installment_id?: string | null
           is_done?: boolean
           kind?: string | null
+          lead_id?: string | null
           mandate_id?: string | null
           org_id?: string
           property_id?: string | null
@@ -2458,6 +2461,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "task_kinds"
             referencedColumns: ["kind"]
+          },
+          {
+            foreignKeyName: "tasks_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["id"]
           },
           {
             foreignKeyName: "tasks_mandate_id_fkey"
@@ -3367,6 +3377,10 @@ export type Database = {
         Args: { p_actor?: string; p_mandate?: string }
         Returns: number
       }
+      raise_lead_sla_tasks: {
+        Args: { p_minutes?: number; p_org?: string }
+        Returns: number
+      }
       record_key_movement: {
         Args: {
           p_action: Database["public"]["Enums"]["key_action"]
@@ -4020,6 +4034,7 @@ export type Database = {
           p_email: string
           p_idempotency_key?: string
           p_message: string
+          p_meta?: Json
           p_name: string
           p_org_slug: string
           p_phone: string
