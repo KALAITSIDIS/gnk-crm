@@ -1,12 +1,12 @@
 /**
- * PostGIS catalog guard (security & compliance audit 2026-09-15, AC-04 / 0096).
+ * PostGIS catalog guard (security & compliance audit 2026-09-15, AC-04 / 0099).
  * Requires the local Supabase stack. Run: npm run test:rls
  *
  * The PostGIS install grants anon and authenticated full DML on
  * public.spatial_ref_sys, and PostgREST exposes it, so without a guard an anon
  * DELETE — carrying only the publishable key — wipes the coordinate reference
  * data and breaks every geography operation. The grant cannot be revoked from
- * postgres (the table is owned by supabase_admin), so migration 0096 installs a
+ * postgres (the table is owned by supabase_admin), so migration 0099 installs a
  * statement-level trigger that refuses writes from the anon/authenticated API
  * roles while leaving reads intact. This pins that behaviour.
  */
@@ -17,7 +17,7 @@ import { anonClient } from "./helpers";
 // types, so query it through the untyped anon client with a loose handle.
 const srs = (): { from: (t: string) => any } => anonClient() as unknown as { from: (t: string) => any };
 
-describe("PostGIS spatial_ref_sys is read-only for the API roles (0096)", () => {
+describe("PostGIS spatial_ref_sys is read-only for the API roles (0099)", () => {
   it("anon may still read the reference table", async () => {
     const { data, error } = await srs().from("spatial_ref_sys").select("srid").limit(1);
     expect(error, error?.message).toBeNull();

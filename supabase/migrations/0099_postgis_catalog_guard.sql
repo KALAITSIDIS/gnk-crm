@@ -1,5 +1,10 @@
 -- =============================================================================
--- 0096 — PostGIS catalog guard (security & compliance audit 2026-09-15, AC-04)
+-- 0099 — PostGIS catalog guard (security & compliance audit 2026-09-15, AC-04)
+--
+-- Numbered 0099 by cross-session coordination on 2026-09-15: 0096/0097 belong to
+-- the integrations session (fix/int-phase-1) and 0098 to the Sprint A lead-routing
+-- session. This migration is independent of all three (it touches only the
+-- PostGIS catalog), so applying it out of number order is harmless.
 --
 -- WHAT THIS CLOSES. The PostGIS install grants the anon and authenticated API
 -- roles full DML on public.spatial_ref_sys — a real 8,500-row reference table
@@ -37,7 +42,7 @@ begin
   -- refused. postgres (migrations), supabase_admin (platform) and service_role
   -- (trusted server code) fall through this and may still write.
   if current_user in ('anon', 'authenticated') then
-    raise exception 'spatial_ref_sys is read-only for API roles (audit AC-04 / 0096)'
+    raise exception 'spatial_ref_sys is read-only for API roles (audit AC-04)'
       using errcode = 'insufficient_privilege';
   end if;
   return null; -- statement-level trigger: the return value is ignored
@@ -58,7 +63,7 @@ begin
   if (select count(*) from pg_trigger
         where tgrelid = 'public.spatial_ref_sys'::regclass
           and tgname = 'trg_srs_api_readonly' and not tgisinternal) <> 1 then
-    raise exception '0096 aborted: trg_srs_api_readonly is not installed';
+    raise exception '0099 aborted: trg_srs_api_readonly is not installed';
   end if;
 
   begin
@@ -77,8 +82,8 @@ begin
   end;
 
   if not blocked then
-    raise exception '0096 aborted: an anon write to spatial_ref_sys was NOT refused';
+    raise exception '0099 aborted: an anon write to spatial_ref_sys was NOT refused';
   end if;
 
-  raise notice '0096: spatial_ref_sys guarded — anon/authenticated writes refused, reads intact.';
+  raise notice '0099: spatial_ref_sys guarded — anon/authenticated writes refused, reads intact.';
 end $$;

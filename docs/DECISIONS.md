@@ -6767,7 +6767,7 @@ A tracked-file audit (`git ls-files`, blob sizes, a `knip` scan, `npm audit --om
 
 What the scan flagged and was deliberately NOT touched: every `scripts/backup/*.mjs` (run by the nightly task and by each other, not by `package.json`), the operator scripts under `scripts/import`, `scripts/maintenance`, `scripts/media` and `scripts/fonts` (run by hand, documented in their headers), `tests/e2e/auth.setup.ts` (Playwright's setup project), `public/sw.js` (served at runtime) and `lib/testing/server-only-stub.ts` (a vitest alias); on the web repo the scan listed its 34 unit-test files, which is the scanner not knowing the vitest layout. Unused *exports* (constants kept for tests and documentation) were left alone: removing them is churn with no benefit. The pack size of `gnk-crm` (about 67 MB, most of it the screenshots' history) is not reduced — that would need a history rewrite, which is out of bounds.
 
-## T-audit-r06-postgis — the PostGIS catalog was anon-writable, and only a trigger could close it (2026-09-15, migration 0096)
+## T-audit-r06-postgis — the PostGIS catalog was anon-writable, and only a trigger could close it (2026-09-15, migration 0099)
 
 The 2026-09-15 security & compliance audit (artifact
 `claude.ai/artifact/8tYzgYtY7n11N52DxXNVfM`, finding AC-04) measured that the
@@ -6787,7 +6787,7 @@ Running the revoke changed the ACL by zero bytes and raised no error, which is
 exactly the false-green trap: a migration that "revokes" and does nothing.
 
 **What postgres CAN do is add a trigger** — it holds `TRIGGER` on the table even
-though it cannot alter the grant. So 0096 installs `forbid_srs_api_writes()` and
+though it cannot alter the grant. So 0099 installs `forbid_srs_api_writes()` and
 a statement-level `BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE` trigger that
 raises `insufficient_privilege` when `current_user` is `anon` or `authenticated`,
 and lets `postgres`, `supabase_admin` and `service_role` through. Reads are
