@@ -21,7 +21,8 @@ tests/
     calculators.spec.ts            on-screen figures vs the statutory scale
     happy-path.spec.ts             lead -> pipeline -> property -> task -> dashboard
     performance.spec.ts            Web Vitals + scale safeguards
-  screenshots/                     22 PNGs, <module>-{desktop,mobile}.png
+  screenshots/                     <module>-{desktop,mobile}.png, written by modules.spec.ts;
+                                   git-ignored since 2026-09-15 (report output, not a baseline)
 ```
 
 ## Running
