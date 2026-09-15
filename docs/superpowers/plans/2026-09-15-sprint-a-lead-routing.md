@@ -4,7 +4,7 @@
 
 **Goal:** A website enquiry lands in the CRM with its brief and its provenance as data, is readable in full in the inbox, becomes a contact and a saved search in one click, is assigned by a rule, is acknowledged to the visitor, and is chased by a task when it waits over an hour.
 
-**Architecture:** One additive migration (0096) extends `submit_public_enquiry` with a `p_meta jsonb` argument whose keys are an allowlist held in the function (the security boundary), seeds a `lead_routing` config row the function reads to assign, adds `tasks.lead_id` and a 10-minute `lead-sla` sweep. The CRM route forwards `meta` from the site; the site's route builds it from the form's own select values plus `source_page`, campaign parameters remembered for the session, the referrer host and a consent version. Nothing personal enters `criteria` or an event: names, e-mail, phone and free text stay in `leads.message`, which erasure and the retention sweep can rewrite. `leads.source` stays `website` for every form fill — the retention sweep keys on it.
+**Architecture:** One additive migration (0098, on top of the integrations session's 0096 idempotency key; 0097 is theirs too) extends `submit_public_enquiry` with a `p_meta jsonb` argument whose keys are an allowlist held in the function (the security boundary), seeds a `lead_routing` config row the function reads to assign, adds `tasks.lead_id` and a 10-minute `lead-sla` sweep. The CRM route forwards `meta` from the site; the site's route builds it from the form's own select values plus `source_page`, campaign parameters remembered for the session, the referrer host and a consent version. Nothing personal enters `criteria` or an event: names, e-mail, phone and free text stay in `leads.message`, which erasure and the retention sweep can rewrite. `leads.source` stays `website` for every form fill — the retention sweep keys on it.
 
 **Tech Stack:** Next.js App Router server actions, Zod, Supabase Postgres (plpgsql, pg_cron), vitest (unit + RLS suite against the local stack), Playwright, Resend REST, `@sentry/nextjs`.
 
@@ -16,7 +16,7 @@
 
 **gnk-crm**
 
-- Create `supabase/migrations/0096_enquiry_meta_routing_sla.sql` — the function with `p_meta`, the `lead_routing` config row, `tasks.lead_id`, `task_kinds` row `lead_unanswered`, `raise_lead_sla_tasks()`, cron `lead-sla`, self-test block.
+- Create `supabase/migrations/0098_enquiry_meta_routing_sla.sql` — the function with `p_meta`, the `lead_routing` config row, `tasks.lead_id`, `task_kinds` row `lead_unanswered`, `raise_lead_sla_tasks()`, cron `lead-sla`, self-test block.
 - Create `lib/services/enquiry-meta.ts` — the allowlist (`ENQUIRY_META_KEYS` with caps), budget bands, chip labels. Pure.
 - Modify `lib/validators/public-enquiry.ts` — `meta` object built from the allowlist.
 - Modify `app/api/public/enquiries/route.ts` — pass `p_meta`, send the acknowledgement.
@@ -51,7 +51,7 @@
 - Create: `lib/services/enquiry-meta.ts`
 - Test: `lib/services/enquiry-meta.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 import { describe, expect, it } from "vitest";
@@ -144,12 +144,12 @@ describe("briefChips — what the inbox shows beside a website lead", () => {
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `npx vitest run lib/services/enquiry-meta.test.ts`
 Expected: FAIL — cannot resolve `./enquiry-meta`.
 
-- [ ] **Step 3: Write the module**
+- [x] **Step 3: Write the module**
 
 ```ts
 /**
@@ -265,20 +265,20 @@ export function briefChips(criteria: unknown): string[] {
 }
 ```
 
-- [ ] **Step 4: Run the test** — `npx vitest run lib/services/enquiry-meta.test.ts` → PASS (adjust the chips test if `buy_property_type` is absent from the fixture; the fixture above has none, so the expected list is exactly the five strings).
+- [x] **Step 4: Run the test** — `npx vitest run lib/services/enquiry-meta.test.ts` → PASS (adjust the chips test if `buy_property_type` is absent from the fixture; the fixture above has none, so the expected list is exactly the five strings).
 
-- [ ] **Step 5: Commit** — `git add lib/services/enquiry-meta.ts lib/services/enquiry-meta.test.ts && git commit -m "feat(leads): enquiry meta allowlist, budget bands and brief chips (audit LR-01)"`
+- [x] **Step 5: Commit** — `git add lib/services/enquiry-meta.ts lib/services/enquiry-meta.test.ts && git commit -m "feat(leads): enquiry meta allowlist, budget bands and brief chips (audit LR-01)"`
 
 ---
 
-### Task 2: Migration 0096 — `p_meta`, routing rule, `tasks.lead_id`, `lead-sla`
+### Task 2: Migration 0098 — `p_meta`, routing rule, `tasks.lead_id`, `lead-sla`
 
 **Files:**
-- Create: `supabase/migrations/0096_enquiry_meta_routing_sla.sql`
-- Modify: `scripts/backup/verify-restore.sql` (`96::bigint as migrations`, `14::bigint as task_kinds`, cron list + `exactly 10 jobs`), `lib/services/cron-health.ts` (`EXPECTED_CRON_JOBS = 10`), `supabase/tests/rls.test.ts` test 50 (ten jobs, `lead-sla` in the names), `docs/10_INFRASTRUCTURE.md` cron table.
+- Create: `supabase/migrations/0098_enquiry_meta_routing_sla.sql`
+- Modify: `scripts/backup/verify-restore.sql` (`97::bigint as migrations` (0097 is not in this branch), `14::bigint as task_kinds`, cron list + `exactly 10 jobs`), `lib/services/cron-health.ts` (`EXPECTED_CRON_JOBS = 10`), `supabase/tests/rls.test.ts` test 50 (ten jobs, `lead-sla` in the names), `docs/10_INFRASTRUCTURE.md` cron table.
 - Test: `supabase/tests/enquiry-meta.test.ts` (new file).
 
-- [ ] **Step 1: Write the RLS test (fails until the migration is applied locally)**
+- [x] **Step 1: Write the RLS test (fails until the migration is applied locally)**
 
 ```ts
 /**
@@ -331,7 +331,7 @@ afterAll(async () => {
   await svc.auth.admin.deleteUser(agentB.id);
 });
 
-describe("0096: the brief travels as data, shape only", () => {
+describe("0098: the brief travels as data, shape only", () => {
   it("keeps allowlisted keys in criteria and drops everything else", async () => {
     const r = await submit("Meta", {
       budget: "300_500k",
@@ -388,7 +388,7 @@ describe("0096: the brief travels as data, shape only", () => {
   });
 });
 
-describe("0096: the routing rule", () => {
+describe("0098: the routing rule", () => {
   it("off (the default): the lead is unassigned", async () => {
     await submit("Unrouted", {});
     expect((await leadNamed("Unrouted")).assigned_agent_id).toBeNull();
@@ -426,7 +426,7 @@ describe("0096: the routing rule", () => {
   });
 });
 
-describe("0096: the lead SLA sweep", () => {
+describe("0098: the lead SLA sweep", () => {
   it("raises one task for a website lead unanswered over an hour, once, and closes it when answered", async () => {
     await svc.from("cyprus_config").update({ value: { mode: "off", agents: [] } }).eq("key", "lead_routing");
     await submit("Slow", {});
@@ -472,9 +472,9 @@ describe("0096: the lead SLA sweep", () => {
 });
 ```
 
-- [ ] **Step 2: Run it** — `npm run test:rls -- supabase/tests/enquiry-meta.test.ts` → FAIL (`p_meta` unknown / function missing).
+- [x] **Step 2: Run it** — `npm run test:rls -- supabase/tests/enquiry-meta.test.ts` → FAIL (`p_meta` unknown / function missing).
 
-- [ ] **Step 3: Write the migration** — header in the house style, then:
+- [x] **Step 3: Write the migration** — header in the house style, then:
 
 ```sql
 -- 1. the door, with p_meta ------------------------------------------------
@@ -697,13 +697,13 @@ select cron.schedule('lead-sla', '*/10 * * * *', $$select raise_lead_sla_tasks()
 
 Then the self-test `do $$ … $$` block: submit with meta containing `budget` and `email`, assert criteria has budget and no email, event has `has_meta`; assert the six-argument call still works; assert grants (anon/authenticated refused for both functions, service_role granted); assert `cron.job` has `lead-sla` at `*/10 * * * *`; assert `rls_aal2_coverage()` = 0; delete the self-test leads (their events stay, as 0084 does). `raise notice '0096: …'`.
 
-- [ ] **Step 4: Apply locally and regenerate types** — `npx supabase migration up --local` (from the worktree), then `npm run db:types`. Verify: `git diff --stat lib/supabase/database.types.ts` shows `p_meta?: Json` on `submit_public_enquiry` and `raise_lead_sla_tasks` present.
+- [x] **Step 4: Apply locally and regenerate types** — `npx supabase migration up --local` (from the worktree), then `npm run db:types`. Verify: `git diff --stat lib/supabase/database.types.ts` shows `p_meta?: Json` on `submit_public_enquiry` and `raise_lead_sla_tasks` present.
 
-- [ ] **Step 5: Run the RLS test** — `npm run test:rls -- supabase/tests/enquiry-meta.test.ts` → PASS.
+- [x] **Step 5: Run the RLS test** — `npm run test:rls -- supabase/tests/enquiry-meta.test.ts` → PASS.
 
-- [ ] **Step 6: Move the five pins** — `verify-restore.sql`: `96::bigint as migrations`, `14::bigint as task_kinds`, add `('lead-sla')` to the cron `values` list, `'cron: exactly 10 jobs, none extra', '10'`; `lib/services/cron-health.ts`: `EXPECTED_CRON_JOBS = 10`; `supabase/tests/rls.test.ts` test 50: title "…all ten jobs (0074, 0092, 0096)", expected names include `lead-sla`, length 10; `docs/10_INFRASTRUCTURE.md`: "10 scheduled jobs", row `*/10 * * * *   lead-sla   select raise_lead_sla_tasks()`. Run `npx vitest run tests/unit/cron-jobs-pinned.test.ts scripts/backup/verify-restore.test.ts` → PASS; `npm run test:rls -- supabase/tests/rls.test.ts -t "50\."` → PASS.
+- [x] **Step 6: Move the five pins** — `verify-restore.sql`: `97::bigint as migrations` (0097 is not in this branch), `14::bigint as task_kinds`, add `('lead-sla')` to the cron `values` list, `'cron: exactly 10 jobs, none extra', '10'`; `lib/services/cron-health.ts`: `EXPECTED_CRON_JOBS = 10`; `supabase/tests/rls.test.ts` test 50: title "…all ten jobs (0074, 0092, 0096)", expected names include `lead-sla`, length 10; `docs/10_INFRASTRUCTURE.md`: "10 scheduled jobs", row `*/10 * * * *   lead-sla   select raise_lead_sla_tasks()`. Run `npx vitest run tests/unit/cron-jobs-pinned.test.ts scripts/backup/verify-restore.test.ts` → PASS; `npm run test:rls -- supabase/tests/rls.test.ts -t "50\."` → PASS.
 
-- [ ] **Step 7: Commit** — `git add supabase/migrations/0096_enquiry_meta_routing_sla.sql supabase/tests/enquiry-meta.test.ts lib/supabase/database.types.ts scripts/backup/verify-restore.sql lib/services/cron-health.ts supabase/tests/rls.test.ts docs/10_INFRASTRUCTURE.md && git commit -m "feat(db): 0096 — enquiry meta on the door, lead routing rule, tasks.lead_id and the lead-sla sweep (audit LR-01/02/05)"`
+- [x] **Step 7: Commit** — `git add supabase/migrations/0098_enquiry_meta_routing_sla.sql supabase/tests/enquiry-meta.test.ts lib/supabase/database.types.ts scripts/backup/verify-restore.sql lib/services/cron-health.ts supabase/tests/rls.test.ts docs/10_INFRASTRUCTURE.md && git commit -m "feat(db): 0096 — enquiry meta on the door, lead routing rule, tasks.lead_id and the lead-sla sweep (audit LR-01/02/05)"`
 
 ---
 
@@ -713,15 +713,15 @@ Then the self-test `do $$ … $$` block: submit with meta containing `budget` an
 - Modify: `lib/validators/public-enquiry.ts`, `app/api/public/enquiries/route.ts`, `lib/services/enquiry-alert.ts`
 - Test: `lib/validators/public-enquiry.test.ts`, `tests/unit/public-enquiries-route.test.ts`, `lib/services/enquiry-alert.test.ts`
 
-- [ ] **Step 1: Tests.** In `public-enquiry.test.ts` add: `meta` with allowlisted + junk keys parses to the cleaned object; a non-object `meta` parses to `undefined`; the schema still accepts a body without `meta`. In the route test, change the "reaches the function with what was sent" expectation to include `p_meta: null` when absent, and add a case posting `meta: { budget: "over_1m", email: "x@y" }` expecting `p_meta: { budget: "over_1m" }`. In the alert test add: `bodyFor({...base, meta: { source_page: "/properties/PAF0001", utm_source: "instagram", utm_campaign: "spring" }})` contains `From:  /properties/PAF0001 · instagram · spring`; and a "failed" send calls `Sentry.captureMessage` (mock `@sentry/nextjs`).
+- [x] **Step 1: Tests.** In `public-enquiry.test.ts` add: `meta` with allowlisted + junk keys parses to the cleaned object; a non-object `meta` parses to `undefined`; the schema still accepts a body without `meta`. In the route test, change the "reaches the function with what was sent" expectation to include `p_meta: null` when absent, and add a case posting `meta: { budget: "over_1m", email: "x@y" }` expecting `p_meta: { budget: "over_1m" }`. In the alert test add: `bodyFor({...base, meta: { source_page: "/properties/PAF0001", utm_source: "instagram", utm_campaign: "spring" }})` contains `From:  /properties/PAF0001 · instagram · spring`; and a "failed" send calls `Sentry.captureMessage` (mock `@sentry/nextjs`).
 
-- [ ] **Step 2: Run → FAIL.**
+- [x] **Step 2: Run → FAIL.**
 
-- [ ] **Step 3: Implement.** Validator: `meta: z.preprocess((v) => (v && typeof v === "object" && !Array.isArray(v) ? cleanEnquiryMeta(v) : undefined), z.record(z.string(), z.string()).optional())`. Route: `p_meta: input.meta ?? null` in the rpc call (cast `as never` if the generated Json type complains), `meta: input.meta ?? null` into `sendEnquiryAlert`. Alert: `EnquiryAlert.meta: Record<string,string> | null`; in `bodyFor` after the About line: `const from = [a.meta?.source_page, a.meta?.utm_source, a.meta?.utm_campaign].filter(Boolean).join(" · "); from ? \`From:   ${from}\` : null`. On `!res.ok` and on throw: `Sentry.captureMessage("[enquiry-alert] send failed", { level: "error", extra: { status, propertyReference: a.propertyReference, hasEmail: Boolean(a.email) } })` — never the message or the person.
+- [x] **Step 3: Implement.** Validator: `meta: z.preprocess((v) => (v && typeof v === "object" && !Array.isArray(v) ? cleanEnquiryMeta(v) : undefined), z.record(z.string(), z.string()).optional())`. Route: `p_meta: input.meta ?? null` in the rpc call (cast `as never` if the generated Json type complains), `meta: input.meta ?? null` into `sendEnquiryAlert`. Alert: `EnquiryAlert.meta: Record<string,string> | null`; in `bodyFor` after the About line: `const from = [a.meta?.source_page, a.meta?.utm_source, a.meta?.utm_campaign].filter(Boolean).join(" · "); from ? \`From:   ${from}\` : null`. On `!res.ok` and on throw: `Sentry.captureMessage("[enquiry-alert] send failed", { level: "error", extra: { status, propertyReference: a.propertyReference, hasEmail: Boolean(a.email) } })` — never the message or the person.
 
-- [ ] **Step 4: Run** `npx vitest run lib/validators/public-enquiry.test.ts tests/unit/public-enquiries-route.test.ts lib/services/enquiry-alert.test.ts` → PASS.
+- [x] **Step 4: Run** `npx vitest run lib/validators/public-enquiry.test.ts tests/unit/public-enquiries-route.test.ts lib/services/enquiry-alert.test.ts` → PASS.
 
-- [ ] **Step 5: Commit** — `git add … && git commit -m "feat(enquiry): route forwards meta; alert names the source page and campaign; a failed send reaches Sentry (LR-02/07)"`
+- [x] **Step 5: Commit** — `git add … && git commit -m "feat(enquiry): route forwards meta; alert names the source page and campaign; a failed send reaches Sentry (LR-02/07)"`
 
 ---
 
@@ -731,15 +731,15 @@ Then the self-test `do $$ … $$` block: submit with meta containing `budget` an
 - Create: `lib/services/enquiry-ack.ts`, `lib/services/enquiry-ack.test.ts`
 - Modify: `app/api/public/enquiries/route.ts`, `.env.example` (comment on `ENQUIRY_ALERT_FROM` arming the ack), `docs/10_INFRASTRUCTURE.md` env row.
 
-- [ ] **Step 1: Test** — `ackBodyFor({ name, propertyReference, orgName })` names the listing, promises a personal reply, states the desk hours constant, and carries no marketing; `sendEnquiryAck` returns `"skipped"` when `RESEND_API_KEY` is unset, when `ENQUIRY_ALERT_FROM` is unset, or when it ends in `@resend.dev` (never write to a client from the onboarding sender), and `"skipped"` when the enquirer gave no e-mail; `"sent"` on a 200 with `to` = the enquirer and `reply_to` = the first `ENQUIRY_ALERT_TO` address; `"failed"` on a 403, with a Sentry message.
+- [x] **Step 1: Test** — `ackBodyFor({ name, propertyReference, orgName })` names the listing, promises a personal reply, states the desk hours constant, and carries no marketing; `sendEnquiryAck` returns `"skipped"` when `RESEND_API_KEY` is unset, when `ENQUIRY_ALERT_FROM` is unset, or when it ends in `@resend.dev` (never write to a client from the onboarding sender), and `"skipped"` when the enquirer gave no e-mail; `"sent"` on a 200 with `to` = the enquirer and `reply_to` = the first `ENQUIRY_ALERT_TO` address; `"failed"` on a 403, with a Sentry message.
 
-- [ ] **Step 2: Run → FAIL.**
+- [x] **Step 2: Run → FAIL.**
 
-- [ ] **Step 3: Implement** — same shape as `enquiry-alert.ts`: `DESK_HOURS = "Monday to Friday, 09:00–18:00 (Cyprus time)"`, subject `Your enquiry${ref ? ` about ${ref}` : ""} — ${orgName}`, plain-text body: "Thank you, {first name}. Your enquiry{ about REF} has reached us. One of us will reply personally — usually within the hour during {DESK_HOURS}, otherwise the next working morning. If you need to add anything, reply to this e-mail." Signature = org name. Route: inside the same `after()`, after the alert: `if (input.email) await sendEnquiryAck({ name: input.name, email: input.email, propertyReference: input.property_reference ?? null, orgName: "GN Kalaitsidis Capital" })` — read the org name from the `organizations` row by slug with the admin client (one select) so the CRM never hardcodes the firm.
+- [x] **Step 3: Implement** — same shape as `enquiry-alert.ts`: `DESK_HOURS = "Monday to Friday, 09:00–18:00 (Cyprus time)"`, subject `Your enquiry${ref ? ` about ${ref}` : ""} — ${orgName}`, plain-text body: "Thank you, {first name}. Your enquiry{ about REF} has reached us. One of us will reply personally — usually within the hour during {DESK_HOURS}, otherwise the next working morning. If you need to add anything, reply to this e-mail." Signature = org name. Route: inside the same `after()`, after the alert: `if (input.email) await sendEnquiryAck({ name: input.name, email: input.email, propertyReference: input.property_reference ?? null, orgName: "GN Kalaitsidis Capital" })` — read the org name from the `organizations` row by slug with the admin client (one select) so the CRM never hardcodes the firm.
 
-- [ ] **Step 4: Run** the ack test and the route test → PASS. `npm run typecheck`.
+- [x] **Step 4: Run** the ack test and the route test → PASS. `npm run typecheck`.
 
-- [ ] **Step 5: Commit** — `"feat(enquiry): acknowledge the enquirer by e-mail, armed only by a real sending address (LR-06)"`
+- [x] **Step 5: Commit** — `"feat(enquiry): acknowledge the enquirer by e-mail, armed only by a real sending address (LR-06)"`
 
 ---
 
@@ -750,7 +750,7 @@ Then the self-test `do $$ … $$` block: submit with meta containing `budget` an
 - Modify: `app/(app)/leads/page.tsx`
 - Test: `components/features/leads/lead-message.test.ts` (renderToStaticMarkup: a two-line message renders a `<details>` whose summary is the first line and whose body keeps line breaks; a one-line message renders no `<details>`; chips render from criteria).
 
-- [ ] Steps: test → fail → implement (`LeadMessage({ message, criteria })`: `briefChips(criteria)` as `<span>` chips; message split on the first `\n`; `<details className="group"><summary className="cursor-pointer truncate …">{firstLine}</summary><p className="mt-1 whitespace-pre-line …">{rest}</p></details>`) → pass → wire into the page (replace the `truncate` paragraph; the query already selects `message`; add `criteria` to the select) → `npm run typecheck && npm run lint` → commit `"feat(leads): the inbox shows the full enquiry and its brief as chips (LR-03)"`.
+- [x] Steps: test → fail → implement (`LeadMessage({ message, criteria })`: `briefChips(criteria)` as `<span>` chips; message split on the first `\n`; `<details className="group"><summary className="cursor-pointer truncate …">{firstLine}</summary><p className="mt-1 whitespace-pre-line …">{rest}</p></details>`) → pass → wire into the page (replace the `truncate` paragraph; the query already selects `message`; add `criteria` to the select) → `npm run typecheck && npm run lint` → commit `"feat(leads): the inbox shows the full enquiry and its brief as chips (LR-03)"`.
 
 ---
 
@@ -759,17 +759,17 @@ Then the self-test `do $$ … $$` block: submit with meta containing `budget` an
 **Files:**
 - Modify: `lib/services/lead-contact.ts` (+ test), `lib/actions/leads.ts`, `components/features/leads/lead-actions.tsx`, `app/(app)/leads/page.tsx` (pass `source`)
 
-- [ ] **Step 1: Parser test** (`lead-contact.test.ts`): `parseWebsiteEnquiry("Website enquiry\nName: Maria Georgiou\nEmail: m@example.invalid\nPhone: +357 99 123456\nAbout: PAF0001\n\nHello")` → `{ name: "Maria Georgiou", email: "m@example.invalid", phone: "+357 99 123456" }`; missing lines → nulls; a message not starting with `Website enquiry` → `null`; the redacted marker → `null`.
+- [x] **Step 1: Parser test** (`lead-contact.test.ts`): `parseWebsiteEnquiry("Website enquiry\nName: Maria Georgiou\nEmail: m@example.invalid\nPhone: +357 99 123456\nAbout: PAF0001\n\nHello")` → `{ name: "Maria Georgiou", email: "m@example.invalid", phone: "+357 99 123456" }`; missing lines → nulls; a message not starting with `Website enquiry` → `null`; the redacted marker → `null`.
 
-- [ ] **Step 2: Implement `parseWebsiteEnquiry`** — line-anchored regexes on the first six lines only.
+- [x] **Step 2: Implement `parseWebsiteEnquiry`** — line-anchored regexes on the first six lines only.
 
-- [ ] **Step 3: Action `createContactFromEnquiry(leadId)`** in `lib/actions/leads.ts` returning `LeadActionState` (`{ error, savedAt, duplicate }`): guards (open lead, `canWorkError`, `source === "website"`, `!contact_id`, parse ok); `normalizePhone`; `checkContactDuplicate` → return `{ error: "A contact with this … already exists.", duplicate }` (the UI offers Link); insert contact (`contact_kind: "person"`, split name, phone, email, `source: "website"`, `contact_types: buyer meta ? ["buyer"] : seller meta ? ["seller","owner"] : []`, `gdpr_notes: \`Website enquiry consent ${meta.consent_version ?? "v1"} recorded ${received_at}\``, `assigned_agent_id: lead.assigned_agent_id ?? (agent ? profile.id : null)`, `created_by`), `created` event `{ has_phone, has_email, via: "website_enquiry" }`; race on 23505 → duplicate; link the lead (`update … contact_id … .select()`), `contact_linked` event `{ contact_id, via: "website_enquiry" }`; if `cleanEnquiryMeta(lead.criteria)` has any buyer key → resolve area by `areas.name->>en ilike` each `/`-separated part of `buy_area` (first match), district from that row, `property_types` = `[buy_property_type]` when it is in `PROPERTY_TYPES`, `transaction_type` = `looking_to === "rent" ? "rent" : "sale"`, budget from `budgetBandRange`, `bedrooms_min` parsed int, `label: "From website enquiry"`, `notes` = timing/deed lines; insert `buyer_requirements` + `requirement_added` event (entity contact); a failure here returns `{ error: "Contact created and linked, but the saved search could not be created: …" }` — never rolls back the contact. `revalidatePath("/leads")`, `/contacts/${id}`.
+- [x] **Step 3: Action `createContactFromEnquiry(leadId)`** in `lib/actions/leads.ts` returning `LeadActionState` (`{ error, savedAt, duplicate }`): guards (open lead, `canWorkError`, `source === "website"`, `!contact_id`, parse ok); `normalizePhone`; `checkContactDuplicate` → return `{ error: "A contact with this … already exists.", duplicate }` (the UI offers Link); insert contact (`contact_kind: "person"`, split name, phone, email, `source: "website"`, `contact_types: buyer meta ? ["buyer"] : seller meta ? ["seller","owner"] : []`, `gdpr_notes: \`Website enquiry consent ${meta.consent_version ?? "v1"} recorded ${received_at}\``, `assigned_agent_id: lead.assigned_agent_id ?? (agent ? profile.id : null)`, `created_by`), `created` event `{ has_phone, has_email, via: "website_enquiry" }`; race on 23505 → duplicate; link the lead (`update … contact_id … .select()`), `contact_linked` event `{ contact_id, via: "website_enquiry" }`; if `cleanEnquiryMeta(lead.criteria)` has any buyer key → resolve area by `areas.name->>en ilike` each `/`-separated part of `buy_area` (first match), district from that row, `property_types` = `[buy_property_type]` when it is in `PROPERTY_TYPES`, `transaction_type` = `looking_to === "rent" ? "rent" : "sale"`, budget from `budgetBandRange`, `bedrooms_min` parsed int, `label: "From website enquiry"`, `notes` = timing/deed lines; insert `buyer_requirements` + `requirement_added` event (entity contact); a failure here returns `{ error: "Contact created and linked, but the saved search could not be created: …" }` — never rolls back the contact. `revalidatePath("/leads")`, `/contacts/${id}`.
 
-- [ ] **Step 4: `convertLead`** — after loading the lead: `const band = budgetBandRange(cleanEnquiryMeta(lead.criteria).budget); expected_value: band?.max ?? band?.min ?? null` in the deal insert; the `created` deal event gains `expected_value_from: "website_budget_band"` when set.
+- [x] **Step 4: `convertLead`** — after loading the lead: `const band = budgetBandRange(cleanEnquiryMeta(lead.criteria).budget); expected_value: band?.max ?? band?.min ?? null` in the deal insert; the `created` deal event gains `expected_value_from: "website_budget_band"` when set.
 
-- [ ] **Step 5: UI** — `LeadRowActions` gains `source: string`; when `!hasContact && source === "website" && canWork` render `<CreateContactFromEnquiryButton leadId>` (calls the action; on `duplicate` shows "Link {name} instead" → `linkLeadContact`). Page passes `source={lead.source}`.
+- [x] **Step 5: UI** — `LeadRowActions` gains `source: string`; when `!hasContact && source === "website" && canWork` render `<CreateContactFromEnquiryButton leadId>` (calls the action; on `duplicate` shows "Link {name} instead" → `linkLeadContact`). Page passes `source={lead.source}`.
 
-- [ ] **Step 6:** `npm run typecheck && npm run lint && npx vitest run lib/services/lead-contact.test.ts` → PASS. Commit `"feat(leads): create the contact, link it and seed a saved search from a website enquiry in one click (LR-08, LR-01)"`.
+- [x] **Step 6:** `npm run typecheck && npm run lint && npx vitest run lib/services/lead-contact.test.ts` → PASS. Commit `"feat(leads): create the contact, link it and seed a saved search from a website enquiry in one click (LR-08, LR-01)"`.
 
 ---
 
@@ -779,10 +779,10 @@ Then the self-test `do $$ … $$` block: submit with meta containing `budget` an
 - Create: `lib/services/lead-routing.ts` (+ test), `app/(app)/settings/lead-routing/page.tsx`, `components/features/settings/lead-routing-panel.tsx`, `tests/e2e/lead-routing.spec.ts`
 - Modify: `lib/validators/settings.ts` (`leadRoutingSchema`: `mode: z.enum(["off","round_robin"])`, `agents: string[]` of guids, non-empty when round_robin), `lib/actions/settings.ts` (`saveLeadRouting`: admin gate, agents must be active org members — read `profiles` under RLS; update `cyprus_config` row-count guarded; event `config.updated { key: "lead_routing", mode, agents }`; `revalidatePath("/settings/lead-routing")`), `components/features/settings/settings-nav.tsx` (entry after Nudges).
 
-- [ ] `lead-routing.ts`: `readLeadRouting(value: unknown): { mode: "off" | "round_robin"; agents: string[] }` mirroring the SQL reader (non-object → off; unknown mode → off; agents filtered to strings). Test the fallback table.
-- [ ] Page: admin-only (`return null` like nudges), loads the row and active profiles, renders the panel (radio Off / Round-robin, a checkbox per active member with role, Save). The panel uses `useActionState(saveLeadRouting, …)` and toasts.
-- [ ] e2e: login as admin, open `/settings/lead-routing`, `assertNoProblems`, `assertNoHorizontalOverflow` (the portals spec's lesson: a settings page nobody measures ships unrendered), choose round-robin, tick the admin, save, expect the success toast; restore Off at the end.
-- [ ] `npm run typecheck && npm run lint && npx vitest run lib/services/lead-routing.test.ts lib/validators/settings.test.ts` → PASS. Commit `"feat(settings): lead routing rule — off or round-robin over named members (LR-05)"`.
+- [x] `lead-routing.ts`: `readLeadRouting(value: unknown): { mode: "off" | "round_robin"; agents: string[] }` mirroring the SQL reader (non-object → off; unknown mode → off; agents filtered to strings). Test the fallback table.
+- [x] Page: admin-only (`return null` like nudges), loads the row and active profiles, renders the panel (radio Off / Round-robin, a checkbox per active member with role, Save). The panel uses `useActionState(saveLeadRouting, …)` and toasts.
+- [x] e2e: login as admin, open `/settings/lead-routing`, `assertNoProblems`, `assertNoHorizontalOverflow` (the portals spec's lesson: a settings page nobody measures ships unrendered), choose round-robin, tick the admin, save, expect the success toast; restore Off at the end.
+- [x] `npm run typecheck && npm run lint && npx vitest run lib/services/lead-routing.test.ts lib/validators/settings.test.ts` → PASS. Commit `"feat(settings): lead routing rule — off or round-robin over named members (LR-05)"`.
 
 ---
 
@@ -792,13 +792,13 @@ Then the self-test `do $$ … $$` block: submit with meta containing `budget` an
 - Modify: `components/features/leads/add-lead-dialog.tsx`, `lib/actions/leads.ts` (`createLeadSchema` + insert), `app/(app)/leads/page.tsx` (`?add=phone|whatsapp`), `components/features/dashboard/agent-dashboard.tsx`, `messages/en.json`, `messages/el.json`, `messages/ru.json`, `docs/BACKLOG.md` (strike the add-lead entry).
 - Test: `lib/actions/leads-create-schema.test.ts` (export the schema from `lib/validators/leads.ts` — new file — and test: `received_at` accepts `YYYY-MM-DDTHH:mm`, refuses a future time, blank → undefined; `property_id` guid or undefined); `lib/services/messages.test.ts` already pins key parity.
 
-- [ ] Move `createLeadSchema` to `lib/validators/leads.ts` with `property_id` (already) and `received_at: z.preprocess(emptyToUndefined, z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/).optional())` + `.refine` not in the future (Cyprus wall clock via `zonedWallClockToUtc`).
-- [ ] `createLead`: insert `received_at: d.received_at ? zonedWallClockToUtc(d.received_at).toISOString() : undefined`; event payload gains `backdated: Boolean(d.received_at)`.
-- [ ] Dialog: props `defaultOpen?: boolean; defaultSource?: LeadSource; defaultChannel?: CommChannel`; `EntityPicker name="property_id" kind="property" label="Property (optional)"`; `<Input type="datetime-local" name="received_at" max={now local}>` labelled "Received (leave blank for now)".
-- [ ] Page: `const add = first(sp.add)`; `<AddLeadDialog defaultOpen={add === "phone" || add === "whatsapp"} defaultSource={add === "whatsapp" ? "whatsapp" : add === "phone" ? "phone" : undefined} defaultChannel={same} />`.
-- [ ] Dashboard: first quick action becomes `{ href: "/leads?add=phone", label: t("quick.logCall"), icon: <Phone/> }`; keys `dashboard.agent.quick.logCall`: en "Log a call", el "Καταγραφή κλήσης", ru "Записать звонок" (keep `addLead` keys — the parity test only needs all three files equal).
-- [ ] BACKLOG: strike `- **Add-lead dialog: optional property link …**` as `~~…~~ **SHIPPED 2026-09-15 (Sprint A task 8).**`
-- [ ] `npm run typecheck && npm run lint && npm test` → PASS. Commit `"feat(leads): log a call or WhatsApp in two taps, link a property, backdate received_at (LR-04)"`.
+- [x] Move `createLeadSchema` to `lib/validators/leads.ts` with `property_id` (already) and `received_at: z.preprocess(emptyToUndefined, z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/).optional())` + `.refine` not in the future (Cyprus wall clock via `zonedWallClockToUtc`).
+- [x] `createLead`: insert `received_at: d.received_at ? zonedWallClockToUtc(d.received_at).toISOString() : undefined`; event payload gains `backdated: Boolean(d.received_at)`.
+- [x] Dialog: props `defaultOpen?: boolean; defaultSource?: LeadSource; defaultChannel?: CommChannel`; `EntityPicker name="property_id" kind="property" label="Property (optional)"`; `<Input type="datetime-local" name="received_at" max={now local}>` labelled "Received (leave blank for now)".
+- [x] Page: `const add = first(sp.add)`; `<AddLeadDialog defaultOpen={add === "phone" || add === "whatsapp"} defaultSource={add === "whatsapp" ? "whatsapp" : add === "phone" ? "phone" : undefined} defaultChannel={same} />`.
+- [x] Dashboard: first quick action becomes `{ href: "/leads?add=phone", label: t("quick.logCall"), icon: <Phone/> }`; keys `dashboard.agent.quick.logCall`: en "Log a call", el "Καταγραφή κλήσης", ru "Записать звонок" (keep `addLead` keys — the parity test only needs all three files equal).
+- [x] BACKLOG: strike `- **Add-lead dialog: optional property link …**` as `~~…~~ **SHIPPED 2026-09-15 (Sprint A task 8).**`
+- [x] `npm run typecheck && npm run lint && npm test` → PASS. Commit `"feat(leads): log a call or WhatsApp in two taps, link a property, backdate received_at (LR-04)"`.
 
 ---
 
@@ -809,13 +809,13 @@ Then the self-test `do $$ … $$` block: submit with meta containing `budget` an
 - Create: `components/campaign-memory.tsx`
 - Test: `lib/enquiry-fields.test.ts`, `components/enquiry-form.test.ts`, `app/api/enquiry/route.test.ts`, `lib/crm.test.ts`, `app/legal/page.test.ts`, `components/campaign-memory.test.ts`
 
-- [ ] **`lib/enquiry-fields.ts`** — add `export const CONSENT_VERSION = "2026-09-15";` (the wording of the checkbox and /legal as they stand today; bump when either changes), `export const CAMPAIGN_KEYS = ["utm_source","utm_medium","utm_campaign"] as const;`, `export const CAMPAIGN_STORAGE_KEY = "gnk-campaign";`, `export function campaignFromSearch(search: string): Record<string,string>` (only those three, trimmed, capped at 120), `export function rememberCampaign(search: string, storage: Storage | null)`, `export function readCampaign(storage: Storage | null): Record<string,string>` (try/catch around every storage access — private windows throw). Tests for each.
-- [ ] **`components/campaign-memory.tsx`** — `"use client"`, renders nothing; `useEffect(() => rememberCampaign(window.location.search, safeSessionStorage()), [])`. Mounted in `app/layout.tsx` inside `<body>`. Test: renders to an empty string.
-- [ ] **Form** — in `onSubmit` body add `source_page: window.location.pathname`, `referrer_host: (() => { try { const h = new URL(document.referrer).host; return h && h !== window.location.host ? h : ""; } catch { return ""; } })()`, `...readCampaign(safeSessionStorage())`. No hidden inputs (the no-JS path gets `source_page` from the Referer header server-side).
-- [ ] **Route** — schema gains `source_page`, `utm_source`, `utm_medium`, `utm_campaign`, `referrer_host` (strings, trimmed, capped 200/80/80/120/120, optional). Build `meta`: `{ ...brief select values (SELLER_KEYS + BUYER_KEYS that are non-empty), source_page: d.source_page || refererPath(request.headers.get("referer")), utm_*, referrer_host, consent_version: CONSENT_VERSION }` with empty values omitted; pass as `meta` to `submitEnquiry`. `refererPath` returns the pathname only when the referer's host equals the request host, else undefined.
-- [ ] **`lib/crm.ts`** — `EnquiryInput.meta?: Record<string, string>`; the body already spreads `input`, so `meta` travels. Test: the JSON body carries `meta`.
-- [ ] **Legal page** — in "Cookies and tracking" append: "If you arrive from a link that names a campaign, the site keeps that name in your browser's session storage until you close the tab, so that an enquiry can say where you came from. That is not a cookie, it identifies nobody, and nothing else reads it." In "Where your enquiry goes" append: "If you give an e-mail address, you also receive one message confirming that your enquiry arrived; it is sent through the same provider." Test: legal HTML contains "session storage" (bound: `components/campaign-memory.tsx` source contains `sessionStorage`) and "confirming that your enquiry arrived".
-- [ ] `npm run typecheck && npm run lint && npm test` → PASS. Commit `"feat(enquiry): the brief and its provenance travel as data; campaign remembered for the session; /legal says so (LR-01/02/11)"`.
+- [x] **`lib/enquiry-fields.ts`** — add `export const CONSENT_VERSION = "2026-09-15";` (the wording of the checkbox and /legal as they stand today; bump when either changes), `export const CAMPAIGN_KEYS = ["utm_source","utm_medium","utm_campaign"] as const;`, `export const CAMPAIGN_STORAGE_KEY = "gnk-campaign";`, `export function campaignFromSearch(search: string): Record<string,string>` (only those three, trimmed, capped at 120), `export function rememberCampaign(search: string, storage: Storage | null)`, `export function readCampaign(storage: Storage | null): Record<string,string>` (try/catch around every storage access — private windows throw). Tests for each.
+- [x] **`components/campaign-memory.tsx`** — `"use client"`, renders nothing; `useEffect(() => rememberCampaign(window.location.search, safeSessionStorage()), [])`. Mounted in `app/layout.tsx` inside `<body>`. Test: renders to an empty string.
+- [x] **Form** — in `onSubmit` body add `source_page: window.location.pathname`, `referrer_host: (() => { try { const h = new URL(document.referrer).host; return h && h !== window.location.host ? h : ""; } catch { return ""; } })()`, `...readCampaign(safeSessionStorage())`. No hidden inputs (the no-JS path gets `source_page` from the Referer header server-side).
+- [x] **Route** — schema gains `source_page`, `utm_source`, `utm_medium`, `utm_campaign`, `referrer_host` (strings, trimmed, capped 200/80/80/120/120, optional). Build `meta`: `{ ...brief select values (SELLER_KEYS + BUYER_KEYS that are non-empty), source_page: d.source_page || refererPath(request.headers.get("referer")), utm_*, referrer_host, consent_version: CONSENT_VERSION }` with empty values omitted; pass as `meta` to `submitEnquiry`. `refererPath` returns the pathname only when the referer's host equals the request host, else undefined.
+- [x] **`lib/crm.ts`** — `EnquiryInput.meta?: Record<string, string>`; the body already spreads `input`, so `meta` travels. Test: the JSON body carries `meta`.
+- [x] **Legal page** — in "Cookies and tracking" append: "If you arrive from a link that names a campaign, the site keeps that name in your browser's session storage until you close the tab, so that an enquiry can say where you came from. That is not a cookie, it identifies nobody, and nothing else reads it." In "Where your enquiry goes" append: "If you give an e-mail address, you also receive one message confirming that your enquiry arrived; it is sent through the same provider." Test: legal HTML contains "session storage" (bound: `components/campaign-memory.tsx` source contains `sessionStorage`) and "confirming that your enquiry arrived".
+- [x] `npm run typecheck && npm run lint && npm test` → PASS. Commit `"feat(enquiry): the brief and its provenance travel as data; campaign remembered for the session; /legal says so (LR-01/02/11)"`.
 
 ---
 
@@ -823,8 +823,8 @@ Then the self-test `do $$ … $$` block: submit with meta containing `budget` an
 
 - [ ] `tests/e2e/public-enquiry.spec.ts` (CRM): post with `meta: { budget: "over_1m", utm_source: "instagram" }` and assert the lead's `criteria` carries both and nothing else beyond `channel`/`listing_reference`.
 - [ ] Full local gates in the CRM worktree: `npm run typecheck && npm run lint && npm test && npm run test:rls` — paste the summary lines. Site: `npm run typecheck && npm run lint && npm test && npm run build`.
-- [ ] `docs/DECISIONS.md`: `## T-sprint-a-lead-routing — …(2026-09-15, migration 0096)` — the four calls: `source` stays `website` (the retention sweep keys on it); `criteria` is shape-only so the allowlist admits no free prose; routing lives in the SQL function because it holds the lead id and the route holds no id; the SLA hop is task-only because `pg_net` is available but not installed on hosted (enabling it is an operator decision; the e-mail escalation is T1's second half). `HANDOFF.md` §0: Hosted DB row, Cron row (TEN jobs, `lead-sla */10`), operator items (set `ENQUIRY_ALERT_FROM` once `send.kalaitsidis.com` is verified, both addresses in `ENQUIRY_ALERT_TO`, turn on Settings → Lead routing).
+- [ ] `docs/DECISIONS.md`: `## T-sprint-a-lead-routing — …(2026-09-15, migration 0098)` — the four calls: `source` stays `website` (the retention sweep keys on it); `criteria` is shape-only so the allowlist admits no free prose; routing lives in the SQL function because it holds the lead id and the route holds no id; the SLA hop is task-only because `pg_net` is available but not installed on hosted (enabling it is an operator decision; the e-mail escalation is T1's second half). `HANDOFF.md` §0: Hosted DB row, Cron row (TEN jobs, `lead-sla */10`), operator items (set `ENQUIRY_ALERT_FROM` once `send.kalaitsidis.com` is verified, both addresses in `ENQUIRY_ALERT_TO`, turn on Settings → Lead routing).
 - [ ] Re-check the other worktrees for a competing `0096_*`; push both branches; wait for CI (read every job's conclusion, not the exit code).
-- [ ] Hosted apply BEFORE merge, in stages via the Supabase MCP `execute_sql` (DDL sections one at a time; the self-test block last), then `npx supabase migration repair --status applied 0096 --linked` with the token from `~/.gnk-crm/backup.env`, then `npx supabase migration list --linked` → 96/96 zero drift; `get_advisors` unchanged.
+- [ ] Hosted apply BEFORE merge, in stages via the Supabase MCP `execute_sql` (DDL sections one at a time; the self-test block last), then `npx supabase migration repair --status applied 0098 --linked` with the token from `~/.gnk-crm/backup.env`, then `npx supabase migration list --linked` → 98 applied, no drift; `get_advisors` unchanged.
 - [ ] Merge CRM PR first (`gh pr merge --merge`), verify the deploy READY, live probe: POST to the production door with `meta` on a `ZZTEST` enquiry, confirm `criteria` via `execute_sql`, then redact it through the app. Merge the site PR, verify the deploy, one real form fill from the live site with a `?utm_source=zztest` landing, confirm the lead, redact.
 - [ ] Update HANDOFF §0 + the memory note; delete the merged branches and the worktrees (`git worktree remove`).
