@@ -13,19 +13,19 @@
 import { describe, expect, it } from "vitest";
 import { anonClient } from "./helpers";
 
-// spatial_ref_sys is a PostGIS catalog table, not part of the app's generated
-// types, so query it through the untyped anon client with a loose handle.
-const srs = (): { from: (t: string) => any } => anonClient() as unknown as { from: (t: string) => any };
-
+// spatial_ref_sys is a PostGIS catalog table, not part of the app schema, so it
+// is reached through the untyped anon client the same way the other RLS tests
+// query their tables.
 describe("PostGIS spatial_ref_sys is read-only for the API roles (0099)", () => {
   it("anon may still read the reference table", async () => {
-    const { data, error } = await srs().from("spatial_ref_sys").select("srid").limit(1);
+    const anon = anonClient();
+    const { data, error } = await anon.from("spatial_ref_sys").select("srid").limit(1);
     expect(error, error?.message).toBeNull();
     expect(Array.isArray(data)).toBe(true);
   });
 
   it("anon may not delete from it, and nothing is removed", async () => {
-    const anon = srs();
+    const anon = anonClient();
     const { count: before } = await anon
       .from("spatial_ref_sys")
       .select("srid", { count: "exact", head: true });
@@ -42,7 +42,8 @@ describe("PostGIS spatial_ref_sys is read-only for the API roles (0099)", () => 
   });
 
   it("anon may not update it either", async () => {
-    const { error } = await srs()
+    const anon = anonClient();
+    const { error } = await anon
       .from("spatial_ref_sys")
       .update({ auth_name: "probe" })
       .eq("srid", -99999);
