@@ -857,6 +857,7 @@ export type Database = {
           first_call_at: string | null
           first_response_at: string | null
           id: string
+          idempotency_key: string | null
           lost_reason: string | null
           message: string | null
           org_id: string
@@ -876,6 +877,7 @@ export type Database = {
           first_call_at?: string | null
           first_response_at?: string | null
           id?: string
+          idempotency_key?: string | null
           lost_reason?: string | null
           message?: string | null
           org_id: string
@@ -895,6 +897,7 @@ export type Database = {
           first_call_at?: string | null
           first_response_at?: string | null
           id?: string
+          idempotency_key?: string | null
           lost_reason?: string | null
           message?: string | null
           org_id?: string
@@ -1200,7 +1203,7 @@ export type Database = {
         Row: {
           created_at: string
           enabled: boolean
-          feed_token: string
+          feed_token_sha256: string | null
           id: string
           last_pull_count: number | null
           last_pulled_at: string | null
@@ -1215,7 +1218,7 @@ export type Database = {
         Insert: {
           created_at?: string
           enabled?: boolean
-          feed_token?: string
+          feed_token_sha256?: string | null
           id?: string
           last_pull_count?: number | null
           last_pulled_at?: string | null
@@ -1230,7 +1233,7 @@ export type Database = {
         Update: {
           created_at?: string
           enabled?: boolean
-          feed_token?: string
+          feed_token_sha256?: string | null
           id?: string
           last_pull_count?: number | null
           last_pulled_at?: string | null
@@ -2368,6 +2371,7 @@ export type Database = {
           installment_id: string | null
           is_done: boolean
           kind: string | null
+          lead_id: string | null
           mandate_id: string | null
           org_id: string
           property_id: string | null
@@ -2387,6 +2391,7 @@ export type Database = {
           installment_id?: string | null
           is_done?: boolean
           kind?: string | null
+          lead_id?: string | null
           mandate_id?: string | null
           org_id: string
           property_id?: string | null
@@ -2406,6 +2411,7 @@ export type Database = {
           installment_id?: string | null
           is_done?: boolean
           kind?: string | null
+          lead_id?: string | null
           mandate_id?: string | null
           org_id?: string
           property_id?: string | null
@@ -2455,6 +2461,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "task_kinds"
             referencedColumns: ["kind"]
+          },
+          {
+            foreignKeyName: "tasks_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["id"]
           },
           {
             foreignKeyName: "tasks_mandate_id_fkey"
@@ -3220,7 +3233,7 @@ export type Database = {
         Returns: string
       }
       note_portal_pull: {
-        Args: { p_count: number; p_token: string; p_ua: string }
+        Args: { p_count: number; p_token_sha256: string; p_ua: string }
         Returns: undefined
       }
       note_public_enquiry_hit: {
@@ -3250,7 +3263,7 @@ export type Database = {
         | { Args: { tbl_oid: unknown; use_typmod?: boolean }; Returns: number }
         | { Args: { use_typmod?: boolean }; Returns: string }
       portal_connection_by_token: {
-        Args: { p_portal: string; p_token: string }
+        Args: { p_portal: string; p_token_sha256: string }
         Returns: {
           enabled: boolean
           org_slug: string
@@ -3258,7 +3271,7 @@ export type Database = {
         }[]
       }
       portal_supplement: {
-        Args: { p_token: string }
+        Args: { p_token_sha256: string }
         Returns: {
           images: Json
           lat: number
@@ -3362,6 +3375,10 @@ export type Database = {
       }
       raise_key_recall_tasks: {
         Args: { p_actor?: string; p_mandate?: string }
+        Returns: number
+      }
+      raise_lead_sla_tasks: {
+        Args: { p_minutes?: number; p_org?: string }
         Returns: number
       }
       record_key_movement: {
@@ -4015,13 +4032,19 @@ export type Database = {
       submit_public_enquiry: {
         Args: {
           p_email: string
+          p_idempotency_key?: string
           p_message: string
+          p_meta?: Json
           p_name: string
           p_org_slug: string
           p_phone: string
           p_property_ref?: string
         }
-        Returns: boolean
+        Returns: {
+          lead_id: string
+          lead_org_id: string
+          replayed: boolean
+        }[]
       }
       unlockrows: { Args: { "": string }; Returns: number }
       updategeometrysrid: {

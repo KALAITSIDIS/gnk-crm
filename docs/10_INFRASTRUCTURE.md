@@ -110,7 +110,7 @@ npm run db:types        # regenerate lib/supabase/database.types.ts
 Run `npm run dev:2fa` to enrol one and print the TOTP secret. That script
 refuses any non-local URL, deliberately.
 
-### pg_cron — 9 scheduled jobs (all live)
+### pg_cron — 10 scheduled jobs (all live)
 
 ```
 0  3 * * *   expire-mandates              select expire_mandates()
@@ -122,6 +122,7 @@ refuses any non-local URL, deliberately.
 45 3 * * *   expire-reservations          select expire_reservations()
 50 3 * * *   warn-expiring-reservations   select warn_expiring_reservations()
 55 3 * * *   remind-due-installments      select remind_due_installments()
+*/10 * * * * lead-sla                     select raise_lead_sla_tasks()      (0098: chases a website lead unanswered after an hour)
 ```
 
 Ordering is deliberate: each sweep runs after the one whose events it needs.
@@ -218,7 +219,8 @@ SENTRY_DSN                       (server — was missing once; everything report
 NEXT_PUBLIC_SENTRY_DSN
 SENTRY_AUTH_TOKEN                (optional, source maps)
 RESEND_API_KEY                   (optional)
-ENQUIRY_ALERT_TO                 (with it; the desk address)
+ENQUIRY_ALERT_TO                 (with it; the desk address — comma-separated for more than one)
+ENQUIRY_ALERT_FROM               (optional; the alert's From. Set to a verified sending address to also arm the visitor acknowledgement, 0098 — never resend.dev for that)
 ENQUIRY_FORWARD_KEY              (secret; = gnk-web's CRM_FORWARD_KEY — the site proves it is the forwarder, 2026-09-06)
 IP_HASH_SALT                     (secret; salts the rate-limit fingerprints — unset falls back to the public project URL and logs it)
 SITE_REVALIDATE_URL              (the site's revalidate door, https://gnk-web.vercel.app/api/revalidate — 2026-09-13, REL-01)

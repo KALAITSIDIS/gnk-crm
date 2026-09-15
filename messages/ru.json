@@ -61,6 +61,7 @@
     "agent": {
       "quick": {
         "addLead": "Добавить лида",
+        "logCall": "Записать звонок",
         "viewings": "Просмотры",
         "contacts": "Контакты",
         "calculators": "Калькуляторы"

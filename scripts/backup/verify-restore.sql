@@ -45,12 +45,12 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 95::bigint as migrations,
+    2::bigint as auth_users, 99::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
     0::bigint as reservations, 0::bigint as reservation_installments,
-    13::bigint as task_kinds, 1::bigint as chain_checkpoints
+    14::bigint as task_kinds, 1::bigint as chain_checkpoints
     -- captured 2026-08-30 from hosted (yjgirvzgoiywdojnpkpd) via
     -- capture-baseline.sql, after the 08-29/30 audit-fix run (0070–0073,
     -- PAF0001 content fixes, test-photo deletion — which is why media
@@ -216,8 +216,12 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   -- three (audit A01). A restore that re-grants anon here re-opens that.
   ('submit_public_enquiry',   true, false, false, true),
   ('note_public_enquiry_hit', true, false, false, true),
+  -- the lead SLA sweep (0098): cron runs it as postgres; nobody else may
+  ('raise_lead_sla_tasks',    true, false, false, true),
   -- the portal feed (0095): a portal PULLS over a tokenised URL, so these
-  -- three are anon-callable and the 64-hex feed_token is the whole gate.
+  -- three are anon-callable and the 64-hex token in the URL is the whole
+  -- gate — since 0097 the row holds only its sha256, and the functions take
+  -- the digest.
   -- note_portal_pull WRITES (the last_pull* columns) and is still anon —
   -- unlike the 0084 door it takes only two harmless caller values (a
   -- user-agent string cut to 200 chars, a count clamped at 0), touches only
@@ -288,9 +292,9 @@ misc as (
   select 'migrations: non_filename_versions', '0',
          (select count(*)::text from supabase_migrations.schema_migrations where version !~ '^[0-9]{4}$')
   union all
-  -- ALL NINE cron jobs (the previous pack checked three, so a restore that
+  -- ALL TEN cron jobs (the previous pack checked three, so a restore that
   -- lost the other five verified green — audit REL-04; the ninth is 0092's
-  -- retention sweep). pg_cron jobs are in
+  -- retention sweep, the tenth 0098's ten-minute lead SLA). pg_cron jobs are in
   -- NO dump; after a restore every one must be recreated from the migrations
   -- (§4b.4), and this is the list that proves it happened.
   select 'cron: ' || j.jobname || ' active', 'true',
@@ -298,9 +302,10 @@ misc as (
   from (values ('expire-mandates'), ('followup-nudges'), ('verify-events-chain'),
                ('verify-events-chain-full'), ('expire-reservations'),
                ('warn-expiring-reservations'), ('remind-due-installments'),
-               ('ensure-events-partitions'), ('redact-stale-enquiries')) as j(jobname)
+               ('ensure-events-partitions'), ('redact-stale-enquiries'),
+               ('lead-sla')) as j(jobname)
   union all
-  select 'cron: exactly 9 jobs, none extra', '9',
+  select 'cron: exactly 10 jobs, none extra', '10',
          (select count(*)::text from cron.job)
   union all
   select 'storage: media bucket is public (migration 0008)', 'true',

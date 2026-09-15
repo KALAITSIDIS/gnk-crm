@@ -8,9 +8,22 @@ import { LEAD_MESSAGE_REDACTED } from "@/lib/services/erasure";
 import { logEvent } from "@/lib/services/events";
 import { createClient } from "@/lib/supabase/server";
 import { checkContactDuplicate, type DuplicateMatch } from "@/lib/actions/contacts";
-import { leadContactMode, splitEnquirerName } from "@/lib/services/lead-contact";
+import {
+  BUYER_META_KEYS,
+  SELLER_META_KEYS,
+  budgetBandRange,
+  cleanEnquiryMeta,
+  requirementFromMeta,
+} from "@/lib/services/enquiry-meta";
+import {
+  leadContactMode,
+  parseWebsiteEnquiry,
+  splitEnquirerName,
+} from "@/lib/services/lead-contact";
 import { normalizePhone } from "@/lib/services/phone";
-import { COMM_CHANNELS, LEAD_OPEN_STATUSES, LEAD_SOURCES } from "@/lib/validators/contacts";
+import { zonedWallClockToUtc } from "@/lib/utils/tz";
+import { COMM_CHANNELS, LEAD_OPEN_STATUSES } from "@/lib/validators/contacts";
+import { createLeadSchema } from "@/lib/validators/leads";
 
 // `duplicate` is set when creating a NEW contact from the lead hits an existing
 // one (doc 02 §C4 dedup): the form surfaces it and offers to link instead.
@@ -18,12 +31,12 @@ export type LeadActionState = {
   error: string | null;
   savedAt: number | null;
   duplicate?: DuplicateMatch | null;
+  /** a success with a caveat — the main thing happened, a side thing did not */
+  note?: string | null;
 };
 
 type LeadRow = Database["public"]["Tables"]["leads"]["Row"];
 type LeadUpdate = Database["public"]["Tables"]["leads"]["Update"];
-
-const emptyToUndefined = (v: unknown) => (v === "" || v === null || v === "none" ? undefined : v);
 
 const isOpen = (lead: LeadRow) =>
   (LEAD_OPEN_STATUSES as readonly string[]).includes(lead.status);
@@ -38,20 +51,6 @@ const canWorkError = (profile: CurrentProfile, lead: LeadRow): string | null =>
   profile.role !== "admin" && lead.assigned_agent_id && lead.assigned_agent_id !== profile.id
     ? "Lead is assigned to another agent."
     : null;
-
-// z.guid(), not z.uuid() — Zod 4 uuid() rejects seeded fixture ids (T3.2)
-const createLeadSchema = z.object({
-  source: z.enum(LEAD_SOURCES),
-  channel: z.preprocess(emptyToUndefined, z.enum(COMM_CHANNELS).optional()),
-  message: z.preprocess(emptyToUndefined, z.string().max(5000).optional()),
-  contact_id: z.preprocess(emptyToUndefined, z.guid().optional()),
-  property_id: z.preprocess(emptyToUndefined, z.guid().optional()),
-  // New-enquirer capture (doc 02 §C4 "create contact"): a name plus optional
-  // phone/email. Ignored when an existing contact_id is picked.
-  new_contact_name: z.preprocess(emptyToUndefined, z.string().max(200).optional()),
-  new_contact_phone: z.preprocess(emptyToUndefined, z.string().max(40).optional()),
-  new_contact_email: z.preprocess(emptyToUndefined, z.string().email().max(200).optional()),
-});
 
 export async function createLead(
   _prev: LeadActionState,
@@ -152,6 +151,11 @@ export async function createLead(
       message: d.message ?? null,
       contact_id: contactId,
       property_id: d.property_id ?? null,
+      // 0098 (audit LR-04): a call logged after the fact keeps its real arrival
+      // time (Cyprus wall clock -> UTC), so the response clock measures the desk
+      ...(d.received_at
+        ? { received_at: zonedWallClockToUtc(d.received_at).toISOString() }
+        : {}),
     })
     .select("id")
     .single();
@@ -163,7 +167,13 @@ export async function createLead(
     entityType: "lead",
     entityId: created.id,
     eventType: "created",
-    payload: { source: d.source, channel: d.channel ?? null, contact_id: contactId },
+    payload: {
+      source: d.source,
+      channel: d.channel ?? null,
+      contact_id: contactId,
+      property_id: d.property_id ?? null,
+      backdated: Boolean(d.received_at),
+    },
   });
 
   revalidatePath("/leads");
@@ -609,6 +619,172 @@ export async function logChatLinkOpened(
   if (leadId) revalidatePath(`/leads/${leadId}`);
 }
 
+/**
+ * One click from a website enquiry to a contact, a link and — when the brief
+ * says what the buyer wants — a saved search (0098, audit LR-08 / LR-01).
+ *
+ * The person's name, e-mail and phone sit in the enquiry's message in a
+ * block the door writes (parseWebsiteEnquiry); the desk used to retype them
+ * into Contacts, come back, and link. This does the three steps in order,
+ * with the same dedup the manual path runs: a match on phone or e-mail is
+ * returned as `duplicate` and NOTHING is created — the row offers "Link X
+ * instead". The site's checkbox is consent to be contacted about THIS enquiry,
+ * not marketing consent, so it lands in gdpr_notes and never flips
+ * consent_marketing.
+ *
+ * Partial success is reported, not hidden: the contact and the link are the
+ * point; a saved search that could not be written comes back as `note` and
+ * the desk adds it on the contact.
+ */
+export async function createContactFromEnquiry(leadId: string): Promise<LeadActionState> {
+  const { supabase, profile, lead } = await getLead(leadId);
+  if (!isOpen(lead)) return { error: "Only an open lead can be worked.", savedAt: null };
+  const guardErr = canWorkError(profile, lead);
+  if (guardErr) return { error: guardErr, savedAt: null };
+  if (lead.contact_id) return { error: "This lead already has a contact.", savedAt: null };
+  if (lead.source !== "website") {
+    return {
+      error: "Only a website enquiry carries the person's details in its message — add the contact by hand.",
+      savedAt: null,
+    };
+  }
+  const person = parseWebsiteEnquiry(lead.message);
+  if (!person) {
+    return {
+      error: "This enquiry's details could not be read — link or create the contact by hand.",
+      savedAt: null,
+    };
+  }
+
+  // A phone the parser cannot normalise is kept raw, not refused: it is what
+  // the visitor typed, and the desk can still ring it.
+  const phoneE164 = person.phone ? (normalizePhone(person.phone)?.e164 ?? null) : null;
+  const email = person.email?.toLowerCase() ?? null;
+
+  const duplicate = await checkContactDuplicate(person.phone, email);
+  if (duplicate) {
+    return {
+      error: `A contact with this ${duplicate.matched_on} already exists — link them instead.`,
+      savedAt: null,
+      duplicate,
+    };
+  }
+
+  const meta = cleanEnquiryMeta(lead.criteria);
+  const isBuyer = BUYER_META_KEYS.some((k) => meta[k]);
+  const isSeller = SELLER_META_KEYS.some((k) => meta[k]);
+  const { firstName, lastName } = splitEnquirerName(person.name);
+
+  const { data: contact, error: contactErr } = await supabase
+    .from("contacts")
+    .insert({
+      org_id: profile.orgId,
+      contact_kind: "person",
+      first_name: firstName,
+      last_name: lastName,
+      phone_e164: phoneE164,
+      phone_raw: person.phone,
+      email,
+      contact_types: isBuyer ? ["buyer"] : isSeller ? ["seller", "owner"] : [],
+      source: "website",
+      source_detail: meta.source_page ?? null,
+      gdpr_notes: `Website enquiry consent (${meta.consent_version ?? "site checkbox"}) recorded ${lead.received_at}.`,
+      assigned_agent_id: lead.assigned_agent_id ?? (profile.role === "agent" ? profile.id : null),
+      created_by: profile.id,
+    })
+    .select("id")
+    .single();
+  if (contactErr) {
+    // race with a unique index (phone, or email since 0077) → a duplicate, not a raw error
+    if (contactErr.code === "23505") {
+      const race = await checkContactDuplicate(person.phone, email);
+      return {
+        error: `A contact with this ${race?.matched_on ?? "phone or email"} already exists — link them instead.`,
+        savedAt: null,
+        duplicate: race,
+      };
+    }
+    return { error: contactErr.message, savedAt: null };
+  }
+
+  await logEvent(supabase, {
+    orgId: profile.orgId,
+    actorId: profile.id,
+    entityType: "contact",
+    entityId: contact.id,
+    eventType: "created",
+    // shape only (SEC-03): the identifiers live on the row, which erasure can blank
+    payload: { has_phone: Boolean(phoneE164), has_email: Boolean(email), via: "website_enquiry" },
+  });
+
+  // `.is("contact_id", null)`: a colleague who linked meanwhile wins, and the
+  // returned row is the proof the write happened (RLS refuses with zero rows).
+  const { data: linked, error: linkErr } = await supabase
+    .from("leads")
+    .update({ contact_id: contact.id })
+    .eq("id", lead.id)
+    .is("contact_id", null)
+    .select("id");
+  if (linkErr || !linked?.length) {
+    return {
+      error:
+        "The contact was created but the lead could not be linked" +
+        (linkErr ? `: ${linkErr.message}` : " — someone may have linked it meanwhile") +
+        ". Link it by hand.",
+      savedAt: null,
+    };
+  }
+  await logEvent(supabase, {
+    orgId: profile.orgId,
+    actorId: profile.id,
+    entityType: "lead",
+    entityId: lead.id,
+    eventType: "contact_linked",
+    payload: { contact_id: contact.id, via: "website_enquiry" },
+  });
+
+  let note: string | null = null;
+  if (isBuyer) {
+    const { data: areaRows } = await supabase.from("areas").select("id, district_id, name");
+    const areas = (areaRows ?? []).map((a) => ({
+      id: a.id,
+      district_id: a.district_id,
+      name_en: ((a.name as { en?: string } | null)?.en ?? "").trim(),
+    }));
+    const seed = requirementFromMeta(meta, areas);
+    if (seed) {
+      const { data: requirement, error: reqErr } = await supabase
+        .from("buyer_requirements")
+        .insert({
+          org_id: profile.orgId,
+          contact_id: contact.id,
+          ...seed,
+          property_types: seed.property_types as Database["public"]["Enums"]["property_type"][],
+          created_by: profile.id,
+        })
+        .select("id")
+        .single();
+      if (reqErr) {
+        note = `The saved search could not be created (${reqErr.message}) — add it on the contact.`;
+      } else {
+        await logEvent(supabase, {
+          orgId: profile.orgId,
+          actorId: profile.id,
+          entityType: "contact",
+          entityId: contact.id,
+          eventType: "requirement_added",
+          payload: { requirement_id: requirement.id, label: seed.label, via: "website_enquiry" },
+        });
+      }
+    }
+  }
+
+  revalidatePath("/leads");
+  revalidatePath("/contacts");
+  revalidatePath(`/contacts/${contact.id}`);
+  return { error: null, savedAt: Date.now(), duplicate: null, note };
+}
+
 const convertSchema = z.object({
   lead_id: z.guid(),
   deal_type: z.enum(["sale", "rental", "antiparoxi", "advisory"]),
@@ -666,6 +842,12 @@ export async function convertLead(
     .filter(Boolean)
     .join(" — ");
 
+  // 0098 (audit LR-01 / PL-08): a website brief's budget band seeds the deal's
+  // expected value — the top of the band, or the bottom of an open-ended one —
+  // so a converted enquiry is not a deal worth "€—" on the board.
+  const band = budgetBandRange(cleanEnquiryMeta(lead.criteria).budget);
+  const expectedValue = band?.max ?? band?.min ?? null;
+
   const dealId = crypto.randomUUID();
   const { error: dealErr } = await supabase.from("deals").insert({
     id: dealId,
@@ -676,6 +858,7 @@ export async function convertLead(
     property_id: lead.property_id,
     buyer_contact_id: lead.contact_id,
     agent_id: lead.assigned_agent_id ?? profile.id,
+    expected_value: expectedValue,
     created_by: profile.id,
   });
   if (dealErr) return { error: dealErr.message, savedAt: null };
@@ -711,7 +894,14 @@ export async function convertLead(
     entityType: "deal",
     entityId: dealId,
     eventType: "created",
-    payload: { from_lead: lead.id, stage: stage.name, title },
+    payload: {
+      from_lead: lead.id,
+      stage: stage.name,
+      title,
+      ...(expectedValue !== null
+        ? { expected_value: expectedValue, expected_value_from: "website_budget_band" }
+        : {}),
+    },
   });
 
   revalidatePath("/leads");

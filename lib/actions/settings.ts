@@ -17,6 +17,7 @@ import {
   areaNameSchema,
   cyprusConfigSchema,
   inviteUserSchema,
+  leadRoutingSchema,
   nudgeThresholdsSchema,
   orgNameSchema,
   stageNameSchema,
@@ -709,5 +710,69 @@ export async function saveCyprusConfig(
   });
   revalidatePath("/settings/cyprus-config");
   revalidatePath("/calculators");
+  return ok();
+}
+
+/* ---------------- lead routing (0098) ---------------- */
+
+/**
+ * Settings → Lead routing. Writes `cyprus_config.lead_routing`, the row the
+ * enquiry door reads at insert time. Members are checked against the org's
+ * ACTIVE profiles under RLS before anything is written, so a stale form or a
+ * hand-typed id cannot route leads to nobody; the database would skip such an
+ * id anyway, but a refusal here is a sentence and a skip there is silence.
+ * Row-count guarded like every other config write; every save is an event.
+ */
+export async function saveLeadRouting(
+  _prev: SettingsActionState,
+  formData: FormData,
+): Promise<SettingsActionState> {
+  const parsed = leadRoutingSchema.safeParse({
+    mode: formData.get("mode"),
+    agents: formData.getAll("agents").map(String).filter(Boolean),
+  });
+  if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Invalid input");
+
+  const gate = await requireAdmin();
+  if ("denied" in gate) return fail(gate.denied);
+  const { supabase, profile } = gate;
+  const { mode, agents } = parsed.data;
+
+  if (agents.length > 0) {
+    const { data: members, error: memberErr } = await supabase
+      .from("profiles")
+      .select("id")
+      .in("id", agents)
+      .in("role", ["admin", "agent"])
+      .eq("is_active", true);
+    if (memberErr) return fail(memberErr.message);
+    const known = new Set((members ?? []).map((m) => m.id));
+    if (agents.some((a) => !known.has(a))) {
+      return fail("Only active admins and agents of this organisation can be in the rotation.");
+    }
+  }
+
+  const value = { mode, agents };
+  const { data: updated, error } = await supabase
+    .from("cyprus_config")
+    .update({ value: value as never })
+    .eq("key", "lead_routing")
+    .select("key");
+  if (error) return fail(error.message);
+  // RLS filters a denied update to zero rows rather than erroring, and 0098's
+  // row could also have been deleted — either way this must not claim success.
+  if (!updated?.length) {
+    return fail("Lead routing is not configured on this database — re-run migration 0098.");
+  }
+
+  await logEvent(supabase, {
+    orgId: profile.orgId,
+    actorId: profile.id,
+    entityType: "config",
+    entityId: null,
+    eventType: "updated",
+    payload: { key: "lead_routing", mode, agents },
+  });
+  revalidatePath("/settings/lead-routing");
   return ok();
 }

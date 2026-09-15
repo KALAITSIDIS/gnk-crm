@@ -35,6 +35,11 @@ describe("the cron-health banner's expected job count", () => {
   it("is what the dashboard component reads — no literal of its own", () => {
     const src = readFileSync(join(root, "components", "features", "dashboard", "cron-health.tsx"), "utf-8");
     expect(src).toContain("EXPECTED_CRON_JOBS");
-    expect(src, "a literal count on the screen is the thing that went stale").not.toMatch(/expected \d+ jobs|!== \d+ \?/);
+    expect(src, "a literal count on the screen is the thing that went stale").not.toMatch(
+      // the message's tail, and the health verdict itself — the tenth job (0098,
+      // 2026-09-15) moved the pin and left `verdicts.length === 9` behind, so the
+      // banner read "0 of 10 unhealthy —" on production until this caught it
+      /expected \d+ jobs|!== \d+ \?|verdicts\.length === \d+/,
+    );
   });
 });

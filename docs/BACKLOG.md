@@ -1400,7 +1400,8 @@ explicit direction.
   `viewings.notes` are free text that may name the data subject; both are
   retained today under the legal-claims basis. If a data subject disputes that,
   they need a review path. Also `leads.lost_reason` is left intact.
-- Add-lead dialog: optional property link (schema + createLead already accept
+- ~~**Add-lead dialog: optional property link + backdated received_at.**~~ **SHIPPED 2026-09-15 (Sprint A, audit LR-04):** the dialog carries a property picker and a `datetime-local` Received field (Cyprus wall clock, the future refused, `backdated` in the event), and the agent dashboard's first quick action is "Log a call" → `/leads?add=phone` with the dialog open and preset.
+  - **Add-lead dialog (original).** optional property link (schema + createLead already accept
   `property_id`; the form never sends it) and an optional backdated
   `received_at` for leads entered after the fact, so the response-time KPI
   reflects reality.
@@ -2215,7 +2216,7 @@ Every VERIFY line in this section was RUN on 2026-09-14 before it was written.
   **VERIFY:** `ls lib/services/portals/dialects/rera.ts lib/services/portals/dialects/trovit.ts` — either present means started. *(neither on 2026-09-14; the directory holds `kyero.ts`, `xml.ts`, `types.ts`, `index.ts` and the fixtures.)*
 
 - **Portal syndication milestone 3, M.** The JamesEdition leads pull — spec
-  §Leads: migration 0096 with `leads.portal` and `leads.external_ref` (unique
+  §Leads: a migration at the next free number (0096 and 0097 went to the integrations audit phase 1 on 2026-09-15, DECISIONS T-int-phase-1) with `leads.portal` and `leads.external_ref` (unique
   on `(org_id, portal, external_ref)` where not null), the four DEFAULTED
   parameters on `submit_public_enquiry` (`p_source`, `p_portal`,
   `p_external_ref`, `p_received_at`; a duplicate returns `false` instead of
@@ -2264,6 +2265,12 @@ Every VERIFY line in this section was RUN on 2026-09-14 before it was written.
   above); that item was removed when this branch merged `origin/main`, so the
   fact lives once — here, struck — and the next person does not re-propose it.
 
+## Sprint A follow-ons — 2026-09-15 (lead capture & workflow audit)
+
+- **Proposal page "I'm interested" button, S.** The audit's DA-07 / Sprint A step A9, deferred: a buyer reading a proposal (`/p/[token]`) sees the agent's e-mail and phone as links, so the open is tracked and the interest is not. One button per property posting to the public enquiry door (with the link's contact name and the reference, `source_page = proposal`) would close the loop through the existing pipe — but `resolve_share_link` returns the org NAME, not its slug, and a link with no contact needs a small name + e-mail/phone form. VERIFY: `grep -n "interest" components/features/share-links/proposal.tsx` — nothing.
+- **Lead SLA e-mail escalation — NEEDS AN OPERATOR DECISION.** 0098's `lead-sla` sweep raises a `lead_unanswered` task after an hour; the audit's trigger T1 also wants an e-mail to the OTHER principal at fifteen minutes and a daily digest. Vercel Hobby's cron is once a day, so the hop from the database is `pg_net` (available on the hosted project, NOT installed — `select * from pg_available_extensions where name = 'pg_net'` says available) posting to a CRM route behind `CRON_SECRET`, or a Pro plan. Enabling an extension on production is the operator's call.
+- **NOTE — a website lead's `criteria` is shape-only by construction.** 0098's allowlist admits select values, short numbers-as-text, a path and campaign names; a name, e-mail, phone or message has no key and cannot be smuggled under one (`supabase/tests/enquiry-meta.test.ts`). Keep it that way: `criteria` is never rewritten by erasure or the retention sweep.
+- **VERIFY — does a website enquiry retried after a refused attempt keep its idempotency key?** Observed ONCE on production 2026-09-15 (gnk-web `8cfe9b5` → gnk-crm `1737b4f`): a /contact fill whose first two presses the meter refused (429) landed with `leads.idempotency_key` NULL although the same form JS sent `source_page` and `utm_*`; a fresh-page fill landed with the key the hidden input held. `components/enquiry-form.tsx` keeps `state = "idle"` and the same `<form>` through an error, so the code does not explain it. Reproduce locally (the meter refuses the sixth post in a quarter-hour bucket), then fix or record as not reproducible. Worst case is the pre-0096 behaviour — a retry after a lost answer makes a second lead — not a regression. VERIFY: `grep -n "enquiry_key" components/enquiry-form.tsx` in gnk-web.
 ## Data integrity audit — 2026-09-15
 
 Twenty findings (LST-01…10 listings and feeds, REC-01…05 record hygiene,
@@ -2289,10 +2296,10 @@ VERIFY, run before starting.
   LST-04, LST-05, LST-07, LST-08, REC-02 in part, REC-03, REC-04, GOV-03,
   GOV-05.) **VERIFY:** `grep -ln "properties_parent_kind\|energy_class in" supabase/migrations/*.sql` — a hit means shipped.
 - **Phase 2 — sweeps and surfaces, M.** Task kinds `mandate_expired_listing_public`
-  (to the oldest active admin), `price_review` (a public listing ninety days
-  without a `price_history` row) and `lead_unanswered` (hourly, past the red
-  threshold in `nudge_thresholds`) as arms of the existing sweeps, so the
-  pinned job count does not move; `data_health()` returning a row per check
+  (to the oldest active admin) and `price_review` (a public listing ninety days
+  without a `price_history` row) as arms of the existing sweeps, so the
+  pinned job count does not move (`lead_unanswered` shipped the same day in
+  0098, DECISIONS `T-sprint-a-lead-routing` — REC-04's nudge half is closed); `data_health()` returning a row per check
   with a nightly `data_health_snapshot` and an admin card beside cron health;
   `property_duplicate_candidates()` (DLS triple, normalised address + type,
   25 m + type) and `contact_duplicate_candidates()` (name similarity with a
@@ -2301,7 +2308,10 @@ VERIFY, run before starting.
   registration duplicate check on the Legal-section save; importer address and
   deed warnings; `archive-records.mts --batch <id>`. (LST-01, LST-03, LST-10,
   REC-03, REC-04, GOV-02.) **VERIFY:** `grep -l "data_health\|mandate_expired_listing_public" supabase/migrations/*.sql` — a hit means shipped.
-- **Phase 2 — the enquirer key, S.** `leads.enquirer_key` (SHA-256 of the
+- **Phase 2 — the enquirer key, S.** Since 0096 the door dedupes a RETRY of
+  the same submission by its idempotency key, and since LR-08 the inbox
+  creates and links the contact in one click; what remains is recognising
+  the same PERSON across submissions: `leads.enquirer_key` (SHA-256 of the
   normalised email or phone, never the value) set by `submit_public_enquiry`;
   the inbox shows earlier enquiries from the same person and a matching
   contact, hashed under the reader's own RLS; a "Link all" action; a same-key

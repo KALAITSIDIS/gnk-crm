@@ -17,6 +17,7 @@
  * listing can be on a portal while off the site — or selection stopped gating
  * the feed and every public listing is being syndicated.
  */
+import { createHash, randomBytes } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   eligibilityInputFromProperty,
@@ -44,6 +45,7 @@ let adminA: TestUser;
 let agentA: TestUser;
 let adminB: TestUser;
 let token = "";
+let tokenSha256 = "";
 let publicId = "";
 let privateId = "";
 let unselectedId = "";
@@ -79,13 +81,17 @@ beforeAll(async () => {
   agentA = await createTestUser(svc, `portals-agt-${run}@example.invalid`, "agent", ORG_A, { enrolFactor: true });
   adminB = await createTestUser(svc, `portals-admb-${run}@example.invalid`, "admin", ORG_B, { enrolFactor: true });
 
-  const { data: conn, error } = await svc
+  // 0097: the database holds only sha256(token). The suite mints the token
+  // the way the app does and stores the digest, so it can play the portal.
+  token = randomBytes(32).toString("hex");
+  tokenSha256 = createHash("sha256").update(token).digest("hex");
+  const { error } = await svc
     .from("portal_connections")
-    .upsert({ org_id: ORG_A, portal: PORTAL, enabled: true }, { onConflict: "org_id,portal" })
-    .select("feed_token")
-    .single();
+    .upsert(
+      { org_id: ORG_A, portal: PORTAL, enabled: true, feed_token_sha256: tokenSha256 },
+      { onConflict: "org_id,portal" },
+    );
   if (error) throw new Error(error.message);
-  token = conn.feed_token as string;
 
   publicId = await mkProperty(ORG_A, ref("P"), "public", agentA.id);
   privateId = await mkProperty(ORG_A, ref("X"), "private", null);
@@ -135,8 +141,23 @@ describe("portal_connections", () => {
     const upd = await adminA.client.from("portal_connections").update({ settings: { email: "x@y.zz" } }).eq("portal", PORTAL).select("id");
     expect(upd.error).toBeNull();
     expect(upd.data).toHaveLength(1);
-    const a = await anon.from("portal_connections").select("feed_token");
+    const a = await anon.from("portal_connections").select("feed_token_sha256");
     expect(a.error?.code).toBe("42501");
+  });
+
+  it("the plaintext token is not stored anywhere: the column is gone (0097)", async () => {
+    // 42703 undefined_column — the service role, which sees every column,
+    // cannot read a token because there is none to read
+    const gone = await svc.from("portal_connections").select("feed_token").limit(1);
+    expect(gone.error?.code).toBe("42703");
+    const { data } = await svc
+      .from("portal_connections")
+      .select("feed_token_sha256")
+      .eq("org_id", ORG_A)
+      .eq("portal", PORTAL)
+      .single();
+    expect(data?.feed_token_sha256).toBe(tokenSha256);
+    expect(data?.feed_token_sha256).not.toBe(token);
   });
 
   it("the database's portal-id check agrees with the registry's PORTAL_ID_PATTERN", async () => {
@@ -221,7 +242,7 @@ describe("the token functions (anon)", () => {
       .from("properties")
       .update({ status: "available", visibility: "public", location_approx: false })
       .eq("id", publicId);
-    await svc.from("portal_connections").update({ enabled: true }).eq("feed_token", token);
+    await svc.from("portal_connections").update({ enabled: true }).eq("feed_token_sha256", tokenSha256);
   });
 
   afterAll(async () => {
@@ -236,23 +257,23 @@ describe("the token functions (anon)", () => {
     return (data ?? []).some((r: { reference: string }) => r.reference === reference);
   };
   const onPortal = async (reference: string) => {
-    const { data, error } = await anon.rpc("portal_supplement", { p_token: token });
+    const { data, error } = await anon.rpc("portal_supplement", { p_token_sha256: tokenSha256 });
     expect(error).toBeNull();
     return (data ?? []).some((r: { reference: string }) => r.reference === reference);
   };
 
   it("a wrong token answers nothing; the right one answers the org slug", async () => {
-    const wrong = await anon.rpc("portal_connection_by_token", { p_portal: PORTAL, p_token: "f".repeat(64) });
+    const wrong = await anon.rpc("portal_connection_by_token", { p_portal: PORTAL, p_token_sha256: "f".repeat(64) });
     expect(wrong.error).toBeNull();
     expect(wrong.data).toHaveLength(0);
-    const right = await anon.rpc("portal_connection_by_token", { p_portal: PORTAL, p_token: token });
+    const right = await anon.rpc("portal_connection_by_token", { p_portal: PORTAL, p_token_sha256: tokenSha256 });
     expect(right.data?.[0]).toMatchObject({ org_slug: "test-org-a", enabled: true, settings: { email: "x@y.zz" } });
-    const otherPortal = await anon.rpc("portal_connection_by_token", { p_portal: "properstar", p_token: token });
+    const otherPortal = await anon.rpc("portal_connection_by_token", { p_portal: "properstar", p_token_sha256: tokenSha256 });
     expect(otherPortal.data).toHaveLength(0);
   });
 
   it("portal_supplement returns the selected public listing with exact coords and only JPEG photos, never the private one", async () => {
-    const { data, error } = await anon.rpc("portal_supplement", { p_token: token });
+    const { data, error } = await anon.rpc("portal_supplement", { p_token_sha256: tokenSha256 });
     expect(error).toBeNull();
     const refs = (data ?? []).map((r: { reference: string }) => r.reference);
     expect(refs).toContain(ref("P"));
@@ -272,7 +293,7 @@ describe("the token functions (anon)", () => {
     // the other direction: an approximate location is flagged as such, so a
     // dialect that must not publish an exact point can tell (afterEach restores)
     await svc.from("properties").update({ location_approx: true }).eq("id", publicId);
-    const again = await anon.rpc("portal_supplement", { p_token: token });
+    const again = await anon.rpc("portal_supplement", { p_token_sha256: tokenSha256 });
     expect(again.error).toBeNull();
     const approxRow = (again.data ?? []).find((r: { reference: string }) => r.reference === ref("P"))!;
     expect(approxRow.location_approx).toBe(true);
@@ -287,7 +308,7 @@ describe("the token functions (anon)", () => {
   // of a listing the desk marked approximate.
   it("portal_supplement withholds the point of an approximate listing and hands it back once exact again", async () => {
     await svc.from("properties").update({ location_approx: true }).eq("id", publicId);
-    const approx = await anon.rpc("portal_supplement", { p_token: token });
+    const approx = await anon.rpc("portal_supplement", { p_token_sha256: tokenSha256 });
     expect(approx.error).toBeNull();
     const withheld = (approx.data ?? []).find((r: { reference: string }) => r.reference === ref("P"))!;
     expect(withheld.location_approx).toBe(true);
@@ -295,7 +316,7 @@ describe("the token functions (anon)", () => {
     expect(withheld.lng).toBeNull();
 
     await svc.from("properties").update({ location_approx: false }).eq("id", publicId);
-    const exact = await anon.rpc("portal_supplement", { p_token: token });
+    const exact = await anon.rpc("portal_supplement", { p_token_sha256: tokenSha256 });
     expect(exact.error).toBeNull();
     const returned = (exact.data ?? []).find((r: { reference: string }) => r.reference === ref("P"))!;
     expect(returned.location_approx).toBe(false);
@@ -359,8 +380,8 @@ describe("the token functions (anon)", () => {
   });
 
   it("a disabled connection answers an empty supplement", async () => {
-    await svc.from("portal_connections").update({ enabled: false }).eq("feed_token", token);
-    const sup = await anon.rpc("portal_supplement", { p_token: token });
+    await svc.from("portal_connections").update({ enabled: false }).eq("feed_token_sha256", tokenSha256);
+    const sup = await anon.rpc("portal_supplement", { p_token_sha256: tokenSha256 });
     expect(sup.data).toHaveLength(0);
   });
 
@@ -368,13 +389,13 @@ describe("the token functions (anon)", () => {
     // 0095 leaves `and enabled` off this one deliberately: that a portal keeps
     // pulling a feed the desk switched off is worth seeing on the settings page,
     // so the pull is recorded against a DISABLED connection too.
-    await svc.from("portal_connections").update({ enabled: false }).eq("feed_token", token);
-    const { error } = await anon.rpc("note_portal_pull", { p_token: token, p_ua: "Test Crawler/1.0", p_count: -5 });
+    await svc.from("portal_connections").update({ enabled: false }).eq("feed_token_sha256", tokenSha256);
+    const { error } = await anon.rpc("note_portal_pull", { p_token_sha256: tokenSha256, p_ua: "Test Crawler/1.0", p_count: -5 });
     expect(error).toBeNull();
     const { data } = await svc
       .from("portal_connections")
       .select("last_pulled_ua, last_pull_count, last_pulled_at, enabled")
-      .eq("feed_token", token)
+      .eq("feed_token_sha256", tokenSha256)
       .single();
     expect(data).toMatchObject({ last_pulled_ua: "Test Crawler/1.0", last_pull_count: 0, enabled: false });
     expect(data?.last_pulled_at).not.toBeNull();

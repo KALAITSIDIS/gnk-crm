@@ -61,6 +61,7 @@
     "agent": {
       "quick": {
         "addLead": "Νέος ενδιαφερόμενος",
+        "logCall": "Καταγραφή κλήσης",
         "viewings": "Επισκέψεις",
         "contacts": "Επαφές",
         "calculators": "Υπολογιστές"

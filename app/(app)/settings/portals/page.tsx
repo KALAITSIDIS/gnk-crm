@@ -38,7 +38,9 @@ export default async function PortalsSettingsPage() {
   // that did not happen.
   const { data: rows, error } = await supabase
     .from("portal_connections")
-    .select("portal, enabled, feed_token, settings, last_pulled_at, last_pulled_ua, last_pull_count");
+    .select(
+      "portal, enabled, feed_token_sha256, settings, last_pulled_at, last_pulled_ua, last_pull_count",
+    );
   if (error) throw new Error(`portal connections: ${error.message}`);
   const byPortal = new Map((rows ?? []).map((r) => [r.portal, r]));
 
@@ -89,9 +91,10 @@ export default async function PortalsSettingsPage() {
         const connection: PortalCardConnection | null = r
           ? {
               enabled: r.enabled,
-              // the path, not a full URL: the card builds the origin on the
-              // client, so no NEXT_PUBLIC_APP_URL to keep in step with reality
-              feedPath: `/api/portals/${def.id}/${r.feed_token}`,
+              // 0097: the row holds only the token's digest, so the page can
+              // say THAT a feed URL exists and never what it is — the card
+              // shows the URL once, from the action that minted it
+              hasToken: r.feed_token_sha256 !== null,
               settings: settingsStrings(r.settings),
               lastPulledAt: r.last_pulled_at,
               lastPulledUa: r.last_pulled_ua,

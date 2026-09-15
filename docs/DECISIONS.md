@@ -6767,6 +6767,134 @@ A tracked-file audit (`git ls-files`, blob sizes, a `knip` scan, `npm audit --om
 
 What the scan flagged and was deliberately NOT touched: every `scripts/backup/*.mjs` (run by the nightly task and by each other, not by `package.json`), the operator scripts under `scripts/import`, `scripts/maintenance`, `scripts/media` and `scripts/fonts` (run by hand, documented in their headers), `tests/e2e/auth.setup.ts` (Playwright's setup project), `public/sw.js` (served at runtime) and `lib/testing/server-only-stub.ts` (a vitest alias); on the web repo the scan listed its 34 unit-test files, which is the scanner not knowing the vitest layout. Unused *exports* (constants kept for tests and documentation) were left alone: removing them is churn with no benefit. The pack size of `gnk-crm` (about 67 MB, most of it the screenshots' history) is not reduced — that would need a history rewrite, which is out of bounds.
 
+## T-int-phase-1 — integrations audit, phase 1: the enquiry door records and dedupes, slip signing retries, portal tokens become digests (2026-09-15, migrations 0096 + 0097)
+
+The 2026-09-15 integrations & third-party API audit (a private artifact held
+by the operator; finding ids `INT-01…INT-18`) found the platform's live state
+healthy and its exposure in what happens when a hop fails silently. Phase 1
+of its plan — the five items that need no vendor and no operator account —
+shipped on `fix/int-phase-1`, built in a worktree because two other sessions
+were running against the main checkout at the time. The plan is
+`docs/superpowers/plans/2026-09-15-int-phase-1.md`.
+
+**INT-01 — the desk alert had no timeout and no record.** `sendEnquiryAlert`
+now passes `AbortSignal.timeout` (8 s, `ALERT_TIMEOUT_MS`) to the Resend
+call, and the route writes its outcome — `sent`, `skipped`, `failed` — as an
+`enquiry_alert` event on the lead (`lib/services/enquiry-alert-event.ts`;
+outcome and provider only, never an address, SEC-03). Until now the word came
+back and was dropped, so a failed or skipped alert was a console line and
+nothing else.
+
+**INT-02 — no idempotency, so a slow save invited a duplicate.** Migration
+**0096** gives `submit_public_enquiry` a `p_idempotency_key` and makes it
+return one row `(lead_id, lead_org_id, replayed)`; a refusal is zero rows.
+The site mints a key per form (`enquiry_key`, filled by the browser after
+mount so the server's render and the client's agree), forwards it as
+`idempotency_key`, and retries a LOST answer exactly once with the same key —
+never without one, never on a status code. The return-shape change is why the
+function is dropped and recreated (a return type survives no
+`create or replace`), and why the 0087 lockdown is restated and asserted.
+
+**INT-08 — slip signing was not retry-safe.** The PNG went up first with
+`upsert: false`; a PDF failure stranded it and every retry was refused by
+Storage. The PDF is now rendered before anything is stored, a fresh signing
+removes whatever an earlier attempt left at its two paths, and a failure after
+an upload takes the upload back out.
+
+**INT-10 — portal feed tokens were stored in clear.** Migration **0097**
+replaces `feed_token` with `feed_token_sha256` (nullable: a row created by
+saving contact details first has no token until the switch is flipped), the
+three anon functions take `p_token_sha256`, the route hashes the path token
+once, and the app mints (`lib/services/portals/token.ts`) on the first enable,
+on an enable of a token-less row, and on Regenerate — returning the plaintext
+once for the card's copy-it-now panel. The settings page can say THAT a URL
+exists and never what it is. The portals e2e now removes the connection before
+and after the run so its Enable is a first enable and shows a URL.
+
+**What moved and why it is recorded here.** The BACKLOG's milestone-3 note
+reserved "0096" for the leads pull; that was a note, not a ledger, and M3
+takes the next free number. The restore pack's migration count pin moved 95 →
+97. The audit's step 1 — regenerating the JamesEdition token the audit's own
+database read had seen — is superseded by 0097 on hosted: the stored value
+becomes a digest, and the next Regenerate mints a token nobody has read.
+
+**Observed on the shared local stack, not a defect of this branch:** while the
+full RLS suite ran, the local database also carried another session's
+migration `0098 enquiry_meta_routing_sla` (a `lead-sla` cron job every ten
+minutes and a `lead_unanswered` task kind), so rls.test.ts 33 and 50 counted
+14 kinds and 10 jobs against pins of 13 and 9, and test 38's synthetic figures
+doubled under two suites running at once. CI applies only this branch's
+migrations to a fresh stack and is the check that counts.
+
+## T-sprint-a-lead-routing — a website enquiry arrives as data, is assigned by a rule, is acknowledged, and is chased after an hour (2026-09-15, migration 0098)
+
+**What the audit found (2026-09-15 lead capture & workflow audit, LR-01…LR-11; the report is a private artifact the operator holds).** The site asked a buyer seven structured questions and a seller ten and flattened every answer into sentences appended to `leads.message`, which the inbox then showed as ONE truncated line with no lead detail page — so the desk was asked to work a brief it could read only in the alert e-mail. No source page, referrer or campaign travelled: an Instagram ad and a Google search were one `website`. Every lead landed unassigned on nobody's dashboard, the response clock was a colour that raised nothing when it turned red, the visitor received no acknowledgement, a failed alert was a console line, and turning an enquiry into a contact meant retyping its header into Contacts and walking back. Production held eight website leads, none answered, none assigned, none linked, and zero `buyer_requirements`.
+
+**What shipped, in one migration and two branches.**
+
+- **`p_meta jsonb` on the door (0098).** `submit_public_enquiry` gains an eighth argument after 0096's `p_idempotency_key`; the seven-argument overload is dropped (two overloads with defaults make the shorter call ambiguous), the return table is 0096's, and a caller that omits it gets 0096's behaviour. The allowlist lives IN THE FUNCTION — the site's own field names and FIELD_CAPS to the character — and admits a key only as a trimmed, non-empty, capped STRING; the function's own `channel` and `listing_reference` are written last so meta can never override them; a replay keeps the first post's meta as it keeps its message. `lib/services/enquiry-meta.ts` is the app's copy (validator, inbox chips, the saved-search builder); `supabase/tests/enquiry-meta.test.ts` pins the SQL side, `enquiry-meta.test.ts` the app's.
+- **`leads.source` STAYS `website` for every form fill, whatever `utm_source` says.** The tempting derivation — an Instagram-ad enquiry filed as `source = instagram` — would have that lead escape `redact_stale_enquiries` (0092), which sweeps `source = 'website'`, and so break the privacy page's 24-month promise. The campaign travels in `criteria` (`utm_source`, `utm_medium`, `utm_campaign`, `source_page`, `referrer_host`, `consent_version`) and the `created` event carries `has_meta`, `source_page` and `utm_source` — a path and a platform name, never a person.
+- **The routing rule is applied by the database, not the route.** `cyprus_config.lead_routing` = `{mode: off | round_robin, agents: [...]}`, seeded OFF, edited on Settings → Lead routing (admin; members checked against active org profiles under RLS before the write; every save an event). Under round-robin the function picks, among the named ACTIVE admins/agents of the org, the one with the fewest open leads, then the one assigned longest ago, and writes a null-actor `assigned` event. It lives in the function because the function holds the lead id at insert time and the route (by 0084's design) learns it only afterwards.
+- **`tasks.lead_id` and the `lead-sla` sweep every ten minutes.** `raise_lead_sla_tasks(p_org, p_minutes default 60)` mints one `lead_unanswered` task per website lead still open with no `first_response_at` after the hour — the lead's agent, else the oldest active admin; due NOW because it is already late; the title carries the listing reference and never the person — and supersedes it, with a null-actor `superseded` event, once the lead is answered or closed. NO E-MAIL leaves the sweep: `pg_net` is available on the hosted project but not installed, and installing it is an operator decision (BACKLOG); the e-mail escalation is the audit's trigger T1, second half. The tenth cron job moved the five count pins (restore pack, `EXPECTED_CRON_JOBS`, RLS test 50, docs/10, HANDOFF §0).
+- **The route and the alert.** The validator cleans `meta` against the same allowlist (a useful 400, not the boundary), the route passes `p_meta` and hands `meta` to the desk alert, whose body gains a `From:` line (page · campaign). A failed send pages Sentry with the reference and which details existed — beside the console line and the `enquiry_alert` event 0096 already writes on the lead.
+- **The enquirer is acknowledged** (`lib/services/enquiry-ack.ts`): one plain-text e-mail after the desk alert, from `ENQUIRY_ALERT_FROM`, replying to the desk, naming the listing and the desk hours — never from Resend's onboarding sender (it skips loudly until a verified sending address is set), never on a replay or a honeypot hit, never for a phone-only enquiry. The firm's name comes from the organisations row the door named.
+- **The inbox shows the whole enquiry** (`components/features/leads/lead-message.tsx`): the first line stays as the row's summary, the rest opens in a `<details>` that needs no JavaScript, and the brief shows as chips.
+- **One click from enquiry to contact, link and saved search** (`createContactFromEnquiry`): `parseWebsiteEnquiry` reads the header block the door writes — header lines only, stopping at the first blank line, so the visitor's own words can never be mistaken for it — the same dedup as the manual path runs (a match creates nothing and the row offers "Link <name> instead"), the contact is made with `source = website` and the consent noted in `gdpr_notes` (the site's checkbox is consent to be contacted about THIS enquiry, not marketing consent), the lead is linked with `.is("contact_id", null)` so a colleague who linked meanwhile wins, and a buyer's brief becomes a `buyer_requirements` row through the pure `requirementFromMeta` — bands → ranges, an area matched by any slash-separated part of the site's label against the CRM's English name, the rest kept in notes, "unsure" and a non-numeric bedroom count no opinion. `convertLead` seeds `expected_value` from the band. A saved search that cannot be written comes back as a `note`, never a rollback of the contact.
+- **Log a call in two taps** (`/leads?add=phone|whatsapp`, the agent dashboard's first quick action): the Add-lead schema moved to `lib/validators/leads.ts` and gained `received_at` (a `datetime-local` in Cyprus wall-clock time, the future refused, `backdated` in the event) and the dialog carries a property picker — the schema and the action accepted `property_id` since T2 and the form never sent it (BACKLOG's own entry, struck).
+- **The site** (gnk-web `feat/sprint-a-lead-routing`): the route sends `meta` beside the message — the form's select values as they are, `source_page` (what the form said, or the same-site Referer's path on the no-JavaScript route, never another site's), the landing campaign, an external referrer's host, and `consent_version` set from the constant on the server so a caller cannot claim wording it never saw. `CampaignMemory`, mounted once in the root layout, keeps the three `utm_` keys in SESSION storage for the visit (not a cookie, not local storage, nothing sent with requests); every storage access survives a private window. Over the CRM's cap a value is dropped, never refused. `/legal` now discloses the session storage and the acknowledgement e-mail, each bound to the code by a test (`app/legal/page.test.ts` reads `components/campaign-memory.tsx`).
+
+**Numbering, and the two parallel sessions.** The integrations session held `fix/int-phase-1` with `0096_enquiry_idempotency` (already applied to the shared local database) and a planned 0097; the data-integrity session had a 0099 on hosted by the evening. Sprint A first wrote its migration as 0096, found the collision on the local apply (`"applied":[]`), merged `fix/int-phase-1` into this branch, and rewrote its migration as 0098 on top of their 0096 — same return table, their idempotency body intact — leaving 0097 to them; the merge later took their 0097 too, so this branch carries 0096, 0097 and 0098 and the restore pack pins 98 (0099 lands with theirs). Hosted order: 0096, 0097 and 0099 were on hosted before 0098; 0098 depends only on 0096. The lesson for the shared tree is written into HANDOFF §0: check the OTHER worktrees' `supabase/migrations` before choosing a number, and again before the hosted apply.
+
+**Deferred, on purpose.** (1) The audit's A9 — an "I'm interested" button on the proposal page posting to the enquiry door — needs the org slug, which `resolve_share_link` does not return, and a small form for links with no contact; Low (DA-07), BACKLOG. (2) The e-mail half of the SLA ladder (T1) waits on `pg_net`. (3) The Vercel `ENQUIRY_ALERT_FROM` / verified sending domain and both principals in `ENQUIRY_ALERT_TO` are operator steps (HANDOFF).
+
+**Two process notes worth more than the code.** The route's unit tests mock `after()` to run inline, but an async callback settles over several microtask hops and an assertion made straight after `await POST()` raced them — it saw the alert (first in the callback) and missed the acknowledgement (last); `post()` now collects every callback and awaits them before answering. And one commit in this sprint went through with a red test because the chain gated on `grep`'s exit code (which matched the failure line) instead of the runner's — the standing rule in memory, violated once more, and the commit was amended before it was pushed; every later gate in the sprint reads `$?` of vitest, tsc and eslint directly.
+
+**Evidence (2026-09-15, this branch at `c710f87`, merged with `fix/int-phase-1`):** `npm test` 1737 across 159 files; RLS `enquiry-meta` 10 + `enquiry-idempotency` 4 + test 50 green against the local stack after 0098; typecheck and lint clean; site `npm test` 362 across 36 files, typecheck, lint and `next build` clean; site CI green at `db77762`. The e2e and CRM CI results, the hosted apply and the production probe are recorded in HANDOFF §0's Hosted DB row.
+
+## T-audit-r06-postgis — the PostGIS catalog was anon-writable, and only a trigger could close it (2026-09-15, migration 0099)
+
+The 2026-09-15 security & compliance audit (artifact
+`claude.ai/artifact/8tYzgYtY7n11N52DxXNVfM`, finding AC-04) measured that the
+PostGIS install grants the `anon` and `authenticated` API roles full DML on
+`public.spatial_ref_sys`, and PostgREST exposes it. Proven on hosted with only
+the publishable key: an anon `DELETE` and an anon `UPDATE` each answered **204**.
+The rows are the public EPSG registry (8,500 of them), so nothing confidential
+leaks, but anyone on the internet could wipe them and break every geography
+operation — the map, area centroids, the approximate-location feed.
+
+**The obvious fix does not work.** `REVOKE ... FROM anon` is a silent no-op from
+`postgres`: the table is owned by `supabase_admin`, every grant was made BY
+`supabase_admin`, and `postgres` — the role every migration and the management
+tooling run as — is neither the owner, a member of `supabase_admin`, nor a
+superuser (`pg_has_role(postgres, supabase_admin, MEMBER)` = false, measured).
+Running the revoke changed the ACL by zero bytes and raised no error, which is
+exactly the false-green trap: a migration that "revokes" and does nothing.
+
+**What postgres CAN do is add a trigger** — it holds `TRIGGER` on the table even
+though it cannot alter the grant. So 0099 installs `forbid_srs_api_writes()` and
+a statement-level `BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE` trigger that
+raises `insufficient_privilege` when `current_user` is `anon` or `authenticated`,
+and lets `postgres`, `supabase_admin` and `service_role` through. Reads are
+untouched. Applied to hosted 2026-09-15 via `execute_sql` and re-probed: the same
+anon `DELETE`/`UPDATE` now answer **401** with the guard's message, the 8,500
+rows are intact, and an anon `SELECT` still answers 200. The migration
+self-verifies on every apply by assuming the `anon` role (postgres holds ADMIN on
+it) and asserting the write is refused, so a fresh CI or local reset proves it
+too. `supabase/tests/postgis-catalog-guard.test.ts` pins it in the RLS suite.
+
+The two siblings `public.geometry_columns` and `public.geography_columns` are
+VIEWS over the system catalogs and are not updatable (anon `DELETE` answers
+SQLSTATE `0A000`), so they carry no write hole and need no guard; anon keeps
+`SELECT` on all three, unchanged.
+
+**Residual, for the operator.** The grants themselves still sit in the ACL and
+can only be revoked by `supabase_admin`, which no customer role can assume — so
+the trigger is the enforcing control, not belt-and-braces. Raise a Supabase
+support request to revoke the default PostGIS grants (or confirm it is handled on
+newer project templates); until then the guard stands in front of them. The
+`spatial_ref_sys` "RLS disabled in public" advisor line is the same object and
+stays for the same reason — a customer cannot enable RLS on a supabase_admin
+table — and is low-risk public reference data.
 ## T-data-integrity-phase0 — the audit's four cheapest protections: the drift detector gets a screen, stored scores recompute nightly, the importer cannot skip the gate, Polis gets a centroid (2026-09-15, no migration)
 
 The 2026-09-15 data architecture and integrity audit (a private artifact held by the operator; finding ids `LST-01…10` listings and feeds, `REC-01…05` record hygiene, `GOV-01…05` governance) ranked twenty findings, none critical, six high. Phase 0 is the code-only set that lands before real mandates are entered; phases 1–3 are on BACKLOG § *Data integrity audit — 2026-09-15*. Built on `feat/data-integrity-phase0` in an isolated worktree because another session was auditing the main tree at the time.
@@ -6779,6 +6907,8 @@ The 2026-09-15 data architecture and integrity audit (a private artifact held by
 
 **LST-05 and GOV-03 — Polis.** One area of eleven had no centroid, so its listings could take no approximate fallback. Set on hosted to `POINT(32.4258 35.0367)` — the town centre, approximate by design (0031: a few hundred metres out is fine, the wrong village is not) — with a `locations_updated` event (actor null, `action: set_area_centroid`, event 294, the `logImported` idiom); the chain verifies from the checkpoint; zero areas now lack one. No migration: Polis was created on hosted after the seed, so it exists in no migration to correct.
 
+**Merged onto a main that had moved.** While this branch was built, `T-int-phase-1`, `T-sprint-a-lead-routing` and `T-audit-r06-postgis` landed (migrations 0096–0099). The only overlap was the three record files, resolved by keeping both sides; the one substantive consequence is on BACKLOG: 0098 shipped `lead_unanswered`, which the phase-2 entry had listed, and 0096's idempotency key dedupes a retried submission (not the same person twice), so the enquirer-key entry says what remains. One thing the merge exposed: `components/features/dashboard/cron-health.tsx` still judged health against a literal `verdicts.length === 9` while `EXPECTED_CRON_JOBS` had moved to ten, so the production banner read "0 of 10 unhealthy —" with nothing after the dash; the guard test in `tests/unit/cron-jobs-pinned.test.ts` had a pattern for the message tail but not for the verdict. The pattern now covers `verdicts.length === <digits>` (red on the literal, green on the pin) and the component compares against the pin — the second time a literal count in that file went stale in three days.
+
 **Deliberately not done here.** The two inert `cyprus_config` rows (`other_property_taxes`, `company_details`): marking them verified asserts the firm's own details and deleting them is a business call — the operator's, listed under phase 3. `archive-records.mts --batch` (the reversal the batch id exists for) is phase 2. The `price_review` and `mandate_expired_listing_public` task kinds need a migration and are phase 2.
 
-Counts on the branch: 1688 unit tests across 153 files (+26 across 3 new files), typecheck and lint clean, RLS and e2e untouched.
+Counts on the merged tree: 1763 unit tests across 162 files (+26 across 3 new files over main's 1737 / 159), typecheck and lint clean; RLS and e2e are untouched by this branch and run in CI on the merge commit.

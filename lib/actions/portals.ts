@@ -1,11 +1,11 @@
 "use server";
 
-import { randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { getCurrentProfile, type CurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
 import { DIALECT_RENDERERS } from "@/lib/services/portals/dialects";
 import { portalById } from "@/lib/services/portals/registry";
+import { hashPortalToken, mintPortalToken } from "@/lib/services/portals/token";
 import { createClient } from "@/lib/supabase/server";
 import { portalIdSchema, portalSettingsForm } from "@/lib/validators/portals";
 
@@ -17,17 +17,26 @@ import { portalIdSchema, portalSettingsForm } from "@/lib/validators/portals";
  * count — an RLS-filtered zero-row write must never report success or log
  * an event — and every success is an event.
  *
- * THE TOKEN IS THE DATABASE'S TO MINT. `portal_connections.feed_token`
- * defaults to 32 random bytes, so an INSERT never names it: an upsert that
- * carried one would hand every enable/disable toggle a NEW feed URL and point
- * the portal at a dead one. `newToken()` exists for regeneration and for
- * nothing else, which is why enable/disable is an explicit
+ * THE TOKEN IS MINTED HERE AND STORED AS A DIGEST (0097). The row holds
+ * `feed_token_sha256`; the plaintext exists only in the action's return value
+ * (`token`), which the card shows once. It is minted in exactly three places:
+ * the first enable (the INSERT), an enable of a row that has no token yet
+ * (contact details were saved before the switch), and Regenerate. A toggle of
+ * a row that has its token never touches it — one `.upsert({ …, feed_token_
+ * sha256 })` would hand every enable/disable a NEW feed URL and point the
+ * portal at a dead one, which is why enable/disable is an explicit
  * insert-if-absent-else-update rather than one `.upsert()`.
  */
 
-export type PortalActionState = { error: string | null; savedAt: number | null };
+export type PortalActionState = {
+  error: string | null;
+  savedAt: number | null;
+  /** The plaintext feed token, present only on the call that minted it. Shown once. */
+  token?: string | null;
+};
 
 const ok = (): PortalActionState => ({ error: null, savedAt: Date.now() });
+const okWithToken = (token: string): PortalActionState => ({ error: null, savedAt: Date.now(), token });
 const fail = (error: string): PortalActionState => ({ error, savedAt: null });
 
 const PORTAL_SETTINGS_PATH = "/settings/portals";
@@ -44,10 +53,6 @@ async function requireAdmin(): Promise<Session | { denied: string }> {
   const s = await session();
   if (s.profile.role !== "admin") return { denied: "Admins only." };
   return s;
-}
-
-function newToken(): string {
-  return randomBytes(32).toString("hex");
 }
 
 /** `settings` is jsonb, so anything could be in the column; only an object has keys. */
@@ -82,7 +87,7 @@ export async function setPortalEnabled(
   // is a row to update at all.
   const { data: existing, error: readError } = await supabase
     .from("portal_connections")
-    .select("id, settings")
+    .select("id, settings, feed_token_sha256")
     .eq("portal", id.data)
     .maybeSingle();
   if (readError) return fail(readError.message);
@@ -100,15 +105,21 @@ export async function setPortalEnabled(
   // describing something that did not happen.
   if (!existing && !enabled) return ok();
 
+  // The switch is where the URL is born (0097): a first enable mints, and so
+  // does enabling a row that was created by saving contact details first. A
+  // row that has its token keeps it through every later toggle.
+  const token = !existing || (enabled && existing.feed_token_sha256 === null) ? mintPortalToken() : null;
+  const digest = token ? { feed_token_sha256: hashPortalToken(token) } : {};
+
   const { data: written, error } = existing
     ? await supabase
         .from("portal_connections")
-        .update({ enabled, updated_by: profile.id })
+        .update({ enabled, updated_by: profile.id, ...digest })
         .eq("id", existing.id)
         .select("id")
     : await supabase
         .from("portal_connections")
-        .insert({ org_id: profile.orgId, portal: id.data, enabled, updated_by: profile.id })
+        .insert({ org_id: profile.orgId, portal: id.data, enabled, updated_by: profile.id, ...digest })
         .select("id");
   if (error) return fail(error.message);
   if (!written?.length) return fail("Nothing changed — your role may not manage portals.");
@@ -122,7 +133,7 @@ export async function setPortalEnabled(
     payload: { portal: id.data },
   });
   revalidatePath(PORTAL_SETTINGS_PATH);
-  return ok();
+  return token ? okWithToken(token) : ok();
 }
 
 export async function savePortalSettings(
@@ -182,12 +193,13 @@ export async function regeneratePortalToken(portalId: string): Promise<PortalAct
   if ("denied" in gate) return fail(gate.denied);
   const { supabase, profile } = gate;
 
-  // The one place a token is minted in the app. No insert branch: rotating a
-  // connection that does not exist would only mean creating one, and the
-  // database's own default already does that better.
+  // No insert branch: rotating a connection that does not exist would only
+  // mean creating one, which is the enable switch's job. The row takes the
+  // digest; the token goes back to the card, once.
+  const token = mintPortalToken();
   const { data: written, error } = await supabase
     .from("portal_connections")
-    .update({ feed_token: newToken(), updated_by: profile.id })
+    .update({ feed_token_sha256: hashPortalToken(token), updated_by: profile.id })
     .eq("portal", id.data)
     .select("id");
   if (error) return fail(error.message);
@@ -202,7 +214,7 @@ export async function regeneratePortalToken(portalId: string): Promise<PortalAct
     payload: { portal: id.data },
   });
   revalidatePath(PORTAL_SETTINGS_PATH);
-  return ok();
+  return okWithToken(token);
 }
 
 /* ---------------- the selection (property page, whoever may edit it) ---------------- */

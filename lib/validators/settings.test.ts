@@ -5,6 +5,7 @@ import {
   cyprusConfigSchema,
   inviteUserSchema,
   orgNameSchema,
+  leadRoutingSchema,
   stageNameSchema,
 } from "./settings";
 
@@ -86,5 +87,34 @@ describe("cyprusConfigSchema", () => {
   it("requires a key and non-trivial JSON payload", () => {
     expect(cyprusConfigSchema.safeParse({ key: "", value_json: "{}" }).success).toBe(false);
     expect(cyprusConfigSchema.safeParse({ key: "stamp_duty", value_json: "" }).success).toBe(false);
+  });
+});
+
+describe("leadRoutingSchema (0098)", () => {
+  const A = "aaaaaaaa-0000-0000-0000-000000000001";
+  const B = "bbbbbbbb-0000-0000-0000-000000000001";
+
+  it("takes off with no members, and round-robin with at least one", () => {
+    expect(leadRoutingSchema.safeParse({ mode: "off", agents: [] }).success).toBe(true);
+    const rr = leadRoutingSchema.safeParse({ mode: "round_robin", agents: [A, B] });
+    expect(rr.success).toBe(true);
+    if (rr.success) expect(rr.data.agents).toEqual([A, B]);
+  });
+
+  it("refuses round-robin over nobody, with a sentence", () => {
+    const r = leadRoutingSchema.safeParse({ mode: "round_robin", agents: [] });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues[0]!.message).toMatch(/at least one member/i);
+  });
+
+  it("refuses an unknown mode and a non-id member", () => {
+    expect(leadRoutingSchema.safeParse({ mode: "random", agents: [A] }).success).toBe(false);
+    expect(leadRoutingSchema.safeParse({ mode: "round_robin", agents: ["not-an-id"] }).success).toBe(false);
+  });
+
+  it("drops a member listed twice", () => {
+    const r = leadRoutingSchema.safeParse({ mode: "round_robin", agents: [A, A, B] });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.agents).toEqual([A, B]);
   });
 });

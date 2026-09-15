@@ -16,8 +16,13 @@ import { baseUrl, fixtureProfile, isLocal, serviceClient } from "./helpers";
  */
 const svc = (): SupabaseClient => serviceClient();
 
-test.beforeEach(() => {
+test.beforeEach(({}, testInfo) => {
   test.skip(!isLocal(), "needs the local stack service key");
+  // API-only: no viewport is involved, and the door's budget is five posts
+  // per quarter hour per address — a second project would spend it and read
+  // the sixth post's 429 as a defect (measured 2026-09-15: desktop 7 passed,
+  // mobile 3 failed on exactly that). CI runs desktop alone; locally, so does this.
+  test.skip(testInfo.project.name === "mobile", "API-only spec — one project is enough");
 });
 
 const ORG_SLUG = "gnk";
@@ -123,6 +128,55 @@ test("a filled honeypot is dropped, and told nothing", async () => {
       .eq("org_id", orgId)
       .like("message", `%${marker}%`);
     expect(leads ?? [], "nothing reached the desk").toHaveLength(0);
+  } finally {
+    await api.dispose();
+  }
+});
+
+test("the brief and its provenance land in criteria as data, shape only (0098)", async () => {
+  const admin = svc();
+  const { orgId } = await fixtureProfile(admin);
+  const marker = `e2e-meta-${randomBytes(3).toString("hex")}`;
+  const api = await pwRequest.newContext({ baseURL: baseUrl() });
+
+  try {
+    const res = await api.post("/api/public/enquiries", {
+      data: {
+        org: ORG_SLUG,
+        name: `Web Buyer ${marker}`,
+        email: `${marker}@example.invalid`,
+        message: `Budget block probe ${marker}`,
+        meta: {
+          budget: "over_1m",
+          buy_area: "Peyia / Coral Bay",
+          utm_source: "instagram",
+          source_page: "/properties/PAF0001",
+          email: "smuggled@example.invalid", // identity has no key in the allowlist
+          hack: "x",
+        },
+      },
+    });
+    expect(res.status()).toBe(202);
+
+    const { data: leads } = await admin
+      .from("leads")
+      .select("id, criteria")
+      .eq("org_id", orgId)
+      .like("message", `%${marker}%`);
+    expect(leads ?? []).toHaveLength(1);
+    const criteria = leads![0]!.criteria as Record<string, unknown>;
+    expect(criteria).toEqual({
+      channel: "website_form",
+      listing_reference: null,
+      budget: "over_1m",
+      buy_area: "Peyia / Coral Bay",
+      utm_source: "instagram",
+      source_page: "/properties/PAF0001",
+    });
+    expect(JSON.stringify(criteria)).not.toContain("smuggled");
+
+    await admin.from("tasks").delete().eq("lead_id", leads![0]!.id);
+    await admin.from("leads").delete().eq("id", leads![0]!.id);
   } finally {
     await api.dispose();
   }

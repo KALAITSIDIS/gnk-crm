@@ -92,4 +92,35 @@ describe("public enquiry input", () => {
     expect(r.success).toBe(true);
     expect(r.data!.website).toBe("http://spam.example");
   });
+
+  it("takes an idempotency key of the shape 0096 accepts, and treats blank as absent", () => {
+    const keyed = publicEnquirySchema.safeParse({ ...base, idempotency_key: "3f2a9c1e-0b7d-4c6e-8a9f-0b1c2d3e4f50" });
+    expect(keyed.success).toBe(true);
+    expect(keyed.data!.idempotency_key).toBe("3f2a9c1e-0b7d-4c6e-8a9f-0b1c2d3e4f50");
+    const blank = publicEnquirySchema.safeParse({ ...base, idempotency_key: "  " });
+    expect(blank.success).toBe(true);
+    expect(blank.data!.idempotency_key).toBeUndefined();
+  });
+
+  it("refuses a key the database would refuse, with a sentence that says why", () => {
+    const r = publicEnquirySchema.safeParse({ ...base, idempotency_key: "no spaces allowed!" });
+    expect(r.success).toBe(false);
+    expect(r.error!.issues[0]!.message).toContain("idempotency_key");
+    expect(publicEnquirySchema.safeParse({ ...base, idempotency_key: "short" }).success).toBe(false);
+  });
+
+  it("takes a meta object and keeps only the allowlisted string keys, cleaned (0098)", () => {
+    const r = publicEnquirySchema.safeParse({
+      ...base,
+      meta: { budget: " over_1m ", email: "x@y.invalid", utm_source: "instagram", bedrooms_min: 3 },
+    });
+    expect(r.success).toBe(true);
+    expect(r.data!.meta).toEqual({ budget: "over_1m", utm_source: "instagram" });
+  });
+
+  it("treats a meta that is not an object as absent, and a body without one as fine", () => {
+    expect(publicEnquirySchema.safeParse({ ...base, meta: "junk" }).data!.meta).toBeUndefined();
+    expect(publicEnquirySchema.safeParse({ ...base, meta: [1] }).data!.meta).toBeUndefined();
+    expect(publicEnquirySchema.safeParse(base).data!.meta).toBeUndefined();
+  });
 });

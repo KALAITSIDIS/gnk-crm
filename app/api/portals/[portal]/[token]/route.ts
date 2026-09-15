@@ -6,6 +6,7 @@ import { assemblePortalFeed, MAX_PAGES } from "@/lib/services/portals/feed";
 import type { SupplementRow } from "@/lib/services/portals/feed-listing";
 import { notePortalPullAfter } from "@/lib/services/portals/pull-note";
 import { portalById } from "@/lib/services/portals/registry";
+import { hashPortalToken } from "@/lib/services/portals/token";
 import { MAX_LIMIT } from "@/lib/services/public-listings";
 
 /**
@@ -36,7 +37,10 @@ import { MAX_LIMIT } from "@/lib/services/public-listings";
  * a URL is not a secret store. That is accepted rather than engineered
  * around: a portal's crawler configuration takes a URL and nothing else, so
  * there is no header to move it to. Regenerating the token in Settings →
- * Portals is the mitigation.
+ * Portals is the mitigation. The DATABASE, though, holds only its sha256
+ * (0097): this route hashes the path token once and every lookup below
+ * carries the digest, so a dump or a service-role read yields no working
+ * URL — the same shape as share links since 0023.
  *
  * WHAT THE TOKEN UNLOCKS is this feed of already-public listings PLUS, for
  * the listings the desk selected, the EXACT coordinates the site feed
@@ -89,10 +93,12 @@ export async function GET(
   if (!renderer) return notFound();
 
   const supabase = createPublicClient();
+  // Hashed once, here; the plaintext goes no further than this request.
+  const tokenSha256 = hashPortalToken(token);
 
   const connection = await supabase.rpc("portal_connection_by_token", {
     p_portal: portalId,
-    p_token: token,
+    p_token_sha256: tokenSha256,
   });
   // A wrong token and a database that would not answer look identical from
   // outside, on purpose: neither tells a guesser that a token was close.
@@ -107,7 +113,7 @@ export async function GET(
   // the request's, and the note runs after the response has gone.
   const userAgent = request.headers.get("user-agent") ?? "";
   const notePull = (count: number) =>
-    notePortalPullAfter(supabase, { token, userAgent, count, portalId });
+    notePortalPullAfter(supabase, { tokenSha256, userAgent, count, portalId });
 
   // Disabled is a VALID feed with nothing in it — see the header. It must be
   // a document rather than an error, and it must never be cached: the desk
@@ -127,7 +133,7 @@ export async function GET(
   // from the feed. Order first, then page.
   const supplementPage = (from: number) =>
     supabase
-      .rpc("portal_supplement", { p_token: token })
+      .rpc("portal_supplement", { p_token_sha256: tokenSha256 })
       .order("reference")
       .range(from, from + SUPPLEMENT_PAGE - 1);
 
