@@ -5,6 +5,7 @@ import {
   briefChips,
   cleanEnquiryMeta,
   ENQUIRY_META_KEYS,
+  requirementFromMeta,
 } from "./enquiry-meta";
 
 /**
@@ -106,5 +107,68 @@ describe("briefChips — what the inbox shows beside a website lead", () => {
   it("is empty for a lead with no brief", () => {
     expect(briefChips({ channel: "website_form", listing_reference: null })).toEqual([]);
     expect(briefChips(null)).toEqual([]);
+  });
+});
+
+describe("requirementFromMeta — the saved search a buyer's brief becomes (LR-01)", () => {
+  const areas = [
+    { id: "a-peyia", district_id: "d-paf", name_en: "Peyia" },
+    { id: "a-tala", district_id: "d-paf", name_en: "Tala" },
+    { id: "a-germ", district_id: "d-lim", name_en: "Germasogeia" },
+  ];
+
+  it("maps the seven buyer answers onto the CRM's requirement fields", () => {
+    const r = requirementFromMeta(
+      {
+        looking_to: "buy",
+        budget: "300_500k",
+        buy_area: "Peyia / Coral Bay",
+        buy_property_type: "villa",
+        bedrooms_min: "3",
+        deed_required: "yes",
+        buy_timing: "3_months",
+      },
+      areas,
+    );
+    expect(r).toEqual({
+      label: "From website enquiry",
+      transaction_type: "sale",
+      property_types: ["villa"],
+      area_ids: ["a-peyia"],
+      district_ids: ["d-paf"],
+      budget_min: 300000,
+      budget_max: 500000,
+      bedrooms_min: 3,
+      title_deed_required: true,
+      notes: "Timing: Within about three months\nSeparate title deed: Yes — separate deed only",
+    });
+  });
+
+  it("matches an area by any slash-separated part, case-insensitively, and leaves it open otherwise", () => {
+    expect(requirementFromMeta({ budget: "over_1m", buy_area: "Coral Bay / PEYIA" }, areas)!.area_ids).toEqual(["a-peyia"]);
+    const open = requirementFromMeta({ budget: "over_1m", buy_area: "Universal" }, areas)!;
+    expect(open.area_ids).toEqual([]);
+    expect(open.district_ids).toEqual([]);
+    expect(open.notes).toContain("Area: Universal");
+  });
+
+  it("treats rent as a rental search, 'either' as a sale, and an unknown type as no type", () => {
+    expect(requirementFromMeta({ looking_to: "rent", budget: "unsure" }, areas)!.transaction_type).toBe("rent");
+    expect(requirementFromMeta({ looking_to: "either" }, areas)!.transaction_type).toBe("sale");
+    expect(requirementFromMeta({ looking_to: "buy", buy_property_type: "castle" }, areas)!.property_types).toEqual([]);
+  });
+
+  it("keeps 'unsure' and blank answers out of the numbers", () => {
+    const r = requirementFromMeta({ budget: "unsure", bedrooms_min: "about three", deed_required: "unsure" }, areas)!;
+    expect(r.budget_min).toBeNull();
+    expect(r.budget_max).toBeNull();
+    expect(r.bedrooms_min).toBeNull();
+    expect(r.title_deed_required).toBe(false);
+  });
+
+  it("is null when the brief has no buyer answer at all", () => {
+    expect(requirementFromMeta({ source_page: "/contact", utm_source: "instagram" }, areas)).toBeNull();
+    expect(requirementFromMeta({ district: "Paphos", area: "Tala / Tsada", property_type: "villa" }, areas)).toBeNull();
+    expect(requirementFromMeta({}, areas)).toBeNull();
   });
 });

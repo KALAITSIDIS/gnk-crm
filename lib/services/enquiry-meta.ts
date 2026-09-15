@@ -20,6 +20,8 @@
  * `enquiry-meta.test.ts` this one.
  */
 
+import { PROPERTY_TYPES } from "@/lib/validators/properties";
+
 /** key → maximum length. */
 export const ENQUIRY_META_KEYS = {
   // buyer brief (the site's BUYER_KEYS)
@@ -124,6 +126,92 @@ const TIMINGS: Record<string, string> = {
 };
 /** A seller's "now" reads differently from a buyer's. */
 const SELLER_TIMINGS: Record<string, string> = { ...TIMINGS, now: "Ready to sell now" };
+
+const DEED_REQUIRED_LABELS: Record<string, string> = {
+  yes: "Yes — separate deed only",
+  flexible: "Flexible if the position is clear",
+  unsure: "I am not sure what this means",
+};
+
+/** An area as the lookup needs it: the CRM's own row, by its English name. */
+export interface AreaLookup {
+  id: string;
+  district_id: string;
+  name_en: string;
+}
+
+/** The fields a website brief can fill on a `buyer_requirements` row. */
+export interface RequirementSeed {
+  label: string;
+  transaction_type: "sale" | "rent";
+  property_types: string[];
+  area_ids: string[];
+  district_ids: string[];
+  budget_min: number | null;
+  budget_max: number | null;
+  bedrooms_min: number | null;
+  title_deed_required: boolean;
+  notes: string | null;
+}
+
+/**
+ * The saved search a buyer's brief becomes (audit LR-01), PURE so the mapping
+ * is testable without a database. The seven answers the site asks map onto
+ * the CRM's own requirement fields; what has no field (timing, the deed
+ * preference as words, an area the CRM does not know by that name) goes into
+ * `notes` so nothing the buyer said is lost. "unsure" and a non-numeric
+ * bedroom count become no opinion, never a €0 ceiling or 0 bedrooms.
+ *
+ * An area is matched by ANY slash-separated part of the site's label
+ * ("Peyia / Coral Bay" → the CRM's "Peyia"), case-insensitively, against the
+ * English name; an unmatched area leaves the search open and is named in the
+ * notes. Null when the brief carries no buyer answer at all — a seller's
+ * property description is not a search.
+ */
+export function requirementFromMeta(meta: EnquiryMeta, areas: readonly AreaLookup[]): RequirementSeed | null {
+  if (!BUYER_META_KEYS.some((k) => meta[k])) return null;
+
+  const range = budgetBandRange(meta.budget);
+  const propertyTypes =
+    meta.buy_property_type && (PROPERTY_TYPES as readonly string[]).includes(meta.buy_property_type)
+      ? [meta.buy_property_type]
+      : [];
+  const bedrooms = meta.bedrooms_min ? parseInt(meta.bedrooms_min, 10) : NaN;
+
+  let areaIds: string[] = [];
+  let districtIds: string[] = [];
+  if (meta.buy_area) {
+    const parts = meta.buy_area
+      .split("/")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    const hit = areas.find((a) => parts.includes(a.name_en.trim().toLowerCase()));
+    if (hit) {
+      areaIds = [hit.id];
+      districtIds = [hit.district_id];
+    }
+  }
+
+  const notes: string[] = [];
+  if (meta.buy_area && areaIds.length === 0) notes.push(`Area: ${meta.buy_area}`);
+  if (meta.buy_timing && TIMINGS[meta.buy_timing]) notes.push(`Timing: ${TIMINGS[meta.buy_timing]}`);
+  if (meta.deed_required && DEED_REQUIRED_LABELS[meta.deed_required]) {
+    notes.push(`Separate title deed: ${DEED_REQUIRED_LABELS[meta.deed_required]}`);
+  }
+
+  return {
+    label: "From website enquiry",
+    transaction_type: meta.looking_to === "rent" ? "rent" : "sale",
+    property_types: propertyTypes,
+    area_ids: areaIds,
+    district_ids: districtIds,
+    budget_min: range?.min ?? null,
+    budget_max: range?.max ?? null,
+    bedrooms_min: Number.isInteger(bedrooms) && bedrooms >= 0 ? bedrooms : null,
+    title_deed_required: meta.deed_required === "yes",
+    notes: notes.length ? notes.join("\n") : null,
+  };
+}
 
 /** Short labelled chips for the inbox row. Order: intent, budget, area, type, timing, source. */
 export function briefChips(criteria: unknown): string[] {

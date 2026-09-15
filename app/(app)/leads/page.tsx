@@ -235,6 +235,7 @@ export default async function LeadsPage({
                     isAdmin={profile.role === "admin"}
                     status={lead.status}
                     isRedacted={lead.message === LEAD_MESSAGE_REDACTED}
+                    source={lead.source}
                   />
                 </div>
               </li>
