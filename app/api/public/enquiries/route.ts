@@ -5,6 +5,7 @@ import { budgetsFor } from "@/lib/services/enquiry-budget";
 import { isTrustedForwarderLoudly } from "@/lib/services/forwarder";
 import { enquiryCompleteness, publicEnquirySchema } from "@/lib/validators/public-enquiry";
 import { sendEnquiryAlert } from "@/lib/services/enquiry-alert";
+import { recordEnquiryAlert } from "@/lib/services/enquiry-alert-event";
 
 /**
  * The public enquiry door (WF-4, migration 0084) — the first place anything
@@ -127,6 +128,7 @@ export async function POST(request: NextRequest) {
     p_phone: input.phone ?? "",
     p_message: input.message ?? "",
     p_property_ref: input.property_reference ?? "",
+    p_idempotency_key: input.idempotency_key ?? "",
   });
 
   if (error) {
@@ -135,11 +137,16 @@ export async function POST(request: NextRequest) {
     console.error("[public enquiry] rpc failed:", error.message);
     return json({ error: "Could not accept that enquiry." }, 503);
   }
-  if (data !== true) {
-    // The function refused. The schema above already caught every shape
-    // problem, so what is left is an org slug that does not exist.
-    return json({ error: "Unknown `org`." }, 400);
-  }
+  // 0096: the function answers one row — the lead it made or replayed — and
+  // a refusal is zero rows. The schema above already caught every shape
+  // problem, so what is left is an org slug that does not exist.
+  const row = (data ?? [])[0];
+  if (!row) return json({ error: "Unknown `org`." }, 400);
+
+  // A replay (0096): the first post with this key already made the lead and
+  // told the desk. Accepted again, and nothing more happens — a second alert
+  // would be exactly the duplicate the key exists to prevent.
+  if (row.replayed) return json({ accepted: true }, 202);
 
   // The desk is told AFTER the response goes out. `after()` runs once the
   // visitor already has their 202, so a slow mail provider never delays the
@@ -147,12 +154,21 @@ export async function POST(request: NextRequest) {
   // error, which is the whole reason the alert lives here and not inside the
   // database function.
   after(async () => {
-    await sendEnquiryAlert({
+    const outcome = await sendEnquiryAlert({
       name: input.name,
       email: input.email ?? null,
       phone: input.phone ?? null,
       message: input.message ?? null,
       propertyReference: input.property_reference ?? null,
+    });
+    // …and the outcome goes on the lead's timeline (INT-01). Until 0096 the
+    // word came back here and was dropped, so a failed or skipped alert was
+    // a console line and nothing else, and the lead sat in the inbox with
+    // its response clock running and nobody told.
+    await recordEnquiryAlert(supabase, {
+      orgId: row.lead_org_id,
+      leadId: row.lead_id,
+      outcome,
     });
   });
 

@@ -5130,7 +5130,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     // The route calls with the service role. From here on, `svc` IS the route.
     const ok = await svc.rpc("submit_public_enquiry", enquiry);
     expect(ok.error).toBeNull();
-    expect(ok.data, "a complete enquiry is accepted").toBe(true);
+    expect(ok.data?.[0]?.replayed, "a complete enquiry is accepted (0096: one row, not a replay)").toBe(false);
 
     const { data: leads } = await svc
       .from("leads")
@@ -5173,17 +5173,17 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       p_org_slug: "test-org-a", p_name: "X", p_email: "", p_phone: "",
       p_message: "hello", p_property_ref: "",
     });
-    expect(noReply.data, "an enquiry with no email and no phone is refused").toBe(false);
+    expect(noReply.data, "an enquiry with no email and no phone is refused (0096: zero rows)").toEqual([]);
     const noSubject = await svc.rpc("submit_public_enquiry", {
       p_org_slug: "test-org-a", p_name: "X", p_email: "a@example.invalid", p_phone: "",
       p_message: "", p_property_ref: "",
     });
-    expect(noSubject.data, "an enquiry about nothing is refused").toBe(false);
+    expect(noSubject.data, "an enquiry about nothing is refused").toEqual([]);
     const wrongOrg = await svc.rpc("submit_public_enquiry", {
       p_org_slug: `no-such-${run}`, p_name: "X", p_email: "a@example.invalid", p_phone: "",
       p_message: "hi", p_property_ref: "",
     });
-    expect(wrongOrg.data, "an unknown org is refused").toBe(false);
+    expect(wrongOrg.data, "an unknown org is refused").toEqual([]);
 
     // 0087: TYPED TEXT NEVER REACHES THE CHAIN. A reference alone satisfies
     // completeness, so the reference argument was a second free-text input —
@@ -5195,7 +5195,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       p_org_slug: "test-org-a", p_name: `Typer ${marker}`, p_email: "t@example.invalid",
       p_phone: "", p_message: "", p_property_ref: `typed-${marker}@example.invalid`,
     });
-    expect(typed.data, "a reference alone is still enough to accept").toBe(true);
+    expect(typed.data?.[0]?.replayed, "a reference alone is still enough to accept").toBe(false);
     const { data: typedLead } = await svc
       .from("leads")
       .select("id, message, criteria")
@@ -5239,7 +5239,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       p_org_slug: "test-org-a", p_name: `Asker ${marker}`, p_email: "ask@example.invalid",
       p_phone: "", p_message: "", p_property_ref: `PUB-${marker}`,
     });
-    expect(about.data).toBe(true);
+    expect(about.data?.[0]?.replayed).toBe(false);
     const { data: aboutLead } = await svc
       .from("leads")
       .select("id, property_id, criteria")
@@ -5276,7 +5276,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       p_org_slug: "test-org-a", p_name: `Prober ${marker}`, p_email: "p@example.invalid",
       p_phone: "", p_message: "", p_property_ref: `PRIV-${marker}`,
     });
-    expect(probe.data, "the enquiry is still accepted").toBe(true);
+    expect(probe.data?.[0]?.replayed, "the enquiry is still accepted").toBe(false);
     const { data: probed } = await svc
       .from("leads")
       .select("property_id")

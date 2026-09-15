@@ -92,4 +92,20 @@ describe("public enquiry input", () => {
     expect(r.success).toBe(true);
     expect(r.data!.website).toBe("http://spam.example");
   });
+
+  it("takes an idempotency key of the shape 0096 accepts, and treats blank as absent", () => {
+    const keyed = publicEnquirySchema.safeParse({ ...base, idempotency_key: "3f2a9c1e-0b7d-4c6e-8a9f-0b1c2d3e4f50" });
+    expect(keyed.success).toBe(true);
+    expect(keyed.data!.idempotency_key).toBe("3f2a9c1e-0b7d-4c6e-8a9f-0b1c2d3e4f50");
+    const blank = publicEnquirySchema.safeParse({ ...base, idempotency_key: "  " });
+    expect(blank.success).toBe(true);
+    expect(blank.data!.idempotency_key).toBeUndefined();
+  });
+
+  it("refuses a key the database would refuse, with a sentence that says why", () => {
+    const r = publicEnquirySchema.safeParse({ ...base, idempotency_key: "no spaces allowed!" });
+    expect(r.success).toBe(false);
+    expect(r.error!.issues[0]!.message).toContain("idempotency_key");
+    expect(publicEnquirySchema.safeParse({ ...base, idempotency_key: "short" }).success).toBe(false);
+  });
 });

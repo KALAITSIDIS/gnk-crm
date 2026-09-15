@@ -102,4 +102,25 @@ describe("arming", () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNRESET"));
     await expect(sendEnquiryAlert(base)).resolves.toBe("failed");
   });
+
+  it("gives up on a provider that accepts the connection and never answers (INT-01)", async () => {
+    process.env.RESEND_API_KEY = "re_test";
+    process.env.ENQUIRY_ALERT_TO = "info@kalaitsidis.com";
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    // A fetch that honours its signal, as the real one does: it settles only
+    // when aborted, or after 200 ms — whichever the timeout makes happen first.
+    // A fetch with no signal at all is the defect, and fails here outright.
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      (_url, init) =>
+        new Promise<Response>((resolve, reject) => {
+          const signal = init?.signal;
+          if (!signal) return reject(new Error("no signal was passed to fetch"));
+          signal.addEventListener("abort", () => reject(signal.reason));
+          setTimeout(() => resolve(new Response("{}", { status: 200 })), 200);
+        }),
+    );
+    await expect(sendEnquiryAlert(base, { timeoutMs: 20 })).resolves.toBe("failed");
+    const reported = String(error.mock.calls[0]?.[1] ?? error.mock.calls[0]?.[0]);
+    expect(reported).toMatch(/timeout|abort/i);
+  });
 });

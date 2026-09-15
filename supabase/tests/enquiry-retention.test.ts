@@ -146,7 +146,7 @@ describe("submit_public_enquiry derives the channel (0092, DATA-02)", () => {
       p_property_ref: "",
     });
     expect(error).toBeNull();
-    expect(ok).toBe(true);
+    expect(ok?.[0]?.replayed, "0096: one row, not a replay").toBe(false);
     const { data } = await svc
       .from("leads")
       .select("id, channel")

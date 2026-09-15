@@ -69,7 +69,19 @@ export function bodyFor(a: EnquiryAlert): string {
  * Send, or say why not. NEVER throws and never returns a failure the caller
  * is expected to act on — the enquiry it describes is already committed.
  */
-export async function sendEnquiryAlert(a: EnquiryAlert): Promise<"sent" | "skipped" | "failed"> {
+/**
+ * Long enough for a slow provider, short enough that a stuck one cannot hold
+ * the function open (integrations audit 2026-09-15, INT-01). `after()` runs
+ * this once the visitor has their 202, so nothing here delays them — but a
+ * provider that accepts the connection and never answers would otherwise
+ * hold the function until the platform kills it.
+ */
+export const ALERT_TIMEOUT_MS = 8000;
+
+export async function sendEnquiryAlert(
+  a: EnquiryAlert,
+  opts: { timeoutMs?: number } = {},
+): Promise<"sent" | "skipped" | "failed"> {
   const key = process.env.RESEND_API_KEY;
   const to = process.env.ENQUIRY_ALERT_TO;
 
@@ -93,6 +105,7 @@ export async function sendEnquiryAlert(a: EnquiryAlert): Promise<"sent" | "skipp
         subject: subjectFor(a),
         text: bodyFor(a),
       }),
+      signal: AbortSignal.timeout(opts.timeoutMs ?? ALERT_TIMEOUT_MS),
     });
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
