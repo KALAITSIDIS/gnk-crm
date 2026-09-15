@@ -136,18 +136,20 @@ test("enable → select → feed → remove → gone", async ({ page }) => {
   const { orgId } = await fixtureProfile(svc);
   const tag = runTag().replace(/-/g, "");
 
-  // The connection is switched off BEFORE the run as well as after it. The
+  // The connection is REMOVED before the run as well as after it (0097). The
   // unconditional `Enable` below exists to prove the enable path is exercised
-  // every time; it should not ALSO fail because someone enabled the portal by
-  // hand on this shared local stack — which is exactly what happened on
-  // 2026-09-14, while the settings-page fix was being checked. Zero rows means
-  // no connection at all, which already reads "Enable".
+  // every time, and since 0097 the feed URL is shown only by the call that
+  // mints its token — the first enable of a connection, or Regenerate. A row
+  // left over from an earlier run would make this Enable a plain toggle that
+  // shows no URL, so the run starts from no row at all, which already reads
+  // "Enable". (Until 2026-09-15 this only switched the row off; the shared
+  // local stack once had it enabled by hand, 2026-09-14.)
   const { error: preErr } = await svc
     .from("portal_connections")
-    .update({ enabled: false })
+    .delete()
     .eq("org_id", orgId)
     .eq("portal", PORTAL_ID);
-  if (preErr) throw new Error(`could not put ${PORTAL_ID} back to disabled: ${preErr.message}`);
+  if (preErr) throw new Error(`could not remove the ${PORTAL_ID} connection: ${preErr.message}`);
 
   // BEFORE the seed, and outside the `try` so the `finally` can dispose it
   // however the test ends. Before, because nothing here needs the listing and
@@ -263,19 +265,18 @@ test("enable → select → feed → remove → gone", async ({ page }) => {
     const faults: string[] = [];
     await api.dispose().catch((e: unknown) => faults.push(`api.dispose: ${String(e)}`));
 
-    // Switching the connection back off costs nothing: setPortalEnabled's
-    // update branch never re-mints feed_token (lib/actions/portals.ts:103-107),
-    // so the next run re-enables the same row behind the same URL. Zero rows is
-    // legitimate HERE AND ONLY HERE — the test may have failed before the
-    // enable, in which case there is no connection to put back.
+    // The connection goes, so the next run's Enable is a first enable again
+    // and mints a URL it can read (see the pre-step). Zero rows is legitimate
+    // HERE AND ONLY HERE — the test may have failed before the enable, in
+    // which case there is no connection to remove.
     const restored = await svc
       .from("portal_connections")
-      .update({ enabled: false }, { count: "exact" })
+      .delete({ count: "exact" })
       .eq("org_id", orgId)
       .eq("portal", PORTAL_ID);
-    if (restored.error) faults.push(`portal_connections restore: ${restored.error.message}`);
+    if (restored.error) faults.push(`portal_connections removal: ${restored.error.message}`);
     else if ((restored.count ?? 0) > 1) {
-      faults.push(`portal_connections restore touched ${restored.count} rows`);
+      faults.push(`portal_connections removal touched ${restored.count} rows`);
     }
 
     // The seed MUST go: it is public, published and available, so a survivor is

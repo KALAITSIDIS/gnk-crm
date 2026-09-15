@@ -74,21 +74,21 @@ export async function signViewingSlip(
   const agentName = (v.agent as { full_name: string } | null)?.full_name ?? "—";
   const signedAt = new Date();
 
-  const admin = createAdminClient();
-  const sigPath = `${v.org_id}/${d.viewing_id}.png`;
-  const pngUpload = await admin.storage
-    .from("signatures")
-    .upload(sigPath, binaryBody(png, "image/png"), { contentType: "image/png", upsert: false });
-  if (pngUpload.error) return { error: pngUpload.error.message, savedAt: null };
-
-  let pdfPath: string | null = null;
+  // RENDER BEFORE ANYTHING IS STORED (integrations audit 2026-09-15, INT-08).
+  // The PNG used to go up first and the PDF was rendered after it: a render or
+  // upload failure left the PNG in Storage with no row, and every retry was
+  // then refused by Storage ("already exists") for as long as the object
+  // lived — a viewing nobody could sign until an administrator deleted the
+  // file by hand. Rendering in memory first means the likeliest failure
+  // happens while nothing is stored at all.
+  //
   // Hashed at signing time and recorded in BOTH the row and the hash-chained
   // event (0026). The signature PNG had this and the PDF did not, so a restored
   // slip PDF could not be proven byte-identical to the one that was signed —
   // found by the 2026-08-05 Storage restore drill.
-  let pdfSha256: string | null = null;
+  let pdf: Buffer;
   try {
-    const pdf = await renderSlipPdf({
+    pdf = await renderSlipPdf({
       orgName: org?.name ?? "Agency",
       agentName,
       signerName: d.signer_name,
@@ -101,19 +101,45 @@ export async function signViewingSlip(
       signedAtLabel: formatDateTime(signedAt),
       sha256,
     });
-    // Hash the exact bytes that go to Storage, before the upload — so the
-    // recorded value describes what was sent rather than what came back.
-    pdfSha256 = sha256Hex(pdf);
-    pdfPath = `${v.org_id}/${d.viewing_id}.pdf`;
-    const pdfUpload = await admin.storage
-      .from("signatures")
-      .upload(pdfPath, binaryBody(pdf, "application/pdf"), {
-        contentType: "application/pdf",
-        upsert: false,
-      });
-    if (pdfUpload.error) return { error: pdfUpload.error.message, savedAt: null };
   } catch (e) {
     return { error: `Could not render slip PDF: ${(e as Error).message}`, savedAt: null };
+  }
+  // Hash the exact bytes that go to Storage, before the upload — so the
+  // recorded value describes what was sent rather than what came back.
+  const pdfSha256 = sha256Hex(pdf);
+
+  const bucket = createAdminClient().storage.from("signatures");
+  const sigPath = `${v.org_id}/${d.viewing_id}.png`;
+  const pdfPath = `${v.org_id}/${d.viewing_id}.pdf`;
+
+  // There is no row for this viewing (checked above), so anything already at
+  // these two paths is what an earlier attempt stranded. Taken out first;
+  // `upsert: false` below stays as the backstop against a CONCURRENT signing,
+  // not as the thing a retry trips over. Storage answers a removal of nothing
+  // with nothing, so the result is not read.
+  await bucket.remove([sigPath, pdfPath]);
+  // A failure after an upload takes the upload back out, so the next attempt
+  // finds clean paths. Best-effort and never thrown: the error being reported
+  // is the one that stopped the signing, not the tidy-up.
+  const takeBack = (paths: string[]) =>
+    bucket.remove(paths).then(
+      () => undefined,
+      () => undefined,
+    );
+
+  const pngUpload = await bucket.upload(sigPath, binaryBody(png, "image/png"), {
+    contentType: "image/png",
+    upsert: false,
+  });
+  if (pngUpload.error) return { error: pngUpload.error.message, savedAt: null };
+
+  const pdfUpload = await bucket.upload(pdfPath, binaryBody(pdf, "application/pdf"), {
+    contentType: "application/pdf",
+    upsert: false,
+  });
+  if (pdfUpload.error) {
+    await takeBack([sigPath]);
+    return { error: pdfUpload.error.message, savedAt: null };
   }
 
   const geolocation =
@@ -134,6 +160,8 @@ export async function signViewingSlip(
     created_by: profile.id,
   });
   if (insErr) {
+    // Nothing points at the two objects now, whatever the reason: out they go.
+    await takeBack([sigPath, pdfPath]);
     // 23505 unique_violation → someone signed between our check and insert
     return {
       error: insErr.code === "23505" ? "This viewing already has a signed slip." : insErr.message,

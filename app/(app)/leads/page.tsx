@@ -3,6 +3,7 @@ import { AlertCircle, Download, Inbox } from "lucide-react";
 import { AddLeadDialog } from "@/components/features/leads/add-lead-dialog";
 import { LeadsFilters } from "@/components/features/leads/filters";
 import { LeadRowActions } from "@/components/features/leads/lead-actions";
+import { LeadMessage } from "@/components/features/leads/lead-message";
 import { Button } from "@/components/ui/button";
 import { ChatLinks } from "@/components/features/shared/chat-links";
 import { Pager } from "@/components/features/shared/pager";
@@ -37,6 +38,9 @@ export default async function LeadsPage({
   const sp = await searchParams;
   const filters = parseLeadFilters(sp);
   const page = pageSchema.parse(first(sp.page));
+  // ?add=phone|whatsapp: the dashboard's "Log a call" opens the dialog preset (0098, LR-04)
+  const add = first(sp.add);
+  const preset = add === "phone" || add === "whatsapp" ? add : undefined;
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
 
@@ -49,7 +53,7 @@ export default async function LeadsPage({
     .from("leads")
     .select(
       `id, source, channel, message, status, received_at, first_response_at,
-       assigned_agent_id, lost_reason, converted_deal_id,
+       assigned_agent_id, lost_reason, converted_deal_id, criteria,
        contacts(id, display_name, phone_e164, telegram_username, has_whatsapp),
        properties(id, reference)`,
       // exact count of the SCOPED set, so the pager totals match these rows
@@ -115,7 +119,12 @@ export default async function LeadsPage({
               </a>
             </Button>
           ) : null}
-          <AddLeadDialog />
+          <AddLeadDialog
+            key={preset ?? "manual"}
+            defaultOpen={preset !== undefined}
+            defaultSource={preset}
+            defaultChannel={preset}
+          />
         </div>
       </div>
 
@@ -209,9 +218,8 @@ export default async function LeadsPage({
                       <span className="text-xs text-warning">unassigned</span>
                     )}
                   </div>
-                  {lead.message ? (
-                    <p className="truncate text-sm text-text-2">{lead.message}</p>
-                  ) : null}
+                  {/* the whole enquiry and its brief, not one truncated line (0098, LR-03) */}
+                  <LeadMessage message={lead.message} criteria={lead.criteria} />
                   {lead.lost_reason ? (
                     <p className="text-xs text-text-3">Reason: {lead.lost_reason}</p>
                   ) : null}
@@ -235,6 +243,7 @@ export default async function LeadsPage({
                     isAdmin={profile.role === "admin"}
                     status={lead.status}
                     isRedacted={lead.message === LEAD_MESSAGE_REDACTED}
+                    source={lead.source}
                   />
                 </div>
               </li>

@@ -7,7 +7,7 @@ import {
   Flame,
   Inbox,
   ListTodo,
-  UserPlus,
+  Phone,
 } from "lucide-react";
 import { Card, CardEmpty } from "@/components/features/dashboard/card";
 import { ResponseClock } from "@/components/features/shared/response-clock";
@@ -163,7 +163,9 @@ export async function AgentDashboard({ profileId }: { profileId: string }) {
       {/* quick actions — thumb-sized targets at 380px */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {[
-          { href: "/leads", label: t("quick.addLead"), icon: <UserPlus className="size-4" /> },
+          // 0098 (LR-04): a call or a WhatsApp that reached the phone, not the CRM,
+          // is two taps to record - the dialog opens preset on /leads
+          { href: "/leads?add=phone", label: t("quick.logCall"), icon: <Phone className="size-4" /> },
           {
             href: "/viewings",
             label: t("quick.viewings"),

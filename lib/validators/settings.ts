@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { LEAD_ROUTING_MODES } from "@/lib/services/lead-routing";
 import {
   FORM_BOUNDS,
   NUDGE_LABELS,
@@ -50,6 +51,25 @@ export const nudgeThresholdsSchema = z.object(
     ]),
   ) as Record<NudgeThresholdKey, z.ZodNumber>,
 );
+
+/**
+ * Lead routing (0098). `agents` arrives as every checked box's value; a member
+ * ticked twice (a double-rendered form) is one member. Round-robin over nobody
+ * is refused here with a sentence — the database would accept it and simply
+ * assign nobody, which is not what a person who picked round-robin meant.
+ */
+export const leadRoutingSchema = z
+  .object({
+    mode: z.enum(LEAD_ROUTING_MODES, { message: "Choose off or round-robin" }),
+    agents: z
+      .array(z.guid("Each member must be a profile id"))
+      .default([])
+      .transform((a) => [...new Set(a)]),
+  })
+  .refine((d) => d.mode !== "round_robin" || d.agents.length > 0, {
+    message: "Pick at least one member for round-robin, or switch it off.",
+    path: ["agents"],
+  });
 
 export const cyprusConfigSchema = z.object({
   key: z.string().trim().min(1).max(60),

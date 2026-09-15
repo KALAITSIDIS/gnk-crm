@@ -1400,7 +1400,8 @@ explicit direction.
   `viewings.notes` are free text that may name the data subject; both are
   retained today under the legal-claims basis. If a data subject disputes that,
   they need a review path. Also `leads.lost_reason` is left intact.
-- Add-lead dialog: optional property link (schema + createLead already accept
+- ~~**Add-lead dialog: optional property link + backdated received_at.**~~ **SHIPPED 2026-09-15 (Sprint A, audit LR-04):** the dialog carries a property picker and a `datetime-local` Received field (Cyprus wall clock, the future refused, `backdated` in the event), and the agent dashboard's first quick action is "Log a call" → `/leads?add=phone` with the dialog open and preset.
+  - **Add-lead dialog (original).** optional property link (schema + createLead already accept
   `property_id`; the form never sends it) and an optional backdated
   `received_at` for leads entered after the fact, so the response-time KPI
   reflects reality.
@@ -2215,7 +2216,7 @@ Every VERIFY line in this section was RUN on 2026-09-14 before it was written.
   **VERIFY:** `ls lib/services/portals/dialects/rera.ts lib/services/portals/dialects/trovit.ts` — either present means started. *(neither on 2026-09-14; the directory holds `kyero.ts`, `xml.ts`, `types.ts`, `index.ts` and the fixtures.)*
 
 - **Portal syndication milestone 3, M.** The JamesEdition leads pull — spec
-  §Leads: migration 0096 with `leads.portal` and `leads.external_ref` (unique
+  §Leads: a migration at the next free number (0096 and 0097 went to the integrations audit phase 1 on 2026-09-15, DECISIONS T-int-phase-1) with `leads.portal` and `leads.external_ref` (unique
   on `(org_id, portal, external_ref)` where not null), the four DEFAULTED
   parameters on `submit_public_enquiry` (`p_source`, `p_portal`,
   `p_external_ref`, `p_received_at`; a duplicate returns `false` instead of
@@ -2263,3 +2264,9 @@ Every VERIFY line in this section was RUN on 2026-09-14 before it was written.
   header widens a phone", found by its probe on 2026-09-14, in its own section
   above); that item was removed when this branch merged `origin/main`, so the
   fact lives once — here, struck — and the next person does not re-propose it.
+
+## Sprint A follow-ons — 2026-09-15 (lead capture & workflow audit)
+
+- **Proposal page "I'm interested" button, S.** The audit's DA-07 / Sprint A step A9, deferred: a buyer reading a proposal (`/p/[token]`) sees the agent's e-mail and phone as links, so the open is tracked and the interest is not. One button per property posting to the public enquiry door (with the link's contact name and the reference, `source_page = proposal`) would close the loop through the existing pipe — but `resolve_share_link` returns the org NAME, not its slug, and a link with no contact needs a small name + e-mail/phone form. VERIFY: `grep -n "interest" components/features/share-links/proposal.tsx` — nothing.
+- **Lead SLA e-mail escalation — NEEDS AN OPERATOR DECISION.** 0098's `lead-sla` sweep raises a `lead_unanswered` task after an hour; the audit's trigger T1 also wants an e-mail to the OTHER principal at fifteen minutes and a daily digest. Vercel Hobby's cron is once a day, so the hop from the database is `pg_net` (available on the hosted project, NOT installed — `select * from pg_available_extensions where name = 'pg_net'` says available) posting to a CRM route behind `CRON_SECRET`, or a Pro plan. Enabling an extension on production is the operator's call.
+- **NOTE — a website lead's `criteria` is shape-only by construction.** 0098's allowlist admits select values, short numbers-as-text, a path and campaign names; a name, e-mail, phone or message has no key and cannot be smuggled under one (`supabase/tests/enquiry-meta.test.ts`). Keep it that way: `criteria` is never rewritten by erasure or the retention sweep.

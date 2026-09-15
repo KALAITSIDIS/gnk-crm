@@ -19,6 +19,7 @@ import {
   closeLead,
   convertLead,
   correctLead,
+  createContactFromEnquiry,
   linkLeadContact,
   logConversation,
   markCalled,
@@ -66,6 +67,7 @@ export function LeadRowActions({
   isAdmin,
   status,
   isRedacted,
+  source,
 }: {
   leadId: string;
   isMine: boolean;
@@ -76,6 +78,8 @@ export function LeadRowActions({
   isAdmin: boolean;
   status: string;
   isRedacted: boolean;
+  /** `website` leads carry the person in their message — one click makes the contact (0098) */
+  source: string;
 }) {
   const [isPending, startTransition] = useTransition();
   // Audit CRM-06: eight buttons wrapped to three rows on a phone, with the
@@ -176,6 +180,9 @@ export function LeadRowActions({
         </Button>
       ) : null}
       {canWork ? <LogConversationDialog leadId={leadId} /> : null}
+      {canLinkContact && source === "website" && !isRedacted ? (
+        <CreateContactFromEnquiryButton leadId={leadId} />
+      ) : null}
       {canWork ? <ConvertLeadDialog leadId={leadId} hasContact={hasContact} /> : null}
       <div className={cn("contents", !more && "max-md:hidden")}>
         {canLinkContact ? <LinkContactDialog leadId={leadId} /> : null}
@@ -197,6 +204,76 @@ export function LeadRowActions({
         {more ? "Less" : "More…"}
       </Button>
     </div>
+  );
+}
+
+/**
+ * "Create contact" for a website enquiry (0098, audit LR-08): the name,
+ * e-mail and phone in the message become the contact, the lead is linked, and
+ * a buyer's brief becomes a saved search — the three screens the desk used to
+ * walk. Dedup applies: a match on phone or e-mail creates nothing and the
+ * button becomes "Link <name>", which is what the desk would have done anyway.
+ */
+function CreateContactFromEnquiryButton({ leadId }: { leadId: string }) {
+  const [pending, startTransition] = useTransition();
+  const [dup, setDup] = useState<{ id: string; display_name: string; matched_on: string } | null>(null);
+
+  const create = () =>
+    startTransition(async () => {
+      try {
+        const r = await createContactFromEnquiry(leadId);
+        if (r.duplicate) {
+          setDup(r.duplicate);
+          toast.error(r.error ?? "A matching contact already exists.");
+          return;
+        }
+        if (r.error) {
+          toast.error(r.error);
+          return;
+        }
+        toast.success("Contact created and linked");
+        if (r.note) toast.warning(r.note);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Action failed");
+      }
+    });
+
+  const link = (contactId: string) =>
+    startTransition(async () => {
+      try {
+        await linkLeadContact(leadId, contactId);
+        toast.success("Contact linked");
+        setDup(null);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Link failed");
+      }
+    });
+
+  if (dup) {
+    return (
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-7 text-xs"
+        disabled={pending}
+        title={`An existing contact has the same ${dup.matched_on}`}
+        onClick={() => link(dup.id)}
+      >
+        <UserPlus className="size-3.5" /> Link {dup.display_name} instead
+      </Button>
+    );
+  }
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className="h-7 text-xs"
+      disabled={pending}
+      title="Make the contact from the enquiry's name, e-mail and phone, link it, and save the brief as a search. Dedup applies."
+      onClick={create}
+    >
+      <UserPlus className="size-3.5" /> {pending ? "Creating…" : "Create contact"}
+    </Button>
   );
 }
 

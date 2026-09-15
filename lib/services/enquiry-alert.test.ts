@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as Sentry from "@sentry/nextjs";
 import { bodyFor, sendEnquiryAlert } from "./enquiry-alert";
+
+vi.mock("@sentry/nextjs", () => ({ captureMessage: vi.fn() }));
 
 const base = {
   name: "A Buyer",
@@ -33,6 +36,19 @@ describe("what the desk actually receives", () => {
     const body = bodyFor(base);
     expect(body).toMatch(/\/leads/);
     expect(body).toContain("green under five minutes");
+  });
+
+  it("says where the enquiry came from when the site told us (0098, LR-02)", () => {
+    const body = bodyFor({
+      ...base,
+      meta: { source_page: "/properties/PAF0001", utm_source: "instagram", utm_campaign: "spring-villas" },
+    });
+    expect(body).toContain("From:   /properties/PAF0001 · instagram · spring-villas");
+  });
+
+  it("omits the From line when there is nothing to say", () => {
+    expect(bodyFor({ ...base, meta: null })).not.toContain("From:");
+    expect(bodyFor({ ...base, meta: { consent_version: "2026-09-15" } })).not.toContain("From:");
   });
 });
 
@@ -95,11 +111,48 @@ describe("arming", () => {
     await expect(sendEnquiryAlert(base)).resolves.toBe("failed");
   });
 
+  it("tells Sentry when a send fails, without the person (LR-07)", async () => {
+    process.env.RESEND_API_KEY = "re_test";
+    process.env.ENQUIRY_ALERT_TO = "info@kalaitsidis.com";
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("nope", { status: 403 }));
+    vi.mocked(Sentry.captureMessage).mockClear();
+    await expect(sendEnquiryAlert(base)).resolves.toBe("failed");
+    expect(Sentry.captureMessage).toHaveBeenCalledTimes(1);
+    const [msg, ctx] = vi.mocked(Sentry.captureMessage).mock.calls[0]!;
+    expect(String(msg)).toContain("enquiry-alert");
+    const context = JSON.stringify(ctx);
+    expect(context).toContain("403");
+    expect(context).not.toContain("buyer@example.com");
+    expect(context).not.toContain("A Buyer");
+  });
+
   it("survives the network being gone — the enquiry must still stand", async () => {
     process.env.RESEND_API_KEY = "re_test";
     process.env.ENQUIRY_ALERT_TO = "info@kalaitsidis.com";
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNRESET"));
     await expect(sendEnquiryAlert(base)).resolves.toBe("failed");
+  });
+
+  it("gives up on a provider that accepts the connection and never answers (INT-01)", async () => {
+    process.env.RESEND_API_KEY = "re_test";
+    process.env.ENQUIRY_ALERT_TO = "info@kalaitsidis.com";
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    // A fetch that honours its signal, as the real one does: it settles only
+    // when aborted, or after 200 ms — whichever the timeout makes happen first.
+    // A fetch with no signal at all is the defect, and fails here outright.
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      (_url, init) =>
+        new Promise<Response>((resolve, reject) => {
+          const signal = init?.signal;
+          if (!signal) return reject(new Error("no signal was passed to fetch"));
+          signal.addEventListener("abort", () => reject(signal.reason));
+          setTimeout(() => resolve(new Response("{}", { status: 200 })), 200);
+        }),
+    );
+    await expect(sendEnquiryAlert(base, { timeoutMs: 20 })).resolves.toBe("failed");
+    const reported = String(error.mock.calls[0]?.[1] ?? error.mock.calls[0]?.[0]);
+    expect(reported).toMatch(/timeout|abort/i);
   });
 });

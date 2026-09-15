@@ -32,3 +32,48 @@ export function splitEnquirerName(name: string): { firstName: string; lastName: 
   if (gap === -1) return { firstName: trimmed, lastName: null };
   return { firstName: trimmed.slice(0, gap), lastName: trimmed.slice(gap + 1) };
 }
+
+export interface ParsedWebsiteEnquiry {
+  name: string;
+  email: string | null;
+  phone: string | null;
+}
+
+/**
+ * The person behind a website enquiry, read from the block the door writes
+ * (0084, kept by 0092/0096/0098; audit LR-08):
+ *
+ *   Website enquiry
+ *   Name: …
+ *   Email: …          (when given)
+ *   Phone: …          (when given)
+ *   About: …          (when a reference was typed)
+ *   <blank>
+ *   <the visitor's own words>
+ *
+ * HEADER LINES ONLY. The reader stops at the first blank line and never looks
+ * past the fifth, so a visitor who writes "Email: my old one bounced" in the
+ * message body cannot be mistaken for the header. Anything that does not open
+ * with the marker — a desk-typed lead, a redacted one — is null, and the desk
+ * links or creates the contact by hand as before.
+ */
+export function parseWebsiteEnquiry(message: string | null | undefined): ParsedWebsiteEnquiry | null {
+  if (!message) return null;
+  const lines = message.replace(/\r\n?/g, "\n").split("\n");
+  if (lines[0]?.trim() !== "Website enquiry") return null;
+
+  let name: string | null = null;
+  let email: string | null = null;
+  let phone: string | null = null;
+  for (const line of lines.slice(1, 6)) {
+    if (line.trim() === "") break;
+    const m = /^(Name|Email|Phone|About): (.*)$/.exec(line);
+    if (!m) continue;
+    const value = m[2]!.trim() || null;
+    if (m[1] === "Name") name = value;
+    else if (m[1] === "Email") email = value;
+    else if (m[1] === "Phone") phone = value;
+  }
+  if (!name) return null;
+  return { name, email, phone };
+}

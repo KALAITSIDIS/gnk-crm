@@ -10,11 +10,13 @@ import type { Database } from "@/lib/supabase/database.types";
  * Its own module rather than a closure in the route so the two things worth
  * proving are reachable from a test: that a note which fails is swallowed,
  * and that the inline fallback actually runs when there is no request scope.
- * The token is passed but never logged — a log line is not the place for the
- * one string that opens the feed.
+ * Since 0097 the note carries the DIGEST of the path token, which is what the
+ * row holds; the route hashes once and the plaintext goes no further than the
+ * request. Neither is logged — a log line is not the place for either.
  */
 export interface PullNote {
-  token: string;
+  /** sha256 of the token in the path (lib/services/portals/token.ts) */
+  tokenSha256: string;
   userAgent: string;
   count: number;
   portalId: string;
@@ -26,7 +28,7 @@ export async function notePortalPull(
 ): Promise<"noted" | "failed"> {
   try {
     const { error } = await supabase.rpc("note_portal_pull", {
-      p_token: n.token,
+      p_token_sha256: n.tokenSha256,
       p_ua: n.userAgent,
       p_count: n.count,
     });
