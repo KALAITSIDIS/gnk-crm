@@ -32,8 +32,10 @@ export async function CronHealth() {
 
   const verdicts = judgeAll(data as CronJobFacts[], new Date());
   const failing = verdicts.filter((v) => !v.healthy);
-  // Nine since 0092 (redact-stale-enquiries); docs/10 § pg_cron is the list.
-  const healthy = failing.length === 0 && verdicts.length === 9;
+  // The count is the pin in lib/services/cron-health.ts, which a test holds to
+  // the migrations' `cron.schedule` names; a literal here went stale twice
+  // (the ninth job on 2026-09-13, the tenth on 2026-09-15).
+  const healthy = failing.length === 0 && verdicts.length === EXPECTED_CRON_JOBS;
 
   return (
     <div

@@ -24,14 +24,23 @@ import { recomputeQualityScore } from "../lib/services/quality-score.ts";
 
 const dryRun = process.argv.includes("--dry-run");
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+// SUPABASE_URL first — backup.env, which the nightly runner passes since
+// 2026-09-15 (audit LST-03): every stored score is recomputed after the
+// backup, so a mandate that expired at 03:00 moves the list's number the
+// same night instead of at the next hand-run. Then the app's own
+// NEXT_PUBLIC_SUPABASE_URL (.env.local, a developer's hand run). The host
+// is printed because HANDOFF §2 records a script that silently fell back
+// to the local stack and worked on the wrong database.
+const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 if (!url || !key) {
   console.error(
-    "NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set — run with --env-file=.env.local",
+    "SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) and SUPABASE_SERVICE_ROLE_KEY must be set — " +
+      "run with --env-file=.env.local or --env-file=<backup.env>",
   );
   process.exit(1);
 }
+console.log(`target: ${new URL(url).host}`);
 
 const supabase = createClient(url, key, {
   auth: { autoRefreshToken: false, persistSession: false },

@@ -19,12 +19,13 @@ import {
   serviceClient,
   str,
 } from "./_shared.mts";
+import { KNOWN_CONTACT_COLUMNS } from "./_rules.mts";
 
 const args = parseArgs(process.argv.slice(2));
 const supabase = serviceClient();
 const orgId = await resolveOrg(supabase, args.org);
-const rows = loadCsv(args.file);
-const report = new Report("contacts", args.file, args.dryRun);
+const rows = loadCsv(args.file, KNOWN_CONTACT_COLUMNS, args.allowExtra);
+const report = new Report("contacts", args.file, args.dryRun, args.batch);
 
 // area name (EN) → id, for preference resolution
 const { data: areaRows } = await supabase
@@ -160,7 +161,7 @@ for (const r of rows) {
       report.add({ row: line, outcome: "error", detail: error.message });
       continue;
     }
-    await logImported(supabase, orgId, "contact", created.id, { name: detail });
+    await logImported(supabase, orgId, "contact", created.id, { name: detail, batch: report.batch });
 
     // SEC-06 (2026-09-02): a consent granted through THIS path used to leave
     // no consent_changed event at all — the trail existed only for the CRM

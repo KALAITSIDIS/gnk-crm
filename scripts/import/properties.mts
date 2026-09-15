@@ -19,12 +19,16 @@ import {
   serviceClient,
   str,
 } from "./_shared.mts";
+import { KNOWN_PROPERTY_COLUMNS, insertVisibilityFor, publishDecision } from "./_rules.mts";
+// Relative and WITH the extension: plain Node resolves neither the alias nor
+// an extensionless path (tests/unit/scripts-run-under-node.test.ts).
+import { PUBLISH_THRESHOLD, recomputeQualityScore } from "../../lib/services/quality-score.ts";
 
 const args = parseArgs(process.argv.slice(2));
 const supabase = serviceClient();
 const orgId = await resolveOrg(supabase, args.org);
-const rows = loadCsv(args.file);
-const report = new Report("properties", args.file, args.dryRun);
+const rows = loadCsv(args.file, KNOWN_PROPERTY_COLUMNS, args.allowExtra);
+const report = new Report("properties", args.file, args.dryRun, args.batch);
 
 const { data: districtRows } = await supabase
   .from("districts")
@@ -82,7 +86,11 @@ async function ensureOwnerContact(
     .select("id")
     .single();
   if (error) throw new Error(`owner contact: ${error.message}`);
-  await logImported(supabase, orgId, "contact", created.id, { name: name ?? phone, as: "owner" });
+  await logImported(supabase, orgId, "contact", created.id, {
+    name: name ?? phone,
+    as: "owner",
+    batch: report.batch,
+  });
   return { id: created.id, note: `owner created ${name ?? phone}` };
 }
 
@@ -170,18 +178,24 @@ for (const r of rows) {
     const lat = num(r.latitude);
     const lng = num(r.longitude);
 
-    // The publish gate refuses an empty container (2026-09-02) and this
-    // importer writes visibility straight from the file, which would walk a
-    // unit-less project past it. A container imports as coming_soon at most;
-    // publish it from the app once its units exist — the gate checks then.
+    // Audit 2026-09-15 (LST-02): this importer used to write `visibility`
+    // straight from the file, so a standalone row could go public with no
+    // score, no gate and no publish stamp — the one path that skipped all
+    // three. A row requested public is now INSERTED private, scored once it
+    // and its mandate exist, and published below only if it clears the
+    // threshold. A container still imports as coming_soon at most (the
+    // empty-container refusal, 2026-09-02): publish it from the app once its
+    // units exist.
     const requestedVisibility = str(r.visibility) ?? "private";
-    const isContainerRow = kind === "project" || kind === "phase";
-    const visibility =
-      isContainerRow && requestedVisibility === "public" ? "coming_soon" : requestedVisibility;
-    if (visibility !== requestedVisibility) {
+    const visibility = insertVisibilityFor(requestedVisibility, kind);
+    const publishPending = requestedVisibility === "public" && visibility === "private";
+    if (requestedVisibility === "public" && visibility === "coming_soon") {
       notes.push(
         "a " + kind + " cannot be imported public — set to coming_soon; publish it from the app once its units exist",
       );
+    }
+    if (args.dryRun && publishPending) {
+      notes.push(`public requested — scored once the row lands; published only at ${PUBLISH_THRESHOLD}+`);
     }
 
     const insertRow: Record<string, unknown> = {
@@ -264,9 +278,7 @@ for (const r of rows) {
       report.add({ row: line, outcome: "error", detail: error.message });
       continue;
     }
-    await logImported(supabase, orgId, "property", created.id, { reference });
-
-    // optional mandate
+    // optional mandate — BEFORE the score, so an active mandate counts
     const mandateType = str(r.mandate_type);
     if (mandateType) {
       const { data: mandate, error: mErr } = await supabase
@@ -285,10 +297,67 @@ for (const r of rows) {
       if (mErr) {
         notes.push(`mandate FAILED: ${mErr.message}`);
       } else {
-        await logImported(supabase, orgId, "mandate", mandate.id, { property: reference });
+        await logImported(supabase, orgId, "mandate", mandate.id, {
+          property: reference,
+          batch: report.batch,
+        });
         notes.push(`+${mandateType} mandate`);
       }
     }
+
+    // Score now that the row and its mandate exist — the stored column used
+    // to stay at its default 0 for every imported row (audit 2026-09-15).
+    // `mandateSource: "base"`: this runs as service_role, for which the
+    // mandates_safe view returns nothing (see recompute-scores.mts). A
+    // scoring failure is a note, never a lost `imported` event.
+    let score = 0;
+    try {
+      const scored = await recomputeQualityScore(
+        supabase as Parameters<typeof recomputeQualityScore>[0],
+        created.id,
+        { mandateSource: "base" },
+      );
+      score = scored?.score ?? 0;
+    } catch (e) {
+      notes.push(`score FAILED: ${(e as Error).message}`);
+    }
+    let finalVisibility = visibility;
+    let publishedAt: string | null = null;
+    if (publishPending) {
+      const decision = publishDecision({
+        requested: requestedVisibility,
+        kind,
+        score,
+        threshold: PUBLISH_THRESHOLD,
+      });
+      if (decision.publish) {
+        // The app stamps published_at on every transition into public (0073);
+        // a row that arrives without it sorts last in the feed for ever.
+        const stamp = new Date().toISOString();
+        const { error: pubErr } = await supabase
+          .from("properties")
+          .update({ visibility: "public", published_at: stamp })
+          .eq("id", created.id);
+        if (pubErr) {
+          notes.push(`score ${score}; publish FAILED: ${pubErr.message} — left private`);
+        } else {
+          finalVisibility = "public";
+          publishedAt = stamp;
+          notes.push(`score ${score} — published`);
+        }
+      } else if (decision.note) {
+        notes.push(decision.note); // carries the score and the threshold
+      }
+    } else {
+      notes.push(`score ${score}`);
+    }
+    await logImported(supabase, orgId, "property", created.id, {
+      reference,
+      batch: report.batch,
+      visibility: finalVisibility,
+      score,
+      ...(publishedAt ? { published_at: publishedAt } : {}),
+    });
 
     report.add({
       row: line,
