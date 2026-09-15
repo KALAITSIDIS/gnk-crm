@@ -40,6 +40,19 @@ export const publicEnquirySchema = z.object({
     (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
     z.string().max(200).optional(),
   ),
+  /**
+   * Minted by the site per form (0096): a repeated post with the same key
+   * answers with the same lead instead of making a second one. Random, not
+   * personal. The database refuses any other shape; this says why first.
+   */
+  idempotency_key: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9-]{8,64}$/, "idempotency_key must be 8–64 letters, digits or dashes.")
+      .optional(),
+  ),
 });
 
 export type PublicEnquiryInput = z.infer<typeof publicEnquirySchema>;
