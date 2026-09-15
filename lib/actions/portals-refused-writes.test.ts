@@ -1,5 +1,8 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { fakeClient, type FakePage } from "@/lib/testing/fake-client";
+
+const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
 /**
  * What the portal actions do when the write is REFUSED, and what they never
@@ -271,47 +274,90 @@ describe("setPortalEnabled", () => {
     expect(logEvent).not.toHaveBeenCalled();
   });
 
-  it("never names feed_token — on the insert branch or the update branch", async () => {
-    // THE DEFECT THIS PINS: one `.upsert({ …, feed_token: newToken() })` would
-    // rotate the URL on every toggle. The database's column default mints the
-    // token on insert; nothing here may.
+  it("mints on the insert branch — the DIGEST goes to the row, the token comes back once", async () => {
+    // 0097: the database no longer holds or mints the token. A first enable
+    // mints it here, stores sha256(token), and hands the plaintext back for
+    // the card to show exactly once. `feed_token` is not a column any more.
     const fresh = setup({
       portal_connections: [
         { data: null, error: null }, // no row yet
         { data: [{ id: "conn-1" }], error: null }, // the INSERT
       ],
     });
-    expect((await setPortalEnabled("jamesedition", true)).error).toBeNull();
+    const res = await setPortalEnabled("jamesedition", true);
+    expect(res.error).toBeNull();
     const inserts = fresh.argsOf("portal_connections", "insert");
     expect(inserts, "a first enable INSERTs").toHaveLength(1);
     expect(fresh.argsOf("portal_connections", "upsert"), "and never upserts").toHaveLength(0);
-    expect(inserts[0]![0]).toEqual({
+    const payload = inserts[0]![0] as Record<string, unknown>;
+    expect(payload).toEqual({
       org_id: "org-1",
       portal: "jamesedition",
       enabled: true,
       updated_by: "actor-1",
+      feed_token_sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
     });
-    expect(Object.keys(inserts[0]![0] as object)).not.toContain("feed_token");
+    expect(Object.keys(payload)).not.toContain("feed_token");
+    expect(res.token, "the plaintext token is handed back, once").toMatch(/^[0-9a-f]{64}$/);
+    expect(sha256(res.token!), "and the row holds exactly its digest").toBe(payload.feed_token_sha256);
+    expect(res.token).not.toBe(payload.feed_token_sha256);
+  });
 
+  it("a toggle of a row that has its token never rotates it, and hands no token back", async () => {
+    // THE DEFECT THIS PINS: one `.upsert({ …, feed_token_sha256: … })` would
+    // rotate the URL on every toggle and point the portal at a dead one.
     const existing = setup({
       portal_connections: [
-        { data: { id: "conn-1", settings: {} }, error: null }, // the row is there
+        { data: { id: "conn-1", settings: {}, feed_token_sha256: "b".repeat(64) }, error: null },
         { data: [{ id: "conn-1" }], error: null }, // the UPDATE
       ],
     });
-    expect((await setPortalEnabled("jamesedition", false)).error).toBeNull();
+    const off = await setPortalEnabled("jamesedition", false);
+    expect(off.error).toBeNull();
+    expect(off.token ?? null).toBeNull();
     const updates = existing.argsOf("portal_connections", "update");
     expect(updates, "a later toggle UPDATEs").toHaveLength(1);
     expect(updates[0]![0]).toEqual({ enabled: false, updated_by: "actor-1" });
-    expect(
-      Object.keys(updates[0]![0] as object),
-      "a toggle must never rotate the portal's feed URL",
-    ).not.toContain("feed_token");
     expect(logEvent.mock.calls[0][1]).toMatchObject({
       entityType: "organization",
       eventType: "portal_disabled",
       payload: { portal: "jamesedition" },
     });
+
+    const again = setup({
+      portal_connections: [
+        { data: { id: "conn-1", settings: {}, feed_token_sha256: "b".repeat(64) }, error: null },
+        { data: [{ id: "conn-1" }], error: null },
+      ],
+    });
+    const on = await setPortalEnabled("jamesedition", true);
+    expect(on.error).toBeNull();
+    expect(on.token ?? null, "re-enabling keeps the URL the portal already has").toBeNull();
+    expect(again.argsOf("portal_connections", "update")[0]![0]).toEqual({
+      enabled: true,
+      updated_by: "actor-1",
+    });
+  });
+
+  it("enabling a row that has NO token yet (settings saved first) mints one", async () => {
+    // Filling in the contact e-mail before switching the portal on creates a
+    // disabled row with no token; the switch is where the URL is born.
+    const fake = setup({
+      portal_connections: [
+        { data: { id: "conn-1", settings: {}, feed_token_sha256: null }, error: null },
+        { data: [{ id: "conn-1" }], error: null },
+      ],
+    });
+    const res = await setPortalEnabled("jamesedition", true);
+    expect(res.error).toBeNull();
+    const payload = fake.argsOf("portal_connections", "update")[0]![0] as Record<string, unknown>;
+    expect(payload).toEqual({
+      enabled: true,
+      updated_by: "actor-1",
+      feed_token_sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+    });
+    expect(res.token).toMatch(/^[0-9a-f]{64}$/);
+    expect(sha256(res.token!)).toBe(payload.feed_token_sha256);
   });
 });
 
@@ -416,15 +462,20 @@ describe("regeneratePortalToken", () => {
     ).not.toHaveBeenCalled();
   });
 
-  it("writes a fresh 64-hex token and logs it when the row is there", async () => {
+  it("writes a fresh digest, hands the token back once, and logs it when the row is there", async () => {
     const fake = setup({ portal_connections: [{ data: [{ id: "conn-1" }], error: null }] });
     const res = await regeneratePortalToken("jamesedition");
     expect(res.error).toBeNull();
     const payload = fake.argsOf("portal_connections", "update")[0]![0] as {
-      feed_token: string;
+      feed_token_sha256: string;
+      feed_token?: string;
     };
-    // 0095's CHECK constraint is exactly this shape
-    expect(payload.feed_token).toMatch(/^[0-9a-f]{64}$/);
+    // 0097's CHECK constraint is exactly this shape — and it is the digest,
+    // never the token, that reaches the row
+    expect(payload.feed_token_sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(payload.feed_token).toBeUndefined();
+    expect(res.token).toMatch(/^[0-9a-f]{64}$/);
+    expect(sha256(res.token!)).toBe(payload.feed_token_sha256);
     expect(logEvent.mock.calls[0][1]).toMatchObject({
       entityType: "organization",
       eventType: "portal_token_regenerated",

@@ -93,7 +93,7 @@ Per-portal settings (all optional unless stated):
 | `org_id` | uuid → organizations | |
 | `portal` | text | a registry id; validated in the app, pinned by test. No DB enum: the registry is the definition. |
 | `enabled` | boolean default false | |
-| `feed_token` | text unique | default `encode(gen_random_bytes(32),'hex')` |
+| ~~`feed_token`~~ `feed_token_sha256` | text unique, nullable | **As built 2026-09-15 (migration 0097, integrations audit INT-10):** the row holds only sha256 of the token; the app mints it (`lib/services/portals/token.ts`) on the first enable and on Regenerate, and the card shows it once. Null until the portal is first enabled. The three functions below take `p_token_sha256`. |
 | `settings` | jsonb default `{}` | validated by the registry's `settingsSchema` on write |
 | `last_pulled_at`, `last_pulled_ua`, `last_pull_count` | timestamptz, text, int | written by the feed route on every pull |
 | `leads_pulled_to` | timestamptz | JamesEdition only: the upper bound of the last successful pull |

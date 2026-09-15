@@ -21,7 +21,8 @@ vi.mock("next/server", () => ({
 }));
 
 const NOTE: PullNote = {
-  token: "f".repeat(64),
+  // 0097: the route hashes the path token once; the note carries the digest
+  tokenSha256: "f".repeat(64),
   userAgent: "KyeroBot/1.0",
   count: 7,
   portalId: "jamesedition",
@@ -52,14 +53,15 @@ beforeEach(() => {
 });
 
 describe("notePortalPull", () => {
-  it("notes the pull and passes 0095's three arguments", async () => {
+  it("notes the pull and passes 0097's three arguments — the digest, never a plaintext token", async () => {
     expect(await notePortalPull(client({ error: null }), NOTE)).toBe("noted");
     expect(calls).toEqual([
       {
         name: "note_portal_pull",
-        args: { p_token: NOTE.token, p_ua: NOTE.userAgent, p_count: NOTE.count },
+        args: { p_token_sha256: NOTE.tokenSha256, p_ua: NOTE.userAgent, p_count: NOTE.count },
       },
     ]);
+    expect(Object.keys(calls[0]!.args)).not.toContain("p_token");
     expect(warned()).toBe("");
   });
 
@@ -69,8 +71,8 @@ describe("notePortalPull", () => {
     const text = warned();
     expect(text).toContain("jamesedition");
     expect(text).toContain("permission denied for function");
-    // the token is the whole of the caller's proof; a log line is not where it goes
-    expect(text).not.toContain(NOTE.token);
+    // the digest names the connection; a log line is not where it goes
+    expect(text).not.toContain(NOTE.tokenSha256);
   });
 
   it("swallows a thrown call rather than rejecting into the feed", async () => {

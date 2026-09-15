@@ -1203,7 +1203,7 @@ export type Database = {
         Row: {
           created_at: string
           enabled: boolean
-          feed_token: string
+          feed_token_sha256: string | null
           id: string
           last_pull_count: number | null
           last_pulled_at: string | null
@@ -1218,7 +1218,7 @@ export type Database = {
         Insert: {
           created_at?: string
           enabled?: boolean
-          feed_token?: string
+          feed_token_sha256?: string | null
           id?: string
           last_pull_count?: number | null
           last_pulled_at?: string | null
@@ -1233,7 +1233,7 @@ export type Database = {
         Update: {
           created_at?: string
           enabled?: boolean
-          feed_token?: string
+          feed_token_sha256?: string | null
           id?: string
           last_pull_count?: number | null
           last_pulled_at?: string | null
@@ -3233,7 +3233,7 @@ export type Database = {
         Returns: string
       }
       note_portal_pull: {
-        Args: { p_count: number; p_token: string; p_ua: string }
+        Args: { p_count: number; p_token_sha256: string; p_ua: string }
         Returns: undefined
       }
       note_public_enquiry_hit: {
@@ -3263,7 +3263,7 @@ export type Database = {
         | { Args: { tbl_oid: unknown; use_typmod?: boolean }; Returns: number }
         | { Args: { use_typmod?: boolean }; Returns: string }
       portal_connection_by_token: {
-        Args: { p_portal: string; p_token: string }
+        Args: { p_portal: string; p_token_sha256: string }
         Returns: {
           enabled: boolean
           org_slug: string
@@ -3271,7 +3271,7 @@ export type Database = {
         }[]
       }
       portal_supplement: {
-        Args: { p_token: string }
+        Args: { p_token_sha256: string }
         Returns: {
           images: Json
           lat: number

@@ -219,7 +219,9 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   -- the lead SLA sweep (0098): cron runs it as postgres; nobody else may
   ('raise_lead_sla_tasks',    true, false, false, true),
   -- the portal feed (0095): a portal PULLS over a tokenised URL, so these
-  -- three are anon-callable and the 64-hex feed_token is the whole gate.
+  -- three are anon-callable and the 64-hex token in the URL is the whole
+  -- gate — since 0097 the row holds only its sha256, and the functions take
+  -- the digest.
   -- note_portal_pull WRITES (the last_pull* columns) and is still anon —
   -- unlike the 0084 door it takes only two harmless caller values (a
   -- user-agent string cut to 200 chars, a count clamped at 0), touches only
