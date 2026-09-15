@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { cleanEnquiryMeta } from "@/lib/services/enquiry-meta";
 
 /**
  * What a website may post to the enquiry door (0084).
@@ -52,6 +53,19 @@ export const publicEnquirySchema = z.object({
       .trim()
       .regex(/^[A-Za-z0-9-]{8,64}$/, "idempotency_key must be 8–64 letters, digits or dashes.")
       .optional(),
+  ),
+  /**
+   * The site's structured brief and provenance (0098): budget band, area,
+   * type, timing, deed position, the page it was posted from, campaign
+   * parameters, a consent version. Cleaned here against the same allowlist
+   * the database function holds — a useful 400-side copy, not the boundary —
+   * so what reaches p_meta is already string-only, trimmed and capped. A
+   * value that is not an object is treated as absent rather than refused: the
+   * brief is optional, and a site that sends nothing is still a site.
+   */
+  meta: z.preprocess(
+    (v) => (v && typeof v === "object" && !Array.isArray(v) ? cleanEnquiryMeta(v) : undefined),
+    z.record(z.string(), z.string()).optional(),
   ),
 });
 

@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as Sentry from "@sentry/nextjs";
 import { bodyFor, sendEnquiryAlert } from "./enquiry-alert";
+
+vi.mock("@sentry/nextjs", () => ({ captureMessage: vi.fn() }));
 
 const base = {
   name: "A Buyer",
@@ -33,6 +36,19 @@ describe("what the desk actually receives", () => {
     const body = bodyFor(base);
     expect(body).toMatch(/\/leads/);
     expect(body).toContain("green under five minutes");
+  });
+
+  it("says where the enquiry came from when the site told us (0098, LR-02)", () => {
+    const body = bodyFor({
+      ...base,
+      meta: { source_page: "/properties/PAF0001", utm_source: "instagram", utm_campaign: "spring-villas" },
+    });
+    expect(body).toContain("From:   /properties/PAF0001 · instagram · spring-villas");
+  });
+
+  it("omits the From line when there is nothing to say", () => {
+    expect(bodyFor({ ...base, meta: null })).not.toContain("From:");
+    expect(bodyFor({ ...base, meta: { consent_version: "2026-09-15" } })).not.toContain("From:");
   });
 });
 
@@ -93,6 +109,22 @@ describe("arming", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("nope", { status: 422 }));
     await expect(sendEnquiryAlert(base)).resolves.toBe("failed");
+  });
+
+  it("tells Sentry when a send fails, without the person (LR-07)", async () => {
+    process.env.RESEND_API_KEY = "re_test";
+    process.env.ENQUIRY_ALERT_TO = "info@kalaitsidis.com";
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("nope", { status: 403 }));
+    vi.mocked(Sentry.captureMessage).mockClear();
+    await expect(sendEnquiryAlert(base)).resolves.toBe("failed");
+    expect(Sentry.captureMessage).toHaveBeenCalledTimes(1);
+    const [msg, ctx] = vi.mocked(Sentry.captureMessage).mock.calls[0]!;
+    expect(String(msg)).toContain("enquiry-alert");
+    const context = JSON.stringify(ctx);
+    expect(context).toContain("403");
+    expect(context).not.toContain("buyer@example.com");
+    expect(context).not.toContain("A Buyer");
   });
 
   it("survives the network being gone — the enquiry must still stand", async () => {

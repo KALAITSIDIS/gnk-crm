@@ -148,8 +148,35 @@ describe("the door believes the visitor header only from our own site", () => {
         p_message: "Is PAF0001 still available?",
         p_property_ref: "",
         p_idempotency_key: "",
+        p_meta: null,
       },
     ]);
+  });
+});
+
+/**
+ * 0098 (audit LR-01/02): the site's structured brief and provenance travel
+ * as `meta`. The route cleans them against the allowlist (a useful 400-side
+ * copy of the function's own rule), forwards them as p_meta, and hands them
+ * to the alert so the desk's e-mail can say where the lead came from.
+ */
+describe("the brief travels as data", () => {
+  it("forwards the allowlisted meta to the function, cleaned, and nothing else", async () => {
+    const res = await post(
+      { "x-gnk-forward-key": KEY },
+      { meta: { budget: "over_1m", email: "x@y.invalid", utm_source: " instagram " } },
+    );
+    expect(res.status).toBe(202);
+    expect(state.submits[0]!.p_meta).toEqual({ budget: "over_1m", utm_source: "instagram" });
+    expect(sendEnquiryAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ meta: { budget: "over_1m", utm_source: "instagram" } }),
+    );
+  });
+
+  it("sends null meta when the caller sent none", async () => {
+    await post({ "x-gnk-forward-key": KEY });
+    expect(state.submits[0]!.p_meta).toBeNull();
+    expect(sendEnquiryAlert).toHaveBeenCalledWith(expect.objectContaining({ meta: null }));
   });
 });
 

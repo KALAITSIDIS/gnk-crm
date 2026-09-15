@@ -108,4 +108,19 @@ describe("public enquiry input", () => {
     expect(r.error!.issues[0]!.message).toContain("idempotency_key");
     expect(publicEnquirySchema.safeParse({ ...base, idempotency_key: "short" }).success).toBe(false);
   });
+
+  it("takes a meta object and keeps only the allowlisted string keys, cleaned (0098)", () => {
+    const r = publicEnquirySchema.safeParse({
+      ...base,
+      meta: { budget: " over_1m ", email: "x@y.invalid", utm_source: "instagram", bedrooms_min: 3 },
+    });
+    expect(r.success).toBe(true);
+    expect(r.data!.meta).toEqual({ budget: "over_1m", utm_source: "instagram" });
+  });
+
+  it("treats a meta that is not an object as absent, and a body without one as fine", () => {
+    expect(publicEnquirySchema.safeParse({ ...base, meta: "junk" }).data!.meta).toBeUndefined();
+    expect(publicEnquirySchema.safeParse({ ...base, meta: [1] }).data!.meta).toBeUndefined();
+    expect(publicEnquirySchema.safeParse(base).data!.meta).toBeUndefined();
+  });
 });

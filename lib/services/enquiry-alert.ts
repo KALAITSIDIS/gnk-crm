@@ -22,6 +22,7 @@
  * The key belongs in Vercel's environment, never in this repository, which is
  * public.
  */
+import * as Sentry from "@sentry/nextjs";
 
 export interface EnquiryAlert {
   name: string;
@@ -29,6 +30,12 @@ export interface EnquiryAlert {
   phone: string | null;
   message: string | null;
   propertyReference: string | null;
+  /**
+   * The site's provenance and brief (0098), already cleaned against the
+   * allowlist — a path and campaign names, never a person. Optional so the
+   * callers and tests that predate it still compile.
+   */
+  meta?: Record<string, string> | null;
 }
 
 const FROM = process.env.ENQUIRY_ALERT_FROM ?? "GNK website <onboarding@resend.dev>";
@@ -44,6 +51,9 @@ function subjectFor(a: EnquiryAlert): string {
  * and the only job is: who, how to reach them, what they want, one link.
  */
 export function bodyFor(a: EnquiryAlert): string {
+  const from = [a.meta?.source_page, a.meta?.utm_source, a.meta?.utm_medium, a.meta?.utm_campaign]
+    .filter((v): v is string => Boolean(v))
+    .join(" · ");
   const lines = [
     `${a.name} enquired through the website.`,
     "",
@@ -54,6 +64,10 @@ export function bodyFor(a: EnquiryAlert): string {
     // the visitor typed and nothing more. The lead's own message carries the
     // "(no published listing with that reference)" note where it applies.
     a.propertyReference ? `About:  ${a.propertyReference}` : null,
+    // Where it came from (0098, audit LR-02): the page, then the campaign the
+    // visitor arrived on, if the site remembered one. Omitted entirely when
+    // there is nothing to say — a "From:" line with no value is noise.
+    from ? `From:   ${from}` : null,
     "",
     a.message ? a.message : "(no message)",
     "",
@@ -110,11 +124,38 @@ export async function sendEnquiryAlert(
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
       console.error(`[enquiry-alert] provider responded ${res.status}: ${detail.slice(0, 300)}`);
+      reportFailure(a, `provider responded ${res.status}`);
       return "failed";
     }
     return "sent";
   } catch (err) {
     console.error("[enquiry-alert] send threw:", err);
+    reportFailure(a, err instanceof Error ? err.name : "threw");
     return "failed";
+  }
+}
+
+/**
+ * A failed alert is the one failure this module exists to prevent, and until
+ * 0098 it was a console line that nobody was watching (audit LR-07; the lead
+ * also carries an `enquiry_alert` event since 0096, but a timeline is read
+ * when someone opens the lead, and the point of the alert is that nobody has).
+ * Sentry is where a human is paged. SHAPE ONLY: the reference and which
+ * details existed, never the person, the address or the message.
+ */
+function reportFailure(a: EnquiryAlert, reason: string): void {
+  try {
+    Sentry.captureMessage(`[enquiry-alert] send failed: ${reason}`, {
+      level: "error",
+      extra: {
+        reason,
+        propertyReference: a.propertyReference,
+        hasEmail: Boolean(a.email),
+        hasPhone: Boolean(a.phone),
+        sourcePage: a.meta?.source_page ?? null,
+      },
+    });
+  } catch {
+    // Sentry is best-effort; the enquiry is already saved and the console line stands.
   }
 }

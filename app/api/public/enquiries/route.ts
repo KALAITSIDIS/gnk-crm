@@ -129,6 +129,9 @@ export async function POST(request: NextRequest) {
     p_message: input.message ?? "",
     p_property_ref: input.property_reference ?? "",
     p_idempotency_key: input.idempotency_key ?? "",
+    // 0098: the site's brief and provenance, already cleaned by the schema;
+    // null, not {}, when the caller sent none — the function reads it as absent
+    p_meta: input.meta ?? null,
   });
 
   if (error) {
@@ -160,6 +163,7 @@ export async function POST(request: NextRequest) {
       phone: input.phone ?? null,
       message: input.message ?? null,
       propertyReference: input.property_reference ?? null,
+      meta: input.meta ?? null,
     });
     // …and the outcome goes on the lead's timeline (INT-01). Until 0096 the
     // word came back here and was dropped, so a failed or skipped alert was
