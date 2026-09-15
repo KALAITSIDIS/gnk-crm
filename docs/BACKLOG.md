@@ -2229,18 +2229,6 @@ Every VERIFY line in this section was RUN on 2026-09-14 before it was written.
   redeploy after setting them, because Vercel binds env at build time.
   **VERIFY:** `grep -l external_ref supabase/migrations/*.sql` — a hit means started. *(no hit on 2026-09-14; `app/api/cron/portal-leads` does not exist.)*
 
-- **Contact page header widens a phone, S.** At 390 px a contact detail page
-  still widens the document to 631 px after the tab-strip fix (`64fe4ab`): the
-  header's `ml-auto` button group in `app/(app)/contacts/[id]/page.tsx` (Log
-  conversation and Add task, measured 607 px wide) does not wrap. Found by the
-  portals task's probe on 2026-09-14 — 980 px of document before the strip
-  fix, 631 after, and the remaining 241 px is this group — and unmeasured by
-  any suite: no e2e visits a contact detail page at phone width (the module
-  suite's `/contacts` is the list). Fix: wrap or fold the group the way the lead
-  card folds behind "More…" (CRM-06), plus a phone-width overflow assertion on
-  a contact detail page so it stays fixed.
-  **VERIFY:** `grep -c 'ml-auto flex items-center gap-2' "app/(app)/contacts/[id]/page.tsx"` — 1 means the group is as it was. *(1 on 2026-09-14.)*
-
 - **Kyero-family vocabulary and contact nodes — NEEDS AN OPERATOR DECISION.**
   Before the first JamesEdition / A Place in the Sun pull, run the CRM's feed
   through the portal's validator (JamesEdition's "Validate your feed" page; the
@@ -2252,3 +2240,26 @@ Every VERIFY line in this section was RUN on 2026-09-14 before it was written.
   `lib/services/portals/dialects/kyero.ts` or a settings decision; none of it
   can be settled without a portal account, which only the operator can open.
   **VERIFY:** `grep -n 'land: "Land"\|building: "Building"' lib/services/portals/dialects/kyero.ts` — the two values as shipped. *(both present on 2026-09-14.)*
+
+## Phone layouts — audit 2026-09-13 (CRM-06), the contact page
+
+- ~~**Contact detail header overflows a phone, S.**~~ ✅ **SHIPPED 2026-09-14**
+  (`ad00581` fix, `afdafc4` test, `578a053` prerequisite). Measured by a
+  throwaway Playwright probe in the mobile project: `/contacts/<id>` was
+  631px wide in a 390px viewport. The offender was the header's action
+  group — an admin's five buttons (Log contact · Add task · Archive · Merge ·
+  Erase personal data) are 607px in a row that could not wrap. `flex-wrap`
+  on the group, and the same class on the property header so there is ONE
+  idiom for header actions rather than a wrapping one and a non-wrapping one
+  that fits today only because an admin sees three buttons there.
+  `tests/e2e/phone-layout.spec.ts` now seeds a live contact, proves the fifth
+  button is on the page and calls `assertNoHorizontalOverflow` in both
+  projects — watched to FAIL first (received 241 against a ceiling of 1),
+  then pass. The prerequisite is the `TabsList` primitive from
+  `feat/portal-syndication-m1`, taken verbatim (`max-w-full justify-start
+  overflow-x-auto`): on `main` the nine-tab strip alone made the page 980px
+  wide, which would have hidden the header behind the strip's own number.
+  **The portal task had logged this as an outstanding S item** ("Contact page
+  header widens a phone", found by its probe on 2026-09-14, in its own section
+  above); that item was removed when this branch merged `origin/main`, so the
+  fact lives once — here, struck — and the next person does not re-propose it.

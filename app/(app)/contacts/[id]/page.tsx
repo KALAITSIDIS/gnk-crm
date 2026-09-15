@@ -291,7 +291,13 @@ export default async function ContactDetailPage({
               archived{c.merged_into_id ? " (merged)" : ""}
             </span>
           ) : null}
-          <div className="ml-auto flex items-center gap-2">
+          {/* `flex-wrap`: an admin's five actions here are 607px of buttons, and
+              a row that could not wrap widened the whole page to 631px in a
+              390px viewport (2026-09-14; measured since by
+              tests/e2e/phone-layout.spec.ts). Once the group drops below the
+              name it takes the full width and the buttons fall into rows;
+              beside the name nothing changes. */}
+          <div className="ml-auto flex flex-wrap items-center gap-2">
             {/* DB-11a: same gate as AddTaskDialog — logging a conversation is
                 a claim any role that can see the contact may make (the
                 ChatLinks precedent), not an edit */}
