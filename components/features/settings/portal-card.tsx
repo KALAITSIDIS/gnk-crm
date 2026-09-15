@@ -1,6 +1,13 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useSyncExternalStore, useTransition } from "react";
+import {
+  useActionState,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  useTransition,
+} from "react";
 import { Copy, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -19,10 +26,12 @@ import { formatDateTime } from "@/lib/utils/format";
 /**
  * One portal on Settings → Portals (spec 2026-09-14 §Settings).
  *
- * The card shows the FEED PATH on the server and upgrades it to the full URL
- * once hydrated. The origin is the browser's, so there is no NEXT_PUBLIC_APP_URL
- * to fall out of step with where the CRM actually answers — and rendering the
- * path first is what keeps the first client render identical to the server's.
+ * THE FEED URL IS SHOWN ONCE (0097). The database holds only the token's
+ * digest, so the server can say that a URL exists and never what it is; the
+ * plaintext arrives in the return value of the action that minted it (the
+ * first enable, or Regenerate) and lives in this card's state until the page
+ * is left. The origin is the browser's, so there is no NEXT_PUBLIC_APP_URL to
+ * fall out of step with where the CRM actually answers.
  *
  * A portal whose renderer this build does not have shows a badge instead of a
  * switch. `setPortalEnabled` refuses it too; the badge is so the desk is told
@@ -31,8 +40,8 @@ import { formatDateTime } from "@/lib/utils/format";
 
 export interface PortalCardConnection {
   enabled: boolean;
-  /** `/api/portals/<id>/<token>` — the origin is added on the client */
-  feedPath: string;
+  /** Whether a feed URL exists. Its token is never stored, so it is shown only when issued. */
+  hasToken: boolean;
   settings: Record<string, string>;
   lastPulledAt: string | null;
   lastPulledUa: string | null;
@@ -84,9 +93,11 @@ export function PortalCard({
   const [toggling, startToggle] = useTransition();
   const [rotating, startRotate] = useTransition();
 
-  // The server renders the path; the client swaps in the origin once hydrated.
   const origin = useSyncExternalStore(subscribeToNothing, readOrigin, noOrigin);
-  const feedUrl = connection ? `${origin}${connection.feedPath}` : "";
+  // The token this card was handed by the action that minted it, if any. Set
+  // only after a client action, so the origin is always known by then.
+  const [issued, setIssued] = useState<string | null>(null);
+  const issuedUrl = issued ? `${origin}/api/portals/${portal.id}/${issued}` : "";
 
   // `setPortalEnabled` refuses an enable while a required setting is blank.
   // Saying so here — and declining to send the click — is what makes the
@@ -116,7 +127,10 @@ export function PortalCard({
       const r = await setPortalEnabled(portal.id, !enabled);
       if (r.error) toast.error(r.error);
       else if (enabled) toast.success(`${portal.name} disabled — its feed now empties`);
-      else toast.success(`${portal.name} enabled`);
+      else if (r.token) {
+        setIssued(r.token);
+        toast.success(`${portal.name} enabled — copy the feed URL now, it is shown once`);
+      } else toast.success(`${portal.name} enabled`);
     });
   };
 
@@ -131,7 +145,10 @@ export function PortalCard({
     startRotate(async () => {
       const r = await regeneratePortalToken(portal.id);
       if (r.error) toast.error(r.error);
-      else toast.success("New feed URL minted — give it to the portal");
+      else {
+        if (r.token) setIssued(r.token);
+        toast.success("New feed URL minted — copy it now and give it to the portal; it is shown once");
+      }
     });
   };
 
@@ -189,45 +206,77 @@ export function PortalCard({
       {connection && portal.spec === "public" ? (
         <div className="mt-4 flex flex-col gap-1.5">
           <Label htmlFor={`feed-url-${portal.id}`}>Feed URL</Label>
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              id={`feed-url-${portal.id}`}
-              data-testid={`portal-feed-url-${portal.id}`}
-              readOnly
-              value={origin ? feedUrl : connection.feedPath}
-              className="h-9 min-w-0 flex-1 font-mono text-xs"
-            />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              // While a rotation is in flight the field still shows the OLD
-              // token; copying it would hand the portal a URL that is about
-              // to stop answering.
-              disabled={rotating}
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(feedUrl || connection.feedPath);
-                  toast.success("Feed URL copied");
-                } catch {
-                  toast.error("Could not copy — select the field and copy it by hand");
-                }
-              }}
-            >
-              <Copy className="size-4" />
-              Copy
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={rotating}
-              onClick={regenerate}
-            >
-              <RefreshCw className="size-4" />
-              Regenerate
-            </Button>
-          </div>
+          {issued ? (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  id={`feed-url-${portal.id}`}
+                  data-testid={`portal-feed-url-${portal.id}`}
+                  readOnly
+                  value={issuedUrl}
+                  className="h-9 min-w-0 flex-1 font-mono text-xs"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  // While a rotation is in flight the field still shows the OLD
+                  // token; copying it would hand the portal a URL that is about
+                  // to stop answering.
+                  disabled={rotating}
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(issuedUrl);
+                      toast.success("Feed URL copied");
+                    } catch {
+                      toast.error("Could not copy — select the field and copy it by hand");
+                    }
+                  }}
+                >
+                  <Copy className="size-4" />
+                  Copy
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={rotating}
+                  onClick={regenerate}
+                >
+                  <RefreshCw className="size-4" />
+                  Regenerate
+                </Button>
+              </div>
+              <p className="text-xs text-warning" data-testid={`portal-feed-url-once-${portal.id}`}>
+                Copy it now — it is shown once. The CRM keeps only a fingerprint of it; leave this
+                page and the URL is gone until you regenerate.
+              </p>
+            </>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <p
+                id={`feed-url-${portal.id}`}
+                className="min-w-0 flex-1 text-sm text-text-2"
+                data-testid={`portal-feed-url-withheld-${portal.id}`}
+              >
+                {connection.hasToken
+                  ? "Shown once, when the portal was enabled or the URL was last regenerated. Regenerate to issue a new one — the old one stops answering."
+                  : "Enabling the portal mints its feed URL."}
+              </p>
+              {connection.hasToken ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={rotating}
+                  onClick={regenerate}
+                >
+                  <RefreshCw className="size-4" />
+                  Regenerate
+                </Button>
+              ) : null}
+            </div>
+          )}
         </div>
       ) : null}
 

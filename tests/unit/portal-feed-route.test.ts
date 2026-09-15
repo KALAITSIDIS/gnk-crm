@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET } from "@/app/api/portals/[portal]/[token]/route";
@@ -31,6 +32,8 @@ import type { PublicListingRow, SupplementRow } from "@/lib/services/portals/fee
  */
 
 const TOKEN = "a".repeat(64);
+/** 0097: the database holds sha256(token); every lookup carries the digest, never the token */
+const TOKEN_SHA256 = createHash("sha256").update(TOKEN).digest("hex");
 const SNAPSHOT = "5|2026-09-10T08:30:15+00:00|abc";
 const UA = "KyeroBot/1.0";
 
@@ -222,7 +225,7 @@ describe("the token is the whole of the proof", () => {
     expect(state.calls).toEqual(["portal_connection_by_token"]);
     expect(rpcArgs("portal_connection_by_token")).toEqual({
       p_portal: "jamesedition",
-      p_token: TOKEN,
+      p_token_sha256: TOKEN_SHA256,
     });
     expect(state.pulls).toEqual([]);
   });
@@ -248,7 +251,7 @@ describe("a disabled portal gets an empty document, never a 404", () => {
     expect(state.calls).toEqual(["portal_connection_by_token", "note_portal_pull"]);
     // 0095 records it deliberately: a frozen "last pulled" would read as "the
     // portal stopped calling", when in fact it is calling and getting nothing.
-    expect(state.pulls).toEqual([{ p_token: TOKEN, p_ua: UA, p_count: 0 }]);
+    expect(state.pulls).toEqual([{ p_token_sha256: TOKEN_SHA256, p_ua: UA, p_count: 0 }]);
   });
 });
 
@@ -269,7 +272,7 @@ describe("an enabled portal gets the listings selected for it", () => {
     expect(state.ranges).toEqual([[0, 999]]);
     // paging portal_supplement, which has no ORDER BY, is only stable ordered
     expect(state.supplementOrder).toBe("reference");
-    expect(state.pulls).toEqual([{ p_token: TOKEN, p_ua: UA, p_count: 1 }]);
+    expect(state.pulls).toEqual([{ p_token_sha256: TOKEN_SHA256, p_ua: UA, p_count: 1 }]);
   });
 
   it("answers 304 to a matching If-None-Match with no body, and still notes the pull", async () => {
@@ -281,12 +284,12 @@ describe("an enabled portal gets the listings selected for it", () => {
     expect(res.headers.get("cache-control")).toBe("public, max-age=300");
     expect(await res.text()).toBe("");
     // "last pulled" means when the portal last ASKED, not when it last got bytes
-    expect(state.pulls).toEqual([{ p_token: TOKEN, p_ua: UA, p_count: 1 }]);
+    expect(state.pulls).toEqual([{ p_token_sha256: TOKEN_SHA256, p_ua: UA, p_count: 1 }]);
   });
 
   it("sends an empty user agent rather than nothing when the caller gave none", async () => {
     expect((await get("jamesedition", TOKEN, {})).status).toBe(200);
-    expect(state.pulls).toEqual([{ p_token: TOKEN, p_ua: "", p_count: 1 }]);
+    expect(state.pulls).toEqual([{ p_token_sha256: TOKEN_SHA256, p_ua: "", p_count: 1 }]);
   });
 
   it("reads the supplement in pages until a short one (PostgREST caps a call at max_rows)", async () => {
@@ -316,7 +319,7 @@ describe("an enabled portal with nothing selected", () => {
     expect(res.headers.get("cache-control")).toBe("public, max-age=300");
     // no selection means no query — the assembler never pages the site feed
     expect(state.calls).not.toContain("public_listings");
-    expect(state.pulls).toEqual([{ p_token: TOKEN, p_ua: UA, p_count: 0 }]);
+    expect(state.pulls).toEqual([{ p_token_sha256: TOKEN_SHA256, p_ua: UA, p_count: 0 }]);
     // nothing was selected, so nothing is wrong: no "nothing eligible" warning
     expect(logged(console.warn)).toBe("");
   });
@@ -403,7 +406,7 @@ describe("a feed that is quietly wrong is a warning, not a silence", () => {
     const warned = logged(console.warn);
     expect(warned).toContain("jamesedition");
     expect(warned).toContain("nothing eligible");
-    expect(state.pulls).toEqual([{ p_token: TOKEN, p_ua: UA, p_count: 0 }]);
+    expect(state.pulls).toEqual([{ p_token_sha256: TOKEN_SHA256, p_ua: UA, p_count: 0 }]);
   });
 });
 
@@ -417,5 +420,20 @@ describe("the feed is not metered", () => {
       "public_listings",
       "note_portal_pull",
     ]);
+  });
+});
+
+describe("the database sees the digest, never the token (0097)", () => {
+  it("every token-bearing call carries sha256(path token) and no plaintext", async () => {
+    expect((await get()).status).toBe(200);
+    const bearing = state.rpcs.filter((r) =>
+      ["portal_connection_by_token", "portal_supplement", "note_portal_pull"].includes(r.name),
+    );
+    expect(bearing.length).toBeGreaterThanOrEqual(3);
+    for (const { name, args } of bearing) {
+      expect(args.p_token_sha256, name).toBe(TOKEN_SHA256);
+      expect("p_token" in args, `${name} must not receive the token itself`).toBe(false);
+      expect(JSON.stringify(args)).not.toContain(TOKEN);
+    }
   });
 });
