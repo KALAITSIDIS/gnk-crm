@@ -24,6 +24,7 @@ Export current data (Excel, phone contacts, WhatsApp notes) into these two CSVs.
 | pref_bedrooms_min | no | int | |
 | pref_property_types | no | `apartment;villa` | |
 | consent_marketing | no | true/false | if true, consent_at = import time; note in gdpr_notes |
+| consent_at | no | ISO date-time | the REAL grant time; without it the stamp is import time and the consent event says so (SEC-06) |
 | notes | no | text | |
 
 ## properties_import.csv
@@ -36,7 +37,7 @@ Export current data (Excel, phone contacts, WhatsApp notes) into these two CSVs.
 | property_type | yes | apartment/villa/townhouse/house/land/shop/office/building/hotel/warehouse/mixed_use/other | |
 | transaction_type | no | sale/rent/sale_or_rent | default sale |
 | status | no | draft/available/reserved/under_offer/sold/rented/withdrawn | default available |
-| visibility | no | public/private/vip/partner/off_market/coming_soon | default private |
+| visibility | no | public/private/vip/partner/off_market/coming_soon | default private. `public` is honoured only when the row scores ≥ 70 once it and its mandate have landed (it is inserted private, scored, then published with `published_at` stamped as the app does); a project or phase imports as coming_soon at most |
 | district_code | yes | PAF/LIM/LAR/NIC/FAM | |
 | area | no | EN area name | created if missing |
 | address | no | text | |
@@ -72,3 +73,6 @@ Export current data (Excel, phone contacts, WhatsApp notes) into these two CSVs.
 2. Dry-run first; fix the report; then live run.
 3. Anything unmappable → keep in a spare `notes` column rather than losing it.
 4. Cyrillic/Greek data is fine in any text field; **names of record for legal docs should follow passport Latin transliteration** in notes where relevant.
+5. **Headers are checked against these tables.** An unknown column stops the run before any row is written — a misspelt header would otherwise import every value in it as blank; `--allow-extra` ignores such columns instead (audit 2026-09-15, LST-10).
+6. **Every run has a batch id** (`--batch <id>`, default `YYYYMMDD-HHMMSS-<file>`), written into each `imported` event's payload and into the report's file name, so a whole run can be found by one name.
+7. **The importer cannot skip the publish gate** (audit 2026-09-15, LST-02). A row requested `public` is scored once it and its mandate exist and is published only at 70 or more, with `published_at` stamped; otherwise it stays private and the report row says the score.

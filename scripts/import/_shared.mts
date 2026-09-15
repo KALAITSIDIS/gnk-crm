@@ -11,6 +11,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import { parsePhoneNumberFromString } from "libphonenumber-js";
+import { batchIdFor, unknownColumns } from "./_rules.mts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -18,6 +19,10 @@ export interface CliArgs {
   file: string;
   dryRun: boolean;
   org?: string;
+  /** import a file whose header carries columns the template does not know (they are ignored) */
+  allowExtra: boolean;
+  /** the run's batch id; default derived from the run time and the file name (_rules.mts) */
+  batch?: string;
 }
 
 export function parseArgs(argv: string[]): CliArgs {
@@ -25,16 +30,25 @@ export function parseArgs(argv: string[]): CliArgs {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--dry-run") args.dryRun = true;
+    else if (a === "--allow-extra") args.allowExtra = true;
+    else if (a === "--batch") args.batch = argv[++i];
+    else if (a.startsWith("--batch=")) args.batch = a.slice(8);
     else if (a === "--file" || a === "-f") args.file = argv[++i];
     else if (a.startsWith("--file=")) args.file = a.slice(7);
     else if (a === "--org") args.org = argv[++i];
     else if (a.startsWith("--org=")) args.org = a.slice(6);
   }
   if (!args.file) {
-    console.error("Usage: --file <csv> [--dry-run] [--org <uuid>]");
+    console.error("Usage: --file <csv> [--dry-run] [--org <uuid>] [--batch <id>] [--allow-extra]");
     process.exit(1);
   }
-  return { file: String(args.file), dryRun: Boolean(args.dryRun), org: args.org as string | undefined };
+  return {
+    file: String(args.file),
+    dryRun: Boolean(args.dryRun),
+    org: args.org as string | undefined,
+    allowExtra: Boolean(args.allowExtra),
+    batch: args.batch as string | undefined,
+  };
 }
 
 export function serviceClient() {
@@ -66,7 +80,7 @@ export async function resolveOrg(
 }
 
 /** RFC-4180-ish CSV parse: quoted fields, "" escapes, newlines inside quotes. */
-export function parseCsv(text: string): Record<string, string>[] {
+export function parseCsvTable(text: string): { header: string[]; rows: Record<string, string>[] } {
   const rows: string[][] = [];
   let field = "";
   let row: string[] = [];
@@ -97,18 +111,50 @@ export function parseCsv(text: string): Record<string, string>[] {
     row.push(field);
     if (row.length > 1 || row[0] !== "") rows.push(row);
   }
-  if (rows.length === 0) return [];
+  if (rows.length === 0) return { header: [], rows: [] };
   const header = rows[0].map((h) => h.trim());
-  return rows.slice(1).map((r) => {
-    const obj: Record<string, string> = {};
-    header.forEach((h, i) => (obj[h] = (r[i] ?? "").trim()));
-    return obj;
-  });
+  return {
+    header,
+    rows: rows.slice(1).map((r) => {
+      const obj: Record<string, string> = {};
+      header.forEach((h, i) => (obj[h] = (r[i] ?? "").trim()));
+      return obj;
+    }),
+  };
 }
 
-export function loadCsv(file: string): Record<string, string>[] {
+export function parseCsv(text: string): Record<string, string>[] {
+  return parseCsvTable(text).rows;
+}
+
+/**
+ * Load a CSV and, when told which columns the template knows, REFUSE an
+ * unknown header before any row is written (audit 2026-09-15, LST-10).
+ * The importers read columns by name, so a misspelt header — `bedroom` —
+ * used to import every value in it as blank without a word. `--allow-extra`
+ * turns the refusal into a warning for a file that carries columns nobody
+ * meant to import.
+ */
+export function loadCsv(
+  file: string,
+  known?: readonly string[],
+  allowExtra = false,
+): Record<string, string>[] {
   const path = resolve(process.cwd(), file);
-  return parseCsv(readFileSync(path, "utf8"));
+  const { header, rows } = parseCsvTable(readFileSync(path, "utf8"));
+  if (known) {
+    const unknown = unknownColumns(header, known);
+    if (unknown.length > 0 && !allowExtra) {
+      console.error(
+        `Unknown column${unknown.length === 1 ? "" : "s"} in ${file}: ${unknown.join(", ")}\n` +
+          "The importer reads only the columns in docs/09_DATA_IMPORT_TEMPLATES.md; a misspelt " +
+          "header would import as blank. Fix the header, or pass --allow-extra to ignore these.",
+      );
+      process.exit(1);
+    }
+    if (unknown.length > 0) console.warn(`ignoring column(s): ${unknown.join(", ")}`);
+  }
+  return rows;
 }
 
 /* ---- field coercion ---- */
@@ -148,10 +194,13 @@ export class Report {
   kind: string;
   file: string;
   dryRun: boolean;
-  constructor(kind: string, file: string, dryRun: boolean) {
+  /** names the run — in every `imported` event of it and in the report's file name */
+  batch: string;
+  constructor(kind: string, file: string, dryRun: boolean, batch?: string) {
     this.kind = kind;
     this.file = file;
     this.dryRun = dryRun;
+    this.batch = batchIdFor(file, new Date(), batch);
   }
 
   add(r: RowResult) {
@@ -169,14 +218,20 @@ export class Report {
 
   finish(): string {
     const c = this.counts();
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const dir = resolve(HERE, "reports");
     mkdirSync(dir, { recursive: true });
-    const path = resolve(dir, `${this.kind}-${this.dryRun ? "dryrun-" : ""}${stamp}.json`);
+    const path = resolve(dir, `${this.kind}-${this.dryRun ? "dryrun-" : ""}${this.batch}.json`);
     writeFileSync(
       path,
       JSON.stringify(
-        { kind: this.kind, file: this.file, mode: this.dryRun ? "dry-run" : "live", ...c, results: this.results },
+        {
+          kind: this.kind,
+          file: this.file,
+          batch: this.batch,
+          mode: this.dryRun ? "dry-run" : "live",
+          ...c,
+          results: this.results,
+        },
         null,
         2,
       ),
@@ -187,7 +242,7 @@ export class Report {
     for (const r of this.results.filter((x) => x.outcome === "error")) {
       console.log(`  row ${r.row}: ERROR — ${r.detail}`);
     }
-    console.log(`Report: ${path}`);
+    console.log(`Batch: ${this.batch}\nReport: ${path}`);
     return path;
   }
 }

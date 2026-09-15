@@ -2,6 +2,7 @@ import { getTranslations } from "next-intl/server";
 import { AdminDashboard } from "@/components/features/dashboard/admin-dashboard";
 import { AgentDashboard } from "@/components/features/dashboard/agent-dashboard";
 import { CronHealth } from "@/components/features/dashboard/cron-health";
+import { ListingHealth } from "@/components/features/dashboard/listing-health";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
 
@@ -24,6 +25,8 @@ export default async function DashboardPage() {
         <>
           {/* admin-branch only: cron_health() is service_role-gated (0074) */}
           <CronHealth />
+          {/* audit 2026-09-15 LST-03: published_below_threshold() finally has a screen */}
+          <ListingHealth />
           <AdminDashboard />
         </>
       ) : (

@@ -9,6 +9,7 @@ import type { QualityScoreResult } from "./quality-score";
  */
 const scored = (reference: string, warnings: QualityScoreResult["warnings"]): ScoredProperty => ({
   property: { id: `id-${reference}`, reference, title: null, score: 85 },
+  listing: { visibility: "private", status: "available", publishedAt: null },
   result: { score: 85, items: [], missing: [], warnings },
 });
 

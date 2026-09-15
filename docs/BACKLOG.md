@@ -2263,3 +2263,63 @@ Every VERIFY line in this section was RUN on 2026-09-14 before it was written.
   header widens a phone", found by its probe on 2026-09-14, in its own section
   above); that item was removed when this branch merged `origin/main`, so the
   fact lives once — here, struck — and the next person does not re-propose it.
+
+## Data integrity audit — 2026-09-15
+
+Twenty findings (LST-01…10 listings and feeds, REC-01…05 record hygiene,
+GOV-01…05 governance) from the data architecture and integrity audit; the
+report is a private artifact held by the operator. **Phase 0 shipped
+2026-09-15** — DECISIONS `T-data-integrity-phase0` — and is not listed here.
+What remains, in the order the report recommends; every entry carries its
+VERIFY, run before starting.
+
+- **Phase 1 — the constraint migration, M.** Vocabulary CHECKs on `energy_class`,
+  `construction_status`, `features`, `contact_types` and `languages`, pinned to
+  the TypeScript constants by a unit test; a Cyprus bounding-box CHECK on
+  `properties.location` and on area and district centroids, with the box in
+  `cyprus_config`; `floor_number ≤ total_floors`; covered and plot areas > 0;
+  `published_at is not null` when `visibility = 'public'`; `is_multilang()` on
+  the four copy columns; a `properties_parent_kind` trigger (unit → project or
+  phase, phase → project, standalone/project → none) with a depth guard; areas
+  unique per district on `lower(name->>'en')` with a centroid required; a
+  partial unique index on active `telegram_username`; a trigger refusing a
+  phone that is another active contact's additional phone; a lead must carry a
+  contact, a property or a message. Offender counts abort naming the number,
+  the 0077 shape; hosted BEFORE the merge; an RLS test per refusal. (LST-02,
+  LST-04, LST-05, LST-07, LST-08, REC-02 in part, REC-03, REC-04, GOV-03,
+  GOV-05.) **VERIFY:** `grep -ln "properties_parent_kind\|energy_class in" supabase/migrations/*.sql` — a hit means shipped.
+- **Phase 2 — sweeps and surfaces, M.** Task kinds `mandate_expired_listing_public`
+  (to the oldest active admin), `price_review` (a public listing ninety days
+  without a `price_history` row) and `lead_unanswered` (hourly, past the red
+  threshold in `nudge_thresholds`) as arms of the existing sweeps, so the
+  pinned job count does not move; `data_health()` returning a row per check
+  with a nightly `data_health_snapshot` and an admin card beside cron health;
+  `property_duplicate_candidates()` (DLS triple, normalised address + type,
+  25 m + type) and `contact_duplicate_candidates()` (name similarity with a
+  shared nationality or area, phone-in-additional, same handle) on the worklist
+  and the contacts list, with an evented "not a duplicate" dismissal; the
+  registration duplicate check on the Legal-section save; importer address and
+  deed warnings; `archive-records.mts --batch <id>`. (LST-01, LST-03, LST-10,
+  REC-03, REC-04, GOV-02.) **VERIFY:** `grep -l "data_health\|mandate_expired_listing_public" supabase/migrations/*.sql` — a hit means shipped.
+- **Phase 2 — the enquirer key, S.** `leads.enquirer_key` (SHA-256 of the
+  normalised email or phone, never the value) set by `submit_public_enquiry`;
+  the inbox shows earlier enquiries from the same person and a matching
+  contact, hashed under the reader's own RLS; a "Link all" action; a same-key
+  submission within 24 hours appends to the open lead. Plus
+  `contacts.last_activity_at` maintained by the event writer and a nightly
+  temperature-decay suggestion task. (REC-01, REC-05.) **VERIFY:**
+  `grep -n enquirer_key supabase/migrations/*.sql` — a hit means shipped.
+- **Phase 3 — review state, hierarchy, feed grouping — NEEDS AN OPERATOR
+  DECISION.** A `review_state` (none / requested / approved) with agents and
+  listing managers requesting and admins approving, both evented, and a RACI
+  table in doc 04 (GOV-01, GOV-04); a linked `title_deed` document before deed
+  status leaves `unknown`, and `verified_fields` on the Legal tab; whether
+  mandate expiry sets `visibility = 'private'` automatically (recommended yes)
+  and whether a cover photo becomes a non-overridable precondition for public
+  (recommended yes) (LST-03, LST-09); `container_type` on phase rows with a
+  backfill from `block`, `orientation` and `views` columns, `unit_type_id` on
+  units, `parent_reference` / `unit_count` / `units_from_price` in the feed
+  allowlist with site grouping and a per-portal project-or-units rule (REC-02,
+  LST-06); whether the two inert `cyprus_config` rows (`other_property_taxes`,
+  `company_details`) are marked verified or deleted (GOV-03). Spec first, under
+  `docs/superpowers/specs/`.

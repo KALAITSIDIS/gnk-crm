@@ -1,4 +1,5 @@
-import type { QualityScoreItem, QualityScoreResult } from "./quality-score";
+import { daysOnMarket, isPriceReviewDue } from "./listing-health";
+import { PUBLISH_THRESHOLD, type QualityScoreItem, type QualityScoreResult } from "./quality-score";
 
 /**
  * Aggregating the quality score's `missing` array across a whole list
@@ -52,8 +53,28 @@ export interface WorklistBuildConflict {
   label: string;
 }
 
+/** A public, available listing and how long it has been so (audit 2026-09-15, LST-03). */
+export interface WorklistOnMarket {
+  property: WorklistProperty;
+  /** whole days since `published_at` */
+  days: number;
+  /** PRICE_REVIEW_DAYS or more on the market — a nudge to look at the price, never a block */
+  priceReviewDue: boolean;
+}
+
 export interface Worklist {
   categories: WorklistCategory[];
+  /**
+   * Public, available listings whose FRESH score is below PUBLISH_THRESHOLD
+   * (audit 2026-09-15, LST-03). The feed deliberately does not re-check the
+   * score — an admin override is an audited decision and a decayed score
+   * must not silently unpublish — so the drift has to be SEEN instead.
+   * `published_below_threshold()` (0066) reads the stored column for the
+   * admin dashboard; this reads the live computation. Worst first.
+   */
+  belowThreshold: WorklistProperty[];
+  /** every public, available listing with a publish stamp, longest on the market first */
+  onMarket: WorklistOnMarket[];
   /** warnings, not points: a build year that contradicts the status or a pending delivery (CRM-05) */
   buildConflicts: WorklistBuildConflict[];
   /** warnings, not points: listings whose photographs appear elsewhere (0088) */
@@ -70,7 +91,14 @@ export interface Worklist {
 
 export interface ScoredProperty {
   property: WorklistProperty;
+  /** the market state the row is in — the feed's predicate reads the same two columns */
+  listing: { visibility: string; status: string; publishedAt: string | null };
   result: QualityScoreResult;
+}
+
+/** The public feed's predicate (0066): what a buyer can currently see. */
+function isOnMarket(listing: ScoredProperty["listing"]): boolean {
+  return listing.visibility === "public" && listing.status === "available";
 }
 
 /**
@@ -101,7 +129,7 @@ export function fixLocation(key: string): string | null {
   return FIX_LOCATION[key] ?? null;
 }
 
-export function buildWorklist(scored: ScoredProperty[]): Worklist {
+export function buildWorklist(scored: ScoredProperty[], now: Date = new Date()): Worklist {
   const byKey = new Map<string, WorklistCategory>();
 
   for (const { property, result } of scored) {
@@ -154,8 +182,22 @@ export function buildWorklist(scored: ScoredProperty[]): Worklist {
         .map((w) => ({ property, label: w.label })),
     )
     .sort((a, b) => a.property.reference.localeCompare(b.property.reference));
+  const live = scored.filter((s) => isOnMarket(s.listing));
+  const belowThreshold = live
+    .filter((s) => s.result.score < PUBLISH_THRESHOLD)
+    .map((s) => s.property)
+    .sort((a, b) => a.score - b.score || a.reference.localeCompare(b.reference));
+  const onMarket: WorklistOnMarket[] = live
+    .filter((s) => s.listing.publishedAt !== null)
+    .map((s) => {
+      const days = daysOnMarket(s.listing.publishedAt as string, now);
+      return { property: s.property, days, priceReviewDue: isPriceReviewDue(days) };
+    })
+    .sort((a, b) => b.days - a.days || a.property.reference.localeCompare(b.property.reference));
   return {
     categories,
+    belowThreshold,
+    onMarket,
     sharedPhotos,
     buildConflicts,
     total,

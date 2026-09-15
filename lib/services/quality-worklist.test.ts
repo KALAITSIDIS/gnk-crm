@@ -34,6 +34,7 @@ const scored = (
   const result = computeQualityScore({ ...perfect, ...over });
   return {
     property: { id: `id-${reference}`, reference, title: null, score: result.score },
+    listing: { visibility: "private", status: "available", publishedAt: null },
     result,
   };
 };
