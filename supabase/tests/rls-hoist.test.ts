@@ -8,7 +8,7 @@
  * that silently — this test is what notices.
  *
  * Scoped ON PURPOSE to contacts, deals, events, leads, properties, tasks and
- * viewings. 62 other permissive policies are deliberately left bare; asserting
+ * viewings. Some 50 permissive policies on small tables keep bare HELPER calls; asserting
  * globally would fail on all of them. That list lives in the guard functions in
  * migration 0030 and is NOT duplicated here — a second copy in TypeScript would
  * enforce nothing and would drift.
@@ -34,12 +34,12 @@ describe("0030 — RLS helpers stay hoisted on the list tables", () => {
   });
 
   // Not a restatement of the test above: that one proves nothing is BARE, this
-  // proves the hoist is actually PRESENT. A migration that dropped all 24
+  // proves the hoist is actually PRESENT. A migration that dropped all 21
   // policies and recreated none would satisfy "no bare calls" perfectly.
-  it("all 24 policies on those tables are hoisted", async () => {
+  it("all 21 policies on those tables are hoisted", async () => {
     const { data, error } = await svc.rpc("rls_hoisted_policy_count");
     expect(error).toBeNull();
-    expect(data).toBe(24);
+    expect(data).toBe(21);
   });
 
   it.each(["rls_bare_helper_calls", "rls_hoisted_policy_count"])(

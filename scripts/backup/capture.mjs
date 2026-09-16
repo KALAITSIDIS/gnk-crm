@@ -174,11 +174,18 @@ const redact = (s) => String(s ?? "").split(dbUrl).join("[DB_URL REDACTED]");
  * here covers (§4b.4). Creating the extension would imply that gap is closed.
  * It is not.
  */
+// [name, why, schema]. THE SCHEMA IS LOAD-BEARING: pg_dump qualifies every
+// operator class and function with the schema the extension lives in on the
+// SOURCE, so the target must create it in the same one. postgis is not
+// relocatable and lives in `public` (0001); 0100 moved pg_trgm to
+// `extensions`, where Supabase provisions pgcrypto/uuid-ossp too — the dump
+// now says "extensions"."gin_trgm_ops", and a pg_trgm created in `public`
+// would fail every trigram index exactly the way §4b.1 failed on nothing.
 const REQUIRED_EXTENSIONS = [
-  ["postgis", "properties.location and the area/district centroids are geography(point,4326)"],
-  ["pg_trgm", "the gin_trgm_ops indexes behind contact and property search"],
-  ["pgcrypto", "gen_random_uuid() column defaults"],
-  ["uuid-ossp", "uuid_generate_v*() defaults on the older tables"],
+  ["postgis", "properties.location and the area/district centroids are geography(point,4326)", "public"],
+  ["pg_trgm", "the gin_trgm_ops indexes behind contact and property search", "extensions"],
+  ["pgcrypto", "gen_random_uuid() column defaults", "extensions"],
+  ["uuid-ossp", "uuid_generate_v*() defaults on the older tables", "extensions"],
 ];
 
 /**
@@ -238,10 +245,11 @@ function addExtensionPreamble(file) {
     "-- The CLI does not emit these and the schema below cannot load without them.",
     "-- See docs/BACKUP_RESTORE.md §4b.1 and §4d. Safe to re-run; safe on a target",
     "-- that already has them.",
-    ...REQUIRED_EXTENSIONS.map(([n, why]) => `-- ${n}: ${why}`),
+    ...REQUIRED_EXTENSIONS.map(([n, why, schema]) => `-- ${n} (in ${schema}): ${why}`),
     "",
-    ...REQUIRED_EXTENSIONS.map(([n]) =>
-      `CREATE EXTENSION IF NOT EXISTS ${/^[a-z_]+$/.test(n) ? n : `"${n}"`} WITH SCHEMA "public";`),
+    'CREATE SCHEMA IF NOT EXISTS "extensions";',
+    ...REQUIRED_EXTENSIONS.map(([n, , schema]) =>
+      `CREATE EXTENSION IF NOT EXISTS ${/^[a-z_]+$/.test(n) ? n : `"${n}"`} WITH SCHEMA "${schema}";`),
     "",
     "-- NOTE: pg_cron is NOT here. The scheduled sweeps live in `cron.job`,",
     "-- which no dump in this set covers, so they are gone after a restore and",
