@@ -3706,13 +3706,62 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     // IDEMPOTENCE. CI builds a fresh database, but this suite is also run
     // repeatedly against a long-lived local stack, and a fixed window plus
     // absolute assertions is only correct if the window starts empty — a second
-    // run otherwise reads 6 leads where it asserts 3. Clear the window first, in
-    // FK order (leads reference deals via converted_deal_id). `events` is never
-    // touched: it is append-only, and test 39 adds to the live window instead.
-    await svc.from("leads").delete().eq("org_id", ORG_A).gte("received_at", FROM).lt("received_at", TO);
-    await svc.from("viewings").delete().eq("org_id", ORG_A).gte("scheduled_at", FROM).lt("scheduled_at", TO);
-    await svc.from("price_history").delete().eq("org_id", ORG_A).gte("changed_at", FROM).lt("changed_at", TO);
-    await svc.from("deals").delete().eq("org_id", ORG_A).gte("created_at", FROM).lt("created_at", TO);
+    // run otherwise reads 8 leads where it asserts 4. Clear the window first,
+    // and THROW on a refused delete. Until 2026-09-16 the four deletes below ran
+    // with their result ignored, and three of them had been failing silently:
+    // the cron sweeps that run between two suite runs attach TASKS to the
+    // fixture rows (0020's viewing_feedback to each completed viewing, 0098's
+    // lead_unanswered to the website lead nobody answered), tasks.viewing_id /
+    // tasks.lead_id / tasks.deal_id are all NO ACTION, one refused row aborts
+    // the whole statement, and the leads that survived then held their deals
+    // through converted_deal_id. The fixture grew by one copy per run until
+    // report_source_roi read 20 website leads where it asserts 4; the
+    // viewings half hid for longer because report_agent_performance is keyed
+    // to THIS run's agent while report_source_roi is keyed to the org.
+    // HANDOFF §4: a test can depend on the absence of residue.
+    //
+    // ORDER: tasks first (they reference all three), then leads (they reference
+    // deals), viewings, price_history, deals. offers and viewing_slips cascade,
+    // reservations set null. `events` is never touched: it is append-only, and
+    // test 39 adds to the live window instead.
+    const preclean = async (
+      what: string,
+      q: PromiseLike<{ error: { message: string } | null }>,
+    ) => {
+      const { error } = await q;
+      if (error) throw new Error(`test 38 pre-clean refused (${what}): ${error.message}`);
+    };
+    const windowIds = async (table: string, col: string): Promise<string[]> => {
+      const { data, error } = await svc
+        .from(table)
+        .select("id")
+        .eq("org_id", ORG_A)
+        .gte(col, FROM)
+        .lt(col, TO);
+      if (error) throw new Error(`test 38 pre-clean could not list ${table}: ${error.message}`);
+      return (data ?? []).map((r) => r.id as string);
+    };
+    for (const [fk, table, col] of [
+      ["lead_id", "leads", "received_at"],
+      ["viewing_id", "viewings", "scheduled_at"],
+      ["deal_id", "deals", "created_at"],
+    ] as const) {
+      const ids = await windowIds(table, col);
+      if (ids.length > 0) {
+        await preclean(
+          `tasks by ${fk}`,
+          svc.from("tasks").delete().eq("org_id", ORG_A).in(fk, ids),
+        );
+      }
+    }
+    for (const [table, col] of [
+      ["leads", "received_at"],
+      ["viewings", "scheduled_at"],
+      ["price_history", "changed_at"],
+      ["deals", "created_at"],
+    ] as const) {
+      await preclean(table, svc.from(table).delete().eq("org_id", ORG_A).gte(col, FROM).lt(col, TO));
+    }
 
     // --- deals: two won (10 and 20 days), one lost (10 days) ----------------
     const mkDeal = async (
