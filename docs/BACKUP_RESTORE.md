@@ -628,7 +628,7 @@ That is **57 errors from this cause alone**. Run this against the TARGET project
 
 ```sql
 create extension if not exists postgis;
-create extension if not exists pg_trgm;
+create extension if not exists pg_trgm with schema extensions; -- 0100 moved it; the dump says "extensions"."gin_trgm_ops"
 create extension if not exists pgcrypto;
 create extension if not exists "uuid-ossp";
 ```
@@ -1037,7 +1037,7 @@ type "public.geography" does not exist            -> properties, then 42 depende
 operator class "public.gin_trgm_ops" missing      -> viewing_slips (11), mandates_safe (4)
 ```
 
-**Enable `postgis`, `pg_trgm`, `pgcrypto`, `uuid-ossp` on the target BEFORE
+**Enable `postgis`, `pg_trgm` (WITH SCHEMA `extensions` since 0100), `pgcrypto`, `uuid-ossp` on the target BEFORE
 loading the schema.** With that done, errors fell 131 -> 71 and policies went
 77 -> **86/86**.
 

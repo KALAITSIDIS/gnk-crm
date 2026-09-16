@@ -3446,8 +3446,6 @@ export type Database = {
         Args: { p_ip_hash: string; p_limit?: number }
         Returns: boolean
       }
-      show_limit: { Args: never; Returns: number }
-      show_trgm: { Args: { "": string }; Returns: string[] }
       st_3dclosestpoint: {
         Args: { geom1: unknown; geom2: unknown }
         Returns: unknown
