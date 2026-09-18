@@ -9,7 +9,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:rls": "vitest run -c vitest.rls.config.ts",
+    "test:rls": "vitest run -c vitest.rls.config.mts",
     "test:e2e": "playwright test",
     "test:e2e:desktop": "playwright test --project=setup --project=desktop",
     "test:e2e:security": "playwright test tests/e2e/security.spec.ts",
