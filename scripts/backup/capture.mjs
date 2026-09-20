@@ -56,6 +56,7 @@ import {
   connEnvFromUrl, dataDumpArgs, resolvePgTools, rewriteDataDump, rewriteRolesDump, rewriteSchemaDump,
   rolesDumpArgs, runPg, schemaDumpArgs,
 } from "./pg-native.mjs";
+import { PARTITIONED_TABLES, rowCountProblems } from "./verify-row-counts.mjs";
 
 const args = process.argv.slice(2);
 const arg = (n, d) => (args.indexOf(n) !== -1 ? args[args.indexOf(n) + 1] : d);
@@ -382,6 +383,41 @@ else {
       dumpedEvents += seg.split("\n\\.")[0].split("\n").slice(1).filter((l) => l.trim() !== "").length;
     }
     log(`  data: ${dumpedEvents} events in the dump across ${partSegs.length} partition(s)`);
+  }
+
+  /**
+   * Every table export.mjs counted must appear in the dump with the same number
+   * of rows. The checks above cannot see an ABSENT table: stripping the entire
+   * public section from a real 246 KB data.sql leaves 178 KB of auth, storage
+   * and events_parts that clears the 10 KB floor, both substring greps, the
+   * replica header and the events count, and the set is promoted verified.
+   * pg_dump is not run with --strict-names, so a mistyped --schema public is
+   * ignored silently rather than failing the dump (§4b.2 is the sibling case).
+   *
+   * Measured against the real 2026-09-16 and 2026-09-20 sets before this
+   * landed: 39 of 39 tables agree exactly, so a disagreement is a true signal
+   * and not an approximation that would cry wolf nightly.
+   */
+  const jsonDir = join(stagingRoot, "data");
+  if (!existsSync(jsonDir)) {
+    // --skip-storage means export.mjs never ran; say so rather than passing a
+    // check that was not performed.
+    log("  data: row-count cross-check SKIPPED — no data/*.json (--skip-storage)");
+  } else {
+    const counts = {};
+    for (const f of readdirSync(jsonDir).filter((n) => n.endsWith(".json"))) {
+      const rows = JSON.parse(readFileSync(join(jsonDir, f), "utf8"));
+      if (!Array.isArray(rows)) problems.push(`data: data/${f} is not an array of rows`);
+      else counts[f.replace(/\.json$/, "")] = rows.length;
+    }
+    const rowProblems = rowCountProblems(dataSql, counts);
+    problems.push(...rowProblems);
+    const checked = Object.keys(counts).filter((t) => !PARTITIONED_TABLES.has(t)).length;
+    log(
+      rowProblems.length
+        ? `  data: ${rowProblems.length} of ${checked} table(s) DISAGREE with the export`
+        : `  data: ${checked} table row counts match the export`,
+    );
   }
 }
 
