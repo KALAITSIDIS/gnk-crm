@@ -1061,6 +1061,34 @@ so this drill leaks a project unless a human removes it. BACKUP_RESTORE §4 step
 blocked, correctly. It permits *any* SQL through that tool in this directory;
 remove the line to restore the block. Kept deliberately (§5).
 
+**BEFORE APPLYING ANYTHING: does the DEPLOYED application still work against the
+migration you are about to run?** The hosted apply comes BEFORE the merge that
+deploys the app, so production spends every release in a
+database-ahead-of-application state. On 2026-09-15 that state lasted 41 minutes
+and the enquiry door was down for all of it: 0096 changed
+`submit_public_enquiry` from `returns boolean` to a table, the deployed route
+still read `data !== true`, and every valid enquiry was answered
+`400 "Unknown org."` AFTER the lead had committed. One lead in the window, this
+project's own probe.
+
+`supabase/tests/release-compat.test.ts` now asks that question on every CI run,
+over real PostgREST against a stack carrying every migration, and prints
+`release-compat-report.txt` (the `rls` job's last step). Read it before
+applying. If the migration changes a function the app calls:
+
+- **Adding a parameter with a DEFAULT is safe in this deploy order** —
+  PostgREST resolves an older caller's shorter named-argument list. 0098's
+  `p_meta` is the worked example and `row-door` in the report is the standing
+  proof that it still resolves.
+- **Changing a RETURN SHAPE is not, and it fails OPEN**: the row is written and
+  the visitor is told no. Either apply and deploy in one sitting, or first make
+  the deployed route tolerant of both shapes and deploy THAT.
+- **Renaming a parameter is the same hazard wearing arity's clothes** — 0097
+  renamed `p_token` to `p_token_sha256` on three portal functions; an older
+  caller gets PGRST202, which at least fails closed.
+- **Add the new shape to `supabase/tests/release-compat-contracts.ts`**, so the
+  next release inherits the check instead of re-learning this.
+
 With it present: apply in **separate `execute_sql` calls** (schema → functions →
 triggers → cron → the `schema_migrations` insert), **verify in a further
 separate call**, then diff each function body against local — `md5(prosrc)` on

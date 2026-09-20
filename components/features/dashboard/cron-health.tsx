@@ -4,10 +4,19 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { cn } from "@/lib/utils";
 
 /**
- * One line the admin actually looks at (0074, audit REL-03): are the eight
- * nightly/weekly/monthly sweeps alive? Before this, a stopped scheduler —
- * the KNOWN post-restore state — or a persistently failing job was invisible
- * until a mandate silently failed to expire.
+ * One line the admin actually looks at (0074, audit REL-03): are the scheduled
+ * sweeps alive? Before this, a stopped scheduler — the KNOWN post-restore
+ * state — or a persistently failing job was invisible until a mandate silently
+ * failed to expire.
+ *
+ * HOW MANY, AND HOW OFTEN, BOTH LIVE ELSEWHERE — deliberately. This sentence
+ * said "the eight nightly/weekly/monthly sweeps" while there were ten, one of
+ * them running every ten minutes (0098's lead-sla): the same staleness the
+ * COUNT suffered before it was hoisted into EXPECTED_CRON_JOBS. That constant
+ * is derived from the migrations by tests/unit/cron-jobs-pinned.test.ts, and
+ * the cadence each job is judged against is allowanceMs in
+ * lib/services/cron-health.ts. Neither number belongs in this file, including
+ * in prose.
  *
  * Server component, rendered ONLY inside the admin branch of the dashboard
  * page: cron_health() is service_role-only (the anon-default-EXECUTE hazard

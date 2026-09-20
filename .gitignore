@@ -56,3 +56,7 @@ import-media/
 
 # MapLibre worker files copied from node_modules by scripts/copy-maplibre-worker.mjs (predev/prebuild)
 public/maplibre/
+
+# the release-compatibility report, written by supabase/tests/release-compat.test.ts
+# and printed by CI. A run artefact, not a source file.
+release-compat-report.txt
