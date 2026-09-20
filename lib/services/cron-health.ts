@@ -34,16 +34,44 @@ const HOUR = 3_600_000;
 /**
  * How long a job may go without a SUCCESS before it is unhealthy, derived
  * from its cron expression's shape:
- *   day-of-week set   (e.g. "35 3 * * 0")  → weekly  → 8 days
- *   day-of-month set  (e.g. "20 3 1 * *")  → monthly → 32 days
- *   otherwise         (e.g. "0 3 * * *")   → daily   → 26 hours
+ *   day-of-week set    ("35 3 * * 0")    → weekly    → 8 days
+ *   day-of-month set   ("20 3 1 * *")    → monthly   → 32 days
+ *   hour unrestricted  ("[*]/10 * * * *")  → sub-daily → 6 intervals, min 1 hour
+ *   otherwise          ("0 3 * * *")     → daily     → 26 hours
+ *
+ * THE SUB-DAILY BRANCH WAS MISSING, AND THE TENTH JOB NEEDED IT. Every job here
+ * was nightly, weekly or monthly until 0098 scheduled `lead-sla` every ten
+ * minutes on 2026-09-15 — the sweep that raises a `lead_unanswered` task when a
+ * website enquiry goes an hour without a reply. It fell through to the daily
+ * fallback, so the dashboard called it healthy for twenty-six hours: measured,
+ * a sweep whose last success was 25 hours old — about 150 missed runs — came
+ * back `{healthy: true, reason: null}`. The one panel whose whole job is
+ * noticing silence was deaf to the one job that is supposed to be noisy.
+ *
+ * Six intervals of headroom, never under an hour: loose enough that a slow
+ * night or one failed run does not cry wolf, tight enough that a stopped
+ * scheduler is caught within the hour instead of the next day. Same shape as
+ * the rest — Period + Grace, not exactness.
  */
 export function allowanceMs(schedule: string): number {
   const fields = schedule.trim().split(/\s+/);
   if (fields.length === 5) {
-    const [, , dayOfMonth, , dayOfWeek] = fields;
+    const [minute, hour, dayOfMonth, , dayOfWeek] = fields;
     if (dayOfWeek !== "*") return 8 * 24 * HOUR;
     if (dayOfMonth !== "*") return 32 * 24 * HOUR;
+    /* An unrestricted HOUR field is what makes a job sub-daily: it runs in
+       every hour of every day. A RESTRICTED hour is daily however busy its
+       minute field looks ("0,30 3 * * *" runs twice, at 03:00 and 03:30), so
+       that falls through to the 26 hours below. */
+    if (hour === "*") {
+      const everyNMinutes = /^\*\/(\d+)$/.exec(minute ?? "");
+      const intervalMs = everyNMinutes
+        ? Math.max(1, Number(everyNMinutes[1])) * 60_000
+        : minute === "*"
+          ? 60_000 // every minute
+          : HOUR; // a fixed minute of every hour
+      return Math.max(HOUR, 6 * intervalMs);
+    }
   }
   return 26 * HOUR;
 }
