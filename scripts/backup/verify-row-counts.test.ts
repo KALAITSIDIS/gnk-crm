@@ -1,5 +1,8 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { rowCountProblems } from "./verify-row-counts.mjs";
+import { rowCountProblems, tableCountsFromSet } from "./verify-row-counts.mjs";
 
 /**
  * The data-side verification in capture.mjs could not see a missing table.
@@ -126,5 +129,45 @@ describe("rowCountProblems", () => {
 
     expect(problems).toHaveLength(1);
     expect(problems[0]).toContain("properties");
+  });
+});
+
+/**
+ * The wiring bug this pair of tests exists for.
+ *
+ * The first version of this check read `join(stagingRoot, "data")` and found
+ * nothing, every night, on every run — because capture.mjs stages the SET at
+ * `stagingRoot/<stamp>/` and renames THAT into place. export.mjs, given
+ * `--out stagingRoot`, appends its own date stamp too, so the JSON lands at
+ * `stagingRoot/<stamp>/data/`. The unit tests all passed and the end-to-end
+ * proof was run against FINAL sets, where the rename has already flattened
+ * `data/` to the top level — so nothing caught it. It shipped, and the first
+ * real run printed `SKIPPED — no data/*.json (--skip-storage)` on a run that
+ * had not used --skip-storage at all: a check doing nothing, explaining itself
+ * with a reason that was not true.
+ *
+ * Hence both halves: read the directory through a tested function, and make an
+ * absent one distinguishable from a deliberate skip.
+ */
+describe("tableCountsFromSet", () => {
+  const stagedSet = (tables: Record<string, number>) => {
+    const root = mkdtempSync(join(tmpdir(), "gnk-set-"));
+    mkdirSync(join(root, "data"), { recursive: true });
+    for (const [t, n] of Object.entries(tables)) {
+      writeFileSync(join(root, "data", `${t}.json`), JSON.stringify(Array.from({ length: n }, (_, i) => ({ id: i }))));
+    }
+    return root;
+  };
+
+  it("counts the rows in each table's json", () => {
+    const dir = stagedSet({ leads: 11, properties: 17, tasks: 0 });
+
+    expect(tableCountsFromSet(dir)).toEqual({ leads: 11, properties: 17, tasks: 0 });
+  });
+
+  it("returns null when the set has no data directory, so the caller can tell absent from empty", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gnk-set-"));
+
+    expect(tableCountsFromSet(dir)).toBeNull();
   });
 });

@@ -56,7 +56,7 @@ import {
   connEnvFromUrl, dataDumpArgs, resolvePgTools, rewriteDataDump, rewriteRolesDump, rewriteSchemaDump,
   rolesDumpArgs, runPg, schemaDumpArgs,
 } from "./pg-native.mjs";
-import { PARTITIONED_TABLES, rowCountProblems } from "./verify-row-counts.mjs";
+import { PARTITIONED_TABLES, rowCountProblems, tableCountsFromSet } from "./verify-row-counts.mjs";
 
 const args = process.argv.slice(2);
 const arg = (n, d) => (args.indexOf(n) !== -1 ? args[args.indexOf(n) + 1] : d);
@@ -397,19 +397,24 @@ else {
    * Measured against the real 2026-09-16 and 2026-09-20 sets before this
    * landed: 39 of 39 tables agree exactly, so a disagreement is a true signal
    * and not an approximation that would cry wolf nightly.
+   *
+   * stageDir, NOT stagingRoot — as the staging comment above already says, both
+   * tools append the same stamp, so they meet one level down. The first version
+   * read stagingRoot, found nothing on every run, and reported it as a
+   * --skip-storage skip, which is why an absent directory is now a PROBLEM
+   * unless storage really was skipped. A check that silently does nothing is
+   * worse than no check, because the log claims it ran.
    */
-  const jsonDir = join(stagingRoot, "data");
-  if (!existsSync(jsonDir)) {
-    // --skip-storage means export.mjs never ran; say so rather than passing a
-    // check that was not performed.
-    log("  data: row-count cross-check SKIPPED — no data/*.json (--skip-storage)");
-  } else {
-    const counts = {};
-    for (const f of readdirSync(jsonDir).filter((n) => n.endsWith(".json"))) {
-      const rows = JSON.parse(readFileSync(join(jsonDir, f), "utf8"));
-      if (!Array.isArray(rows)) problems.push(`data: data/${f} is not an array of rows`);
-      else counts[f.replace(/\.json$/, "")] = rows.length;
+  const counts = tableCountsFromSet(stageDir);
+  if (counts === null) {
+    if (skipStorage) {
+      log("  data: row-count cross-check SKIPPED — --skip-storage, export.mjs wrote no table json");
+    } else {
+      problems.push(
+        `data: no data/*.json under ${relative(outRoot, stageDir) || stageDir} — export.mjs ran but its table json is not where the cross-check reads it, so the check did NOT run`,
+      );
     }
+  } else {
     const rowProblems = rowCountProblems(dataSql, counts);
     problems.push(...rowProblems);
     const checked = Object.keys(counts).filter((t) => !PARTITIONED_TABLES.has(t)).length;
