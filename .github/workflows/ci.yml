@@ -104,6 +104,23 @@ jobs:
       - name: RLS suite (12 mandatory tests, doc 04)
         run: npm run test:rls
 
+      # THE RELEASE-COMPATIBILITY REPORT, printed rather than left in a log
+      # nobody opens. supabase/tests/release-compat.test.ts (run by the step
+      # above) writes it: which application contracts were exercised against
+      # this migration set, their exact commits and migration ranges, the
+      # deployment order each one is live during, and what cannot be rolled
+      # back. `if: always()` because a red compatibility check is exactly when
+      # somebody needs to read it.
+      #
+      # It is NOT a release gate, because this repository has no release
+      # pipeline to gate: Vercel deploys on a push to main, outside Actions,
+      # and a hosted migration is applied by hand through the Supabase
+      # connector (HANDOFF §3). The gate is the ordinary CI run plus the step
+      # in that runbook which says to read this report before applying.
+      - name: Release compatibility report
+        if: always()
+        run: cat release-compat-report.txt || echo "no report — the compat suite did not run"
+
   # Added 2026-08-04. Until then all 167 Playwright tests ran nowhere but a
   # developer's machine, so guards like security.spec.ts's client-bundle leak
   # check protected nothing on a push.
