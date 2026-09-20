@@ -219,6 +219,7 @@ It checks its own output against every failure this project has actually hit:
 | `data.sql` line 1 is `SET session_replication_role = replica;` | otherwise `trg_events_hash` re-mints every hash on restore (§5) |
 | `auth.users` / `events` / `storage.objects` COPY blocks present | a restore where nobody can log in |
 | **events in the dump == events live right now** | a truncated dump, which does not error |
+| **every exported table's rows == its `COPY` block's rows** | a dump that silently lost a table — `--schema` is not `--strict-names`, so a mistyped one is ignored, and stripping the whole public section still leaves 178 KB that clears every floor and grep above |
 | size floors, and partial output deleted on failure | the 0-byte `pg_dump.sql` that reads as a backup |
 
 Anything failing is listed on stderr *and* recorded as `verified:false` in
