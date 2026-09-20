@@ -1,3 +1,6 @@
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+
 /**
  * Cross-check `data.sql`'s COPY blocks against the per-table JSON export.
  *
@@ -54,6 +57,34 @@ export function copyRowCount(dataSql, table, schema = "public") {
     if (line !== "") rows++;
   }
   return null;
+}
+
+/**
+ * Row counts per table from a set's `data/<table>.json`, or null when the set
+ * has no `data` directory at all.
+ *
+ * Null and `{}` are different answers and the caller must treat them as such:
+ * `{}` is "export ran and found no tables", null is "export's output is not
+ * here". The first version of this check inlined `readdirSync` in capture.mjs
+ * against the WRONG directory, got the null case on every run, and reported it
+ * as a deliberate `--skip-storage` skip — a check that did nothing while
+ * explaining itself with a reason that was not true.
+ *
+ * @param {string} setDir the set root — capture.mjs's `stageDir`, i.e.
+ *   `<stagingRoot>/<stamp>`, NOT `stagingRoot`. export.mjs appends its own date
+ *   stamp to its `--out`, and capture stages the set under that same stamp and
+ *   renames THAT into place, which is why the two agree only one level down.
+ * @returns {Record<string, number> | null}
+ */
+export function tableCountsFromSet(setDir) {
+  const dir = join(setDir, "data");
+  if (!existsSync(dir)) return null;
+  const counts = {};
+  for (const f of readdirSync(dir).filter((n) => n.endsWith(".json"))) {
+    const rows = JSON.parse(readFileSync(join(dir, f), "utf8"));
+    if (Array.isArray(rows)) counts[f.replace(/\.json$/, "")] = rows.length;
+  }
+  return counts;
 }
 
 /**
