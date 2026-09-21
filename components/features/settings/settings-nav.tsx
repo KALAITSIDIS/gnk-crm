@@ -11,6 +11,7 @@ const SECTIONS = [
   { href: "/settings/locations", label: "Locations" },
   { href: "/settings/nudges", label: "Nudges" },
   { href: "/settings/lead-routing", label: "Lead routing" },
+  { href: "/settings/lead-escalation", label: "Lead escalation" },
   { href: "/settings/cyprus-config", label: "Cyprus config" },
   { href: "/settings/portals", label: "Portals" },
   { href: "/settings/retention", label: "Data retention" },

@@ -18,11 +18,13 @@ import {
   cyprusConfigSchema,
   inviteUserSchema,
   leadRoutingSchema,
+  leadEscalationSchema,
   nudgeThresholdsSchema,
   orgNameSchema,
   stageNameSchema,
 } from "@/lib/validators/settings";
 import { NUDGE_THRESHOLD_KEYS } from "@/lib/services/nudge-thresholds";
+import { readLeadEscalation } from "@/lib/services/lead-escalation";
 
 /**
  * Settings suite actions (T5.4, doc 02 §C9). Every action is admin-gated
@@ -774,5 +776,96 @@ export async function saveLeadRouting(
     payload: { key: "lead_routing", mode, agents },
   });
   revalidatePath("/settings/lead-routing");
+  return ok();
+}
+
+/* ---------------- lead escalation (0107) ---------------- */
+
+/**
+ * Settings → Lead escalation. Writes `cyprus_config.lead_escalation`, the
+ * row the five-minute sweep and the alert worker read. Recipients are checked
+ * against the org's ACTIVE admins and agents under RLS before anything is
+ * written — the worker would skip an unusable id anyway, but a refusal here
+ * is a sentence and a skip there is a cancelled row nobody reads. The
+ * timezone is not on the form (the raw editor changes it) and is carried
+ * over from the row as the reader sees it. Row-count guarded like every
+ * other config write; every save is an event, ids and numbers only.
+ */
+export async function saveLeadEscalation(
+  _prev: SettingsActionState,
+  formData: FormData,
+): Promise<SettingsActionState> {
+  const text = (k: string) => {
+    const v = formData.get(k);
+    return v === null ? undefined : String(v);
+  };
+  const parsed = leadEscalationSchema.safeParse({
+    enabled: text("enabled"),
+    after_minutes: text("after_minutes"),
+    max_age_hours: text("max_age_hours"),
+    recipients: formData.getAll("recipients").map(String).filter(Boolean),
+    hours_enabled: text("hours_enabled"),
+    days: formData.getAll("days").map(String).filter(Boolean),
+    start: text("start"),
+    end: text("end"),
+  });
+  if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Invalid input");
+
+  const gate = await requireAdmin();
+  if ("denied" in gate) return fail(gate.denied);
+  const { supabase, profile } = gate;
+  const d = parsed.data;
+
+  if (d.recipients.length > 0) {
+    const { data: members, error: memberErr } = await supabase
+      .from("profiles")
+      .select("id")
+      .in("id", d.recipients)
+      .in("role", ["admin", "agent"])
+      .eq("is_active", true);
+    if (memberErr) return fail(memberErr.message);
+    const known = new Set((members ?? []).map((m) => m.id));
+    if (d.recipients.some((r) => !known.has(r))) {
+      return fail("Only active admins and agents of this organisation can be told.");
+    }
+  }
+
+  const { data: current, error: readErr } = await supabase
+    .from("cyprus_config")
+    .select("value")
+    .eq("key", "lead_escalation")
+    .maybeSingle();
+  if (readErr) return fail(readErr.message);
+  const { timezone } = readLeadEscalation(current?.value ?? null);
+
+  const value = {
+    enabled: d.enabled,
+    after_minutes: d.after_minutes,
+    max_age_hours: d.max_age_hours,
+    recipients: d.recipients,
+    working_hours: d.hours_enabled ? { days: d.days, start: d.start, end: d.end } : null,
+    timezone,
+  };
+  const { data: updated, error } = await supabase
+    .from("cyprus_config")
+    .update({ value: value as never })
+    .eq("key", "lead_escalation")
+    .select("key");
+  if (error) return fail(error.message);
+  // RLS filters a denied update to zero rows rather than erroring, and 0107's
+  // row could also have been deleted — either way this must not claim success.
+  if (!updated?.length) {
+    return fail("Lead escalation is not configured on this database — re-run migration 0107.");
+  }
+
+  await logEvent(supabase, {
+    orgId: profile.orgId,
+    actorId: profile.id,
+    entityType: "config",
+    entityId: null,
+    eventType: "updated",
+    payload: { key: "lead_escalation", ...value },
+  });
+  revalidatePath("/settings/lead-escalation");
   return ok();
 }

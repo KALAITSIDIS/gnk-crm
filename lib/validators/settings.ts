@@ -6,6 +6,7 @@ import {
   NUDGE_THRESHOLD_KEYS,
   type NudgeThresholdKey,
 } from "@/lib/services/nudge-thresholds";
+import { ESCALATION_FORM_BOUNDS } from "@/lib/services/lead-escalation";
 
 /** Roles an admin can hand out in Phase 1 (portal roles are later phases). */
 export const INVITABLE_ROLES = ["admin", "agent", "listing_manager"] as const;
@@ -82,3 +83,55 @@ export const cyprusConfigSchema = z.object({
   // the old `|| undefined` transform made a saved note impossible to remove
   source_note: z.string().trim().max(500).default(""),
 });
+
+/**
+ * Lead escalation (0107). A checkbox posts "on" or nothing; the recipient and
+ * day boxes post every checked value; the time inputs are disabled — and so
+ * absent — when hours are off. The bounds are the FORM's, deliberately
+ * narrower than the SQL reader's (lib/services/lead-escalation.ts): SQL
+ * refuses what would break the sweep, this refuses what would be silly.
+ * Switching escalation on with nobody to tell is refused here with a
+ * sentence; the sweep would mint rows the worker then cancels one by one as
+ * no_recipient, which is not what a person who ticked "on" meant.
+ */
+const HHMM = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
+const checkbox = z.preprocess((v) => v === "on" || v === "true" || v === true, z.boolean());
+const B = ESCALATION_FORM_BOUNDS;
+
+export const leadEscalationSchema = z
+  .object({
+    enabled: checkbox,
+    after_minutes: z.coerce
+      .number({ message: "The wait must be a number of minutes" })
+      .int("The wait must be a whole number of minutes")
+      .min(B.after_minutes.min, `The wait: minimum ${B.after_minutes.min} minutes`)
+      .max(B.after_minutes.max, `The wait: maximum ${B.after_minutes.max} minutes`),
+    max_age_hours: z.coerce
+      .number({ message: "The age limit must be a number of hours" })
+      .int("The age limit must be a whole number of hours")
+      .min(B.max_age_hours.min, `The age limit: minimum ${B.max_age_hours.min} hour`)
+      .max(B.max_age_hours.max, `The age limit: maximum ${B.max_age_hours.max} hours`),
+    recipients: z
+      .array(z.guid("Each recipient must be a profile id"))
+      .default([])
+      .transform((a) => [...new Set(a)]),
+    hours_enabled: checkbox,
+    days: z
+      .array(z.coerce.number().int().min(1).max(7))
+      .default([])
+      .transform((d) => [...new Set(d)].sort((a, b) => a - b)),
+    start: z.string().regex(HHMM, "Working hours need a start time (HH:MM)").optional(),
+    end: z.string().regex(HHMM, "Working hours need an end time (HH:MM)").optional(),
+  })
+  .refine((d) => !d.enabled || d.recipients.length > 0, {
+    message: "Tick at least one person to tell, or leave escalation off.",
+    path: ["recipients"],
+  })
+  .refine((d) => !d.hours_enabled || d.days.length > 0, {
+    message: "Pick at least one working day, or count clock time instead.",
+    path: ["days"],
+  })
+  .refine((d) => !d.hours_enabled || Boolean(d.start && d.end && d.start < d.end), {
+    message: "Working hours must start before they end.",
+    path: ["end"],
+  });

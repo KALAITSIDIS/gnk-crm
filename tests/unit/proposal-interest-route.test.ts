@@ -127,6 +127,31 @@ describe("shape: a useful 400 before anything touches the database", () => {
     expect((await post({ idempotency_key: "bad key!" })).status).toBe(400);
     expect(state.submits).toHaveLength(0);
   });
+
+  it("a 400 carries a stable code and the field it concerns, so the page can speak the visitor's language (audit 2026-09-22)", async () => {
+    const body = async (over: Record<string, unknown>) => (await post(over)).json();
+    expect(await body({ name: "   " })).toMatchObject({ code: "name_required", field: "name" });
+    expect(await body({ name: "x".repeat(201) })).toMatchObject({ code: "name_too_long", field: "name" });
+    expect(await body({ email: "not-an-email" })).toMatchObject({ code: "email_invalid", field: "email" });
+    expect(await body({ email: "", phone: "" })).toMatchObject({ code: "contact_required", field: "contact" });
+    expect(await body({ phone: "9".repeat(41) })).toMatchObject({ code: "phone_too_long", field: "phone" });
+    expect(await body({ message: "m".repeat(5001) })).toMatchObject({ code: "message_too_long", field: "message" });
+    // what only the page can get wrong has no visitor field
+    expect(await body({ token: "../../etc" })).toMatchObject({ code: "invalid_token", field: null });
+    expect(await body({ idempotency_key: "bad key!" })).toMatchObject({ code: "idempotency_key_invalid", field: null });
+    // and every one still carries an English sentence for a caller that is not the page
+    const b = (await body({ name: "" })) as { error?: string };
+    expect(typeof b.error).toBe("string");
+    expect(b.error).not.toMatch(/too_small|invalid_type|expected/i);
+    expect(state.submits).toHaveLength(0);
+  });
+
+  it("transport refusals carry a code too: 415 and unparseable JSON", async () => {
+    const unsupported = await post({}, { "content-type": "text/plain" });
+    expect(await unsupported.json()).toMatchObject({ code: "unsupported_media_type", field: null });
+    const notJson = await post({}, { "content-type": "application/json" }, "{not json");
+    expect(await notJson.json()).toMatchObject({ code: "invalid_json", field: null });
+  });
 });
 
 describe("the meter and the honeypot", () => {
@@ -141,6 +166,7 @@ describe("the meter and the honeypot", () => {
     const res = await post();
     expect(res.status).toBe(429);
     expect(res.headers.get("retry-after")).toBe("900");
+    expect(await res.json()).toMatchObject({ code: "rate_limited", field: null });
     expect(state.submits).toHaveLength(0);
     expect(runEnquiryAlertWorker).not.toHaveBeenCalled();
   });
@@ -207,7 +233,7 @@ describe("what the function refuses or replays", () => {
     state.answer = "refused";
     const res = await post();
     expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ error: "This link is no longer available." });
+    expect(await res.json()).toEqual({ error: "This link is no longer available.", code: "link_unavailable", field: null });
     expect(runEnquiryAlertWorker).not.toHaveBeenCalled();
     expect(sendEnquiryAck).not.toHaveBeenCalled();
   });
@@ -218,6 +244,7 @@ describe("what the function refuses or replays", () => {
     expect(res.status).toBe(503);
     const body = await res.json();
     expect(body.error).not.toContain("relation");
+    expect(body).toMatchObject({ code: "unavailable", field: null });
     expect(runEnquiryAlertWorker).not.toHaveBeenCalled();
   });
 });

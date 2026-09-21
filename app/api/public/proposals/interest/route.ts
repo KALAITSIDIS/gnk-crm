@@ -6,7 +6,13 @@ import { RATE_LIMIT } from "@/lib/services/enquiry-budget";
 import { runEnquiryAlertWorker } from "@/lib/services/enquiry-alert-worker";
 import { sendEnquiryAck } from "@/lib/services/enquiry-ack";
 import { hashShareToken } from "@/lib/services/share-links-token";
-import { interestCompleteness, proposalInterestSchema } from "@/lib/validators/proposal-interest";
+import {
+  PROPOSAL_INTEREST_ERROR_TEXT,
+  interestCompleteness,
+  interestProblem,
+  proposalInterestSchema,
+  type ProposalInterestProblem,
+} from "@/lib/validators/proposal-interest";
 
 /**
  * "I'm interested" on a shared proposal (0106, audit 2026-09-21 finding 4):
@@ -27,31 +33,42 @@ import { interestCompleteness, proposalInterestSchema } from "@/lib/validators/p
  * only ever sees a digest, one neutral 404 for every refusal, and — once
  * the visitor has their 202 — the same accelerator and acknowledgement the
  * website door runs. No CORS: the page lives on this origin.
+ *
+ * EVERY REFUSAL IS A CODE (audit 2026-09-22, finding 2). The body of a
+ * non-2xx answer is `{ error, code, field }`: `error` is an English
+ * sentence for a caller that is not the page, `code` is the stable word
+ * the page translates (lib/services/proposal-interest-copy.ts) and `field`
+ * names the control it concerns, or null. The page never shows `error`.
  */
 export const dynamic = "force-dynamic";
 
 const json = (body: unknown, status: number, extra: Record<string, string> = {}) =>
   NextResponse.json(body, { status, headers: { "Cache-Control": "no-store", ...extra } });
 
+/** A refusal, in the shape the page reads: an English sentence, a code, and the field or null. */
+const refuse = (error: string, code: string, status: number, field: ProposalInterestProblem["field"] = null, extra: Record<string, string> = {}) =>
+  json({ error, code, field }, status, extra);
+
 export async function POST(request: NextRequest) {
   if (!request.headers.get("content-type")?.includes("application/json")) {
-    return json({ error: "Send application/json." }, 415);
+    return refuse("Send application/json.", "unsupported_media_type", 415);
   }
 
   let body: unknown;
   try {
     body = await request.json();
   } catch {
-    return json({ error: "That is not valid JSON." }, 400);
+    return refuse("That is not valid JSON.", "invalid_json", 400);
   }
 
   const parsed = proposalInterestSchema.safeParse(body);
   if (!parsed.success) {
-    return json({ error: parsed.error.issues[0]?.message ?? "Invalid request." }, 400);
+    const problem = interestProblem(parsed.error.issues);
+    return refuse(PROPOSAL_INTEREST_ERROR_TEXT[problem.code], problem.code, 400, problem.field);
   }
   const input = parsed.data;
   const incomplete = interestCompleteness(input);
-  if (incomplete) return json({ error: incomplete }, 400);
+  if (incomplete) return refuse(PROPOSAL_INTEREST_ERROR_TEXT[incomplete.code], incomplete.code, 400, incomplete.field);
 
   const supabase = createAdminClient();
 
@@ -62,7 +79,7 @@ export async function POST(request: NextRequest) {
     p_limit: RATE_LIMIT,
   });
   if (meter.data === true) {
-    return json({ error: "Too many enquiries from this address. Try again shortly." }, 429, { "Retry-After": "900" });
+    return refuse("Too many enquiries from this address. Try again shortly.", "rate_limited", 429, null, { "Retry-After": "900" });
   }
   if (meter.error) {
     // Fails OPEN, loudly — the same asymmetry as the door: a junk lead is one
@@ -89,14 +106,14 @@ export async function POST(request: NextRequest) {
     // lead's transaction, a failure here rolled the lead back too; 503 tells
     // the page to try once more with the same key.
     console.error("[proposal interest] rpc failed:", error.message);
-    return json({ error: "Could not record your interest. Please try again." }, 503);
+    return refuse("Could not record your interest. Please try again.", "unavailable", 503);
   }
 
   // One neutral answer for every refusal — an expired, revoked or unknown
   // link, a reference the proposal does not hold — exactly as the page
   // renders one neutral "no longer available" for every failed resolve.
   const row = (data ?? [])[0];
-  if (!row) return json({ error: "This link is no longer available." }, 404);
+  if (!row) return refuse("This link is no longer available.", "link_unavailable", 404);
 
   // A replay: the first post with this key made the lead and its alert row.
   if (row.replayed) return json({ accepted: true }, 202);

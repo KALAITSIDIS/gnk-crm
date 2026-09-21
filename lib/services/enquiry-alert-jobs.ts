@@ -83,8 +83,11 @@ export function retryAfterSeconds(header: string | null | undefined, now: Date):
  * second. `request_enquiry_alert_retry` moves the serial only when the old
  * key is no longer safe to reuse, on a person's say-so.
  */
-export function idempotencyKeyFor(job: { id: string; key_serial: number }): string {
-  return `enquiry-desk-alert/${job.id}/${job.key_serial}`;
+export function idempotencyKeyFor(job: { id: string; key_serial: number; kind?: string }): string {
+  // prefixed by the kind (0107): the two messages a lead can produce must
+  // never share a key, and a row's kind never changes
+  const prefix = job.kind === "lead_escalation" ? "lead-escalation" : "enquiry-desk-alert";
+  return `${prefix}/${job.id}/${job.key_serial}`;
 }
 
 /**

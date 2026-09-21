@@ -1,9 +1,10 @@
 /**
- * The worker between the outbox and the provider (0101, reviewed 0102).
+ * The worker between the outbox and the provider (0101, reviewed 0102,
+ * second kind 0107).
  *
  * WHAT IT IS. One function that claims due `notification_jobs` rows (or the
- * one row for a given lead), rebuilds each desk e-mail from its lead, makes
- * ONE provider attempt under the job's idempotency key, and hands the outcome
+ * one row for a given lead), rebuilds each message from its lead, makes ONE
+ * provider attempt under the job's idempotency key, and hands the outcome
  * back to the database, which owns the state. It runs from three places and
  * behaves identically in each:
  *
@@ -14,6 +15,18 @@
  *     first two never reached: an invocation killed after the commit, a
  *     provider that answered 503, a lease that lapsed. The sweep is what
  *     makes the alert RECOVERABLE; the accelerator only makes it fast.
+ *
+ * TWO KINDS (0107). `enquiry_desk_alert` tells the desk an enquiry arrived;
+ * `lead_escalation` tells the colleagues the policy names that it is still
+ * unanswered. The claim, the lease, the key window, the retry schedule and
+ * the completion are the same for both; what differs is the message and
+ * the check made before it leaves. The escalation re-reads the policy (a
+ * kill switch at send time), re-reads the lead (still open, still
+ * unanswered, not redacted) and resolves its recipients AT THAT MOMENT —
+ * active admins/agents of the lead's own organisation among the configured
+ * ids, never the assignee — and cancels with a word when any of that no
+ * longer holds. It never invents a recipient and never reads one from the
+ * environment.
  *
  * WHAT IT NEVER DOES. It never throws (a sweep that dies on one job would
  * strand the rest), never decides a state on its own (every transition is a
@@ -70,6 +83,14 @@ import {
   retryFitsKeyWindow,
 } from "@/lib/services/enquiry-alert-jobs";
 import { LEAD_MESSAGE_REDACTED } from "@/lib/services/erasure";
+import {
+  escalationFromLead,
+  escalationIneligibility,
+  escalationRecipients,
+  readLeadEscalation,
+  sendLeadEscalation,
+  type LeadEscalation,
+} from "@/lib/services/lead-escalation";
 
 type Client = SupabaseClient<Database>;
 type Job = Database["public"]["Tables"]["notification_jobs"]["Row"];
@@ -88,8 +109,10 @@ export interface WorkerOptions {
 }
 
 export interface WorkerDeps {
-  /** The one provider attempt. Injected so a test never reaches the network. */
+  /** The one provider attempt for a desk alert. Injected so a test never reaches the network. */
   send?: (a: EnquiryAlert, opts: { idempotencyKey: string }) => Promise<AlertSendResult>;
+  /** The one provider attempt for an escalation (0107). Injected for the same reason. */
+  sendEscalation?: (e: LeadEscalation, opts: { to: string[]; idempotencyKey: string }) => Promise<AlertSendResult>;
   /** The clock, for the budget and the key window. Injected so a test controls time. */
   now?: () => number;
   /** The provider call's worst case, for the budget arithmetic. */
@@ -136,7 +159,10 @@ export async function runEnquiryAlertWorker(
   deps: WorkerDeps = {},
 ): Promise<WorkerRun> {
   const run = zero();
-  const send = deps.send ?? sendEnquiryAlert;
+  const senders: Senders = {
+    alert: deps.send ?? sendEnquiryAlert,
+    escalation: deps.sendEscalation ?? sendLeadEscalation,
+  };
   const now = deps.now ?? Date.now;
   const sendTimeoutMs = deps.sendTimeoutMs ?? ALERT_TIMEOUT_MS;
   const budgetMs = opts.budgetMs ?? DEFAULT_BUDGET_MS;
@@ -208,7 +234,7 @@ export async function runEnquiryAlertWorker(
       continue;
     }
     try {
-      await processOne(supabase, job, opts.workerId, send, run, now);
+      await processOne(supabase, job, opts.workerId, senders, run, now);
     } catch (err) {
       // A job that throws past its own handling must not strand the rest of
       // the batch. Its lease lapses and the next sweep counts the attempt.
@@ -222,6 +248,13 @@ export async function runEnquiryAlertWorker(
 }
 
 type Outcome = "accepted" | "retry" | "failed" | "cancelled" | "released";
+
+interface Senders {
+  alert: NonNullable<WorkerDeps["send"]>;
+  escalation: NonNullable<WorkerDeps["sendEscalation"]>;
+}
+
+type Complete = (outcome: Outcome, fields?: Parameters<typeof completeJob>[5]) => Promise<boolean>;
 
 async function completeJob(
   supabase: Client,
@@ -258,12 +291,11 @@ async function processOne(
   supabase: Client,
   job: Job,
   workerId: string,
-  send: NonNullable<WorkerDeps["send"]>,
+  senders: Senders,
   run: WorkerRun,
   now: () => number,
 ): Promise<void> {
-  const complete = (outcome: Outcome, fields: Parameters<typeof completeJob>[5] = {}) =>
-    completeJob(supabase, job, workerId, run, outcome, fields);
+  const complete: Complete = (outcome, fields = {}) => completeJob(supabase, job, workerId, run, outcome, fields);
   const at = () => new Date(now());
 
   // THE KEY WINDOW, checked before anything leaves. The claim (0102) refuses
@@ -279,6 +311,21 @@ async function processOne(
     return;
   }
 
+  if (job.kind === "lead_escalation") {
+    await processEscalation(supabase, job, senders.escalation, run, complete, at);
+    return;
+  }
+  await processDeskAlert(supabase, job, senders.alert, run, complete, at);
+}
+
+async function processDeskAlert(
+  supabase: Client,
+  job: Job,
+  send: Senders["alert"],
+  run: WorkerRun,
+  complete: Complete,
+  at: () => Date,
+): Promise<void> {
   const { data: lead, error: leadErr } = await supabase
     .from("leads")
     .select("id, message, criteria")
@@ -310,7 +357,93 @@ async function processOne(
     console.error(`[enquiry-alert] sender threw for job ${job.id}:`, err instanceof Error ? err.name : String(err));
     result = { outcome: "failed", category: "transient", result: "sender_threw", retryAfterSeconds: null };
   }
+  await settle(job, result, run, complete, at);
+}
 
+/**
+ * The escalation (0107): the same claim, the same key, the same completion —
+ * and, before anything leaves, the policy, the lead and the recipients read
+ * AGAIN. Minutes pass between the sweep that minted the row and this
+ * attempt; a colleague chased about an enquiry answered in between is the
+ * failure this block exists to prevent. Every refusal is a word on the row.
+ */
+async function processEscalation(
+  supabase: Client,
+  job: Job,
+  send: Senders["escalation"],
+  run: WorkerRun,
+  complete: Complete,
+  at: () => Date,
+): Promise<void> {
+  const cancel = async (result: string) => {
+    if (await complete("cancelled", { result })) run.cancelled += 1;
+  };
+
+  // 1. the policy, now: a kill switch that reaches rows already minted
+  const { data: policyRow, error: policyErr } = await supabase
+    .from("cyprus_config")
+    .select("value")
+    .eq("key", "lead_escalation")
+    .maybeSingle();
+  if (policyErr) {
+    console.error("[lead-escalation] policy read failed:", policyErr.message);
+    await scheduleRetry(job, "transient", "config_read_failed", null, complete, run, at());
+    return;
+  }
+  const policy = readLeadEscalation(policyRow?.value ?? null);
+  if (!policy.enabled) return cancel("escalation_disabled");
+
+  // 2. the lead, now
+  const { data: lead, error: leadErr } = await supabase
+    .from("leads")
+    .select("id, org_id, status, first_response_at, message, received_at, assigned_agent_id, properties(reference)")
+    .eq("id", job.lead_id)
+    .maybeSingle();
+  if (leadErr) {
+    console.error("[lead-escalation] lead read failed:", leadErr.message);
+    await scheduleRetry(job, "transient", "lead_read_failed", null, complete, run, at());
+    return;
+  }
+  if (!lead) return cancel("lead_missing");
+  if (lead.org_id !== job.org_id) return cancel("org_mismatch");
+  const ineligible = escalationIneligibility(lead);
+  if (ineligible) return cancel(ineligible);
+
+  // 3. the recipients, now — and the assignee's name for the message. One
+  //    read, scoped to the lead's organisation; the rule is applied again in
+  //    escalationRecipients so the decision does not depend on the query.
+  const ids = [...new Set([...policy.recipients, ...(lead.assigned_agent_id ? [lead.assigned_agent_id] : [])])];
+  if (ids.length === 0) return cancel("no_recipient");
+  const { data: profiles, error: profileErr } = await supabase
+    .from("profiles")
+    .select("id, org_id, email, full_name, role, is_active")
+    .eq("org_id", job.org_id)
+    .in("id", ids);
+  if (profileErr) {
+    console.error("[lead-escalation] recipient read failed:", profileErr.message);
+    await scheduleRetry(job, "transient", "recipient_read_failed", null, complete, run, at());
+    return;
+  }
+  const rows = profiles ?? [];
+  const to = escalationRecipients(policy, rows, lead);
+  if (to.length === 0) return cancel("no_recipient");
+  const assigneeName = lead.assigned_agent_id ? (rows.find((p) => p.id === lead.assigned_agent_id)?.full_name ?? null) : null;
+
+  const escalation = escalationFromLead(lead, { assigneeName, now: at() });
+  if (!escalation) return cancel("lead_unreadable");
+
+  let result: AlertSendResult;
+  try {
+    result = await send(escalation, { to, idempotencyKey: idempotencyKeyFor(job) });
+  } catch (err) {
+    console.error(`[lead-escalation] sender threw for job ${job.id}:`, err instanceof Error ? err.name : String(err));
+    result = { outcome: "failed", category: "transient", result: "sender_threw", retryAfterSeconds: null };
+  }
+  await settle(job, result, run, complete, at);
+}
+
+/** What a provider's answer does to the row — identical for both kinds. */
+async function settle(job: Job, result: AlertSendResult, run: WorkerRun, complete: Complete, at: () => Date): Promise<void> {
   if (result.outcome === "accepted") {
     if (await complete("accepted", { result: "accepted", providerMessageId: result.providerMessageId })) run.accepted += 1;
     return;
@@ -348,7 +481,7 @@ async function scheduleRetry(
   category: "transient" | "timeout",
   result: string,
   retryAfterSeconds: number | null,
-  complete: (outcome: Outcome, fields?: Parameters<typeof completeJob>[5]) => Promise<boolean>,
+  complete: Complete,
   run: WorkerRun,
   now: Date,
 ): Promise<void> {
@@ -370,14 +503,15 @@ async function scheduleRetry(
 
 /**
  * The one failure this module exists to prevent, on the one channel a human
- * is paged on (audit LR-07). SHAPE ONLY: ids, the category, the provider's
- * error name — never the person, the address or the message.
+ * is paged on (audit LR-07). SHAPE ONLY: ids, the kind, the category, the
+ * provider's error name — never the person, the address or the message.
  */
 function reportTerminal(job: Job, category: string, result: string, exhausted: boolean): void {
   try {
-    Sentry.captureMessage(`[enquiry-alert] desk alert failed for good: ${result}`, {
+    const what = job.kind === "lead_escalation" ? "lead escalation" : "desk alert";
+    Sentry.captureMessage(`[enquiry-alert] ${what} failed for good: ${result}`, {
       level: "error",
-      tags: { category, result: result.slice(0, 40) },
+      tags: { category, result: result.slice(0, 40), kind: job.kind },
       extra: { jobId: job.id, leadId: job.lead_id, attempts: job.attempts, exhausted },
     });
   } catch {

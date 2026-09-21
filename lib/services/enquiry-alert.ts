@@ -169,11 +169,47 @@ export async function sendEnquiryAlert(
     return { outcome: "skipped" };
   }
 
+  return postProviderEmail(
+    {
+      from: FROM,
+      to: to.split(",").map((s) => s.trim()).filter(Boolean),
+      // so a reply from the phone goes to the buyer, not into the void
+      replyTo: a.email,
+      subject: subjectFor(a),
+      text: bodyFor(a),
+    },
+    { apiKey: key, timeoutMs: opts.timeoutMs, idempotencyKey: opts.idempotencyKey, log: "enquiry-alert" },
+  );
+}
+
+/** One message as the provider takes it: the desk alert's shape, and the escalation's (0107). */
+export interface ProviderEmail {
+  from: string;
+  to: string[];
+  replyTo?: string | null;
+  subject: string;
+  text: string;
+}
+
+/** The sender's From, shared by every internal message this CRM sends. */
+export const ALERT_FROM = FROM;
+
+/**
+ * ONE provider call, in the outbox's vocabulary. NEVER throws. Shared by the
+ * desk alert and the lead escalation (0107) so the two classify a provider's
+ * answer identically and neither logs a person: the status and the error
+ * NAME, never the body, never an address.
+ */
+export async function postProviderEmail(
+  message: ProviderEmail,
+  opts: { apiKey: string; timeoutMs?: number; idempotencyKey?: string; log?: string },
+): Promise<AlertSendResult> {
+  const tag = opts.log ?? "enquiry-alert";
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${key}`,
+        Authorization: `Bearer ${opts.apiKey}`,
         "Content-Type": "application/json",
         // Resend remembers a key for 24 hours and answers a repeat with the
         // first message's id instead of sending again (docs:
@@ -182,12 +218,11 @@ export async function sendEnquiryAlert(
         ...(opts.idempotencyKey ? { "Idempotency-Key": opts.idempotencyKey } : {}),
       },
       body: JSON.stringify({
-        from: FROM,
-        to: to.split(",").map((s) => s.trim()).filter(Boolean),
-        // so a reply from the phone goes to the buyer, not into the void
-        ...(a.email ? { reply_to: a.email } : {}),
-        subject: subjectFor(a),
-        text: bodyFor(a),
+        from: message.from,
+        to: message.to,
+        ...(message.replyTo ? { reply_to: message.replyTo } : {}),
+        subject: message.subject,
+        text: message.text,
       }),
       signal: AbortSignal.timeout(opts.timeoutMs ?? ALERT_TIMEOUT_MS),
     });
@@ -197,7 +232,7 @@ export async function sendEnquiryAlert(
       const { category, result } = classifyProviderFailure(res.status, name);
       // The status and the NAME, never the message: a provider's message can
       // repeat the address it refused.
-      console.error(`[enquiry-alert] provider responded ${res.status} (${result}, ${category})`);
+      console.error(`[${tag}] provider responded ${res.status} (${result}, ${category})`);
       return {
         outcome: "failed",
         category,
@@ -214,10 +249,10 @@ export async function sendEnquiryAlert(
     // provider may have accepted the message, which is why the worker
     // retries under the same key rather than a fresh one.
     if (name === "TimeoutError" || name === "AbortError") {
-      console.error("[enquiry-alert] send timed out — the provider's answer is unknown");
+      console.error(`[${tag}] send timed out — the provider's answer is unknown`);
       return { outcome: "failed", category: "timeout", result: "timeout", retryAfterSeconds: null };
     }
-    console.error(`[enquiry-alert] send threw: ${name}`);
+    console.error(`[${tag}] send threw: ${name}`);
     return { outcome: "failed", category: "transient", result: "network", retryAfterSeconds: null };
   }
 }
