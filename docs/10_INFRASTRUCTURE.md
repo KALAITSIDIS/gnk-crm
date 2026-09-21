@@ -110,7 +110,7 @@ npm run db:types        # regenerate lib/supabase/database.types.ts
 Run `npm run dev:2fa` to enrol one and print the TOTP secret. That script
 refuses any non-local URL, deliberately.
 
-### pg_cron — 10 scheduled jobs (all live)
+### pg_cron — 11 scheduled jobs (all live)
 
 ```
 0  3 * * *   expire-mandates              select expire_mandates()
@@ -123,6 +123,7 @@ refuses any non-local URL, deliberately.
 50 3 * * *   warn-expiring-reservations   select warn_expiring_reservations()
 55 3 * * *   remind-due-installments      select remind_due_installments()
 */10 * * * * lead-sla                     select raise_lead_sla_tasks()      (0098: chases a website lead unanswered after an hour)
+*/2 * * * *  enquiry-alerts               select enquiry_alerts_sweep()      (0103: the desk-alert sweep, POSTed through pg_net; URL and bearer from Vault — raises when either is absent)
 ```
 
 Ordering is deliberate: each sweep runs after the one whose events it needs.
@@ -134,7 +135,7 @@ success inside its schedule's allowance (26h nightly / 8d weekly / 32d monthly,
 **all eight unhealthy** until the jobs are recreated (BACKUP_RESTORE §4b.4) —
 that is the panel doing its job, not a false alarm.
 
-### The desk-alert sweep (0101) — an application route, not a pg_cron job
+### The desk-alert sweep (0101) — an application route, reached by a pg_cron job since 0103
 
 A website enquiry's desk e-mail is a `notification_jobs` row written by
 `submit_public_enquiry` in the lead's own transaction; the e-mail is one
@@ -163,14 +164,28 @@ nothing; rows keep waiting and the inbox says "Desk alert queued".
   Rotate the value on the Environment Variables page and redeploy; the
   pg_net job below must then get the same value in Vault.
 * **`pg_cron` + `pg_net` every two minutes — the cadence the retry schedule
-  was written for, and NOT ARMED.** `pg_net` is available on the hosted
-  project and not installed; installing an extension on production is the
-  operator's decision (BACKLOG). The job is prepared, verbatim, in
-  `supabase/activation/0103_enquiry_alerts_cron.sql`: once approved it moves
-  into `supabase/migrations/` (as 0103 or whatever number is free), which
-  makes it the ELEVENTH cron job and moves every pin that counts them
-  (`EXPECTED_CRON_JOBS`, RLS test 50, the restore pack's cron list, the table
-  above, HANDOFF §0). It reads the secret from Vault, never from SQL text.
+  was written for — ARMED 2026-09-21 by migration 0103 (`enquiry-alerts`,
+  the eleventh job in the table above).** The operator took the extension
+  decision that day: `pg_net` 0.20.3 was installed on hosted by hand, the
+  Vault secrets `crm_url` (`https://gnk-crm.vercel.app`) and `cron_secret`
+  (the SAME value as Vercel's `CRON_SECRET`) were created through the
+  dashboard (Integrations → Vault), and the job body `enquiry_alerts_sweep()`
+  (SECURITY INVOKER; postgres and service_role only) reads both from Vault at
+  run time and `net.http_post`s — nothing in `cron.job`'s command text holds
+  a value. Rotating `CRON_SECRET` therefore means updating the Vault secret
+  too, or the sweep answers 401 every two minutes (visible in
+  `net._http_response`; pg_net is asynchronous: the response lands there,
+  kept for its `ttl` of six hours, the run itself in `cron.job_run_details`).
+  **A missing secret is loud, a wrong one is not:** the function RAISES
+  naming the absent secret, the run is recorded `failed`, and the admin
+  dashboard's cron-health card shows the job amber within the hour (it
+  allows this job one hour without a success) — whereas a wrong value posts
+  and gets 401, which only `net._http_response` shows. The migration itself
+  needs no secret to apply (CI's fresh stack has no hook before migrations,
+  and the first cut, which refused, killed `rls` and `e2e` at `supabase
+  start`); `supabase/seed.sql` plants local placeholders on `db reset`, and
+  the restore pack asserts both Vault rows exist after a restore — a restore
+  into a NEW project cannot decrypt the old rows and must recreate them.
 * **A person, after an incident:**
   `curl -sS -X POST -H "Authorization: Bearer $CRON_SECRET" https://gnk-crm.vercel.app/api/internal/enquiry-alerts`
   — the answer is the run's counts: **200 `ok: true`** with the counts (an

@@ -4841,7 +4841,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(rows[iOld].images, "no photos means an empty array, not null").toEqual([]);
   });
 
-  it("50. cron_health() is service_role-only and sees all ten jobs (0074, 0092, 0098)", async () => {
+  it("50. cron_health() is service_role-only and sees all eleven jobs (0074, 0092, 0098, 0103)", async () => {
     // REL-03. The function reads cron.job_run_details as its definer; the
     // grant surface is the whole security story, so it is pinned per role —
     // the anon-default-EXECUTE hazard has shipped twice before.
@@ -4855,7 +4855,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     const svcCall = await svc.rpc("cron_health");
     expect(svcCall.error).toBeNull();
     const jobs = (svcCall.data ?? []) as Array<Record<string, unknown>>;
-    expect(jobs, "all ten scheduled jobs are visible").toHaveLength(10);
+    expect(jobs, "all eleven scheduled jobs are visible").toHaveLength(11);
     for (const job of jobs) {
       expect(job.jobname, "every row names its job").toBeTruthy();
       expect(job.schedule, "every row carries the cron expression the TS verdict needs").toBeTruthy();
@@ -4863,7 +4863,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     }
     const names = jobs.map((j) => String(j.jobname));
     expect(names, "the chain walkers are among them").toEqual(
-      expect.arrayContaining(["verify-events-chain", "verify-events-chain-full", "ensure-events-partitions", "lead-sla"]),
+      expect.arrayContaining(["verify-events-chain", "verify-events-chain-full", "ensure-events-partitions", "lead-sla", "enquiry-alerts"]),
     );
   });
 

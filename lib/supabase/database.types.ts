@@ -3244,6 +3244,10 @@ export type Database = {
         | { Args: { schema_name: string; table_name: string }; Returns: string }
         | { Args: { table_name: string }; Returns: string }
       enablelongtransactions: { Args: never; Returns: string }
+      enquiry_alerts_sweep: {
+        Args: { p_bearer_secret?: string; p_url_secret?: string }
+        Returns: number
+      }
       ensure_events_partitions: {
         Args: { p_from?: string; p_months_ahead?: number }
         Returns: number

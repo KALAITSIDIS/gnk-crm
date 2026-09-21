@@ -116,7 +116,7 @@ export const CHAIN_CHECK_STALE_MS = 48 * HOUR;
  * the component went stale the day 0092 scheduled the ninth job and production
  * read "expected 8 jobs, found 9" on the card whose purpose is to be believed.
  */
-export const EXPECTED_CRON_JOBS = 10;
+export const EXPECTED_CRON_JOBS = 11;
 
 export function chainCheckIsStale(checkedAt: string | null, now: Date): boolean {
   if (!checkedAt) return true;
