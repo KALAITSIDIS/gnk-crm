@@ -134,6 +134,51 @@ success inside its schedule's allowance (26h nightly / 8d weekly / 32d monthly,
 **all eight unhealthy** until the jobs are recreated (BACKUP_RESTORE §4b.4) —
 that is the panel doing its job, not a false alarm.
 
+### The desk-alert sweep (0101) — an application route, not a pg_cron job
+
+A website enquiry's desk e-mail is a `notification_jobs` row written by
+`submit_public_enquiry` in the lead's own transaction; the e-mail is one
+provider attempt against that row. Three callers run the same worker
+(`lib/services/enquiry-alert-worker.ts`):
+
+| Caller | When | What it covers |
+|---|---|---|
+| the enquiry route's `after()` | within a second of the 202 | the normal case — the desk is told at once, as before 0101 |
+| the staff retry (inbox row → **Retry alert**) | on demand | a terminal failure a person wants sent again |
+| **the sweep**, `GET\|POST /api/internal/enquiry-alerts` | on a schedule | everything the first two never reached: an invocation killed after the commit, a provider that said 503, a lapsed lease. **This is what makes the alert recoverable.** |
+
+The sweep is gated by `CRON_SECRET` as a bearer token (`Authorization: Bearer
+…`, constant-time compare). Without the variable it answers 503 and runs
+nothing; rows keep waiting and the inbox says "Desk alert queued".
+
+**Who calls the sweep:**
+
+* **Vercel cron, daily at 06:00 UTC (±59 min), from `vercel.json`.** The most a
+  Hobby plan allows (once per day; a more frequent expression fails the
+  deployment). Vercel sends `Authorization: Bearer $CRON_SECRET` on its own
+  once the variable exists in the project. Worst case, a row the accelerator
+  missed is sent within a day rather than never.
+* **`pg_cron` + `pg_net` every two minutes — the cadence the retry schedule
+  was written for, and NOT ARMED.** `pg_net` is available on the hosted
+  project and not installed; installing an extension on production is the
+  operator's decision (BACKLOG). The job is prepared, verbatim, in
+  `supabase/activation/0102_enquiry_alerts_cron.sql`: once approved it moves
+  into `supabase/migrations/` (as 0102 or whatever number is free), which
+  makes it the ELEVENTH cron job and moves every pin that counts them
+  (`EXPECTED_CRON_JOBS`, RLS test 50, the restore pack's cron list, the table
+  above, HANDOFF §0). It reads the secret from Vault, never from SQL text.
+* **A person, after an incident:**
+  `curl -sS -X POST -H "Authorization: Bearer $CRON_SECRET" https://gnk-crm.vercel.app/api/internal/enquiry-alerts?limit=20`
+  — the answer is the run's counts.
+
+Each run claims at most `limit` rows (default 5, ceiling 20), one 8-second
+provider attempt each, under a 90-second lease, inside the route's
+`maxDuration = 60`. Retries back off 1 → 2 → 4 … 64 minutes over eight
+attempts (~2h07m in total, well inside Resend's 24-hour memory of the
+idempotency key, which every automatic retry reuses), then the row is
+`failed` and the inbox offers **Retry alert**. `accepted` means Resend
+accepted the message — nothing here confirms delivery.
+
 ### Account lockout runbook (SEC-03)
 
 Who can no longer sign in, and what unlocks them:
@@ -225,6 +270,7 @@ ENQUIRY_FORWARD_KEY              (secret; = gnk-web's CRM_FORWARD_KEY — the si
 IP_HASH_SALT                     (secret; salts the rate-limit fingerprints — unset falls back to the public project URL and logs it)
 SITE_REVALIDATE_URL              (the site's revalidate door, https://gnk-web.vercel.app/api/revalidate — 2026-09-13, REL-01)
 SITE_REVALIDATE_KEY              (secret; = gnk-web's SITE_REVALIDATE_KEY — the CRM proves a knock is its own; unset = the site refreshes on its timers alone, logged once)
+CRON_SECRET                      (secret; the bearer token the desk-alert sweep requires, 0101 — Vercel's cron sends it unprompted once set; the pg_net job reads the same value from Vault. Unset = the sweep answers 503 and pending desk alerts wait; the enquiry route still sends at once)
 ```
 
 **Rotating a Supabase key requires a redeploy with the build cache OFF.** A
@@ -238,13 +284,15 @@ not taken the alias is not serving anyone.
 
 ## 4. Public surface
 
-Three paths are unauthenticated, and `proxy.ts` names all three in one
+Five paths pass the session gate, and `proxy.ts` names all five in one
 condition so they can be read at a glance:
 
 | path | what |
 |---|---|
 | `/p/…` | tokenised share links (buyer proposals, availability) |
-| `/api/public/…` | the C3 listing feed |
+| `/api/public/…` | the C3 listing feed and the enquiry door |
+| `/api/portals/…` | the portal feed, by 64-hex token (0095) |
+| `/api/internal/…` | **not public**: the desk-alert sweep (0101), gated in the route by `CRON_SECRET` as a bearer token — sessionless because a scheduler has none |
 | `/offline` | PWA fallback |
 
 Live feed: `https://gnk-crm.vercel.app/api/public/listings?org=gnk`

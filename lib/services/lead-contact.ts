@@ -37,6 +37,13 @@ export interface ParsedWebsiteEnquiry {
   name: string;
   email: string | null;
   phone: string | null;
+  /**
+   * The reference the visitor TYPED (0101), without the door's
+   * "(no published listing with that reference)" note. The alert worker
+   * rebuilds the desk e-mail from the lead and needs the same "About:" the
+   * route used to send from the request body.
+   */
+  about: string | null;
 }
 
 /**
@@ -65,6 +72,7 @@ export function parseWebsiteEnquiry(message: string | null | undefined): ParsedW
   let name: string | null = null;
   let email: string | null = null;
   let phone: string | null = null;
+  let about: string | null = null;
   for (const line of lines.slice(1, 6)) {
     if (line.trim() === "") break;
     const m = /^(Name|Email|Phone|About): (.*)$/.exec(line);
@@ -73,7 +81,25 @@ export function parseWebsiteEnquiry(message: string | null | undefined): ParsedW
     if (m[1] === "Name") name = value;
     else if (m[1] === "Email") email = value;
     else if (m[1] === "Phone") phone = value;
+    // the door appends its own note when the typed reference matched nothing
+    else if (m[1] === "About")
+      about = value?.replace(/\s*\(no published listing with that reference\)\s*$/, "").trim() || null;
   }
   if (!name) return null;
-  return { name, email, phone };
+  return { name, email, phone, about };
+}
+
+/**
+ * The visitor's own words, read from the same block: everything after the
+ * first blank line that ends the header. Null when they typed none (an
+ * enquiry may be a reference alone) and for anything that is not the block.
+ */
+export function websiteEnquiryBody(message: string | null | undefined): string | null {
+  if (!message) return null;
+  const text = message.replace(/\r\n?/g, "\n");
+  if (!text.startsWith("Website enquiry\n")) return null;
+  const gap = text.indexOf("\n\n");
+  if (gap === -1) return null;
+  const body = text.slice(gap + 2).trim();
+  return body || null;
 }

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { AlertCircle, Download, Inbox } from "lucide-react";
 import { AddLeadDialog } from "@/components/features/leads/add-lead-dialog";
+import { DeskAlertChip } from "@/components/features/leads/desk-alert";
 import { LeadsFilters } from "@/components/features/leads/filters";
 import { LeadRowActions } from "@/components/features/leads/lead-actions";
 import { LeadMessage } from "@/components/features/leads/lead-message";
@@ -10,6 +11,7 @@ import { Pager } from "@/components/features/shared/pager";
 import { ResponseClock } from "@/components/features/shared/response-clock";
 import { StatusBadge } from "@/components/features/shared/status-badge";
 import { getCurrentProfile } from "@/lib/services/auth";
+import type { DeskAlertJob } from "@/lib/services/enquiry-alert-status";
 import { LEAD_MESSAGE_REDACTED } from "@/lib/services/erasure";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTime } from "@/lib/utils/format";
@@ -55,7 +57,9 @@ export default async function LeadsPage({
       `id, source, channel, message, status, received_at, first_response_at,
        assigned_agent_id, lost_reason, converted_deal_id, criteria,
        contacts(id, display_name, phone_e164, telegram_username, has_whatsapp),
-       properties(id, reference)`,
+       properties(id, reference),
+       notification_jobs!notification_jobs_lead_id_fkey(kind, state, attempts, max_attempts,
+         next_attempt_at, claimed_until, last_category, last_result, accepted_at)`,
       // exact count of the SCOPED set, so the pager totals match these rows
       { count: "exact" },
     );
@@ -220,6 +224,17 @@ export default async function LeadsPage({
                   </div>
                   {/* the whole enquiry and its brief, not one truncated line (0098, LR-03) */}
                   <LeadMessage message={lead.message} criteria={lead.criteria} />
+                  {/* whether the desk was e-mailed about it (0101): the outbox row, or nothing for a lead that predates it */}
+                  {lead.source === "website" ? (
+                    <DeskAlertChip
+                      leadId={lead.id}
+                      job={
+                        (lead.notification_jobs as Array<DeskAlertJob & { kind: string }> | null)?.find(
+                          (j) => j.kind === "enquiry_desk_alert",
+                        ) ?? null
+                      }
+                    />
+                  ) : null}
                   {lead.lost_reason ? (
                     <p className="text-xs text-text-3">Reason: {lead.lost_reason}</p>
                   ) : null}

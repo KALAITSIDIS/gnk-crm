@@ -61,8 +61,10 @@ import {
  *
  * SAFETY. Local stack only, asserted below; synthetic org and synthetic
  * contacts; every lead it writes is deleted afterwards (its events stay, as
- * every event does). It sends no mail: the desk alert lives in the ROUTE, not
- * in the database function, and is not reached from here at all.
+ * every event does; since 0101 the lead's notification_jobs row cascades with
+ * it). It sends no mail: the database function writes the desk alert's ROW
+ * (0101), and the e-mail is the worker's — reached from the route's after()
+ * and the sweep, never from here.
  */
 const svc = (): SupabaseClient => serviceClient();
 const admin = svc();

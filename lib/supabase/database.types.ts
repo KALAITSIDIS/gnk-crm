@@ -1055,6 +1055,100 @@ export type Database = {
           },
         ]
       }
+      notification_jobs: {
+        Row: {
+          accepted_at: string | null
+          attempts: number
+          claimed_by: string | null
+          claimed_until: string | null
+          created_at: string
+          finished_at: string | null
+          first_attempted_at: string | null
+          id: string
+          key_serial: number
+          kind: string
+          last_attempted_at: string | null
+          last_category: string | null
+          last_result: string | null
+          lead_id: string
+          max_attempts: number
+          next_attempt_at: string
+          org_id: string
+          provider: string
+          provider_message_id: string | null
+          state: string
+          updated_at: string
+        }
+        Insert: {
+          accepted_at?: string | null
+          attempts?: number
+          claimed_by?: string | null
+          claimed_until?: string | null
+          created_at?: string
+          finished_at?: string | null
+          first_attempted_at?: string | null
+          id?: string
+          key_serial?: number
+          kind: string
+          last_attempted_at?: string | null
+          last_category?: string | null
+          last_result?: string | null
+          lead_id: string
+          max_attempts?: number
+          next_attempt_at?: string
+          org_id: string
+          provider?: string
+          provider_message_id?: string | null
+          state?: string
+          updated_at?: string
+        }
+        Update: {
+          accepted_at?: string | null
+          attempts?: number
+          claimed_by?: string | null
+          claimed_until?: string | null
+          created_at?: string
+          finished_at?: string | null
+          first_attempted_at?: string | null
+          id?: string
+          key_serial?: number
+          kind?: string
+          last_attempted_at?: string | null
+          last_category?: string | null
+          last_result?: string | null
+          lead_id?: string
+          max_attempts?: number
+          next_attempt_at?: string
+          org_id?: string
+          provider?: string
+          provider_message_id?: string | null
+          state?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notification_jobs_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notification_jobs_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notification_jobs_org_lead_fkey"
+            columns: ["org_id", "lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["org_id", "id"]
+          },
+        ]
+      }
       offers: {
         Row: {
           amount: number
@@ -3051,6 +3145,55 @@ export type Database = {
           walked: number
         }[]
       }
+      claim_notification_jobs: {
+        Args: {
+          p_lead_id?: string
+          p_lease_seconds?: number
+          p_limit?: number
+          p_worker: string
+        }
+        Returns: {
+          accepted_at: string | null
+          attempts: number
+          claimed_by: string | null
+          claimed_until: string | null
+          created_at: string
+          finished_at: string | null
+          first_attempted_at: string | null
+          id: string
+          key_serial: number
+          kind: string
+          last_attempted_at: string | null
+          last_category: string | null
+          last_result: string | null
+          lead_id: string
+          max_attempts: number
+          next_attempt_at: string
+          org_id: string
+          provider: string
+          provider_message_id: string | null
+          state: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "notification_jobs"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      complete_notification_job: {
+        Args: {
+          p_category?: string
+          p_job_id: string
+          p_outcome: string
+          p_provider_message_id?: string
+          p_result?: string
+          p_retry_in_seconds?: number
+          p_worker: string
+        }
+        Returns: boolean
+      }
       create_followup_nudges: { Args: { p_org?: string }; Returns: undefined }
       cron_health: {
         Args: never
@@ -3417,6 +3560,38 @@ export type Database = {
       report_time_to_close: {
         Args: { p_from: string; p_to: string }
         Returns: Json
+      }
+      request_enquiry_alert_retry: {
+        Args: { p_lead_id: string }
+        Returns: {
+          accepted_at: string | null
+          attempts: number
+          claimed_by: string | null
+          claimed_until: string | null
+          created_at: string
+          finished_at: string | null
+          first_attempted_at: string | null
+          id: string
+          key_serial: number
+          kind: string
+          last_attempted_at: string | null
+          last_category: string | null
+          last_result: string | null
+          lead_id: string
+          max_attempts: number
+          next_attempt_at: string
+          org_id: string
+          provider: string
+          provider_message_id: string | null
+          state: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "notification_jobs"
+          isOneToOne: false
+          isSetofReturn: true
+        }
       }
       resolve_share_link: { Args: { p_token_sha256: string }; Returns: Json }
       rls_aal2_coverage: {

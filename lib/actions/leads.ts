@@ -1,11 +1,14 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { z } from "zod";
 import type { Database } from "@/lib/supabase/database.types";
 import { getCurrentProfile, type CurrentProfile } from "@/lib/services/auth";
+import { runEnquiryAlertWorker } from "@/lib/services/enquiry-alert-worker";
 import { LEAD_MESSAGE_REDACTED } from "@/lib/services/erasure";
 import { logEvent } from "@/lib/services/events";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { checkContactDuplicate, type DuplicateMatch } from "@/lib/actions/contacts";
 import {
@@ -358,6 +361,43 @@ export async function redactLead(leadId: string): Promise<void> {
     eventType: "redacted",
     // nothing of what was redacted — an event cannot be erased
     payload: {},
+  });
+  revalidatePath("/leads");
+}
+
+/**
+ * Send the desk alert of a website enquiry again (0101).
+ *
+ * The inbox shows a website lead's `notification_jobs` row — queued, sent,
+ * failed — and offers this on a failure. The DATABASE decides whether the
+ * caller may: `request_enquiry_alert_retry` runs as its definer and checks
+ * the org, the lead rule (admin, the assignee, or anyone while unassigned),
+ * that no worker holds a live claim, that the alert was not already
+ * accepted, and that the lead is not redacted. Its refusals are sentences
+ * written for the desk and are shown as they are; any other database error
+ * is one sentence, because its words would describe the schema. Once the
+ * row is pending again the worker is kicked for THAT lead after the answer,
+ * exactly as the enquiry route does — the sweep would get to it anyway.
+ */
+export async function retryEnquiryAlert(leadId: string): Promise<void> {
+  const supabase = await createClient();
+  await getCurrentProfile(supabase);
+
+  const { data, error } = await supabase.rpc("request_enquiry_alert_retry", { p_lead_id: leadId });
+  if (error) {
+    // P0001 is `raise exception` — the function's own words, meant to be read.
+    if (error.code === "P0001") throw new Error(error.message);
+    throw new Error("Could not queue the alert — try again, and tell an admin if it keeps failing.");
+  }
+  const job = data?.[0];
+  if (!job) throw new Error("No desk alert is recorded for this lead.");
+
+  after(async () => {
+    await runEnquiryAlertWorker(createAdminClient(), {
+      workerId: `retry:${job.id}`,
+      leadId,
+      limit: 1,
+    });
   });
   revalidatePath("/leads");
 }
