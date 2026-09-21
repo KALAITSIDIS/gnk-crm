@@ -322,12 +322,20 @@ test("a repeat with the same key is the same enquiry: one lead, and the desk tol
     const created = await waitForEvents(admin, leadId, "created");
     expect(created, "one created event — the repeat wrote nothing").toHaveLength(1);
 
-    /* AND THE DESK IS TOLD ONCE. The route returns before `after()` on a
-       replay (route.ts: `if (row.replayed) return`), so a second alert is
-       never attempted; the `enquiry_alert` event is the durable proof of how
-       many attempts there were. */
-    const alerts = await waitForEvents(admin, leadId, "enquiry_alert");
-    expect(alerts, "one alert attempt for two posts").toHaveLength(1);
+    /* AND THE DESK IS TOLD ONCE. Since 0101 the desk alert is a
+       `notification_jobs` row the function writes WITH the lead, and a replay
+       writes nothing — so the durable proof of "one notification for two
+       posts" is one row, whatever the provider did with it. The route also
+       returns before `after()` on a replay (route.ts: `if (row.replayed)
+       return`), so the accelerator runs once at most. */
+    const { data: jobs, error: jobsErr } = await admin
+      .from("notification_jobs")
+      .select("kind, state, attempts")
+      .eq("lead_id", leadId);
+    expect(jobsErr).toBeNull();
+    expect(jobs ?? [], "one desk-alert record for two posts").toHaveLength(1);
+    expect(jobs![0]!.kind).toBe("enquiry_desk_alert");
+    expect(jobs![0]!.attempts, "at most one attempt for two posts").toBeLessThanOrEqual(1);
   } finally {
     await removeLeads(admin, leadId ? [leadId] : []);
     await api.dispose();
@@ -335,13 +343,16 @@ test("a repeat with the same key is the same enquiry: one lead, and the desk tol
 });
 
 test("a notification that did not go out is not an enquiry that did not arrive", async () => {
-  /* THE DISTINCTION, END TO END. The alert lives in the route, inside
-     `after()`, precisely so a mail provider can never turn a saved enquiry
-     into a failed one — and until 0096 its verdict was dropped, so a lead sat
-     in the inbox with its response clock running and nothing anywhere saying
-     nobody had been told. Locally and in CI there is no RESEND_API_KEY, so the
-     outcome is `skipped`: the enquiry is saved, the visitor has their 202, and
-     the lead's own timeline says the desk was not reached. */
+  /* THE DISTINCTION, END TO END. The alert is sent after the answer, from a
+     row the function wrote with the lead (0101), precisely so a mail provider
+     can never turn a saved enquiry into a failed one — and until 0096 its
+     verdict was dropped, so a lead sat in the inbox with its response clock
+     running and nothing anywhere saying nobody had been told. Locally and in
+     CI there is no RESEND_API_KEY, so the worker claims nothing and spends
+     no attempt: the enquiry is saved, the visitor has their 202, and the
+     lead's `notification_jobs` row says — pending, zero attempts — that the
+     desk has not been reached. No `enquiry_alert` event is written for that:
+     an unconfigured deployment is a state the row shows, not an outcome. */
   const admin = svc();
   const { orgId } = await fixtureProfile(admin);
   const marker = `e2e-alertout-${randomBytes(3).toString("hex")}`;
@@ -368,15 +379,30 @@ test("a notification that did not go out is not an enquiry that did not arrive",
     leadId = leads![0]!.id as string;
     expect(leads![0]!.status).toBe("new");
 
-    const alerts = await waitForEvents(admin, leadId, "enquiry_alert");
-    expect(alerts, "and the notification's outcome is a SEPARATE fact").toHaveLength(1);
-    const payload = alerts[0]!.payload as { outcome?: string };
-    expect(["sent", "skipped", "failed"]).toContain(payload.outcome);
-    expect(payload.outcome, "no provider is configured here, and the record says so").toBe(
-      "skipped",
+    const { data: jobs, error: jobsErr } = await admin
+      .from("notification_jobs")
+      .select("*")
+      .eq("lead_id", leadId);
+    expect(jobsErr).toBeNull();
+    expect(jobs ?? [], "and the notification is a SEPARATE fact, recorded with the lead").toHaveLength(1);
+    const job = jobs![0]!;
+    expect(job.kind).toBe("enquiry_desk_alert");
+    expect(["pending", "sending", "accepted", "failed", "cancelled"]).toContain(job.state);
+    expect(job.state, "no provider is configured here, and the record says the desk is not yet told").toBe(
+      "pending",
     );
-    // and nothing erasable rode along on an event that can never be redacted
-    expect(JSON.stringify(alerts[0])).not.toContain(marker);
+    expect(job.attempts, "an unconfigured worker spends no attempt").toBe(0);
+    expect(job.provider_message_id).toBeNull();
+    // the row carries ids and words only — nothing erasable, ever
+    expect(JSON.stringify(job)).not.toContain(marker);
+    // and nothing was attempted, so the timeline has no outcome to report
+    const { data: alerts } = await admin
+      .from("events")
+      .select("id")
+      .eq("entity_type", "lead")
+      .eq("entity_id", leadId)
+      .eq("event_type", "enquiry_alert");
+    expect(alerts ?? [], "no attempt, no outcome event").toHaveLength(0);
   } finally {
     await removeLeads(admin, leadId ? [leadId] : []);
     await api.dispose();

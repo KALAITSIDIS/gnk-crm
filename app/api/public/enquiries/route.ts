@@ -1,11 +1,11 @@
+import { randomUUID } from "node:crypto";
 import { after, NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { callerIpHash } from "@/lib/services/caller-ip";
 import { budgetsFor } from "@/lib/services/enquiry-budget";
 import { isTrustedForwarderLoudly } from "@/lib/services/forwarder";
 import { enquiryCompleteness, publicEnquirySchema } from "@/lib/validators/public-enquiry";
-import { sendEnquiryAlert } from "@/lib/services/enquiry-alert";
-import { recordEnquiryAlert } from "@/lib/services/enquiry-alert-event";
+import { runEnquiryAlertWorker } from "@/lib/services/enquiry-alert-worker";
 import { sendEnquiryAck } from "@/lib/services/enquiry-ack";
 
 /**
@@ -137,7 +137,11 @@ export async function POST(request: NextRequest) {
 
   if (error) {
     // Never the database's words: they would describe a schema the caller
-    // has no business knowing about.
+    // has no business knowing about. Since 0101 this is also the answer when
+    // the lead's desk-alert row could not be written: the function rolls the
+    // lead back with it, and a 503 tells the site to try once more with the
+    // same key — an accepted enquiry without its durable notification record
+    // cannot exist.
     console.error("[public enquiry] rpc failed:", error.message);
     return json({ error: "Could not accept that enquiry." }, 503);
   }
@@ -148,33 +152,29 @@ export async function POST(request: NextRequest) {
   if (!row) return json({ error: "Unknown `org`." }, 400);
 
   // A replay (0096): the first post with this key already made the lead and
-  // told the desk. Accepted again, and nothing more happens — a second alert
+  // its alert job. Accepted again, and nothing more happens — a second alert
   // would be exactly the duplicate the key exists to prevent.
   if (row.replayed) return json({ accepted: true }, 202);
 
-  // The desk is told AFTER the response goes out. `after()` runs once the
-  // visitor already has their 202, so a slow mail provider never delays the
-  // thank-you — and a failed send can never turn a saved enquiry into an
-  // error, which is the whole reason the alert lives here and not inside the
-  // database function.
+  // THE DESK ALERT IS ALREADY A ROW (0101): the function wrote it with the
+  // lead, in the same transaction, so from here on nothing can lose it. What
+  // runs below, once the visitor already has their 202, is the ACCELERATOR —
+  // the worker claims that one row and makes the first provider attempt now,
+  // so the desk is told within a second as before. If this callback never
+  // runs (the invocation is killed) or the provider says no, the row stays
+  // pending or is backed off, and the sweep (/api/internal/enquiry-alerts)
+  // finishes the job. The worker never throws; the guard around it is for
+  // the acknowledgement's sake.
   after(async () => {
-    const outcome = await sendEnquiryAlert({
-      name: input.name,
-      email: input.email ?? null,
-      phone: input.phone ?? null,
-      message: input.message ?? null,
-      propertyReference: input.property_reference ?? null,
-      meta: input.meta ?? null,
-    });
-    // …and the outcome goes on the lead's timeline (INT-01). Until 0096 the
-    // word came back here and was dropped, so a failed or skipped alert was
-    // a console line and nothing else, and the lead sat in the inbox with
-    // its response clock running and nobody told.
-    await recordEnquiryAlert(supabase, {
-      orgId: row.lead_org_id,
-      leadId: row.lead_id,
-      outcome,
-    });
+    try {
+      await runEnquiryAlertWorker(supabase, {
+        workerId: `route:${randomUUID()}`,
+        leadId: row.lead_id,
+        limit: 1,
+      });
+    } catch (err) {
+      console.error("[public enquiry] alert accelerator threw:", err instanceof Error ? err.name : String(err));
+    }
 
     // 0098 (audit LR-06): the enquirer is acknowledged too — once per fresh
     // enquiry (a replay and a honeypot hit return above), from the firm's own

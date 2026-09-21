@@ -94,11 +94,21 @@ export default async function proxy(request: NextRequest) {
    * a 64-hex token in the path. Same construction as `/api/public/` — anon
    * key only, so its reach is what 0095 grants `anon` by name — and the same
    * rule: nothing goes under it that is not meant for the open internet.
+   *
+   * `/api/internal/` (0101) is the OTHER kind of sessionless caller: a
+   * scheduler — pg_net from the database, a Vercel cron, an operator with
+   * curl — hitting the desk-alert sweep. It passes the session gate here
+   * because it has no session to present, and is gated in the route by
+   * `CRON_SECRET` as a bearer token, compared in constant time; without the
+   * secret the route answers 503 and runs nothing. The prefix name says what
+   * it is for: nothing under it is for a browser, and nothing under it may
+   * rely on this file for its authentication.
    */
   if (
     path.startsWith("/p/") ||
     path.startsWith("/api/public/") ||
     path.startsWith("/api/portals/") ||
+    path.startsWith("/api/internal/") ||
     path === "/offline"
   ) {
     const publicResponse = withNonce();

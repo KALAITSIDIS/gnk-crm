@@ -19,10 +19,20 @@
  * the enquiry is already saved by the time this runs, so nothing this module
  * does may ever turn a saved enquiry into a failed one.
  *
+ * SINCE 0101 THIS IS ONE ATTEMPT, NOT THE WHOLE STORY. The desk alert is a
+ * `notification_jobs` row written with the lead; this module makes one
+ * provider call for one claimed job and answers in the outbox's vocabulary —
+ * accepted (the provider took the message; delivery is not confirmed by
+ * anything here), skipped (unarmed), or failed with a CATEGORY that decides
+ * what the worker does next: transient and timeout are retried under the
+ * same idempotency key, permanent and conflict wait for a human. It reports
+ * nothing to Sentry itself: a transient failure that succeeds on the next
+ * attempt is not a page. The worker pages on the terminal outcome.
+ *
  * The key belongs in Vercel's environment, never in this repository, which is
  * public.
  */
-import * as Sentry from "@sentry/nextjs";
+import { retryAfterSeconds } from "@/lib/services/enquiry-alert-jobs";
 
 export interface EnquiryAlert {
   name: string;
@@ -38,8 +48,21 @@ export interface EnquiryAlert {
   meta?: Record<string, string> | null;
 }
 
+export type AlertFailureCategory = "transient" | "permanent" | "timeout" | "conflict";
+
+export type AlertSendResult =
+  /** The provider accepted the message. Its id is kept for the record; delivery is not confirmed. */
+  | { outcome: "accepted"; providerMessageId: string | null }
+  /** Not configured on this deployment. The row waits; nothing was attempted. */
+  | { outcome: "skipped" }
+  /** One attempt failed. `result` is a status or the provider's error NAME — never its body. */
+  | { outcome: "failed"; category: AlertFailureCategory; result: string; retryAfterSeconds: number | null };
+
 const FROM = process.env.ENQUIRY_ALERT_FROM ?? "GNK website <onboarding@resend.dev>";
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://gnk-crm.vercel.app";
+
+/** What the outbox row may hold for a diagnostic word (0101: last_result). */
+const RESULT_MAX = 80;
 
 function subjectFor(a: EnquiryAlert): string {
   const about = a.propertyReference ? ` — ${a.propertyReference}` : "";
@@ -80,9 +103,44 @@ export function bodyFor(a: EnquiryAlert): string {
 }
 
 /**
- * Send, or say why not. NEVER throws and never returns a failure the caller
- * is expected to act on — the enquiry it describes is already committed.
+ * Is the desk alert armed on this deployment? One answer for the sender, the
+ * worker and the route, so "unconfigured" is decided once.
  */
+export function enquiryAlertConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
+  return Boolean(env.RESEND_API_KEY && env.ENQUIRY_ALERT_TO);
+}
+
+/**
+ * What a non-2xx answer from the provider MEANS, by status and by the error
+ * name Resend puts in the body (docs: api-reference/errors, read 2026-09-21):
+ *
+ *   transient — 5xx (application_error, service_unavailable), 429 (any of
+ *               the three quota/rate names), 408, and 409
+ *               concurrent_idempotent_requests (the same key is in flight —
+ *               ours, from a lease that lapsed mid-send). Retried under the
+ *               same key.
+ *   conflict  — 409 invalid_idempotent_request: this key was already used
+ *               with a DIFFERENT payload. The key is burnt, not the enquiry;
+ *               the retry action rotates it.
+ *   permanent — everything else in 4xx: validation, a missing or restricted
+ *               key, an unverified domain, a bad recipient. Nothing a retry
+ *               would change; a human reads the inbox chip and fixes the
+ *               configuration or the address.
+ *
+ * The RESULT is the error name when the body carried one, else the status —
+ * never the message, which can echo the recipient address.
+ */
+export function classifyProviderFailure(
+  status: number,
+  errorName: string | null,
+): { category: AlertFailureCategory; result: string } {
+  const result = (errorName && errorName.trim() ? errorName.trim() : String(status)).slice(0, RESULT_MAX);
+  if (status === 409 && errorName === "invalid_idempotent_request") return { category: "conflict", result };
+  if (status >= 500 || status === 429 || status === 408) return { category: "transient", result };
+  if (status === 409 && errorName === "concurrent_idempotent_requests") return { category: "transient", result };
+  return { category: "permanent", result };
+}
+
 /**
  * Long enough for a slow provider, short enough that a stuck one cannot hold
  * the function open (integrations audit 2026-09-15, INT-01). `after()` runs
@@ -92,10 +150,14 @@ export function bodyFor(a: EnquiryAlert): string {
  */
 export const ALERT_TIMEOUT_MS = 8000;
 
+/**
+ * One attempt. NEVER throws: the enquiry it describes is already committed,
+ * and the word returned is what the outbox records.
+ */
 export async function sendEnquiryAlert(
   a: EnquiryAlert,
-  opts: { timeoutMs?: number } = {},
-): Promise<"sent" | "skipped" | "failed"> {
+  opts: { timeoutMs?: number; idempotencyKey?: string } = {},
+): Promise<AlertSendResult> {
   const key = process.env.RESEND_API_KEY;
   const to = process.env.ENQUIRY_ALERT_TO;
 
@@ -104,13 +166,21 @@ export async function sendEnquiryAlert(
       "[enquiry-alert] SKIPPED — set RESEND_API_KEY and ENQUIRY_ALERT_TO in the Vercel " +
         "environment to arm it. The enquiry itself was saved.",
     );
-    return "skipped";
+    return { outcome: "skipped" };
   }
 
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+        // Resend remembers a key for 24 hours and answers a repeat with the
+        // first message's id instead of sending again (docs:
+        // dashboard/emails/idempotency-keys). That is what makes a retry
+        // after an ambiguous timeout safe.
+        ...(opts.idempotencyKey ? { "Idempotency-Key": opts.idempotencyKey } : {}),
+      },
       body: JSON.stringify({
         from: FROM,
         to: to.split(",").map((s) => s.trim()).filter(Boolean),
@@ -121,41 +191,33 @@ export async function sendEnquiryAlert(
       }),
       signal: AbortSignal.timeout(opts.timeoutMs ?? ALERT_TIMEOUT_MS),
     });
+    const body = await res.json().catch(() => null) as Record<string, unknown> | null;
     if (!res.ok) {
-      const detail = await res.text().catch(() => "");
-      console.error(`[enquiry-alert] provider responded ${res.status}: ${detail.slice(0, 300)}`);
-      reportFailure(a, `provider responded ${res.status}`);
-      return "failed";
+      const name = typeof body?.name === "string" ? body.name : null;
+      const { category, result } = classifyProviderFailure(res.status, name);
+      // The status and the NAME, never the message: a provider's message can
+      // repeat the address it refused.
+      console.error(`[enquiry-alert] provider responded ${res.status} (${result}, ${category})`);
+      return {
+        outcome: "failed",
+        category,
+        result,
+        retryAfterSeconds: retryAfterSeconds(res.headers.get("retry-after"), new Date()),
+      };
     }
-    return "sent";
+    const id = typeof body?.id === "string" ? body.id.slice(0, 120) : null;
+    return { outcome: "accepted", providerMessageId: id };
   } catch (err) {
-    console.error("[enquiry-alert] send threw:", err);
-    reportFailure(a, err instanceof Error ? err.name : "threw");
-    return "failed";
-  }
-}
-
-/**
- * A failed alert is the one failure this module exists to prevent, and until
- * 0098 it was a console line that nobody was watching (audit LR-07; the lead
- * also carries an `enquiry_alert` event since 0096, but a timeline is read
- * when someone opens the lead, and the point of the alert is that nobody has).
- * Sentry is where a human is paged. SHAPE ONLY: the reference and which
- * details existed, never the person, the address or the message.
- */
-function reportFailure(a: EnquiryAlert, reason: string): void {
-  try {
-    Sentry.captureMessage(`[enquiry-alert] send failed: ${reason}`, {
-      level: "error",
-      extra: {
-        reason,
-        propertyReference: a.propertyReference,
-        hasEmail: Boolean(a.email),
-        hasPhone: Boolean(a.phone),
-        sourcePage: a.meta?.source_page ?? null,
-      },
-    });
-  } catch {
-    // Sentry is best-effort; the enquiry is already saved and the console line stands.
+    const name = err instanceof Error ? err.name : "threw";
+    // AbortSignal.timeout rejects with TimeoutError; an abort from elsewhere
+    // with AbortError. Both mean the ANSWER was lost, not the request — the
+    // provider may have accepted the message, which is why the worker
+    // retries under the same key rather than a fresh one.
+    if (name === "TimeoutError" || name === "AbortError") {
+      console.error("[enquiry-alert] send timed out — the provider's answer is unknown");
+      return { outcome: "failed", category: "timeout", result: "timeout", retryAfterSeconds: null };
+    }
+    console.error(`[enquiry-alert] send threw: ${name}`);
+    return { outcome: "failed", category: "transient", result: "network", retryAfterSeconds: null };
   }
 }

@@ -90,15 +90,46 @@ export const DOOR_CONTRACTS: DoorContract[] = [
   },
   {
     id: "meta-door",
-    appRange: "main since 1737b4f — including the commit deployed to production today",
-    commits: "1737b4f..83b531d",
+    appRange: "main from 1737b4f to 46a1b6f — the route deployed to production before the outbox",
+    commits: "1737b4f..46a1b6f",
     migrations: "0098, 0099, 0100",
     supported: true,
     sendsKey: true,
     why:
       "Eight named arguments including p_meta, and the same row predicate. Unchanged on " +
-      "main since 1737b4f (`git log 1737b4f..HEAD -- app/api/public/enquiries/route.ts` is " +
-      "empty), so every production deployment since then sends exactly this.",
+      "main from 1737b4f to 46a1b6f (`git log 1737b4f..46a1b6f -- app/api/public/enquiries/route.ts` " +
+      "is empty), so every production deployment in that range sends exactly this — and sends " +
+      "the desk alert itself from after(), writing an `enquiry_alert: sent` event. Against a " +
+      "database at 0101 the same call also leaves a pending notification_jobs row; the worker " +
+      "that arrives with the next deploy reads that event and closes the row as `legacy_sender` " +
+      "rather than sending twice (lib/services/enquiry-alert-worker.ts, the rollout guard).",
+    args: (p) => ({
+      p_org_slug: "test-org-a",
+      p_name: p.name,
+      p_email: p.email,
+      p_phone: "",
+      p_message: p.message,
+      p_property_ref: "",
+      p_idempotency_key: p.key,
+      p_meta: { source_page: "/contact", budget: "over_1m" },
+    }),
+    accepted: (a) => a.errorCode === null && rows(a).length > 0,
+  },
+  {
+    id: "outbox-door",
+    appRange: "main after 46a1b6f — the route that runs the desk-alert worker from after() (0101)",
+    commits: "feat/enquiry-alert-outbox and every main commit that carries it",
+    migrations: "0101",
+    supported: true,
+    sendsKey: true,
+    why:
+      "The SAME eight named arguments and the same row predicate as meta-door — 0101 changed " +
+      "the function's body (it now writes the lead's notification_jobs row in the lead's " +
+      "transaction) and not its signature, defaults or return shape, so this call is what " +
+      "meta-door sends, and against a database at 0100 it resolves and writes a lead exactly " +
+      "as before; only the worker it then runs finds no row to claim (an rpc error on a table " +
+      "that does not exist, logged, never thrown at the visitor). What it does NOT do any " +
+      "more is send the e-mail itself: after() claims the row and makes the first attempt.",
     args: (p) => ({
       p_org_slug: "test-org-a",
       p_name: p.name,
@@ -143,6 +174,14 @@ export const ORDER_OF_DEPLOYMENT: Array<{ stage: string; pairing: string; covere
     pairing: "an OLDER CRM against the NEW database",
     covered: "whichever contract that commit sends — supported only back to 1737b4f",
   },
+  {
+    stage: "0101 specifically: hosted migration applied, meta-door CRM still deployed",
+    pairing:
+      "the after() sender still e-mails the desk and writes `enquiry_alert: sent`; the door already writes a pending notification_jobs row",
+    covered:
+      "meta-door (the call resolves; the lead is written once) — and the double-send is prevented by the worker's legacy_sender guard, " +
+      "pinned in lib/services/enquiry-alert-worker.test.ts, when the outbox-door CRM deploys and sweeps those rows",
+  },
 ];
 
 /**
@@ -152,6 +191,7 @@ export const ROLLBACK_LIMITS: string[] = [
   "Rolling the CRM application back PAST 1737b4f against a database at 0096 or later re-opens the 2026-09-15 defect exactly: the boolean-door route commits a lead and answers the visitor 400 'Unknown org.'. It is the one application rollback that fails OPEN — a row is written and nobody is told. Roll the application back only to 1737b4f or later.",
   "Rolling the DATABASE back below 0098 while the current application is deployed is not supported either, but it fails CLOSED: PostgREST cannot resolve the eight-argument call, answers PGRST202, and the route returns 503 with nothing written. A visitor is asked to call instead; no lead is orphaned. This file probes that failure mode rather than standing up a second database at an older migration.",
   "A migration that changes this function's RETURN SHAPE is deploy-coupled and must not be applied to hosted ahead of the application. A change that only ADDS a parameter with a default is not (0098 is the worked example), and is the transition to prefer.",
+  "0101 (the desk-alert outbox) changed the function's BODY only, so both directions are safe for the enquiry itself. Rolling the APPLICATION back to a meta-door commit against a database at 0101 re-enables the after() sender: the desk is told as before, and every new lead's notification_jobs row sits pending until the outbox code returns, when the legacy_sender guard closes those rows without a second e-mail. Rolling the DATABASE back below 0101 (drop the table, its trigger and the three functions, restore 0098's body) while the outbox application is deployed loses nothing at the door — the call still resolves and writes the lead — but the worker's claim errors on every enquiry and NO desk alert is sent by anything; pending rows are dropped with the table, so read them first and re-send by hand. Do not roll the database back with rows still pending.",
 ];
 
 export function compatibilityReport(

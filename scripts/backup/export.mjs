@@ -74,6 +74,9 @@ const TABLES = [
   // 0095: the feed_token IS the portal's pull URL, so a restore that loses
   // this table points every enabled portal at a dead link.
   "portal_connections", "portal_listings",
+  // 0101: the desk-alert outbox — ids, states and counters only, no person;
+  // a restore that loses it loses which enquiries still owe the desk a word.
+  "notification_jobs",
   "chain_checks", "events_chain_checkpoint",
   "events",
 ];
