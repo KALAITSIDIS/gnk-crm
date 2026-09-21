@@ -186,7 +186,7 @@ nothing; rows keep waiting and the inbox says "Desk alert queued".
   start`); `supabase/seed.sql` plants local placeholders on `db reset`, and
   the restore pack asserts both Vault rows exist after a restore — a restore
   into a NEW project cannot decrypt the old rows and must recreate them.
-* **What the card judges (0105 — on the branch, not yet on hosted).** pg_cron
+* **What the card judges (0105).** pg_cron
   records every `enquiry-alerts` run `succeeded` the moment `net.http_post`
   queues the request (production: 0.03 s, every time), so `cron_health()` alone
   could not tell a working sweep from one answered 401 every two minutes.
