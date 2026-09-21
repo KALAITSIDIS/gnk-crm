@@ -218,6 +218,10 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   ('note_public_enquiry_hit', true, false, false, true),
   -- the lead SLA sweep (0098): cron runs it as postgres; nobody else may
   ('raise_lead_sla_tasks',    true, false, false, true),
+  -- the two-minute desk-alert sweep (0103): an INVOKER body that reads Vault
+  -- and posts through pg_net; cron runs it as postgres, service_role may
+  -- rehearse it, nobody else may call it
+  ('enquiry_alerts_sweep',    true, false, false, true),
   -- the desk-alert outbox (0101): the worker's two functions are
   -- service_role-only (the sweep route and the enquiry route's after() hold
   -- the service key); the staff retry is authenticated-callable and checks
@@ -318,6 +322,14 @@ misc as (
   union all
   select 'cron: exactly 11 jobs, none extra', '11',
          (select count(*)::text from cron.job)
+  union all
+  -- 0103: the enquiry-alerts job reads these two at run time and FAILS
+  -- without them. Vault rows survive a same-project restore; a restore into
+  -- a NEW project cannot decrypt them (the key is the project's) and they
+  -- must be recreated by hand (docs/10 §2) — this line proves it happened.
+  select 'vault: crm_url + cron_secret present (0103)', 'true',
+         (exists (select 1 from vault.decrypted_secrets where name = 'crm_url')
+          and exists (select 1 from vault.decrypted_secrets where name = 'cron_secret'))::text
   union all
   select 'storage: media bucket is public (migration 0008)', 'true',
          coalesce((select public::text from storage.buckets where id = 'media'), 'BUCKET MISSING')

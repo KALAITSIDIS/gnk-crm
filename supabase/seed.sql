@@ -43,3 +43,21 @@ values (
   'Gerasimos Kalaitsidis',
   'admin@gnk.local'
 ) on conflict (id) do nothing;
+
+-- -----------------------------------------------------------------------------
+-- 0103: the `enquiry-alerts` cron job reads two Vault secrets at RUN time
+-- (docs/10 §2) and FAILS loudly every two minutes when either is absent.
+-- LOCAL PLACEHOLDERS ONLY — hosted holds the real values, and this file never
+-- runs there. The bearer is deliberately not a real CRON_SECRET: the local
+-- sweep answers 401 unless .env.local's CRON_SECRET is set to the same string.
+-- `where not exists` keeps a real value someone already put in Vault.
+-- -----------------------------------------------------------------------------
+select vault.create_secret(
+  'http://host.docker.internal:3000', 'crm_url',
+  'LOCAL seed placeholder (0103): the CRM origin the enquiry-alerts job posts to')
+ where not exists (select 1 from vault.secrets where name = 'crm_url');
+
+select vault.create_secret(
+  'local-seed-placeholder-not-a-secret', 'cron_secret',
+  'LOCAL seed placeholder (0103): set .env.local CRON_SECRET to this string to exercise the sweep locally')
+ where not exists (select 1 from vault.secrets where name = 'cron_secret');

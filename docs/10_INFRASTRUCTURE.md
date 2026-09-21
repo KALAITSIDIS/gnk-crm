@@ -123,7 +123,7 @@ refuses any non-local URL, deliberately.
 50 3 * * *   warn-expiring-reservations   select warn_expiring_reservations()
 55 3 * * *   remind-due-installments      select remind_due_installments()
 */10 * * * * lead-sla                     select raise_lead_sla_tasks()      (0098: chases a website lead unanswered after an hour)
-*/2 * * * *  enquiry-alerts               select net.http_post(...)          (0103: the desk-alert sweep, POSTed through pg_net; URL and bearer from Vault)
+*/2 * * * *  enquiry-alerts               select enquiry_alerts_sweep()      (0103: the desk-alert sweep, POSTed through pg_net; URL and bearer from Vault — raises when either is absent)
 ```
 
 Ordering is deliberate: each sweep runs after the one whose events it needs.
@@ -169,18 +169,23 @@ nothing; rows keep waiting and the inbox says "Desk alert queued".
   decision that day: `pg_net` 0.20.3 was installed on hosted by hand, the
   Vault secrets `crm_url` (`https://gnk-crm.vercel.app`) and `cron_secret`
   (the SAME value as Vercel's `CRON_SECRET`) were created through the
-  dashboard (Integrations → Vault), and the job posts `net.http_post` with
-  the bearer read from Vault at run time — nothing in `cron.job`'s command
-  text holds a value. Rotating `CRON_SECRET` therefore means updating the
-  Vault secret too, or the sweep answers 401 every two minutes (visible in
-  `net._http_response`, and on the admin dashboard's cron-health card, which
-  allows this job one hour without a success before it shows amber). pg_net
-  is asynchronous: the response lands in `net._http_response` (pg_net keeps
-  them for its `ttl`, six hours by default), the run itself in
-  `cron.job_run_details`. A fresh restore or another developer's stack needs
-  the two secrets before `migration up` reaches 0103 — its self-test stops
-  with the remedy in the error text rather than scheduling a job that posts
-  an empty bearer.
+  dashboard (Integrations → Vault), and the job body `enquiry_alerts_sweep()`
+  (SECURITY INVOKER; postgres and service_role only) reads both from Vault at
+  run time and `net.http_post`s — nothing in `cron.job`'s command text holds
+  a value. Rotating `CRON_SECRET` therefore means updating the Vault secret
+  too, or the sweep answers 401 every two minutes (visible in
+  `net._http_response`; pg_net is asynchronous: the response lands there,
+  kept for its `ttl` of six hours, the run itself in `cron.job_run_details`).
+  **A missing secret is loud, a wrong one is not:** the function RAISES
+  naming the absent secret, the run is recorded `failed`, and the admin
+  dashboard's cron-health card shows the job amber within the hour (it
+  allows this job one hour without a success) — whereas a wrong value posts
+  and gets 401, which only `net._http_response` shows. The migration itself
+  needs no secret to apply (CI's fresh stack has no hook before migrations,
+  and the first cut, which refused, killed `rls` and `e2e` at `supabase
+  start`); `supabase/seed.sql` plants local placeholders on `db reset`, and
+  the restore pack asserts both Vault rows exist after a restore — a restore
+  into a NEW project cannot decrypt the old rows and must recreate them.
 * **A person, after an incident:**
   `curl -sS -X POST -H "Authorization: Bearer $CRON_SECRET" https://gnk-crm.vercel.app/api/internal/enquiry-alerts`
   — the answer is the run's counts: **200 `ok: true`** with the counts (an
