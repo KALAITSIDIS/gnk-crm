@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 102::bigint as migrations,
+    2::bigint as auth_users, 103::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -302,9 +302,10 @@ misc as (
   select 'migrations: non_filename_versions', '0',
          (select count(*)::text from supabase_migrations.schema_migrations where version !~ '^[0-9]{4}$')
   union all
-  -- ALL TEN cron jobs (the previous pack checked three, so a restore that
+  -- ALL ELEVEN cron jobs (the previous pack checked three, so a restore that
   -- lost the other five verified green — audit REL-04; the ninth is 0092's
-  -- retention sweep, the tenth 0098's ten-minute lead SLA). pg_cron jobs are in
+  -- retention sweep, the tenth 0098's ten-minute lead SLA, the eleventh 0103's
+  -- two-minute desk-alert sweep through pg_net). pg_cron jobs are in
   -- NO dump; after a restore every one must be recreated from the migrations
   -- (§4b.4), and this is the list that proves it happened.
   select 'cron: ' || j.jobname || ' active', 'true',
@@ -313,9 +314,9 @@ misc as (
                ('verify-events-chain-full'), ('expire-reservations'),
                ('warn-expiring-reservations'), ('remind-due-installments'),
                ('ensure-events-partitions'), ('redact-stale-enquiries'),
-               ('lead-sla')) as j(jobname)
+               ('lead-sla'), ('enquiry-alerts')) as j(jobname)
   union all
-  select 'cron: exactly 10 jobs, none extra', '10',
+  select 'cron: exactly 11 jobs, none extra', '11',
          (select count(*)::text from cron.job)
   union all
   select 'storage: media bucket is public (migration 0008)', 'true',
