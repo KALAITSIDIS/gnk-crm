@@ -3147,6 +3147,7 @@ export type Database = {
       }
       claim_notification_jobs: {
         Args: {
+          p_key_window?: string
           p_lead_id?: string
           p_lease_seconds?: number
           p_limit?: number
@@ -3391,6 +3392,7 @@ export type Database = {
         Args: { p_ip_hash: string; p_limit?: number }
         Returns: boolean
       }
+      notification_key_window: { Args: never; Returns: string }
       nudge_threshold: {
         Args: { p_fallback: number; p_key: string }
         Returns: number
