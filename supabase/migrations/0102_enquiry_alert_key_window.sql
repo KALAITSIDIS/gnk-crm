@@ -71,9 +71,12 @@
 -- ---------------------------------------------------------------------------
 -- 1. The one definition of the window
 -- ---------------------------------------------------------------------------
+-- search_path pinned like every other function here: the advisor's
+-- function_search_path_mutable flagged the first apply without it (0100
+-- closed that class for good, and a constant is no exception).
 create or replace function public.notification_key_window()
 returns interval
-language sql immutable parallel safe as $fn$
+language sql immutable parallel safe set search_path = public as $fn$
   select interval '20 hours'
 $fn$;
 
