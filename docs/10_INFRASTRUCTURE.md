@@ -153,11 +153,15 @@ nothing; rows keep waiting and the inbox says "Desk alert queued".
 
 **Who calls the sweep:**
 
-* **Vercel cron, daily at 06:00 UTC (±59 min), from `vercel.json`.** The most a
-  Hobby plan allows (once per day; a more frequent expression fails the
-  deployment). Vercel sends `Authorization: Bearer $CRON_SECRET` on its own
-  once the variable exists in the project. Worst case, a row the accelerator
-  missed is sent within a day rather than never.
+* **Vercel cron, daily at 06:00 UTC (±59 min), from `vercel.json` — ARMED
+  2026-09-21.** The most a Hobby plan allows (once per day; a more frequent
+  expression fails the deployment). Vercel sends `Authorization: Bearer
+  $CRON_SECRET` on its own; the variable was set in Production (Secret type)
+  and the deployment redeployed that day, and the arming was MEASURED: a
+  wrong or missing bearer answers 401 where it answered 503 unarmed. Worst
+  case, a row the accelerator missed is sent within a day rather than never.
+  Rotate the value on the Environment Variables page and redeploy; the
+  pg_net job below must then get the same value in Vault.
 * **`pg_cron` + `pg_net` every two minutes — the cadence the retry schedule
   was written for, and NOT ARMED.** `pg_net` is available on the hosted
   project and not installed; installing an extension on production is the
