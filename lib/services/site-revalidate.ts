@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { after } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
@@ -105,22 +106,59 @@ export function notifySiteAfter(reference: string | null): void {
  * For writes that do not already hold the row: the media actions know a
  * property id and nothing else. Reads through the caller's own client — a
  * listing the caller may edit is a listing the caller may read.
+ *
+ * A lookup that FAILS is reported, not swallowed. supabase-js RESOLVES a
+ * database error — and, with throwOnError off, a network failure too — as
+ * `{ data: null, error }`; it does not throw. Until 2026-09-21 this read
+ * `data` alone, so a refused or failed lookup was indistinguishable from a
+ * private listing: no knock, no line, and the site kept an old render for up
+ * to an hour with nothing anywhere saying why. Both shapes now reach Sentry
+ * with the operation and the error CODE — never the message, which can carry
+ * a column value or a SQL fragment — and the helper still returns normally:
+ * the write it follows is already committed (rule 1), and the site refreshes
+ * on its timers as it does after any failed knock. No row is not a failure:
+ * the listing is gone, or is not the caller's to read, and either way there
+ * is nothing to tell the site.
  */
 export async function notifySiteIfPublic(
   supabase: SupabaseClient<Database>,
   propertyId: string,
 ): Promise<void> {
+  let listing: { reference: string; visibility: string } | null;
   try {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("properties")
       .select("reference, visibility")
       .eq("id", propertyId)
       .maybeSingle();
-    if (data?.visibility === "public") notifySiteAfter(data.reference);
+    if (error) {
+      reportLookupFailure(propertyId, error.code || "unknown");
+      return;
+    }
+    listing = data;
   } catch (err) {
-    console.error(
-      "[site-revalidate] could not read the listing to notify:",
-      err instanceof Error ? err.message : String(err),
-    );
+    reportLookupFailure(propertyId, err instanceof Error ? err.name : "threw");
+    return;
+  }
+  if (listing?.visibility === "public") notifySiteAfter(listing.reference);
+}
+
+/**
+ * The console line is for the runtime log; Sentry is where a human is paged
+ * (the enquiry-alert shape). SHAPE ONLY: the operation, the code and the
+ * property id — an opaque uuid — never the database's message.
+ */
+function reportLookupFailure(propertyId: string, code: string): void {
+  console.error(
+    `[site-revalidate] could not read listing ${propertyId} to notify the site (${code}) — it will refresh on its timers`,
+  );
+  try {
+    Sentry.captureMessage("[site-revalidate] listing lookup failed", {
+      level: "error",
+      tags: { operation: "properties.lookup", code },
+      extra: { propertyId },
+    });
+  } catch {
+    // Sentry is best-effort; the write is already committed and the console line stands.
   }
 }
