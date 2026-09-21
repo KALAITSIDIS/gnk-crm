@@ -186,6 +186,26 @@ nothing; rows keep waiting and the inbox says "Desk alert queued".
   start`); `supabase/seed.sql` plants local placeholders on `db reset`, and
   the restore pack asserts both Vault rows exist after a restore — a restore
   into a NEW project cannot decrypt the old rows and must recreate them.
+* **What the card judges (0105 — on the branch, not yet on hosted).** pg_cron
+  records every `enquiry-alerts` run `succeeded` the moment `net.http_post`
+  queues the request (production: 0.03 s, every time), so `cron_health()` alone
+  could not tell a working sweep from one answered 401 every two minutes.
+  Since 0105 `enquiry_alerts_sweep()` records each request it queues in
+  `enquiry_alert_sweep_runs` and, at the start of the next run, reconciles the
+  previous answers from `net._http_response` (grace 90 s; `no_response` after
+  10 min; rows kept 30 days) into one outcome per request: `ok` (the worker
+  completed — an EMPTY QUEUE is ok), `unconfigured` (200 with `skipped:
+  unconfigured` — the route runs, no alert can be sent, NOT a success),
+  `worker_failed` (`ok:false`, 503, 500), `unauthorized` (401/403 — the two
+  copies of the secret have drifted), `timeout`, `connect_error`, `malformed`
+  (a 200 that is not the worker's body), `http_error`. `enquiry_alert_sweep_health()`
+  summarises (service_role-only) and `lib/services/enquiry-alert-sweep-health.ts`
+  judges: no completed run for 15 min, three failures in a row, three requests
+  without an answer, ANY desk-alert row still due 10 min past its time (with the
+  oldest's age), or an unconfigured provider — each turns the `enquiry-alerts`
+  line on the admin dashboard amber whatever pg_cron says. Read the record by
+  hand: `select outcome, count(*), max(queued_at) from enquiry_alert_sweep_runs
+  group by 1`.
 * **A person, after an incident:**
   `curl -sS -X POST -H "Authorization: Bearer $CRON_SECRET" https://gnk-crm.vercel.app/api/internal/enquiry-alerts`
   — the answer is the run's counts: **200 `ok: true`** with the counts (an

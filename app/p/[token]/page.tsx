@@ -109,6 +109,6 @@ export default async function ProposalPage({
   return isAvailability(resolved) ? (
     <AvailabilityView availability={resolved} />
   ) : (
-    <ProposalView proposal={resolved} />
+    <ProposalView proposal={resolved} token={token} />
   );
 }

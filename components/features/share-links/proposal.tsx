@@ -4,6 +4,7 @@ import {
   type ProposalProperty,
 } from "@/lib/services/share-links";
 import { publicMediaUrl } from "@/lib/utils/storage";
+import { InterestForm } from "@/components/features/share-links/interest-form";
 
 /**
  * The buyer-facing proposal (IMPROVEMENTS B3). Mobile-first: this is read on a
@@ -74,9 +75,13 @@ function money(amount: number | null, currency: string, locale: string): string 
 function PropertyCard({
   property,
   locale,
+  token,
+  agentName,
 }: {
   property: ProposalProperty;
   locale: keyof typeof COPY;
+  token: string;
+  agentName: string | null;
 }) {
   const t = COPY[locale];
   const cover = property.media[0];
@@ -160,12 +165,17 @@ function PropertyCard({
             )}
           </div>
         ) : null}
+
+        {/* 0106: explicit interest in THIS property, after a click — never from a view. */}
+        <div className="relative mt-2">
+          <InterestForm token={token} reference={property.reference} locale={locale} agentName={agentName} />
+        </div>
       </div>
     </article>
   );
 }
 
-export function Proposal({ proposal }: { proposal: ProposalData }) {
+export function Proposal({ proposal, token }: { proposal: ProposalData; token: string }) {
   const locale = (
     proposal.locale in COPY ? proposal.locale : "en"
   ) as keyof typeof COPY;
@@ -198,7 +208,13 @@ export function Proposal({ proposal }: { proposal: ProposalData }) {
         </p>
       ) : (
         proposal.properties.map((p) => (
-          <PropertyCard key={p.reference} property={p} locale={locale} />
+          <PropertyCard
+            key={p.reference}
+            property={p}
+            locale={locale}
+            token={token}
+            agentName={proposal.agent?.name ?? null}
+          />
         ))
       )}
 
