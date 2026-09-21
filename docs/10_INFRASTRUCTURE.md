@@ -280,11 +280,40 @@ select (select count(*) from rls_aal2_coverage())            as aal2_gaps,      
 | Team | `gn-kalaitsidis` — `team_7UnPtMNxGLzHtM7WVBuajduo` (Hobby plan) |
 | Framework | Next.js |
 | Region | `fra1` — set in `vercel.json`, **not** default |
+| Ignored Build Step | `ignoreCommand` in `vercel.json` — a push whose only changes are under `docs/` or in `*.md` files is **not built** (since 2026-09-21) |
 | Production URL | `https://gnk-crm.vercel.app` |
 | Branch alias | `gnk-crm-git-main-gn-kalaitsidis.vercel.app` |
 
 `fra1` is deliberate: server timing was roughly 3× worse on the default region
 from Cyprus.
+
+**The Ignored Build Step exists because of Functions Storage.** The Hobby
+plan holds 10 GB of function bundles across every deployment Vercel still
+stores — and it keeps a deleted or expired deployment's bundle for its 30-day
+recovery period, so the retention policy set on 2026-09-07 could not show in
+the number before October. On 2026-09-21 the team read 10.87 GB and Vercel's
+changelog (2026-09-16) says a team over the cap "can be blocked from
+deploying". A gnk-crm deployment is ~22 MB of bundle (page functions 14.7 MB
+each, shared files stored once), and a third of the retained deployments that
+day were the preview plus the production build of a `docs/handoff-*` branch —
+the same bundle rebuilt because a markdown file changed. `git diff --quiet
+HEAD^ HEAD -- . ':!docs' ':!*.md'` exits 0 for exactly those pushes and Vercel
+skips the build; anything else (code, migrations, `vercel.json`, no parent
+commit) builds. Consequences to know:
+
+* A docs-only merge to `main` produces a **Canceled** deployment record, not a
+  READY one, and production keeps serving the previous SHA — which is the same
+  code. When the HANDOFF ritual says "confirm the deploy", a docs-only merge is
+  confirmed by the previous production deployment still being current.
+* A branch pushed with several commits at once is judged by its last commit
+  only (Vercel's documented shape). That can skip a *preview*; a production
+  deploy compares the merge commit against the previous `main`, so it is only
+  skipped when the whole PR was docs.
+* `tests/unit/vercel-ignored-build-step.test.ts` runs the real command string
+  against throwaway repositories: a pathspec edit that would skip a code push
+  fails there first.
+* Usage: `vercel.com/gn-kalaitsidis/~/usage` → Deployment Storage → Functions
+  Storage. Per-function sizes for one deployment: its **Resources** view.
 
 ### Environment variables (Vercel → Settings → Environment Variables)
 
