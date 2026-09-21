@@ -1,17 +1,24 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   ALERT_MAX_ATTEMPTS,
+  KEY_SAFE_WINDOW_MS,
+  PER_JOB_OVERHEAD_MS,
   RETRY_BASE_SECONDS,
   RETRY_CAP_SECONDS,
   alertFromLead,
   idempotencyKeyFor,
+  jobsThatFit,
+  keyWindowRemainingMs,
   retryAfterSeconds,
   retryDelaySeconds,
+  retryFitsKeyWindow,
 } from "./enquiry-alert-jobs";
 
 /**
- * The arithmetic and the reconstruction behind the outbox (0101), kept pure
- * so a test reaches them without a database or a provider.
+ * The arithmetic and the reconstruction behind the outbox (0101, reviewed
+ * 0102), kept pure so a test reaches them without a database or a provider.
  */
 describe("the retry schedule", () => {
   it("doubles from a minute and stays inside the provider's 24-hour key memory over the whole budget", () => {
@@ -26,10 +33,13 @@ describe("the retry schedule", () => {
     );
   });
 
-  it("honours a longer Retry-After, but never past the cap", () => {
+  it("honours a longer Retry-After IN FULL — a retry must never come earlier than the provider asked (review A)", () => {
     expect(retryDelaySeconds(1, 900)).toBe(900);
-    expect(retryDelaySeconds(1, 10)).toBe(RETRY_BASE_SECONDS);
-    expect(retryDelaySeconds(1, 99_999)).toBe(RETRY_CAP_SECONDS);
+    expect(retryDelaySeconds(1, 10), "but never shorter than the schedule's own step").toBe(RETRY_BASE_SECONDS);
+    expect(retryDelaySeconds(1, 5400), "the old one-hour cap retried before the provider said to").toBe(5400);
+    expect(retryDelaySeconds(1, 99_999), "whether such a wait is SAFE is the key window's question, not a cap's").toBe(
+      99_999,
+    );
   });
 
   it("treats a nonsense attempt number as the first", () => {
@@ -62,6 +72,56 @@ describe("the provider key", () => {
     expect(idempotencyKeyFor({ id: "8f1c2d3e-0000-4000-8000-000000000001", key_serial: 2 })).toBe(
       "enquiry-desk-alert/8f1c2d3e-0000-4000-8000-000000000001/2",
     );
+  });
+});
+
+/**
+ * THE KEY WINDOW (review A). Resend remembers a key for 24 hours; after that a
+ * retry under the same key is a second e-mail if the first was accepted and
+ * its answer lost. The window is the ONE number both halves agree on: the
+ * migration's `notification_key_window()` closes such rows at the claim, and
+ * this module refuses to send or to schedule past it.
+ */
+describe("the provider's key window", () => {
+  const now = new Date("2026-09-21T10:00:00Z");
+  const ago = (h: number) => new Date(now.getTime() - h * 3_600_000).toISOString();
+
+  it("is shorter than the provider's 24 hours, and is the migration's number to the hour", () => {
+    expect(KEY_SAFE_WINDOW_MS).toBeLessThan(24 * 3_600_000);
+    const sql = readFileSync(
+      join(__dirname, "..", "..", "supabase", "migrations", "0102_enquiry_alert_key_window.sql"),
+      "utf-8",
+    );
+    const m = /create or replace function public\.notification_key_window\(\)[\s\S]*?select interval '(\d+) hours'/.exec(sql);
+    expect(m, "the migration defines notification_key_window() as N hours").not.toBeNull();
+    expect(KEY_SAFE_WINDOW_MS, "TS and SQL must carry the same window").toBe(Number(m![1]) * 3_600_000);
+  });
+
+  it("counts from the FIRST attempt, never from creation: a never-attempted job has no window running", () => {
+    expect(keyWindowRemainingMs({ first_attempted_at: null }, now)).toBeNull();
+    expect(keyWindowRemainingMs({ first_attempted_at: ago(19) }, now)).toBe(3_600_000);
+    expect(keyWindowRemainingMs({ first_attempted_at: ago(25) }, now)).toBeLessThan(0);
+  });
+
+  it("a retry fits when it would land inside the window, and not otherwise", () => {
+    expect(retryFitsKeyWindow({ first_attempted_at: null }, 99_999, now), "nothing was ever presented").toBe(true);
+    expect(retryFitsKeyWindow({ first_attempted_at: ago(19) }, 3_599, now)).toBe(true);
+    expect(retryFitsKeyWindow({ first_attempted_at: ago(19) }, 3_601, now)).toBe(false);
+    expect(retryFitsKeyWindow({ first_attempted_at: ago(25) }, 1, now)).toBe(false);
+  });
+});
+
+/**
+ * THE BUDGET (review B). A sweep is one invocation with a wall-clock limit;
+ * it may claim only what it can finish, provider timeout plus round trips.
+ */
+describe("what fits a run's budget", () => {
+  it("is the budget over one send's worst case plus its round trips, rounded down", () => {
+    expect(jobsThatFit(45_000, 8_000)).toBe(Math.floor(45_000 / (8_000 + PER_JOB_OVERHEAD_MS)));
+    expect(jobsThatFit(45_000, 8_000)).toBe(4);
+    expect(jobsThatFit(9_000, 8_000), "less than one worst case: claim nothing").toBe(0);
+    expect(jobsThatFit(0, 8_000)).toBe(0);
+    expect(jobsThatFit(-5, 8_000)).toBe(0);
   });
 });
 

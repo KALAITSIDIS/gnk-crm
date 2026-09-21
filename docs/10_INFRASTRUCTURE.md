@@ -162,22 +162,39 @@ nothing; rows keep waiting and the inbox says "Desk alert queued".
   was written for, and NOT ARMED.** `pg_net` is available on the hosted
   project and not installed; installing an extension on production is the
   operator's decision (BACKLOG). The job is prepared, verbatim, in
-  `supabase/activation/0102_enquiry_alerts_cron.sql`: once approved it moves
-  into `supabase/migrations/` (as 0102 or whatever number is free), which
+  `supabase/activation/0103_enquiry_alerts_cron.sql`: once approved it moves
+  into `supabase/migrations/` (as 0103 or whatever number is free), which
   makes it the ELEVENTH cron job and moves every pin that counts them
   (`EXPECTED_CRON_JOBS`, RLS test 50, the restore pack's cron list, the table
   above, HANDOFF §0). It reads the secret from Vault, never from SQL text.
 * **A person, after an incident:**
-  `curl -sS -X POST -H "Authorization: Bearer $CRON_SECRET" https://gnk-crm.vercel.app/api/internal/enquiry-alerts?limit=20`
-  — the answer is the run's counts.
+  `curl -sS -X POST -H "Authorization: Bearer $CRON_SECRET" https://gnk-crm.vercel.app/api/internal/enquiry-alerts`
+  — the answer is the run's counts: **200 `ok: true`** with the counts (an
+  empty queue is `claimed: 0`; an unarmed provider says `skipped:
+  "unconfigured"`), **503 `ok: false`** with `error: {stage, code}` when the
+  queue could not be reached — never a 200 that reads as "nothing due"
+  (review C). The same line goes to Sentry with the code only.
 
-Each run claims at most `limit` rows (default 5, ceiling 20), one 8-second
-provider attempt each, under a 90-second lease, inside the route's
-`maxDuration = 60`. Retries back off 1 → 2 → 4 … 64 minutes over eight
-attempts (~2h07m in total, well inside Resend's 24-hour memory of the
-idempotency key, which every automatic retry reuses), then the row is
-`failed` and the inbox offers **Retry alert**. `accepted` means Resend
-accepted the message — nothing here confirms delivery.
+**The budget (review B).** One invocation has `maxDuration = 60`; the run is
+given 45 s of it and claims only what that fits at the provider's 8-second
+worst case plus 2 s of round trips per row — **four rows**, whatever
+`?limit=` asks (a smaller number is honoured). A batch whose sends were slow
+hands the rest back UNATTEMPTED (`released`: the attempt the claim counted is
+given back). The lease is raised to outlive the budget.
+
+**The key window (review A).** Every automatic retry reuses one Resend
+idempotency key, which Resend keeps for 24 hours. The database's
+`notification_key_window()` (0102) is 20 hours and the claim refuses any
+row whose FIRST attempt is older — closing it as `failed` /
+`key_window_expired` for a decision; a row never attempted is eligible
+however old. The worker checks the same window before it sends and refuses
+to schedule a retry — the schedule's step or the provider's Retry-After,
+which is honoured in full — that would land past it (`retry_beyond_window`).
+The inbox reads both as "needs a decision" and offers **Retry alert**: the
+one place a key rotates, on a person's say-so, with a fresh lifetime.
+Retries back off 1 → 2 → 4 … 64 minutes over eight attempts (~2h07m when
+the sweep runs on time); `accepted` means Resend accepted the message —
+nothing here confirms delivery.
 
 ### Account lockout runbook (SEC-03)
 

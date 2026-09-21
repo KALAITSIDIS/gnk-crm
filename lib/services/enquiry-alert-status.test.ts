@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 import { deskAlertStatus, type DeskAlertJob } from "./enquiry-alert-status";
 
 /**
- * What the inbox says about a website lead's desk alert (0101), from the
- * `notification_jobs` row. Pure, so the wording — the one place a person
- * learns that nobody was told — is pinned without rendering anything.
+ * What the inbox says about a website lead's desk alert (0101, reviewed
+ * 0102), from the `notification_jobs` row. Pure, so the wording — the one
+ * place a person learns that nobody was told, or that a decision is theirs —
+ * is pinned without rendering anything.
  */
 const now = new Date("2026-09-21T10:00:00Z");
 
@@ -54,6 +55,12 @@ describe("deskAlertStatus", () => {
     });
   });
 
+  it("accepted because the old route had already told the desk (the rollout closure)", () => {
+    expect(
+      deskAlertStatus(job({ state: "accepted", attempts: 0, last_result: "legacy_sender", accepted_at: "2026-09-21T09:59:00Z" }), now),
+    ).toEqual({ tone: "success", label: "Desk alerted (before the outbox)", canRetry: false });
+  });
+
   it("failed for good, with the last word and the retry offered", () => {
     expect(
       deskAlertStatus(job({ state: "failed", attempts: 8, last_category: "transient", last_result: "503" }), now),
@@ -61,6 +68,26 @@ describe("deskAlertStatus", () => {
     expect(
       deskAlertStatus(job({ state: "failed", attempts: 1, last_category: "permanent", last_result: "validation_error" }), now),
     ).toEqual({ tone: "danger", label: "Desk alert FAILED (validation_error)", canRetry: true });
+  });
+
+  it("needs a decision when the provider may have sent it and the key has expired (review A)", () => {
+    expect(
+      deskAlertStatus(job({ state: "failed", attempts: 3, last_category: "timeout", last_result: "key_window_expired" }), now),
+    ).toEqual({
+      tone: "danger",
+      label: "Desk alert needs a decision — an earlier attempt may have reached the desk; Retry sends it again",
+      canRetry: true,
+    });
+  });
+
+  it("needs a decision when the provider asked for a wait the key cannot survive (review A)", () => {
+    expect(
+      deskAlertStatus(job({ state: "failed", attempts: 2, last_category: "transient", last_result: "retry_beyond_window" }), now),
+    ).toEqual({
+      tone: "danger",
+      label: "Desk alert needs a decision — the provider asked to wait longer than the key stays safe; Retry sends it again",
+      canRetry: true,
+    });
   });
 
   it("cancelled because the enquiry was redacted — nothing to retry", () => {

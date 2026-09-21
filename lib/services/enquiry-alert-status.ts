@@ -36,9 +36,32 @@ export function deskAlertStatus(job: DeskAlertJob | null | undefined, now: Date)
 
   switch (job.state) {
     case "accepted":
-      return { tone: "success", label: "Desk alerted", canRetry: false };
+      return {
+        tone: "success",
+        // the rollout closure (0102): the pre-outbox route had already told the desk
+        label: job.last_result === "legacy_sender" ? "Desk alerted (before the outbox)" : "Desk alerted",
+        canRetry: false,
+      };
 
     case "failed":
+      // The two review states (0102): nothing is wrong with the enquiry or
+      // the address — the provider's key can no longer be trusted, so the
+      // worker stopped and a person decides. Retry sends again under a fresh key.
+      if (job.last_result === "key_window_expired") {
+        return {
+          tone: "danger",
+          label: "Desk alert needs a decision — an earlier attempt may have reached the desk; Retry sends it again",
+          canRetry: true,
+        };
+      }
+      if (job.last_result === "retry_beyond_window") {
+        return {
+          tone: "danger",
+          label:
+            "Desk alert needs a decision — the provider asked to wait longer than the key stays safe; Retry sends it again",
+          canRetry: true,
+        };
+      }
       return {
         tone: "danger",
         label:

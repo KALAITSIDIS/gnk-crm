@@ -111,10 +111,22 @@ a backfill would be a separate, reviewed selection.
 ## Limitations, stated
 
 * Acceptance ≠ delivery. Bounces are not read back.
-* An ambiguous timeout is retried under the same key; that is safe for 24 h
-  and every automatic retry stays inside that window. A manual retry after
-  24 h mints a new key and could, in the rare case the lost answer was a
-  success, send a second e-mail — a person chose that.
+* An ambiguous timeout is retried under the same key, which the provider
+  keeps for 24 h. **Reviewed 2026-09-21 (migration 0102):** the schedule
+  fitting inside 24 h proved nothing about when a sweep actually runs, so the
+  window is now ENFORCED — `notification_key_window()` = 20 h; the claim
+  closes a row first attempted outside it for a decision
+  (`key_window_expired`), the worker refuses to schedule a retry the window
+  cannot hold (`retry_beyond_window`), and Retry-After is honoured in full.
+  A manual retry after the window mints a new key with a fresh lifetime and
+  could, in the rare case the lost answer was a success, send a second
+  e-mail — a person chose that, and the inbox says so before they click.
+* A sweep claims only what its 45-second budget fits (four rows at the
+  provider's 8-second worst case) and hands back unattempted what a slow
+  batch cannot reach (`released`, attempt returned). A failed claim is a
+  503 from the sweep, never a 200.
+* The rollout guard lives in the claim's transaction (0102); the worker no
+  longer reads the events table.
 * Until `CRON_SECRET` is set the sweep is inert and the system behaves as
   before 0101 for anything the accelerator misses — except that it is now
   visible ("Desk alert queued") instead of silent.

@@ -1,6 +1,7 @@
 -- =============================================================================
--- 0102 (PREPARED, NOT APPLIED) — the desk-alert sweep every two minutes,
+-- 0103 (PREPARED, NOT APPLIED) — the desk-alert sweep every two minutes,
 --        from the database, through pg_net
+--        (was numbered 0102 until the review migration 0102 took that slot)
 --
 -- THIS FILE IS NOT UNDER supabase/migrations/ ON PURPOSE. It installs an
 -- extension on the hosted project (`pg_net` — available there, not
@@ -29,11 +30,12 @@
 -- WHAT IT DOES. Every two minutes, POST the sweep route with the bearer
 -- secret. pg_net is asynchronous: the call returns a request id and the
 -- response lands in net._http_response, so a failing route does not block
--- the scheduler. The worker claims at most `limit` rows per call (the query
--- string below asks for 10 — twice the route's default, half its ceiling).
--- Between the route's after() accelerator and this, a retry lands within two
--- minutes of its scheduled time and the whole eight-attempt budget completes
--- inside ~2h07m — inside the provider's 24-hour memory of the key.
+-- the scheduler. The worker claims at most what the route's 45-second budget
+-- fits — four rows at the provider's 8-second worst case (review B) — and
+-- hands back unattempted whatever a slow batch cannot reach. Between the
+-- route's after() accelerator and this, a retry lands within two minutes of
+-- its scheduled time and the whole eight-attempt budget completes inside
+-- ~2h07m — well inside the 20-hour key window the claim enforces (0102).
 --
 -- `cron_health()` will watch it like the other ten: the sub-daily branch in
 -- lib/services/cron-health.ts allows 6 intervals (12 minutes, floor 1 hour)
@@ -51,7 +53,9 @@ select cron.schedule(
   $$
   select net.http_post(
     url     := (select decrypted_secret from vault.decrypted_secrets where name = 'crm_url')
-               || '/api/internal/enquiry-alerts?limit=10',
+               -- no ?limit=: the route's own ceiling is what its budget fits (review B —
+               -- ten never fitted sixty seconds at eight seconds a send)
+               || '/api/internal/enquiry-alerts',
     headers := jsonb_build_object(
                  'Authorization',
                  'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'cron_secret'),
