@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 103::bigint as migrations,
+    2::bigint as auth_users, 106::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -222,6 +222,15 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   -- and posts through pg_net; cron runs it as postgres, service_role may
   -- rehearse it, nobody else may call it
   ('enquiry_alerts_sweep',    true, false, false, true),
+  -- the sweep's outcome record (0105): the reconciler reads pg_net as postgres,
+  -- the health read feeds the dashboard, the classifier is pure; all
+  -- service_role-only like cron_health
+  ('reconcile_enquiry_alert_sweeps',         true,  false, false, true),
+  ('enquiry_alert_sweep_health',             true,  false, false, true),
+  ('classify_enquiry_alert_sweep_response',  false, false, false, true),
+  -- a buyer's interest in one proposal property (0106): the second public
+  -- door, service_role-only like the first since 0087
+  ('submit_proposal_interest',               true,  false, false, true),
   -- the desk-alert outbox (0101): the worker's two functions are
   -- service_role-only (the sweep route and the enquiry route's after() hold
   -- the service key); the staff retry is authenticated-callable and checks

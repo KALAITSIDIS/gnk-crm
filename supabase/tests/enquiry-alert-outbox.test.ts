@@ -406,7 +406,7 @@ describe("the staff retry", () => {
         attempts: 8,
         last_category: "transient",
         last_result: "503",
-        first_attempted_at: new Date().toISOString(),
+        key_attempts: 1, first_attempted_at: new Date().toISOString(),
         finished_at: new Date().toISOString(),
       })
       .eq("lead_id", leadId);
@@ -465,7 +465,7 @@ describe("the staff retry", () => {
     await fail(row.lead_id);
     await svc
       .from("notification_jobs")
-      .update({ first_attempted_at: new Date(Date.now() - 25 * 3_600_000).toISOString() })
+      .update({ key_attempts: 1, first_attempted_at: new Date(Date.now() - 25 * 3_600_000).toISOString() })
       .eq("lead_id", row.lead_id);
     const old = await adminA.client.rpc("request_enquiry_alert_retry", { p_lead_id: row.lead_id });
     expect(old.error).toBeNull();

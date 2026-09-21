@@ -652,6 +652,63 @@ export type Database = {
           },
         ]
       }
+      enquiry_alert_sweep_runs: {
+        Row: {
+          accepted: number | null
+          cancelled: number | null
+          claimed: number | null
+          error_code: string | null
+          error_stage: string | null
+          failed: number | null
+          http_status: number | null
+          id: number
+          lost: number | null
+          note: string | null
+          outcome: string
+          queued_at: string
+          released: number | null
+          request_id: number
+          resolved_at: string | null
+          retried: number | null
+        }
+        Insert: {
+          accepted?: number | null
+          cancelled?: number | null
+          claimed?: number | null
+          error_code?: string | null
+          error_stage?: string | null
+          failed?: number | null
+          http_status?: number | null
+          id?: number
+          lost?: number | null
+          note?: string | null
+          outcome?: string
+          queued_at?: string
+          released?: number | null
+          request_id: number
+          resolved_at?: string | null
+          retried?: number | null
+        }
+        Update: {
+          accepted?: number | null
+          cancelled?: number | null
+          claimed?: number | null
+          error_code?: string | null
+          error_stage?: string | null
+          failed?: number | null
+          http_status?: number | null
+          id?: number
+          lost?: number | null
+          note?: string | null
+          outcome?: string
+          queued_at?: string
+          released?: number | null
+          request_id?: number
+          resolved_at?: string | null
+          retried?: number | null
+        }
+        Relationships: []
+      }
       events: {
         Row: {
           actor_id: string | null
@@ -1065,6 +1122,7 @@ export type Database = {
           finished_at: string | null
           first_attempted_at: string | null
           id: string
+          key_attempts: number
           key_serial: number
           kind: string
           last_attempted_at: string | null
@@ -1088,6 +1146,7 @@ export type Database = {
           finished_at?: string | null
           first_attempted_at?: string | null
           id?: string
+          key_attempts?: number
           key_serial?: number
           kind: string
           last_attempted_at?: string | null
@@ -1111,6 +1170,7 @@ export type Database = {
           finished_at?: string | null
           first_attempted_at?: string | null
           id?: string
+          key_attempts?: number
           key_serial?: number
           kind?: string
           last_attempted_at?: string | null
@@ -3162,6 +3222,7 @@ export type Database = {
           finished_at: string | null
           first_attempted_at: string | null
           id: string
+          key_attempts: number
           key_serial: number
           kind: string
           last_attempted_at: string | null
@@ -3182,6 +3243,26 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      classify_enquiry_alert_sweep_response: {
+        Args: {
+          p_content: string
+          p_error: string
+          p_status: number
+          p_timed_out: boolean
+        }
+        Returns: {
+          accepted: number
+          cancelled: number
+          claimed: number
+          error_code: string
+          error_stage: string
+          failed: number
+          lost: number
+          outcome: string
+          released: number
+          retried: number
+        }[]
       }
       complete_notification_job: {
         Args: {
@@ -3244,6 +3325,21 @@ export type Database = {
         | { Args: { schema_name: string; table_name: string }; Returns: string }
         | { Args: { table_name: string }; Returns: string }
       enablelongtransactions: { Args: never; Returns: string }
+      enquiry_alert_sweep_health: {
+        Args: { p_overdue_minutes?: number }
+        Returns: {
+          consecutive_failures: number
+          last_ok_at: string
+          last_outcome: string
+          last_queued_at: string
+          last_resolved_at: string
+          oldest_overdue_minutes: number
+          overdue_jobs: number
+          pending_jobs: number
+          queued_unresolved: number
+          runs_last_hour: number
+        }[]
+      }
       enquiry_alerts_sweep: {
         Args: { p_bearer_secret?: string; p_url_secret?: string }
         Returns: number
@@ -3530,6 +3626,15 @@ export type Database = {
         Args: { p_minutes?: number; p_org?: string }
         Returns: number
       }
+      reconcile_enquiry_alert_sweeps: {
+        Args: {
+          p_grace?: string
+          p_missing_after?: string
+          p_now?: string
+          p_retention?: string
+        }
+        Returns: number
+      }
       record_key_movement: {
         Args: {
           p_action: Database["public"]["Enums"]["key_action"]
@@ -3578,6 +3683,7 @@ export type Database = {
           finished_at: string | null
           first_attempted_at: string | null
           id: string
+          key_attempts: number
           key_serial: number
           kind: string
           last_attempted_at: string | null
@@ -4207,6 +4313,22 @@ export type Database = {
       st_wrapx: {
         Args: { geom: unknown; move: number; wrap: number }
         Returns: unknown
+      }
+      submit_proposal_interest: {
+        Args: {
+          p_email: string
+          p_idempotency_key?: string
+          p_message: string
+          p_name: string
+          p_phone: string
+          p_property_ref: string
+          p_token_sha256: string
+        }
+        Returns: {
+          lead_id: string
+          lead_org_id: string
+          replayed: boolean
+        }[]
       }
       submit_public_enquiry: {
         Args: {

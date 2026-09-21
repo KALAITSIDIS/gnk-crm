@@ -123,7 +123,7 @@ afterAll(async () => {
 describe("the provider's key window (finding A)", () => {
   it("a job first attempted 25 hours ago is NOT claimed: it is closed for review, with an event", async () => {
     const row = await submit("stale");
-    await setJob(row.lead_id, { attempts: 1, first_attempted_at: hours(25), last_attempted_at: hours(25) });
+    await setJob(row.lead_id, { attempts: 1, key_attempts: 1, first_attempted_at: hours(25), last_attempted_at: hours(25) });
     const claimed = await claim(`w-${run}`, row.lead_id);
     expect(claimed, "the provider no longer remembers this key — no automatic resend").toHaveLength(0);
     const job = await jobFor(row.lead_id);
@@ -144,7 +144,7 @@ describe("the provider's key window (finding A)", () => {
       claimed_by: "dead-worker",
       claimed_until: hours(23),
       attempts: 2,
-      first_attempted_at: hours(25),
+      key_attempts: 1, first_attempted_at: hours(25),
     });
     const claimed = await claim(`w-${run}`, row.lead_id);
     expect(claimed).toHaveLength(0);
@@ -153,7 +153,7 @@ describe("the provider's key window (finding A)", () => {
 
   it("a job inside the window is still claimed under the same key", async () => {
     const row = await submit("fresh-retry");
-    await setJob(row.lead_id, { attempts: 3, first_attempted_at: hours(19), key_serial: 1 });
+    await setJob(row.lead_id, { attempts: 3, key_attempts: 3, first_attempted_at: hours(19), key_serial: 1 });
     const claimed = await claim(`w-${run}`, row.lead_id);
     expect(claimed).toHaveLength(1);
     expect(claimed[0]!.key_serial, "the same key: a lost answer is answered with the first message").toBe(1);
@@ -245,7 +245,7 @@ describe("releasing an unattempted claim (finding B)", () => {
   it("released after an earlier real attempt keeps that attempt's clock", async () => {
     const row = await submit("release-second");
     const first = hours(1);
-    await setJob(row.lead_id, { attempts: 1, first_attempted_at: first, last_attempted_at: first });
+    await setJob(row.lead_id, { attempts: 1, key_attempts: 1, first_attempted_at: first, last_attempted_at: first });
     const [job] = await claim(`w-${run}`, row.lead_id);
     expect(job!.attempts).toBe(2);
     await complete(job!.id, `w-${run}`, "released");
@@ -277,7 +277,7 @@ describe("the lifetime of a rotated key (explicit resend)", () => {
 
   it("a resend after the window rotates the key AND starts a fresh, unattempted lifetime", async () => {
     const row = await submit("rotate");
-    await fail(row.lead_id, { first_attempted_at: hours(25) });
+    await fail(row.lead_id, { key_attempts: 1, first_attempted_at: hours(25) });
     const res = await adminA.client.rpc("request_enquiry_alert_retry", { p_lead_id: row.lead_id });
     expect(res.error).toBeNull();
     const job = await jobFor(row.lead_id);
@@ -293,7 +293,7 @@ describe("the lifetime of a rotated key (explicit resend)", () => {
   it("a resend inside the window keeps the key and its clock", async () => {
     const row = await submit("keep");
     const first = hours(2);
-    await fail(row.lead_id, { last_category: "permanent", last_result: "validation_error", first_attempted_at: first });
+    await fail(row.lead_id, { last_category: "permanent", last_result: "validation_error", key_attempts: 1, first_attempted_at: first });
     const res = await adminA.client.rpc("request_enquiry_alert_retry", { p_lead_id: row.lead_id });
     expect(res.error).toBeNull();
     const job = await jobFor(row.lead_id);
@@ -304,7 +304,7 @@ describe("the lifetime of a rotated key (explicit resend)", () => {
 
   it("a payload conflict rotates the key on the human's say-so, never on the worker's", async () => {
     const row = await submit("conflict");
-    await fail(row.lead_id, { last_category: "conflict", last_result: "invalid_idempotent_request", first_attempted_at: hours(1) });
+    await fail(row.lead_id, { last_category: "conflict", last_result: "invalid_idempotent_request", key_attempts: 1, first_attempted_at: hours(1) });
     const res = await adminA.client.rpc("request_enquiry_alert_retry", { p_lead_id: row.lead_id });
     expect(res.error).toBeNull();
     const job = await jobFor(row.lead_id);

@@ -77,6 +77,7 @@ const TABLES = [
   // 0101: the desk-alert outbox — ids, states and counters only, no person;
   // a restore that loses it loses which enquiries still owe the desk a word.
   "notification_jobs",
+  "enquiry_alert_sweep_runs",
   "chain_checks", "events_chain_checkpoint",
   "events",
 ];

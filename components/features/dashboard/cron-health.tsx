@@ -1,5 +1,6 @@
 import { AlarmClockCheck, AlarmClockMinus } from "lucide-react";
 import { judgeAll, type CronJobFacts, EXPECTED_CRON_JOBS } from "@/lib/services/cron-health";
+import { applySweepVerdict, judgeSweep, type SweepHealthFacts } from "@/lib/services/enquiry-alert-sweep-health";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { cn } from "@/lib/utils";
 
@@ -39,7 +40,16 @@ export async function CronHealth() {
     );
   }
 
-  const verdicts = judgeAll(data as CronJobFacts[], new Date());
+  // 0105: the enquiry-alerts job "succeeds" whenever pg_net QUEUES its
+  // request, whatever the sweep route then answers. Its real outcomes are
+  // reconciled into enquiry_alert_sweep_runs; the worker's verdict is folded
+  // into that one line, so this card cannot stay green while every request
+  // is being queued and every one of them fails. An unreadable summary is
+  // itself the unhealthy state, never a silent pass.
+  const sweep = await admin.rpc("enquiry_alert_sweep_health");
+  const facts = sweep.error ? null : (((sweep.data ?? []) as SweepHealthFacts[])[0] ?? null);
+  const now = new Date();
+  const verdicts = applySweepVerdict(judgeAll(data as CronJobFacts[], now), judgeSweep(facts, now));
   const failing = verdicts.filter((v) => !v.healthy);
   // The count is the pin in lib/services/cron-health.ts, which a test holds to
   // the migrations' `cron.schedule` names; a literal here went stale twice
