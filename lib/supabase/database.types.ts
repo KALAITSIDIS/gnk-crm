@@ -3458,6 +3458,21 @@ export type Database = {
       }
       geomfromewkt: { Args: { "": string }; Returns: unknown }
       gettransactionid: { Args: never; Returns: unknown }
+      lead_escalation_candidates: {
+        Args: { p_cfg?: Json; p_now?: string; p_org?: string }
+        Returns: {
+          assigned_agent_id: string
+          due_at: string
+          job_id: string
+          job_state: string
+          lead_id: string
+          org_id: string
+          property_id: string
+          received_at: string
+          status: string
+          verdict: string
+        }[]
+      }
       lead_escalation_config: { Args: { p_raw?: Json }; Returns: Json }
       lead_escalation_due_at: {
         Args: { p_cfg?: Json; p_received: string }
@@ -3568,6 +3583,10 @@ export type Database = {
       }
       postgis_version: { Args: never; Returns: string }
       postgis_wagyu_version: { Args: never; Returns: string }
+      preview_lead_escalation: {
+        Args: { p_limit?: number; p_now?: string; p_policy: Json }
+        Returns: Json
+      }
       public_listings: {
         Args: {
           p_limit?: number
