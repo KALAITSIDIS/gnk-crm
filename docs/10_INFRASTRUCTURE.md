@@ -110,7 +110,7 @@ npm run db:types        # regenerate lib/supabase/database.types.ts
 Run `npm run dev:2fa` to enrol one and print the TOTP secret. That script
 refuses any non-local URL, deliberately.
 
-### pg_cron — 11 scheduled jobs (all live)
+### pg_cron — 12 scheduled jobs (all live)
 
 ```
 0  3 * * *   expire-mandates              select expire_mandates()
@@ -124,6 +124,7 @@ refuses any non-local URL, deliberately.
 55 3 * * *   remind-due-installments      select remind_due_installments()
 */10 * * * * lead-sla                     select raise_lead_sla_tasks()      (0098: chases a website lead unanswered after an hour)
 */2 * * * *  enquiry-alerts               select enquiry_alerts_sweep()      (0103: the desk-alert sweep, POSTed through pg_net; URL and bearer from Vault — raises when either is absent)
+*/5 * * * *  lead-escalation              select raise_lead_escalations()    (0107: mints a lead_escalation job for a website lead still unanswered past the policy's working-time wait; the alert sweep sends it. OFF until Settings → Lead escalation enables it)
 ```
 
 Ordering is deliberate: each sweep runs after the one whose events it needs.
@@ -348,7 +349,7 @@ TZ
 SENTRY_DSN                       (server — was missing once; everything reported nowhere)
 NEXT_PUBLIC_SENTRY_DSN
 SENTRY_AUTH_TOKEN                (optional, source maps)
-RESEND_API_KEY                   (optional)
+RESEND_API_KEY                   (optional; arms the desk alert AND the lead escalation, 0107 — the escalation's recipients are profiles chosen on Settings → Lead escalation, never an env var)
 ENQUIRY_ALERT_TO                 (with it; the desk address — comma-separated for more than one)
 ENQUIRY_ALERT_FROM               (optional; the alert's From. Set to a verified sending address to also arm the visitor acknowledgement, 0098 — never resend.dev for that)
 ENQUIRY_FORWARD_KEY              (secret; = gnk-web's CRM_FORWARD_KEY — the site proves it is the forwarder, 2026-09-06)

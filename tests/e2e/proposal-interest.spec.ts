@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { test, expect, type Page } from "@playwright/test";
 import { type SupabaseClient } from "@supabase/supabase-js";
+import { INTEREST_COPY, type InterestLocale } from "@/lib/services/proposal-interest-copy";
 import { isLocal, serviceClient } from "./helpers";
 
 /**
@@ -12,10 +13,17 @@ import { isLocal, serviceClient } from "./helpers";
  * attributed. The recoverable and terminal states: a submission without a
  * way to reply is refused on the page; a link revoked after the page was
  * opened answers "no longer available" on submit.
+ *
+ * AND THE PAGE'S LANGUAGE UNDER REFUSAL (audit 2026-09-22, finding 2): a
+ * Greek or Russian proposal that refuses a blank name or a mistyped
+ * address must say so in Greek or Russian, under the field, with the field
+ * marked invalid and described by the message — the server's 400 used to
+ * reach the page as an English sentence. And a correction after a refusal
+ * must be ONE lead: the form keeps what was typed and its idempotency key.
  */
 const sha = (t: string) => createHash("sha256").update(t).digest("hex");
 
-async function seedProposal(admin: SupabaseClient, locale: "en" | "el") {
+async function seedProposal(admin: SupabaseClient, locale: InterestLocale) {
   const { data: profile } = await admin.from("profiles").select("id, org_id").eq("email", "admin@gnk.local").single();
   const reference = `E2E-INT-${randomBytes(3).toString("hex").toUpperCase()}`;
   const { data: property } = await admin
@@ -72,6 +80,17 @@ async function openAndExpress(page: Page, token: string, cta: string) {
   const button = page.getByRole("button", { name: cta });
   await expect(button).toBeVisible();
   await button.click();
+}
+
+/** The one visible problem message, and the control it is attached to. */
+async function expectProblemOn(page: Page, control: ReturnType<Page["getByLabel"]>, text: string) {
+  // p[role=alert]: Next's route announcer is a role=alert div too
+  const alert = page.locator('p[role="alert"]');
+  await expect(alert).toHaveCount(1);
+  await expect(alert).toHaveText(text);
+  await expect(control).toHaveAttribute("aria-invalid", "true");
+  const describedBy = await control.getAttribute("aria-describedby");
+  expect(describedBy, "the message must be the control's description").toBe(await alert.getAttribute("id"));
 }
 
 test.describe("Proposal interest", () => {
@@ -149,4 +168,64 @@ test.describe("Proposal interest", () => {
       await cleanup(admin, s);
     }
   });
+
+  /**
+   * The same refusals in each language the proposal is made in. The blank
+   * name is refused by the page itself; the mistyped address is refused by
+   * the SERVER (the form posts with noValidate, so the browser does not
+   * catch it) — that 400 is the one that used to arrive in English. Then
+   * the correction: the third submission is accepted, the lead is ONE, and
+   * every post carried the same idempotency key.
+   */
+  for (const locale of ["en", "el", "ru"] as const) {
+    test(`a ${locale} proposal refuses a blank name and a mistyped address in ${locale}, and a correction is one lead`, async ({ page }) => {
+      const admin = serviceClient();
+      const t = INTEREST_COPY[locale];
+      const s = await seedProposal(admin, locale);
+      const keys: string[] = [];
+      page.on("request", (req) => {
+        if (req.method() === "POST" && req.url().includes("/api/public/proposals/interest")) {
+          const body = req.postDataJSON() as { idempotency_key?: string };
+          if (body?.idempotency_key) keys.push(body.idempotency_key);
+        }
+      });
+      try {
+        await openAndExpress(page, s.token, t.cta);
+        const name = page.getByLabel(t.name);
+        const email = page.getByLabel(t.email, { exact: true });
+        const phone = page.getByLabel(t.phone, { exact: true });
+
+        // 1. a blank name, an otherwise valid form: refused on the page, in the page's language
+        await email.fill(`buyer-${s.reference}@example.invalid`);
+        await page.getByRole("button", { name: t.send }).click();
+        await expectProblemOn(page, name, t.problems.name_required);
+        expect(keys, "nothing was posted for a blank name").toHaveLength(0);
+
+        // 2. a name and a mistyped address: the SERVER refuses (400 email_invalid) and the page translates
+        await name.fill(`Buyer ${locale}`);
+        await email.fill("not-an-email");
+        await page.getByRole("button", { name: t.send }).click();
+        await expectProblemOn(page, email, t.problems.email_invalid);
+        expect(keys, "one post was made and refused").toHaveLength(1);
+        await expect(name, "what was typed survives the refusal").toHaveValue(`Buyer ${locale}`);
+        await expect(phone).not.toHaveAttribute("aria-invalid", "true");
+        // the English sentence the route also carries never reaches the page
+        await expect(page.getByText("That email address is not valid.")).toHaveCount(0);
+
+        // 3. the correction is accepted, as ONE lead, under the SAME key
+        await email.fill(`buyer-${s.reference}@example.invalid`);
+        await page.getByRole("button", { name: t.send }).click();
+        await expect(page.getByRole("status")).toContainText(t.done);
+        await expect(page.locator('p[role="alert"]')).toHaveCount(0);
+        expect(keys).toHaveLength(2);
+        expect(new Set(keys).size, "the same idempotency key on every post").toBe(1);
+
+        const { data: leads } = await admin.from("leads").select("id, message").eq("property_id", s.propertyId);
+        expect(leads, "exactly one lead").toHaveLength(1);
+        expect(String(leads![0]!.message)).toContain(`Buyer ${locale}`);
+      } finally {
+        await cleanup(admin, s);
+      }
+    });
+  }
 });

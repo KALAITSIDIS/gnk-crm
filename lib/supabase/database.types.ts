@@ -3457,6 +3457,11 @@ export type Database = {
       }
       geomfromewkt: { Args: { "": string }; Returns: unknown }
       gettransactionid: { Args: never; Returns: unknown }
+      lead_escalation_config: { Args: { p_raw?: Json }; Returns: Json }
+      lead_escalation_due_at: {
+        Args: { p_cfg?: Json; p_received: string }
+        Returns: string
+      }
       log_conversation: {
         Args: {
           p_channel: Database["public"]["Enums"]["comm_channel"]
@@ -3622,6 +3627,7 @@ export type Database = {
         Args: { p_actor?: string; p_mandate?: string }
         Returns: number
       }
+      raise_lead_escalations: { Args: { p_org?: string }; Returns: number }
       raise_lead_sla_tasks: {
         Args: { p_minutes?: number; p_org?: string }
         Returns: number

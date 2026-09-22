@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 106::bigint as migrations,
+    2::bigint as auth_users, 108::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -238,6 +238,12 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   ('claim_notification_jobs',     true, false, false, true),
   ('complete_notification_job',   true, false, false, true),
   ('request_enquiry_alert_retry', true, false, true,  true),
+  -- the lead escalation (0107): the policy reader, the working-time clock and
+  -- the five-minute minting sweep — cron runs the sweep as postgres,
+  -- service_role may rehearse all three, nobody else may call them
+  ('lead_escalation_config',      true, false, false, true),
+  ('lead_escalation_due_at',      true, false, false, true),
+  ('raise_lead_escalations',      true, false, false, true),
   -- the portal feed (0095): a portal PULLS over a tokenised URL, so these
   -- three are anon-callable and the 64-hex token in the URL is the whole
   -- gate — since 0097 the row holds only its sha256, and the functions take
@@ -315,10 +321,11 @@ misc as (
   select 'migrations: non_filename_versions', '0',
          (select count(*)::text from supabase_migrations.schema_migrations where version !~ '^[0-9]{4}$')
   union all
-  -- ALL ELEVEN cron jobs (the previous pack checked three, so a restore that
+  -- ALL TWELVE cron jobs (the previous pack checked three, so a restore that
   -- lost the other five verified green — audit REL-04; the ninth is 0092's
   -- retention sweep, the tenth 0098's ten-minute lead SLA, the eleventh 0103's
-  -- two-minute desk-alert sweep through pg_net). pg_cron jobs are in
+  -- two-minute desk-alert sweep through pg_net, the twelfth 0107's five-minute
+  -- lead escalation). pg_cron jobs are in
   -- NO dump; after a restore every one must be recreated from the migrations
   -- (§4b.4), and this is the list that proves it happened.
   select 'cron: ' || j.jobname || ' active', 'true',
@@ -327,9 +334,9 @@ misc as (
                ('verify-events-chain-full'), ('expire-reservations'),
                ('warn-expiring-reservations'), ('remind-due-installments'),
                ('ensure-events-partitions'), ('redact-stale-enquiries'),
-               ('lead-sla'), ('enquiry-alerts')) as j(jobname)
+               ('lead-sla'), ('enquiry-alerts'), ('lead-escalation')) as j(jobname)
   union all
-  select 'cron: exactly 11 jobs, none extra', '11',
+  select 'cron: exactly 12 jobs, none extra', '12',
          (select count(*)::text from cron.job)
   union all
   -- 0103: the enquiry-alerts job reads these two at run time and FAILS

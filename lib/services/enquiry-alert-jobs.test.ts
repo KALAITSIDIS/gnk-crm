@@ -183,3 +183,14 @@ describe("rebuilding the alert from the lead", () => {
     expect(alertFromLead({ message: null, criteria: {} })).toBeNull();
   });
 });
+
+describe("the escalation's key (0107)", () => {
+  it("is prefixed by its kind, so the two messages a lead can produce never share a provider key", () => {
+    const id = "8f1c2d3e-0000-4000-8000-000000000001";
+    expect(idempotencyKeyFor({ id, key_serial: 1, kind: "lead_escalation" })).toBe(`lead-escalation/${id}/1`);
+    expect(idempotencyKeyFor({ id, key_serial: 1, kind: "enquiry_desk_alert" })).toBe(`enquiry-desk-alert/${id}/1`);
+    expect(idempotencyKeyFor({ id, key_serial: 1 }), "no kind reads as the desk alert — the shape every caller before 0107 passed").toBe(
+      `enquiry-desk-alert/${id}/1`,
+    );
+  });
+});

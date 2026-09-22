@@ -3,6 +3,7 @@ import * as Sentry from "@sentry/nextjs";
 import type { AlertSendResult, EnquiryAlert } from "./enquiry-alert";
 import { KEY_SAFE_WINDOW_MS } from "./enquiry-alert-jobs";
 import { DEFAULT_LEASE_SECONDS, runEnquiryAlertWorker } from "./enquiry-alert-worker";
+import type { LeadEscalation } from "./lead-escalation";
 
 vi.mock("@sentry/nextjs", () => ({ captureMessage: vi.fn() }));
 
@@ -427,5 +428,219 @@ describe("the run's budget", () => {
     expect(run.accepted).toBe(3);
     expect(run.released).toBe(0);
     expect(completions(rpcCalls).every((x) => x.p_outcome === "accepted")).toBe(true);
+  });
+});
+
+/**
+ * 0107: a `lead_escalation` job. The claim, the key window, the retry
+ * schedule and the completion are the desk alert's; what this block pins is
+ * the check made at the moment of sending — the policy, the lead and the
+ * recipients read AGAIN — and that a refusal is a word on the row, never a
+ * message to a colleague about an enquiry that no longer needs one.
+ */
+describe("a lead escalation (0107)", () => {
+  const A = "aaaaaaaa-0000-4000-8000-000000000001"; // the assignee
+  const B = "bbbbbbbb-0000-4000-8000-000000000002"; // a colleague
+  const C = "cccccccc-0000-4000-8000-000000000003"; // an inactive colleague
+  const D = "dddddddd-0000-4000-8000-000000000004"; // a member of ANOTHER organisation
+
+  const policy = (over: Record<string, unknown> = {}) => ({
+    enabled: true,
+    after_minutes: 15,
+    max_age_hours: 48,
+    recipients: [A, B, C, D],
+    working_hours: null,
+    timezone: "Asia/Nicosia",
+    ...over,
+  });
+  const escalationLead = (over: Record<string, unknown> = {}) => ({
+    id: "lead-1",
+    org_id: "org-1",
+    status: "new",
+    first_response_at: null,
+    message,
+    received_at: new Date(T0 - 17 * 60_000).toISOString(),
+    assigned_agent_id: A,
+    properties: { reference: "PAF0001" },
+    ...over,
+  });
+  const profiles = [
+    { id: A, org_id: "org-1", email: "assignee@example.invalid", full_name: "Nontas", role: "admin", is_active: true },
+    { id: B, org_id: "org-1", email: "colleague@example.invalid", full_name: "Giorgos", role: "agent", is_active: true },
+    { id: C, org_id: "org-1", email: "gone@example.invalid", full_name: "Former", role: "agent", is_active: false },
+    // the query is scoped to the job's org; a row like this cannot come back
+    // from a real client, and the rule must refuse it anyway
+    { id: D, org_id: "org-2", email: "other@example.invalid", full_name: "Elsewhere", role: "admin", is_active: true },
+  ];
+
+  /** A client with what the escalation path reads: the policy row, the lead, the profiles. */
+  function makeEscalationClient(script: {
+    policy?: Record<string, unknown> | null | { error: string };
+    lead?: Record<string, unknown> | null | { error: string };
+    profiles?: Array<Record<string, unknown>> | { error: string };
+  }) {
+    const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const tablesRead: string[] = [];
+    const filters: Array<{ table: string; op: string; args: unknown[] }> = [];
+    const client = {
+      rpc: async (name: string, args: Record<string, unknown>) => {
+        rpcCalls.push({ name, args });
+        if (name === "claim_notification_jobs") return { data: [job({ kind: "lead_escalation" })], error: null };
+        if (name === "complete_notification_job") return { data: true, error: null };
+        throw new Error("unexpected rpc " + name);
+      },
+      from: (table: string) => {
+        tablesRead.push(table);
+        const chain: Record<string, unknown> = {};
+        for (const m of ["select", "eq", "in", "limit", "order"]) {
+          chain[m] = (...args: unknown[]) => {
+            filters.push({ table, op: m, args });
+            return chain;
+          };
+        }
+        chain.maybeSingle = async () => {
+          if (table === "cyprus_config") {
+            const p = script.policy === undefined ? policy() : script.policy;
+            if (p && "error" in p) return { data: null, error: { message: p.error } };
+            return { data: p ? { value: p } : null, error: null };
+          }
+          if (table === "leads") {
+            const l = script.lead === undefined ? escalationLead() : script.lead;
+            if (l && "error" in l) return { data: null, error: { message: l.error } };
+            return { data: l, error: null };
+          }
+          return { data: null, error: null };
+        };
+        chain.then = (resolve: (v: unknown) => void) => {
+          if (table === "profiles") {
+            const p = script.profiles ?? profiles;
+            if (!Array.isArray(p)) return resolve({ data: null, error: { message: p.error } });
+            return resolve({ data: p, error: null });
+          }
+          return resolve({ data: [], error: null });
+        };
+        return chain;
+      },
+    };
+    return { client: client as never, rpcCalls, tablesRead, filters };
+  }
+
+  const escalations: Array<{ e: LeadEscalation; to: string[]; key: string | undefined }> = [];
+  const escalationSender =
+    (result: AlertSendResult) =>
+    async (e: LeadEscalation, opts: { to: string[]; idempotencyKey?: string }) => {
+      escalations.push({ e, to: opts.to, key: opts.idempotencyKey });
+      return result;
+    };
+  beforeEach(() => {
+    escalations.length = 0;
+  });
+
+  it("re-reads the policy, the lead and the recipients, sends to the named ACTIVE colleagues of the lead's org — never the assignee — under the escalation's own key, and is accepted", async () => {
+    const { client, rpcCalls, tablesRead, filters } = makeEscalationClient({});
+    const run = await runEnquiryAlertWorker(
+      client,
+      { workerId: "sweep:1" },
+      { send: sender({ outcome: "skipped" }), sendEscalation: escalationSender({ outcome: "accepted", providerMessageId: "re_esc" }), now: () => T0 },
+    );
+    expect(run).toMatchObject({ claimed: 1, accepted: 1, cancelled: 0, failed: 0, retried: 0 });
+    expect(sent, "the desk-alert sender is not used for an escalation").toHaveLength(0);
+    expect(escalations).toHaveLength(1);
+    expect(escalations[0]!.to).toEqual(["colleague@example.invalid"]);
+    expect(escalations[0]!.key).toBe("lead-escalation/job-1/1");
+    expect(escalations[0]!.e).toMatchObject({ name: "A Buyer", assigneeName: "Nontas", propertyReference: "PAF0001", waitingMinutes: 17 });
+    expect(tablesRead).toEqual(expect.arrayContaining(["cyprus_config", "leads", "profiles"]));
+    // the recipient read is scoped to the job's organisation before the rule is applied again
+    expect(filters).toContainEqual({ table: "profiles", op: "eq", args: ["org_id", "org-1"] });
+    expect(completions(rpcCalls)[0]).toMatchObject({ p_outcome: "accepted", p_provider_message_id: "re_esc" });
+  });
+
+  it("the policy switched OFF after the row was minted cancels it — the kill switch reaches rows already scheduled", async () => {
+    const { client, rpcCalls, tablesRead } = makeEscalationClient({ policy: policy({ enabled: false }) });
+    const run = await runEnquiryAlertWorker(client, { workerId: "w1" }, { sendEscalation: escalationSender({ outcome: "accepted", providerMessageId: "x" }) });
+    expect(run.cancelled).toBe(1);
+    expect(escalations).toHaveLength(0);
+    expect(tablesRead, "no lead is read once the policy is off").not.toContain("leads");
+    expect(completions(rpcCalls)[0]).toMatchObject({ p_outcome: "cancelled", p_result: "escalation_disabled" });
+  });
+
+  it.each([
+    ["answered in the meantime", { first_response_at: "2026-09-21T09:59:00Z" }, "lead_answered"],
+    ["closed as lost", { status: "lost" }, "lead_closed"],
+    ["converted", { status: "converted" }, "lead_closed"],
+    ["redacted", { message: REDACTED }, "lead_redacted"],
+  ] as const)("a lead %s is cancelled with the reason, and nothing is sent", async (_what, over, reason) => {
+    const { client, rpcCalls, tablesRead } = makeEscalationClient({ lead: escalationLead(over) });
+    const run = await runEnquiryAlertWorker(client, { workerId: "w1" }, { sendEscalation: escalationSender({ outcome: "accepted", providerMessageId: "x" }) });
+    expect(run.cancelled).toBe(1);
+    expect(escalations).toHaveLength(0);
+    expect(tablesRead, "recipients are not even looked up").not.toContain("profiles");
+    expect(completions(rpcCalls)[0]).toMatchObject({ p_outcome: "cancelled", p_result: reason });
+  });
+
+  it("nobody left to tell — only the assignee, an inactive member and another organisation's — is cancelled as no_recipient", async () => {
+    const { client, rpcCalls } = makeEscalationClient({ policy: policy({ recipients: [A, C, D] }) });
+    const run = await runEnquiryAlertWorker(client, { workerId: "w1" }, { sendEscalation: escalationSender({ outcome: "accepted", providerMessageId: "x" }) });
+    expect(run.cancelled).toBe(1);
+    expect(escalations).toHaveLength(0);
+    expect(completions(rpcCalls)[0]).toMatchObject({ p_outcome: "cancelled", p_result: "no_recipient" });
+  });
+
+  it("an empty recipient list cancels without reading a single profile", async () => {
+    const { client, rpcCalls, tablesRead } = makeEscalationClient({ policy: policy({ recipients: [] }), lead: escalationLead({ assigned_agent_id: null }) });
+    await runEnquiryAlertWorker(client, { workerId: "w1" }, { sendEscalation: escalationSender({ outcome: "accepted", providerMessageId: "x" }) });
+    expect(tablesRead).not.toContain("profiles");
+    expect(completions(rpcCalls)[0]).toMatchObject({ p_outcome: "cancelled", p_result: "no_recipient" });
+  });
+
+  it("a lead reassigned to the only named colleague is cancelled — the escalation is never sent to whoever now owns it", async () => {
+    const { client, rpcCalls } = makeEscalationClient({ policy: policy({ recipients: [B] }), lead: escalationLead({ assigned_agent_id: B }) });
+    await runEnquiryAlertWorker(client, { workerId: "w1" }, { sendEscalation: escalationSender({ outcome: "accepted", providerMessageId: "x" }) });
+    expect(escalations).toHaveLength(0);
+    expect(completions(rpcCalls)[0]).toMatchObject({ p_outcome: "cancelled", p_result: "no_recipient" });
+  });
+
+  it("a provider that says try later is retried on the schedule; one that refuses for good is failed and paged as a lead escalation", async () => {
+    const t1 = makeEscalationClient({});
+    const r1 = await runEnquiryAlertWorker(
+      t1.client,
+      { workerId: "w1" },
+      { sendEscalation: escalationSender({ outcome: "failed", category: "transient", result: "503", retryAfterSeconds: null }), now: () => T0 },
+    );
+    expect(r1.retried).toBe(1);
+    expect(completions(t1.rpcCalls)[0]).toMatchObject({ p_outcome: "retry", p_category: "transient", p_result: "503", p_retry_in_seconds: 60 });
+    expect(Sentry.captureMessage).not.toHaveBeenCalled();
+
+    const t2 = makeEscalationClient({});
+    const r2 = await runEnquiryAlertWorker(
+      t2.client,
+      { workerId: "w1" },
+      { sendEscalation: escalationSender({ outcome: "failed", category: "permanent", result: "validation_error", retryAfterSeconds: null }), now: () => T0 },
+    );
+    expect(r2.failed).toBe(1);
+    expect(completions(t2.rpcCalls)[0]).toMatchObject({ p_outcome: "failed", p_category: "permanent", p_result: "validation_error" });
+    expect(Sentry.captureMessage).toHaveBeenCalledTimes(1);
+    const ctx = JSON.stringify(vi.mocked(Sentry.captureMessage).mock.calls[0]);
+    expect(ctx).toContain("lead escalation");
+    expect(ctx).toContain("lead_escalation");
+    expect(ctx, "no address in a page").not.toContain("example.invalid");
+  });
+
+  it("a policy or recipient read that FAILS is a retry, not a cancellation — ask the database, not the reader", async () => {
+    const t1 = makeEscalationClient({ policy: { error: "connection reset" } });
+    await runEnquiryAlertWorker(t1.client, { workerId: "w1" }, { sendEscalation: escalationSender({ outcome: "accepted", providerMessageId: "x" }), now: () => T0 });
+    expect(completions(t1.rpcCalls)[0]).toMatchObject({ p_outcome: "retry", p_category: "transient", p_result: "config_read_failed" });
+
+    const t2 = makeEscalationClient({ profiles: { error: "connection reset" } });
+    await runEnquiryAlertWorker(t2.client, { workerId: "w1" }, { sendEscalation: escalationSender({ outcome: "accepted", providerMessageId: "x" }), now: () => T0 });
+    expect(completions(t2.rpcCalls)[0]).toMatchObject({ p_outcome: "retry", p_category: "transient", p_result: "recipient_read_failed" });
+    expect(escalations).toHaveLength(0);
+  });
+
+  it("a desk-alert job never touches the policy or the profiles", async () => {
+    const { client, tablesRead } = makeClient({ claim: [job()] });
+    await runEnquiryAlertWorker(client, { workerId: "w1" }, { send: sender({ outcome: "accepted", providerMessageId: "x" }) });
+    expect(tablesRead).not.toContain("cyprus_config");
+    expect(tablesRead).not.toContain("profiles");
   });
 });
