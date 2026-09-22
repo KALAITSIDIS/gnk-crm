@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 111::bigint as migrations,
+    2::bigint as auth_users, 112::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -241,6 +241,11 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   -- the escalation's recovery (0111): authenticated-callable like the desk
   -- alert's retry and stricter — admin only, by job id, every rule in SQL
   ('request_lead_escalation_recovery', true, false, true, true),
+  -- the activation preview (0112): authenticated-callable like the recovery
+  -- and as strict (admin, aal2, own org); STABLE, so it cannot write. The
+  -- one eligibility rule it shares with the sweep is service_role-only.
+  ('preview_lead_escalation',        true, false, true, true),
+  ('lead_escalation_candidates',     true, false, false, true),
   -- the lead escalation (0107): the policy reader, the working-time clock and
   -- the five-minute minting sweep — cron runs the sweep as postgres,
   -- service_role may rehearse all three, nobody else may call them

@@ -98,7 +98,13 @@ const HHMM = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
 const checkbox = z.preprocess((v) => v === "on" || v === "true" || v === true, z.boolean());
 const B = ESCALATION_FORM_BOUNDS;
 
-export const leadEscalationSchema = z
+/**
+ * The PREVIEW's reading of the same form (0112): everything the save reads,
+ * minus "tick at least one person" — a preview with nobody ticked is the one
+ * that must show every enquiry as unsendable. `leadEscalationSchema` is this
+ * plus that one refinement, so the two cannot drift.
+ */
+export const leadEscalationPreviewSchema = z
   .object({
     enabled: checkbox,
     after_minutes: z.coerce
@@ -123,10 +129,6 @@ export const leadEscalationSchema = z
     start: z.string().regex(HHMM, "Working hours need a start time (HH:MM)").optional(),
     end: z.string().regex(HHMM, "Working hours need an end time (HH:MM)").optional(),
   })
-  .refine((d) => !d.enabled || d.recipients.length > 0, {
-    message: "Tick at least one person to tell, or leave escalation off.",
-    path: ["recipients"],
-  })
   .refine((d) => !d.hours_enabled || d.days.length > 0, {
     message: "Pick at least one working day, or count clock time instead.",
     path: ["days"],
@@ -135,3 +137,8 @@ export const leadEscalationSchema = z
     message: "Working hours must start before they end.",
     path: ["end"],
   });
+
+export const leadEscalationSchema = leadEscalationPreviewSchema.refine((d) => !d.enabled || d.recipients.length > 0, {
+  message: "Tick at least one person to tell, or leave escalation off.",
+  path: ["recipients"],
+});

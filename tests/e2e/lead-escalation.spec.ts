@@ -6,6 +6,7 @@ import {
   fixtureProfile,
   isLocal,
   opTimeout,
+  runTag,
   serviceClient,
   watchForProblems,
 } from "./helpers";
@@ -109,5 +110,74 @@ test.describe("Settings → Lead escalation", () => {
     await expect(page.getByText(/lead escalation saved/i)).toBeVisible({ timeout: opTimeout(15_000) });
     const { data } = await svc.from("cyprus_config").select("value").eq("key", "lead_escalation").single();
     expect(data!.value).toMatchObject({ enabled: false, working_hours: null, recipients: [adminId] });
+  });
+
+  /**
+   * 0112: the activation preview. What only the running page can prove —
+   * the card renders from the form's UNSAVED values (a value typed, never
+   * saved, still drives the answer), a fixture enquiry that has waited
+   * twenty minutes is listed as one the sweep would mint and the worker
+   * could send, a changed field marks the preview stale, and afterwards the
+   * policy row is what it was and the enquiry has no escalation job. The
+   * database half — every verdict, every reason, org scope, the write-nothing
+   * proof — is supabase/tests/lead-escalation-preview.test.ts.
+   */
+  test("previews activation from the unsaved form, lists a waiting enquiry, goes stale on a change, and writes nothing", async ({ page }) => {
+    const svc = serviceClient();
+    const { id: adminId, orgId } = await fixtureProfile(svc);
+    const { data: org } = await svc.from("organizations").select("slug").eq("id", orgId).single();
+    const tag = runTag();
+    // a website enquiry that has waited twenty minutes; the policy is OFF, so the five-minute cron leaves it alone
+    const { data: door, error: doorErr } = await svc.rpc("submit_public_enquiry", {
+      p_org_slug: org!.slug,
+      p_name: `Preview ${tag}`,
+      p_email: `preview-${tag}@example.invalid`,
+      p_phone: "",
+      p_message: `preview e2e ${tag}`,
+      p_property_ref: "",
+      p_idempotency_key: `preview-${tag}`,
+    });
+    expect(doorErr).toBeNull();
+    const leadId = (door as Array<{ lead_id: string }>)[0]!.lead_id;
+    await svc.from("leads").update({ received_at: new Date(Date.now() - 20 * 60_000).toISOString() }).eq("id", leadId);
+
+    try {
+      const problems = watchForProblems(page);
+      await page.goto("/settings/lead-escalation", { waitUntil: "networkidle" });
+      // clock time, a fifteen-minute wait, a one-hour cutoff: the fixture is due whatever the hour, and residue older than an hour is not on the page
+      const hoursOn = page.getByRole("checkbox", { name: /count the wait in working time only/i });
+      if (await hoursOn.isChecked()) await hoursOn.uncheck();
+      await page.getByLabel(/minutes without a first response/i).fill("15");
+      await page.getByLabel(/ignore enquiries overdue for more than/i).fill("1");
+      await page.locator(`input[name="recipients"][value="${adminId}"]`).check();
+
+      await page.getByRole("button", { name: /preview activation/i }).click();
+      const card = page.getByTestId("lead-escalation-preview");
+      await expect(card).toBeVisible({ timeout: opTimeout(15_000) });
+      await expect(card, "evaluated as if on, against a stored OFF").toContainText(/stored policy is currently OFF/i);
+      await expect(card, "the wait typed, never saved, drove the answer").toContainText(/15 min of clock time/i);
+      await expect(card.getByTestId(`preview-recipient-${adminId}`)).toContainText(/eligible/i);
+      const row = card.getByTestId(`preview-lead-${leadId}`);
+      await expect(row).toContainText(/would be escalated now/i);
+      await expect(row.locator("td").last(), "one eligible recipient: the admin, who is not its assignee").toHaveText("1");
+      await expect(page.getByTestId("lead-escalation-preview-stale")).toHaveCount(0);
+      await assertNoHorizontalOverflow(page, "settings/lead-escalation (preview)");
+
+      // any change after the preview marks it stale
+      await page.getByLabel(/minutes without a first response/i).fill("30");
+      await expect(page.getByTestId("lead-escalation-preview-stale")).toBeVisible();
+
+      // nothing was written: the policy row is what it was, the enquiry has no escalation job, no escalation event
+      const { data } = await svc.from("cyprus_config").select("value").eq("key", "lead_escalation").single();
+      expect(data!.value, "the policy row").toEqual(before);
+      const { data: jobs } = await svc.from("notification_jobs").select("id").eq("lead_id", leadId).eq("kind", "lead_escalation");
+      expect(jobs, "no escalation job").toHaveLength(0);
+      const { data: events } = await svc.from("events").select("id").eq("entity_type", "lead").eq("entity_id", leadId).eq("event_type", "lead_escalation");
+      expect(events, "no escalation event").toHaveLength(0);
+      assertNoProblems(problems, "settings/lead-escalation (preview)");
+    } finally {
+      await svc.from("tasks").delete().eq("lead_id", leadId);
+      await svc.from("leads").delete().eq("id", leadId); // the desk-alert job cascades; events stay
+    }
   });
 });

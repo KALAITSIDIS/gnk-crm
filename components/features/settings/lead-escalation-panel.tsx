@@ -1,11 +1,12 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState } from "react";
+import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
-import { saveLeadEscalation, type SettingsActionState } from "@/lib/actions/settings";
+import { previewLeadEscalation, saveLeadEscalation, type PreviewLeadEscalationResult, type SettingsActionState } from "@/lib/actions/settings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LeadEscalationPreviewCard } from "@/components/features/settings/lead-escalation-preview";
 import type { RoutableMember } from "@/components/features/settings/lead-routing-panel";
 import {
   ESCALATION_FORM_BOUNDS,
@@ -25,6 +26,15 @@ import { cn } from "@/lib/utils";
  * out. What the page shows is what the sweep will do: the reader applies
  * the same fallback rules as the SQL, so a value set through the raw JSON
  * editor that the sweep would ignore shows here as ignored.
+ *
+ * PREVIEW ACTIVATION (0112). A second button reads the form as it stands
+ * and asks the database what switching THESE values on would do — which
+ * enquiries the sweep would mint, which the worker could e-mail, who is
+ * eligible and who is not. It is `type="button"` on purpose: a form action
+ * (or `formAction`) makes React reset the uncontrolled fields when it
+ * resolves, which would wipe the values the admin just typed. Any change to
+ * the form after a preview marks it stale; a save clears it. Previewing
+ * writes nothing and never switches escalation on.
  */
 const DAYS: ReadonlyArray<{ iso: number; label: string }> = [
   { iso: 1, label: "Mon" },
@@ -50,12 +60,32 @@ export function LeadEscalationPanel({ value, members }: { value: LeadEscalationC
   const last = useRef<number | null>(null);
   const hours = value.working_hours ?? SEEDED_WORKING_HOURS;
 
+  const formRef = useRef<HTMLFormElement>(null);
+  const [previewing, startPreview] = useTransition();
+  const [previewResult, setPreviewResult] = useState<PreviewLeadEscalationResult | null>(null);
+  const [stale, setStale] = useState(false);
+
   useEffect(() => {
     if (state.savedAt && state.savedAt !== last.current) {
       last.current = state.savedAt;
       toast.success("Lead escalation saved — the next five-minute check applies it");
+      // the preview was about a proposal; the row now holds it (or something else)
+      setPreviewResult(null);
+      setStale(false);
     }
   }, [state.savedAt]);
+
+  const runPreview = () => {
+    const form = formRef.current;
+    if (!form || !form.reportValidity()) return;
+    const data = new FormData(form);
+    startPreview(async () => {
+      const result = await previewLeadEscalation(data);
+      setPreviewResult(result);
+      setStale(false);
+      if (result.error) toast.error(result.error);
+    });
+  };
 
   useEffect(() => {
     if (state.error) toast.error(state.error);
@@ -77,7 +107,15 @@ export function LeadEscalationPanel({ value, members }: { value: LeadEscalationC
         itself.
       </p>
 
-      <form action={formAction} data-testid="lead-escalation-form" className="flex flex-col gap-5">
+      <form
+        ref={formRef}
+        action={formAction}
+        data-testid="lead-escalation-form"
+        className="flex flex-col gap-5"
+        onChange={() => {
+          if (previewResult?.preview) setStale(true);
+        }}
+      >
         <label className="flex items-start gap-3 rounded-[10px] border border-border bg-surface p-3">
           <input
             type="checkbox"
@@ -219,13 +257,30 @@ export function LeadEscalationPanel({ value, members }: { value: LeadEscalationC
           </div>
         </fieldset>
 
-        <div className="flex items-center gap-3">
-          <Button type="submit" disabled={pending}>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button type="submit" disabled={pending || previewing}>
             {pending ? "Saving…" : "Save escalation"}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={pending || previewing}
+            onClick={runPreview}
+            title="See which enquiries would be escalated, and to whom, if these values were switched on now — without saving or sending anything"
+          >
+            {previewing ? "Previewing…" : "Preview activation"}
           </Button>
           <p className="text-xs text-text-3">Every save is an event. The e-mail itself needs the provider key the desk alert already uses.</p>
         </div>
       </form>
+
+      {previewResult?.preview ? (
+        <LeadEscalationPreviewCard preview={previewResult.preview} providerArmed={previewResult.providerArmed} stale={stale} />
+      ) : previewResult?.error ? (
+        <p role="alert" data-testid="lead-escalation-preview-error" className="text-sm text-danger">
+          {previewResult.error}
+        </p>
+      ) : null}
     </div>
   );
 }

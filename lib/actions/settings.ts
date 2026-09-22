@@ -18,13 +18,16 @@ import {
   cyprusConfigSchema,
   inviteUserSchema,
   leadRoutingSchema,
+  leadEscalationPreviewSchema,
   leadEscalationSchema,
   nudgeThresholdsSchema,
   orgNameSchema,
   stageNameSchema,
 } from "@/lib/validators/settings";
 import { NUDGE_THRESHOLD_KEYS } from "@/lib/services/nudge-thresholds";
+import { enquiryAlertConfigured } from "@/lib/services/enquiry-alert";
 import { readLeadEscalation } from "@/lib/services/lead-escalation";
+import { PREVIEW_LIMIT, readLeadEscalationPreview, type LeadEscalationPreview } from "@/lib/services/lead-escalation-preview";
 
 /**
  * Settings suite actions (T5.4, doc 02 §C9). Every action is admin-gated
@@ -791,15 +794,13 @@ export async function saveLeadRouting(
  * over from the row as the reader sees it. Row-count guarded like every
  * other config write; every save is an event, ids and numbers only.
  */
-export async function saveLeadEscalation(
-  _prev: SettingsActionState,
-  formData: FormData,
-): Promise<SettingsActionState> {
+/** The lead-escalation form's fields, as the two schemas expect them (save 0107, preview 0112). */
+function leadEscalationFormInput(formData: FormData) {
   const text = (k: string) => {
     const v = formData.get(k);
     return v === null ? undefined : String(v);
   };
-  const parsed = leadEscalationSchema.safeParse({
+  return {
     enabled: text("enabled"),
     after_minutes: text("after_minutes"),
     max_age_hours: text("max_age_hours"),
@@ -808,7 +809,14 @@ export async function saveLeadEscalation(
     days: formData.getAll("days").map(String).filter(Boolean),
     start: text("start"),
     end: text("end"),
-  });
+  };
+}
+
+export async function saveLeadEscalation(
+  _prev: SettingsActionState,
+  formData: FormData,
+): Promise<SettingsActionState> {
+  const parsed = leadEscalationSchema.safeParse(leadEscalationFormInput(formData));
   if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Invalid input");
 
   const gate = await requireAdmin();
@@ -868,4 +876,63 @@ export async function saveLeadEscalation(
   });
   revalidatePath("/settings/lead-escalation");
   return ok();
+}
+
+export type PreviewLeadEscalationResult =
+  | { error: string; preview: null; providerArmed: boolean }
+  | { error: null; preview: LeadEscalationPreview; providerArmed: boolean };
+
+/**
+ * Settings → Lead escalation → Preview activation (0112). The values on the
+ * form, evaluated by `preview_lead_escalation` AS IF they were switched on:
+ * which enquiries the sweep would mint, which of those the worker could
+ * actually e-mail, and why not the rest. The DATABASE decides who may ask
+ * (an aal2 admin of their own organisation) and applies the sweep's own
+ * eligibility rule; this action reads the form with the preview's schema
+ * (nobody ticked is allowed — that is the preview that shows every enquiry
+ * as unsendable), carries the stored timezone exactly as the save does, asks
+ * through the caller's own session, and surfaces the function's words.
+ *
+ * WRITES NOTHING: no policy, no job, no event, no revalidation. A preview
+ * never enables escalation — Save is the activation and stays the only one.
+ * `providerArmed` is read from the environment because an unarmed worker
+ * claims nothing however many rows the sweep mints.
+ */
+export async function previewLeadEscalation(formData: FormData): Promise<PreviewLeadEscalationResult> {
+  const providerArmed = enquiryAlertConfigured();
+  const refuse = (error: string): PreviewLeadEscalationResult => ({ error, preview: null, providerArmed });
+
+  const parsed = leadEscalationPreviewSchema.safeParse(leadEscalationFormInput(formData));
+  if (!parsed.success) return refuse(parsed.error.issues[0]?.message ?? "Invalid input");
+
+  const gate = await requireAdmin();
+  if ("denied" in gate) return refuse(gate.denied);
+  const { supabase } = gate;
+  const d = parsed.data;
+
+  const { data: current, error: readErr } = await supabase
+    .from("cyprus_config")
+    .select("value")
+    .eq("key", "lead_escalation")
+    .maybeSingle();
+  if (readErr) return refuse(readErr.message);
+  const { timezone } = readLeadEscalation(current?.value ?? null);
+
+  const policy = {
+    enabled: d.enabled,
+    after_minutes: d.after_minutes,
+    max_age_hours: d.max_age_hours,
+    recipients: d.recipients,
+    working_hours: d.hours_enabled ? { days: d.days, start: d.start, end: d.end } : null,
+    timezone,
+  };
+  const { data, error } = await supabase.rpc("preview_lead_escalation", { p_policy: policy, p_limit: PREVIEW_LIMIT });
+  if (error) {
+    // P0001 is `raise exception` — the function's own words, meant to be read.
+    if (error.code === "P0001") return refuse(error.message);
+    return refuse("Could not run the preview — try again, and tell an admin if it keeps failing.");
+  }
+  const preview = readLeadEscalationPreview(data);
+  if (!preview) return refuse("The preview came back in a shape this page does not understand — refresh and try again.");
+  return { error: null, preview, providerArmed };
 }
