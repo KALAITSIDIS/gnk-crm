@@ -127,7 +127,7 @@ describe("who is told", () => {
 });
 
 describe("what the colleague reads", () => {
-  const now = new Date("2026-09-22T10:20:00Z");
+  const waitMeasuredAt = new Date("2026-09-22T10:20:00Z");
   const lead = {
     message: ["Website enquiry", "Name: A Buyer", "Email: buyer@example.invalid", "Phone: +357 99 000000", "About: PAF0001", "", "Still available?"].join("\n"),
     received_at: "2026-09-22T10:02:30Z",
@@ -135,7 +135,7 @@ describe("what the colleague reads", () => {
   };
 
   it("is rebuilt from the lead: the wait in whole minutes, the assignee, the enquirer, the message, one link", () => {
-    const e = escalationFromLead(lead, { assigneeName: "Nontas", now });
+    const e = escalationFromLead(lead, { assigneeName: "Nontas", waitMeasuredAt });
     expect(e).not.toBeNull();
     expect(e!.waitingMinutes).toBe(17);
     expect(escalationSubjectFor(e!)).toBe("Unanswered website enquiry — PAF0001 — waiting 17 min");
@@ -148,8 +148,14 @@ describe("what the colleague reads", () => {
     expect(body).toMatch(/\/leads/);
   });
 
+  it("counts the wait to the instant it is given — the first attempt under the key — not to the clock", () => {
+    const later = new Date("2026-09-22T12:00:00Z");
+    expect(escalationFromLead(lead, { assigneeName: null, waitMeasuredAt })!.waitingMinutes).toBe(17);
+    expect(escalationFromLead(lead, { assigneeName: null, waitMeasuredAt: later })!.waitingMinutes).toBe(117);
+  });
+
   it("says so when the lead is unclaimed, and when the enquirer typed no message", () => {
-    const e = escalationFromLead({ ...lead, message: "Website enquiry\nName: Quiet Buyer\nPhone: +357 99 1" }, { assigneeName: null, now });
+    const e = escalationFromLead({ ...lead, message: "Website enquiry\nName: Quiet Buyer\nPhone: +357 99 1" }, { assigneeName: null, waitMeasuredAt });
     const body = escalationBodyFor(e!);
     expect(body).toContain("nobody — the enquiry is unclaimed");
     expect(body).toContain("(no message)");
@@ -157,8 +163,8 @@ describe("what the colleague reads", () => {
   });
 
   it("is null for anything that is not a website enquiry block", () => {
-    expect(escalationFromLead({ ...lead, message: "typed by the desk" }, { assigneeName: null, now })).toBeNull();
-    expect(escalationFromLead({ ...lead, message: null }, { assigneeName: null, now })).toBeNull();
+    expect(escalationFromLead({ ...lead, message: "typed by the desk" }, { assigneeName: null, waitMeasuredAt })).toBeNull();
+    expect(escalationFromLead({ ...lead, message: null }, { assigneeName: null, waitMeasuredAt })).toBeNull();
   });
 });
 

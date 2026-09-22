@@ -62,6 +62,23 @@
  * already alerted is closed by `claim_notification_jobs` itself, in the
  * claim's own transaction — there is no lookup left that can fail and let
  * a send through.
+ *
+ * THE PAYLOAD UNDER ONE KEY (audit 2026-09-22, finding 2). The provider
+ * deduplicates on the key AND the payload: the same key with the same bytes
+ * answers with the first message, the same key with different bytes is
+ * refused (409 invalid_idempotent_request). So every attempt under one key
+ * must rebuild the same message. The desk alert always did — it is a pure
+ * function of the lead row. The escalation was not: its wait was measured
+ * at send time and moved with every retry, so a retry after an
+ * accepted-but-lost answer was refused for good. It is now counted to the
+ * job's first attempt under the current key (the claim stamps it; only a
+ * rotation clears it) and its recipients are sorted. What may still change
+ * between attempts — the recipients named, the assignee, the linked
+ * property — changes the message, and then the provider's refusal is the
+ * SAFE answer: the original may have been delivered, so the row is closed
+ * as a conflict for a person (settle), nothing is sent twice, and the key
+ * is not rotated by this worker. A lead answered, closed or redacted in
+ * between is cancelled before any provider call, as before.
  */
 import * as Sentry from "@sentry/nextjs";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -429,7 +446,18 @@ async function processEscalation(
   if (to.length === 0) return cancel("no_recipient");
   const assigneeName = lead.assigned_agent_id ? (rows.find((p) => p.id === lead.assigned_agent_id)?.full_name ?? null) : null;
 
-  const escalation = escalationFromLead(lead, { assigneeName, now: at() });
+  // 4. THE PAYLOAD UNDER ONE KEY (audit 2026-09-22, finding 2). The provider
+  //    deduplicates on the key AND the payload, so every attempt under one
+  //    key must present the same bytes. The wait in the message is therefore
+  //    counted to the FIRST attempt under the current key — the claim stamps
+  //    it, rotation clears it — never to this attempt's clock. Anything else
+  //    in the message that changed since (the recipients, the assignee, the
+  //    property) makes the payload one the provider will refuse with a
+  //    conflict, which settle() closes for a person: that is the safe
+  //    outcome, because the original may already have been delivered.
+  const firstAttempt = job.first_attempted_at ? new Date(job.first_attempted_at) : null;
+  const waitMeasuredAt = firstAttempt && !Number.isNaN(firstAttempt.getTime()) ? firstAttempt : at();
+  const escalation = escalationFromLead(lead, { assigneeName, waitMeasuredAt });
   if (!escalation) return cancel("lead_unreadable");
 
   let result: AlertSendResult;

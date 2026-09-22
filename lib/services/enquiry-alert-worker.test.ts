@@ -120,8 +120,16 @@ beforeEach(() => {
   vi.spyOn(console, "warn").mockImplementation(() => {});
   process.env.RESEND_API_KEY = "re_test";
   process.env.ENQUIRY_ALERT_TO = "desk@example.invalid";
+  // THE CLOCK IS PINNED. The fixtures date their first attempt at T0, and
+  // the worker reads Date.now unless a test injects `now` — so the day after
+  // this file was written, sixteen tests failed with key_window_expired
+  // because T0 had drifted more than the 20-hour window into the past
+  // (measured 2026-09-22 on main). Only Date is faked; timers stay real.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(T0);
 });
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   process.env = { ...OLD };
 });
@@ -642,5 +650,212 @@ describe("a lead escalation (0107)", () => {
     await runEnquiryAlertWorker(client, { workerId: "w1" }, { send: sender({ outcome: "accepted", providerMessageId: "x" }) });
     expect(tablesRead).not.toContain("cyprus_config");
     expect(tablesRead).not.toContain("profiles");
+  });
+
+  /**
+   * ONE PAYLOAD FOR THE LIFE OF A KEY (audit 2026-09-22, finding 2). The
+   * provider deduplicates on the key AND the payload: the same key with the
+   * same payload answers with the first message, the same key with a
+   * DIFFERENT payload is refused with 409 invalid_idempotent_request
+   * (resend.com/docs/dashboard/emails/idempotency-keys, read 2026-09-22).
+   * A retry after an ambiguous answer is therefore only safe if the worker
+   * rebuilds EXACTLY the message it first presented — which it did not: the
+   * wait was measured at send time, so two minutes later the subject and
+   * the body had moved on and the retry was refused for good.
+   *
+   * These scenarios run the REAL sender (sendLeadEscalation →
+   * postProviderEmail → fetch) against a stub that behaves like the
+   * provider: it stores each key's payload, answers a repeat with the first
+   * id without sending again, and refuses a different payload. A sender that
+   * always says yes could not tell these apart.
+   */
+  describe("one payload for the life of a key (finding 2, 2026-09-22)", () => {
+    const E = "eeeeeeee-0000-4000-8000-000000000005"; // a second active colleague
+    const profileE = { id: E, org_id: "org-1", email: "second@example.invalid", full_name: "Eleni", role: "agent", is_active: true };
+
+    /** A provider that remembers keys, exactly as Resend documents. */
+    function resendStub() {
+      const stored = new Map<string, { body: string; id: string }>();
+      const requests: Array<{ key: string; body: string }> = [];
+      let sent = 0;
+      let loseNextAnswer = false;
+      const fetch = async (_url: string, init: RequestInit): Promise<Response> => {
+        const key = (init.headers as Record<string, string>)["Idempotency-Key"]!;
+        const body = String(init.body);
+        requests.push({ key, body });
+        const known = stored.get(key);
+        if (known) {
+          if (known.body === body) return new Response(JSON.stringify({ id: known.id }), { status: 200 });
+          return new Response(JSON.stringify({ name: "invalid_idempotent_request", message: "different payload" }), { status: 409 });
+        }
+        sent += 1;
+        const id = `msg_${sent}`;
+        stored.set(key, { body, id });
+        if (loseNextAnswer) {
+          // the provider accepted and sent; the answer never reached us
+          loseNextAnswer = false;
+          const err = new Error("The operation was aborted due to timeout");
+          err.name = "TimeoutError";
+          throw err;
+        }
+        return new Response(JSON.stringify({ id }), { status: 200 });
+      };
+      return {
+        fetch,
+        requests,
+        sent: () => sent,
+        loseNextAnswer: () => {
+          loseNextAnswer = true;
+        },
+      };
+    }
+
+    /** A client that replays one claim per run and lets each run see its own policy, lead and profiles. */
+    function makeReplayClient(script: {
+      claims: Job[][];
+      policy?: (run: number) => Record<string, unknown>;
+      lead?: (run: number) => Record<string, unknown>;
+      profiles?: (run: number) => Array<Record<string, unknown>>;
+    }) {
+      const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+      let run = -1;
+      const client = {
+        rpc: async (name: string, args: Record<string, unknown>) => {
+          rpcCalls.push({ name, args });
+          if (name === "claim_notification_jobs") {
+            run += 1;
+            return { data: script.claims[run] ?? [], error: null };
+          }
+          if (name === "complete_notification_job") return { data: true, error: null };
+          throw new Error("unexpected rpc " + name);
+        },
+        from: (table: string) => {
+          const chain: Record<string, unknown> = {};
+          for (const m of ["select", "eq", "in", "limit", "order"]) chain[m] = () => chain;
+          chain.maybeSingle = async () => {
+            if (table === "cyprus_config") return { data: { value: (script.policy ?? (() => policy()))(run) }, error: null };
+            if (table === "leads") return { data: (script.lead ?? (() => escalationLead()))(run), error: null };
+            return { data: null, error: null };
+          };
+          chain.then = (resolve: (v: unknown) => void) =>
+            resolve({ data: table === "profiles" ? (script.profiles ?? (() => profiles))(run) : [], error: null });
+          return chain;
+        },
+      };
+      return { client: client as never, rpcCalls };
+    }
+
+    const attempt1 = () => job({ kind: "lead_escalation", attempts: 1 });
+    // the claim of a retry: one more attempt, the SAME key serial and the SAME first attempt
+    const attempt2 = () => job({ kind: "lead_escalation", attempts: 2 });
+    const subjectOf = (r: { body: string }) => String((JSON.parse(r.body) as { subject: string }).subject);
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("a retry two minutes after an accepted-but-lost answer presents the same key and the same payload, recovers the first message id, and sends nothing new", async () => {
+      const provider = resendStub();
+      vi.stubGlobal("fetch", provider.fetch);
+      const c = clock();
+      const { client, rpcCalls } = makeReplayClient({ claims: [[attempt1()], [attempt2()]] });
+
+      provider.loseNextAnswer();
+      const run1 = await runEnquiryAlertWorker(client, { workerId: "sweep:1" }, { now: c.now });
+      expect(run1.retried, "an ambiguous answer is a retry under the same key").toBe(1);
+      expect(completions(rpcCalls)[0]).toMatchObject({ p_outcome: "retry", p_category: "timeout", p_result: "timeout" });
+      expect(provider.sent(), "the provider did send the first one").toBe(1);
+      expect(subjectOf(provider.requests[0]!)).toContain("waiting 17 min");
+
+      c.advance(2 * 60_000);
+      const run2 = await runEnquiryAlertWorker(client, { workerId: "sweep:2" }, { now: c.now });
+      expect(provider.requests).toHaveLength(2);
+      expect(provider.requests[1]!.key).toBe(provider.requests[0]!.key);
+      expect(provider.requests[1]!.body, "the exact payload the provider stored under this key").toBe(provider.requests[0]!.body);
+      expect(run2.accepted, "the provider's stored answer is the retry's answer").toBe(1);
+      expect(completions(rpcCalls)[1]).toMatchObject({ p_outcome: "accepted", p_provider_message_id: "msg_1" });
+      expect(provider.sent(), "one logical e-mail").toBe(1);
+    });
+
+    it("the recipients are presented in one order whatever order the profiles came back in", async () => {
+      const provider = resendStub();
+      vi.stubGlobal("fetch", provider.fetch);
+      const c = clock();
+      const two = [...profiles, profileE];
+      const { client, rpcCalls } = makeReplayClient({
+        claims: [[attempt1()], [attempt2()]],
+        policy: () => policy({ recipients: [A, B, E] }),
+        profiles: (run) => (run === 0 ? two : [...two].reverse()),
+      });
+
+      provider.loseNextAnswer();
+      await runEnquiryAlertWorker(client, { workerId: "sweep:1" }, { now: c.now });
+      c.advance(2 * 60_000);
+      const run2 = await runEnquiryAlertWorker(client, { workerId: "sweep:2" }, { now: c.now });
+      expect(provider.requests[1]!.body).toBe(provider.requests[0]!.body);
+      expect((JSON.parse(provider.requests[0]!.body) as { to: string[] }).to).toEqual(["colleague@example.invalid", "second@example.invalid"]);
+      expect(run2.accepted).toBe(1);
+      expect(completions(rpcCalls)[1]).toMatchObject({ p_outcome: "accepted", p_provider_message_id: "msg_1" });
+      expect(provider.sent()).toBe(1);
+    });
+
+    it("a recipient added after an ambiguous attempt cannot be reached under the burnt key: the provider refuses, the row is closed as a conflict for a person, nothing is sent twice and the key is not rotated", async () => {
+      const provider = resendStub();
+      vi.stubGlobal("fetch", provider.fetch);
+      const c = clock();
+      const { client, rpcCalls } = makeReplayClient({
+        claims: [[attempt1()], [attempt2()]],
+        policy: (run) => policy({ recipients: run === 0 ? [A, B] : [A, B, E] }),
+        profiles: () => [...profiles, profileE],
+      });
+
+      provider.loseNextAnswer();
+      await runEnquiryAlertWorker(client, { workerId: "sweep:1" }, { now: c.now });
+      c.advance(2 * 60_000);
+      const run2 = await runEnquiryAlertWorker(client, { workerId: "sweep:2" }, { now: c.now });
+      expect(provider.requests[1]!.key, "the same key: rotation is a person's decision").toBe(provider.requests[0]!.key);
+      expect(run2.failed).toBe(1);
+      expect(completions(rpcCalls)[1]).toMatchObject({ p_outcome: "failed", p_category: "conflict", p_result: "invalid_idempotent_request" });
+      expect(provider.sent(), "the colleague named first was told once; the new one is a person's retry").toBe(1);
+      expect(Sentry.captureMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ["answered", { first_response_at: "2026-09-21T10:01:00Z" }, "lead_answered"],
+      ["redacted", { message: REDACTED }, "lead_redacted"],
+    ] as const)("a lead %s after an ambiguous attempt is cancelled on the retry without a second provider call", async (_what, over, reason) => {
+      const provider = resendStub();
+      vi.stubGlobal("fetch", provider.fetch);
+      const c = clock();
+      const { client, rpcCalls } = makeReplayClient({
+        claims: [[attempt1()], [attempt2()]],
+        lead: (run) => (run === 0 ? escalationLead() : escalationLead(over)),
+      });
+
+      provider.loseNextAnswer();
+      await runEnquiryAlertWorker(client, { workerId: "sweep:1" }, { now: c.now });
+      c.advance(2 * 60_000);
+      const run2 = await runEnquiryAlertWorker(client, { workerId: "sweep:2" }, { now: c.now });
+      expect(run2.cancelled).toBe(1);
+      expect(completions(rpcCalls)[1]).toMatchObject({ p_outcome: "cancelled", p_result: reason });
+      expect(provider.requests, "no second provider call").toHaveLength(1);
+      expect(provider.sent()).toBe(1);
+    });
+
+    it("a retry that reaches the worker past the key window is closed without a send, whatever the claim said", async () => {
+      const provider = resendStub();
+      vi.stubGlobal("fetch", provider.fetch);
+      const c = clock();
+      const { client, rpcCalls } = makeReplayClient({ claims: [[attempt1()], [attempt2()]] });
+
+      provider.loseNextAnswer();
+      await runEnquiryAlertWorker(client, { workerId: "sweep:1" }, { now: c.now });
+      c.advance(KEY_SAFE_WINDOW_MS + 60_000);
+      const run2 = await runEnquiryAlertWorker(client, { workerId: "sweep:2" }, { now: c.now });
+      expect(run2.failed).toBe(1);
+      expect(completions(rpcCalls)[1]).toMatchObject({ p_outcome: "failed", p_category: "timeout", p_result: "key_window_expired" });
+      expect(provider.requests, "the provider may have forgotten the key; a send could be a second e-mail").toHaveLength(1);
+      expect(provider.sent()).toBe(1);
+    });
   });
 });

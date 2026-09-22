@@ -90,9 +90,10 @@ export function LeadEscalationPanel({ value, members }: { value: LeadEscalationC
           <span className="flex flex-col">
             <span className="text-sm font-medium text-text-1">Escalate unanswered website enquiries</span>
             <span className="text-xs text-text-2">
-              Off: nothing is sent, whatever the settings below say. On: enquiries received in the last{" "}
-              <span className="font-mono">{value.max_age_hours}</span> hours that are still unanswered after the wait are escalated,
-              including ones already waiting when you switch this on.
+              Off: nothing is sent, whatever the settings below say. On: enquiries still unanswered after the wait are
+              escalated once, including ones already waiting when you switch this on — unless the wait ended more than{" "}
+              <span className="font-mono">{value.max_age_hours}</span> hours ago. An enquiry that waited through the weekend
+              counts from Monday&apos;s opening, not from Friday night.
             </span>
           </span>
         </label>
@@ -120,7 +121,7 @@ export function LeadEscalationPanel({ value, members }: { value: LeadEscalationC
               </p>
             </div>
             <div className="flex flex-col gap-1">
-              <Label htmlFor="max_age_hours">Ignore enquiries older than (hours)</Label>
+              <Label htmlFor="max_age_hours">Ignore enquiries overdue for more than (hours)</Label>
               <Input
                 id="max_age_hours"
                 name="max_age_hours"
@@ -133,7 +134,8 @@ export function LeadEscalationPanel({ value, members }: { value: LeadEscalationC
                 required
               />
               <p className="text-xs text-text-3">
-                So switching this on does not e-mail about every stale enquiry — those have their tasks
+                Counted from the moment the wait ended, so closed days do not count against an enquiry. Keeps switching
+                this on from e-mailing about every stale enquiry — those have their tasks
                 {outsideAge ? ` (the row currently holds ${value.max_age_hours}, set outside this form)` : ""}.
               </p>
             </div>

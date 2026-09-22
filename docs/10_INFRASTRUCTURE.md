@@ -124,7 +124,7 @@ refuses any non-local URL, deliberately.
 55 3 * * *   remind-due-installments      select remind_due_installments()
 */10 * * * * lead-sla                     select raise_lead_sla_tasks()      (0098: chases a website lead unanswered after an hour)
 */2 * * * *  enquiry-alerts               select enquiry_alerts_sweep()      (0103: the desk-alert sweep, POSTed through pg_net; URL and bearer from Vault — raises when either is absent)
-*/5 * * * *  lead-escalation              select raise_lead_escalations()    (0107: mints a lead_escalation job for a website lead still unanswered past the policy's working-time wait; the alert sweep sends it. OFF until Settings → Lead escalation enables it)
+*/5 * * * *  lead-escalation              select raise_lead_escalations()    (0107: mints a lead_escalation job for a website lead still unanswered past the policy's working-time wait; the alert sweep sends it. OFF until Settings → Lead escalation enables it. 0110: the max_age_hours guard counts from the END of the wait, so a weekend enquiry is not cut off by the closed days it waited through)
 ```
 
 Ordering is deliberate: each sweep runs after the one whose events it needs.
