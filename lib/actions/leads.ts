@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { randomUUID } from "node:crypto";
 import { after } from "next/server";
 import { z } from "zod";
 import type { Database } from "@/lib/supabase/database.types";
@@ -394,8 +395,67 @@ export async function retryEnquiryAlert(leadId: string): Promise<void> {
 
   after(async () => {
     await runEnquiryAlertWorker(createAdminClient(), {
-      workerId: `retry:${job.id}`,
+      // unique per RUN, not per job: complete_notification_job knows the holder
+      // by claimed_by alone, so a second retry after a lapsed lease must not
+      // share a name with the first run's still-running worker
+      workerId: `retry:${job.id}:${randomUUID()}`,
       leadId,
+      // THIS job (0111): the lead may also carry an escalation row, and
+      // "any due job of this lead, limit 1" could have sent that instead
+      jobId: job.id,
+      limit: 1,
+    });
+  });
+  revalidatePath("/leads");
+}
+
+const recoverEscalationSchema = z.object({
+  // z.guid(), not z.uuid() — the project's convention (lib/validators/deals.ts)
+  jobId: z.guid({ message: "Invalid notification id." }),
+  action: z.enum(["retry", "resend"], { message: "Invalid action." }),
+  reason: z.string().trim().max(200, "A reason is at most 200 characters.").optional(),
+});
+
+export type RecoverEscalationInput = z.input<typeof recoverEscalationSchema>;
+
+/**
+ * An admin recovers a lead escalation that stopped (0111). The DATABASE
+ * decides — admin, aal2, the row's org, the lead still eligible, the policy
+ * on, somebody to receive it, no live lease, not accepted, not merely
+ * queued, and WHICH of the two actions the row admits: `retry` under the
+ * same provider key while it is safe, `resend` under a new key only when it
+ * is not (a reason required). The browser supplies nothing but the job id,
+ * the action and the reason; every fact is derived server-side. The worker
+ * is then kicked for THAT job.
+ */
+export async function recoverLeadEscalation(input: RecoverEscalationInput): Promise<void> {
+  const parsed = recoverEscalationSchema.safeParse(input);
+  if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? "Invalid input.");
+  const { jobId, action, reason } = parsed.data;
+
+  const supabase = await createClient();
+  await getCurrentProfile(supabase);
+
+  const { data, error } = await supabase.rpc("request_lead_escalation_recovery", {
+    p_job_id: jobId,
+    p_action: action,
+    ...(reason ? { p_reason: reason } : {}),
+  });
+  if (error) {
+    // P0001 is `raise exception` — the function's own words, meant to be read.
+    if (error.code === "P0001") throw new Error(error.message);
+    throw new Error("Could not queue the escalation — try again, and tell an admin if it keeps failing.");
+  }
+  const job = data?.[0];
+  if (!job) throw new Error("No escalation is recorded for this job.");
+
+  after(async () => {
+    await runEnquiryAlertWorker(createAdminClient(), {
+      // unique per RUN (see retryEnquiryAlert): a late completion from an
+      // earlier run must never be accepted for this claim
+      workerId: `recover:${job.id}:${randomUUID()}`,
+      leadId: job.lead_id,
+      jobId: job.id,
       limit: 1,
     });
   });

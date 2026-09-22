@@ -2,6 +2,7 @@ import Link from "next/link";
 import { AlertCircle, Download, Inbox } from "lucide-react";
 import { AddLeadDialog } from "@/components/features/leads/add-lead-dialog";
 import { DeskAlertChip } from "@/components/features/leads/desk-alert";
+import { EscalationChip } from "@/components/features/leads/escalation-status";
 import { LeadsFilters } from "@/components/features/leads/filters";
 import { LeadRowActions } from "@/components/features/leads/lead-actions";
 import { LeadMessage } from "@/components/features/leads/lead-message";
@@ -11,7 +12,7 @@ import { Pager } from "@/components/features/shared/pager";
 import { ResponseClock } from "@/components/features/shared/response-clock";
 import { StatusBadge } from "@/components/features/shared/status-badge";
 import { getCurrentProfile } from "@/lib/services/auth";
-import type { DeskAlertJob } from "@/lib/services/enquiry-alert-status";
+import type { EscalationJob } from "@/lib/services/lead-escalation-status";
 import { LEAD_MESSAGE_REDACTED } from "@/lib/services/erasure";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTime } from "@/lib/utils/format";
@@ -58,8 +59,9 @@ export default async function LeadsPage({
        assigned_agent_id, lost_reason, converted_deal_id, criteria,
        contacts(id, display_name, phone_e164, telegram_username, has_whatsapp),
        properties(id, reference),
-       notification_jobs!notification_jobs_lead_id_fkey(kind, state, attempts, max_attempts,
-         next_attempt_at, claimed_until, last_category, last_result, accepted_at)`,
+       notification_jobs!notification_jobs_lead_id_fkey(id, kind, state, attempts, max_attempts,
+         next_attempt_at, claimed_until, last_category, last_result, accepted_at,
+         first_attempted_at, last_attempted_at, key_serial)`,
       // exact count of the SCOPED set, so the pager totals match these rows
       { count: "exact" },
     );
@@ -224,17 +226,23 @@ export default async function LeadsPage({
                   </div>
                   {/* the whole enquiry and its brief, not one truncated line (0098, LR-03) */}
                   <LeadMessage message={lead.message} criteria={lead.criteria} />
-                  {/* whether the desk was e-mailed about it (0101): the outbox row, or nothing for a lead that predates it */}
-                  {lead.source === "website" ? (
-                    <DeskAlertChip
-                      leadId={lead.id}
-                      job={
-                        (lead.notification_jobs as Array<DeskAlertJob & { kind: string }> | null)?.find(
-                          (j) => j.kind === "enquiry_desk_alert",
-                        ) ?? null
-                      }
-                    />
-                  ) : null}
+                  {/* whether the desk was e-mailed about it (0101), and whether a colleague was told it
+                      was still waiting (0107, recovery 0111): the outbox rows by kind, or nothing for a
+                      lead that predates them or never needed one */}
+                  {lead.source === "website"
+                    ? (() => {
+                        const jobs = (lead.notification_jobs as Array<EscalationJob & { kind: string }> | null) ?? [];
+                        return (
+                          <>
+                            <DeskAlertChip leadId={lead.id} job={jobs.find((j) => j.kind === "enquiry_desk_alert") ?? null} />
+                            <EscalationChip
+                              job={jobs.find((j) => j.kind === "lead_escalation") ?? null}
+                              isAdmin={profile.role === "admin"}
+                            />
+                          </>
+                        );
+                      })()
+                    : null}
                   {lead.lost_reason ? (
                     <p className="text-xs text-text-3">Reason: {lead.lost_reason}</p>
                   ) : null}
