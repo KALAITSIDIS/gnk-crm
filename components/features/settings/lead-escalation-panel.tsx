@@ -1,12 +1,13 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState, useTransition } from "react";
+import { useActionState, useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { previewLeadEscalation, saveLeadEscalation, type PreviewLeadEscalationResult, type SettingsActionState } from "@/lib/actions/settings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LeadEscalationPreviewCard } from "@/components/features/settings/lead-escalation-preview";
+import { previewFormSnapshot } from "@/lib/services/lead-escalation-preview";
 import type { RoutableMember } from "@/components/features/settings/lead-routing-panel";
 import {
   ESCALATION_FORM_BOUNDS,
@@ -32,9 +33,18 @@ import { cn } from "@/lib/utils";
  * enquiries the sweep would mint, which the worker could e-mail, who is
  * eligible and who is not. It is `type="button"` on purpose: a form action
  * (or `formAction`) makes React reset the uncontrolled fields when it
- * resolves, which would wipe the values the admin just typed. Any change to
- * the form after a preview marks it stale; a save clears it. Previewing
+ * resolves, which would wipe the values the admin just typed. Previewing
  * writes nothing and never switches escalation on.
+ *
+ * A PREVIEW IS ABOUT THE VALUES IT SENT (audit 2026-09-22, late). The form
+ * stays editable while a preview is in flight, so its answer can describe
+ * values the form no longer holds. Each request keeps a snapshot of what it
+ * sent; the answer is shown against that snapshot and is STALE whenever the
+ * form differs from it — whether the edit came before the answer (the first
+ * request included) or after, by typing or by React's silent reset after a
+ * save or a same-page refresh. Putting the values back makes it current
+ * again; only the latest request's answer is ever shown; a save clears it;
+ * a request that gets no answer at all says so without leaving the form.
  */
 const DAYS: ReadonlyArray<{ iso: number; label: string }> = [
   { iso: 1, label: "Mon" },
@@ -64,25 +74,82 @@ export function LeadEscalationPanel({ value, members }: { value: LeadEscalationC
   const [previewing, startPreview] = useTransition();
   const [previewResult, setPreviewResult] = useState<PreviewLeadEscalationResult | null>(null);
   const [stale, setStale] = useState(false);
+  // what the SHOWN preview was asked about (null: none shown), and the latest request
+  const shownFor = useRef<string | null>(null);
+  const latestRequest = useRef(0);
+  const [edits, setEdits] = useState(0);
 
   useEffect(() => {
     if (state.savedAt && state.savedAt !== last.current) {
       last.current = state.savedAt;
       toast.success("Lead escalation saved — the next five-minute check applies it");
-      // the preview was about a proposal; the row now holds it (or something else)
+      // the preview was about a proposal; the row now holds it (or something else).
+      // No request is superseded here: Preview is disabled while a save is in
+      // flight, so a request pending now was made AFTER the save — its answer counts.
+      shownFor.current = null;
       setPreviewResult(null);
       setStale(false);
     }
   }, [state.savedAt]);
 
+  // The two boxes that grey out and disable other fields, read from what they
+  // SHOW. Not from their own onChange: after a form reset React's record of a
+  // box's last value is out of date and it drops a change that repeats it —
+  // a ticked hours box would then keep its days disabled.
+  const syncBoxes = useCallback(() => {
+    const form = formRef.current;
+    if (!form) return;
+    const ticked = (name: string) => (form.elements.namedItem(name) as HTMLInputElement | null)?.checked ?? false;
+    setEnabled(ticked("enabled"));
+    setHoursOn(ticked("hours_enabled"));
+  }, []);
+
+  // Fields change without any event, too: after every settled save (`state`
+  // is a new object each time, refused or not) React resets them to the
+  // stored row, and a same-page refresh (new `value`/`members`) moves an
+  // untouched field to the newly stored value.
+  useEffect(() => {
+    syncBoxes();
+  }, [state, value, members, syncBoxes]);
+
+  // Compared after the change has rendered, so a box that disables the day
+  // and time fields has disabled them and the snapshot is what a submit would
+  // send.
+  useEffect(() => {
+    const form = formRef.current;
+    if (!form || shownFor.current === null) return;
+    setStale(previewFormSnapshot(new FormData(form)) !== shownFor.current);
+  }, [edits, state, value, members, hoursOn]);
+
+  // `onInput` as well as `onChange` for the same reason as `syncBoxes`: the
+  // native input event (boxes, spinners, typing) is not deduped by React.
+  const onEdit = () => {
+    syncBoxes();
+    setEdits((n) => n + 1);
+  };
+
   const runPreview = () => {
     const form = formRef.current;
     if (!form || !form.reportValidity()) return;
     const data = new FormData(form);
+    const sent = previewFormSnapshot(data);
+    const request = ++latestRequest.current;
     startPreview(async () => {
-      const result = await previewLeadEscalation(data);
+      let result: PreviewLeadEscalationResult;
+      try {
+        result = await previewLeadEscalation(data);
+      } catch {
+        // no answer at all (a dropped connection, a deploy since the page
+        // loaded): say so here rather than let it take the page — and the
+        // values on the form — down with it
+        result = { error: "Could not reach the server — nothing was changed, and your values are still on the form. Try again.", preview: null };
+      }
+      if (request !== latestRequest.current) return; // superseded by a later preview
       setPreviewResult(result);
-      setStale(false);
+      shownFor.current = result.error === null ? sent : null;
+      // the answer is about the values SENT; the admin may have edited since
+      const now = formRef.current ? previewFormSnapshot(new FormData(formRef.current)) : sent;
+      setStale(result.error === null && now !== sent);
       if (result.error) toast.error(result.error);
     });
   };
@@ -112,9 +179,8 @@ export function LeadEscalationPanel({ value, members }: { value: LeadEscalationC
         action={formAction}
         data-testid="lead-escalation-form"
         className="flex flex-col gap-5"
-        onChange={() => {
-          if (previewResult?.preview) setStale(true);
-        }}
+        onInput={onEdit}
+        onChange={onEdit}
       >
         <label className="flex items-start gap-3 rounded-[10px] border border-border bg-surface p-3">
           <input
@@ -122,7 +188,6 @@ export function LeadEscalationPanel({ value, members }: { value: LeadEscalationC
             name="enabled"
             value="on"
             defaultChecked={value.enabled}
-            onChange={(e) => setEnabled(e.target.checked)}
             className="mt-0.5 size-4 accent-brand-700"
           />
           <span className="flex flex-col">
@@ -219,7 +284,6 @@ export function LeadEscalationPanel({ value, members }: { value: LeadEscalationC
               name="hours_enabled"
               value="on"
               defaultChecked={value.working_hours !== null}
-              onChange={(e) => setHoursOn(e.target.checked)}
               className="size-4 accent-brand-700"
             />
             Count the wait in working time only
@@ -270,12 +334,15 @@ export function LeadEscalationPanel({ value, members }: { value: LeadEscalationC
           >
             {previewing ? "Previewing…" : "Preview activation"}
           </Button>
-          <p className="text-xs text-text-3">Every save is an event. The e-mail itself needs the provider key the desk alert already uses.</p>
+          <p className="text-xs text-text-3">
+            Every save is an event. Sending also needs the provider set up with a sender it accepts — the preview says what this
+            deployment&rsquo;s sender can do.
+          </p>
         </div>
       </form>
 
-      {previewResult?.preview ? (
-        <LeadEscalationPreviewCard preview={previewResult.preview} providerArmed={previewResult.providerArmed} stale={stale} />
+      {previewResult && previewResult.error === null ? (
+        <LeadEscalationPreviewCard preview={previewResult.preview} sender={previewResult.sender} stale={stale} />
       ) : previewResult?.error ? (
         <p role="alert" data-testid="lead-escalation-preview-error" className="text-sm text-danger">
           {previewResult.error}

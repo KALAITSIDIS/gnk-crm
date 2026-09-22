@@ -25,7 +25,8 @@ import {
   stageNameSchema,
 } from "@/lib/validators/settings";
 import { NUDGE_THRESHOLD_KEYS } from "@/lib/services/nudge-thresholds";
-import { enquiryAlertConfigured } from "@/lib/services/enquiry-alert";
+import { senderReadiness } from "@/lib/services/enquiry-alert";
+import type { SenderReadiness } from "@/lib/services/sender-readiness";
 import { readLeadEscalation } from "@/lib/services/lead-escalation";
 import { PREVIEW_LIMIT, readLeadEscalationPreview, type LeadEscalationPreview } from "@/lib/services/lead-escalation-preview";
 
@@ -879,8 +880,8 @@ export async function saveLeadEscalation(
 }
 
 export type PreviewLeadEscalationResult =
-  | { error: string; preview: null; providerArmed: boolean }
-  | { error: null; preview: LeadEscalationPreview; providerArmed: boolean };
+  | { error: string; preview: null }
+  | { error: null; preview: LeadEscalationPreview; sender: SenderReadiness };
 
 /**
  * Settings → Lead escalation → Preview activation (0112). The values on the
@@ -893,14 +894,22 @@ export type PreviewLeadEscalationResult =
  * as unsendable), carries the stored timezone exactly as the save does, asks
  * through the caller's own session, and surfaces the function's words.
  *
- * WRITES NOTHING: no policy, no job, no event, no revalidation. A preview
- * never enables escalation — Save is the activation and stays the only one.
- * `providerArmed` is read from the environment because an unarmed worker
- * claims nothing however many rows the sweep mints.
+ * WRITES NOTHING: no policy, no job, no event, no revalidation, no e-mail. A
+ * preview never enables escalation — Save is the activation and stays the
+ * only one.
+ *
+ * THE SENDER IS REPORTED APART FROM THE RECIPIENTS (audit 2026-09-22, late).
+ * The database's counts say who is eligible under the escalation's rules;
+ * `sender` says what can be established about the provider accepting mail
+ * from this deployment's From — not configured, Resend's test sender, a
+ * custom domain whose verification is unknown or refused, or verified. It
+ * used to be `providerArmed`, the worker's configuration gate alone, which
+ * said "armed" for a From that could reach nobody but the Resend account's
+ * owner. It is read only once the database has answered, so only an admin
+ * it accepted ever causes the one read-only provider call.
  */
 export async function previewLeadEscalation(formData: FormData): Promise<PreviewLeadEscalationResult> {
-  const providerArmed = enquiryAlertConfigured();
-  const refuse = (error: string): PreviewLeadEscalationResult => ({ error, preview: null, providerArmed });
+  const refuse = (error: string): PreviewLeadEscalationResult => ({ error, preview: null });
 
   const parsed = leadEscalationPreviewSchema.safeParse(leadEscalationFormInput(formData));
   if (!parsed.success) return refuse(parsed.error.issues[0]?.message ?? "Invalid input");
@@ -934,5 +943,5 @@ export async function previewLeadEscalation(formData: FormData): Promise<Preview
   }
   const preview = readLeadEscalationPreview(data);
   if (!preview) return refuse("The preview came back in a shape this page does not understand — refresh and try again.");
-  return { error: null, preview, providerArmed };
+  return { error: null, preview, sender: await senderReadiness() };
 }

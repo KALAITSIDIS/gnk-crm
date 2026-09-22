@@ -349,9 +349,9 @@ TZ
 SENTRY_DSN                       (server — was missing once; everything reported nowhere)
 NEXT_PUBLIC_SENTRY_DSN
 SENTRY_AUTH_TOKEN                (optional, source maps)
-RESEND_API_KEY                   (optional; arms the desk alert AND the lead escalation, 0107 — the escalation's recipients are profiles chosen on Settings → Lead escalation, never an env var)
+RESEND_API_KEY                   (optional; with ENQUIRY_ALERT_TO it arms the desk alert AND the lead escalation, 0107 — the worker claims nothing without BOTH; the escalation's recipients are profiles chosen on Settings → Lead escalation, never an env var)
 ENQUIRY_ALERT_TO                 (with it; the desk address — comma-separated for more than one)
-ENQUIRY_ALERT_FROM               (optional; the alert's From. Set to a verified sending address to also arm the visitor acknowledgement, 0098 — never resend.dev for that)
+ENQUIRY_ALERT_FROM               (optional; the From of the desk alert AND the escalation. Unset = Resend's onboarding sender, which delivers only to the Resend account's own address — an escalation to anyone else is refused whole (403). Set only once the domain is verified in Resend (an unverified From breaks the desk alert too); it also arms the visitor acknowledgement, 0098 — never resend.dev for that. The activation preview's Sender row reports the state, 2026-09-22)
 ENQUIRY_FORWARD_KEY              (secret; = gnk-web's CRM_FORWARD_KEY — the site proves it is the forwarder, 2026-09-06)
 IP_HASH_SALT                     (secret; salts the rate-limit fingerprints — unset falls back to the public project URL and logs it)
 SITE_REVALIDATE_URL              (the site's revalidate door, https://gnk-web.vercel.app/api/revalidate — 2026-09-13, REL-01)

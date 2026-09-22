@@ -217,3 +217,17 @@ export function leadExclusionReason(lead: PreviewLead): string | null {
   }
   return VERDICT_COPY[lead.verdict];
 }
+
+/**
+ * The form as a submit would send it, as one comparable string (audit
+ * 2026-09-22, late): the panel keeps this for each preview request and calls
+ * the answer stale whenever the form's differs. Every [name, value] pair —
+ * FormData skips disabled fields exactly as a submit does — sorted, because
+ * the server reads recipients and days as sets: a refresh that reorders the
+ * ticked colleagues changes nothing.
+ */
+export function previewFormSnapshot(data: FormData): string {
+  return JSON.stringify(
+    [...data].map(([name, v]) => JSON.stringify([name, typeof v === "string" ? v : v.name])).sort(),
+  );
+}

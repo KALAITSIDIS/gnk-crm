@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Settings → Lead escalation → Preview activation (0112). The DATABASE
@@ -81,7 +81,6 @@ describe("previewLeadEscalation", () => {
     const res = await previewLeadEscalation(form(proposed));
     expect(res.error).toBeNull();
     expect(res.preview?.counts.due).toBe(0);
-    expect(typeof res.providerArmed).toBe("boolean");
     expect(state.rpc).toHaveBeenCalledTimes(1);
     const [name, args] = state.rpc.mock.calls[0]!;
     expect(name).toBe("preview_lead_escalation");
@@ -140,5 +139,68 @@ describe("previewLeadEscalation", () => {
     await previewLeadEscalation(form(proposed));
     expect(revalidatePath).not.toHaveBeenCalled();
     expect(logEvent).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Audit 2026-09-22 (late): the sender is reported apart from the
+   * recipients — the old `providerArmed` said "armed" for Resend's test
+   * sender and an unverified domain alike. The report comes with the
+   * preview; the provider is asked (read-only) only for a custom From, and
+   * only once the caller has passed the admin gate.
+   */
+  describe("the sender report", () => {
+    const OLD = { ...process.env };
+    beforeEach(() => {
+      process.env = { ...OLD };
+    });
+    afterEach(() => {
+      process.env = { ...OLD };
+      vi.restoreAllMocks();
+    });
+
+    it("says not configured without the provider key or the desk address, asking nobody", async () => {
+      delete process.env.RESEND_API_KEY;
+      delete process.env.ENQUIRY_ALERT_TO;
+      const fetchMock = vi.spyOn(globalThis, "fetch");
+      state.rpc.mockResolvedValue({ data: DOC, error: null });
+      const res = await previewLeadEscalation(form(proposed));
+      expect(res.error).toBeNull();
+      expect(res.error === null && res.sender.state).toBe("not_configured");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("says test sender when ENQUIRY_ALERT_FROM is unset, even with the key and desk address — not 'armed'", async () => {
+      process.env.RESEND_API_KEY = "re_test_key";
+      process.env.ENQUIRY_ALERT_TO = "desk@example.com";
+      delete process.env.ENQUIRY_ALERT_FROM;
+      const fetchMock = vi.spyOn(globalThis, "fetch");
+      state.rpc.mockResolvedValue({ data: DOC, error: null });
+      const res = await previewLeadEscalation(form(proposed));
+      expect(res.error === null && res.sender).toEqual({ state: "test_sender", fromSet: false, domain: "resend.dev" });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("asks the provider's domain list for a custom From — once, read-only — and never for a caller the gate stops", async () => {
+      process.env.RESEND_API_KEY = "re_test_key";
+      process.env.ENQUIRY_ALERT_TO = "desk@example.com";
+      process.env.ENQUIRY_ALERT_FROM = "GN Kalaitsidis <alerts@send.kalaitsidis.com>";
+      const fetchMock = vi
+        .spyOn(globalThis, "fetch")
+        .mockImplementation(async () => new Response(JSON.stringify({ object: "list", has_more: false, data: [{ name: "send.kalaitsidis.com", status: "pending" }] }), { status: 200 }));
+      state.rpc.mockResolvedValue({ data: DOC, error: null });
+
+      state.role = "agent";
+      expect((await previewLeadEscalation(form(proposed))).error).toMatch(/admins only/i);
+      expect((await previewLeadEscalation(form({ ...proposed, after_minutes: "2" }))).error).toMatch(/minimum/i);
+      expect(fetchMock, "a refused caller makes no provider call").not.toHaveBeenCalled();
+
+      state.role = "admin";
+      const res = await previewLeadEscalation(form(proposed));
+      expect(res.error === null && res.sender).toEqual({ state: "custom_not_verified", domain: "send.kalaitsidis.com", providerStatus: "pending" });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0]!;
+      expect(String(url)).toMatch(/^https:\/\/api\.resend\.com\/domains/);
+      expect(init?.method).toBe("GET");
+    });
   });
 });
