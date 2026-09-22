@@ -69,6 +69,17 @@ begin
   return new;
 end $function$;
 
+-- THE ACL, MADE TRUE RATHER THAN ASSUMED (hosted apply, 2026-09-22): the first
+-- apply on the hosted project was refused by the assertion below because
+-- there the function carried service_role=X (the pre-0021 default every
+-- trigger body on hosted still has), while the local stack carried postgres
+-- only. A trigger body is callable by nobody over PostgREST — the 0101
+-- standard for cancel_lead_notification_jobs — so the standard is enforced
+-- here, idempotently, instead of merely checked. Harmless either way: a
+-- trigger function called directly raises 'trigger functions can only be
+-- called as triggers'; the trigger itself fires as its owner.
+revoke execute on function public.trg_events_hash() from public, anon, authenticated, service_role;
+
 comment on function public.trg_events_hash() is
   'BEFORE INSERT on events and every partition (0061 v2 hash, 0063 partitions, '
   '0108 serialised): takes a transaction-scoped advisory lock on the '
