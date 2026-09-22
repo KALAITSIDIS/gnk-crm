@@ -109,7 +109,10 @@ inbox row ── EscalationChip ──(admin)──▶ recoverLeadEscalation(job
 | cancelled, no_recipient | Escalation cancelled — nobody eligible to receive it (Settings → Lead escalation) | retry (once fixed) |
 | cancelled, lead_* / org_mismatch | Escalation cancelled — the enquiry was answered / the lead was closed / the enquiry was redacted / … | none |
 
-Every row also shows the last attempt time where one exists.
+Failed, cancelled, stuck and retrying rows also say when the last attempt
+was; an accepted row says when the provider accepted it; a live `sending`
+row says nothing more. A lapsed lease whose key is no longer safe is offered
+`resend`, like any unsafe key.
 
 ## Compatibility and rollout
 

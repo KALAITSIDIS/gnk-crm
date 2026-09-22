@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 110::bigint as migrations,
+    2::bigint as auth_users, 111::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -238,6 +238,9 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   ('claim_notification_jobs',     true, false, false, true),
   ('complete_notification_job',   true, false, false, true),
   ('request_enquiry_alert_retry', true, false, true,  true),
+  -- the escalation's recovery (0111): authenticated-callable like the desk
+  -- alert's retry and stricter — admin only, by job id, every rule in SQL
+  ('request_lead_escalation_recovery', true, false, true, true),
   -- the lead escalation (0107): the policy reader, the working-time clock and
   -- the five-minute minting sweep — cron runs the sweep as postgres,
   -- service_role may rehearse all three, nobody else may call them

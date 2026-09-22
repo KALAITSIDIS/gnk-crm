@@ -162,6 +162,24 @@ describe("the claim", () => {
     );
   });
 
+  it("names the exact job when given one, and sends no p_job_id otherwise (0111)", async () => {
+    const exact = makeClient({ claim: [] });
+    await runEnquiryAlertWorker(
+      exact.client,
+      { workerId: "recover:job-7", leadId: "lead-9", jobId: "job-7", limit: 1 },
+      { send: sender({ outcome: "skipped" }) },
+    );
+    expect(exact.rpcCalls[0]!.args, "a staff action that was given a job id claims that job and no other").toMatchObject({
+      p_lead_id: "lead-9",
+      p_job_id: "job-7",
+      p_limit: 1,
+    });
+    const sweep = makeClient({ claim: [] });
+    await runEnquiryAlertWorker(sweep.client, { workerId: "sweep:1" }, { send: sender({ outcome: "skipped" }) });
+    expect(sweep.rpcCalls[0]!.args, "omitted, not null: PostgREST then takes the function's default").not.toHaveProperty("p_job_id");
+    expect(sweep.rpcCalls[0]!.args).not.toHaveProperty("p_lead_id");
+  });
+
   it("asks for less than the budget fits when the caller wants less", async () => {
     const { client, rpcCalls } = makeClient({ claim: [] });
     await runEnquiryAlertWorker(client, { workerId: "w1", limit: 1, budgetMs: 45_000 }, { send: sender({ outcome: "skipped" }) });

@@ -10,7 +10,8 @@
  *
  *   - the enquiry route's `after()`, for the lead it just made — the
  *     ACCELERATOR: the desk is told within a second of the 202, as before;
- *   - the staff retry action's `after()`, for the lead a person asked about;
+ *   - the two staff actions' `after()` — the desk-alert retry and the
+ *     escalation recovery (0111) — for the ONE JOB a person asked about;
  *   - the sweep, `GET|POST /api/internal/enquiry-alerts`, for whatever the
  *     first two never reached: an invocation killed after the commit, a
  *     provider that answered 503, a lease that lapsed. The sweep is what
@@ -119,6 +120,13 @@ export interface WorkerOptions {
   limit?: number;
   /** Narrow the claim to one lead (the accelerator and the staff retry). */
   leadId?: string;
+  /**
+   * Narrow the claim to ONE job (0111). A lead carries up to two rows since
+   * 0107, and "any due job of this lead, limit 1" could hand a staff retry
+   * of the desk alert the escalation instead — or the other way round. A
+   * staff action that was given a job id claims that job and no other.
+   */
+  jobId?: string;
   /** How long a claim may be held before another worker may take the row over. Raised to outlive the budget. */
   leaseSeconds?: number;
   /** Wall-clock budget for this run. Claims only what fits; releases what it cannot reach. */
@@ -222,6 +230,7 @@ export async function runEnquiryAlertWorker(
     p_lease_seconds: leaseSeconds,
     // omitted, not null: PostgREST then takes the function's own default
     ...(opts.leadId ? { p_lead_id: opts.leadId } : {}),
+    ...(opts.jobId ? { p_job_id: opts.jobId } : {}),
   });
   if (claim.error) {
     // The queue could not be reached. That is not "nothing due", and nobody

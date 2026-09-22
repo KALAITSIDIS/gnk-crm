@@ -50,8 +50,14 @@ describe("retryEnquiryAlert", () => {
     expect(runEnquiryAlertWorker).toHaveBeenCalledTimes(1);
     const [client, opts] = runEnquiryAlertWorker.mock.calls[0]!;
     expect(client).toEqual({ marker: "admin" });
-    expect(opts).toMatchObject({ leadId: "lead-1", limit: 1 });
-    expect(String(opts.workerId)).toMatch(/^retry:/);
+    expect(opts, "the lead AND the job it was told about (0111): a lead carrying both kinds must not have the other claimed").toMatchObject({
+      leadId: "lead-1",
+      jobId: "job-7",
+      limit: 1,
+    });
+    expect(String(opts.workerId), "named for the job AND unique per run: a late completion from an earlier run must not land on this claim").toMatch(
+      /^retry:job-7:[0-9a-f-]{36}$/,
+    );
     expect(revalidatePath).toHaveBeenCalledWith("/leads");
   });
 

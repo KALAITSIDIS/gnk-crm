@@ -3207,6 +3207,7 @@ export type Database = {
       }
       claim_notification_jobs: {
         Args: {
+          p_job_id?: string
           p_key_window?: string
           p_lead_id?: string
           p_lease_seconds?: number
@@ -3683,6 +3684,39 @@ export type Database = {
       }
       request_enquiry_alert_retry: {
         Args: { p_lead_id: string }
+        Returns: {
+          accepted_at: string | null
+          attempts: number
+          claimed_by: string | null
+          claimed_until: string | null
+          created_at: string
+          finished_at: string | null
+          first_attempted_at: string | null
+          id: string
+          key_attempts: number
+          key_serial: number
+          kind: string
+          last_attempted_at: string | null
+          last_category: string | null
+          last_result: string | null
+          lead_id: string
+          max_attempts: number
+          next_attempt_at: string
+          org_id: string
+          provider: string
+          provider_message_id: string | null
+          state: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "notification_jobs"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      request_lead_escalation_recovery: {
+        Args: { p_action: string; p_job_id: string; p_reason?: string }
         Returns: {
           accepted_at: string | null
           attempts: number
