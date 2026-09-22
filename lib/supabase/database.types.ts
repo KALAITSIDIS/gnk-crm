@@ -3627,7 +3627,10 @@ export type Database = {
         Args: { p_actor?: string; p_mandate?: string }
         Returns: number
       }
-      raise_lead_escalations: { Args: { p_org?: string }; Returns: number }
+      raise_lead_escalations: {
+        Args: { p_now?: string; p_org?: string }
+        Returns: number
+      }
       raise_lead_sla_tasks: {
         Args: { p_minutes?: number; p_org?: string }
         Returns: number

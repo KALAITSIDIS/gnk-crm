@@ -70,10 +70,16 @@ async function age(leadId: string, minutes: number, patch: Record<string, unknow
   if (error) throw new Error(`age: ${error.message}`);
 }
 
-async function raise(org: string) {
-  const { data, error } = await svc.rpc("raise_lead_escalations", { p_org: org });
+/** The sweep, for one org — and, since 0110, as of a given instant (p_now), so a scenario is the same whatever day it runs. */
+async function raise(org: string, now?: string) {
+  const { data, error } = await svc.rpc("raise_lead_escalations", { p_org: org, ...(now ? { p_now: now } : {}) });
   if (error) throw new Error(`raise: ${error.message}`);
   return data as number;
+}
+
+async function receivedAt(leadId: string, iso: string) {
+  const { error } = await svc.from("leads").update({ received_at: iso } as never).eq("id", leadId);
+  if (error) throw new Error(`receivedAt: ${error.message}`);
 }
 
 async function escalationJobs(leadId: string): Promise<Job[]> {
@@ -319,6 +325,85 @@ describe("the minting sweep", () => {
     expect(dup.error?.code, "unique_violation").toBe("23505");
     const odd = await svc.from("notification_jobs").insert({ org_id: ORG_A, lead_id: waiting, kind: "something_else" });
     expect(odd.error?.code, "check_violation").toBe("23514");
+  });
+});
+
+/**
+ * THE AGE CUTOFF COUNTS FROM WHEN THE WAIT ENDED, NOT FROM ARRIVAL (audit
+ * 2026-09-22, second brief, finding 3). 0107 required `received_at` within
+ * max_age_hours AND the working-time due time passed. With the seeded
+ * Mon–Fri 09:00–18:00 hours, a Friday 22:00 enquiry is due Monday 09:15 —
+ * and at Monday 09:20 it is 59 hours old, so the sweep skipped it: the
+ * guard against e-mailing a stale backlog at activation was cutting off
+ * exactly the enquiries that had waited legitimately through the closed
+ * days. Since 0110 the guard asks how long ago the wait ENDED (`due_at`
+ * within max_age_hours), which is the same question for a lead received in
+ * working hours and the right one for a lead received outside them.
+ *
+ * The sweep takes `p_now` so the brief's example runs on its own dates
+ * whatever day the suite runs: Friday 25 September 2026 22:00 Asia/Nicosia
+ * (19:00Z), swept Monday 28 September 09:20 (06:20Z).
+ */
+describe("the age cutoff counts from the end of the wait, not from arrival (finding 3, 2026-09-22)", () => {
+  const MONDAY_0920 = "2026-09-28T06:20:00Z";
+  let friday: string;
+  let monday: string;
+  let backlog: string;
+  const hoursPolicy = () => ({ ...onFlat([adminA.id]), working_hours: HOURS });
+
+  beforeAll(async () => {
+    friday = await submit("test-org-a", "friday-night");
+    monday = await submit("test-org-a", "monday-control");
+    backlog = await submit("test-org-a", "backlog");
+    await receivedAt(friday, "2026-09-25T19:00:00Z"); // Friday 22:00 local → due Monday 09:15 local (06:15Z)
+    await receivedAt(monday, "2026-09-28T06:00:00Z"); // Monday 09:00 local → due 09:15 local (06:15Z)
+    await receivedAt(backlog, "2026-09-01T07:00:00Z"); // Tuesday 1 September 10:00 local → due 10:15; weeks before the sweep
+  });
+
+  it("the due time itself is unchanged: Friday 22:00 Nicosia is due Monday 09:15", async () => {
+    expect(await dueAt("2026-09-25T19:00:00Z", hoursPolicy())).toBe("2026-09-28T06:15:00.000Z");
+  });
+
+  it("a Friday-night enquiry, 59 hours old and five minutes overdue on Monday morning, receives its one escalation; the Monday control does too; the weeks-old backlog does not", async () => {
+    await setPolicy(hoursPolicy());
+    try {
+      await raise(ORG_A, MONDAY_0920);
+      expect(await escalationJobs(friday), "waited through the weekend: eligible after the next opening").toHaveLength(1);
+      expect(await escalationJobs(monday), "received in working hours: eligible as before").toHaveLength(1);
+      expect(await escalationJobs(backlog), "its wait ended weeks ago: the activation guard leaves it to its task").toHaveLength(0);
+      // a second sweep at the same instant changes nothing
+      await raise(ORG_A, MONDAY_0920);
+      expect(await escalationJobs(friday)).toHaveLength(1);
+      expect(await escalationJobs(monday)).toHaveLength(1);
+      expect(await escalationJobs(backlog)).toHaveLength(0);
+    } finally {
+      await setPolicy({ ...onFlat([adminA.id]), enabled: false });
+    }
+  });
+
+  it("the guard still bites when the wait ended more than max_age_hours ago: the same Friday enquiry swept on Thursday is left alone", async () => {
+    const thursday = await submit("test-org-a", "friday-night-swept-thursday");
+    await receivedAt(thursday, "2026-09-25T19:00:00Z");
+    await setPolicy(hoursPolicy());
+    try {
+      // due Monday 06:15Z; Thursday 1 October 06:20Z is 72 hours after that
+      await raise(ORG_A, "2026-10-01T06:20:00Z");
+      expect(await escalationJobs(thursday)).toHaveLength(0);
+    } finally {
+      await setPolicy({ ...onFlat([adminA.id]), enabled: false });
+    }
+  });
+
+  it("a lead not yet due at the sweep's instant is untouched, however it is dated", async () => {
+    const early = await submit("test-org-a", "friday-night-swept-sunday");
+    await receivedAt(early, "2026-09-25T19:00:00Z");
+    await setPolicy(hoursPolicy());
+    try {
+      await raise(ORG_A, "2026-09-27T12:00:00Z"); // Sunday noon: nothing has opened yet
+      expect(await escalationJobs(early)).toHaveLength(0);
+    } finally {
+      await setPolicy({ ...onFlat([adminA.id]), enabled: false });
+    }
   });
 });
 

@@ -54,7 +54,7 @@ test.describe("Settings → Lead escalation", () => {
     await expect(enabled, "seeded OFF").not.toBeChecked();
     await enabled.check();
     await page.getByLabel(/minutes without a first response/i).fill("20");
-    await page.getByLabel(/ignore enquiries older than/i).fill("24");
+    await page.getByLabel(/ignore enquiries overdue for more than/i).fill("24");
     await page.locator(`input[name="recipients"][value="${adminId}"]`).check();
     // working hours on, Saturday added, 08:30–17:30
     const hoursOn = page.getByRole("checkbox", { name: /count the wait in working time only/i });

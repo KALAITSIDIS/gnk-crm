@@ -49,6 +49,13 @@ export interface WorkingHours {
 export interface LeadEscalationConfig {
   enabled: boolean;
   after_minutes: number;
+  /**
+   * The activation guard: an enquiry whose working-time wait ENDED more than
+   * this many hours ago is left to its task. Counted from the due time, not
+   * from arrival (0110) — measured from arrival, the seeded Mon–Fri hours
+   * cut off every Friday-evening and weekend enquiry, which were 59+ hours
+   * old by the time they were five minutes overdue on Monday morning.
+   */
   max_age_hours: number;
   /** profile ids; resolved to active admins/agents of the lead's org at send time */
   recipients: string[];
@@ -174,6 +181,11 @@ export function escalationIneligibility(lead: {
  * and never the lead's assignee. The query already scopes org and ids; the
  * rule is applied again here so the decision is one function a test can
  * read, whatever the client returned.
+ *
+ * SORTED, because the list is part of the provider payload and the payload
+ * must be byte-identical on every attempt under one idempotency key (audit
+ * 2026-09-22, finding 2): the profiles query carries no ORDER BY, and the
+ * same set in another order is "a different payload" to the provider.
  */
 export function escalationRecipients(
   cfg: Pick<LeadEscalationConfig, "recipients">,
@@ -191,7 +203,7 @@ export function escalationRecipients(
     const email = p.email?.trim();
     if (email) out.add(email);
   }
-  return [...out];
+  return [...out].sort();
 }
 
 /* ------------------------------------------------------------------------- */
@@ -206,7 +218,17 @@ export interface LeadEscalation {
   message: string | null;
   /** who the lead is assigned to, or null for unassigned — a colleague reading this should know whom to nudge */
   assigneeName: string | null;
-  /** whole minutes since the enquiry arrived, at the moment of sending */
+  /**
+   * Whole minutes between the enquiry's arrival and the FIRST attempt under
+   * the job's provider key — never the clock at the moment of sending. The
+   * number is in the subject and the body, and the provider deduplicates a
+   * retry on the key AND the payload: measured at send time it moved with
+   * every retry, and a retry after an accepted-but-lost answer was refused
+   * for good (409 invalid_idempotent_request; audit 2026-09-22, finding 2).
+   * The first attempt's instant is the key's own clock (0102/0104: cleared
+   * with the key on rotation, and only then), so every attempt under one key
+   * says the same minutes.
+   */
   waitingMinutes: number;
 }
 
@@ -246,15 +268,19 @@ export function escalationBodyFor(e: LeadEscalation): string {
  * The escalation, rebuilt from the lead row at send time — the same header
  * block the desk alert is rebuilt from (lib/services/lead-contact.ts), plus
  * the assignee and the wait. Null when the row is not a website enquiry.
+ *
+ * `waitMeasuredAt` is the instant the wait is counted to: the job's first
+ * attempt under its current key (see LeadEscalation.waitingMinutes), which
+ * the worker reads off the claimed row. It is deliberately not "now".
  */
 export function escalationFromLead(
   lead: { message: string | null; received_at: string; properties?: { reference: string | null } | null },
-  ctx: { assigneeName: string | null; now: Date },
+  ctx: { assigneeName: string | null; waitMeasuredAt: Date },
 ): LeadEscalation | null {
   const person = parseWebsiteEnquiry(lead.message);
   if (!person) return null;
   const received = new Date(lead.received_at).getTime();
-  const waitingMinutes = Number.isNaN(received) ? 0 : Math.max(0, Math.floor((ctx.now.getTime() - received) / 60_000));
+  const waitingMinutes = Number.isNaN(received) ? 0 : Math.max(0, Math.floor((ctx.waitMeasuredAt.getTime() - received) / 60_000));
   return {
     name: person.name,
     email: person.email,
