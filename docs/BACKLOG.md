@@ -2337,7 +2337,7 @@ VERIFY, run before starting.
   `contacts.last_activity_at` maintained by the event writer and a nightly
   temperature-decay suggestion task. (REC-01, REC-05.) **VERIFY:**
   `grep -n enquirer_key supabase/migrations/*.sql` — a hit means shipped.
-  **Slice BUILT 2026-09-23 (PR #48, branch `feat/enquiry-contact-suggestions`, no migration — NOT merged until the operator approves) — "a matching
+  **Slice SHIPPED 2026-09-23 (PR #48 → main `90990d1`, deployed, no migration) — "a matching
   contact", without the key:** an open, unlinked website enquiry's row lists every ACTIVE contact
   sharing its e-mail or phone (additional phones included, phone formats normalised), with that
   contact's three most recent LINKED enquiries, and "Review and link" behind an explicit
