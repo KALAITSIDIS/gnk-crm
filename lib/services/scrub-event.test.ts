@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 // @sentry/core is @sentry/nextjs's own dependency, pinned to the same version
@@ -15,11 +15,14 @@ import { describe, expect, it, vi } from "vitest";
 import {
   REDACTED,
   SENSITIVE_HEADERS,
+  TOKEN_SEGMENT,
+  redactPathTokens,
   scrubBreadcrumbUrls,
   scrubEvent,
   scrubEventOrDrop,
   scrubSensitiveHeaders,
   scrubSpanUrls,
+  scrubUrlText,
   stripUrlQueries,
 } from "./scrub-event";
 
@@ -408,6 +411,232 @@ describe("what the independent review found (2026-09-23)", () => {
   });
 });
 
+/**
+ * Two routes' PATHS are the credential (T-sentry-path-token-redaction,
+ * 2026-09-23): cutting the query, above, kept them whole. Each carrier below
+ * is one the scrub already cuts queries from — the same shapes, measured then
+ * — now holding a token in its path instead of a search term in its query.
+ */
+/** 43 base64url characters: the shape isWellFormedShareToken accepts. */
+const SHARE_TOKEN = `FAKE-SHARE-TOKEN_${"a".repeat(26)}`;
+/** 64 hex: the shape the feed route accepts. */
+const FEED_TOKEN = "fa4efeed".repeat(8);
+const TOKEN_LEAKS = /FAKE-SHARE-TOKEN|fa4efeed/i;
+const ORIGIN = "https://gnk-crm.vercel.app";
+
+const TOKENISED = [
+  { route: "the proposal link", live: `/p/${SHARE_TOKEN}`, kept: "/p/[token]", name: "GET /p/[token]" },
+  {
+    route: "the portal feed",
+    live: `/api/portals/bazaraki/${FEED_TOKEN}`,
+    kept: "/api/portals/bazaraki/[token]",
+    name: "GET /api/portals/[portal]/[token]",
+  },
+] as const;
+
+describe("no tokenised route's secret travels in its path", () => {
+  it("replaces the secret segment wherever a path starts, keeping the rest of the path", () => {
+    for (const [text, expected] of [
+      [`/p/${SHARE_TOKEN}`, "/p/[token]"],
+      [`/p/${SHARE_TOKEN}/`, "/p/[token]/"],
+      [`${ORIGIN}/p/${SHARE_TOKEN}`, `${ORIGIN}/p/[token]`],
+      [`//gnk-crm.vercel.app/p/${SHARE_TOKEN}`, "//gnk-crm.vercel.app/p/[token]"],
+      [`http://localhost:3000/p/${SHARE_TOKEN}`, "http://localhost:3000/p/[token]"],
+      [`GET /p/${SHARE_TOKEN}`, "GET /p/[token]"],
+      [`a[title="${ORIGIN}/p/${SHARE_TOKEN}"]`, `a[title="${ORIGIN}/p/[token]"]`],
+      [`/api/portals/bazaraki/${FEED_TOKEN}`, "/api/portals/bazaraki/[token]"],
+      [`${ORIGIN}/api/portals/prian/${FEED_TOKEN}`, `${ORIGIN}/api/portals/prian/[token]`],
+    ] as const) {
+      expect(redactPathTokens(text), text).toBe(expected);
+    }
+  });
+
+  it("leaves a route's own name, a file path and every other path alone", () => {
+    for (const text of [
+      "GET /p/[token]",
+      "/api/portals/[portal]/[token]",
+      "/var/task/.next/server/app/p/[token]/page.js",
+      "app:///_next/static/chunks/app/p/%5Btoken%5D/page-4f2a.js",
+      "/contacts/8f0c",
+      "/api/portals/bazaraki",
+      "/p",
+      "/pages/1",
+      "https://example.invalid/shop/p/42",
+    ]) {
+      expect(redactPathTokens(text), text).toBe(text);
+    }
+  });
+
+  it("cuts the query AND the token when a value has both", () => {
+    expect(scrubUrlText(`${ORIGIN}/p/${SHARE_TOKEN}?_rsc=1x2y3`)).toBe(`${ORIGIN}/p/[token]`);
+    expect(scrubUrlText(`/api/portals/bazaraki/${FEED_TOKEN}?page=2#x`)).toBe("/api/portals/bazaraki/[token]");
+  });
+
+  for (const { route, live, kept, name } of TOKENISED) {
+    describe(route, () => {
+      it("a server ERROR event: request.url, the referer, onRequestError's request_path", () => {
+        const event = scrubEvent({
+          transaction: name,
+          request: {
+            method: "GET",
+            url: `${ORIGIN}${live}`,
+            headers: { host: "gnk-crm.vercel.app", referer: `${ORIGIN}${live}`, "x-matched-path": name.slice(4) },
+          },
+          contexts: { nextjs: { request_path: live, router_path: name.slice(4), route_type: "render" } },
+        });
+        expect(JSON.stringify(event)).not.toMatch(TOKEN_LEAKS);
+        expect(event.request.url, "the path is what a person debugging needs").toBe(`${ORIGIN}${kept}`);
+        expect(event.request.headers.referer).toBe(`${ORIGIN}${kept}`);
+        expect(event.contexts.nextjs.request_path).toBe(kept);
+        expect(event.transaction, "already the route's name").toBe(name);
+        expect(event.request.headers["x-matched-path"]).toBe(name.slice(4));
+      });
+
+      it("Next's root span and a sampled TRANSACTION: http.target, http.url, the copied referer", () => {
+        const data = {
+          "http.method": "GET",
+          "http.target": live,
+          "http.url": `${ORIGIN}${live}`,
+          "http.route": name.slice(4),
+          "next.span_name": name,
+          "http.request.header.referer": `${ORIGIN}${live}`,
+        };
+        const span = scrubSpanUrls({ description: name, data: { ...data } as Record<string, unknown> });
+        expect(JSON.stringify(span)).not.toMatch(TOKEN_LEAKS);
+        expect(span.data["http.target"]).toBe(kept);
+        expect(span.data["http.route"]).toBe(name.slice(4));
+        const event = scrubEvent({
+          type: "transaction",
+          transaction: name,
+          contexts: { trace: { op: "http.server", data: { ...data } as Record<string, unknown> } },
+          request: { url: `${ORIGIN}${live}`, headers: { referer: `${ORIGIN}${live}` } },
+          spans: [{ description: name, data: { ...data } as Record<string, unknown> }],
+        });
+        expect(JSON.stringify(event)).not.toMatch(TOKEN_LEAKS);
+        expect(event.contexts.trace.data["http.url"]).toBe(`${ORIGIN}${kept}`);
+      });
+
+      it("a BROWSER event: location.href, Referer, the pageload's url.full, a pageload named by its raw path", () => {
+        // The route manifest withSentryConfig injects names a pageload
+        // `/p/[token]`; where it has no match, the name IS the raw pathname
+        // (appRouterRoutingInstrumentation.js, source "url").
+        const event = scrubEvent({
+          type: "transaction",
+          transaction: live,
+          request: { url: `${ORIGIN}${live}`, headers: { Referer: `${ORIGIN}${live}`, "User-Agent": "Mozilla/5.0" } },
+          contexts: {
+            trace: { op: "pageload", data: { "url.full": `${ORIGIN}${live}`, "url.path": live } as Record<string, unknown> },
+          },
+        });
+        expect(JSON.stringify(event)).not.toMatch(TOKEN_LEAKS);
+        expect(event.transaction).toBe(kept);
+        expect(event.request.url).toBe(`${ORIGIN}${kept}`);
+        expect(event.request.headers.Referer).toBe(`${ORIGIN}${kept}`);
+        expect(event.contexts.trace.data["url.path"]).toBe(kept);
+      });
+
+      it("a navigation breadcrumb, a logged URL and an exception message", () => {
+        const crumb = scrubBreadcrumbUrls({ category: "navigation", data: { from: live, to: "/" } });
+        expect(crumb.data).toEqual({ from: kept, to: "/" });
+        const logged = scrubBreadcrumbUrls({
+          category: "console",
+          message: `Failed to fetch RSC payload for ${ORIGIN}${live}?_rsc=1x2y3. Falling back to browser navigation.`,
+          data: { arguments: [`GET ${live} 500`] },
+        });
+        expect(JSON.stringify(logged)).not.toMatch(TOKEN_LEAKS);
+        expect(logged.data.arguments[0]).toBe(`GET ${kept} 500`);
+        const event = scrubEvent({
+          message: `GET ${ORIGIN}${live} failed`,
+          exception: { values: [{ type: "Error", value: `Failed to load ${ORIGIN}${live}`, stacktrace: { frames: [] } }] },
+        });
+        expect(JSON.stringify(event)).not.toMatch(TOKEN_LEAKS);
+        expect(event.message).toBe(`GET ${ORIGIN}${kept} failed`);
+      });
+    });
+  }
+
+  it("the proposal page's interest POST: its Referer IS the link, and its body holds the token", () => {
+    // interest-form.tsx posts from /p/<token>, and our Referrer-Policy
+    // (strict-origin-when-cross-origin, next.config.ts) sends the WHOLE URL on
+    // a same-origin request.
+    const event = scrubEvent({
+      type: "transaction",
+      request: {
+        method: "POST",
+        url: `${ORIGIN}/api/public/proposals/interest`,
+        headers: { referer: `${ORIGIN}/p/${SHARE_TOKEN}`, "content-type": "application/json" },
+        data: JSON.stringify({ token: SHARE_TOKEN, name: "Maria Enquirer" }),
+      },
+    });
+    expect(JSON.stringify(event)).not.toMatch(TOKEN_LEAKS);
+    expect(event.request.headers.referer).toBe(`${ORIGIN}/p/[token]`);
+    expect(event.request.url).toBe(`${ORIGIN}/api/public/proposals/interest`);
+  });
+
+  it("an RSC request made FROM the proposal page: next-url and the router state tree", () => {
+    // None leaves the page today (no Link, router call or action on it); Next
+    // would send both headers the day one does, and the SDK copies them onto
+    // the root span as well as event.request.
+    const tree = encodeURIComponent(
+      JSON.stringify([
+        "",
+        { children: ["p", { children: [["token", SHARE_TOKEN, "d", null], { children: ["__PAGE__", {}] }] }] },
+        null,
+        null,
+        true,
+      ]),
+    );
+    const event = scrubEvent({
+      request: { url: `${ORIGIN}/`, headers: { rsc: "1", "next-url": `/p/${SHARE_TOKEN}`, "next-router-state-tree": tree } },
+      contexts: { trace: { data: { "http.request.header.next_router_state_tree": tree } as Record<string, unknown> } },
+    });
+    expect(JSON.stringify(event)).not.toMatch(TOKEN_LEAKS);
+    expect(event.request.headers["next-url"]).toBe("/p/[token]");
+    const cleaned = JSON.parse(decodeURIComponent(event.request.headers["next-router-state-tree"]!));
+    expect(cleaned[1].children[1].children[0], "the tree keeps its shape").toEqual(["token", TOKEN_SEGMENT, "d", null]);
+    expect(event.contexts.trace.data["http.request.header.next_router_state_tree"]).toBe(
+      event.request.headers["next-router-state-tree"],
+    );
+  });
+});
+
+describe("app/ holds no secret path segment the scrub does not know", () => {
+  /**
+   * Every dynamic segment in app/, classified. A new one fails here until
+   * someone decides whether its value is a credential — and a new tokenised
+   * route fails the second test until redactPathTokens covers it.
+   */
+  const SEGMENTS: Record<string, string> = {
+    id: "a record's uuid: reaching the page needs a signed-in session",
+    portal: "a portal's public name from the registry",
+    token: "THE CREDENTIAL: redactPathTokens replaces it",
+  };
+  const routes = readdirSync(join(root, "app"), { recursive: true })
+    .map((entry) => String(entry).replace(/\\/g, "/"))
+    .filter((file) => /(^|\/)(page|route)\.tsx?$/.test(file))
+    .map((file) => `/${file.split("/").slice(0, -1).filter((part) => !/^\(.*\)$/.test(part)).join("/")}`)
+    .filter((route) => route.includes("["));
+
+  it("every dynamic segment is one of the classified names", () => {
+    const names = new Set(routes.flatMap((route) => [...route.matchAll(/\[([^\]]+)\]/g)].map((m) => m[1]!)));
+    expect(names.size, "the walk found the dynamic routes").toBeGreaterThan(0);
+    for (const n of names) expect(Object.keys(SEGMENTS), `[${n}] is unclassified`).toContain(n);
+  });
+
+  it("every route with a [token] segment loses it, on any origin", () => {
+    const tokenised = routes.filter((route) => route.includes("[token]")).sort();
+    expect(tokenised).toEqual(["/api/portals/[portal]/[token]", "/p/[token]"]);
+    for (const route of tokenised) {
+      const named = route.replace("[portal]", "bazaraki");
+      const live = named.replace("[token]", SHARE_TOKEN);
+      expect(redactPathTokens(live), route).toBe(named);
+      expect(redactPathTokens(`https://preview-abc.vercel.app${live}?_rsc=1`), route).toBe(
+        `https://preview-abc.vercel.app${named}?_rsc=1`,
+      );
+    }
+  });
+});
+
 describe("the installed SDK's own event, through scrubEvent, carries none of it", () => {
   /**
    * The shapes above are copies; this one RequestData builds. A real core
@@ -418,7 +647,33 @@ describe("the installed SDK's own event, through scrubEvent, carries none of it"
    * @sentry/nextjs's own hooks, the header copy onto the root span, or the
    * browser SDK; those are the measured shapes above.
    */
-  async function capture(): Promise<Array<ErrorEvent | TransactionEvent>> {
+  interface Incoming {
+    method: string;
+    /** req.url as Node hands it over: relative, query and all. */
+    url: string;
+    /** Next's name for the route: the transaction's, and the root span's route. */
+    route: string;
+    headers: Record<string, string>;
+    body: string;
+  }
+
+  const CONTACTS_SEARCH: Incoming = {
+    method: "POST",
+    url: `/contacts?q=${SEARCH}`,
+    route: "/contacts",
+    headers: {
+      host: "gnk-crm.vercel.app",
+      "x-forwarded-proto": "https",
+      referer: PAGE,
+      cookie: "sb-yjg-auth-token=FAKE-SESSION-TOKEN",
+      authorization: "Bearer FAKE-CRON-SECRET",
+      "x-gnk-visitor-ip": "198.51.100.22",
+      "x-gnk-forward-key": "FAKE-FORWARD-KEY",
+    },
+    body: ENQUIRY,
+  };
+
+  async function capture(incoming: Incoming): Promise<Array<ErrorEvent | TransactionEvent>> {
     const sent: Array<ErrorEvent | TransactionEvent> = [];
     const keep = <T extends ErrorEvent | TransactionEvent>(event: T): null => {
       sent.push(JSON.parse(JSON.stringify({ ...scrubEvent(event), sdkProcessingMetadata: undefined })));
@@ -435,27 +690,19 @@ describe("the installed SDK's own event, through scrubEvent, carries none of it"
     });
     client.init();
     const normalizedRequest = httpRequestToRequestData({
-      method: "POST",
-      url: `/contacts?q=${SEARCH}`,
-      headers: {
-        host: "gnk-crm.vercel.app",
-        "x-forwarded-proto": "https",
-        referer: PAGE,
-        cookie: "sb-yjg-auth-token=FAKE-SESSION-TOKEN",
-        authorization: "Bearer FAKE-CRON-SECRET",
-        "x-gnk-visitor-ip": "198.51.100.22",
-        "x-gnk-forward-key": "FAKE-FORWARD-KEY",
-      },
+      method: incoming.method,
+      url: incoming.url,
+      headers: incoming.headers,
     });
     const scope = new Scope();
     scope.setClient(client);
     // The body arrives on the scope the way patchRequestToCaptureBody puts it.
-    scope.setSDKProcessingMetadata({ normalizedRequest: { ...normalizedRequest, data: ENQUIRY } });
+    scope.setSDKProcessingMetadata({ normalizedRequest: { ...normalizedRequest, data: incoming.body } });
     client.captureException(new Error("render failed"), {}, scope);
     client.captureEvent(
       {
         type: "transaction",
-        transaction: "POST /contacts",
+        transaction: `${incoming.method} ${incoming.route}`,
         start_timestamp: 1,
         timestamp: 2,
         contexts: {
@@ -463,7 +710,11 @@ describe("the installed SDK's own event, through scrubEvent, carries none of it"
             trace_id: "a".repeat(32),
             span_id: "b".repeat(16),
             op: "http.server",
-            data: { "http.target": `/contacts?q=${SEARCH}`, "http.request.header.referer": PAGE },
+            data: {
+              "http.target": incoming.url,
+              "http.route": incoming.route,
+              ...(incoming.headers.referer && { "http.request.header.referer": incoming.headers.referer }),
+            },
           },
         },
         spans: [],
@@ -476,7 +727,7 @@ describe("the installed SDK's own event, through scrubEvent, carries none of it"
   }
 
   it("an error and a transaction both arrive, with the path and without the rest", async () => {
-    const sent = await capture();
+    const sent = await capture(CONTACTS_SEARCH);
     expect(sent.map((e) => e.type ?? "error")).toEqual(["error", "transaction"]);
     for (const event of sent) {
       expect(JSON.stringify(event)).not.toMatch(LEAKS);
@@ -485,6 +736,62 @@ describe("the installed SDK's own event, through scrubEvent, carries none of it"
       expect(event.request?.method).toBe("POST");
     }
   });
+
+  // A buyer opening a proposal link, a portal's crawler pulling its feed, and
+  // the proposal page's interest POST, whose Referer is the link itself.
+  for (const [what, incoming, kept, referer] of [
+    [
+      "a buyer opening the proposal link",
+      {
+        method: "GET",
+        url: `/p/${SHARE_TOKEN}`,
+        route: "/p/[token]",
+        body: "",
+        headers: { host: "gnk-crm.vercel.app", "x-forwarded-proto": "https", "user-agent": "Mozilla/5.0" },
+      },
+      `${ORIGIN}/p/[token]`,
+      undefined,
+    ],
+    [
+      "a portal's crawler pulling its feed",
+      {
+        method: "GET",
+        url: `/api/portals/bazaraki/${FEED_TOKEN}?since=1`,
+        route: "/api/portals/[portal]/[token]",
+        body: "",
+        headers: { host: "gnk-crm.vercel.app", "x-forwarded-proto": "https", "user-agent": "BazarakiBot/1.0" },
+      },
+      `${ORIGIN}/api/portals/bazaraki/[token]`,
+      undefined,
+    ],
+    [
+      "the proposal page's interest POST",
+      {
+        method: "POST",
+        url: "/api/public/proposals/interest",
+        route: "/api/public/proposals/interest",
+        body: JSON.stringify({ token: SHARE_TOKEN, name: "Maria Enquirer" }),
+        headers: {
+          host: "gnk-crm.vercel.app",
+          "x-forwarded-proto": "https",
+          referer: `${ORIGIN}/p/${SHARE_TOKEN}`,
+          "content-type": "application/json",
+        },
+      },
+      `${ORIGIN}/api/public/proposals/interest`,
+      `${ORIGIN}/p/[token]`,
+    ],
+  ] as const satisfies ReadonlyArray<readonly [string, Incoming, string, string | undefined]>) {
+    it(`${what}: the error and the transaction keep the path and lose the token`, async () => {
+      const sent = await capture(incoming);
+      expect(sent.map((e) => e.type ?? "error")).toEqual(["error", "transaction"]);
+      for (const event of sent) {
+        expect(JSON.stringify(event)).not.toMatch(TOKEN_LEAKS);
+        expect(event.request?.url).toBe(kept);
+        expect(event.request?.headers?.referer).toBe(referer);
+      }
+    });
+  }
 });
 
 describe("the scrub is actually wired to the thing that sends", () => {

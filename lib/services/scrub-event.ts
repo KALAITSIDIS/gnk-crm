@@ -89,6 +89,7 @@ interface EventLike {
   breadcrumbs?: BreadcrumbLike[];
   exception?: unknown;
   message?: string;
+  transaction?: string;
 }
 
 export function scrubSensitiveHeaders<T extends EventLike>(event: T): T {
@@ -128,6 +129,71 @@ export function stripUrlQueries(text: string): string {
   return absolute.startsWith("/") ? absolute.replace(/[?#][\s\S]*$/, "") : absolute;
 }
 
+// ---------------------------------------------------------------------------
+// TOKENS IN THE PATH (T-sentry-path-token-redaction, 2026-09-23).
+//
+// Cutting the query keeps the path, and two routes' paths ARE the credential:
+//
+//   /p/<token>                      a buyer's proposal or availability link:
+//                                   43 base64url characters; the row holds
+//                                   only their sha256 (share-links-token.ts)
+//   /api/portals/<portal>/<token>   a portal's feed: 64 hex, "the whole of the
+//                                   caller's proof" (portals/token.ts, 0097)
+//
+// Next names both transactions by their route (`GET /p/[token]`), but the path
+// itself rides wherever a URL does: `event.request.url`, the root span's
+// `http.target`, onRequestError's `request_path`, the browser's location.href
+// and a pageload's `url.full`, the Referer on the interest form's POST from
+// the proposal page, a navigation breadcrumb. The secret segment becomes
+// `[token]` — the route's own name for it — and the rest of the path stays,
+// so an event still says which kind of page, or which portal's feed.
+//
+// A path counts where one can START: at the start of a value, after a
+// character no path segment is made of (whitespace, a quote, `(`, `=`), or
+// straight after an absolute or protocol-relative URL's origin — any origin,
+// because a preview deployment's host is not the production one. Unlike the
+// query cut above, a relative path inside prose counts too: a false match
+// costs one segment of debugging detail, a miss costs a credential. A stack
+// frame's `…/server/app/p/[token]/page.js` is a file, not the route, and is
+// left alone. `app/` holds no other secret segment: a test walks it.
+
+/** Group 1, kept: the start of the value or a delimiter, then an optional origin. */
+const PATH_START = String.raw`((?:^|[^\w.~%/+-])(?:[a-z][a-z0-9+.-]*:)?(?:\/\/[^\/\s?#]*)?)`;
+/** One path segment. Quotes and angle brackets end it: none is ever unencoded in a path. */
+const SEGMENT = String.raw`[^\/\s?#"'<>]+`;
+
+/** Group 2, kept: the route up to its secret segment, which is replaced. */
+const TOKEN_PATHS = [
+  new RegExp(String.raw`${PATH_START}(\/p\/)${SEGMENT}`, "gi"),
+  new RegExp(String.raw`${PATH_START}(\/api\/portals\/${SEGMENT}\/)${SEGMENT}`, "gi"),
+];
+
+/**
+ * The same token inside the router state Next sends with every RSC request
+ * and server action made FROM a page (`next-router-state-tree`, percent-encoded
+ * JSON), where a dynamic segment is the tuple `["token","<value>","d",null]`
+ * (flight-data-helpers.js). No such request leaves /p/<token> today — the page
+ * has no Link, router call or action — so this shuts a door a future "back to
+ * listings" link would open without anyone thinking of Sentry. Both routes
+ * call their secret `token`; the test that walks app/ holds that.
+ */
+const ROUTER_STATE_TOKEN = /((?:\[|%5B)(?:"|%22)token(?:"|%22)(?:,|%2C)(?:"|%22))[^"%]*/gi;
+
+/** What the secret segment becomes: the name the route itself gives it. */
+export const TOKEN_SEGMENT = "[token]";
+
+/** Every tokenised route's secret segment in `text`, replaced by `[token]`; the rest of each path kept. */
+export function redactPathTokens(text: string): string {
+  let out = text;
+  for (const pattern of TOKEN_PATHS) out = out.replace(pattern, `$1$2${TOKEN_SEGMENT}`);
+  return out.replace(ROUTER_STATE_TOKEN, `$1${TOKEN_SEGMENT}`);
+}
+
+/** A value that may hold a URL, as it may leave: no query, no fragment, no token in its path. */
+export function scrubUrlText(text: string): string {
+  return redactPathTokens(stripUrlQueries(text));
+}
+
 /**
  * A record's string values, and the strings inside an array value (a console
  * breadcrumb's `arguments`: Next logs "Failed to fetch RSC payload for <url>").
@@ -139,10 +205,10 @@ function scrubData(data: unknown): void {
   for (const key of QUERY_ONLY_KEYS) delete data[key];
   for (const [key, value] of Object.entries(data)) {
     if (typeof value === "string") {
-      data[key] = stripUrlQueries(value);
+      data[key] = scrubUrlText(value);
     } else if (Array.isArray(value)) {
       value.forEach((item, i) => {
-        if (typeof item === "string") value[i] = stripUrlQueries(item);
+        if (typeof item === "string") value[i] = scrubUrlText(item);
       });
     }
   }
@@ -153,9 +219,9 @@ interface SpanLike {
   data?: Record<string, unknown>;
 }
 
-/** `beforeSendSpan`: a span's name and attributes, without any URL's query. */
+/** `beforeSendSpan`: a span's name and attributes, without any URL's query or path token. */
 export function scrubSpanUrls<T extends SpanLike>(span: T): T {
-  if (typeof span.description === "string") span.description = stripUrlQueries(span.description);
+  if (typeof span.description === "string") span.description = scrubUrlText(span.description);
   scrubData(span.data);
   return span;
 }
@@ -165,9 +231,9 @@ interface BreadcrumbLike {
   data?: Record<string, unknown>;
 }
 
-/** `beforeBreadcrumb`: a fetch breadcrumb keeps its method, path and status, not its query. */
+/** `beforeBreadcrumb`: a fetch breadcrumb keeps its method, path and status, not its query or a path token. */
 export function scrubBreadcrumbUrls<T extends BreadcrumbLike>(breadcrumb: T): T {
-  if (typeof breadcrumb.message === "string") breadcrumb.message = stripUrlQueries(breadcrumb.message);
+  if (typeof breadcrumb.message === "string") breadcrumb.message = scrubUrlText(breadcrumb.message);
   scrubData(breadcrumb.data);
   return breadcrumb;
 }
@@ -196,13 +262,13 @@ export function scrubBreadcrumbUrls<T extends BreadcrumbLike>(breadcrumb: T): T 
 // The path stays everywhere: `/contacts` is what a person debugging needs.
 // The query, the cookies and the body go; the secrets are redacted above.
 
-/** `event.request`: the URL's path, no query, no cookies, no body; URL-valued headers cut. */
+/** `event.request`: the URL's path (token redacted), no query, no cookies, no body; URL-valued headers cut. */
 function scrubRequest(request: RequestLike | undefined): void {
   if (!isRecord(request)) return;
   delete request.query_string;
   delete request.cookies;
   delete request.data;
-  if (typeof request.url === "string") request.url = stripUrlQueries(request.url);
+  if (typeof request.url === "string") request.url = scrubUrlText(request.url);
   scrubData(request.headers);
 }
 
@@ -225,13 +291,13 @@ function scrubException(exception: unknown): void {
   if (!isRecord(exception) || !Array.isArray(exception.values)) return;
   for (const value of exception.values) {
     if (!isRecord(value)) continue;
-    if (typeof value.value === "string") value.value = stripUrlQueries(value.value);
+    if (typeof value.value === "string") value.value = scrubUrlText(value.value);
     const frames = isRecord(value.stacktrace) ? value.stacktrace.frames : undefined;
     if (!Array.isArray(frames)) continue;
     for (const frame of frames) {
       if (!isRecord(frame)) continue;
-      if (typeof frame.filename === "string") frame.filename = stripUrlQueries(frame.filename);
-      if (typeof frame.abs_path === "string") frame.abs_path = stripUrlQueries(frame.abs_path);
+      if (typeof frame.filename === "string") frame.filename = scrubUrlText(frame.filename);
+      if (typeof frame.abs_path === "string") frame.abs_path = scrubUrlText(frame.abs_path);
     }
   }
 }
@@ -249,7 +315,11 @@ export function scrubEvent<T extends EventLike>(event: T): T {
   scrubRequest(event.request);
   scrubContexts(event.contexts);
   scrubException(event.exception);
-  if (typeof event.message === "string") event.message = stripUrlQueries(event.message);
+  if (typeof event.message === "string") event.message = scrubUrlText(event.message);
+  // Parameterised (`GET /p/[token]`, and `/p/[token]` in the browser from the
+  // route manifest withSentryConfig injects), except where the manifest has no
+  // match: then the browser names a pageload by the raw pathname.
+  if (typeof event.transaction === "string") event.transaction = scrubUrlText(event.transaction);
   if (Array.isArray(event.spans)) {
     for (const span of event.spans) if (isRecord(span)) scrubSpanUrls(span);
   }
