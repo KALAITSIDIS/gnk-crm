@@ -2421,16 +2421,30 @@ VERIFY, run before starting.
     review; not built there — it changes what every transaction records. Cut relative targets and
     drop `request.query_string` in `beforeSend`/`beforeSendTransaction`. **VERIFY:**
     `grep -n "query_string" lib/services/scrub-event.ts` — no hit means still open.
-- **A secret token IN THE PATH still reaches Sentry, S.** T-sentry-incoming-request-scrub keeps
-  every path (the brief's rule: `/contacts` is what a person debugging needs), and two paths ARE the
-  credential: the portal feed `/api/portals/<portal>/<64-hex token>` (route comment: "the token in
-  the path is the whole of the caller's proof") and the proposal link `/p/<base64url token>`. Both
-  reach Sentry in `request.url`, `http.target`, the browser's `url.full`/`url.path` and a referer —
-  at 10% of feed pulls, and of proposal pageloads in the browser SDK. The transaction NAME is safe
-  (`GET /p/[token]`, parameterised). The fix is a route-aware cut in `stripUrlQueries`' caller —
-  replace the segment after `/p/` and `/api/portals/<portal>/` with `[token]` — plus a test per
-  route; not built there because it contradicts that brief's "keep the path". **VERIFY:**
-  `grep -n "\[token\]" lib/services/scrub-event.ts` — no hit means still open.
+- ~~**A secret token IN THE PATH still reaches Sentry, S.**~~ **BUILT 2026-09-23 on branch
+  `fix/sentry-path-token-redaction`, stacked on PR #52 — not merged (the operator approves; #52
+  first).** DECISIONS `T-sentry-path-token-redaction`. `redactPathTokens` turns the segment after
+  `/p/` and after `/api/portals/<portal>/` into `[token]` wherever a path starts, keeping the rest,
+  in every place the query cut runs, plus `event.transaction` (the browser names a pageload by its
+  raw path when the route manifest has no match) and the `token` tuple in Next's router state tree
+  (latent). An independent review found the carrier no event hook reaches: the trace header's
+  transaction name, which the SDK's own `createDsc` listener names from the raw path before Next
+  sets the route, and which Next renders into the page's `<meta name="baggage">`. `scrubDsc` is now
+  registered on `createDsc` after init, server and browser. A test walks `app/`: every dynamic
+  segment is classified, and every `[token]` route must lose its token. Production held none
+  (counts only: 0 transactions or errors on either route; the 10 interest POSTs carry no referer
+  and no baggage). **VERIFY:**
+  `grep -n "redactPathTokens" lib/services/scrub-event.ts` — no hit means not landed.
+  - **A secret token IN THE PATH still reaches Sentry, S (original).** T-sentry-incoming-request-scrub keeps
+    every path (the brief's rule: `/contacts` is what a person debugging needs), and two paths ARE the
+    credential: the portal feed `/api/portals/<portal>/<64-hex token>` (route comment: "the token in
+    the path is the whole of the caller's proof") and the proposal link `/p/<base64url token>`. Both
+    reach Sentry in `request.url`, `http.target`, the browser's `url.full`/`url.path` and a referer —
+    at 10% of feed pulls, and of proposal pageloads in the browser SDK. The transaction NAME is safe
+    (`GET /p/[token]`, parameterised). The fix is a route-aware cut in `stripUrlQueries`' caller —
+    replace the segment after `/p/` and `/api/portals/<portal>/` with `[token]` — plus a test per
+    route; not built there because it contradicts that brief's "keep the path". **VERIFY:**
+    `grep -n "\[token\]" lib/services/scrub-event.ts` — no hit means still open.
 - **A contact's enquiries are listed nowhere, S (nice-to-have).** "Possible existing contact" shows
   a contact's three most recent linked enquiries and says "Showing the 3 most recent only."; the
   contact page has no Leads tab and the inbox has no contact filter, so the rest are reachable only
