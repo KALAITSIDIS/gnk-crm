@@ -2420,6 +2420,15 @@ VERIFY, run before starting.
   `grep -nE "payload: \{ (title|reason: lostReason|document_id: doc\.id, title)" lib/actions/tasks.ts lib/actions/mandates.ts lib/actions/contact-documents.ts lib/actions/property-documents.ts lib/actions/deals.ts` ·
   `grep -n -A4 'eventType: "document_deleted"' lib/actions/contact-documents.ts lib/actions/property-documents.ts | grep "title: doc.title"` ·
   `grep -n -A5 'eventType: "created",' lib/actions/leads.ts | grep -E -- "-\s+title,$"`.
+- **RLS test 15 compares a client clock and a database timestamp as strings, S.** `supabase/tests/rls.test.ts`
+  (`move_deal_to_stage`, "stage_entered_at must restart") takes `t0 = new Date().toISOString()` and asserts
+  `moved.stage_entered_at >= t0` on the STRINGS. `t0` has milliseconds and `Z`; PostgREST returns microseconds and
+  `+00:00`, so a database time later in the same millisecond compares as earlier (`"…10.123456+00:00" >=
+  "…10.123Z"` is false: `'4' < 'Z'`). It failed once on main's CI for `10e9076` (run 35916241188, attempt 1) and
+  passed on the rerun; nothing in that merge touched deals. The fix is one line: compare
+  `Date.parse(moved.stage_entered_at) >= Date.parse(t0)`. Same class as the note "an assertion that can only fail
+  rarely". Found by T-updated-event-shape-only's landing. **VERIFY:**
+  `grep -n "moved.stage_entered_at >= t0" supabase/tests/rls.test.ts` — a hit means still open.
 - **The door keeps line breaks in name, phone and reference, S.** `publicEnquirySchema`
   (`lib/validators/public-enquiry.ts`) trims but keeps interior newlines, and 0101 writes the values
   raw into the header block, so a name like `Ann\nEmail: x@y` becomes an `Email:` line that
