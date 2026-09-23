@@ -1,10 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
-import {
-  scrubBreadcrumbUrls,
-  scrubSensitiveHeaders,
-  scrubSpanUrls,
-  scrubTransactionUrls,
-} from "@/lib/services/scrub-event";
+import { scrubBreadcrumbUrls, scrubEventOrDrop, scrubSpanUrls } from "@/lib/services/scrub-event";
 
 /**
  * Server/edge Sentry init (T5.7). Strictly env-gated: with no DSN (dev, CI,
@@ -19,17 +14,19 @@ export async function register() {
     environment: process.env.VERCEL_ENV ?? "production",
     tracesSampleRate: 0.1,
     enabled: true,
-    // An error event carries the request's headers, and two of ours must not
-    // travel: the visitor's raw address (the site's legal page says it is
-    // never stored) and the forward key. `sendDefaultPii` is off and strips
-    // what the SDK knows about; a custom header is ours to scrub.
-    beforeSend: (event) => scrubSensitiveHeaders(event),
+    // Errors AND sampled transactions carry the incoming request whole —
+    // `sendDefaultPii` off strips none of this (measured, scrub-event.ts):
+    // the URL's query (`/contacts?q=<name>`), the session cookie, a bearer
+    // secret, the visitor's raw address and the forward key, and — when Next
+    // clones it for the proxy — the BODY (an enquiry's name, e-mail and
+    // phone). The path stays; the rest goes.
+    beforeSend: (event) => scrubEventOrDrop(event),
+    beforeSendTransaction: (event) => scrubEventOrDrop(event),
     // A PostgREST read's filter IS its query string — the e-mails, phones
     // and names being searched for. Outgoing URLs keep their path and lose
-    // their query on every span, breadcrumb and sampled trace.
+    // their query on every span and breadcrumb.
     beforeSendSpan: (span) => scrubSpanUrls(span),
     beforeBreadcrumb: (breadcrumb) => scrubBreadcrumbUrls(breadcrumb),
-    beforeSendTransaction: (event) => scrubTransactionUrls(event),
   });
 }
 
