@@ -7282,6 +7282,8 @@ Run as the operator runs them (plain Node, live, `--org`), the old importers imp
 
 **Deploy.** Code only — no migration, no environment variable. The Sentry hooks take effect with the deploy. gnk-web needs nothing: the public enquiry contract is unchanged.
 
+**Landing (2026-09-23 night).** On the operator's word ("merge PR #48 and deploy"): branch CI green on both commits (`3f9d8d1`, `969a648`: checks, rls, e2e — the five local-only RLS failures pass on CI's fresh database, as predicted), PR #48 merged pinned to `969a648` → main `90990d1` (merge commit), Vercel production `dpl_7miDm6Vaci9QapTqmpELJZVcAYwa` READY and aliased to gnk-crm.vercel.app, `/login` 200 with the CSP nonce on 16 of 16 scripts, `/leads` redirecting a signed-out visitor to login, no runtime errors after the deploy, CI on the merge commit green (run 35898866747: checks, rls, e2e). Nothing to apply on hosted (still 0113). Hosted holds 0 open unlinked website enquiries, so the panel first shows in production when one arrives. Remote branch deleted.
+
 
 ## T-merged-event-ids-only — the `merged` event carries the duplicate's id and WHICH conflicting field was not kept, never a name or an address; the payload scan reads keys with the TypeScript parser (2026-09-23; no migration)
 
