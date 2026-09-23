@@ -29,6 +29,7 @@ import {
 import { PartyDefaultsForm } from "@/components/features/contacts/party-defaults-form";
 import { getPartyDefaults } from "@/lib/actions/party-defaults";
 import { mayEditBuyerRequirements } from "@/lib/validators/buyer-requirements";
+import { contactArchiveAction } from "@/lib/validators/contacts";
 import { isPartyContact, partyDefaultsSchema } from "@/lib/validators/party-defaults";
 import { buildPortfolio, PORTFOLIO_SELECT } from "@/lib/services/contact-portfolio";
 import { getCurrentProfile } from "@/lib/services/auth";
@@ -203,6 +204,13 @@ export default async function ContactDetailPage({
   const isErased = Boolean(c.erased_at);
   const eraserName = c.erased_by ? (profileName.get(c.erased_by) ?? null) : null;
   const canEdit = mayUpdate && !c.is_archived && !isErased;
+  // a merged duplicate and an erased contact stay archived — no Unarchive
+  const archiveAction = contactArchiveAction({
+    mayUpdate,
+    isArchived: Boolean(c.is_archived),
+    isMerged: Boolean(c.merged_into_id),
+    isErased,
+  });
   const readOnlyHint = isErased
     ? "Personal data was erased under GDPR Art.17 — this contact is read-only."
     : c.is_archived
@@ -308,11 +316,11 @@ export default async function ContactDetailPage({
                 entityLabel={c.display_name ?? "this contact"}
               />
             ) : null}
-            {mayUpdate && (!c.is_archived || !c.merged_into_id) ? (
+            {archiveAction ? (
               <ArchiveContactButton
                 contactId={c.id}
                 contactName={c.display_name ?? "this contact"}
-                isArchived={c.is_archived}
+                isArchived={archiveAction === "unarchive"}
               />
             ) : null}
             {profile.role === "admin" && !c.is_archived && !isErased ? (

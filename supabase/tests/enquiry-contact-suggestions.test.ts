@@ -140,8 +140,9 @@ beforeAll(async () => {
     is_archived: true,
     erased_at: new Date().toISOString(),
   });
-  // erased, then unarchived: unarchiveContact checks only is_archived and
-  // merged_into_id, so this row is reachable — `erased_at` must be tested on its own
+  // erased, then unarchived: unarchiveContact refuses this since
+  // T-refuse-unarchive-erased, but rows from before it exist and the database
+  // does not forbid the state — `erased_at` must be tested on its own
   await insertContact("erasedUnarchived", {
     first_name: "Gone",
     last_name: "Unarchived",
