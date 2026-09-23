@@ -7533,6 +7533,6 @@ The tests were written after the implementation, so mutation proves them instead
 
 Measured 2026-09-23: typecheck and lint clean; unit 193 files / 2378 tests.
 
-**State.** PR #53 (KALAITSIDIS/gnk-crm) open against `main`, NOT merged — the operator approves the merge and the deploy. On the merged tree (`ef078b1`): typecheck and lint clean; unit 2397 of 2400 in the full run, the 3 failures 5 s timeouts (`evidence-pdf` and two repo-scan tests) while other sessions held the CPU at 70%, and all three files pass alone (19/19).
+**State.** PR #53 (KALAITSIDIS/gnk-crm) open against `main`, NOT merged — the operator approves the merge and the deploy. Main moved twice more while it was open (#49, then #51, each a DECISIONS append conflict, main's entries kept first). On the tree merged with #51 (`6020dab`): typecheck and lint clean; unit 196 files / 2497 tests with `--testTimeout=30000`. At the default 5 s, the run before it lost `evidence-pdf` and two repo-scan tests to timeouts while other sessions held the CPU at 70%; all three pass alone.
 
 **Deploy.** Code only: no migration, no environment variable. It takes effect with the deploy (the browser half with the build). After it, two counts-only checks, both of which must stay 0 (a redacted value contains the word `token`, a live one does not): `is_transaction:true transaction:*/p/* !transaction:*token*`, and `is_transaction:true http.request.header.baggage:*%2Fp%2F* !http.request.header.baggage:*token*`.
