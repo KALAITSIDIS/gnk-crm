@@ -10,8 +10,9 @@ import {
 /**
  * The four measurement rules (LST-07; audit 2026-09-23). One pure definition,
  * read by the Zod schemas, the unit-type stamp, the unit writer and the CSV
- * importer — and held for every other path by migration 0113's CHECKs, which
- * must say the same thing (supabase/tests/property-measurements.test.ts).
+ * importer — and held for every other path by migration 0113's CHECKs;
+ * supabase/tests/property-measurements.test.ts checks the database refuses
+ * exactly what this module refuses, case by case.
  */
 describe("areaProblem — a known area is positive AS STORED", () => {
   it.each([

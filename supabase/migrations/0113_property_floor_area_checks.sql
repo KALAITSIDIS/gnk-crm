@@ -59,8 +59,11 @@
 -- these CHECKs in place such a save would fail closed with a raw 23514 —
 -- nothing written, no event, but an unreadable message. Merge and deploy,
 -- confirm the deployed SHA, re-run the preflight, then apply this file.
--- Rollback is `alter table … drop constraint if exists …` for the four
--- names below — no data moves in either direction.
+-- Rollback, should it ever be wanted, is a forward migration of its own (the
+-- house stance, DECISIONS T-audit-2026-09-21-evening): `alter table … drop
+-- constraint if exists …` for the four names below plus `comment on column …
+-- is null` for the four comments, with its own ledger row and pins. No data
+-- moves in either direction; the application needs none of it to work.
 --
 -- Pins that move with this file: the migrations count in
 -- scripts/backup/verify-restore.sql (113). database.types.ts is unaffected

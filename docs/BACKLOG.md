@@ -2297,6 +2297,19 @@ VERIFY, run before starting.
   the 0077 shape; hosted BEFORE the merge; an RLS test per refusal. (LST-02,
   LST-04, LST-05, LST-07, LST-08, REC-02 in part, REC-03, REC-04, GOV-03,
   GOV-05.) **VERIFY:** `grep -ln "properties_parent_kind\|energy_class in" supabase/migrations/*.sql` — a hit means shipped.
+  **Slice BUILT 2026-09-23, NOT MERGED — `floor_number ≤ total_floors` and positive covered/plot areas only:**
+  migration 0113 (`properties_covered_area_positive`, `properties_plot_area_positive`,
+  `properties_floor_within_total`, `unit_types_covered_area_positive`) with the app rules on
+  branch `fix/property-floor-area-validation`, DECISIONS `T-audit-2026-09-23-property-floor-area`.
+  Everything else in this entry is still outstanding, which is why the VERIFY above still
+  reads unbuilt. VERIFY for the slice: `grep -l "properties_floor_within_total" supabase/migrations/*.sql`.
+- **The importer reads a decimal COMMA as a thousands separator, S.** `num()` in
+  `scripts/import/_shared.mts` strips every comma before `Number()`, so a Greek/European
+  spreadsheet cell `85,5` imports as **855** m² (ten times too large) and `1.200,50` as
+  1.2005 — silently, and 855 passes every measurement rule (measured 2026-09-23 while
+  tracing LST-07; not built there, it is a parsing question for the operator: refuse a
+  comma, or read it as a decimal when no dot is present). **VERIFY:**
+  `grep -n "replace(/\[, \]/g" scripts/import/_shared.mts` — a hit means still open.
 - **Phase 2 — sweeps and surfaces, M.** Task kinds `mandate_expired_listing_public`
   (to the oldest active admin) and `price_review` (a public listing ninety days
   without a `price_history` row) as arms of the existing sweeps, so the

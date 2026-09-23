@@ -205,16 +205,26 @@ describe("unit write paths refuse a zero area before touching anything", () => {
     expect(logEvent).not.toHaveBeenCalled();
   });
 
-  it("createUnit reads a whitespace floor as unknown, not the ground floor", async () => {
-    // reaches the project read, which is where the scripted client answers "not found"
-    const fake = fakeClient({ properties: [{ data: null, error: null }] });
+  it.each([
+    { posted: "  ", written: null, why: "whitespace is UNKNOWN — Number('  ') is 0, which was the ground floor" },
+    { posted: "", written: null, why: "a blank floor is unknown" },
+    { posted: "0", written: 0, why: "the ground floor" },
+    { posted: "-1", written: -1, why: "a basement" },
+  ])("createUnit writes floor $posted as $written ($why)", async ({ posted, written }) => {
+    const fake = fakeClient({
+      properties: [
+        { data: { id: PROJECT, org_id: "org-1", kind: "project", reference: "PAF0002" }, error: null }, // the project
+        { data: { id: "unit-1" }, error: null }, // the insert
+      ],
+    });
     state.client = fake.client;
     const res = await createUnit(
       { error: null, savedAt: null },
-      unitForm({ project_id: PROJECT, unit_number: "101", property_type: "apartment", floor_number: "  " }),
+      unitForm({ project_id: PROJECT, unit_number: "101", property_type: "apartment", floor_number: posted }),
     );
-    expect(res.error).toBe("Project not found"); // parsed fine: blank is unknown
-    expect(fake.argsOf("properties", "insert")).toHaveLength(0);
+    expect(res.error).toBeNull();
+    const [row] = fake.argsOf("properties", "insert")[0] as [Record<string, unknown>];
+    expect(row.floor_number).toBe(written);
   });
 
   it.each([

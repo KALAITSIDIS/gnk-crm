@@ -28,7 +28,8 @@
  * Pure and dependency-free: the Zod schemas, the server actions, the unit
  * writer and the CSV importer (plain Node) all import it, and migration 0113's
  * CHECK constraints say the same thing for every other write path —
- * supabase/tests/property-measurements.test.ts holds the two together.
+ * supabase/tests/property-measurements.test.ts asserts, case by case, that
+ * the database refuses a row exactly when this module does.
  */
 
 /** The smallest area numeric(p,2) stores as positive: 0.004 rounds to 0.00. */
@@ -48,7 +49,7 @@ export const AREA_LABELS: Record<AreaField, string> = {
   plot_area_sqm: "Plot area",
 };
 
-/** null/undefined/"" are unknown; anything else is read as a number (PostgREST may send numeric as text). */
+/** null/undefined/"" are unknown; anything else is read as a number (form and CSV values arrive as text). */
 function known(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   if (typeof value === "string" && value.trim() === "") return null;
@@ -64,7 +65,7 @@ export function areaProblem(label: string, value: unknown): string | null {
     return `${label} must be greater than 0 m² — leave it blank if it is not known or does not apply.`;
   }
   if (n < MIN_AREA_SQM) {
-    return `${label} must be at least ${MIN_AREA_SQM} m² — a smaller value is stored as 0.`;
+    return `${label} must be at least ${MIN_AREA_SQM} m² — areas are kept to two decimal places.`;
   }
   return null;
 }
