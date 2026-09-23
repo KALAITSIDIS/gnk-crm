@@ -10,7 +10,9 @@ import { fakeClient, type FakePage } from "@/lib/testing/fake-client";
  * buyer's name, on every conversion, where neither erasure nor a correction can
  * reach it. Nothing reads it there: the timeline's `created` line prints an
  * amount only. The title stays on the deal ROW, where the pipeline shows it and
- * erasure and editing reach it. Driven through the real action, like
+ * an edit can correct it (erasure does not: it keeps identity by design and
+ * leaves deals alone — but the row can be corrected, the event could not).
+ * Driven through the real action, like
  * updated-event-payload.test.ts, and every logged payload is searched for the
  * fixture's own name.
  */
