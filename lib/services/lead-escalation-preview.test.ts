@@ -4,6 +4,7 @@ import {
   RECIPIENT_REASON_COPY,
   VERDICT_COPY,
   leadExclusionReason,
+  previewFormSnapshot,
   readLeadEscalationPreview,
   type LeadEscalationPreview,
   type PreviewLead,
@@ -109,3 +110,34 @@ describe("leadExclusionReason — why this enquiry would NOT be e-mailed", () =>
 // the type is exported for the panel; a compile-time check that the reader returns it
 const _typed: LeadEscalationPreview | null = readLeadEscalationPreview(doc());
 void _typed;
+
+/**
+ * Audit 2026-09-22 (late): the panel compares the form with what a preview
+ * SENT. The comparison is by value, and recipients and days are sets to the
+ * server — a refresh that reorders the ticked colleagues changes nothing.
+ */
+describe("previewFormSnapshot", () => {
+  function fd(entries: Array<[string, string]>): FormData {
+    const f = new FormData();
+    for (const [k, v] of entries) f.append(k, v);
+    return f;
+  }
+
+  it("is equal for the same values, whatever order the multi-value fields come in", () => {
+    const a = fd([["enabled", "on"], ["after_minutes", "15"], ["recipients", "A"], ["recipients", "B"], ["days", "1"], ["days", "5"]]);
+    const b = fd([["recipients", "B"], ["enabled", "on"], ["days", "5"], ["recipients", "A"], ["after_minutes", "15"], ["days", "1"]]);
+    expect(previewFormSnapshot(a)).toBe(previewFormSnapshot(b));
+  });
+
+  it("differs when any value, or the presence of a field, differs", () => {
+    const base: Array<[string, string]> = [["enabled", "on"], ["after_minutes", "15"], ["recipients", "A"]];
+    const s = previewFormSnapshot(fd(base));
+    expect(previewFormSnapshot(fd([["enabled", "on"], ["after_minutes", "30"], ["recipients", "A"]]))).not.toBe(s);
+    expect(previewFormSnapshot(fd([["after_minutes", "15"], ["recipients", "A"]])), "a box unticked").not.toBe(s);
+    expect(previewFormSnapshot(fd([...base, ["recipients", "B"]])), "one more recipient").not.toBe(s);
+  });
+
+  it("cannot be fooled by a value that looks like another field", () => {
+    expect(previewFormSnapshot(fd([["a", "b=c"]]))).not.toBe(previewFormSnapshot(fd([["a=b", "c"]])));
+  });
+});

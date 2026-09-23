@@ -9,6 +9,7 @@ import {
   type LeadEscalationPreview,
   type PreviewLead,
 } from "@/lib/services/lead-escalation-preview";
+import { senderReadinessCopy, type SenderReadiness } from "@/lib/services/sender-readiness";
 import { cn } from "@/lib/utils";
 
 /**
@@ -24,6 +25,12 @@ import { cn } from "@/lib/utils";
  * none: it is as of one instant and eligibility moves on; provider
  * acceptance is not delivery; and previewing changes nothing — Save is the
  * only activation.
+ *
+ * Keeps two questions apart (audit 2026-09-22, late): who is ELIGIBLE under
+ * the escalation's own rules (the database's counts) and what the SENDER can
+ * do (sender-readiness.ts: not configured, Resend's test sender, a custom
+ * domain unknown or refused, or verified). An eligible recipient is not a
+ * recipient the provider will accept a message for.
  */
 const DAY_NAMES = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -79,17 +86,18 @@ function LeadRow({ lead, timeZone }: { lead: PreviewLead; timeZone: string }) {
 
 export function LeadEscalationPreviewCard({
   preview,
-  providerArmed,
+  sender,
   stale,
 }: {
   preview: LeadEscalationPreview;
-  providerArmed: boolean;
+  sender: SenderReadiness;
   stale: boolean;
 }) {
   const p = preview.policy;
   const c = preview.counts;
   const tz = p.timezone;
   const proposed = preview.recipients.length;
+  const senderLine = senderReadinessCopy(sender);
 
   return (
     <section
@@ -121,20 +129,27 @@ export function LeadEscalationPreviewCard({
         <dd className="text-text-1">an enquiry whose wait ended more than {p.max_age_hours} h ago is left to its task</dd>
         <dt className="text-text-3">Recipients</dt>
         <dd className="text-text-1">
-          {proposed} proposed, {preview.eligible_recipient_count} eligible
+          {proposed} proposed, {preview.eligible_recipient_count} eligible under the escalation&rsquo;s rules (an active admin or agent with an
+          address) — not a check that the provider will take a message for them
         </dd>
-        <dt className="text-text-3">Provider</dt>
-        <dd className={cn(providerArmed ? "text-text-1" : "text-danger")}>
-          {providerArmed
-            ? "armed on this deployment — accepted means accepted by the provider, not delivered"
-            : "NOT armed on this deployment — the sweep would create jobs and the worker would send none; the rows would wait"}
+        <dt className="text-text-3">Sender</dt>
+        <dd
+          data-testid="lead-escalation-preview-sender"
+          data-sender-state={sender.state}
+          className={cn(senderLine.tone === "danger" ? "text-danger" : senderLine.tone === "warning" ? "text-warning" : "text-text-1")}
+        >
+          {senderLine.text}
         </dd>
       </dl>
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Stat label="enquiries considered" value={c.considered} />
         <Stat label="jobs the sweep would create" value={c.due} />
-        <Stat label="e-mails the worker could send" value={c.would_send} tone="success" />
+        <Stat
+          label={sender.state === "not_configured" ? "e-mails the worker would attempt once configured" : "e-mails the worker would attempt"}
+          value={c.would_send}
+          tone={sender.state === "domain_verified" ? "success" : undefined}
+        />
         <Stat label="due, but nobody eligible" value={c.no_recipient} tone="danger" />
         <Stat label="of which: only recipient is the assignee" value={c.only_recipient_is_assignee} tone="warning" />
         <Stat label="not yet due" value={c.not_yet_due} />

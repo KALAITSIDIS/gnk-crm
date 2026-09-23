@@ -33,6 +33,13 @@
  * public.
  */
 import { retryAfterSeconds } from "@/lib/services/enquiry-alert-jobs";
+import {
+  DEFAULT_ALERT_FROM,
+  SENDING_DISABLED,
+  isResendTestDomain,
+  senderDomain,
+  type SenderReadiness,
+} from "@/lib/services/sender-readiness";
 
 export interface EnquiryAlert {
   name: string;
@@ -58,7 +65,7 @@ export type AlertSendResult =
   /** One attempt failed. `result` is a status or the provider's error NAME — never its body. */
   | { outcome: "failed"; category: AlertFailureCategory; result: string; retryAfterSeconds: number | null };
 
-const FROM = process.env.ENQUIRY_ALERT_FROM ?? "GNK website <onboarding@resend.dev>";
+const FROM = process.env.ENQUIRY_ALERT_FROM ?? DEFAULT_ALERT_FROM;
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://gnk-crm.vercel.app";
 
 /** What the outbox row may hold for a diagnostic word (0101: last_result). */
@@ -108,6 +115,87 @@ export function bodyFor(a: EnquiryAlert): string {
  */
 export function enquiryAlertConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
   return Boolean(env.RESEND_API_KEY && env.ENQUIRY_ALERT_TO);
+}
+
+/** Long enough for the provider's domain list, short enough that a preview never hangs on it. */
+export const DOMAIN_LOOKUP_TIMEOUT_MS = 3000;
+
+/**
+ * What can truthfully be said about the SENDER on this deployment (audit
+ * 2026-09-22, late; the answers are described in sender-readiness.ts).
+ * REPORTING ONLY: the worker still gates on `enquiryAlertConfigured`, and
+ * nothing here changes what is sent, retried or recovered.
+ *
+ * The configuration answers come from the environment, the same values the
+ * sender reads. Only a CUSTOM From costs a provider call, and that call is
+ * READ-ONLY — one `GET /domains` with the deployment's own key, never a
+ * send. "Verified" is taken from nothing but that answer: this exact domain
+ * listed as `verified` with sending not disabled. A key that may only send
+ * (401 `restricted_api_key`), a provider that cannot be asked, or a listing
+ * the provider says is incomplete all answer UNKNOWN — the key is never
+ * given more permission to turn a status green. A key the provider calls
+ * invalid is its own answer: every send would be refused. NEVER throws;
+ * logs a status and an error name at most, never the key or an address.
+ */
+export async function senderReadiness(
+  env: NodeJS.ProcessEnv = process.env,
+  opts: { timeoutMs?: number } = {},
+): Promise<SenderReadiness> {
+  const domain = senderDomain(env.ENQUIRY_ALERT_FROM ?? DEFAULT_ALERT_FROM);
+  if (!enquiryAlertConfigured(env)) {
+    // the worker's own gate: it claims nothing, so every row waits
+    const missing: string[] = [];
+    if (!env.RESEND_API_KEY) missing.push("RESEND_API_KEY is not set");
+    if (!env.ENQUIRY_ALERT_TO) missing.push("ENQUIRY_ALERT_TO is not set");
+    if (!domain) missing.push("ENQUIRY_ALERT_FROM holds no usable e-mail address");
+    return { state: "not_configured", missing };
+  }
+  // the gate passes, so the worker WOULD attempt — with a From the provider refuses
+  if (!domain) return { state: "invalid_from" };
+  if (isResendTestDomain(domain)) return { state: "test_sender", fromSet: env.ENQUIRY_ALERT_FROM !== undefined, domain };
+
+  const unknown = (evidence: Extract<SenderReadiness, { state: "custom_unverified" }>["evidence"]): SenderReadiness => ({
+    state: "custom_unverified",
+    domain,
+    evidence,
+  });
+  try {
+    const res = await fetch("https://api.resend.com/domains?limit=100", {
+      method: "GET",
+      headers: { Authorization: `Bearer ${env.RESEND_API_KEY}` },
+      cache: "no-store",
+      signal: AbortSignal.timeout(opts.timeoutMs ?? DOMAIN_LOOKUP_TIMEOUT_MS),
+    });
+    const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!res.ok) {
+      const name = typeof body?.name === "string" ? body.name.slice(0, 60) : null;
+      console.warn(`[sender-readiness] domain lookup answered ${res.status} (${name ?? "no error name"})`);
+      // a definite answer about the key itself (docs: api-reference/errors)
+      if ((res.status === 403 && name === "invalid_api_key") || (res.status === 401 && name === "missing_api_key")) {
+        return { state: "key_rejected" };
+      }
+      return unknown(res.status === 401 && name === "restricted_api_key" ? "key_cannot_read_domains" : "lookup_failed");
+    }
+    if (!Array.isArray(body?.data)) {
+      console.warn("[sender-readiness] domain lookup answered a shape it does not recognise");
+      return unknown("lookup_failed");
+    }
+    const row = (body.data as Array<Record<string, unknown> | null>).find(
+      (d) => typeof d?.name === "string" && d.name.toLowerCase() === domain,
+    );
+    if (!row) return body.has_more === true ? unknown("listing_incomplete") : { state: "custom_not_verified", domain, providerStatus: null };
+    if (typeof row.status !== "string") {
+      console.warn("[sender-readiness] domain lookup listed the domain without a status");
+      return unknown("lookup_failed");
+    }
+    const status = row.status.slice(0, 40);
+    const sending = (row.capabilities as Record<string, unknown> | null | undefined)?.sending;
+    if (status === "verified" && sending !== "disabled") return { state: "domain_verified", domain };
+    return { state: "custom_not_verified", domain, providerStatus: status === "verified" ? SENDING_DISABLED : status };
+  } catch (err) {
+    console.warn(`[sender-readiness] domain lookup failed: ${err instanceof Error ? err.name : "threw"}`);
+    return unknown("lookup_failed");
+  }
 }
 
 /**
