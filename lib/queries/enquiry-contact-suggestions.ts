@@ -26,8 +26,10 @@ import {
  * second factor reads nothing at all. What RLS does NOT hide is filtered here:
  * archived contacts (archive is the contacts "delete", and a merged duplicate
  * is archived) and erased ones — erasure keeps the name, e-mail and phone on
- * the row, and an erased contact can currently be unarchived, so `erased_at`
- * is tested on its own.
+ * the row, and an erased contact can be active — unarchived before
+ * unarchiveContact refused it (T-refuse-unarchive-erased), or by a write
+ * outside the app, which the database does not forbid — so `erased_at` is
+ * tested on its own.
  *
  * A FAILED LOOKUP IS NEVER "NO MATCH". An error, or more candidate rows than
  * the page bound, makes every row that needed the lookup say "unavailable".

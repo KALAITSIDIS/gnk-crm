@@ -863,7 +863,8 @@ export async function logChatLinkOpened(
 
 /**
  * Create contact's answer when the dedup check finds a holder. An ERASED
- * holder (erased, then unarchived — BACKLOG) is named for what it is and not
+ * holder (erased, then unarchived before T-refuse-unarchive-erased, or by a
+ * write outside the app) is named for what it is and not
  * returned as a duplicate: "Possible existing contact" never offers one and
  * the link refuses it, so pointing the desk back at the panel would loop.
  */
