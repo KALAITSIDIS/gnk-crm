@@ -1,5 +1,10 @@
 import * as Sentry from "@sentry/nextjs";
-import { scrubSensitiveHeaders } from "@/lib/services/scrub-event";
+import {
+  scrubBreadcrumbUrls,
+  scrubSensitiveHeaders,
+  scrubSpanUrls,
+  scrubTransactionUrls,
+} from "@/lib/services/scrub-event";
 
 /**
  * Server/edge Sentry init (T5.7). Strictly env-gated: with no DSN (dev, CI,
@@ -19,6 +24,12 @@ export async function register() {
     // never stored) and the forward key. `sendDefaultPii` is off and strips
     // what the SDK knows about; a custom header is ours to scrub.
     beforeSend: (event) => scrubSensitiveHeaders(event),
+    // A PostgREST read's filter IS its query string — the e-mails, phones
+    // and names being searched for. Outgoing URLs keep their path and lose
+    // their query on every span, breadcrumb and sampled trace.
+    beforeSendSpan: (span) => scrubSpanUrls(span),
+    beforeBreadcrumb: (breadcrumb) => scrubBreadcrumbUrls(breadcrumb),
+    beforeSendTransaction: (event) => scrubTransactionUrls(event),
   });
 }
 

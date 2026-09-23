@@ -26,7 +26,10 @@ export const createLeadSchema = z.object({
   // phone/email. Ignored when an existing contact_id is picked.
   new_contact_name: z.preprocess(emptyToUndefined, z.string().max(200).optional()),
   new_contact_phone: z.preprocess(emptyToUndefined, z.string().max(40).optional()),
-  new_contact_email: z.preprocess(emptyToUndefined, z.string().email().max(200).optional()),
+  // lower-cased like every other contact write (createContactSchema, the
+  // importer, createContactFromEnquiry): dedup and "Possible existing
+  // contact" compare the stored address exactly (T-enquiry-contact-suggestions)
+  new_contact_email: z.preprocess(emptyToUndefined, z.string().email().max(200).toLowerCase().optional()),
   received_at: z.preprocess(
     emptyToUndefined,
     z

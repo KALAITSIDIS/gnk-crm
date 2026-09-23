@@ -7,8 +7,15 @@ import { z } from "zod";
 import type { Database } from "@/lib/supabase/database.types";
 import { getCurrentProfile, type CurrentProfile } from "@/lib/services/auth";
 import { runEnquiryAlertWorker } from "@/lib/services/enquiry-alert-worker";
+import {
+  enquiryMatchKeys,
+  matchEvidence,
+  matchedOn,
+  type MatchedOn,
+} from "@/lib/services/enquiry-contact-match";
 import { LEAD_MESSAGE_REDACTED } from "@/lib/services/erasure";
 import { logEvent } from "@/lib/services/events";
+import { linkUnlinkedLead, mayLinkLeadContact } from "@/lib/services/lead-contact-link";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { checkContactDuplicate, type DuplicateMatch } from "@/lib/actions/contacts";
@@ -192,45 +199,167 @@ async function getLead(leadId: string) {
   return { supabase, profile, lead };
 }
 
-/**
- * Link (or replace) the contact on an existing lead — doc 02 §C4
- * "link/create contact". Allowed for admin or the assigned/claiming agent
- * (mirrors the leads UPDATE policy, doc 04). Not permitted once converted:
- * the contact is already carried on the resulting deal.
- */
-export async function linkLeadContact(leadId: string, contactId: string): Promise<void> {
-  const { supabase, profile, lead } = await getLead(leadId);
-  if (lead.status === "converted") {
-    throw new Error("Lead already converted — the contact lives on its deal.");
-  }
-  const guardErr = canWorkError(profile, lead);
-  if (guardErr) throw new Error(guardErr);
+export type LinkLeadContactResult = {
+  error: string | null;
+  /** the lead already held this contact — nothing was written, no event */
+  alreadyLinked?: boolean;
+  /** the link was made, but something after it was not — said, never hidden */
+  warning?: string | null;
+};
 
-  // org-scoped by RLS; confirms the contact exists. The event names it by id
-  // only (audit SEC-03): the chain is immutable, and a page can look a name up.
-  const { data: contact } = await supabase
+const linkLeadContactSchema = z.object({
+  leadId: z.guid({ message: "Invalid lead." }),
+  contactId: z.guid({ message: "Invalid contact." }),
+});
+
+/**
+ * Link a contact to a lead that has none — doc 02 §C4 "link/create contact".
+ * Used by the Link contact dialog, by "Review and link" on a possible existing
+ * contact, and by the create-contact fallback (T-enquiry-contact-suggestions).
+ *
+ * IT NEVER REPLACES A LINK. It used to be "link (or replace)" with an
+ * unconditional UPDATE, so a screen drawn before a colleague linked someone
+ * else could overwrite their work; nothing in the UI offers a replacement.
+ * The write is conditional (lib/services/lead-contact-link.ts) and its
+ * zero-row answer is classified, so:
+ *   - the same contact again (a double click, or a colleague who got there
+ *     first) is success with `alreadyLinked` — no second write, no second event
+ *   - another contact, a conversion or a close in between is refused with a
+ *     sentence, and nothing of theirs changes
+ * Refused up front, mirroring `leads_update` (doc 04): a listing manager, an
+ * agent on another agent's lead, a closed or converted lead, a REDACTED
+ * enquiry (re-attaching an anonymised enquiry to a named person would undo
+ * the redaction's point), and an archived, erased or unknown contact
+ * (archived contacts are read-only everywhere, and RLS alone would let an
+ * archived one through). The contact is looked up through RLS, which is also
+ * the org check the foreign key does not make.
+ *
+ * `via: "suggestion"` is "Review and link": the enquiry and the contact must
+ * STILL share an e-mail or a phone — recomputed here from the lead's message
+ * and the contact row, never taken from the browser — or the link is refused
+ * and the desk reviews the fresh evidence. `matched_on` records what matched.
+ * Ids and shape only in the event (audit SEC-03), as an inline literal so
+ * event-payload-privacy.test.ts can read it.
+ *
+ * A link that happened is never reported as a failure: if the event cannot be
+ * written afterwards, the result says so as a warning (a retry would find the
+ * lead already linked and write nothing, so a thrown error here would lose
+ * the event for good).
+ *
+ * Returns a result instead of throwing: Next strips a thrown action's message
+ * in production (ENGINEERING_NOTES), and every refusal here is a sentence the
+ * desk needs to read.
+ */
+export async function linkLeadContact(
+  leadId: string,
+  contactId: string,
+  opts?: { via?: "suggestion" } | null,
+): Promise<LinkLeadContactResult> {
+  const parsed = linkLeadContactSchema.safeParse({ leadId, contactId });
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  // the browser sends `opts` too: only the one known value reaches the event
+  const via = opts && typeof opts === "object" && opts.via === "suggestion" ? "suggestion" : null;
+
+  const supabase = await createClient();
+  let profile: CurrentProfile;
+  try {
+    profile = await getCurrentProfile(supabase);
+  } catch {
+    // deactivated, or no profile: a sentence, not a stripped production throw
+    return { error: "Your session could not be verified — sign in again. Nothing was changed." };
+  }
+  if (profile.role !== "admin" && profile.role !== "agent") {
+    return { error: "Only an admin or an agent can link a contact to a lead." };
+  }
+
+  const { data: lead, error: leadErr } = await supabase
+    .from("leads")
+    .select("id, status, contact_id, assigned_agent_id, message")
+    .eq("id", leadId)
+    .maybeSingle();
+  if (leadErr) return { error: "Could not load the lead — try again." };
+  if (!lead) return { error: "Lead not found." };
+  if (lead.contact_id === contactId) {
+    // a colleague got there first: redraw the row this page still shows unlinked
+    revalidatePath("/leads");
+    return { error: null, alreadyLinked: true };
+  }
+  if (lead.contact_id) {
+    return { error: "This lead is already linked to another contact — refresh to see who." };
+  }
+  if (lead.status === "converted") {
+    return { error: "Lead already converted — the contact lives on its deal." };
+  }
+  if (!(LEAD_OPEN_STATUSES as readonly string[]).includes(lead.status)) {
+    return { error: "Only an open lead can be linked — reopen it first." };
+  }
+  if (!mayLinkLeadContact(profile, lead.assigned_agent_id)) {
+    return { error: "Lead is assigned to another agent." };
+  }
+  if (lead.message === LEAD_MESSAGE_REDACTED) {
+    return { error: "This enquiry was redacted — it cannot be linked to a contact." };
+  }
+
+  const { data: contact, error: contactErr } = await supabase
     .from("contacts")
-    .select("id")
+    .select("id, is_archived, erased_at, email, phone_e164, additional_phones")
     .eq("id", contactId)
     .maybeSingle();
-  if (!contact) throw new Error("Contact not found.");
+  if (contactErr) return { error: "Could not load the contact — try again." };
+  if (!contact) return { error: "Contact not found." };
+  if (contact.erased_at) return { error: "This contact was erased — no new records may be added." };
+  if (contact.is_archived) return { error: "This contact is archived — restore it before linking." };
 
-  const { data, error } = await supabase
-    .from("leads")
-    .update({ contact_id: contactId })
-    .eq("id", leadId)
-    .select("id");
-  if (error || !data?.length) throw new Error(error?.message ?? "Link blocked");
+  // "Review and link" confirmed evidence the page showed: it must still hold
+  let matched: MatchedOn | null = null;
+  if (via === "suggestion") {
+    const read = enquiryMatchKeys(lead.message);
+    matched = read.kind === "keys" ? matchedOn(matchEvidence(read.keys, contact)) : null;
+    if (!matched) {
+      revalidatePath("/leads");
+      return { error: "This contact no longer shares the enquiry's e-mail or phone — nothing was changed. Review it again." };
+    }
+  }
 
-  await logEvent(supabase, {
-    orgId: profile.orgId,
-    actorId: profile.id,
-    entityType: "lead",
-    entityId: leadId,
-    eventType: "contact_linked",
-    payload: { contact_id: contactId },
-  });
+  const outcome = await linkUnlinkedLead(supabase, leadId, contactId);
+  switch (outcome) {
+    case "linked":
+      break;
+    case "already_linked":
+      revalidatePath("/leads");
+      return { error: null, alreadyLinked: true };
+    case "linked_elsewhere":
+      revalidatePath("/leads");
+      return { error: "Someone linked this lead to another contact meanwhile — nothing was changed." };
+    case "closed":
+      revalidatePath("/leads");
+      return { error: "This lead was converted or closed meanwhile — nothing was changed." };
+    case "redacted":
+      revalidatePath("/leads");
+      return { error: "This enquiry was redacted meanwhile — nothing was changed." };
+    case "refused":
+      return { error: "That write was refused — you may not work this lead." };
+    case "error":
+      return { error: "Could not link the contact — try again." };
+  }
+
+  let warning: string | null = null;
+  try {
+    await logEvent(supabase, {
+      orgId: profile.orgId,
+      actorId: profile.id,
+      entityType: "lead",
+      entityId: leadId,
+      eventType: "contact_linked",
+      payload: { contact_id: contactId, via, matched_on: matched },
+    });
+  } catch {
+    // no message: an event error could echo the payload's ids back into a log line
+    console.error("[leads] contact_linked event not written after a successful link");
+    warning = "Linked — but the timeline entry could not be written. Tell an admin.";
+  }
   revalidatePath("/leads");
+  return { error: null, alreadyLinked: false, warning };
 }
 
 /**
@@ -347,12 +476,25 @@ export async function redactLead(leadId: string): Promise<void> {
   }
   if (lead.message === LEAD_MESSAGE_REDACTED) throw new Error("Already redacted.");
 
+  // `contact_id is null` at the database too: a Review and link that commits
+  // between the read above and this write must not end as a lead that is both
+  // linked and redacted — the state this action exists to refuse. The link
+  // guards the other order (lib/services/lead-contact-link.ts).
   const { data, error } = await supabase
     .from("leads")
     .update({ message: LEAD_MESSAGE_REDACTED })
     .eq("id", leadId)
+    .is("contact_id", null)
     .select("id");
-  if (error || !data?.length) throw new Error(error?.message ?? "Redaction blocked");
+  if (error) throw new Error(error.message);
+  if (!data?.length) {
+    const { data: now } = await supabase.from("leads").select("contact_id, message").eq("id", leadId).maybeSingle();
+    if (now?.contact_id) {
+      throw new Error("This enquiry was linked to a contact meanwhile — erase the contact instead.");
+    }
+    if (now?.message === LEAD_MESSAGE_REDACTED) throw new Error("Already redacted.");
+    throw new Error("Redaction blocked");
+  }
 
   await logEvent(supabase, {
     orgId: profile.orgId,
@@ -720,6 +862,27 @@ export async function logChatLinkOpened(
 }
 
 /**
+ * Create contact's answer when the dedup check finds a holder. An ERASED
+ * holder (erased, then unarchived — BACKLOG) is named for what it is and not
+ * returned as a duplicate: "Possible existing contact" never offers one and
+ * the link refuses it, so pointing the desk back at the panel would loop.
+ */
+function duplicateRefusal(duplicate: DuplicateMatch): LeadActionState {
+  if (duplicate.erased) {
+    return {
+      error: `An erased contact still holds this ${duplicate.matched_on} — an admin must deal with that record before a new contact can be created.`,
+      savedAt: null,
+      duplicate: null,
+    };
+  }
+  return {
+    error: `A contact with this ${duplicate.matched_on} already exists — link them instead.`,
+    savedAt: null,
+    duplicate,
+  };
+}
+
+/**
  * One click from a website enquiry to a contact, a link and — when the brief
  * says what the buyer wants — a saved search (0098, audit LR-08 / LR-01).
  *
@@ -727,8 +890,9 @@ export async function logChatLinkOpened(
  * block the door writes (parseWebsiteEnquiry); the desk used to retype them
  * into Contacts, come back, and link. This does the three steps in order,
  * with the same dedup the manual path runs: a match on phone or e-mail is
- * returned as `duplicate` and NOTHING is created — the row offers "Link X
- * instead". The site's checkbox is consent to be contacted about THIS enquiry,
+ * returned as `duplicate` and NOTHING is created — the inbox then refreshes
+ * and "Possible existing contact" shows every candidate with the evidence
+ * (T-enquiry-contact-suggestions). The site's checkbox is consent to be contacted about THIS enquiry,
  * not marketing consent, so it lands in gdpr_notes and never flips
  * consent_marketing.
  *
@@ -739,6 +903,13 @@ export async function logChatLinkOpened(
 export async function createContactFromEnquiry(leadId: string): Promise<LeadActionState> {
   const { supabase, profile, lead } = await getLead(leadId);
   if (!isOpen(lead)) return { error: "Only an open lead can be worked.", savedAt: null };
+  // A listing manager may insert a contact but never update a lead
+  // (leads_update, doc 04): the contact would be created and the link would
+  // then match zero rows — an orphan holding the enquiry's e-mail and phone,
+  // which "Possible existing contact" would go on to suggest.
+  if (profile.role !== "admin" && profile.role !== "agent") {
+    return { error: "Only an admin or an agent can create a contact from an enquiry.", savedAt: null };
+  }
   const guardErr = canWorkError(profile, lead);
   if (guardErr) return { error: guardErr, savedAt: null };
   if (lead.contact_id) return { error: "This lead already has a contact.", savedAt: null };
@@ -762,13 +933,7 @@ export async function createContactFromEnquiry(leadId: string): Promise<LeadActi
   const email = person.email?.toLowerCase() ?? null;
 
   const duplicate = await checkContactDuplicate(person.phone, email);
-  if (duplicate) {
-    return {
-      error: `A contact with this ${duplicate.matched_on} already exists — link them instead.`,
-      savedAt: null,
-      duplicate,
-    };
-  }
+  if (duplicate) return duplicateRefusal(duplicate);
 
   const meta = cleanEnquiryMeta(lead.criteria);
   const isBuyer = BUYER_META_KEYS.some((k) => meta[k]);
@@ -798,11 +963,8 @@ export async function createContactFromEnquiry(leadId: string): Promise<LeadActi
     // race with a unique index (phone, or email since 0077) → a duplicate, not a raw error
     if (contactErr.code === "23505") {
       const race = await checkContactDuplicate(person.phone, email);
-      return {
-        error: `A contact with this ${race?.matched_on ?? "phone or email"} already exists — link them instead.`,
-        savedAt: null,
-        duplicate: race,
-      };
+      if (race) return duplicateRefusal(race);
+      return { error: "A contact with this phone or email already exists — link them instead.", savedAt: null, duplicate: null };
     }
     return { error: contactErr.message, savedAt: null };
   }

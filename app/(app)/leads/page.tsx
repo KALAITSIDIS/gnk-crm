@@ -2,6 +2,7 @@ import Link from "next/link";
 import { AlertCircle, Download, Inbox } from "lucide-react";
 import { AddLeadDialog } from "@/components/features/leads/add-lead-dialog";
 import { DeskAlertChip } from "@/components/features/leads/desk-alert";
+import { EnquiryContactSuggestions } from "@/components/features/leads/enquiry-contact-suggestions";
 import { EscalationChip } from "@/components/features/leads/escalation-status";
 import { LeadsFilters } from "@/components/features/leads/filters";
 import { LeadRowActions } from "@/components/features/leads/lead-actions";
@@ -12,11 +13,13 @@ import { Pager } from "@/components/features/shared/pager";
 import { ResponseClock } from "@/components/features/shared/response-clock";
 import { StatusBadge } from "@/components/features/shared/status-badge";
 import { getCurrentProfile } from "@/lib/services/auth";
+import { mayLinkLeadContact } from "@/lib/services/lead-contact-link";
 import type { EscalationJob } from "@/lib/services/lead-escalation-status";
 import { LEAD_MESSAGE_REDACTED } from "@/lib/services/erasure";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTime } from "@/lib/utils/format";
 import { LEAD_OPEN_STATUSES } from "@/lib/validators/contacts";
+import { loadEnquiryContactSuggestions } from "@/lib/queries/enquiry-contact-suggestions";
 import { applyLeadListFilters, parseLeadFilters } from "@/lib/queries/leads-list";
 import {
   isRangeBeyondEnd,
@@ -56,7 +59,7 @@ export default async function LeadsPage({
     .from("leads")
     .select(
       `id, source, channel, message, status, received_at, first_response_at,
-       assigned_agent_id, lost_reason, converted_deal_id, criteria,
+       assigned_agent_id, lost_reason, converted_deal_id, criteria, contact_id,
        contacts(id, display_name, phone_e164, telegram_username, has_whatsapp),
        properties(id, reference),
        notification_jobs!notification_jobs_lead_id_fkey(id, kind, state, attempts, max_attempts,
@@ -93,6 +96,24 @@ export default async function LeadsPage({
   const rows = leadsResult.data ?? [];
   const scopedTotal = leadsResult.count ?? 0;
   const pageCount = countPages(scopedTotal);
+
+  // "Possible existing contact" (T-enquiry-contact-suggestions): ONE read for
+  // the open, unlinked, unredacted website enquiries on this page, through
+  // this user's RLS — never a query per row, never a write. "Unlinked" is the
+  // lead's own `contact_id`, not whether this reader can see a contact.
+  const suggestions = await loadEnquiryContactSuggestions(
+    supabase,
+    rows
+      .filter(
+        (l) =>
+          l.source === "website" &&
+          l.contact_id === null &&
+          (openStatuses as string[]).includes(l.status) &&
+          l.message !== LEAD_MESSAGE_REDACTED,
+      )
+      .map((l) => ({ id: l.id, message: l.message })),
+  );
+  const agentLabels = Object.fromEntries(agentName);
 
   // Export carries the active status scope but not pagination; RLS-scoped.
   const exportHref = (() => {
@@ -170,6 +191,7 @@ export default async function LeadsPage({
             } | null;
             const property = lead.properties as { id: string; reference: string } | null;
             const isOpen = (openStatuses as string[]).includes(lead.status);
+            const suggestion = suggestions.get(lead.id) ?? null;
             return (
               <li
                 key={lead.id}
@@ -226,6 +248,14 @@ export default async function LeadsPage({
                   </div>
                   {/* the whole enquiry and its brief, not one truncated line (0098, LR-03) */}
                   <LeadMessage message={lead.message} criteria={lead.criteria} />
+                  {suggestion ? (
+                    <EnquiryContactSuggestions
+                      leadId={lead.id}
+                      state={suggestion}
+                      canLink={mayLinkLeadContact(profile, lead.assigned_agent_id)}
+                      agentLabels={agentLabels}
+                    />
+                  ) : null}
                   {/* whether the desk was e-mailed about it (0101), and whether a colleague was told it
                       was still waiting (0107, recovery 0111): the outbox rows by kind, or nothing for a
                       lead that predates them or never needed one */}
@@ -262,11 +292,13 @@ export default async function LeadsPage({
                     isUnassigned={!lead.assigned_agent_id}
                     isOpen={isOpen}
                     hasResponse={Boolean(lead.first_response_at)}
-                    hasContact={Boolean(contact)}
+                    hasContact={lead.contact_id !== null}
                     isAdmin={profile.role === "admin"}
                     status={lead.status}
                     isRedacted={lead.message === LEAD_MESSAGE_REDACTED}
                     source={lead.source}
+                    mayLink={mayLinkLeadContact(profile, lead.assigned_agent_id)}
+                    suggestion={suggestion?.status ?? null}
                   />
                 </div>
               </li>
