@@ -2356,7 +2356,7 @@ VERIFY, run before starting.
   T-enquiry-contact-suggestions design review; not built there — it changes what an admin may do to
   an erased record. **VERIFY:** `grep -n "erased_at" lib/actions/contacts.ts` — no hit inside
   `unarchiveContact` means still open.
-- ~~**The `merged` event carries a name and an address by value, S.**~~ **FIXED 2026-09-23 — DECISIONS
+- ~~**The `merged` event carries a name and an address by value, S.**~~ **FIXED 2026-09-23 (PR #50 → main `595241e`, deployed) — DECISIONS
   `T-merged-event-ids-only`: the payload is `{ merged_contact_id, dropped_fields }` (which conflicting
   field was not kept, never its value — the backfill now returns field names by type), the contact page
   names the line from the duplicate's row, and the payload scan reads keys with the TypeScript parser
