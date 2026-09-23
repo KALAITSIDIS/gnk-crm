@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
+import { scrubBreadcrumbUrls, scrubEventOrDrop, scrubSpanUrls } from "@/lib/services/scrub-event";
 
 /**
  * Browser Sentry init (T5.7). Env-gated on the PUBLIC DSN; a no-op without it.
@@ -16,6 +17,14 @@ if (dsn) {
     tracesSampleRate: 0.1,
     replaysSessionSampleRate: 0,
     replaysOnErrorSampleRate: 0,
+    // Every browser event carries location.href and the previous page as
+    // Referer, pageload/navigation spans carry `url.full`, and a navigation
+    // breadcrumb records `to: "/contacts?q=<name>"` — the same search term
+    // the server scrub removes. Same scrub, same hooks (scrub-event.ts).
+    beforeSend: (event) => scrubEventOrDrop(event),
+    beforeSendTransaction: (event) => scrubEventOrDrop(event),
+    beforeSendSpan: (span) => scrubSpanUrls(span),
+    beforeBreadcrumb: (breadcrumb) => scrubBreadcrumbUrls(breadcrumb),
   });
 }
 
