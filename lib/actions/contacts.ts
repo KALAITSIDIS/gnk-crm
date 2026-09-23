@@ -22,6 +22,12 @@ export interface DuplicateMatch {
   id: string;
   display_name: string;
   matched_on: "phone" | "email";
+  /**
+   * The holder was ERASED and then unarchived (unarchiveContact does not
+   * refuse it — BACKLOG): it still holds the phone/e-mail slot, but it is not
+   * a contact anyone may link. "Possible existing contact" never offers one.
+   */
+  erased?: boolean;
 }
 
 export type ContactActionState = {
@@ -43,23 +49,33 @@ export async function checkContactDuplicate(
   if (e164) {
     const { data } = await supabase
       .from("contacts")
-      .select("id, display_name")
+      .select("id, display_name, erased_at")
       .or(`phone_e164.eq.${e164},additional_phones.cs.{"${e164}"}`)
       .eq("is_archived", false)
       .limit(1);
     if (data?.[0]) {
-      return { id: data[0].id, display_name: data[0].display_name ?? "Unnamed", matched_on: "phone" };
+      return {
+        id: data[0].id,
+        display_name: data[0].display_name ?? "Unnamed",
+        matched_on: "phone",
+        erased: Boolean(data[0].erased_at),
+      };
     }
   }
   if (email) {
     const { data } = await supabase
       .from("contacts")
-      .select("id, display_name")
+      .select("id, display_name, erased_at")
       .eq("email", email.toLowerCase().trim())
       .eq("is_archived", false)
       .limit(1);
     if (data?.[0]) {
-      return { id: data[0].id, display_name: data[0].display_name ?? "Unnamed", matched_on: "email" };
+      return {
+        id: data[0].id,
+        display_name: data[0].display_name ?? "Unnamed",
+        matched_on: "email",
+        erased: Boolean(data[0].erased_at),
+      };
     }
   }
   return null;

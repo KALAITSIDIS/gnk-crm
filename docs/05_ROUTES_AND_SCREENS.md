@@ -17,7 +17,7 @@ App Router. `(auth)` = public auth pages; `(app)` = authenticated shell (sidebar
 | `/contacts` | List: search (name/phone/email), filters (type, temperature, source, agent, nationality, language); "Add contact" | all |
 | `/contacts/new` | Form with live dedup check on phone/email | all |
 | `/contacts/[id]` | Tabs per spec C3: Profile · Preferences · KYC & Banking (checklists with %) · Activity · Deals · Documents; Merge action (admin) | all |
-| `/leads` | Inbox 📱: rows with response-clock chip, source icon, property/criteria summary; actions: claim, contacted, called, log conversation, convert, lost/spam | all |
+| `/leads` | Inbox 📱: rows with response-clock chip, source icon, property/criteria summary; actions: claim, contacted, called, log conversation, convert, lost/spam. An open, unlinked website enquiry shows **Possible existing contact** — every active contact sharing its e-mail or phone, with that contact's recent linked enquiries and "Review and link" (T-enquiry-contact-suggestions) | all |
 | `/leads/[id]` | Lead detail + conversation log + convert panel | all |
 | `/pipeline` | Kanban 📱-usable: deal-type tabs; drag between stages; deal cards (title, value, health dot, agent avatar, days-in-stage) | all |
 | `/deals/[id]` | Deal drawer/page: parties, property, expected value, commission_split_notes (textarea), health panel with checklist, offers table + "Add offer", activity | per RLS |

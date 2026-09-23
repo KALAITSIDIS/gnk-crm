@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import {
   ArrowRightCircle,
   Check,
@@ -68,6 +69,8 @@ export function LeadRowActions({
   status,
   isRedacted,
   source,
+  mayLink,
+  suggestion = null,
 }: {
   leadId: string;
   isMine: boolean;
@@ -80,6 +83,22 @@ export function LeadRowActions({
   isRedacted: boolean;
   /** `website` leads carry the person in their message — one click makes the contact (0098) */
   source: string;
+  /**
+   * `leads_update` in the app's words (mayLinkLeadContact): an admin, or an
+   * agent on their own or an unassigned lead. A listing manager may write no
+   * lead, so is offered neither Link contact nor Create contact — the second
+   * used to create the contact and then fail the link, leaving an orphan.
+   */
+  mayLink: boolean;
+  /**
+   * The row's "Possible existing contact" state (T-enquiry-contact-
+   * suggestions). While it lists candidates, "Create contact" is not offered:
+   * the dedup check refuses a contact whose phone or e-mail an active contact
+   * already holds, so it could only end in the match the row already shows —
+   * Review and link is the way forward. Nor when the header could not be read:
+   * Create contact reads the same header and could only fail.
+   */
+  suggestion?: string | null;
 }) {
   const [isPending, startTransition] = useTransition();
   // Audit CRM-06: eight buttons wrapped to three rows on a phone, with the
@@ -141,7 +160,7 @@ export function LeadRowActions({
   // anyone on an unassigned lead may work it. Rendering the buttons for other
   // agents produced silent no-op updates with bogus success toasts (audit fix).
   const canWork = isMine || isUnassigned || isAdmin;
-  const canLinkContact = !hasContact && canWork;
+  const canLinkContact = !hasContact && mayLink && !isRedacted;
 
   return (
     <div className="flex flex-wrap items-center justify-end gap-1">
@@ -180,7 +199,7 @@ export function LeadRowActions({
         </Button>
       ) : null}
       {canWork ? <LogConversationDialog leadId={leadId} /> : null}
-      {canLinkContact && source === "website" && !isRedacted ? (
+      {canLinkContact && source === "website" && suggestion !== "matches" && suggestion !== "unreadable" ? (
         <CreateContactFromEnquiryButton leadId={leadId} />
       ) : null}
       {canWork ? <ConvertLeadDialog leadId={leadId} hasContact={hasContact} /> : null}
@@ -211,20 +230,27 @@ export function LeadRowActions({
  * "Create contact" for a website enquiry (0098, audit LR-08): the name,
  * e-mail and phone in the message become the contact, the lead is linked, and
  * a buyer's brief becomes a saved search — the three screens the desk used to
- * walk. Dedup applies: a match on phone or e-mail creates nothing and the
- * button becomes "Link <name>", which is what the desk would have done anyway.
+ * walk. Dedup applies: a match on phone or e-mail creates nothing.
+ *
+ * On a match it used to become a one-click "Link <name> instead" for the FIRST
+ * contact the dedup check found — phone before e-mail — so when the phone and
+ * the e-mail belonged to two different contacts one was picked silently. The
+ * row's "Possible existing contact" panel now lists every candidate before
+ * anyone clicks (T-enquiry-contact-suggestions), and this button is not shown
+ * while it does; a match found here means one appeared after the page was
+ * drawn, so the inbox is refreshed to show it there, with the evidence.
  */
 function CreateContactFromEnquiryButton({ leadId }: { leadId: string }) {
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const [dup, setDup] = useState<{ id: string; display_name: string; matched_on: string } | null>(null);
 
   const create = () =>
     startTransition(async () => {
       try {
         const r = await createContactFromEnquiry(leadId);
         if (r.duplicate) {
-          setDup(r.duplicate);
-          toast.error(r.error ?? "A matching contact already exists.");
+          toast.error(`${r.error ?? "A matching contact already exists."} Review the match on this enquiry.`);
+          router.refresh();
           return;
         }
         if (r.error) {
@@ -238,31 +264,6 @@ function CreateContactFromEnquiryButton({ leadId }: { leadId: string }) {
       }
     });
 
-  const link = (contactId: string) =>
-    startTransition(async () => {
-      try {
-        await linkLeadContact(leadId, contactId);
-        toast.success("Contact linked");
-        setDup(null);
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Link failed");
-      }
-    });
-
-  if (dup) {
-    return (
-      <Button
-        variant="outline"
-        size="sm"
-        className="h-7 text-xs"
-        disabled={pending}
-        title={`An existing contact has the same ${dup.matched_on}`}
-        onClick={() => link(dup.id)}
-      >
-        <UserPlus className="size-3.5" /> Link {dup.display_name} instead
-      </Button>
-    );
-  }
   return (
     <Button
       variant="outline"
@@ -287,8 +288,14 @@ export function LinkContactDialog({ leadId }: { leadId: string }) {
     const contactId = selected.id;
     startTransition(async () => {
       try {
-        await linkLeadContact(leadId, contactId);
-        toast.success("Contact linked");
+        // a result, not a throw: the refusals are sentences the desk must read
+        const r = await linkLeadContact(leadId, contactId);
+        if (r.error) {
+          toast.error(r.error);
+          return;
+        }
+        toast.success(r.alreadyLinked ? "Already linked to that contact" : "Contact linked");
+        if (r.warning) toast.warning(r.warning);
         setOpen(false);
         setSelected(null);
       } catch (e) {

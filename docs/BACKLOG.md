@@ -2337,6 +2337,61 @@ VERIFY, run before starting.
   `contacts.last_activity_at` maintained by the event writer and a nightly
   temperature-decay suggestion task. (REC-01, REC-05.) **VERIFY:**
   `grep -n enquirer_key supabase/migrations/*.sql` — a hit means shipped.
+  **Slice BUILT 2026-09-23 (PR #48, branch `feat/enquiry-contact-suggestions`, no migration — NOT merged until the operator approves) — "a matching
+  contact", without the key:** an open, unlinked website enquiry's row lists every ACTIVE contact
+  sharing its e-mail or phone (additional phones included, phone formats normalised), with that
+  contact's three most recent LINKED enquiries, and "Review and link" behind an explicit
+  confirmation; DECISIONS `T-enquiry-contact-suggestions`. Everything else here — earlier UNLINKED
+  enquiries from the same person, `enquirer_key`, backfill, "Link all", appending, last_activity —
+  is still outstanding, which is why the VERIFY above still reads unbuilt. VERIFY for the slice:
+  `grep -l "loadEnquiryContactSuggestions" "app/(app)/leads/page.tsx"`.
+- **Refuse to unarchive an ERASED contact, S.** `unarchiveContact` (`lib/actions/contacts.ts`)
+  checks `is_archived` and `merged_into_id` but not `erased_at`, and the contact page shows the
+  Unarchive button on an erased contact; erasure keeps the name, e-mail and phone (identity is
+  retained for AML), so an unarchived erased contact takes its phone/e-mail slot back under the
+  partial unique indexes, re-enters `checkContactDuplicate` (which filters `is_archived` only) and
+  the contact picker. "Possible existing contact" filters `erased_at` itself and never offers one,
+  so today such a row makes the panel say "no match" while Create contact is refused as a duplicate.
+  Hosted holds 0 erased-but-active contacts (2026-09-23); local test fixtures hold 20. Found by the
+  T-enquiry-contact-suggestions design review; not built there — it changes what an admin may do to
+  an erased record. **VERIFY:** `grep -n "erased_at" lib/actions/contacts.ts` — no hit inside
+  `unarchiveContact` means still open.
+- **The `merged` event carries a name and an address by value, S.** `mergeContacts`
+  (`lib/actions/merge-contacts.ts`) writes `merged_contact_name` and the backfill's `dropped`
+  e-mail (`lib/services/merge-backfill.ts`) into the hash-chained payload, which erasure cannot
+  reach — the SEC-03 rule ("ids and digests only") broken on one event. The privacy scan misses it:
+  the key is not on its list and the value arrives through a spread. Found by the
+  T-enquiry-contact-suggestions review. **VERIFY:** `grep -n "merged_contact_name" lib/actions/merge-contacts.ts` —
+  a hit means still open.
+- **The door keeps line breaks in name, phone and reference, S.** `publicEnquirySchema`
+  (`lib/validators/public-enquiry.ts`) trims but keeps interior newlines, and 0101 writes the values
+  raw into the header block, so a name like `Ann\nEmail: x@y` becomes an `Email:` line that
+  `parseWebsiteEnquiry` reads, and extra lines can push the real Email/Phone past its five-line
+  window. Nothing breaks out of a filter (the matcher refuses quotes and commas) and a visitor can
+  type any address anyway, so it misleads rather than exposes; collapsing CR/LF to a space at the
+  door keeps the contract (build it as a `singleLine` preprocess). **VERIFY:**
+  `grep -n "singleLine" lib/validators/public-enquiry.ts` — no hit means still open.
+- **Listing managers are shown lead buttons their policy refuses, S.** `LeadRowActions`' `canWork`
+  (`components/features/leads/lead-actions.tsx`) is `isMine || isUnassigned || isAdmin`, true for a
+  listing manager on any unassigned lead, but `leads_update` admits admins and agents only — so
+  Contacted, Called, Convert and Close are offered and then refused with zero rows. Link contact and
+  Create contact were gated on `mayLinkLeadContact` by T-enquiry-contact-suggestions (Create contact
+  used to leave an orphan contact); the rest is not. **VERIFY:** `grep -n "const canWork = isMine || isUnassigned || isAdmin" components/features/leads/lead-actions.tsx` —
+  a hit means still open.
+- **An INCOMING request's query string still reaches Sentry, S.** T-enquiry-contact-suggestions cut
+  the query off every OUTGOING URL (PostgREST filters) on spans, breadcrumbs and transactions
+  (`lib/services/scrub-event.ts`), but a sampled transaction of `/contacts?q=<name or e-mail>` still
+  carries the search term: Next's root span sets `http.target` to the relative `req.url` (the scrub
+  needs `scheme://`), and the SDK's request data puts it in `event.request.query_string` / `url`
+  (with `sendDefaultPii` off, query params are denied by key, not dropped). Found by that task's
+  review; not built there — it changes what every transaction records. Cut relative targets and
+  drop `request.query_string` in `beforeSend`/`beforeSendTransaction`. **VERIFY:**
+  `grep -n "query_string" lib/services/scrub-event.ts` — no hit means still open.
+- **A contact's enquiries are listed nowhere, S (nice-to-have).** "Possible existing contact" shows
+  a contact's three most recent linked enquiries and says "Showing the 3 most recent only."; the
+  contact page has no Leads tab and the inbox has no contact filter, so the rest are reachable only
+  by scrolling the inbox. **VERIFY:** `grep -n "leads" "app/(app)/contacts/[id]/page.tsx"` — no
+  `.from("leads")` hit means still open.
 - **Phase 3 — review state, hierarchy, feed grouping — NEEDS AN OPERATOR
   DECISION.** A `review_state` (none / requested / approved) with agents and
   listing managers requesting and admins approving, both evented, and a RACI

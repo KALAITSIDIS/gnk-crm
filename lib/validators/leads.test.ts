@@ -32,6 +32,14 @@ describe("createLeadSchema — received_at", () => {
   });
 });
 
+describe("createLeadSchema — new_contact_email", () => {
+  it("stores the address lower-cased, like every other contact write (T-enquiry-contact-suggestions)", () => {
+    const r = createLeadSchema.safeParse({ ...base, new_contact_name: "Maria", new_contact_email: "Maria.G@Example.INVALID" });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.new_contact_email).toBe("maria.g@example.invalid");
+  });
+});
+
 describe("createLeadSchema — property_id", () => {
   it("takes a property id, and none", () => {
     const ok = createLeadSchema.safeParse({ ...base, property_id: "aaaaaaaa-0000-0000-0000-000000000001" });
