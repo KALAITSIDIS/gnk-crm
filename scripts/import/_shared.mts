@@ -206,12 +206,20 @@ function readRecords(src: string, delimiter: string): RawRecord[] {
  */
 export function parseCsvTable(text: string): { header: string[]; rows: Record<string, string>[] } {
   const src = text.replace(/^﻿/, ""); // strip BOM
-  const delimiter = delimiterOf(src.split(/\r?\n/, 1)[0] ?? "");
+  // the header is the first line with anything on it, whatever ends the lines (CR-only included)
+  const delimiter = delimiterOf(src.split(/\r\n|\r|\n/).find((l) => l.trim() !== "") ?? "");
   const records = readRecords(src, delimiter);
   if (records.length === 0) return { header: [], rows: [] };
   const [head, ...body] = records;
   const header = head.cells.map((h) => h.trim());
   const problems: string[] = [];
+
+  // A name holding a line break, a quote or the separator is not a name: a
+  // quote left open on the header line has swallowed what follows it — rows
+  // included, and it can close cleanly inside them (an inch mark). Such a
+  // header is refused by position only, and lends no names to any message.
+  const plain = (name: string) => !/[\r\n"]/.test(name) && !name.includes(delimiter);
+  const headerTrusted = head.faults.length === 0 && header.every(plain);
 
   for (const f of head.faults) problems.push(`line ${f.line} (header), column ${f.cell + 1}: ${f.reason}`);
   header.forEach((name, i) => {
@@ -220,9 +228,14 @@ export function parseCsvTable(text: string): { header: string[]; rows: Record<st
         `line ${head.line} (header): column ${i + 1} has no name — delete the empty column ` +
           "(a separator at the end of the header line makes one)",
       );
+    } else if (!plain(name)) {
+      problems.push(
+        `line ${head.line} (header): the name in column ${i + 1} holds a line break, a double quote or the ` +
+          "separator — a header name is plain text; check the quotes on the header line",
+      );
     }
   });
-  if (!head.unclosed) {
+  if (headerTrusted) {
     const positions = new Map<string, number[]>();
     header.forEach((name, i) => {
       if (name !== "") positions.set(name, [...(positions.get(name) ?? []), i + 1]);
@@ -239,7 +252,7 @@ export function parseCsvTable(text: string): { header: string[]; rows: Record<st
   const example = delimiter === ";" ? '"pool;garden"' : '"1,250,000"';
   for (const record of body) {
     for (const f of record.faults) {
-      const name = header[f.cell] ? ` (${header[f.cell]})` : "";
+      const name = headerTrusted && header[f.cell] ? ` (${header[f.cell]})` : "";
       problems.push(`line ${f.line}, column ${f.cell + 1}${name}: ${f.reason}`);
     }
     const found = record.cells.length;

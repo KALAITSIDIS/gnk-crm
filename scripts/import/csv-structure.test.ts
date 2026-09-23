@@ -101,6 +101,31 @@ describe("the header", () => {
   });
 });
 
+describe("a broken header never becomes the column names (review of cf7c0b2)", () => {
+  const HOLDS =
+    "holds a line break, a double quote or the separator — a header name is plain text; check the quotes on the header line";
+
+  it("a header quote that closes cleanly inside the data is refused, and the swallowed row is not printed", () => {
+    // the inch mark closes the header's stray quote: no quoting fault at all,
+    // and the header's second "name" is Maria's row
+    const text = "first_name,\"last_name,phone\nMaria,Papadopoulou 5'10\",99123456\nNikos,Georgiou,99000000\n";
+    const problems = problemsOf(text);
+    expect(problems).toEqual([`line 1 (header): the name in column 2 ${HOLDS}`]);
+    for (const secret of ["Maria", "Papadopoulou", "99123456"]) expect(problems.join("\n")).not.toContain(secret);
+  });
+
+  it("so is a quoted header name holding the separator", () => {
+    expect(problemsOf('reference,"asking,price"\nZZ1,1\n')).toEqual([`line 1 (header): the name in column 2 ${HOLDS}`]);
+  });
+
+  it("a faulted header lends no names to the rows' messages", () => {
+    const text = 'reference,"asking_price,owner_name\nPAF1,"1,250,000",Maria Papadopoulou\nPAF2,1,2,3,Ni"kos\n';
+    const joined = problemsOf(text).join("\n");
+    expect(joined).toContain("line 3, column 5: a double quote inside an unquoted value");
+    for (const secret of ["Maria", "Papadopoulou", "PAF1", "1,250,000"]) expect(joined).not.toContain(secret);
+  });
+});
+
 describe("quoting", () => {
   it("refuses a quote inside an unquoted value", () => {
     expect(problemsOf(`${H}\nAUDIT,apartment,PAF,12"5,85.5\n`)).toEqual([
@@ -234,6 +259,21 @@ describe("well-formed files keep every value they had", () => {
     }
   });
 
+  it("old-Mac CR-only line endings", () => {
+    const { rows } = parseCsvTable("reference,features\rA,pool;garden;sea;view\rB,pool;garden;sea\r");
+    expect(rows).toEqual([
+      { reference: "A", features: "pool;garden;sea;view" },
+      { reference: "B", features: "pool;garden;sea" },
+    ]);
+  });
+
+  it("the separator is read from the header line even below blank lines", () => {
+    expect(parseCsvTable("\nreference;covered_area_sqm\nZZ1;85,5\n").rows).toEqual([
+      { reference: "ZZ1", covered_area_sqm: "85,5" },
+    ]);
+    expect(problemsOf("\n\nreference;covered_area_sqm\nZZ1;85,5;9\n")[0]).toMatch(/^line 4: expected 2 cells/);
+  });
+
   it("blank lines — empty, or nothing but spaces — are skipped wherever they fall", () => {
     const { rows } = parseCsvTable("reference,asking_price\n\nZZ1,1\n   \n\nZZ2,2\n\n\n");
     expect(rows).toEqual([
@@ -306,6 +346,13 @@ describe("loadCsv — the importers' loader", () => {
     );
     expect(() => loadCsv(path, KNOWN_PROPERTY_COLUMNS, true)).toThrow("process.exit(1)");
     expect(errors.join("\n")).toContain('column "asking_price" appears more than once');
+  });
+
+  it("--allow-extra cannot turn a swallowed row into an ignored column", () => {
+    const path = file("swallowed.csv", "first_name,\"last_name,phone\nMaria,Papadopoulou 5'10\",99123456\nNikos,Georgiou,99000000\n");
+    expect(() => loadCsv(path, KNOWN_CONTACT_COLUMNS, true)).toThrow("process.exit(1)");
+    expect(warnings).toEqual([]);
+    expect(errors.join("\n")).not.toContain("Maria");
   });
 
   it("--allow-extra still ignores an unknown column in a well-formed file, as documented", () => {
