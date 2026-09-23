@@ -166,3 +166,29 @@ export const bankingReadinessSchema = z.object({
 });
 
 export const CONTACTS_PAGE_SIZE = 25;
+
+/**
+ * Which of Archive / Unarchive the contact page offers — the page's half of
+ * the rule `archiveContact` / `unarchiveContact` enforce.
+ *
+ * A merged duplicate and an ERASED contact stay archived. Erasure keeps the
+ * name, e-mail and phone (identity is retained for AML) and parks the row as
+ * archived, so unarchiving it would put that identity back into use: the
+ * phone/e-mail slot under the partial unique indexes, the duplicate check,
+ * the contact picker (T-refuse-unarchive-erased).
+ *
+ * An erased contact that is NOT archived — one unarchived before the refusal
+ * existed — still gets Archive: that is the way back to the state erasure
+ * left it in.
+ */
+export function contactArchiveAction(contact: {
+  mayUpdate: boolean;
+  isArchived: boolean;
+  isMerged: boolean;
+  isErased: boolean;
+}): "archive" | "unarchive" | null {
+  if (!contact.mayUpdate) return null;
+  if (!contact.isArchived) return "archive";
+  if (contact.isMerged || contact.isErased) return null;
+  return "unarchive";
+}

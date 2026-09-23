@@ -4,6 +4,7 @@ import {
   LEAD_OPEN_STATUSES,
   SELECT_NONE,
   bankingReadinessSchema,
+  contactArchiveAction,
   createContactSchema,
   kycStateSchema,
   leadFiltersSchema,
@@ -115,5 +116,32 @@ describe("checklist schemas", () => {
     expect(bankingReadinessSchema.safeParse({ account_feasibility: "definitely" }).success).toBe(
       false,
     );
+  });
+});
+
+describe("contactArchiveAction — which button the contact page offers", () => {
+  const live = { mayUpdate: true, isArchived: false, isMerged: false, isErased: false };
+
+  it("offers Archive on an active contact and Unarchive on an archived one", () => {
+    expect(contactArchiveAction(live)).toBe("archive");
+    expect(contactArchiveAction({ ...live, isArchived: true })).toBe("unarchive");
+  });
+
+  it("offers nothing to someone the contacts UPDATE policy refuses", () => {
+    expect(contactArchiveAction({ ...live, mayUpdate: false })).toBeNull();
+    expect(contactArchiveAction({ ...live, mayUpdate: false, isArchived: true })).toBeNull();
+  });
+
+  it("never offers Unarchive on an erased contact — its retained identity stays out of use", () => {
+    expect(contactArchiveAction({ ...live, isArchived: true, isErased: true })).toBeNull();
+  });
+
+  it("never offers Unarchive on a merged duplicate", () => {
+    expect(contactArchiveAction({ ...live, isArchived: true, isMerged: true })).toBeNull();
+  });
+
+  it("still offers Archive on an erased contact someone unarchived before the refusal existed", () => {
+    // the way back to the state erasure left it in
+    expect(contactArchiveAction({ ...live, isErased: true })).toBe("archive");
   });
 });
