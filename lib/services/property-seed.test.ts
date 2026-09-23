@@ -98,10 +98,11 @@ describe("buildPropertySeed survives the shapes a real row arrives in", () => {
   });
 
   it("keeps a legitimate ZERO instead of blanking it", () => {
-    // `|| ""` would erase these; a studio really does have 0 bedrooms
-    const s = buildPropertySeed(src({ bedrooms: 0, plot_area_sqm: 0 }));
+    // `|| ""` would erase it; a studio really does have 0 bedrooms. (An AREA
+    // of 0 is not legitimate — unknown is null, and since 0113 the database
+    // refuses a stored 0 m², so a seed never meets one: LST-07, 2026-09-23.)
+    const s = buildPropertySeed(src({ bedrooms: 0 }));
     expect(s.bedrooms).toBe("0");
-    expect(s.plotAreaSqm).toBe("0");
   });
 
   it("turns every null into an empty string, never the text 'null'", () => {

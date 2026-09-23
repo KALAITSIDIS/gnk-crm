@@ -19,7 +19,12 @@ import {
   serviceClient,
   str,
 } from "./_shared.mts";
-import { KNOWN_PROPERTY_COLUMNS, insertVisibilityFor, publishDecision } from "./_rules.mts";
+import {
+  KNOWN_PROPERTY_COLUMNS,
+  insertVisibilityFor,
+  measurementRefusal,
+  publishDecision,
+} from "./_rules.mts";
 // Relative and WITH the extension: plain Node resolves neither the alias nor
 // an extensionless path (tests/unit/scripts-run-under-node.test.ts).
 import { PUBLISH_THRESHOLD, recomputeQualityScore } from "../../lib/services/quality-score.ts";
@@ -147,6 +152,21 @@ for (const r of rows) {
       parentId = parent[0].id;
     }
 
+    // Areas and floors (LST-07, 2026-09-23) — BEFORE the first side effect
+    // below (an area, an owner contact), so a refused row creates nothing,
+    // and before the dry-run branch, so the rehearsal refuses it too.
+    const measurements = {
+      covered_area_sqm: num(r.covered_area_sqm),
+      plot_area_sqm: num(r.plot_area_sqm),
+      floor_number: int(r.floor_number),
+      total_floors: int(r.total_floors),
+    };
+    const measurementError = measurementRefusal(measurements);
+    if (measurementError) {
+      report.add({ row: line, outcome: "error", detail: measurementError });
+      continue;
+    }
+
     // area (create if missing)
     let areaId: string | null = null;
     const areaName = str(r.area);
@@ -220,14 +240,14 @@ for (const r of rows) {
       owner_net_price: num(r.owner_net_price),
       rent_price_month: num(r.rent_price_month),
       vat_status: str(r.vat_status) ?? "unknown",
-      covered_area_sqm: num(r.covered_area_sqm),
-      plot_area_sqm: num(r.plot_area_sqm),
+      covered_area_sqm: measurements.covered_area_sqm,
+      plot_area_sqm: measurements.plot_area_sqm,
       veranda_sqm: num(r.veranda_sqm),
       bedrooms: int(r.bedrooms),
       bathrooms: int(r.bathrooms),
       parking_spaces: int(r.parking_spaces),
-      floor_number: int(r.floor_number),
-      total_floors: int(r.total_floors),
+      floor_number: measurements.floor_number,
+      total_floors: measurements.total_floors,
       year_built: int(r.year_built),
       features: list(r.features),
       title_deed_status: str(r.title_deed_status) ?? "unknown",

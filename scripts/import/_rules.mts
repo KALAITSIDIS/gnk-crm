@@ -1,10 +1,13 @@
 /**
  * The importers' pure rules (audit 2026-09-15, LST-02 and LST-10), kept
  * apart from `_shared.mts` so they can be unit-tested without a Supabase
- * client or a file on disk. Only node built-ins: this runs under plain Node
- * with type stripping, the same as every script in this directory.
+ * client or a file on disk. Only node built-ins and the app's dependency-free
+ * measurement rules: this runs under plain Node with type stripping, the same
+ * as every script in this directory.
  */
 import { basename, extname } from "node:path";
+// Relative and WITH the extension (tests/unit/scripts-run-under-node.test.ts).
+import { measurementProblem, type MeasurementField } from "../../lib/validators/property-measurements.ts";
 
 /**
  * The columns docs/09_DATA_IMPORT_TEMPLATES.md describes. `_rules.test.ts`
@@ -148,4 +151,19 @@ export function batchIdFor(file: string, now: Date, explicit?: string): string {
   const iso = now.toISOString();
   const stamp = `${iso.slice(0, 10).replace(/-/g, "")}-${iso.slice(11, 19).replace(/:/g, "")}`;
   return `${stamp}-${basename(file, extname(file))}`;
+}
+
+/**
+ * Why an import row's areas or floors cannot be stored (LST-07, 2026-09-23),
+ * as `column: message`, or null. The same rules the app's forms apply, read
+ * from the ONE definition — the importer used to write any finite number,
+ * so a 0 m² area or floor 9 of 3 landed through the one path that skipped
+ * every form. Applied to the parsed values before the row's first side
+ * effect, so a refused row creates no area and no owner contact, and the
+ * dry run reports it exactly as the live run would. Migration 0113's CHECKs
+ * refuse the same rows at the insert; this says which column and why.
+ */
+export function measurementRefusal(values: Record<MeasurementField, number | null>): string | null {
+  const problem = measurementProblem(values);
+  return problem ? `${problem.field}: ${problem.message}` : null;
 }

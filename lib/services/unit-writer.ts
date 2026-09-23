@@ -16,6 +16,7 @@ import {
   computeQualityScore,
   type QualityScoreSource,
 } from "./quality-score.ts";
+import { measurementProblem } from "../validators/property-measurements.ts";
 
 /**
  * The one place generated units are WRITTEN (2026-09-02).
@@ -57,6 +58,16 @@ export async function writeGeneratedUnits(
   opts: { propertyType: (typeof PROPERTY_TYPES)[number]; actorId: string },
 ): Promise<WriteUnitsResult> {
   if (generated.length === 0) return { error: "That range produces no units" };
+
+  // The measurement rules (LST-07), before anything is asked of the database.
+  // Both callers validate their inputs with the same rules, and the pure
+  // generator copies whatever area it is handed — so this is the backstop for
+  // the next caller, and it names the UNIT: 0113's CHECK would refuse the
+  // whole one-statement insert naming only a constraint.
+  for (const u of generated) {
+    const problem = measurementProblem(u);
+    if (problem) return { error: `Unit ${u.label}: ${problem.message}` };
+  }
 
   // Unit reference per doc 02 §A6: parent ref + label (PAF0007-B203, PAF0002-V01).
   const references = generated.map((u) => `${project.reference}-${u.label}`);

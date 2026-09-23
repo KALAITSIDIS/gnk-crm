@@ -48,9 +48,9 @@ Export current data (Excel, phone contacts, WhatsApp notes) into these two CSVs.
 | owner_net_price | no | number | internal |
 | rent_price_month | no | number | |
 | vat_status | no | new_vat/resale_no_vat/reduced_rate_eligible/unknown | |
-| covered_area_sqm / plot_area_sqm / veranda_sqm | no | number | |
+| covered_area_sqm / plot_area_sqm / veranda_sqm | no | number | covered and plot, when given, are greater than 0 (at least 0.01) — leave the cell blank when unknown or not applicable (a flat's plot, land's covered area), never 0. A veranda may be 0 |
 | bedrooms / bathrooms / parking_spaces | no | int | |
-| floor_number / total_floors / year_built | no | int | |
+| floor_number / total_floors / year_built | no | int | floor 0 = ground floor, negative = basement; when both are given, floor_number ≤ total_floors |
 | features | no | `pool;garden;sea_view;furnished` | keys from features constant |
 | title_deed_status | no | separate/pending/shared/none/unknown | |
 | permit_status | no | full/pending/partial/none/unknown | |
@@ -76,3 +76,4 @@ Export current data (Excel, phone contacts, WhatsApp notes) into these two CSVs.
 5. **Headers are checked against these tables.** An unknown column stops the run before any row is written — a misspelt header would otherwise import every value in it as blank; `--allow-extra` ignores such columns instead (audit 2026-09-15, LST-10).
 6. **Every run has a batch id** (`--batch <id>`, default `YYYYMMDD-HHMMSS-<file>`), written into each `imported` event's payload and into the report's file name, so a whole run can be found by one name.
 7. **The importer cannot skip the publish gate** (audit 2026-09-15, LST-02). A row requested `public` is scored once it and its mandate exist and is published only at 70 or more, with `published_at` stamped; otherwise it stays private and the report row says the score.
+8. **Areas and floors obey the app's rules** (audit 2026-09-23, LST-07). A row with a covered or plot area of 0 or less, or a floor above its total floors, is refused in the report naming the column — in the dry run too — before it creates an area or an owner contact. Migration 0113 refuses the same values at the table.

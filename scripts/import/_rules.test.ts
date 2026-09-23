@@ -7,6 +7,7 @@ import {
   insertVisibilityFor,
   KNOWN_CONTACT_COLUMNS,
   KNOWN_PROPERTY_COLUMNS,
+  measurementRefusal,
   publishDecision,
   unknownColumns,
 } from "./_rules.mts";
@@ -128,5 +129,29 @@ describe("KNOWN_*_COLUMNS agree with docs/09_DATA_IMPORT_TEMPLATES.md", () => {
 
   it("properties", () => {
     expect([...KNOWN_PROPERTY_COLUMNS].sort()).toEqual(documented("properties_import.csv").sort());
+  });
+});
+
+describe("measurementRefusal — an import row is held to the same measurement rules as the app (LST-07)", () => {
+  // The importer parses with num()/int() and, until 2026-09-23, wrote whatever
+  // came out: 0 and negative areas, floor 9 of 3. Checked on the PARSED
+  // values, before the row's first side effect (an area or an owner contact),
+  // so a refused row creates nothing and the dry run reports it too.
+  it.each([
+    [{ covered_area_sqm: 0 }, /^covered_area_sqm: Covered area must be greater than 0/],
+    [{ plot_area_sqm: -1 }, /^plot_area_sqm: Plot area must be greater than 0/],
+    [{ covered_area_sqm: 0.004 }, /^covered_area_sqm: Covered area must be at least 0\.01/],
+    [{ floor_number: 9, total_floors: 3 }, /^floor_number: Floor 9 is above the building's total floors \(3\)/],
+  ])("refuses %j, naming the CSV column", (values, message) => {
+    expect(measurementRefusal({ covered_area_sqm: null, plot_area_sqm: null, floor_number: null, total_floors: null, ...values })).toMatch(message);
+  });
+
+  it.each([
+    [{ covered_area_sqm: 95, plot_area_sqm: null, floor_number: 2, total_floors: 4 }],
+    [{ covered_area_sqm: null, plot_area_sqm: 1200, floor_number: null, total_floors: null }],
+    [{ covered_area_sqm: 85, plot_area_sqm: null, floor_number: -1, total_floors: 3 }],
+    [{ covered_area_sqm: 180, plot_area_sqm: 450, floor_number: null, total_floors: 2 }],
+  ])("admits %j (blank cells are null, basements are negative)", (values) => {
+    expect(measurementRefusal(values)).toBeNull();
   });
 });
