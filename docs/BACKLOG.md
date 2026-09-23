@@ -2404,15 +2404,39 @@ VERIFY, run before starting.
   Create contact were gated on `mayLinkLeadContact` by T-enquiry-contact-suggestions (Create contact
   used to leave an orphan contact); the rest is not. **VERIFY:** `grep -n "const canWork = isMine || isUnassigned || isAdmin" components/features/leads/lead-actions.tsx` —
   a hit means still open.
-- **An INCOMING request's query string still reaches Sentry, S.** T-enquiry-contact-suggestions cut
-  the query off every OUTGOING URL (PostgREST filters) on spans, breadcrumbs and transactions
-  (`lib/services/scrub-event.ts`), but a sampled transaction of `/contacts?q=<name or e-mail>` still
-  carries the search term: Next's root span sets `http.target` to the relative `req.url` (the scrub
-  needs `scheme://`), and the SDK's request data puts it in `event.request.query_string` / `url`
-  (with `sendDefaultPii` off, query params are denied by key, not dropped). Found by that task's
-  review; not built there — it changes what every transaction records. Cut relative targets and
-  drop `request.query_string` in `beforeSend`/`beforeSendTransaction`. **VERIFY:**
-  `grep -n "query_string" lib/services/scrub-event.ts` — no hit means still open.
+- ~~**An INCOMING request's query string still reaches Sentry, S.**~~ **BUILT 2026-09-23 on branch
+  `fix/sentry-incoming-request-scrub`, PR #52 — not merged (the operator approves).** DECISIONS
+  `T-sentry-incoming-request-scrub`. One `scrubEvent` on `beforeSend` AND `beforeSendTransaction`,
+  server and browser: the URL keeps its path and loses its query everywhere it was measured
+  (`request.url`, `http.target`, `contexts.nextjs.request_path`, referer, `url.full`, navigation
+  breadcrumbs), and `request.query_string` goes. Measuring it through the real SDK found three
+  worse leaks on the same `event.request`, closed in the same change: the Supabase session cookie
+  (`sendDefaultPii` off does NOT strip it in 10.65), `Authorization: Bearer <CRON_SECRET>` on sampled
+  enquiry-alert sweeps, and the request BODY whenever Next clones it for the proxy — an enquiry's
+  name, e-mail and phone — plus the door's two headers on transactions (only errors were redacted),
+  and, after an independent review, every header whose name the SDK's own fragments mark sensitive
+  (a Vercel OIDC token, `x-vercel-ip-*` geolocation), browser stack-frame file names and console
+  breadcrumb arguments; a scrub that throws drops the event. **VERIFY:**
+  `grep -n "delete request.data" lib/services/scrub-event.ts` — no hit means not landed.
+  - **An INCOMING request's query string still reaches Sentry, S (original).** T-enquiry-contact-suggestions cut
+    the query off every OUTGOING URL (PostgREST filters) on spans, breadcrumbs and transactions
+    (`lib/services/scrub-event.ts`), but a sampled transaction of `/contacts?q=<name or e-mail>` still
+    carries the search term: Next's root span sets `http.target` to the relative `req.url` (the scrub
+    needs `scheme://`), and the SDK's request data puts it in `event.request.query_string` / `url`
+    (with `sendDefaultPii` off, query params are denied by key, not dropped). Found by that task's
+    review; not built there — it changes what every transaction records. Cut relative targets and
+    drop `request.query_string` in `beforeSend`/`beforeSendTransaction`. **VERIFY:**
+    `grep -n "query_string" lib/services/scrub-event.ts` — no hit means still open.
+- **A secret token IN THE PATH still reaches Sentry, S.** T-sentry-incoming-request-scrub keeps
+  every path (the brief's rule: `/contacts` is what a person debugging needs), and two paths ARE the
+  credential: the portal feed `/api/portals/<portal>/<64-hex token>` (route comment: "the token in
+  the path is the whole of the caller's proof") and the proposal link `/p/<base64url token>`. Both
+  reach Sentry in `request.url`, `http.target`, the browser's `url.full`/`url.path` and a referer —
+  at 10% of feed pulls, and of proposal pageloads in the browser SDK. The transaction NAME is safe
+  (`GET /p/[token]`, parameterised). The fix is a route-aware cut in `stripUrlQueries`' caller —
+  replace the segment after `/p/` and `/api/portals/<portal>/` with `[token]` — plus a test per
+  route; not built there because it contradicts that brief's "keep the path". **VERIFY:**
+  `grep -n "\[token\]" lib/services/scrub-event.ts` — no hit means still open.
 - **A contact's enquiries are listed nowhere, S (nice-to-have).** "Possible existing contact" shows
   a contact's three most recent linked enquiries and says "Showing the 3 most recent only."; the
   contact page has no Leads tab and the inbox has no contact filter, so the rest are reachable only
