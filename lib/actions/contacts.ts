@@ -451,6 +451,7 @@ export async function archiveContact(contactId: string): Promise<{ error: string
 
 const ERASED_STAYS_ARCHIVED =
   "This contact's personal data was erased under GDPR Article 17 — it stays archived.";
+const MERGED_STAYS_ARCHIVED = "This contact was merged into another — it stays archived.";
 
 /**
  * A merged duplicate and an ERASED contact stay archived (the page hides the
@@ -474,18 +475,17 @@ export async function unarchiveContact(contactId: string): Promise<{ error: stri
   if (!current) return { error: "Contact not found" };
   if (!current.is_archived) return { error: "Not archived" };
   if (current.erased_at) return { error: ERASED_STAYS_ARCHIVED };
-  if (current.merged_into_id) {
-    return { error: "This contact was merged into another — it stays archived." };
-  }
+  if (current.merged_into_id) return { error: MERGED_STAYS_ARCHIVED };
 
-  // conditional on erased_at too: an erasure landing between the read above
-  // and this write must not be undone by it
+  // conditional on both refusals too: an erasure or a merge landing between
+  // the read above and this write must not be undone by it
   const { data: rows, error } = await supabase
     .from("contacts")
     .update({ is_archived: false })
     .eq("id", contactId)
     .eq("is_archived", true)
     .is("erased_at", null)
+    .is("merged_into_id", null)
     .select("id");
   if (error) {
     // partial unique indexes: another active contact may hold the phone —
@@ -496,13 +496,22 @@ export async function unarchiveContact(contactId: string): Promise<{ error: stri
     return { error: error.message };
   }
   if (!rows || rows.length === 0) {
-    // zero rows is RLS or the condition — say which, if it was the erasure
-    const { data: after } = await supabase
+    // zero rows is RLS or the row changed since the read — say which
+    const { data: after, error: afterErr } = await supabase
       .from("contacts")
-      .select("erased_at")
+      .select("is_archived, merged_into_id, erased_at")
       .eq("id", contactId)
       .maybeSingle();
+    if (afterErr) return { error: "Could not unarchive this contact — try again." };
     if (after?.erased_at) return { error: ERASED_STAYS_ARCHIVED };
+    if (after?.merged_into_id) return { error: MERGED_STAYS_ARCHIVED };
+    if (after && !after.is_archived) {
+      // unarchived meanwhile (a double click, a colleague): the state asked
+      // for, and that unarchive already wrote its event
+      revalidatePath(`/contacts/${contactId}`);
+      revalidatePath("/contacts");
+      return { error: null };
+    }
     return { error: "You don't have permission to unarchive this contact." };
   }
 
