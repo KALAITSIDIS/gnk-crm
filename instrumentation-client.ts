@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
-import { scrubBreadcrumbUrls, scrubEventOrDrop, scrubSpanUrls } from "@/lib/services/scrub-event";
+import { scrubBreadcrumbUrls, scrubDsc, scrubEventOrDrop, scrubSpanUrls } from "@/lib/services/scrub-event";
 
 /**
  * Browser Sentry init (T5.7). Env-gated on the PUBLIC DSN; a no-op without it.
@@ -26,6 +26,9 @@ if (dsn) {
     beforeSendSpan: (span) => scrubSpanUrls(span),
     beforeBreadcrumb: (breadcrumb) => scrubBreadcrumbUrls(breadcrumb),
   });
+  // A trace header the browser starts itself; one it continues from the
+  // server's meta tag is frozen, and cleaned there (scrub-event.ts).
+  Sentry.getClient()?.on("createDsc", (dsc) => scrubDsc(dsc));
 }
 
 // Instruments App Router client navigations — no-ops until init() runs.

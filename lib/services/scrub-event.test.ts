@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,10 +7,18 @@ import { fileURLToPath } from "node:url";
 import {
   Scope,
   ServerRuntimeClient,
+  dynamicSamplingContextToSentryBaggageHeader,
+  getCurrentScope,
+  getDynamicSamplingContextFromSpan,
   httpHeadersToSpanAttributes,
   httpRequestToRequestData,
   requestDataIntegration,
+  setCurrentClient,
 } from "@sentry/core";
+// What @sentry/nextjs's server build runs on (@sentry/node's own dependencies).
+import { SpanKind } from "@opentelemetry/api";
+import { BasicTracerProvider } from "@opentelemetry/sdk-trace-base";
+import { enhanceDscWithOpenTelemetryRootSpanName } from "@sentry/opentelemetry";
 import type { ErrorEvent, TransactionEvent } from "@sentry/core";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -18,6 +27,7 @@ import {
   TOKEN_SEGMENT,
   redactPathTokens,
   scrubBreadcrumbUrls,
+  scrubDsc,
   scrubEvent,
   scrubEventOrDrop,
   scrubSensitiveHeaders,
@@ -417,11 +427,12 @@ describe("what the independent review found (2026-09-23)", () => {
  * is one the scrub already cuts queries from — the same shapes, measured then
  * — now holding a token in its path instead of a search term in its query.
  */
-/** 43 base64url characters: the shape isWellFormedShareToken accepts. */
-const SHARE_TOKEN = `FAKE-SHARE-TOKEN_${"a".repeat(26)}`;
-/** 64 hex: the shape the feed route accepts. */
-const FEED_TOKEN = "fa4efeed".repeat(8);
-const TOKEN_LEAKS = /FAKE-SHARE-TOKEN|fa4efeed/i;
+/** 43 base64url characters, the shape isWellFormedShareToken accepts — and made the way the real one is. */
+const SHARE_TOKEN = createHash("sha256").update("a fake share link").digest("base64url");
+/** 64 hex, the shape the feed route accepts. */
+const FEED_TOKEN = createHash("sha256").update("a fake portal feed").digest("hex");
+/** Any 8-character chunk of either token (both alphabets are regex-literal): a half-redacted token is still a leak. */
+const TOKEN_LEAKS = new RegExp([SHARE_TOKEN, FEED_TOKEN].flatMap((token) => token.match(/.{8}/g)!).join("|"));
 const ORIGIN = "https://gnk-crm.vercel.app";
 
 const TOKENISED = [
@@ -637,6 +648,104 @@ describe("app/ holds no secret path segment the scrub does not know", () => {
   });
 });
 
+describe("what the path-token review found (2026-09-23)", () => {
+  it("redacts a percent-encoded path, a doubled slash, and every URL in one value", () => {
+    for (const [text, expected] of [
+      // A transaction name inside a `baggage` header, and an encoded URL.
+      [`sentry-transaction=GET%20%2Fp%2F${SHARE_TOKEN},sentry-sampled=true`, "sentry-transaction=GET%20%2Fp%2F[token],sentry-sampled=true"],
+      [`https%3A%2F%2Fgnk-crm.vercel.app%2Fp%2F${SHARE_TOKEN}`, "https%3A%2F%2Fgnk-crm.vercel.app%2Fp%2F[token]"],
+      [`%2Fapi%2Fportals%2Fbazaraki%2F${FEED_TOKEN}`, "%2Fapi%2Fportals%2Fbazaraki%2F[token]"],
+      // The token's own alphabet ends it, so a separator is never swallowed.
+      [`/p/${SHARE_TOKEN},/p/${SHARE_TOKEN}`, "/p/[token],/p/[token]"],
+      [`${ORIGIN}/p/${SHARE_TOKEN}|${ORIGIN}/p/${SHARE_TOKEN}`, `${ORIGIN}/p/[token]|${ORIGIN}/p/[token]`],
+      [`(/p/${SHARE_TOKEN})(/p/${SHARE_TOKEN})`, "(/p/[token])(/p/[token])"],
+      [`/p/${SHARE_TOKEN}:12:5`, "/p/[token]:12:5"],
+      // A garbled copy of a real link still opens the page.
+      [`${ORIGIN}//p/${SHARE_TOKEN}`, `${ORIGIN}//p/[token]`],
+      [`//p/${SHARE_TOKEN}`, "//p/[token]"],
+      [`/p//${SHARE_TOKEN}`, "/p//[token]"],
+      [`/api//portals/bazaraki/${FEED_TOKEN}`, "/api//portals/bazaraki/[token]"],
+      // Vercel's routing hands a route's params over as a prefixed query.
+      [`GET /p/${SHARE_TOKEN}?nxtPtoken=${SHARE_TOKEN}`, "GET /p/[token]?nxtPtoken=[token]"],
+    ] as const) {
+      expect(redactPathTokens(text), text).toBe(expected);
+    }
+  });
+
+  it("the interest POST's baggage header, and a string in tags or extra", () => {
+    const event = scrubEvent({
+      request: {
+        url: `${ORIGIN}/api/public/proposals/interest`,
+        headers: { baggage: `sentry-environment=production,sentry-transaction=GET%20%2Fp%2F${SHARE_TOKEN}` },
+      },
+      contexts: {
+        trace: {
+          data: { "http.request.header.baggage": `sentry-transaction=GET%20%2Fp%2F${SHARE_TOKEN}` } as Record<string, unknown>,
+        },
+      },
+      tags: { page: `/p/${SHARE_TOKEN}` },
+      extra: { arguments: [`${ORIGIN}/p/${SHARE_TOKEN}`] },
+    });
+    expect(JSON.stringify(event)).not.toMatch(TOKEN_LEAKS);
+    expect(event.request.headers.baggage).toBe("sentry-environment=production,sentry-transaction=GET%20%2Fp%2F[token]");
+  });
+
+  it("the trace header the page's <meta name=baggage> carries: the SDK's own listener names it from the raw path", () => {
+    // On Vercel, Next opens the root span with only http.method and
+    // http.target (app-page-runtime.js) — this span, built with the same
+    // OpenTelemetry SDK @sentry/node runs — and @sentry/opentelemetry's
+    // createDsc listener names the DSC from http.target. No beforeSend* hook
+    // sees it: it rides the envelope header and the baggage the browser
+    // continues. scrubDsc, registered after it, has the last word.
+    function baggage(withScrub: boolean): string | undefined {
+      const client = new ServerRuntimeClient({
+        dsn: "https://public@o1.ingest.sentry.io/1",
+        transport: () => ({ send: async () => ({}), flush: async () => true }),
+        stackParser: () => [],
+        integrations: [],
+        tracesSampleRate: 1,
+      });
+      setCurrentClient(client);
+      client.init();
+      enhanceDscWithOpenTelemetryRootSpanName(client);
+      if (withScrub) client.on("createDsc", (dsc) => scrubDsc(dsc));
+      const span = new BasicTracerProvider().getTracer("next.js").startSpan("GET /p/[token]", {
+        kind: SpanKind.SERVER,
+        attributes: { "http.method": "GET", "http.target": `/p/${SHARE_TOKEN}` },
+      });
+      const dsc = getDynamicSamplingContextFromSpan(span as unknown as Parameters<typeof getDynamicSamplingContextFromSpan>[0]);
+      span.end();
+      getCurrentScope().setClient(undefined);
+      return dynamicSamplingContextToSentryBaggageHeader(dsc);
+    }
+    expect(baggage(false), "the SDK alone puts the token in the trace header").toMatch(TOKEN_LEAKS);
+    const cleaned = baggage(true);
+    expect(cleaned).not.toMatch(TOKEN_LEAKS);
+    expect(cleaned).toContain("sentry-transaction=GET%20%2Fp%2F%5Btoken%5D");
+  });
+
+  it("scrubDsc leaves a DSC with no transaction, or a route's name, as it is", () => {
+    const none: { transaction?: string } = {};
+    scrubDsc(none);
+    expect(none).toEqual({});
+    const named = { transaction: "GET /api/portals/[portal]/[token]" };
+    scrubDsc(named);
+    expect(named.transaction).toBe("GET /api/portals/[portal]/[token]");
+  });
+
+  it("cuts a long hostile value in linear time — the scrub runs on the browser's main thread", () => {
+    // A pattern that rescans the rest of the string from every position is
+    // seconds here: the old query cut on "a://" (~2.3 s), an unbounded slash
+    // run on "%2F" (7.1 s). Measured after the fix, the worst of 21 hostile
+    // 64 KB inputs took 4 ms; the bound is 1 s.
+    for (const hostile of ["a://".repeat(16_384), "a.".repeat(32_768), "=//".repeat(21_845), "%2F".repeat(21_845), "/p/".repeat(21_845)]) {
+      const started = performance.now();
+      scrubUrlText(hostile);
+      expect(performance.now() - started, hostile.slice(0, 8)).toBeLessThan(1000);
+    }
+  });
+});
+
 describe("the installed SDK's own event, through scrubEvent, carries none of it", () => {
   /**
    * The shapes above are copies; this one RequestData builds. A real core
@@ -815,6 +924,14 @@ describe("the scrub is actually wired to the thing that sends", () => {
     it(`${runtime}: every span and breadcrumb goes through the URL scrub`, () => {
       expect(source).toMatch(/beforeSendSpan:\s*\(span\)\s*=>\s*scrubSpanUrls\(span\)/);
       expect(source).toMatch(/beforeBreadcrumb:\s*\(breadcrumb\)\s*=>\s*scrubBreadcrumbUrls\(breadcrumb\)/);
+    });
+
+    it(`${runtime}: the trace header's transaction name goes through scrubDsc, registered AFTER init`, () => {
+      // After: the SDK's own createDsc listener is registered by init, and
+      // listeners run in order — ours must have the last word.
+      const hook = source.search(/getClient\(\)\?\.on\("createDsc",\s*\(dsc\)\s*=>\s*scrubDsc\(dsc\)\)/);
+      expect(hook, "the hook is wired").toBeGreaterThan(-1);
+      expect(hook, "after Sentry.init").toBeGreaterThan(source.indexOf("Sentry.init("));
     });
   }
 

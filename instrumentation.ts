@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
-import { scrubBreadcrumbUrls, scrubEventOrDrop, scrubSpanUrls } from "@/lib/services/scrub-event";
+import { scrubBreadcrumbUrls, scrubDsc, scrubEventOrDrop, scrubSpanUrls } from "@/lib/services/scrub-event";
 
 /**
  * Server/edge Sentry init (T5.7). Strictly env-gated: with no DSN (dev, CI,
@@ -28,6 +28,11 @@ export async function register() {
     beforeSendSpan: (span) => scrubSpanUrls(span),
     beforeBreadcrumb: (breadcrumb) => scrubBreadcrumbUrls(breadcrumb),
   });
+  // The trace header's transaction name, which no hook above sees: named from
+  // the raw path before Next sets the route, it would carry a proposal
+  // link's token into the page's <meta name="baggage"> (scrub-event.ts).
+  // After init, so it runs after the SDK's own listener.
+  Sentry.getClient()?.on("createDsc", (dsc) => scrubDsc(dsc));
 }
 
 // Next 15+ server-error hook — no-ops until init() has run with a DSN.
