@@ -37,7 +37,7 @@ export function changesForChain(
 }
 
 function shapeOf({ from, to }: FieldChange): ShapeOnlyChange {
-  const shape: ShapeOnlyChange = { from_set: isSet(from), to_set: isSet(to) };
+  const shape: ShapeOnlyChange = { from_set: hasValue(from), to_set: hasValue(to) };
   if (isPlainObject(from) || isPlainObject(to)) {
     const before = isPlainObject(from) ? from : {};
     const after = isPlainObject(to) ? to : {};
@@ -52,7 +52,8 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-function isSet(v: unknown): boolean {
+/** Whether a field holds anything — what a shape-only field records instead of its value. */
+export function hasValue(v: unknown): boolean {
   if (v === null || v === undefined || v === "") return false;
   if (Array.isArray(v)) return v.length > 0;
   if (isPlainObject(v)) return Object.keys(v).length > 0;

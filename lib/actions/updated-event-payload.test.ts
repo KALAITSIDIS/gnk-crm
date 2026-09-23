@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeClient, type FakePage } from "@/lib/testing/fake-client";
 
@@ -18,13 +19,20 @@ import { fakeClient, type FakePage } from "@/lib/testing/fake-client";
  * shorthand `changed` — so each test here drives the real action and searches
  * everything it logged for the fixture's own values, whatever syntax put them
  * there. The fields that still carry from/to are asserted too: sales velocity
- * reads `changed.status.to`, 0073's feed reads `changed.visibility.to`, and
- * the consent event reads `changed.consent_marketing`.
+ * reads `changed.status.to`, and the consent event reads
+ * `changed.consent_marketing`. The project sync (syncInheritedField) writes
+ * the same `updated` event on every unit it touches, so it is driven here too.
  */
 
 const state = vi.hoisted(() => ({ client: null as unknown }));
 const logEvent = vi.hoisted(() =>
   vi.fn<(client: unknown, event: Record<string, unknown>) => Promise<void>>(async () => {}),
+);
+/** every event of a batch goes through logEvent, so one list holds everything logged */
+const logEvents = vi.hoisted(() =>
+  vi.fn(async (client: unknown, events: Record<string, unknown>[]) => {
+    for (const e of events) await logEvent(client, e);
+  }),
 );
 
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => state.client }));
@@ -32,7 +40,7 @@ vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => state.client }
 vi.mock("@/lib/services/auth", () => ({
   getCurrentProfile: async () => ({ id: "admin-1", orgId: "org-1", role: "admin" }),
 }));
-vi.mock("@/lib/services/events", () => ({ logEvent }));
+vi.mock("@/lib/services/events", () => ({ logEvent, logEvents }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/services/health-score", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -59,12 +67,14 @@ const { updateContactSection } = await import("@/lib/actions/contacts");
 const { updateDealSection, saveOffer } = await import("@/lib/actions/deals");
 const { saveMandate } = await import("@/lib/actions/mandates");
 const { updatePropertySection } = await import("@/lib/actions/properties");
+const { syncInheritedField } = await import("@/lib/actions/unit-inheritance");
 
 const CONTACT_ID = "7c1f3a52-4a0e-4d8b-9a51-0f6f3f1c2a01";
 const DEAL_ID = "7c1f3a52-4a0e-4d8b-9a51-0f6f3f1c2a02";
 const OFFER_ID = "7c1f3a52-4a0e-4d8b-9a51-0f6f3f1c2a03";
 const MANDATE_ID = "7c1f3a52-4a0e-4d8b-9a51-0f6f3f1c2a04";
 const PROPERTY_ID = "7c1f3a52-4a0e-4d8b-9a51-0f6f3f1c2a05";
+const PROJECT_ID = "7c1f3a52-4a0e-4d8b-9a51-0f6f3f1c2a06";
 const T1 = "2026-09-23T08:00:00.000000+00:00";
 
 function form(fields: Record<string, string | string[]>): FormData {
@@ -571,11 +581,110 @@ describe("a property edit (updatePropertySection)", () => {
   });
 });
 
+/* ------------------------------------------------------------ project sync */
+
+describe("a project field synced down to its units (syncInheritedField)", () => {
+  const units = [
+    { id: "unit-1", reference: "PAF0009-A1" },
+    { id: "unit-2", reference: "PAF0009-A2" },
+  ];
+
+  it("records a synced note as set on each unit, without the words", async () => {
+    use({
+      properties: [
+        {
+          data: {
+            id: PROJECT_ID,
+            kind: "project",
+            reference: "PAF0009",
+            amenities_notes: "Opposite Palaiopoulou's bakery, her cousin runs it",
+          },
+          error: null,
+        },
+        { data: units, error: null }, // the guarded UPDATE, two units still inheriting
+      ],
+    });
+    const res = await syncInheritedField(PROJECT_ID, "amenities_notes");
+    expect(res).toMatchObject({ error: null, synced: 2 });
+    expect(leaks(["Palaiopoulou", "bakery", "cousin"]), "a note reached the hash chain").toEqual([]);
+    const events = logged().filter((e) => e.eventType === "updated");
+    expect(events.map((e) => e.entityId)).toEqual(["unit-1", "unit-2"]);
+    for (const e of events) {
+      // the sync never read the unit's previous value, so there is no from_set
+      expect((e.payload as { changed: unknown }).changed).toEqual({ amenities_notes: { to_set: true } });
+    }
+  });
+
+  it("keeps the value of a field that is not a note", async () => {
+    use({
+      properties: [
+        { data: { id: PROJECT_ID, kind: "project", reference: "PAF0009", vat_status: "new_vat" }, error: null },
+        { data: units, error: null },
+      ],
+    });
+    const res = await syncInheritedField(PROJECT_ID, "vat_status");
+    expect(res).toMatchObject({ error: null, synced: 2 });
+    for (const e of logged().filter((x) => x.eventType === "updated")) {
+      expect((e.payload as { changed: unknown }).changed).toEqual({ vat_status: { to: "new_vat" } });
+    }
+  });
+});
+
 /* ------------------------------------------------------------------- the guard */
+
+/**
+ * Every `payload` whose `changed` IS the raw diff: the shorthand `{ changed }`
+ * or `changed: <an identifier>`, however the payload is wrapped or spread over
+ * lines. Read with the TypeScript parser — the first cut matched single lines
+ * and missed the multi-line payload this change itself writes.
+ */
+function rawDiffPayloads(source: string): number[] {
+  const sf = ts.createSourceFile("action.ts", source, ts.ScriptTarget.Latest, true);
+  const lines: number[] = [];
+  const unwrap = (e: ts.Expression): ts.Expression => {
+    while (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isSatisfiesExpression(e)) {
+      e = e.expression;
+    }
+    // JSON.parse(JSON.stringify(x)) is a Json cast, not a transformation
+    if (ts.isCallExpression(e) && e.expression.getText(sf) === "JSON.parse" && e.arguments[0]) {
+      const inner = unwrap(e.arguments[0]);
+      if (ts.isCallExpression(inner) && inner.expression.getText(sf) === "JSON.stringify" && inner.arguments[0]) {
+        return unwrap(inner.arguments[0]);
+      }
+    }
+    return e;
+  };
+  const visit = (n: ts.Node) => {
+    if (ts.isPropertyAssignment(n) && n.name.getText(sf) === "payload") {
+      const value = unwrap(n.initializer);
+      if (ts.isObjectLiteralExpression(value)) {
+        for (const p of value.properties) {
+          const raw =
+            (ts.isShorthandPropertyAssignment(p) && p.name.getText(sf) === "changed") ||
+            (ts.isPropertyAssignment(p) &&
+              p.name.getText(sf) === "changed" &&
+              ts.isIdentifier(unwrap(p.initializer)));
+          if (raw) lines.push(sf.getLineAndCharacterOfPosition(p.getStart(sf)).line + 1);
+        }
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return lines;
+}
 
 describe("no action logs the raw diff", () => {
   const dir = join(dirname(fileURLToPath(import.meta.url)));
   const files = readdirSync(dir).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"));
+
+  it("can see the shapes it exists to catch", () => {
+    const multiLine = `logEvent(s, {\n  payload: JSON.parse(\n    JSON.stringify({ section: "x", changed }),\n  ),\n});`;
+    expect(rawDiffPayloads(multiLine), "the shorthand across lines").toEqual([3]);
+    expect(rawDiffPayloads(`logEvent(s, { payload: { changed: diff } });`), "an identifier").toEqual([1]);
+    expect(rawDiffPayloads(`logEvent(s, { payload: { changed: changesForChain(changed, f) } });`)).toEqual([]);
+    expect(rawDiffPayloads(`logEvent(s, { payload: { changed: { status: { from: a, to: b } } } });`)).toEqual([]);
+  });
 
   it("finds the actions that build a from/to diff", () => {
     const builders = files.filter((f) =>
@@ -587,15 +696,11 @@ describe("no action logs the raw diff", () => {
   });
 
   // The diff holds every value that moved; what an event may carry is its
-  // shape (changesForChain). A payload that names `changed` bare — the
-  // shorthand this idiom was copied with five times — is the raw diff.
+  // shape (changesForChain).
   for (const file of files) {
     it(`${file} passes a diff through changesForChain before logging it`, () => {
-      const src = readFileSync(join(dir, file), "utf-8");
-      const raw = src
-        .split("\n")
-        .filter((line) => /payload:/.test(line) && /[{,]\s*changed\s*[},]/.test(line));
-      expect(raw, `${file} logs the raw diff`).toEqual([]);
+      const lines = rawDiffPayloads(readFileSync(join(dir, file), "utf-8"));
+      expect(lines, `${file} logs the raw diff at these lines`).toEqual([]);
     });
   }
 });

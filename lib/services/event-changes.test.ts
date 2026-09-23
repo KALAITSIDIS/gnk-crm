@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { changesForChain, contactShapeOnly, isNoteField } from "./event-changes";
+import { changesForChain, contactShapeOnly, hasValue, isNoteField } from "./event-changes";
+
+describe("hasValue — what a shape-only field records instead of its value", () => {
+  it.each([["text"], [0], [false], [["en"]], [{ a: 1 }]])("%j is a value", (v) => {
+    expect(hasValue(v)).toBe(true);
+  });
+  it.each([[null], [undefined], [""], [[]], [{}]])("%j is not", (v) => {
+    expect(hasValue(v)).toBe(false);
+  });
+});
 
 describe("changesForChain", () => {
   const everything = () => true;
