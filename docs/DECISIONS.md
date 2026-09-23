@@ -7492,4 +7492,6 @@ The tests were written after the implementation, so mutation proves them instead
 
 Measured 2026-09-23: typecheck and lint clean; unit 193 files / 2378 tests.
 
-**Deploy.** Code only: no migration, no environment variable. It takes effect with the deploy (the browser half with the build).
+**State.** PR #53 (KALAITSIDIS/gnk-crm) open against `main`, NOT merged — the operator approves the merge and the deploy. On the merged tree (`ef078b1`): typecheck and lint clean; unit 2397 of 2400 in the full run, the 3 failures 5 s timeouts (`evidence-pdf` and two repo-scan tests) while other sessions held the CPU at 70%, and all three files pass alone (19/19).
+
+**Deploy.** Code only: no migration, no environment variable. It takes effect with the deploy (the browser half with the build). After it, the same counts-only checks should keep returning 0: `is_transaction:true transaction:*/p/*` names only `/p/[token]` forms, and nothing under `has:http.request.header.baggage` on the interest POST holds `%2Fp%2F` followed by a token.

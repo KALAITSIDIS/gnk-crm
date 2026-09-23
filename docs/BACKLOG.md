@@ -2428,7 +2428,7 @@ VERIFY, run before starting.
     drop `request.query_string` in `beforeSend`/`beforeSendTransaction`. **VERIFY:**
     `grep -n "query_string" lib/services/scrub-event.ts` — no hit means still open.
 - ~~**A secret token IN THE PATH still reaches Sentry, S.**~~ **BUILT 2026-09-23 on branch
-  `fix/sentry-path-token-redaction` — not merged (the operator approves).** DECISIONS `T-sentry-path-token-redaction`. `redactPathTokens` turns the segment after
+  `fix/sentry-path-token-redaction`, PR #53 — not merged (the operator approves).** DECISIONS `T-sentry-path-token-redaction`. `redactPathTokens` turns the segment after
   `/p/` and after `/api/portals/<portal>/` into `[token]` wherever a path starts, keeping the rest,
   in every place the query cut runs, plus `event.transaction` (the browser names a pageload by its
   raw path when the route manifest has no match) and the `token` tuple in Next's router state tree
