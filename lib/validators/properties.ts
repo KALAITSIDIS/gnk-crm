@@ -3,6 +3,7 @@ import { z } from "zod";
 // standalone scripts (via lib/services/container-units.ts), which run under
 // plain Node where neither "@/" nor a missing extension resolves.
 import { MAX_FLOOR, MAX_GENERATED_UNITS, MAX_PER_FLOOR } from "../services/unit-generator.ts";
+import { AREA_LABELS, areaProblem, floorProblem } from "./property-measurements.ts";
 
 export const PROPERTY_TYPES = [
   "apartment",
@@ -284,6 +285,50 @@ export const CREATABLE_KINDS = ["standalone", "project"] as const;
 
 export const emptyToUndefined = (v: unknown) => (v === "" || v === null ? undefined : v);
 
+/* ---------- measurements: areas and floors (LST-07, 2026-09-23) ----------
+ * The rules live in ./property-measurements.ts; these are their Zod field
+ * shapes, shared by the create wizard, the details form and the unit forms
+ * (lib/actions/units.ts) so creation and editing cannot disagree again.
+ *
+ * Blank here includes WHITESPACE. `emptyToUndefined` leaves "  " to
+ * z.coerce, which reads it as 0 — a blank floor became the ground floor and a
+ * blank area a zero. Kept to these four fields rather than changed in
+ * `emptyToUndefined`, which a hundred other fields share. */
+const blankToUndefined = (v: unknown) =>
+  v === null || (typeof v === "string" && v.trim() === "") ? undefined : v;
+
+/** A known area, positive as stored; blank is unknown (undefined → null). */
+export const measuredArea = (label: string) =>
+  z.preprocess(
+    blankToUndefined,
+    z.coerce
+      .number({ error: `${label} must be a number` })
+      .superRefine((n, ctx) => {
+        const problem = areaProblem(label, n);
+        if (problem) ctx.addIssue({ code: "custom", message: problem });
+      })
+      .optional(),
+  );
+
+/** The floor a property is on: 0 = ground, negative = basement; blank is unknown. */
+export const measuredFloor = z.preprocess(
+  blankToUndefined,
+  z.coerce
+    .number({ error: "Floor must be a whole number" })
+    .int("Floor must be a whole number")
+    .optional(),
+);
+
+/** Floors in the building; blank is unknown. Never negative (unchanged rule, now with a message). */
+export const measuredTotalFloors = z.preprocess(
+  blankToUndefined,
+  z.coerce
+    .number({ error: "Total floors must be a whole number" })
+    .int("Total floors must be a whole number")
+    .min(0, "Total floors cannot be negative")
+    .optional(),
+);
+
 /**
  * Where a listing comes from (migration 0038's create-wizard half).
  *
@@ -320,8 +365,8 @@ export const createPropertySchema = z.object({
   ),
   bedrooms: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).optional()),
   bathrooms: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).optional()),
-  covered_area_sqm: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
-  plot_area_sqm: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
+  covered_area_sqm: measuredArea(AREA_LABELS.covered_area_sqm),
+  plot_area_sqm: measuredArea(AREA_LABELS.plot_area_sqm),
   internal_notes: z.preprocess(emptyToUndefined, z.string().max(5000).optional()),
 
   /* ---- Project layout (2026-09-02) — wizard step 2 for a container. ----
@@ -354,8 +399,8 @@ export const createPropertySchema = z.object({
   ),
   gen_bedrooms: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).optional()),
   gen_bathrooms: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).optional()),
-  gen_covered_area_sqm: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
-  gen_plot_area_sqm: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
+  gen_covered_area_sqm: measuredArea(AREA_LABELS.covered_area_sqm),
+  gen_plot_area_sqm: measuredArea(AREA_LABELS.plot_area_sqm),
   gen_base_price: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
   gen_price_step: z.preprocess(emptyToUndefined, z.coerce.number().min(0).optional()),
 });
@@ -439,8 +484,10 @@ export const detailsSectionSchema = z.object({
   owner_net_price: optNumber,
   rent_price_month: optNumber,
   vat_status: z.enum(VAT_STATUSES),
-  covered_area_sqm: optNumber,
-  plot_area_sqm: optNumber,
+  // LST-07: the create wizard's rule (positive, blank = unknown) — this form
+  // used the generic `optNumber` (≥ 0) since T1.3, so 0 m² saved on edit
+  covered_area_sqm: measuredArea(AREA_LABELS.covered_area_sqm),
+  plot_area_sqm: measuredArea(AREA_LABELS.plot_area_sqm),
   veranda_sqm: optNumber,
   roof_garden_sqm: optNumber,
   basement_sqm: optNumber,
@@ -449,8 +496,8 @@ export const detailsSectionSchema = z.object({
   wc: optInt,
   parking_spaces: optInt,
   has_storage: checkbox,
-  floor_number: z.preprocess(emptyToUndefined, z.coerce.number().int().optional()),
-  total_floors: optInt,
+  floor_number: measuredFloor,
+  total_floors: measuredTotalFloors,
   year_built: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1800).max(2100).optional()),
   energy_class: z.preprocess(
     emptyToUndefined,
@@ -482,10 +529,19 @@ export const detailsSectionSchema = z.object({
   water_available: checkbox,
   electricity_available: checkbox,
   constraints_notes: optText(2000),
-}).refine((d) => (d.latitude === undefined) === (d.longitude === undefined), {
-  message: "Enter both latitude and longitude, or clear both",
-  path: ["latitude"],
-});
+})
+  .refine((d) => (d.latitude === undefined) === (d.longitude === undefined), {
+    message: "Enter both latitude and longitude, or clear both",
+    path: ["latitude"],
+  })
+  // LST-07: floor 9 of a 3-floor building saved here. The save writes both
+  // columns every time (absent → null), so checking what was posted IS
+  // checking the row it leaves; 0113's CHECK holds the same line for every
+  // other writer.
+  .superRefine((d, ctx) => {
+    const problem = floorProblem(d.floor_number, d.total_floors);
+    if (problem) ctx.addIssue({ code: "custom", path: ["floor_number"], message: problem });
+  });
 
 export const legalSectionSchema = z.object({
   title_deed_status: z.enum(TITLE_DEED_STATUSES),

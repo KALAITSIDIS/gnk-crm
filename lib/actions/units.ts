@@ -9,9 +9,12 @@ import { createClient } from "@/lib/supabase/server";
 import {
   emptyToUndefined,
   isStatusRegression,
+  measuredArea,
+  measuredFloor,
   PROPERTY_STATUSES,
   PROPERTY_TYPES,
 } from "@/lib/validators/properties";
+import { AREA_LABELS, areaProblem } from "@/lib/validators/property-measurements";
 import {
   INHERITED_UNIT_FIELDS,
   inheritedFieldsWithValues,
@@ -46,9 +49,11 @@ const createUnitSchema = z.object({
   property_type: z.enum(PROPERTY_TYPES),
   bedrooms: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).optional()),
   bathrooms: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).optional()),
-  covered_area_sqm: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
+  // the property forms' measurement rules (LST-07): positive as stored,
+  // blank = unknown; a floor may be 0 (ground) or negative (basement)
+  covered_area_sqm: measuredArea(AREA_LABELS.covered_area_sqm),
   asking_price: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
-  floor_number: z.preprocess(emptyToUndefined, z.coerce.number().int().optional()),
+  floor_number: measuredFloor,
 });
 
 export async function createUnit(
@@ -228,7 +233,7 @@ const generateUnitsSchema = z
     // shared across both layouts
     bedrooms: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).optional()),
     bathrooms: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).optional()),
-    covered_area_sqm: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
+    covered_area_sqm: measuredArea(AREA_LABELS.covered_area_sqm),
     base_price: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
     // floors
     block: z.preprocess(emptyToUndefined, z.string().max(20).optional()),
@@ -242,7 +247,7 @@ const generateUnitsSchema = z
     villa_count: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1).max(MAX_GENERATED_UNITS).optional()),
     villa_prefix: z.preprocess(emptyToUndefined, z.string().max(10).optional()),
     start_number: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).optional()),
-    plot_area_sqm: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
+    plot_area_sqm: measuredArea(AREA_LABELS.plot_area_sqm),
     price_per_villa: z.preprocess(emptyToUndefined, z.coerce.number().min(0).optional()),
   })
   .refine((d) => d.layout !== "floors" || (d.floor_from !== undefined && d.floor_to !== undefined && d.per_floor !== undefined), {
@@ -736,7 +741,8 @@ const unitTypeSchema = z.object({
   name: z.preprocess(emptyToUndefined, z.string().max(80).optional()),
   bedrooms: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).max(20).optional()),
   bathrooms: z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).max(20).optional()),
-  covered_area_sqm: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
+  // stamped onto units by applyUnitType, so it obeys the units' own rule
+  covered_area_sqm: measuredArea(AREA_LABELS.covered_area_sqm),
   veranda_sqm: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
   price_per_sqm: z.preprocess(emptyToUndefined, z.coerce.number().positive().optional()),
 });
@@ -842,6 +848,15 @@ export async function applyUnitType(
     .eq("project_id", projectId)
     .maybeSingle();
   if (!type) return { error: "Type not found on this project", savedAt: null };
+
+  // The stamp's one measurement column, checked ONCE before the first unit
+  // is touched (LST-07). The loop below is not atomic — a refusal on unit N
+  // would leave units 1..N-1 stamped with no events — and a type row can only
+  // hold a bad area by a write that skipped createUnitType (0113 now refuses
+  // those too). The stamp touches no floor, so this is the whole check on
+  // the row it leaves.
+  const stampRefusal = areaProblem(AREA_LABELS.covered_area_sqm, type.covered_area_sqm);
+  if (stampRefusal) return { error: `Type ${type.code}: ${stampRefusal}`, savedAt: null };
 
   let query = supabase
     .from("properties")

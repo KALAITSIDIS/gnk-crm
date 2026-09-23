@@ -205,3 +205,22 @@ describe("a generated unit is scored the moment it is written", () => {
     expect(res.recorded).toBe(true);
   });
 });
+
+describe("a generated row with an impossible measurement is refused before any query (LST-07)", () => {
+  // Both callers validate their inputs with the shared area rule, so this is
+  // the backstop for the next caller: the pure generator copies whatever area
+  // it is given, and 0113's CHECK would otherwise refuse the WHOLE multi-row
+  // insert with a message naming a constraint rather than a unit.
+  it.each([
+    [{ covered_area_sqm: 0 }, /^Unit V01: Covered area must be greater than 0/],
+    [{ plot_area_sqm: 0.004 }, /^Unit V01: Plot area must be at least 0\.01/],
+  ])("%j", async (over, message) => {
+    const fake = setup([]);
+    const res = await writeGeneratedUnits(fake.client as never, project, [unit(over)], {
+      propertyType: "villa",
+      actorId: "actor-1",
+    });
+    expect(res.error).toMatch(message);
+    expect(fake.calls, "not even the clash pre-check ran").toHaveLength(0);
+  });
+});
