@@ -2297,13 +2297,16 @@ VERIFY, run before starting.
   the 0077 shape; hosted BEFORE the merge; an RLS test per refusal. (LST-02,
   LST-04, LST-05, LST-07, LST-08, REC-02 in part, REC-03, REC-04, GOV-03,
   GOV-05.) **VERIFY:** `grep -ln "properties_parent_kind\|energy_class in" supabase/migrations/*.sql` — a hit means shipped.
-  **Slice BUILT 2026-09-23, NOT MERGED — `floor_number ≤ total_floors` and positive covered/plot areas only:**
+  **Slice SHIPPED 2026-09-23 — `floor_number ≤ total_floors` and positive covered/plot areas only:**
   migration 0113 (`properties_covered_area_positive`, `properties_plot_area_positive`,
-  `properties_floor_within_total`, `unit_types_covered_area_positive`) with the app rules on
-  branch `fix/property-floor-area-validation`, DECISIONS `T-audit-2026-09-23-property-floor-area`.
+  `properties_floor_within_total`, `unit_types_covered_area_positive`) ON HOSTED, with the app rules
+  merged as PR #45 → main `4b100ab` and deployed, DECISIONS `T-audit-2026-09-23-property-floor-area`.
   Everything else in this entry is still outstanding, which is why the VERIFY above still
   reads unbuilt. VERIFY for the slice: `grep -l "properties_floor_within_total" supabase/migrations/*.sql`.
-- **The importer reads a decimal COMMA as a thousands separator, S.** `num()` in
+- ~~**The importer reads a decimal COMMA as a thousands separator, S.**~~ **FIXED 2026-09-23 — DECISIONS
+  `T-importer-cyprus-number-format`: both Cyprus conventions read, ambiguous or non-numeric cells refused
+  naming the column, fractions refused in whole-number columns, semicolon files read; `num()` removed.**
+  VERIFY (fixed): `grep -n "parseNumberColumns" scripts/import/properties.mts` — a hit. The original: `num()` in
   `scripts/import/_shared.mts` strips every comma before `Number()`, so a Greek/European
   spreadsheet cell `85,5` imports as **855** m² (ten times too large) and `1.200,50` as
   1.2005 — silently, and 855 passes every measurement rule (measured 2026-09-23 while

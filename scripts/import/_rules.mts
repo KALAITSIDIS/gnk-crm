@@ -167,3 +167,165 @@ export function measurementRefusal(values: Record<MeasurementField, number | nul
   const problem = measurementProblem(values);
   return problem ? `${problem.field}: ${problem.message}` : null;
 }
+
+/* ---------- numbers as Cyprus writes them (2026-09-23) ----------
+ *
+ * The importer used to strip every comma before Number(), so a Greek-style
+ * `85,5` m² became 855 — ten times too large, silently — `1.200,50` became
+ * 1.2005, and a cell with a symbol (`€250,000`) became a blank. Both
+ * conventions are in daily use in Cyprus: the Greek one (decimal comma, dot
+ * for thousands — what Excel writes under Greek regional settings) and the
+ * English one (decimal dot, comma for thousands). Both are read; a cell that
+ * could mean two different numbers, or is not a number at all, is REFUSED
+ * with its column named, never guessed and never blanked.
+ *
+ * - "amount" (prices, areas, lengths): a single separator followed by
+ *   exactly three digits is a THOUSANDS separator (1.200 = 1,200 = 1200) —
+ *   nobody writes a price or an area to three decimal places; otherwise a
+ *   single separator is the decimal mark (85,5 = 85.5). With both marks, the
+ *   last one is the decimal (1.200,50 = 1,200.50).
+ * - "decimal" (coordinates, percentages): these never carry thousands, so a
+ *   single separator is always the decimal mark — 34.775 is a latitude, not
+ *   34775.
+ * - "integer" (rooms, floors, year): read as an amount, and a fraction is
+ *   refused rather than truncated (2,5 bedrooms used to import as 25).
+ */
+export type NumberKind = "amount" | "decimal" | "integer";
+
+/** Every numeric column of properties_import.csv (pinned to doc 09 by numbers.test.ts). */
+export const PROPERTY_NUMBER_COLUMNS = {
+  latitude: "decimal",
+  longitude: "decimal",
+  asking_price: "amount",
+  owner_net_price: "amount",
+  rent_price_month: "amount",
+  covered_area_sqm: "amount",
+  plot_area_sqm: "amount",
+  veranda_sqm: "amount",
+  bedrooms: "integer",
+  bathrooms: "integer",
+  parking_spaces: "integer",
+  floor_number: "integer",
+  total_floors: "integer",
+  year_built: "integer",
+  building_density_pct: "decimal",
+  coverage_ratio_pct: "decimal",
+  max_floors: "integer",
+  road_frontage_m: "amount",
+  mandate_commission_pct: "decimal",
+} as const satisfies Record<string, NumberKind>;
+
+/** Every numeric column of contacts_import.csv (pinned to doc 09 by numbers.test.ts). */
+export const CONTACT_NUMBER_COLUMNS = {
+  budget_min: "amount",
+  budget_max: "amount",
+  pref_bedrooms_min: "integer",
+} as const satisfies Record<string, NumberKind>;
+
+export type ParsedNumber = { value: number | null; error?: undefined } | { value?: undefined; error: string };
+
+const HOW_TO_WRITE: Record<NumberKind, string> = {
+  amount: "write digits with at most one decimal mark, e.g. 250000, 250.000, 250,000 or 85,5",
+  decimal: "write it with one decimal mark, e.g. 34.7754 or 34,7754",
+  integer: "write a whole number, e.g. 2",
+};
+
+/** Whole thousands groups: 1.234.567 / 1,234 — a first group of 1-3 digits, then groups of exactly 3. */
+const GROUPED: Record<"," | ".", RegExp> = {
+  ",": /^[1-9]\d{0,2}(,\d{3})+$/,
+  ".": /^[1-9]\d{0,2}(\.\d{3})+$/,
+};
+const groupedBy = (mark: string): RegExp => GROUPED[mark as "," | "."];
+
+/** A cell as a number, null when blank, or why it cannot be read. */
+export function parseNumberCell(raw: string | undefined, kind: NumberKind): ParsedNumber {
+  if (raw === undefined) return { value: null };
+  // spaces (incl. no-break and thin) only ever group thousands; a typographic
+  // minus is a minus
+  const s = raw.trim().replace(/[\s\u00a0\u202f\u2009]/g, "").replace(/^\u2212/, "-");
+  if (s === "") return { value: null };
+  const refuse = (): ParsedNumber => ({ error: `cannot read "${raw.trim()}" as a number — ${HOW_TO_WRITE[kind]}` });
+
+  const m = /^([+-]?)([\d.,]+)$/.exec(s);
+  if (!m || !/\d/.test(m[2])) return refuse();
+  const sign = m[1] === "-" ? -1 : 1;
+  const body = m[2];
+  const commas = (body.match(/,/g) ?? []).length;
+  const dots = (body.match(/\./g) ?? []).length;
+
+  let digits: string; // canonical "1234.5"
+  if (commas === 0 && dots === 0) {
+    digits = body;
+  } else if (commas > 0 && dots > 0) {
+    if (kind === "decimal") return refuse(); // coordinates and percentages carry no thousands
+    const decimalMark = body.lastIndexOf(",") > body.lastIndexOf(".") ? "," : ".";
+    const groupMark = decimalMark === "," ? "." : ",";
+    const at = body.lastIndexOf(decimalMark);
+    const whole = body.slice(0, at);
+    const fraction = body.slice(at + 1);
+    if (fraction === "" || !/^\d+$/.test(fraction) || !groupedBy(groupMark).test(whole)) return refuse();
+    digits = `${whole.split(groupMark).join("")}.${fraction}`;
+  } else {
+    const mark = commas > 0 ? "," : ".";
+    const count = commas + dots;
+    if (count > 1) {
+      // several of one mark can only be thousands groups
+      if (kind === "decimal") return refuse();
+      if (!groupedBy(mark).test(body)) return refuse();
+      digits = body.split(mark).join("");
+    } else {
+      const [whole, fraction] = body.split(mark) as [string, string];
+      if (fraction === "") return refuse();
+      const thousands = kind !== "decimal" && fraction.length === 3 && /^[1-9]\d{0,2}$/.test(whole);
+      digits = thousands ? `${whole}${fraction}` : `${whole === "" ? "0" : whole}.${fraction}`;
+    }
+  }
+
+  const n = sign * Number(digits);
+  if (!Number.isFinite(n)) return refuse();
+  if (kind === "integer" && !Number.isInteger(n)) {
+    return { error: `"${raw.trim()}" must be a whole number — a fraction is not rounded or truncated` };
+  }
+  return { value: n };
+}
+
+/**
+ * Every numeric column of a row at once: the values (null for a blank or
+ * absent cell) and one `column: why` per unreadable cell — ALL of them, so
+ * one report pass fixes the whole row.
+ */
+export function parseNumberColumns<K extends string>(
+  row: Record<string, string | undefined>,
+  columns: Record<K, NumberKind>,
+): { values: Record<K, number | null>; errors: string[] } {
+  const values = {} as Record<K, number | null>;
+  const errors: string[] = [];
+  for (const column of Object.keys(columns) as K[]) {
+    const parsed = parseNumberCell(row[column], columns[column]);
+    if (parsed.error !== undefined) {
+      errors.push(`${column}: ${parsed.error}`);
+      values[column] = null;
+    } else {
+      values[column] = parsed.value;
+    }
+  }
+  return { values, errors };
+}
+
+/**
+ * The file's delimiter, read from its header line: `;` when it has more
+ * semicolons than commas outside quotes. Excel under Greek regional settings
+ * (decimal comma) saves "CSV" with semicolons between cells; a header never
+ * holds either character inside a column name.
+ */
+export function delimiterOf(headerLine: string): "," | ";" {
+  let inQuotes = false;
+  let commas = 0;
+  let semicolons = 0;
+  for (const c of headerLine) {
+    if (c === '"') inQuotes = !inQuotes;
+    else if (!inQuotes && c === ",") commas++;
+    else if (!inQuotes && c === ";") semicolons++;
+  }
+  return semicolons > commas ? ";" : ",";
+}

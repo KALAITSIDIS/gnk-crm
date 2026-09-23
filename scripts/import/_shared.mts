@@ -11,7 +11,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import { parsePhoneNumberFromString } from "libphonenumber-js";
-import { batchIdFor, unknownColumns } from "./_rules.mts";
+import { batchIdFor, delimiterOf, unknownColumns } from "./_rules.mts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -79,13 +79,18 @@ export async function resolveOrg(
   return data[0].id;
 }
 
-/** RFC-4180-ish CSV parse: quoted fields, "" escapes, newlines inside quotes. */
+/**
+ * RFC-4180-ish CSV parse: quoted fields, "" escapes, newlines inside quotes.
+ * Comma- OR semicolon-separated, decided by the header line (`delimiterOf`):
+ * Excel under Greek regional settings saves "CSV" with semicolons.
+ */
 export function parseCsvTable(text: string): { header: string[]; rows: Record<string, string>[] } {
   const rows: string[][] = [];
   let field = "";
   let row: string[] = [];
   let inQuotes = false;
   const src = text.replace(/^﻿/, ""); // strip BOM
+  const delimiter = delimiterOf(src.split(/\r?\n/, 1)[0] ?? "");
   for (let i = 0; i < src.length; i++) {
     const c = src[i];
     if (inQuotes) {
@@ -96,7 +101,7 @@ export function parseCsvTable(text: string): { header: string[]; rows: Record<st
         } else inQuotes = false;
       } else field += c;
     } else if (c === '"') inQuotes = true;
-    else if (c === ",") {
+    else if (c === delimiter) {
       row.push(field);
       field = "";
     } else if (c === "\n" || c === "\r") {
@@ -160,15 +165,9 @@ export function loadCsv(
 /* ---- field coercion ---- */
 export const str = (v: string | undefined): string | null => (v && v.trim() ? v.trim() : null);
 export const bool = (v: string | undefined): boolean => /^(true|yes|1)$/i.test((v ?? "").trim());
-export const num = (v: string | undefined): number | null => {
-  if (!v || !v.trim()) return null;
-  const n = Number(v.replace(/[, ]/g, ""));
-  return Number.isFinite(n) ? n : null;
-};
-export const int = (v: string | undefined): number | null => {
-  const n = num(v);
-  return n === null ? null : Math.trunc(n);
-};
+// Numbers are NOT coerced here any more: `parseNumberColumns` (_rules.mts)
+// reads them the way Cyprus writes them and REFUSES what it cannot read. The
+// old `num()` stripped every comma (85,5 → 855) and `int()` truncated (2.9 → 2).
 export const list = (v: string | undefined): string[] =>
   (v ?? "")
     .split(";")
