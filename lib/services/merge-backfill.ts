@@ -11,10 +11,18 @@ type ContactUpdate = Database["public"]["Tables"]["contacts"]["Update"];
  * unit-tested (and because such files may only export async functions).
  */
 
+/** A duplicate field whose conflicting value the primary did not take. */
+export type MergeDroppedField = "email";
+
 export interface MergeBackfillResult {
   updates: ContactUpdate;
-  /** Conflicting duplicate values that could NOT be kept — recorded on the merge event. */
-  dropped: Record<string, string>;
+  /**
+   * WHICH conflicting duplicate fields could not be kept — recorded on the
+   * merge event. Names, never values: the event is hash-chained and erasure
+   * cannot reach it, while the value stays on the archived duplicate's row,
+   * which it can (DECISIONS T-merged-event-ids-only).
+   */
+  dropped: MergeDroppedField[];
 }
 
 const sortedUnion = (...lists: (string[] | null | undefined)[]): string[] =>
@@ -38,7 +46,7 @@ export function buildMergeBackfill(
   duplicate: ContactRow,
 ): MergeBackfillResult {
   const updates: ContactUpdate = {};
-  const dropped: Record<string, string> = {};
+  const dropped: MergeDroppedField[] = [];
 
   // phone: inherit when the primary has none; otherwise keep the duplicate's
   // number reachable via additional_phones
@@ -60,7 +68,7 @@ export function buildMergeBackfill(
 
   if (!primary.email && duplicate.email) updates.email = duplicate.email;
   else if (primary.email && duplicate.email && primary.email !== duplicate.email) {
-    dropped.email = duplicate.email;
+    dropped.push("email");
   }
 
   if (!primary.telegram_username && duplicate.telegram_username) {

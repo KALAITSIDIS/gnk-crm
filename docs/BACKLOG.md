@@ -2356,34 +2356,42 @@ VERIFY, run before starting.
   T-enquiry-contact-suggestions design review; not built there — it changes what an admin may do to
   an erased record. **VERIFY:** `grep -n "erased_at" lib/actions/contacts.ts` — no hit inside
   `unarchiveContact` means still open.
-- **The `merged` event carries a name and an address by value, S.** `mergeContacts`
-  (`lib/actions/merge-contacts.ts`) writes `merged_contact_name` and the backfill's `dropped`
-  e-mail (`lib/services/merge-backfill.ts`) into the hash-chained payload, which erasure cannot
-  reach — the SEC-03 rule ("ids and digests only") broken on one event. The privacy scan misses it:
-  the key is not on its list and the value arrives through a spread. Found by the
-  T-enquiry-contact-suggestions review. **VERIFY:** `grep -n "merged_contact_name" lib/actions/merge-contacts.ts` —
-  a hit means still open.
+- ~~**The `merged` event carries a name and an address by value, S.**~~ **FIXED 2026-09-23 — DECISIONS
+  `T-merged-event-ids-only`: the payload is `{ merged_contact_id, dropped_fields }` (which conflicting
+  field was not kept, never its value — the backfill now returns field names by type), the contact page
+  names the line from the duplicate's row, and the payload scan reads keys with the TypeScript parser
+  (suffixes, shorthand, spreads, unreadable parts refused).** Events already written cannot be edited
+  and keep reading "Merged in <name>"; hosted held 0 `merged` events when measured. VERIFY (fixed):
+  `grep -n "merged_contact_name" lib/actions/merge-contacts.ts` — no hit.
+  - **The `merged` event carries a name and an address by value (original).** `mergeContacts`
+    (`lib/actions/merge-contacts.ts`) writes `merged_contact_name` and the backfill's `dropped`
+    e-mail (`lib/services/merge-backfill.ts`) into the hash-chained payload, which erasure cannot
+    reach — the SEC-03 rule ("ids and digests only") broken on one event. The privacy scan misses it:
+    the key is not on its list and the value arrives through a spread. Found by the
+    T-enquiry-contact-suggestions review.
 - ~~**A contact profile edit writes the old and new identifiers into the chain, S/M.**~~ **FIXED 2026-09-23 —
   DECISIONS `T-updated-event-shape-only`: every section save logs its diff through `changesForChain`
   (`lib/services/event-changes.ts`). Contacts keep from/to only for an allow-list of the desk's own
   fields (kind, types, temperature, source, channel, WhatsApp flag, consent, agent); everything else is
   `{ from_set, to_set }` (+ `keys` for the KYC and banking objects). Deal titles, offer terms and every
-  `*_notes` field of deals, mandates and properties likewise; party defaults hold no client field. Ten
-  hosted events written before the fix keep their values (contact 119, mandate 26, eight property
-  events) — the chain cannot be edited.** VERIFY (fixed):
+  `*_notes` field of deals, mandates and properties likewise; party defaults hold no client field.**
+  Ten hosted events written before the fix keep their values (contact 119, mandate 26, eight property
+  events) — the chain cannot be edited. VERIFY (fixed):
   `grep -n "changesForChain(changed, contactShapeOnly)" lib/actions/contacts.ts` — a hit. (The original's
   VERIFY no longer tells the two apart: the diff is still BUILT, because the consent event reads it.)
-  The original: `updateContactSection` (`lib/actions/contacts.ts`, section `profile`) logs
-  `{ section, changed }`, where `changed` holds `{ from, to }` for every field that moved — `first_name`,
-  `last_name`, `email`, `phone_e164`, `phone_raw`, `telegram_username`, `notes`, `gdpr_notes` and
-  `psychology` among them — so a corrected name or e-mail enters the hash-chained payload twice, beyond
-  erasure's reach: SEC-03 broken on the commonest contact event. Measured on hosted 2026-09-23: one
-  contact `updated` event (id 119, 2026-08-28, operator test data), carrying `first_name`, `last_name`
-  and `telegram_username` from/to. The payload scan cannot see it — the values sit inside the shorthand
-  `changed` — so it wants a behavioural test like `lib/actions/merge-contacts-event-payload.test.ts`. The
-  same `changed` idiom is written by deals, mandates, properties and party defaults: check each for
-  client fields. The `updated` timeline line does not read `changed` (`lib/services/events.ts`).
-  Existing events cannot be edited. Found by T-merged-event-ids-only.
+  - **A contact profile edit writes the old and new identifiers into the chain (original).**
+    `updateContactSection` (`lib/actions/contacts.ts`, section `profile`) logs `{ section, changed }`,
+    where `changed` holds `{ from, to }` for every field that moved — `first_name`, `last_name`,
+    `email`, `phone_e164`, `phone_raw`, `telegram_username`, `notes`, `gdpr_notes` and `psychology`
+    among them — so a corrected name or e-mail enters the hash-chained payload twice, beyond erasure's
+    reach: SEC-03 broken on the commonest contact event. Measured on hosted 2026-09-23: one contact
+    `updated` event (id 119, 2026-08-28, operator test data), carrying `first_name`, `last_name` and
+    `telegram_username` from/to. The payload scan cannot see it — the values sit inside the shorthand
+    `changed` (T-merged-event-ids-only records why no key scan can) — so it wants a behavioural test
+    like `lib/actions/merge-contacts-event-payload.test.ts`. The same `changed` idiom is written by
+    deals, mandates, properties and party defaults: check each for client fields. The `updated`
+    timeline line does not read `changed` (`lib/services/events.ts`). Existing events cannot be
+    edited. Found by T-merged-event-ids-only.
 - **Task and document titles enter the chain by value, S/M.** A task's title (`lib/actions/tasks.ts`:
   `created`, `completed`, `reopened`), a contact or property document's title
   (`contact-documents.ts`, `property-documents.ts`: `document_uploaded`, `document_deleted`) and a
