@@ -1157,10 +1157,12 @@ export async function convertLead(
     entityType: "deal",
     entityId: dealId,
     eventType: "created",
+    // no `title`: it is the buyer's display name, and the chain is beyond
+    // erasure and correction (SEC-03). The row holds it; the timeline's
+    // `created` line never printed it.
     payload: {
       from_lead: lead.id,
       stage: stage.name,
-      title,
       ...(expectedValue !== null
         ? { expected_value: expectedValue, expected_value_from: "website_budget_band" }
         : {}),
