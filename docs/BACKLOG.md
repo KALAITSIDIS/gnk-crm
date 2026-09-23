@@ -2345,11 +2345,10 @@ VERIFY, run before starting.
   enquiries from the same person, `enquirer_key`, backfill, "Link all", appending, last_activity —
   is still outstanding, which is why the VERIFY above still reads unbuilt. VERIFY for the slice:
   `grep -l "loadEnquiryContactSuggestions" "app/(app)/leads/page.tsx"`.
-- ~~**Refuse to unarchive an ERASED contact, S.**~~ **FIXED 2026-09-23 — DECISIONS
-  `T-refuse-unarchive-erased` (branch `fix/refuse-unarchive-erased-contact`, no migration; NOT merged
-  until the operator approves): `unarchiveContact` refuses an erased contact with a sentence and no
-  event, its UPDATE is conditional on `erased_at is null`, and the contact page offers no Unarchive
-  on one (`contactArchiveAction`).** VERIFY (fixed): `grep -n "ERASED_STAYS_ARCHIVED" lib/actions/contacts.ts`
+- ~~**Refuse to unarchive an ERASED contact, S.**~~ **FIXED 2026-09-23 (PR #49 → main `3d9f476`, deployed,
+  no migration) — DECISIONS `T-refuse-unarchive-erased`: `unarchiveContact` refuses an erased contact
+  with a sentence and no event, its UPDATE is conditional on `erased_at is null` and `merged_into_id is
+  null`, and the contact page offers no Unarchive on one (`contactArchiveAction`).** VERIFY (fixed): `grep -n "ERASED_STAYS_ARCHIVED" lib/actions/contacts.ts`
   — a hit, and `grep -n "contactArchiveAction" "app/(app)/contacts/[id]/page.tsx"` — a hit. The original:
   `unarchiveContact` (`lib/actions/contacts.ts`)
   checks `is_archived` and `merged_into_id` but not `erased_at`, and the contact page shows the
