@@ -2374,20 +2374,52 @@ VERIFY, run before starting.
     reach — the SEC-03 rule ("ids and digests only") broken on one event. The privacy scan misses it:
     the key is not on its list and the value arrives through a spread. Found by the
     T-enquiry-contact-suggestions review.
-- **A contact profile edit writes the old and new identifiers into the chain, S/M.**
-  `updateContactSection` (`lib/actions/contacts.ts`, section `profile`) logs `{ section, changed }`,
-  where `changed` holds `{ from, to }` for every field that moved — `first_name`, `last_name`,
-  `email`, `phone_e164`, `phone_raw`, `telegram_username`, `notes`, `gdpr_notes` and `psychology`
-  among them — so a corrected name or e-mail enters the hash-chained payload twice, beyond erasure's
-  reach: SEC-03 broken on the commonest contact event. Measured on hosted 2026-09-23: one contact
-  `updated` event (id 119, 2026-08-28, operator test data), carrying `first_name`, `last_name` and
-  `telegram_username` from/to. The payload scan cannot see it — the values sit inside the shorthand
-  `changed` (T-merged-event-ids-only records why no key scan can) — so it wants a behavioural test like
-  `lib/actions/merge-contacts-event-payload.test.ts`. The same `changed` idiom is written by deals,
-  mandates, properties and party defaults: check each for client fields. The `updated` timeline line
-  does not read `changed` (`lib/services/events.ts`). Existing events cannot be edited. Found by
-  T-merged-event-ids-only. **VERIFY:** `grep -n "changed\[key\] = { from: prev" lib/actions/contacts.ts` —
-  a hit means still open.
+- ~~**A contact profile edit writes the old and new identifiers into the chain, S/M.**~~ **FIXED 2026-09-23 —
+  DECISIONS `T-updated-event-shape-only`: every section save logs its diff through `changesForChain`
+  (`lib/services/event-changes.ts`). Contacts keep from/to only for an allow-list of the desk's own
+  fields (kind, types, temperature, source, channel, WhatsApp flag, consent, agent); everything else is
+  `{ from_set, to_set }` (+ `keys` for the KYC and banking objects). Deal titles, offer terms and every
+  `*_notes` field of deals, mandates and properties likewise; party defaults hold no client field; the
+  project sync (`syncInheritedField`) records a pushed note as `{ to_set }` on each unit.**
+  Ten hosted events written before the fix keep their values (contact 119, mandate 26, eight property
+  events) — the chain cannot be edited. VERIFY (fixed):
+  `grep -n "changesForChain(changed, contactShapeOnly)" lib/actions/contacts.ts` — a hit. (The original's
+  VERIFY no longer tells the two apart: the diff is still BUILT, because the consent event reads it.)
+  - **A contact profile edit writes the old and new identifiers into the chain (original).**
+    `updateContactSection` (`lib/actions/contacts.ts`, section `profile`) logs `{ section, changed }`,
+    where `changed` holds `{ from, to }` for every field that moved — `first_name`, `last_name`,
+    `email`, `phone_e164`, `phone_raw`, `telegram_username`, `notes`, `gdpr_notes` and `psychology`
+    among them — so a corrected name or e-mail enters the hash-chained payload twice, beyond erasure's
+    reach: SEC-03 broken on the commonest contact event. Measured on hosted 2026-09-23: one contact
+    `updated` event (id 119, 2026-08-28, operator test data), carrying `first_name`, `last_name` and
+    `telegram_username` from/to. The payload scan cannot see it — the values sit inside the shorthand
+    `changed` (T-merged-event-ids-only records why no key scan can) — so it wants a behavioural test
+    like `lib/actions/merge-contacts-event-payload.test.ts`. The same `changed` idiom is written by
+    deals, mandates, properties and party defaults: check each for client fields. The `updated`
+    timeline line does not read `changed` (`lib/services/events.ts`). Existing events cannot be
+    edited. Found by T-merged-event-ids-only.
+- **Titles, a file name, a buyer's name and a lost reason enter the chain by value, S/M.** Written into
+  the hash-chained payload, and typed or chosen by people ("Call Maria about the deposit", "Andreou
+  passport scan.pdf"):
+  - a task's title (`lib/actions/tasks.ts`: `created`, `completed`, `reopened`);
+  - a contact or property document's title (`contact-documents.ts`, `property-documents.ts`:
+    `document_uploaded`, `document_deleted`);
+  - a mandate file's NAME (`mandates.ts`, `document_uploaded`);
+  - a converted deal's `title` in its `created` event (`leads.ts` `convertLead`), which is the buyer's
+    display name, on EVERY conversion. The `updated` retitle is shape-only since
+    T-updated-event-shape-only, so this is the larger leak;
+  - a lost deal's typed reason (`deals.ts`, `lost`).
+  The deal `created` line does not print the title (`lib/services/events.ts` `created` reads `amount`
+  only), so that one is a plain payload edit. The rest are RENDERED from the payload
+  (`completed` / `reopened` / `document_uploaded` / `document_deleted` / `lost`), so the fix is 0094's
+  shape: the event carries the row's id and the line joins the row (`deals.lost_reason` already holds
+  the reason). A deleted document has no row left to join, which needs a decision (a tombstone row, or
+  "a document" without its name). Found by T-updated-event-shape-only and its pre-merge review; not
+  built there. **VERIFY:** each of these three greps (run from the repo root) hits a writer; any hit
+  means that writer is still open:
+  `grep -nE "payload: \{ (title|reason: lostReason|document_id: doc\.id, title)" lib/actions/tasks.ts lib/actions/mandates.ts lib/actions/contact-documents.ts lib/actions/property-documents.ts lib/actions/deals.ts` ·
+  `grep -n -A4 'eventType: "document_deleted"' lib/actions/contact-documents.ts lib/actions/property-documents.ts | grep "title: doc.title"` ·
+  `grep -n -A5 'eventType: "created",' lib/actions/leads.ts | grep -E -- "-\s+title,$"`.
 - **The door keeps line breaks in name, phone and reference, S.** `publicEnquirySchema`
   (`lib/validators/public-enquiry.ts`) trims but keeps interior newlines, and 0101 writes the values
   raw into the header block, so a name like `Ann\nEmail: x@y` becomes an `Email:` line that

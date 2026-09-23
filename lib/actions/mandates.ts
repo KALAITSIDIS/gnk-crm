@@ -6,6 +6,7 @@ import { z } from "zod";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
 import { recomputeDealsFor } from "@/lib/services/health-score";
+import { changesForChain, isNoteField } from "@/lib/services/event-changes";
 import { recomputeQualityScore } from "@/lib/services/quality-score";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -181,7 +182,8 @@ export async function saveMandate(
       entityType: "mandate",
       entityId: d.mandate_id,
       eventType: "updated",
-      payload: JSON.parse(JSON.stringify({ changed })),
+      // the two notes record shape only (SEC-03); the terms keep from/to
+      payload: JSON.parse(JSON.stringify({ changed: changesForChain(changed, isNoteField) })),
     });
     if ("expiry_date" in changed) {
       await supersedeRenewalTasks(

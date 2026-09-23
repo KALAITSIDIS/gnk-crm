@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import type { Database } from "@/lib/supabase/database.types";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
+import { changesForChain, isNoteField } from "@/lib/services/event-changes";
 import { recomputeDealHealth } from "@/lib/services/health-score";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -64,6 +65,10 @@ function normEq(a: unknown, b: unknown): boolean {
   };
   return norm(a) === norm(b);
 }
+
+/** What a deal or offer event may not carry by value: text somebody typed. */
+const dealShapeOnly = (field: string) => field === "title" || isNoteField(field);
+const offerShapeOnly = (field: string) => field === "terms" || isNoteField(field);
 
 /** Deal detail sections (T3.2): "details" (parties/value/title) and "commission". */
 export async function updateDealSection(
@@ -151,7 +156,11 @@ export async function updateDealSection(
     entityType: "deal",
     entityId: dealId,
     eventType: "updated",
-    payload: JSON.parse(JSON.stringify({ section, changed })),
+    // a deal's title is built from the buyer's name (convertLead) — it and
+    // the split notes record shape only (SEC-03)
+    payload: JSON.parse(
+      JSON.stringify({ section, changed: changesForChain(changed, dealShapeOnly) }),
+    ),
   });
 
   await recomputeDealHealth(supabase, dealId);
@@ -229,7 +238,9 @@ export async function saveOffer(
       entityType: "offer",
       entityId: offer.id,
       eventType: "updated",
-      payload: JSON.parse(JSON.stringify({ deal_id: deal.id, changed })),
+      payload: JSON.parse(
+        JSON.stringify({ deal_id: deal.id, changed: changesForChain(changed, offerShapeOnly) }),
+      ),
     });
   } else {
     const { data: created, error: insertErr } = await supabase

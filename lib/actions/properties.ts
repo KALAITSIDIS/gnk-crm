@@ -15,6 +15,7 @@ import { UNIT_PARENT_SELECT } from "@/lib/services/unit-inheritance";
 import { writeGeneratedUnits } from "@/lib/services/unit-writer";
 import { generateReference } from "@/lib/services/reference";
 import { createClient } from "@/lib/supabase/server";
+import { changesForChain, isNoteField } from "@/lib/services/event-changes";
 import { changedValue } from "@/lib/utils/diff";
 import { createPropertySchema } from "@/lib/validators/properties";
 import type { PropertyDuplicateMatch } from "@/lib/services/property-duplicate";
@@ -794,7 +795,9 @@ export async function updatePropertySection(
     entityType: "property",
     entityId: propertyId,
     eventType: "updated",
-    payload: JSON.parse(JSON.stringify({ section, changed })),
+    // the notes record shape only (SEC-03); status and visibility keep
+    // from/to — sales velocity and the feed (0073) read them
+    payload: JSON.parse(JSON.stringify({ section, changed: changesForChain(changed, isNoteField) })),
   });
 
   // DB-01: the regression got past the admin gate above — mark it with its
