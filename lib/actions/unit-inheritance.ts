@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { getCurrentProfile } from "@/lib/services/auth";
+import { hasValue, isNoteField } from "@/lib/services/event-changes";
 import { logEvents } from "@/lib/services/events";
 import type { Database } from "@/lib/supabase/database.types";
 import { createClient } from "@/lib/supabase/server";
@@ -96,7 +97,12 @@ export async function syncInheritedField(
           source: "project_sync",
           field: column,
           from_project: project.reference,
-          changed: { [column]: { to: value ?? null } },
+          // a note records that it is set, never its words (SEC-03, the
+          // section saves' rule); the sync never read the unit's previous
+          // value, so there is no from_set
+          changed: {
+            [column]: isNoteField(column) ? { to_set: hasValue(value) } : { to: value ?? null },
+          },
         }),
       ),
     })),

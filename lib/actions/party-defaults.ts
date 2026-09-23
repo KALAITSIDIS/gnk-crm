@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
 import { createClient } from "@/lib/supabase/server";
+import { changesForChain, isNoteField } from "@/lib/services/event-changes";
 import { changedValue } from "@/lib/utils/diff";
 import {
   partyDefaultsSchema,
@@ -150,7 +151,10 @@ export async function savePartyDefaults(
     entityType: "contact",
     entityId: contactId,
     eventType: "updated",
-    payload: JSON.parse(JSON.stringify({ section: "party_defaults", changed })),
+    // terms only today (enums, numbers, ids); a note added later records shape
+    payload: JSON.parse(
+      JSON.stringify({ section: "party_defaults", changed: changesForChain(changed, isNoteField) }),
+    ),
   });
 
   revalidatePath(`/contacts/${contactId}`);

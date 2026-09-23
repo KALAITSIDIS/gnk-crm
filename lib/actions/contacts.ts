@@ -10,6 +10,7 @@ import { logEvent } from "@/lib/services/events";
 import { recomputeDealsFor } from "@/lib/services/health-score";
 import { normalizePhone } from "@/lib/services/phone";
 import { createClient } from "@/lib/supabase/server";
+import { changesForChain, contactShapeOnly } from "@/lib/services/event-changes";
 import { changedValue } from "@/lib/utils/diff";
 import {
   COMM_CHANNELS,
@@ -372,7 +373,10 @@ export async function updateContactSection(
     entityType: "contact",
     entityId: contactId,
     eventType: "updated",
-    payload: JSON.parse(JSON.stringify({ section, changed })),
+    // which fields moved, never a person's identifiers or typed text (SEC-03)
+    payload: JSON.parse(
+      JSON.stringify({ section, changed: changesForChain(changed, contactShapeOnly) }),
+    ),
   });
 
   // SEC-06: Article 7(1) asks the controller to DEMONSTRATE consent — a flip
