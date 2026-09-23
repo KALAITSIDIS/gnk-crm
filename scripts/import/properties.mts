@@ -8,12 +8,10 @@
  */
 import {
   Report,
-  int,
   list,
   loadCsv,
   logImported,
   normalizePhone,
-  num,
   parseArgs,
   resolveOrg,
   serviceClient,
@@ -21,8 +19,10 @@ import {
 } from "./_shared.mts";
 import {
   KNOWN_PROPERTY_COLUMNS,
+  PROPERTY_NUMBER_COLUMNS,
   insertVisibilityFor,
   measurementRefusal,
+  parseNumberColumns,
   publishDecision,
 } from "./_rules.mts";
 // Relative and WITH the extension: plain Node resolves neither the alias nor
@@ -152,16 +152,24 @@ for (const r of rows) {
       parentId = parent[0].id;
     }
 
-    // Areas and floors (LST-07, 2026-09-23) — BEFORE the first side effect
-    // below (an area, an owner contact), so a refused row creates nothing,
-    // and before the dry-run branch, so the rehearsal refuses it too.
-    const measurements = {
-      covered_area_sqm: num(r.covered_area_sqm),
-      plot_area_sqm: num(r.plot_area_sqm),
-      floor_number: int(r.floor_number),
-      total_floors: int(r.total_floors),
-    };
-    const measurementError = measurementRefusal(measurements);
+    // Every number in the row, read the way Cyprus writes it (85,5 or 85.5;
+    // 1.200 or 1,200) — and every cell that cannot be read is refused with
+    // its column named, never guessed, never blanked (2026-09-23). Then the
+    // areas and floors (LST-07). Both BEFORE the first side effect below (an
+    // area, an owner contact), so a refused row creates nothing, and before
+    // the dry-run branch, so the rehearsal refuses it too.
+    const numbers = parseNumberColumns(r, PROPERTY_NUMBER_COLUMNS);
+    if (numbers.errors.length > 0) {
+      report.add({ row: line, outcome: "error", detail: numbers.errors.join("; ") });
+      continue;
+    }
+    const n = numbers.values;
+    const measurementError = measurementRefusal({
+      covered_area_sqm: n.covered_area_sqm,
+      plot_area_sqm: n.plot_area_sqm,
+      floor_number: n.floor_number,
+      total_floors: n.total_floors,
+    });
     if (measurementError) {
       report.add({ row: line, outcome: "error", detail: measurementError });
       continue;
@@ -195,8 +203,8 @@ for (const r of rows) {
     const owner = await ensureOwnerContact(r.owner_phone, str(r.owner_name));
     if (owner.note) notes.push(owner.note);
 
-    const lat = num(r.latitude);
-    const lng = num(r.longitude);
+    const lat = n.latitude;
+    const lng = n.longitude;
 
     // Audit 2026-09-15 (LST-02): this importer used to write `visibility`
     // straight from the file, so a standalone row could go public with no
@@ -236,19 +244,19 @@ for (const r of rows) {
         str(r.description_el),
         str(r.description_ru),
       ),
-      asking_price: num(r.asking_price),
-      owner_net_price: num(r.owner_net_price),
-      rent_price_month: num(r.rent_price_month),
+      asking_price: n.asking_price,
+      owner_net_price: n.owner_net_price,
+      rent_price_month: n.rent_price_month,
       vat_status: str(r.vat_status) ?? "unknown",
-      covered_area_sqm: measurements.covered_area_sqm,
-      plot_area_sqm: measurements.plot_area_sqm,
-      veranda_sqm: num(r.veranda_sqm),
-      bedrooms: int(r.bedrooms),
-      bathrooms: int(r.bathrooms),
-      parking_spaces: int(r.parking_spaces),
-      floor_number: measurements.floor_number,
-      total_floors: measurements.total_floors,
-      year_built: int(r.year_built),
+      covered_area_sqm: n.covered_area_sqm,
+      plot_area_sqm: n.plot_area_sqm,
+      veranda_sqm: n.veranda_sqm,
+      bedrooms: n.bedrooms,
+      bathrooms: n.bathrooms,
+      parking_spaces: n.parking_spaces,
+      floor_number: n.floor_number,
+      total_floors: n.total_floors,
+      year_built: n.year_built,
       features: list(r.features),
       title_deed_status: str(r.title_deed_status) ?? "unknown",
       permit_status: str(r.permit_status) ?? "unknown",
@@ -259,10 +267,10 @@ for (const r of rows) {
       sheet_plan: str(r.sheet_plan),
       registry_municipality: str(r.registry_municipality),
       planning_zone_code: str(r.planning_zone_code),
-      building_density_pct: num(r.building_density_pct),
-      coverage_ratio_pct: num(r.coverage_ratio_pct),
-      max_floors: int(r.max_floors),
-      road_frontage_m: num(r.road_frontage_m),
+      building_density_pct: n.building_density_pct,
+      coverage_ratio_pct: n.coverage_ratio_pct,
+      max_floors: n.max_floors,
+      road_frontage_m: n.road_frontage_m,
       internal_notes: str(r.internal_notes),
       owner_contact_id: owner.id,
     };
@@ -309,7 +317,7 @@ for (const r of rows) {
           owner_contact_id: owner.id,
           type: mandateType,
           status: "active",
-          commission_pct: num(r.mandate_commission_pct),
+          commission_pct: n.mandate_commission_pct,
           expiry_date: str(r.mandate_expiry),
         } as never)
         .select("id")

@@ -8,18 +8,16 @@
 import {
   Report,
   bool,
-  int,
   list,
   loadCsv,
   logImported,
   normalizePhone,
-  num,
   parseArgs,
   resolveOrg,
   serviceClient,
   str,
 } from "./_shared.mts";
-import { KNOWN_CONTACT_COLUMNS } from "./_rules.mts";
+import { CONTACT_NUMBER_COLUMNS, KNOWN_CONTACT_COLUMNS, parseNumberColumns } from "./_rules.mts";
 
 const args = parseArgs(process.argv.slice(2));
 const supabase = serviceClient();
@@ -47,6 +45,16 @@ for (const r of rows) {
       report.add({ row: line, outcome: "error", detail: "needs a first/last/company name" });
       continue;
     }
+
+    // Budgets and bedrooms read the way Cyprus writes them (250.000 or
+    // 250,000); an unreadable cell is refused naming its column, before the
+    // dedup reads and the insert (2026-09-23, see _rules.mts).
+    const numbers = parseNumberColumns(r, CONTACT_NUMBER_COLUMNS);
+    if (numbers.errors.length > 0) {
+      report.add({ row: line, outcome: "error", detail: numbers.errors.join("; ") });
+      continue;
+    }
+    const n = numbers.values;
 
     const phoneE164 = normalizePhone(r.phone);
     if (r.phone && r.phone.trim() && !phoneE164) {
@@ -98,9 +106,9 @@ for (const r of rows) {
     }
     const requirement: Record<string, unknown> = {};
     if (prefAreaIds.length) requirement.area_ids = prefAreaIds;
-    if (num(r.budget_min) !== null) requirement.budget_min = num(r.budget_min);
-    if (num(r.budget_max) !== null) requirement.budget_max = num(r.budget_max);
-    if (int(r.pref_bedrooms_min) !== null) requirement.bedrooms_min = int(r.pref_bedrooms_min);
+    if (n.budget_min !== null) requirement.budget_min = n.budget_min;
+    if (n.budget_max !== null) requirement.budget_max = n.budget_max;
+    if (n.pref_bedrooms_min !== null) requirement.bedrooms_min = n.pref_bedrooms_min;
     if (list(r.pref_property_types).length) requirement.property_types = list(r.pref_property_types);
     const hasRequirement = Object.keys(requirement).length > 0;
 

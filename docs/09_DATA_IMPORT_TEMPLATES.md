@@ -1,6 +1,6 @@
 # 09 — DATA IMPORT TEMPLATES
 
-Export current data (Excel, phone contacts, WhatsApp notes) into these two CSVs. Import scripts (`scripts/import/*`, task T5.6) run with service role, support `--dry-run`, write an import report, respect dedup, and log `imported` events. UTF-8, comma-separated, header row required. Empty cells = null.
+Export current data (Excel, phone contacts, WhatsApp notes) into these two CSVs. Import scripts (`scripts/import/*`, task T5.6) run with service role, support `--dry-run`, write an import report, respect dedup, and log `imported` events. UTF-8 (in Excel: *CSV UTF-8*), comma- **or semicolon**-separated — Excel under Greek regional settings saves semicolons, and both are read — header row required. Empty cells = null. Numbers may be written the Greek or the English way (Rule 9).
 
 ## contacts_import.csv
 
@@ -77,3 +77,4 @@ Export current data (Excel, phone contacts, WhatsApp notes) into these two CSVs.
 6. **Every run has a batch id** (`--batch <id>`, default `YYYYMMDD-HHMMSS-<file>`), written into each `imported` event's payload and into the report's file name, so a whole run can be found by one name.
 7. **The importer cannot skip the publish gate** (audit 2026-09-15, LST-02). A row requested `public` is scored once it and its mandate exist and is published only at 70 or more, with `published_at` stamped; otherwise it stays private and the report row says the score.
 8. **Areas and floors obey the app's rules** (audit 2026-09-23, LST-07). A row with a covered or plot area of 0 or less, or a floor above its total floors, is refused in the report naming the column — in the dry run too — before it creates an area or an owner contact. Migration 0113 refuses the same values at the table.
+9. **Numbers are read the way Cyprus writes them** (2026-09-23). `85,5` and `85.5` are both eighty-five and a half; `1.200`, `1,200` and `1 200` are all twelve hundred; `1.200,50` and `1,200.50` are both twelve hundred and a half — a single `.` or `,` followed by exactly three digits groups thousands in prices, areas and lengths, since nobody writes those to three decimals. In `latitude`, `longitude` and the `_pct` columns a single separator is always the decimal mark (`34.775` is a latitude, not 34775). A cell that is not a plain number — `€250.000`, `185 m²`, `1,20,000` — is refused naming its column rather than guessed or left blank, and a whole-number column (bedrooms, floors, year) refuses a fraction instead of truncating it (`2,5` bedrooms used to import as 25).
