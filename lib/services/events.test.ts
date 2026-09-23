@@ -80,10 +80,21 @@ describe("describeEvent registry (T3.5) — English parity", () => {
     );
   });
 
-  it("renders merged with the source contact name", () => {
+  it("renders a merged event written before 2026-09-23 with the name it carries", () => {
+    // those events are chained and cannot be edited, so this reading stays
     expect(describeEvent(ev("merged", { merged_contact_name: "M. Testides" }, "contact"), t)).toBe(
       "Merged in M. Testides",
     );
+  });
+
+  it("renders a merged event that carries ids and shape only (T-merged-event-ids-only)", () => {
+    // the contact page adds the duplicate's name from its row as the line's note
+    expect(
+      describeEvent(
+        ev("merged", { merged_contact_id: "dup-1", dropped_fields: ["email"] }, "contact"),
+        t,
+      ),
+    ).toBe("Merged in a duplicate");
   });
 
   it("renders section updates", () => {

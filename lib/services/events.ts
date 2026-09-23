@@ -543,6 +543,10 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
     if (note) return t("viewingFeedbackNote", { note });
     return t("viewingFeedback");
   },
+  // Since 2026-09-23 the payload is `{ merged_contact_id, dropped_fields }` —
+  // ids and shape only (DECISIONS T-merged-event-ids-only) — and the contact
+  // page names the duplicate from its row (lib/services/contact-timeline.ts).
+  // Older events carry the name and cannot be edited: they keep this reading.
   merged: (p, t) => {
     const name = asText(p.merged_contact_name);
     return name ? t("mergedName", { name }) : t("merged");

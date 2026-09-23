@@ -254,6 +254,9 @@ test("merging a duplicate moves every record that pointed at it", async ({ page 
       .eq("entity_id", primaryId)
       .eq("event_type", "merged");
     expect(merged, "a merge is a state change, so it owes an event").toHaveLength(1);
+    // ids and shape only — the chain cannot be erased, so the duplicate's
+    // name stays on its row (DECISIONS T-merged-event-ids-only)
+    expect(merged![0].payload).toEqual({ merged_contact_id: duplicateId, dropped_fields: [] });
   } finally {
     await removeFixture(svc);
   }
