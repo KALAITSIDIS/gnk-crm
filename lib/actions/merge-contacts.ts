@@ -180,17 +180,19 @@ export async function mergeContacts(
   }
 
   // 4. events on both sides (insert-only — history is never rewritten)
+  //
+  // Ids and shape only (audit SEC-03, DECISIONS T-merged-event-ids-only): the
+  // chain is never updated and erasure cannot reach it, so the duplicate's
+  // name and any e-mail the primary did not take stay on the duplicate's ROW —
+  // archived, not deleted — and the contact page names the line from there.
+  // `dropped_fields` says WHICH conflicting field was not kept, never its value.
   await logEvent(supabase, {
     orgId: profile.orgId,
     actorId: profile.id,
     entityType: "contact",
     entityId: primaryId,
     eventType: "merged",
-    payload: {
-      merged_contact_id: duplicateId,
-      merged_contact_name: duplicate.display_name,
-      ...(Object.keys(dropped).length > 0 ? { dropped } : {}),
-    },
+    payload: { merged_contact_id: duplicateId, dropped_fields: dropped },
   });
   await logEvent(supabase, {
     orgId: profile.orgId,

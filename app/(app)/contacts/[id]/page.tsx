@@ -31,6 +31,7 @@ import { getPartyDefaults } from "@/lib/actions/party-defaults";
 import { mayEditBuyerRequirements } from "@/lib/validators/buyer-requirements";
 import { isPartyContact, partyDefaultsSchema } from "@/lib/validators/party-defaults";
 import { buildPortfolio, PORTFOLIO_SELECT } from "@/lib/services/contact-portfolio";
+import { annotateContactTimeline } from "@/lib/services/contact-timeline";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { Button } from "@/components/ui/button";
 import {
@@ -154,15 +155,7 @@ export default async function ContactDetailPage({
       .limit(50),
   ]);
 
-  const mergedName = new Map((mergedRows ?? []).map((m) => [m.id, m.display_name]));
-  const events = (eventRows ?? []).map((e) => ({
-    ...e,
-    // the merged-away source's name, and/or the conversation note the reader attached (0094)
-    note:
-      e.entity_id !== id
-        ? [mergedName.get(e.entity_id ?? "") ?? "merged contact", e.note].filter(Boolean).join(" · ")
-        : (e.note ?? null),
-  }));
+  const events = annotateContactTimeline(eventRows ?? [], id, mergedRows ?? []);
 
   const areaOptions = (areaRows ?? []).map((a) => ({
     id: a.id,

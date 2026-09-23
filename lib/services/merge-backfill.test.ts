@@ -74,17 +74,27 @@ describe("buildMergeBackfill", () => {
     expect(updates.additional_phones).toBeUndefined();
   });
 
-  it("backfills empty email but records a conflicting one as dropped", () => {
+  it("backfills empty email but names a conflicting one as dropped", () => {
     const empty = buildMergeBackfill(contact(), contact({ email: "dup@x.com" }));
     expect(empty.updates.email).toBe("dup@x.com");
-    expect(empty.dropped.email).toBeUndefined();
+    expect(empty.dropped).toEqual([]);
 
     const conflict = buildMergeBackfill(
       contact({ email: "primary@x.com" }),
       contact({ email: "dup@x.com" }),
     );
     expect(conflict.updates.email).toBeUndefined();
-    expect(conflict.dropped.email).toBe("dup@x.com");
+    expect(conflict.dropped).toEqual(["email"]);
+  });
+
+  it("reports WHICH field was dropped, never the value — it goes on the merge event", () => {
+    // the value stays on the archived duplicate's row, which erasure can
+    // reach; the hash-chained event cannot be (DECISIONS T-merged-event-ids-only)
+    const { dropped } = buildMergeBackfill(
+      contact({ email: "primary@x.com" }),
+      contact({ email: "dup@x.com" }),
+    );
+    expect(JSON.stringify(dropped)).not.toContain("dup@x.com");
   });
 
   it("unions types and languages sorted, skipping same-set no-ops", () => {
@@ -146,6 +156,6 @@ describe("buildMergeBackfill", () => {
   it("returns no updates for two blank contacts", () => {
     const { updates, dropped } = buildMergeBackfill(contact(), contact());
     expect(Object.keys(updates)).toHaveLength(0);
-    expect(Object.keys(dropped)).toHaveLength(0);
+    expect(dropped).toEqual([]);
   });
 });
