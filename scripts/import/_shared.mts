@@ -79,66 +79,200 @@ export async function resolveOrg(
   return data[0].id;
 }
 
+/* ---- reading a CSV file ----
+ *
+ * The file's STRUCTURE is checked whole before a single row is handed to an
+ * importer (2026-09-23). The reader used to take whatever a line held:
+ * surplus cells were dropped (an unquoted `1,250,000` imported as a price of
+ * 1 and an area of 250), a missing cell was padded to blank, a repeated
+ * header let its second column overwrite the first, and a quote that never
+ * closed swallowed the rest of the file — all silently, and all past the
+ * number and measurement rules, because every value that came out looked
+ * plausible. A cell's position is its meaning, so a file whose positions
+ * cannot be trusted is refused, never repaired: which cells "should" be
+ * joined is a guess.
+ */
+
+/** Why a file cannot be read as a table — every problem, in file order. Never a partial result. */
+export class CsvStructureError extends Error {
+  readonly problems: string[];
+  constructor(problems: string[]) {
+    super(`not a well-formed CSV:\n${problems.join("\n")}`);
+    this.name = "CsvStructureError";
+    this.problems = problems;
+  }
+}
+
+const QUOTE_INSIDE =
+  'a double quote inside an unquoted value — wrap the whole value in double quotes and write each quote inside it twice ("")';
+const TEXT_AFTER_QUOTE = "text after the closing double quote — a quoted value must end at its closing quote";
+const NEVER_CLOSED = "the double quote that opens this value is never closed";
+
+/** A record as written: the physical line it starts on, its raw cells, and its quoting faults. */
+interface RawRecord {
+  line: number;
+  cells: string[];
+  faults: { line: number; cell: number; reason: string }[];
+  unclosed: boolean;
+}
+
 /**
- * RFC-4180-ish CSV parse: quoted fields, "" escapes, newlines inside quotes.
+ * RFC 4180 with two tolerances that cannot change a value: spaces around a
+ * quoted value (every cell is trimmed anyway), and a line that is empty or
+ * holds only spaces, which is skipped. Line numbers are PHYSICAL — a quoted
+ * line break counts — so an error points where an editor does.
+ */
+function readRecords(src: string, delimiter: string): RawRecord[] {
+  const records: RawRecord[] = [];
+  let line = 1;
+  let record: RawRecord = { line, cells: [], faults: [], unclosed: false };
+  let field = "";
+  // start: nothing but spaces yet · plain: unquoted text · quoted: inside quotes · closed: after the closing quote
+  let state: "start" | "plain" | "quoted" | "closed" = "start";
+  let quoteLine = 0;
+  let faulted = false; // one fault per cell is enough to locate it
+
+  const fault = (reason: string, at = line) => {
+    if (!faulted) record.faults.push({ line: at, cell: record.cells.length, reason });
+    faulted = true;
+  };
+  const endCell = () => {
+    record.cells.push(field);
+    field = "";
+    state = "start";
+    faulted = false;
+  };
+  const endRecord = () => {
+    endCell();
+    const blank = record.cells.length === 1 && record.cells[0].trim() === "" && record.faults.length === 0;
+    if (!blank) records.push(record);
+  };
+
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (state === "quoted") {
+      if (c === '"' && src[i + 1] === '"') {
+        field += '"';
+        i++;
+      } else if (c === '"') {
+        state = "closed";
+      } else {
+        if (c === "\n" || (c === "\r" && src[i + 1] !== "\n")) line++;
+        field += c;
+      }
+    } else if (c === delimiter) {
+      endCell();
+    } else if (c === "\n" || c === "\r") {
+      if (c === "\r" && src[i + 1] === "\n") i++;
+      endRecord();
+      line++;
+      record = { line, cells: [], faults: [], unclosed: false };
+    } else if (state === "start" && c === '"') {
+      state = "quoted";
+      quoteLine = line;
+      field = ""; // the spaces before it
+    } else if (state === "closed") {
+      if (c !== " " && c !== "\t") {
+        fault(TEXT_AFTER_QUOTE);
+        state = "plain";
+        field += c;
+      }
+    } else {
+      if (c === '"') fault(QUOTE_INSIDE);
+      if (c !== " " && c !== "\t") state = "plain";
+      field += c;
+    }
+  }
+  if (state === "quoted") {
+    fault(NEVER_CLOSED, quoteLine);
+    record.unclosed = true;
+    endRecord();
+  } else if (field !== "" || record.cells.length > 0 || state === "closed") {
+    endRecord(); // the last line had no line break
+  }
+  return records;
+}
+
+/**
+ * Parse a CSV into its header and rows, or throw `CsvStructureError` naming
+ * every problem: a blank or repeated header name, a row with more or fewer
+ * cells than the header, a quote in the wrong place, a quote never closed.
+ * A problem in the LAST row refuses the whole file — nothing is returned, so
+ * nothing before it can be imported either. Messages carry line numbers,
+ * column numbers, header names and counts, never a cell's value.
+ *
  * Comma- OR semicolon-separated, decided by the header line (`delimiterOf`):
  * Excel under Greek regional settings saves "CSV" with semicolons.
  */
 export function parseCsvTable(text: string): { header: string[]; rows: Record<string, string>[] } {
-  const rows: string[][] = [];
-  let field = "";
-  let row: string[] = [];
-  let inQuotes = false;
   const src = text.replace(/^﻿/, ""); // strip BOM
   const delimiter = delimiterOf(src.split(/\r?\n/, 1)[0] ?? "");
-  for (let i = 0; i < src.length; i++) {
-    const c = src[i];
-    if (inQuotes) {
-      if (c === '"') {
-        if (src[i + 1] === '"') {
-          field += '"';
-          i++;
-        } else inQuotes = false;
-      } else field += c;
-    } else if (c === '"') inQuotes = true;
-    else if (c === delimiter) {
-      row.push(field);
-      field = "";
-    } else if (c === "\n" || c === "\r") {
-      if (c === "\r" && src[i + 1] === "\n") i++;
-      row.push(field);
-      field = "";
-      if (row.length > 1 || row[0] !== "") rows.push(row);
-      row = [];
-    } else field += c;
+  const records = readRecords(src, delimiter);
+  if (records.length === 0) return { header: [], rows: [] };
+  const [head, ...body] = records;
+  const header = head.cells.map((h) => h.trim());
+  const problems: string[] = [];
+
+  for (const f of head.faults) problems.push(`line ${f.line} (header), column ${f.cell + 1}: ${f.reason}`);
+  header.forEach((name, i) => {
+    if (name === "") {
+      problems.push(
+        `line ${head.line} (header): column ${i + 1} has no name — delete the empty column ` +
+          "(a separator at the end of the header line makes one)",
+      );
+    }
+  });
+  if (!head.unclosed) {
+    const positions = new Map<string, number[]>();
+    header.forEach((name, i) => {
+      if (name !== "") positions.set(name, [...(positions.get(name) ?? []), i + 1]);
+    });
+    for (const [name, columns] of positions) {
+      if (columns.length > 1) {
+        problems.push(
+          `line ${head.line} (header): column "${name}" appears more than once (columns ${columns.join(", ")}) — keep one`,
+        );
+      }
+    }
   }
-  if (field !== "" || row.length > 0) {
-    row.push(field);
-    if (row.length > 1 || row[0] !== "") rows.push(row);
+
+  const example = delimiter === ";" ? '"pool;garden"' : '"1,250,000"';
+  for (const record of body) {
+    for (const f of record.faults) {
+      const name = header[f.cell] ? ` (${header[f.cell]})` : "";
+      problems.push(`line ${f.line}, column ${f.cell + 1}${name}: ${f.reason}`);
+    }
+    const found = record.cells.length;
+    if (record.unclosed || found === header.length) continue; // an unclosed quote swallowed the count
+    problems.push(
+      `line ${record.line}: expected ${header.length} cells (one per header column), found ${found} — ` +
+        (found > header.length
+          ? `a value that contains "${delimiter}" must be wrapped in double quotes, e.g. ${example}`
+          : "every row needs a separator for every column, even an empty one"),
+    );
   }
-  if (rows.length === 0) return { header: [], rows: [] };
-  const header = rows[0].map((h) => h.trim());
+  if (problems.length > 0) throw new CsvStructureError(problems);
+
   return {
     header,
-    rows: rows.slice(1).map((r) => {
-      const obj: Record<string, string> = {};
-      header.forEach((h, i) => (obj[h] = (r[i] ?? "").trim()));
-      return obj;
-    }),
+    rows: body.map((record) => Object.fromEntries(header.map((h, i) => [h, record.cells[i].trim()]))),
   };
 }
 
-export function parseCsv(text: string): Record<string, string>[] {
-  return parseCsvTable(text).rows;
-}
+/** How many structure problems `loadCsv` prints before summarising the rest. */
+const PROBLEMS_SHOWN = 20;
 
 /**
- * Load a CSV and, when told which columns the template knows, REFUSE an
- * unknown header before any row is written (audit 2026-09-15, LST-10).
- * The importers read columns by name, so a misspelt header — `bedroom` —
- * used to import every value in it as blank without a word. `--allow-extra`
- * turns the refusal into a warning for a file that carries columns nobody
- * meant to import.
+ * Load a CSV for an importer, and stop the run before its first write when
+ * the file cannot be trusted. Two refusals, in this order:
+ *
+ * - its STRUCTURE (`parseCsvTable`, 2026-09-23) — always, dry run or live;
+ *   `--allow-extra` does not reach it.
+ * - when told which columns the template knows, an unknown header (audit
+ *   2026-09-15, LST-10). The importers read columns by name, so a misspelt
+ *   header — `bedroom` — used to import every value in it as blank without a
+ *   word. `--allow-extra` turns this refusal, and only this one, into a
+ *   warning for a file that carries columns nobody meant to import.
  */
 export function loadCsv(
   file: string,
@@ -146,7 +280,24 @@ export function loadCsv(
   allowExtra = false,
 ): Record<string, string>[] {
   const path = resolve(process.cwd(), file);
-  const { header, rows } = parseCsvTable(readFileSync(path, "utf8"));
+  let table: ReturnType<typeof parseCsvTable>;
+  try {
+    table = parseCsvTable(readFileSync(path, "utf8"));
+  } catch (e) {
+    if (!(e instanceof CsvStructureError)) throw e;
+    const shown = e.problems.slice(0, PROBLEMS_SHOWN);
+    const more = e.problems.length - shown.length;
+    console.error(
+      `Cannot import ${file}: it is not a well-formed CSV, so nothing was imported.\n` +
+        shown.map((p) => `  ${p}`).join("\n") +
+        (more > 0 ? `\n  …and ${more} more` : "") +
+        "\nEvery row is checked before any is written. A value that contains the separator, a double quote " +
+        'or a line break must be wrapped in double quotes ("1,250,000"), with each quote inside it written ' +
+        'twice (""). See docs/09_DATA_IMPORT_TEMPLATES.md.',
+    );
+    process.exit(1);
+  }
+  const { header, rows } = table;
   if (known) {
     const unknown = unknownColumns(header, known);
     if (unknown.length > 0 && !allowExtra) {

@@ -3,7 +3,7 @@
  *
  * Symmetric with the import-side parser in `scripts/import/_shared.mts`: RFC-4180
  * quoting, `""` escaping, CRLF rows, leading BOM. A value written here round-trips
- * back through `parseCsv` unchanged (modulo the parser's field trimming).
+ * back through `parseCsvTable` unchanged (modulo the parser's field trimming).
  *
  * Pure and I/O-free so it is unit-testable and reusable by any list page.
  */

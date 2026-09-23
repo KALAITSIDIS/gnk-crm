@@ -50,7 +50,7 @@ import {
   type RenditionName,
 } from "../../lib/services/media.ts";
 import { recomputeQualityScore } from "../../lib/services/quality-score.ts";
-import { Report, parseCsv, resolveOrg, serviceClient } from "./_shared.mts";
+import { Report, loadCsv, resolveOrg, serviceClient } from "./_shared.mts";
 
 const { values: args } = nodeParseArgs({
   options: {
@@ -95,7 +95,9 @@ async function orgWatermark(): Promise<Buffer | null> {
   return watermarkCache;
 }
 
-const csv = parseCsv(readFileSync(resolve(String(args.file)), "utf8"));
+// The same structural refusal as the row importers: a row whose cells have
+// shifted would hand one listing's photo_folder to another reference.
+const csv = loadCsv(String(args.file));
 const withPhotos = csv
   .map((row, i) => ({ row, line: i + 2 })) // header is line 1, like the row importers
   .filter(({ row }) => (row.photo_folder ?? "").trim() !== "");
