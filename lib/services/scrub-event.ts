@@ -32,14 +32,43 @@
  * unreadable tells the person debugging what they need (was the site the
  * caller? was anyone signed in?) without telling them the value.
  *
+ * Those are ours by name. Beyond them, a header is redacted when its NAME
+ * carries a sensitive fragment — the SDK's own judgement (below), which it
+ * applies to span attributes but never to `event.request`, so a Vercel OIDC
+ * token or a visitor's `x-vercel-ip-city` travelled raw.
+ *
  * Pure, and tested, because the alternative is finding out from a Sentry
- * event that it did not work. It must not throw on any shape: the SDK drops an
- * event whose `beforeSend` throws and sends its own error in its place.
+ * event that it did not work. Wired through `scrubEventOrDrop`: if it throws,
+ * the event is dropped — left to the SDK, a throwing `beforeSend` makes it
+ * send its own replacement event, and that one skips `beforeSend`.
  */
 export const REDACTED = "[redacted]";
 
 /** Header names, lower-case, that are redacted from every outbound event. */
 export const SENSITIVE_HEADERS = ["x-gnk-visitor-ip", "x-gnk-forward-key", "cookie", "authorization"] as const;
+
+/**
+ * Fragments of a header NAME that make it sensitive: @sentry/core 10.65's
+ * SENSITIVE_KEY_SNIPPETS and PII_HEADER_SNIPPETS
+ * (utils/data-collection/filtering-snippets.js — not exported, so copied; the
+ * test holds this list against the SDK's filter itself), plus two of ours:
+ * `bypass` (Vercel's `x-vercel-protection-bypass` automation secret) and
+ * `signature` (a request signature is a credential, whoever sends it).
+ */
+const SENSITIVE_HEADER_FRAGMENTS = [
+  "auth", "token", "secret", "session", "password", "passwd", "pwd", "key", "jwt", "bearer", "sso",
+  "saml", "csrf", "xsrf", "credentials", "sid", "identity", "set-cookie", "cookie",
+  "forwarded", "-ip", "remote-", "via", "-user",
+  "bypass", "signature",
+] as const;
+
+function isSensitiveHeader(name: string): boolean {
+  const lower = name.toLowerCase();
+  return (
+    (SENSITIVE_HEADERS as readonly string[]).includes(lower) ||
+    SENSITIVE_HEADER_FRAGMENTS.some((fragment) => lower.includes(fragment))
+  );
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -58,15 +87,15 @@ interface EventLike {
   contexts?: Record<string, unknown>;
   spans?: SpanLike[];
   breadcrumbs?: BreadcrumbLike[];
+  exception?: unknown;
+  message?: string;
 }
 
 export function scrubSensitiveHeaders<T extends EventLike>(event: T): T {
   const headers = event.request?.headers;
   if (!isRecord(headers)) return event;
   for (const name of Object.keys(headers)) {
-    if ((SENSITIVE_HEADERS as readonly string[]).includes(name.toLowerCase())) {
-      headers[name] = REDACTED;
-    }
+    if (isSensitiveHeader(name)) headers[name] = REDACTED;
   }
   return event;
 }
@@ -99,11 +128,23 @@ export function stripUrlQueries(text: string): string {
   return absolute.startsWith("/") ? absolute.replace(/[?#][\s\S]*$/, "") : absolute;
 }
 
+/**
+ * A record's string values, and the strings inside an array value (a console
+ * breadcrumb's `arguments`: Next logs "Failed to fetch RSC payload for <url>").
+ * Never an object inside an array: those are the app's OWN logged objects,
+ * and `beforeBreadcrumb` runs before the SDK copies them.
+ */
 function scrubData(data: unknown): void {
   if (!isRecord(data)) return;
   for (const key of QUERY_ONLY_KEYS) delete data[key];
   for (const [key, value] of Object.entries(data)) {
-    if (typeof value === "string") data[key] = stripUrlQueries(value);
+    if (typeof value === "string") {
+      data[key] = stripUrlQueries(value);
+    } else if (Array.isArray(value)) {
+      value.forEach((item, i) => {
+        if (typeof item === "string") value[i] = stripUrlQueries(item);
+      });
+    }
   }
 }
 
@@ -176,6 +217,26 @@ function scrubContexts(contexts: Record<string, unknown> | undefined): void {
 }
 
 /**
+ * An exception's message and its frames' file names. In the browser a frame
+ * with no file falls back to `location.href` (globalhandlers.js), and an
+ * inline script's frames ARE the page URL — query included.
+ */
+function scrubException(exception: unknown): void {
+  if (!isRecord(exception) || !Array.isArray(exception.values)) return;
+  for (const value of exception.values) {
+    if (!isRecord(value)) continue;
+    if (typeof value.value === "string") value.value = stripUrlQueries(value.value);
+    const frames = isRecord(value.stacktrace) ? value.stacktrace.frames : undefined;
+    if (!Array.isArray(frames)) continue;
+    for (const frame of frames) {
+      if (!isRecord(frame)) continue;
+      if (typeof frame.filename === "string") frame.filename = stripUrlQueries(frame.filename);
+      if (typeof frame.abs_path === "string") frame.abs_path = stripUrlQueries(frame.abs_path);
+    }
+  }
+}
+
+/**
  * `beforeSend` AND `beforeSendTransaction`, server and browser: one event,
  * whatever its type, leaves with nothing above on it. One function for both
  * hooks, because the two used to differ — only errors had the door's headers
@@ -187,6 +248,8 @@ export function scrubEvent<T extends EventLike>(event: T): T {
   scrubSensitiveHeaders(event);
   scrubRequest(event.request);
   scrubContexts(event.contexts);
+  scrubException(event.exception);
+  if (typeof event.message === "string") event.message = stripUrlQueries(event.message);
   if (Array.isArray(event.spans)) {
     for (const span of event.spans) if (isRecord(span)) scrubSpanUrls(span);
   }
@@ -194,4 +257,20 @@ export function scrubEvent<T extends EventLike>(event: T): T {
     for (const crumb of event.breadcrumbs) if (isRecord(crumb)) scrubBreadcrumbUrls(crumb);
   }
   return event;
+}
+
+/**
+ * What the hooks call. A scrub that throws DROPS the event: handed back to
+ * the SDK, the throw makes it send an "Event processing pipeline threw"
+ * replacement, which returns before `beforeSend` (client.js, `__sentry__`) —
+ * so whatever its scope holds would travel unscrubbed. Nothing of the event is
+ * logged, only that one was dropped.
+ */
+export function scrubEventOrDrop<T extends EventLike>(event: T): T | null {
+  try {
+    return scrubEvent(event);
+  } catch (error) {
+    console.error(`[sentry] an event was dropped: the scrub threw ${error instanceof Error ? error.name : typeof error}`);
+    return null;
+  }
 }

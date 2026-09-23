@@ -2387,7 +2387,10 @@ VERIFY, run before starting.
   worse leaks on the same `event.request`, closed in the same change: the Supabase session cookie
   (`sendDefaultPii` off does NOT strip it in 10.65), `Authorization: Bearer <CRON_SECRET>` on sampled
   enquiry-alert sweeps, and the request BODY whenever Next clones it for the proxy — an enquiry's
-  name, e-mail and phone — plus the door's two headers on transactions (only errors were redacted). **VERIFY:**
+  name, e-mail and phone — plus the door's two headers on transactions (only errors were redacted),
+  and, after an independent review, every header whose name the SDK's own fragments mark sensitive
+  (a Vercel OIDC token, `x-vercel-ip-*` geolocation), browser stack-frame file names and console
+  breadcrumb arguments; a scrub that throws drops the event. **VERIFY:**
   `grep -n "delete request.data" lib/services/scrub-event.ts` — no hit means not landed.
   - **An INCOMING request's query string still reaches Sentry, S (original).** T-enquiry-contact-suggestions cut
     the query off every OUTGOING URL (PostgREST filters) on spans, breadcrumbs and transactions

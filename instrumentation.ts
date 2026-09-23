@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
-import { scrubBreadcrumbUrls, scrubEvent, scrubSpanUrls } from "@/lib/services/scrub-event";
+import { scrubBreadcrumbUrls, scrubEventOrDrop, scrubSpanUrls } from "@/lib/services/scrub-event";
 
 /**
  * Server/edge Sentry init (T5.7). Strictly env-gated: with no DSN (dev, CI,
@@ -20,8 +20,8 @@ export async function register() {
     // secret, the visitor's raw address and the forward key, and — when Next
     // clones it for the proxy — the BODY (an enquiry's name, e-mail and
     // phone). The path stays; the rest goes.
-    beforeSend: (event) => scrubEvent(event),
-    beforeSendTransaction: (event) => scrubEvent(event),
+    beforeSend: (event) => scrubEventOrDrop(event),
+    beforeSendTransaction: (event) => scrubEventOrDrop(event),
     // A PostgREST read's filter IS its query string — the e-mails, phones
     // and names being searched for. Outgoing URLs keep their path and lose
     // their query on every span and breadcrumb.

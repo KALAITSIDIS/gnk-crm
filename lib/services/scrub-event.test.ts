@@ -3,14 +3,21 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 // @sentry/core is @sentry/nextjs's own dependency, pinned to the same version
 // by the lockfile — which is the point: these are the functions production runs.
-import { Scope, ServerRuntimeClient, httpRequestToRequestData, requestDataIntegration } from "@sentry/core";
+import {
+  Scope,
+  ServerRuntimeClient,
+  httpHeadersToSpanAttributes,
+  httpRequestToRequestData,
+  requestDataIntegration,
+} from "@sentry/core";
 import type { ErrorEvent, TransactionEvent } from "@sentry/core";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   REDACTED,
   SENSITIVE_HEADERS,
   scrubBreadcrumbUrls,
   scrubEvent,
+  scrubEventOrDrop,
   scrubSensitiveHeaders,
   scrubSpanUrls,
   stripUrlQueries,
@@ -298,13 +305,118 @@ describe("no incoming request's query, cookie, secret or body travels in an erro
   });
 });
 
+describe("what the independent review found (2026-09-23)", () => {
+  it("redacts every header the SDK's OWN filter would — it applies that filter to span attributes, never to event.request", () => {
+    // The SDK judges a header by fragments of its NAME (auth, token, key,
+    // session, cookie, -ip, forwarded, …) when it copies headers onto a span;
+    // RequestData copies event.request.headers raw. Its filter is the oracle,
+    // so a fragment an SDK upgrade adds is caught here. Cookie is covered
+    // above (the SDK splits it per cookie).
+    const names = [
+      "authorization", "proxy-authorization", "x-vercel-oidc-token", "x-vercel-ip-city",
+      "x-vercel-ip-latitude", "x-vercel-ip-longitude", "x-vercel-ip-postal-code", "x-vercel-ip-country",
+      "x-forwarded-host", "x-forwarded-for", "x-real-ip", "x-gnk-visitor-ip", "x-gnk-forward-key",
+      "x-csrf-token", "x-session-id", "x-api-key", "via", "x-remote-user", "x-jwt-assertion",
+      "host", "user-agent", "accept", "content-type", "x-matched-path", "next-router-state-tree",
+      "sentry-trace", "baggage", "rsc", "next-url",
+    ];
+    const headers = Object.fromEntries(names.map((n) => [n, `value-of-${n}`]));
+    const sdk = httpHeadersToSpanAttributes(headers, false);
+    const sdkFilters = (n: string) => sdk[`http.request.header.${n.replace(/-/g, "_")}`] === "[Filtered]";
+    expect(sdkFilters("x-vercel-oidc-token") && sdkFilters("x-vercel-ip-city"), "the oracle still filters").toBe(true);
+
+    const event = scrubEvent({ request: { headers: { ...headers } } });
+    for (const name of names) {
+      const expected = sdkFilters(name) ? REDACTED : `value-of-${name}`;
+      expect(event.request.headers[name], name).toBe(expected);
+    }
+  });
+
+  it("also redacts a bypass secret and a request signature, which the SDK's fragments miss", () => {
+    const event = scrubEvent({
+      request: { headers: { "x-vercel-protection-bypass": "FAKE-BYPASS", "x-request-signature": "FAKE-SIG" } },
+    });
+    expect(event.request.headers).toEqual({ "x-vercel-protection-bypass": REDACTED, "x-request-signature": REDACTED });
+  });
+
+  it("cuts a browser stack frame's filename — the SDK falls back to location.href — and URLs in the message", () => {
+    // globalhandlers.js: `filename: getFilenameFromUrl(url) ?? getLocationHref()`,
+    // and an inline script's frames are the page URL itself.
+    const event = scrubEvent({
+      message: `GET ${PAGE} failed`,
+      exception: {
+        values: [
+          {
+            type: "Error",
+            value: `Failed to load ${PAGE}`,
+            stacktrace: {
+              frames: [
+                { filename: PAGE, abs_path: PAGE, function: "?", in_app: true },
+                { filename: "/var/task/.next/server/chunks/815.js", function: "render" },
+                { filename: "app:///_next/static/chunks/app/page.js", function: "x" },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    expect(JSON.stringify(event)).not.toMatch(LEAKS);
+    const [value] = event.exception.values;
+    expect(value!.stacktrace.frames[0]!.filename).toBe(PAGE_PATH);
+    expect(value!.stacktrace.frames[0]!.abs_path).toBe(PAGE_PATH);
+    expect(value!.stacktrace.frames[1]!.filename).toBe("/var/task/.next/server/chunks/815.js");
+    expect(value!.stacktrace.frames[2]!.filename).toBe("app:///_next/static/chunks/app/page.js");
+    expect(value!.value).toBe(`Failed to load ${PAGE_PATH}`);
+    expect(event.message).toBe(`GET ${PAGE_PATH} failed`);
+  });
+
+  it("cuts a console breadcrumb's logged strings — Next logs 'Failed to fetch RSC payload for <url>'", () => {
+    const logged = { url: PAGE };
+    const line = `Failed to fetch RSC payload for ${PAGE}. Falling back to browser navigation.`;
+    const crumb = scrubBreadcrumbUrls({
+      category: "console",
+      message: line,
+      data: { arguments: [line, 42, logged], logger: "console" },
+    });
+    expect(crumb.message).not.toMatch(LEAKS);
+    // The cut runs to the next whitespace, so the full stop Next puts straight
+    // after the URL goes with the query.
+    expect(crumb.data.arguments[0]).toBe(`Failed to fetch RSC payload for ${PAGE_PATH} Falling back to browser navigation.`);
+    expect(crumb.data.arguments[1]).toBe(42);
+    // The arguments are the app's OWN objects, and beforeBreadcrumb runs
+    // before the SDK copies them: a logged object is never rewritten.
+    expect(logged.url).toBe(PAGE);
+  });
+
+  it("drops the event — null — when the scrub throws; the SDK's replacement would skip beforeSend", () => {
+    // client.js: the "Event processing pipeline threw" replacement is sent
+    // with data.__sentry__ and returns before processBeforeSend.
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const hostile = {
+      request: {
+        get headers(): Record<string, string> {
+          throw new Error("hostile shape");
+        },
+      },
+    };
+    expect(scrubEventOrDrop(hostile)).toBeNull();
+    expect(logged).toHaveBeenCalledOnce();
+    logged.mockRestore();
+    const ordinary = { request: { url: PAGE } };
+    expect(scrubEventOrDrop(ordinary)).toBe(ordinary);
+    expect(ordinary.request.url).toBe(PAGE_PATH);
+  });
+});
+
 describe("the installed SDK's own event, through scrubEvent, carries none of it", () => {
   /**
-   * The shapes above are copies; this is the SDK itself. A real client with
-   * RequestData and sendDefaultPii off, fed the normalizedRequest the http
-   * integration builds from an incoming request (httpRequestToRequestData) —
-   * so a new place an SDK upgrade puts the URL, a cookie or the body fails
-   * HERE, not in someone else's log.
+   * The shapes above are copies; this one RequestData builds. A real core
+   * client with RequestData and sendDefaultPii off, fed the normalizedRequest
+   * the http integration builds from an incoming request
+   * (httpRequestToRequestData) — so a new place an SDK upgrade makes
+   * RequestData put the URL, a cookie or the body fails HERE. It does not run
+   * @sentry/nextjs's own hooks, the header copy onto the root span, or the
+   * browser SDK; those are the measured shapes above.
    */
   async function capture(): Promise<Array<ErrorEvent | TransactionEvent>> {
     const sent: Array<ErrorEvent | TransactionEvent> = [];
@@ -386,9 +498,11 @@ describe("the scrub is actually wired to the thing that sends", () => {
     ["server (instrumentation.ts)", instrumentation],
     ["browser (instrumentation-client.ts)", client],
   ] as const) {
-    it(`${runtime}: every error AND every transaction goes through scrubEvent`, () => {
-      expect(source).toMatch(/beforeSend:\s*\(event\)\s*=>\s*scrubEvent\(event\)/);
-      expect(source).toMatch(/beforeSendTransaction:\s*\(event\)\s*=>\s*scrubEvent\(event\)/);
+    it(`${runtime}: every error AND every transaction goes through scrubEventOrDrop`, () => {
+      // OrDrop: a scrub that throws must drop the event, not hand it to the
+      // SDK's replacement path, which skips beforeSend.
+      expect(source).toMatch(/beforeSend:\s*\(event\)\s*=>\s*scrubEventOrDrop\(event\)/);
+      expect(source).toMatch(/beforeSendTransaction:\s*\(event\)\s*=>\s*scrubEventOrDrop\(event\)/);
     });
 
     it(`${runtime}: every span and breadcrumb goes through the URL scrub`, () => {
