@@ -2379,7 +2379,7 @@ VERIFY, run before starting.
   used to leave an orphan contact); the rest is not. **VERIFY:** `grep -n "const canWork = isMine || isUnassigned || isAdmin" components/features/leads/lead-actions.tsx` —
   a hit means still open.
 - ~~**An INCOMING request's query string still reaches Sentry, S.**~~ **BUILT 2026-09-23 on branch
-  `fix/sentry-incoming-request-scrub` — not merged (the operator approves).** DECISIONS
+  `fix/sentry-incoming-request-scrub`, PR #52 — not merged (the operator approves).** DECISIONS
   `T-sentry-incoming-request-scrub`. One `scrubEvent` on `beforeSend` AND `beforeSendTransaction`,
   server and browser: the URL keeps its path and loses its query everywhere it was measured
   (`request.url`, `http.target`, `contexts.nextjs.request_path`, referer, `url.full`, navigation
