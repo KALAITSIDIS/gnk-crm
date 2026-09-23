@@ -2345,11 +2345,10 @@ VERIFY, run before starting.
   enquiries from the same person, `enquirer_key`, backfill, "Link all", appending, last_activity —
   is still outstanding, which is why the VERIFY above still reads unbuilt. VERIFY for the slice:
   `grep -l "loadEnquiryContactSuggestions" "app/(app)/leads/page.tsx"`.
-- ~~**Refuse to unarchive an ERASED contact, S.**~~ **FIXED 2026-09-23 — DECISIONS
-  `T-refuse-unarchive-erased` (branch `fix/refuse-unarchive-erased-contact`, no migration; NOT merged
-  until the operator approves): `unarchiveContact` refuses an erased contact with a sentence and no
-  event, its UPDATE is conditional on `erased_at is null`, and the contact page offers no Unarchive
-  on one (`contactArchiveAction`).** VERIFY (fixed): `grep -n "ERASED_STAYS_ARCHIVED" lib/actions/contacts.ts`
+- ~~**Refuse to unarchive an ERASED contact, S.**~~ **FIXED 2026-09-23 (PR #49 → main `3d9f476`, deployed,
+  no migration) — DECISIONS `T-refuse-unarchive-erased`: `unarchiveContact` refuses an erased contact
+  with a sentence and no event, its UPDATE is conditional on `erased_at is null` and `merged_into_id is
+  null`, and the contact page offers no Unarchive on one (`contactArchiveAction`).** VERIFY (fixed): `grep -n "ERASED_STAYS_ARCHIVED" lib/actions/contacts.ts`
   — a hit, and `grep -n "contactArchiveAction" "app/(app)/contacts/[id]/page.tsx"` — a hit. The original:
   `unarchiveContact` (`lib/actions/contacts.ts`)
   checks `is_archived` and `merged_into_id` but not `erased_at`, and the contact page shows the
@@ -2436,8 +2435,9 @@ VERIFY, run before starting.
   Create contact were gated on `mayLinkLeadContact` by T-enquiry-contact-suggestions (Create contact
   used to leave an orphan contact); the rest is not. **VERIFY:** `grep -n "const canWork = isMine || isUnassigned || isAdmin" components/features/leads/lead-actions.tsx` —
   a hit means still open.
-- ~~**An INCOMING request's query string still reaches Sentry, S.**~~ **BUILT 2026-09-23 on branch
-  `fix/sentry-incoming-request-scrub`, PR #52 — not merged (the operator approves).** DECISIONS
+- ~~**An INCOMING request's query string still reaches Sentry, S.**~~ **SHIPPED 2026-09-23 — PR #52 →
+  main `eb9d12d`, deployed and verified in production (`http.target` with a query: ~2,620 in the 7
+  days before, 0 after; browser envelopes path-only).** DECISIONS
   `T-sentry-incoming-request-scrub`. One `scrubEvent` on `beforeSend` AND `beforeSendTransaction`,
   server and browser: the URL keeps its path and loses its query everywhere it was measured
   (`request.url`, `http.target`, `contexts.nextjs.request_path`, referer, `url.full`, navigation
@@ -2469,6 +2469,22 @@ VERIFY, run before starting.
   replace the segment after `/p/` and `/api/portals/<portal>/` with `[token]` — plus a test per
   route; not built there because it contradicts that brief's "keep the path". **VERIFY:**
   `grep -n "\[token\]" lib/services/scrub-event.ts` — no hit means still open.
+- **Sentry still stores `x-vercel-proxied-for` (an IP) and cookie names as span attributes, S.**
+  Measured after T-sentry-incoming-request-scrub deployed (2026-09-23; counts only, no value read):
+  every sampled server transaction carries `http.request.header.x_vercel_proxied_for` raw and
+  IPv4-shaped — GET /login 190, middleware GET 180, GET /offline 110, the enquiry-alert cron 10 — on
+  the same events whose `x_forwarded_for` is `[Filtered]`, and its distinct values follow the caller,
+  so it is very likely the caller's IP (an admin's; a buyer's on `/p/<token>`). No fragment in
+  `SENSITIVE_HEADER_FRAGMENTS` or the SDK's lists matches `proxied-for`, so `event.request.headers`
+  lets it through too. The SDK's header copy onto the root span (`addHeadersAsAttributes`) also
+  stores every cookie NAME (`http.request.header.cookie.<name>`) and the value of any cookie whose
+  name misses its list. Pre-existing, not a regression. Fix: add `proxied` to the fragments; in
+  `scrubData`, redact `http.request.header.<name>` attributes whose name (underscores read as
+  hyphens) is sensitive and drop `http.request.header.cookie.*`; put `x-vercel-proxied-for` and a
+  non-sensitive cookie in the test fixtures. **VERIFY:** `grep -n '"proxied"' lib/services/scrub-event.ts`
+  — no hit means still open; after a deploy the Sentry spans query `is_transaction:true
+  has:http.request.header.x_vercel_proxied_for !http.request.header.x_vercel_proxied_for:"[Filtered]"
+  !http.request.header.x_vercel_proxied_for:"[redacted]"` must return nothing.
 - **A contact's enquiries are listed nowhere, S (nice-to-have).** "Possible existing contact" shows
   a contact's three most recent linked enquiries and says "Showing the 3 most recent only."; the
   contact page has no Leads tab and the inbox has no contact filter, so the rest are reachable only
