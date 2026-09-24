@@ -2583,7 +2583,10 @@ VERIFY, run before starting.
     — no hit means still open; after a deploy the Sentry spans query `is_transaction:true
     has:http.request.header.x_vercel_proxied_for !http.request.header.x_vercel_proxied_for:"[Filtered]"
     !http.request.header.x_vercel_proxied_for:"[redacted]"` must return nothing.
-- **Sentry stores the caller's IP on browser INP spans (`client.address`), S — NEEDS THE OPERATOR.** Found by
+- **Sentry stores the caller's IP on browser INP spans (`client.address`), S — SETTING ON 2026-09-24 ~10:45Z, VERIFY PENDING.**
+  "Prevent Storing of IP Addresses" was switched ON for project gnk-crm at the operator's request (through their
+  Chrome; confirmed saved after a reload, beside Data Scrubber and Use Default Scrubbers, both already on). It
+  applies to NEW events only; run the VERIFY below once browser traffic has arrived. Found by
   T-sentry-span-header-scrub's landing critic and confirmed (2026-09-24, counts only): 50 of the 60
   `span.op:ui.interaction.click` spans in 14 days carry an IPv4-shaped `client.address` (mirrored in
   `http.client_ip`), across five releases. The SDK does not set it — `@sentry/browser-utils`
