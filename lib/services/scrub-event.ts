@@ -79,16 +79,18 @@ function isSensitiveHeader(name: string): boolean {
 
 /**
  * The headers, lower-case, whose VALUE may travel: what a person debugging a
- * request needs (which client, what it asked for, which Next route and
- * request kind, the trace, Vercel's request id for its own logs) and nothing
- * that identifies the person or proves anything. A header off this list keeps
- * its name and loses its value. `referer`, `next-url`, `baggage` and the
- * router state still pass through the URL and token scrub.
+ * request needs (which client, what it asked for — conditional GETs included,
+ * the feeds answer 304 on `if-none-match` — which Next route and request kind,
+ * the trace, Vercel's request id for its own logs). Nothing here proves
+ * anything or pins a person down: the client hints and `accept-language` are
+ * coarse, as is the edge region that opens `x-vercel-id`. A header off this
+ * list keeps its name and loses its value. `referer`, `next-url`, `baggage`
+ * and the router state still pass through the URL and token scrub.
  */
 export const HEADERS_KEPT = [
   "accept", "accept-encoding", "accept-language", "cache-control", "connection", "content-length",
-  "content-type", "host", "origin", "pragma", "priority", "purpose", "referer", "te",
-  "upgrade-insecure-requests", "user-agent",
+  "content-type", "host", "if-modified-since", "if-none-match", "origin", "pragma", "priority",
+  "purpose", "referer", "te", "upgrade-insecure-requests", "user-agent",
   "sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform", "sec-fetch-dest", "sec-fetch-mode",
   "sec-fetch-site", "sec-purpose",
   "rsc", "next-action", "next-router-prefetch", "next-router-segment-prefetch", "next-router-state-tree",

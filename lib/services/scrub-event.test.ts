@@ -847,6 +847,20 @@ describe("a header's value travels only when it is on the list (T-sentry-span-he
     expect(event.contexts.trace.data).toEqual({ "http.response.header.content_type": "text/html", "http.route": "/contacts" });
   });
 
+  it("drops the bare cookie keys the SDK makes for an empty cookie or a Set-Cookie array, and keeps a conditional GET", () => {
+    // The review's probe: an empty Cookie becomes `…header.cookie`, a Node
+    // array Set-Cookie `…header.set_cookie` — no `.<name>` suffix on either.
+    const span = scrubSpanUrls({
+      data: {
+        "http.request.header.cookie": "[Filtered]",
+        "http.response.header.set_cookie": "gnk_fake_pref=FAKE-COOKIE-VALUE",
+        "http.request.header.cookie2": "FAKE-COOKIE-VALUE",
+        "http.request.header.if_none_match": 'W/"feed-etag"',
+      } as Record<string, unknown>,
+    });
+    expect(span.data).toEqual({ "http.request.header.cookie2": REDACTED, "http.request.header.if_none_match": 'W/"feed-etag"' });
+  });
+
   it("holds against the SDK's own header copy, whatever keys it makes", () => {
     // httpHeadersToSpanAttributes is what @sentry/nextjs's addHeadersAsAttributes
     // calls: if an SDK upgrade changes the key shape, this is where it shows.
