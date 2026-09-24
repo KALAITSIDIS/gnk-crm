@@ -2555,7 +2555,7 @@ VERIFY, run before starting.
     route; not built there because it contradicts that brief's "keep the path". **VERIFY:**
     `grep -n "\[token\]" lib/services/scrub-event.ts` — no hit means still open.
 - ~~**Sentry still stores `x-vercel-proxied-for` (an IP) and cookie names as span attributes, S.**~~
-  **BUILT 2026-09-24 on branch `fix/sentry-span-header-scrub`, PR #56 — not merged (the operator approves).**
+  **LANDED 2026-09-24: PR #56 → main `75d8635`, deployed (`dpl_6uZZgd9ZZpNFoQNi8gMrb8sVrCiH`), verified in production.**
   DECISIONS `T-sentry-span-header-scrub`. Measured first (counts only): `x-vercel-proxied-for` AND
   `x-vercel-ja4-digest` (the TLS client fingerprint, which nobody had named) were raw on all 10,060
   sampled server transactions in 7 days, so a fragment would have been one more miss. A header's VALUE
@@ -2579,6 +2579,16 @@ VERIFY, run before starting.
     — no hit means still open; after a deploy the Sentry spans query `is_transaction:true
     has:http.request.header.x_vercel_proxied_for !http.request.header.x_vercel_proxied_for:"[Filtered]"
     !http.request.header.x_vercel_proxied_for:"[redacted]"` must return nothing.
+- **Sentry stores the caller's IP on browser INP spans (`client.address`), S — NEEDS THE OPERATOR.** Found by
+  T-sentry-span-header-scrub's landing critic and confirmed (2026-09-24, counts only): 50 of the 60
+  `span.op:ui.interaction.click` spans in 14 days carry an IPv4-shaped `client.address` (mirrored in
+  `http.client_ip`), across five releases. The SDK does not set it — `@sentry/browser-utils`
+  (`metrics/utils.js`) writes `client.address: "{{auto}}"` only when `userInfo` is on, and `sendDefaultPii` is
+  unset — so Sentry's ingest infers it from the request, where no `beforeSend*`/`beforeSendSpan` hook reaches. Fix:
+  Sentry → gnk-crm → Settings → Security & Privacy → "Prevent Storing of IP Addresses" (a project setting — the
+  operator's to change). Untested alternative in code: set `client.address` to a non-`{{auto}}` placeholder in
+  `beforeSendSpan` and MEASURE whether ingest still overwrites it. **VERIFY:** the spans query
+  `span.op:ui.interaction.click client.address:*.*.*.*` over the days after the change must return 0.
 - **A contact's enquiries are listed nowhere, S (nice-to-have).** "Possible existing contact" shows
   a contact's three most recent linked enquiries and says "Showing the 3 most recent only."; the
   contact page has no Leads tab and the inbox has no contact filter, so the rest are reachable only
