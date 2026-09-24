@@ -794,7 +794,7 @@ describe("a header's value travels only when it is on the list (T-sentry-span-he
           "x-vercel-ja4-digest": VERCEL_ADDS["x-vercel-ja4-digest"],
           "x-vercel-new-thing": "FAKE-UNKNOWN",
           "X-Now-Route-Matches": "nxtPtoken=FAKE-UNKNOWN",
-        },
+        } as Record<string, string>,
       },
     });
     expect(JSON.stringify(event)).not.toMatch(/203\.0\.113\.77|FAKEJA4|FAKE-UNKNOWN/);
