@@ -7935,7 +7935,7 @@ Refuted but cheap, also done: the unit test now proves the update names THIS lea
 **The leak** (operator: "fix the reservation release reason leak next"; BACKLOG "More event payloads carry typed text by value"). Inspected at `fdbc5e4` (`origin/main` when the work began).
 - **The writer.** `transitionReservation` (`lib/actions/reservations.ts:242-249`) logged `reservation_status_changed` on the PROPERTY as `{ reservation_id, from, to, reason: release_reason ?? null }`. The release reason is free text an agent types, up to 300 characters (`optText(300)`), so it entered the hash-chained payload, beyond erasure and correction (SEC-03).
 - **Where it printed.** The line printed it (`reservationStatusReason`) on the property's Activity tab, on the admin dashboard feed, and in a property-scoped commission evidence report. That report lists every hold on the property, so it printed OTHER buyers' reasons on a report about one buyer.
-- **Worse than the row.** The row dropped a reason posted with a live target (`isLiveReservation(to) ? null : …`, line 231), but the event did not. So a crafted Confirm or Convert with a reason put text into the chain that no row ever held.
+- **Worse than the row.** The row dropped a reason posted with a live target (`isLiveReservation(to) ? null : …`, line 231), but the event did not. So a crafted Confirm (the one live target a form can post) with a reason put text into the chain that no row ever held; a Convert's or Expire's reason landed on the row, as a Release's does.
 
 **Verified, not assumed** (a read-only scouting workflow of three readers and a critic, at `fdbc5e4`).
 - **The only producer of typed text in any reservation event.** Every other reservation-family payload holds ids, enum values, amounts, dates, staff plan labels or SYSTEM-built strings:
@@ -7964,5 +7964,7 @@ Refuted but cheap, also done: the unit test now proves the update names THIS lea
 **Found on the way — BACKLOG, not built here.**
 - `request_lead_escalation_recovery` (0111) writes the admin-typed recovery reason into the `lead_escalation` event. It is SQL, so the fix is a migration.
 - Erasure never touches `reservations`, so a hold's `release_reason` and `notes` outlive Article 17. That is added to the open erasure decision.
+
+**Review.** Three read-only lenses (correctness, tests, docs), two refuters per finding. Correctness found nothing. Confirmed (low) and fixed: the unit test did not prove the UPDATE names THIS hold — the read before it filters on the id too; now only the filters chained after the update count, as in the lead test — and this entry's "Confirm or Convert" (Convert is not live; its reason reaches the row). Refuted but cheap, also done: typed legacy reasons on confirmed / converted / expired in the renderer test, a positive anchor for the e2e dashboard check, and an exact e2e comment.
 
 **Compatibility and deploy order.** No migration, no hosted step, not deploy-coupled: an old app renders a new payload as `Reservation {from} → {to}`, and a new app renders an old one the same. Evidence reports whose rows held a release reason recompute to a different content hash if regenerated; verification is by `pdf_sha256` (see T-event-typed-text-shape). Order: branch CI green → merge → deploy READY → probes.

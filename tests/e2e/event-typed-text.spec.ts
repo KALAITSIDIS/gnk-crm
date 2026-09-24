@@ -346,7 +346,8 @@ test("releasing a reservation keeps the reason on the hold; the event and the Ac
     const panel = page.getByRole("tabpanel");
     await panel.getByLabel(/^reason$/i).fill(RES_REASON);
     await panel.getByRole("button", { name: /^release$/i }).click();
-    // no toast on success: the status event is the action's last write, so wait for it
+    // no toast on success; the status event is written after the row update, so its
+    // arrival proves the row write (the prompt close that follows is not asserted here)
     await expect.poll(async () => (await eventsOf(svc, propertyId, "reservation_status_changed")).length, {
       timeout: opTimeout(15_000),
     }).toBe(1);
@@ -371,6 +372,8 @@ test("releasing a reservation keeps the reason on the hold; the event and the Ac
     }
 
     await page.goto("/dashboard", { waitUntil: "networkidle" });
+    // the feed shows THIS release (its note carries the reference) — then none of why
+    await expect(page.locator("li", { hasText: "Reservation held → released" }).filter({ hasText: RES_REF }).first()).toBeVisible();
     for (const word of ["Elena", "Hadjipetrou", "mother"]) {
       await expect(page.locator("body")).not.toContainText(word);
     }

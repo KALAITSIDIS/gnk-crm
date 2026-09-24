@@ -71,13 +71,15 @@ describe("transitionReservation keeps the release reason on the row, not in the 
     const [patch] = fake.argsOf("reservations", "update")[0] as [Record<string, unknown>];
     expect(patch).toMatchObject({ status: "released", release_reason: REASON });
     expect(typeof patch.released_at).toBe("string");
-    // race-safe precondition folded into the write, unchanged
-    expect(fake.argsOf("reservations", "eq")).toEqual(
-      expect.arrayContaining([
-        ["id", RES_ID],
-        ["status", "held"],
-      ]),
-    );
+    // The write names THIS hold and the status it read (race-safe), unchanged.
+    // Only the filters chained AFTER the update count: the read before it filters
+    // on the id too, so a write that lost its id filter would otherwise pass.
+    const calls = fake.calls.filter((c) => c.table === "reservations");
+    const at = calls.findIndex((c) => c.method === "update");
+    expect(calls.slice(at).filter((c) => c.method === "eq").map((c) => c.args)).toEqual([
+      ["id", RES_ID],
+      ["status", "held"],
+    ]);
   });
 
   it("release: ONE status event on the property, naming the hold and the move only", async () => {

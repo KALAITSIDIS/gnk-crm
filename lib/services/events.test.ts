@@ -336,6 +336,10 @@ describe("typed text is never printed from a payload (T-event-typed-text-shape)"
     // T-reservation-release-reason-shape: transitionReservation wrote `{ reservation_id, from, to, reason }`
     ["reservation released", ev("reservation_status_changed", { reservation_id: "r1", from: "held", to: "released", reason: REASON }, "property"), "Reservation held → released"],
     ["reservation with a null reason", ev("reservation_status_changed", { reservation_id: "r1", from: "held", to: "confirmed", reason: null }, "property"), "Reservation held → confirmed"],
+    // a crafted Confirm put its reason in the chain and never on the row
+    ["reservation confirmed with a reason", ev("reservation_status_changed", { reservation_id: "r1", from: "held", to: "confirmed", reason: REASON }, "property"), "Reservation held → confirmed"],
+    ["reservation converted with a reason", ev("reservation_status_changed", { reservation_id: "r1", from: "confirmed", to: "converted", reason: REASON }, "property"), "Reservation confirmed → converted"],
+    ["reservation expired with a reason", ev("reservation_status_changed", { reservation_id: "r1", from: "held", to: "expired", reason: REASON }, "property"), "Reservation held → expired"],
   ] as const;
 
   it.each(LEGACY)("a LEGACY %s payload renders the neutral line", (_name, e, line) => {
