@@ -2398,28 +2398,35 @@ VERIFY, run before starting.
     deals, mandates, properties and party defaults: check each for client fields. The `updated`
     timeline line does not read `changed` (`lib/services/events.ts`). Existing events cannot be
     edited. Found by T-merged-event-ids-only.
-- **Titles, a file name, a buyer's name and a lost reason enter the chain by value, S/M.** Written into
-  the hash-chained payload, and typed or chosen by people ("Call Maria about the deposit", "Andreou
-  passport scan.pdf"):
-  - a task's title (`lib/actions/tasks.ts`: `created`, `completed`, `reopened`);
+- **Titles, a file name and a lost reason enter the chain by value, S/M.** Written into the
+  hash-chained payload, and typed or chosen by people ("Call Maria about the deposit", "Andreou
+  passport scan.pdf") — or BUILT from a person's name by the system, which nobody types:
+  - a task's title (`lib/actions/tasks.ts`: `created`, `completed`, `reopened`). Some task titles are
+    machine-built from a name: the `deal_no_contact` nudge is `'No contact in N days: ' || d.title`
+    (0078's `create_followup_nudges`), and a deal converted from a lead is titled with the buyer's display
+    name; the `retention_expired` task is built from the contact's `display_name` (0078), which erasure
+    keeps. Ticking either task writes that name through `completed` / `reopened`;
   - a contact or property document's title (`contact-documents.ts`, `property-documents.ts`:
     `document_uploaded`, `document_deleted`);
   - a mandate file's NAME (`mandates.ts`, `document_uploaded`);
-  - a converted deal's `title` in its `created` event (`leads.ts` `convertLead`), which is the buyer's
-    display name, on EVERY conversion. The `updated` retitle is shape-only since
-    T-updated-event-shape-only, so this is the larger leak;
   - a lost deal's typed reason (`deals.ts`, `lost`).
-  The deal `created` line does not print the title (`lib/services/events.ts` `created` reads `amount`
-  only), so that one is a plain payload edit. The rest are RENDERED from the payload
-  (`completed` / `reopened` / `document_uploaded` / `document_deleted` / `lost`), so the fix is 0094's
-  shape: the event carries the row's id and the line joins the row (`deals.lost_reason` already holds
-  the reason). A deleted document has no row left to join, which needs a decision (a tombstone row, or
-  "a document" without its name). Found by T-updated-event-shape-only and its pre-merge review; not
-  built there. **VERIFY:** each of these three greps (run from the repo root) hits a writer; any hit
-  means that writer is still open:
+  The task's `created` title is NOT printed (the `created` line reads `amount` only), so that one is a
+  plain payload edit, like the deal's was. The rest are RENDERED from the payload (`completed` /
+  `reopened` / `document_uploaded` / `document_deleted` / `lost` in `lib/services/events.ts`), so the
+  fix is 0094's shape: the event carries the row's id and the line joins the row (`deals.lost_reason`
+  already holds the reason). A deleted document has no row left to join, which needs a decision (a
+  tombstone row, or "a document" without its name). Found by T-updated-event-shape-only and its
+  pre-merge review, the system-built titles by T-deal-created-title-shape's review; not built there.
+  **VERIFY:** each of these two greps (run from the repo root) hits a writer; any hit means that
+  writer is still open:
   `grep -nE "payload: \{ (title|reason: lostReason|document_id: doc\.id, title)" lib/actions/tasks.ts lib/actions/mandates.ts lib/actions/contact-documents.ts lib/actions/property-documents.ts lib/actions/deals.ts` ·
-  `grep -n -A4 'eventType: "document_deleted"' lib/actions/contact-documents.ts lib/actions/property-documents.ts | grep "title: doc.title"` ·
-  `grep -n -A5 'eventType: "created",' lib/actions/leads.ts | grep -E -- "-\s+title,$"`.
+  `grep -n -A4 'eventType: "document_deleted"' lib/actions/contact-documents.ts lib/actions/property-documents.ts | grep "title: doc.title"`.
+  - ~~**A converted deal's `created` event carries the buyer's name.**~~ **FIXED 2026-09-23 — DECISIONS
+    `T-deal-created-title-shape`: `convertLead` no longer writes the deal's `title` (`<buyer display
+    name> — <reference>`) into the deal's `created` event; the row keeps it. Two hosted events written
+    before the fix keep it (ids 14 and 70, operator test data) — the chain cannot be edited.** VERIFY
+    (fixed): `grep -n -A8 'eventType: "created",' lib/actions/leads.ts | grep -E -- "-\s+title,$"` —
+    no hit.
 - **RLS test 15 compares a client clock and a database timestamp as strings, S.** `supabase/tests/rls.test.ts`
   (`move_deal_to_stage`, "stage_entered_at must restart") takes `t0 = new Date().toISOString()` and asserts
   `moved.stage_entered_at >= t0` on the STRINGS. `t0` has milliseconds and `Z`; PostgREST returns microseconds and
