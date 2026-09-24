@@ -7567,3 +7567,57 @@ Remote branch deleted; worktree removed.
 - **The merge.** PR #54 → main `37083ca`. Vercel production `dpl_Ds2KrUXWZdXQgm9VVcjamwBNkz41` READY and aliased (fra1).
 - **Checks after the deploy.** `/login` 200 with the CSP nonce on 16 of 16 scripts, `/leads` 307 to login, no runtime errors, and no Sentry issue first seen after the deploy. CI on the merge commit was green on the first attempt (run 35969130506: checks, rls, e2e).
 - Nothing on hosted. Remote branch deleted.
+
+## T-sentry-span-header-scrub — a request header's value reaches Sentry only when its name is on a list; cookie attributes are dropped (2026-09-24; no migration)
+
+**The brief** (BACKLOG, from #52's landing): `x-vercel-proxied-for` — very likely the caller's IP — was stored raw as the span attribute `http.request.header.x_vercel_proxied_for` on every sampled server transaction. The SDK's header copy also stored every cookie NAME as an attribute key. The line proposed adding `proxied` to the name fragments, applying the fragments to span attributes, and dropping cookie attributes.
+
+**Measured first** (Sentry spans, 7 days, counts only; no value read):
+- `x-vercel-proxied-for` was raw on **10,060** transactions: every sampled server transaction, on the same events whose `x-forwarded-for` is `[Filtered]` (10,060, the control).
+- **`x-vercel-ja4-digest` was raw on the same 10,060.** Nobody had named it. It is the TLS client fingerprint Vercel computes, which identifies the visitor's device and browser.
+- `x-vercel-id` (the request id Vercel's logs are keyed by) was present, as expected.
+- `http.request.header.cookie.sb_yjgirvzgoiywdojnpkpd_auth_token` was present on 5,640. The name is stored; the value is filtered by the SDK.
+- Never stored, per the query validator's "unknown attribute": `x-vercel-ja3-digest`, `x-vercel-proxy-signature`, `x-vercel-sc-headers`, and every `http.response.header.*`. This setup does not copy response headers.
+
+**Decision: an allowlist, not one more fragment.** Adding `proxied` would have left `ja4` raw, and the next header Vercel adds after it. Naming what is sensitive failed twice on the same measurement, so a header's VALUE now travels only when its name is on `HEADERS_KEPT` and is not sensitive by name. Every other header, today's and tomorrow's, keeps its name and says `[redacted]`: #52's "present and unreadable" convention.
+- **The list** is what a person debugging a request needs: which client (`user-agent`, the `sec-ch-ua*` and `sec-fetch-*` hints), what it asked for (`accept*`, `content-type`, `content-length`, `host`, `origin`, `referer`, and the conditional-GET pair `if-none-match`/`if-modified-since`, since the feeds answer 304 on our own ETag), which Next route and request kind (`x-matched-path`, `rsc`, `next-url`, `next-action`, the router state and prefetch headers), the trace (`sentry-trace`, `baggage`, `traceparent`, `tracestate`), and Vercel's request id and deployment URL. Nothing on it proves anything or pins a person down: the client hints and `accept-language` are coarse, as is the edge region that opens `x-vercel-id`. `referer`, `next-url`, `baggage` and the router state still pass through the URL and token scrub.
+- **Where it applies:** `event.request.headers` (errors and transactions, server and browser — the browser's `Referer` and `User-Agent` are on the list) and every `http.request.header.*` / `http.response.header.*` span attribute. There, the name is read back from the key with `_` as `-`.
+- **Cookies:** a cookie attribute (`http.request.header.cookie.<name>`, a response's `set_cookie.<name>`) is dropped whole, because the SDK puts the cookie's name in the key itself. `event.request.headers.cookie` stays `[redacted]`, and `request.cookies` was already dropped by #52.
+- **The fragment rule stays as a second guard.** A listed name that the SDK itself filters (say someone lists `x-forwarded-for`) still does not travel, and a test holds every listed name against `httpHeadersToSpanAttributes`.
+- `x-now-route-matches` (Vercel's route params, which could carry a `[token]`) is off the list, so it cannot carry a token in a header either.
+
+**Tests.** `lib/services/scrub-event.test.ts`, 55 → 61, written first and seen failing (6 red for the right reasons: the address, the fingerprint and the cookie name leaking, `HEADERS_KEPT` missing).
+- `event.request.headers` with Vercel's two headers, an unknown future one and `X-Now-Route-Matches`: redacted, while ten ordinary headers keep their values.
+- The root span's attributes, underscores for hyphens: redacted versus kept, and a `[Filtered]` value becomes `[redacted]`.
+- Cookie attributes, request and response: dropped. So are the bare keys the SDK makes for an empty `Cookie` or a Node array `Set-Cookie` (`…header.cookie`, `…header.set_cookie`), while `cookie2` is redacted and `if-none-match` kept.
+- The SDK's own `httpHeadersToSpanAttributes` over a realistic Vercel header set with a cookie: the SDK alone stores all of it, and the scrub leaves none.
+- Every listed name against the SDK's filter.
+- The real-SDK event test now puts the SDK's own header copy on its transaction's root span (as `addHeadersAsAttributes` does), and its request carries Vercel's headers and a cookie with an innocent name.
+
+Ten mutations, each restored after its run, were each caught:
+- the old fragment rule on `event.request`;
+- span header attributes not visited;
+- cookie attributes kept;
+- underscores not read as hyphens (this also reddens the router-state test);
+- a filtered header listed;
+- the SDK guard removed;
+- `proxied-for` listed;
+- `ja4` listed;
+- (review round) the bare cookie keys not dropped;
+- (review round) the conditional-GET pair unlisted.
+
+**Independent review** (a code-reviewer agent, against the installed Next 16.3.5 and @sentry 10.65 sources, with a probe through the real `@sentry/core`). Nothing critical or important. It confirmed:
+- only `httpHeadersToSpanAttributes` writes header attributes here (`addHeadersAsAttributes`; undici's copy is unconfigured);
+- @sentry/nextjs disables the http integration's incoming-request spans, which would write `http.client_ip`;
+- span streaming is off, so attributes arrive as `data`;
+- multi-value headers are joined with `;`, never given a `.<n>` key;
+- `app/` has no edge routes;
+- the browser sends only `Referer` and `User-Agent`.
+
+Fixed: `if-none-match`/`if-modified-since` added to the list; the list's comment made honest about coarse signals; the bare cookie keys tested. Accepted:
+- `baggage` members other than `sentry-*` pass (only a caller can add them, so it is the caller's own data);
+- a header LITERALLY named with underscores (`user_agent`) reads as a listed name in a span key, though it is redacted on `event.request.headers` (only a caller can send one).
+
+Measured 2026-09-24, on the tree merged with main after #54: typecheck and lint clean; unit 197 files / 2508 tests (`--testTimeout=30000`).
+
+**Deploy.** Code only: no migration, no environment variable. After it, the BACKLOG's own check must return nothing: `is_transaction:true has:http.request.header.x_vercel_proxied_for !http.request.header.x_vercel_proxied_for:"[Filtered]" !http.request.header.x_vercel_proxied_for:"[redacted]"`. So must the same query for `x_vercel_ja4_digest`, and `has:http.request.header.cookie.sb_yjgirvzgoiywdojnpkpd_auth_token` for new transactions.
