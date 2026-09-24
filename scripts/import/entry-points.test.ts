@@ -5,6 +5,9 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
+import { mkdirSync } from "node:fs";
+import sharp from "sharp";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 /**
@@ -26,10 +29,12 @@ const REPORTS = join(HERE, "reports");
 const ORG = "00000000-0000-4000-8000-0000000000aa";
 const ROW_ID = "00000000-0000-4000-8000-0000000000bb";
 
-type Seen = { method: string; path: string };
+type Seen = { method: string; path: string; body: string };
 let server: Server;
 let url = "";
 let seen: Seen[] = [];
+/** the row a single-row read of `properties` answers with (media.mts looks its listing up) */
+let propertyRow: Record<string, unknown> | null = null;
 const writes = () => seen.filter((r) => r.method !== "GET" && r.method !== "HEAD");
 const written = (table: string) => writes().some((r) => r.path === `/rest/v1/${table}`);
 
@@ -39,14 +44,21 @@ beforeAll(async () => {
   // id for every insert.
   server = createServer((req, res) => {
     const path = (req.url ?? "").split("?")[0];
-    seen.push({ method: req.method ?? "", path });
-    req.resume();
+    const entry: Seen = { method: req.method ?? "", path, body: "" };
+    seen.push(entry);
+    req.setEncoding("latin1");
+    req.on("data", (chunk: string) => (entry.body += chunk));
     req.on("end", () => {
       const one = String(req.headers.accept ?? "").includes("vnd.pgrst.object");
       res.setHeader("content-type", "application/json");
       if (req.method === "GET" || req.method === "HEAD") {
-        const list = path === "/rest/v1/districts" ? [{ id: "district-paf", code: "PAF" }] : [];
-        res.end(JSON.stringify(one ? null : list));
+        const list =
+          path === "/rest/v1/districts"
+            ? [{ id: "district-paf", code: "PAF" }]
+            : path === "/rest/v1/properties" && propertyRow
+              ? [propertyRow] // maybeSingle() asks for a list and picks the row itself
+              : [];
+        res.end(JSON.stringify(one ? (path === "/rest/v1/properties" ? propertyRow : null) : list));
       } else if (path.startsWith("/rest/v1/rpc/")) {
         res.end(JSON.stringify("PAF9999"));
       } else {
@@ -67,6 +79,7 @@ let dir: string;
 let n = 0;
 beforeEach(() => {
   seen = [];
+  propertyRow = null;
   dir = mkdtempSync(join(tmpdir(), "import-entry-"));
   return () => rmSync(dir, { recursive: true, force: true });
 });
@@ -182,6 +195,41 @@ describe("positive controls — the recorder sees every write a well-formed file
       for (const table of ["contacts", "events", "buyer_requirements"]) {
         expect(written(table), `a write to ${table}`).toBe(true);
       }
+    } finally {
+      for (const f of reportsFor(base)) unlinkSync(join(REPORTS, f));
+    }
+  }, 60_000);
+});
+
+describe("media.mts logs a photo by id and digest, never by its file name (T-media-file-name-shape)", () => {
+  it("live: the row and the media_uploaded event carry the digest of the file's bytes, and no word of its name", async () => {
+    const root = join(dir, "media-root");
+    const folder = join(root, "zz-photos");
+    mkdirSync(folder, { recursive: true });
+    const image = await sharp({ create: { width: 48, height: 32, channels: 3, background: { r: 90, g: 60, b: 30 } } })
+      .jpeg()
+      .toBuffer();
+    // a folder name a person gave it — none of it may reach the chain
+    writeFileSync(join(folder, "Andreou Kyriakos villa front 99111222.jpg"), image);
+    const digest = createHash("sha256").update(image).digest("hex");
+    propertyRow = { id: "prop-media-1", org_id: ORG, visibility: "draft" };
+    const { path, base } = csv("reference,photo_folder\nZZMEDIA1,zz-photos\n");
+    try {
+      const r = await run("media.mts", ["--file", path, "--org", ORG, "--media-root", root]);
+      expect(r.code, r.stderr).toBe(0);
+
+      const eventWrites = writes().filter((w) => w.path === "/rest/v1/events");
+      expect(eventWrites).toHaveLength(1);
+      const event = JSON.parse(eventWrites[0].body) as Record<string, unknown>;
+      expect(event).toMatchObject({ entity_type: "property", entity_id: "prop-media-1", event_type: "media_uploaded" });
+      expect(event.payload).toEqual({ media_id: ROW_ID, watermarked: false, content_sha256: digest, source: "import_script" });
+      for (const word of ["Andreou", "Kyriakos", "villa front", "99111222", ".jpg"]) {
+        expect(eventWrites[0].body, `the file name's "${word}" reached the chain`).not.toContain(word);
+      }
+
+      // one digest, the same fact on the row
+      const rowWrite = writes().find((w) => w.path === "/rest/v1/property_media");
+      expect(JSON.parse(rowWrite!.body)).toMatchObject({ content_sha256: digest, kind: "photo" });
     } finally {
       for (const f of reportsFor(base)) unlinkSync(join(REPORTS, f));
     }

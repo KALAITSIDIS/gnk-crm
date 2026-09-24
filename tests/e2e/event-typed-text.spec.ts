@@ -452,11 +452,24 @@ test("a photo's events carry its id and digest, never its file name", async ({ p
     }).toBe(1);
     expect(await eventsOf(svc, propertyId, "media_deleted")).toEqual([{ media_id: row!.id, content_sha256: digest }]);
 
+    // An OLDER upload event, in the shape written before this change — it carries
+    // the name, as 35 hosted events do. The Activity tab must not print it either.
+    const { error: legacyErr } = await svc.from("events").insert({
+      org_id: orgId,
+      actor_id: null,
+      entity_type: "property",
+      entity_id: propertyId,
+      event_type: "media_uploaded",
+      payload: { media_id: row!.id, file: PHOTO_NAME, kind: "photo", watermarked: false },
+    });
+    expect(legacyErr).toBeNull();
+
     // the Activity tab says what happened to a photo, and nothing of its file's name
     await page.reload({ waitUntil: "networkidle" });
     await openTab(page, /^Activity$/);
     const timeline = page.getByRole("tabpanel");
-    await expect(timeline.locator("li", { hasText: "Photo uploaded" })).toHaveCount(1);
+    // two: the real upload and the older-shape one
+    await expect(timeline.locator("li", { hasText: "Photo uploaded" })).toHaveCount(2);
     await expect(timeline.locator("li", { hasText: "Photo deleted" })).toHaveCount(1);
     for (const word of ["Andreou", "Kyriakos", "99111222"]) {
       await expect(timeline).not.toContainText(word);

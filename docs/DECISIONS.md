@@ -7985,7 +7985,7 @@ Refuted but cheap, also done: the unit test now proves the update names THIS lea
 **The fix.**
 - `media_uploaded` = `{ media_id, kind, watermarked, content_sha256 }`. The digest is the ROW's own `content_sha256` — one computation, the same fact on the row and in the event — of the ORIGINAL bytes. It is a digest of an image, not of the removed text, and it keeps the trace the names gave: the 2026-09-07 cleanup used them to find six borrowed images across four listings, including photos already deleted, and `content_sha256` on the row covers only photos that still exist.
 - `media_deleted` = `{ media_id, content_sha256?, bulk? }`, the digest read from the row the delete itself returns (the select now names the column). An imported photo whose digest was never backfilled gets no key, not a null. The admin events lookup is GONE; the admin client stays for storage removal only.
-- The importer logs `{ media_id, watermarked, source: "import_script" }` (it computes no digest; its row gap is the known backfill-hashes script).
+- The importer (`scripts/import/media.mts`) now hashes the original bytes once and writes the digest to the row AND the event — `{ media_id, watermarked, content_sha256, source: "import_script" }` — as the action does. Before, it computed none, so an imported photo's row stayed null until someone ran `backfill-hashes.mjs`, and a delete before that would have left no trace of which image it was.
 - The lines print `mediaUploaded` / `mediaDeleted` for any payload, old or new, whoever wrote it — any staff member can insert an event with any payload (`events_insert`, 0071), so the renderer must not trust `file` at all. `mediaUploadedFile` / `mediaDeletedFile` are gone in EN, EL and RU, and `{file}` leaves `messages.test.ts`'s sample parameters.
 - `lib/actions/media-deleted-keeps-the-name.test.ts` is DELETED. Its premise was the name's recovery; the new file pins the opposite, including that the system is never asked for events.
 
@@ -7998,6 +7998,13 @@ Refuted but cheap, also done: the unit test now proves the update names THIS lea
 **Not changed here.**
 - `media_alt_set`'s alt text: staff-written, PUBLISHED marketing copy, which T-updated-event-shape-only keeps by value on purpose — now a BACKLOG NOTE with the facts, including that it is missing from `MEDIA_NOISE`.
 - The floor-plan wording: the lines say "Photo" for a floor plan too, as before.
-- The scouts found another identity-in-chain writer: the contact importer's `imported` event carries the contact's name. It is on BACKLOG.
+- The scouts and the review found another identity-in-chain writer, in both row importers: `imported` carries a contact's name, or an owner's PHONE number (`properties.mts`: `name ?? phone`). It is on BACKLOG, with a VERIFY grep per importer.
+
+**Review.** Four read-only lenses (correctness, security, tests, docs), two refuters per finding; nothing wrong with the fix itself. Confirmed and fixed:
+- BACKLOG's importer item missed `properties.mts`'s owner name-or-phone, and its grep would have gone silent with it open;
+- the delete tests could not catch the chain lookup coming back on the CALLER's client — the caller's fake now holds an old upload event WITH the name, and the test pins that `events` is never read;
+- no test covered the importer's event — `scripts/import/entry-points.test.ts`'s PostgREST stand-in now records request bodies and serves a property, and a live run of `media.mts` over a sharp-made JPEG with a person's name pins the exact event body and the row's digest;
+- the importer wrote no digest (one vote), which undercut the reason for adding one — it now hashes, as above.
+Refuted but cheap, also done: the storage assertions name their bucket (renditions from `media`, the original from `documents`), and the e2e inserts an older upload event WITH the file name before reading the Activity tab, so its "no file name" check can fail.
 
 **Compatibility and deploy order.** No migration, no hosted step, not deploy-coupled: an old app renders a new payload as the bare line (its `file` branch finds nothing), and a new app renders an old payload the same. The evidence report never included these two types, so no report hash moves. The public feed and portals read no events and carried no names. Order: branch CI green → merge → deploy READY → probes.

@@ -2482,18 +2482,20 @@ VERIFY, run before starting.
     `lead_escalation` event as `'reason', v_reason`. No line prints it (no `lead_escalation` entry in
     `EVENT_LINES`), but the chain holds it, and the TypeScript payload scan cannot see SQL. The fix is a
     forward migration re-creating the function without the key (a return shape is untouched);
-  - an IMPORTED contact's name — found by T-media-file-name-shape's scouts: `scripts/import/contacts.mts`
-    logs `imported` with `{ name }`, built from the row's first and last name (or company name), and
-    `importedRef` prints it on the contact's Activity tab and in an un-narrowed evidence report. That is
-    identity in the chain, which T-merged-event-ids-only ruled out for `merged`. (A property import's
-    `reference` is the office's own code, not typed text.)
+  - an IMPORTED person's name or phone — found by T-media-file-name-shape's scouts and review:
+    `scripts/import/contacts.mts` logs `imported` with `{ name }`, built from the row's first and last name
+    (or company name), and `scripts/import/properties.mts` logs the owner contact it creates with
+    `{ name: name ?? phone, as: "owner" }` — the PHONE NUMBER when no name was given. `importedRef` prints
+    it on the contact's Activity tab and in an un-narrowed evidence report. That is identity in the chain,
+    which T-merged-event-ids-only ruled out for `merged`. (A property import's `reference` is the office's
+    own code, not typed text; the default `batch` label is the CSV's own file name, the operator's.)
   **VERIFY** — one grep per writer, and a hit means THAT writer is still open (the lead, reservation and
   photo ones are fixed and must stay silent): `grep -n "payload: { reason: parsed.data.reason" lib/actions/leads.ts` ·
   `grep -n "reason: release_reason" lib/actions/reservations.ts` ·
   `grep -nE "file: (file\.)?name," lib/actions/media.ts scripts/import/media.mts` ·
   `grep -n "\.\.\.feedback," lib/actions/viewings.ts` ·
   `grep -ln "function public.request_lead_escalation_recovery" supabase/migrations/*.sql | tail -1 | xargs grep -n "'reason', v_reason"` ·
-  `grep -n "name: detail" scripts/import/contacts.mts`.
+  `grep -n "name: detail" scripts/import/contacts.mts` · `grep -n "name: name ?? phone" scripts/import/properties.mts`.
 - **NOTE — a photo's alt text stays in its event, by the marketing-copy rule.** `setMediaAlt` logs `media_alt_set`
   `{ media_id, alt }` and the line prints it. It is staff-written copy PUBLISHED through the feed and the portals,
   which T-updated-event-shape-only keeps by value on purpose ("what was advertised when is evidence in a

@@ -23,18 +23,18 @@ import { fakeClient, type FakePage } from "@/lib/testing/fake-client";
  * so a delete that still asks the system for old events fails loudly here.
  */
 
-const state = vi.hoisted(() => ({ caller: null as unknown, removed: [] as string[][] }));
+const state = vi.hoisted(() => ({ caller: null as unknown, removed: [] as [string, string[]][] }));
 
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => state.caller }));
 vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: () => ({
     storage: {
-      from: () => ({
+      from: (bucket: string) => ({
         upload: async (path: string) => ({ data: { path }, error: null }),
         // no org watermark; the fixture listings are drafts either way
         download: async () => ({ data: null, error: { message: "not found" } }),
         remove: async (paths: string[]) => {
-          state.removed.push(paths);
+          state.removed.push([bucket, paths]);
           return { data: paths.map((name) => ({ name })), error: null };
         },
         exists: async () => ({ data: false, error: null }),
@@ -161,7 +161,18 @@ const deletedRow = (id: string, extra: Record<string, unknown> = {}) => ({
 });
 
 function remove(ids: string[], rows: unknown[]) {
-  const fake = fakeClient({ property_media: [{ data: rows, error: null }] });
+  const fake = fakeClient({
+    property_media: [{ data: rows, error: null }],
+    // An older upload event that DOES carry the name, readable on the caller's
+    // own client: a lookup that came back — on either client — would find it
+    // and the exact payload checks below would see the name.
+    events: [
+      {
+        data: rows.map((r) => ({ payload: { media_id: (r as { id: string }).id, file: FILE_NAME, kind: "photo" } })),
+        error: null,
+      },
+    ],
+  });
   state.caller = fake.client;
   return { fake, run: () => deleteMediaBulk(PROPERTY_ID, ids) };
 }
@@ -175,10 +186,14 @@ describe("deleteMediaBulk logs the photo by id and digest, and never reads old e
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ entity_type: "property", entity_id: PROPERTY_ID, event_type: "media_deleted" });
     expect(rows[0].payload).toEqual({ media_id: "m1", content_sha256: SOURCE_SHA256 });
-    // storage behaviour unchanged: renditions and the original are removed
-    expect(state.removed.flat()).toEqual(
-      expect.arrayContaining([`properties/${PROPERTY_ID}/m1_thumb.webp`, `properties/${PROPERTY_ID}/original/m1.jpg`]),
-    );
+    // no read of the chain at all, on the caller's client either
+    expect(fake.argsOf("events", "select")).toEqual([]);
+    expect(leaked(fake)).toEqual([]);
+    // storage behaviour unchanged: a photo's renditions from `media`, its original from `documents`
+    expect(state.removed).toEqual([
+      ["media", [`properties/${PROPERTY_ID}/m1_thumb.webp`]],
+      ["documents", [`properties/${PROPERTY_ID}/original/m1.jpg`]],
+    ]);
   });
 
   it("the delete asks the row for its digest (the select names the column)", async () => {

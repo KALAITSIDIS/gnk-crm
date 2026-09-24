@@ -35,7 +35,7 @@
  * binaryBody() guards against is a Vercel-runtime behaviour — Node sends a
  * Buffer as-is (see lib/services/storage-upload.ts's own header).
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { resolve, extname, join } from "node:path";
 import { parseArgs as nodeParseArgs } from "node:util";
@@ -194,6 +194,9 @@ for (const { row, line } of withPhotos) {
       break;
     }
 
+    // 0088: the ORIGINAL bytes — the same fact the upload action writes, so an
+    // imported photo answers "which image was this" after it is deleted too
+    const contentSha256 = createHash("sha256").update(input).digest("hex");
     const id = randomUUID();
     const ext = mime === "image/png" ? "png" : mime === "image/webp" ? "webp" : "jpg";
     const originalPath = `properties/${property.id}/original/${id}.${ext}`;
@@ -233,6 +236,7 @@ for (const { row, line } of withPhotos) {
         path_jpeg: renditionPath("jpeg"), // 0095: the portal feed's copy
         width: processed.width,
         height: processed.height,
+        content_sha256: contentSha256,
         sort_order: nextSort++,
         is_cover: !hasCover,
         watermarked: processed.watermarked,
@@ -258,8 +262,9 @@ for (const { row, line } of withPhotos) {
       entity_id: property.id,
       event_type: "media_uploaded",
       // no file name — it is whatever the folder called the photo, and the chain
-      // is beyond erasure (SEC-03, T-media-file-name-shape); the id names it
-      payload: { media_id: mediaRow.id, watermarked: processed.watermarked, source: "import_script" },
+      // is beyond erasure (SEC-03, T-media-file-name-shape); the id and the
+      // digest of its bytes name it, as the upload action's event does
+      payload: { media_id: mediaRow.id, watermarked: processed.watermarked, content_sha256: contentSha256, source: "import_script" },
     });
     if (eventErr) {
       failed = `${name}: photo stored but its event failed — ${eventErr.message}`;
