@@ -58,10 +58,10 @@ export type ProposalInterestInput = z.infer<typeof proposalInterestSchema>;
  * reference, its key) and land on the page's generic sentence.
  *
  * `name_line_break` / `phone_line_break` (T-enquiry-identity-single-line):
- * the page's own inputs cannot hold a line break (the browser inserts a
- * space), so a visitor meets these only through a client that is not the
- * page. They still say what is wrong rather than "required", which is what
- * the mapping below would have said.
+ * the page's own inputs drop LF and CR (Chromium inserts a space), so a
+ * visitor meets these only by pasting one of the rarer separators (NEL,
+ * U+2028, …); a script meets them easily. They say what is wrong rather than
+ * "required", which is what the mapping below would have said.
  */
 export const PROPOSAL_INTEREST_ERROR_CODES = [
   "name_required",

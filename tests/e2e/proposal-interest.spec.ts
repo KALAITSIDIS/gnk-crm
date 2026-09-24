@@ -233,9 +233,10 @@ test.describe("Proposal interest", () => {
    * T-enquiry-identity-single-line. The name and the phone are one line each
    * of the header the CRM reads the person back from, so the server refuses a
    * line break in either (400 `name_line_break` / `phone_line_break`, and 0114
-   * in the database). The page's own inputs cannot hold one — the browser
-   * turns it into a space, which the first step shows — so the break is put into the page's
-   * request in flight, as a client other than this page would send it. The
+   * in the database). The page's inputs drop LF and CR — the browser turns a
+   * newline into a space, which the first step shows — so the break is put
+   * into the page's request in flight, as a script would send it (a visitor
+   * reaches the same refusal only by pasting a rarer separator). The
    * page must still say what is wrong, in its language, under that field —
    * not "please enter your name" — keep what was typed and its key, and the
    * untampered correction must be ONE lead with the name the visitor typed.

@@ -47,8 +47,9 @@
 -- a decision (no DECISIONS entry adopts it), and it would store a value the
 -- visitor did not type — a phone of '+357 99' || chr(10) || 'Email: x@y'
 -- becomes the "phone" '+357 99 Email: x@y'. No real name or number contains
--- a line break (a browser's one-line input cannot even hold one), so the
--- only callers who meet the refusal are scripts, and they are told why.
+-- a line break, and a browser's one-line input drops LF and CR, so the
+-- callers who meet the refusal are scripts and, rarely, a visitor who pasted
+-- one of the other separators (NEL, U+2028, …); both are told why.
 --
 -- UNCHANGED: both signatures and return shapes, SECURITY DEFINER with
 -- search_path = public, EXECUTE for service_role alone, org resolution by

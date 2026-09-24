@@ -22,9 +22,10 @@ export type InterestLocale = (typeof INTEREST_LOCALES)[number];
 /**
  * The codes a VISITOR can cause with the form; each has a sentence in every
  * locale. The two `_line_break` codes (T-enquiry-identity-single-line) are
- * reachable only from a client that is not this page — its inputs cannot
- * hold a line break — and still get a sentence of their own, never
- * "please enter your name" to someone who did.
+ * rare from this page — its inputs drop LF and CR, so only a PASTED NEL,
+ * U+2028 or the like reaches them — and common from a script. Either way
+ * they get a sentence of their own, never "please enter your name" to
+ * someone who did.
  */
 export const VISITOR_PROBLEM_CODES = [
   "name_required",
