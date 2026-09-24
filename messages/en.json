@@ -260,7 +260,6 @@
     "wonOverride": "Marked won — admin override",
     "wonOverrideAuthorized": "Admin override authorized — no accepted offer",
     "lost": "Marked lost",
-    "lostReason": "Marked lost — {reason}",
     "spam": "Marked spam",
     "claimed": "Claimed",
     "reassigned": "Reassigned",

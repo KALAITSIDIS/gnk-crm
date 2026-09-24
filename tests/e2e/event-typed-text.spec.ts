@@ -16,7 +16,10 @@ import { fixtureProfile, isLocal, opTimeout, serviceClient } from "./helpers";
  *   still says which task, as a labelled current title;
  * - marking a deal lost stores the typed reason on the deal, which the page
  *   header prints; the event carries none, and the Activity line is "Marked
- *   lost" alone.
+ *   lost" alone;
+ * - closing a lead as lost does the same (T-lead-lost-reason-shape): the inbox
+ *   prints the reason from the lead, the event is `{}`, and the admin feed's
+ *   line is "Marked lost" alone.
  *
  * What an agent may NOT see (an admin_only document, a colleague's task) is
  * measured against the real policies in supabase/tests/event-context.test.ts —
@@ -30,9 +33,12 @@ const DOC_TITLE = "E2E Kyriakou title deed scan";
 const FILE_NAME = "E2E Kyriakou deed 99111222.pdf";
 const TASK_TITLE = "E2E call Kyriakoula Palaiopoulou about the deposit";
 const REASON = "E2E Eleni Charalambous bought her cousin's villa instead";
+const LEAD_MESSAGE = "E2E typed-text lead — asking about a two-bed";
+const LEAD_REASON = "E2E Andreas Kyprianou went with his brother-in-law";
 
 async function removeFixture(svc: SupabaseClient): Promise<void> {
   await svc.from("tasks").delete().eq("title", TASK_TITLE);
+  await svc.from("leads").delete().eq("message", LEAD_MESSAGE);
   const { data: deals } = await svc.from("deals").select("id").eq("title", DEAL_TITLE);
   for (const d of deals ?? []) {
     await svc.from("tasks").delete().eq("deal_id", d.id);
@@ -239,6 +245,46 @@ test("marking a deal lost keeps the reason on the deal; the event and the Activi
     const activity = page.locator("section", { has: page.getByRole("heading", { name: "Activity" }) });
     await expect(activity.locator("li", { hasText: "Marked lost" })).toHaveCount(1);
     await expect(activity).not.toContainText("Eleni");
+  } finally {
+    await removeFixture(svc);
+  }
+});
+
+test("closing a lead as lost keeps the reason on the lead; the event and the admin feed line carry none", async ({ page }) => {
+  const svc = serviceClient();
+  await removeFixture(svc);
+  const { orgId } = await fixtureProfile(svc);
+  // a phone lead, so no website-enquiry cron (alerts, SLA tasks) touches it
+  const { data: lead } = await svc
+    .from("leads")
+    .insert({ org_id: orgId, source: "phone", status: "new", received_at: new Date().toISOString(), message: LEAD_MESSAGE })
+    .select("id")
+    .single();
+  const leadId = lead!.id as string;
+
+  try {
+    await page.goto("/leads", { waitUntil: "networkidle" });
+    const row = page.locator("li", { hasText: LEAD_MESSAGE });
+    await expect(row).toBeVisible({ timeout: opTimeout(30_000) });
+    await row.getByRole("button", { name: /^close$/i }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByLabel(/reason/i).fill(LEAD_REASON);
+    await dialog.getByRole("button", { name: /^mark lost$/i }).click();
+    // the dialog closes when the action has returned — every write is done
+    await expect(page.getByRole("dialog")).toBeHidden({ timeout: opTimeout(15_000) });
+
+    const { data: rowNow } = await svc.from("leads").select("status, lost_reason").eq("id", leadId).single();
+    expect(rowNow).toEqual({ status: "lost", lost_reason: LEAD_REASON });
+    expect(await eventsOf(svc, leadId, "lost")).toEqual([{}]);
+
+    // the inbox's closed scope prints the CURRENT reason, from the lead
+    await page.goto("/leads?status=lost", { waitUntil: "networkidle" });
+    await expect(page.locator("li", { hasText: LEAD_MESSAGE })).toContainText(`Reason: ${LEAD_REASON}`);
+
+    // the admin feed says it was lost, and nothing of why
+    await page.goto("/dashboard", { waitUntil: "networkidle" });
+    await expect(page.locator("li", { hasText: "Marked lost" }).first()).toBeVisible();
+    await expect(page.locator("body")).not.toContainText("Kyprianou");
   } finally {
     await removeFixture(svc);
   }

@@ -150,4 +150,34 @@ describe("assembleEvidence prints no typed text from event payloads", () => {
     // the evidence path never asks the admin client for anything but slips and the chain
     expect(admin.calls).toEqual([]);
   });
+
+  it("renders a lead's legacy lost and spam reasons as neutral lines (T-lead-lost-reason-shape)", async () => {
+    const LEAD = "99999999-9999-4999-8999-999999999999";
+    const caller = fakeClient({
+      contacts: [{ data: { id: CONTACT, display_name: "Fixture Buyer", phone_e164: null, email: null }, error: null }],
+      organizations: [{ data: { name: "Fixture Agency" }, error: null }],
+      deals: [{ data: [], error: null }],
+      leads: [{ data: [{ id: LEAD, property_id: null }], error: null }],
+      events: [
+        // the contact family is awaited first, then the lead family
+        { data: [], error: null },
+        {
+          data: [
+            { id: 1, occurred_at: "2026-09-01T10:00:00Z", entity_type: "lead", entity_id: LEAD, event_type: "lost", actor_id: null, payload: { reason: "Andreas Kyprianou went elsewhere" } },
+            { id: 2, occurred_at: "2026-09-02T10:00:00Z", entity_type: "lead", entity_id: LEAD, event_type: "spam", actor_id: null, payload: { reason: "sent from 99 555 666" } },
+            { id: 3, occurred_at: "2026-09-03T10:00:00Z", entity_type: "lead", entity_id: LEAD, event_type: "lost", actor_id: null, payload: {} },
+          ],
+          error: null,
+        },
+      ],
+    });
+    const out = await assembleEvidence(caller.client as never, fakeClient({}).client as never, "org-1", {
+      contactId: CONTACT,
+      generatedBy: { name: "Admin", role: "admin" },
+    });
+    if ("errorKey" in out) throw new Error(`assembly failed: ${out.errorKey}`);
+    expect(out.rows.map((r) => r.line)).toEqual(["Marked lost", "Marked spam", "Marked lost"]);
+    const text = JSON.stringify(out.rows);
+    for (const word of ["Andreas", "Kyprianou", "99 555 666"]) expect(text).not.toContain(word);
+  });
 });

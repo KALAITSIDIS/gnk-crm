@@ -150,16 +150,16 @@ const asMoney = (v: unknown): string | null => {
  * Each entry chooses a message key (and its interpolation values) from the
  * payload; the fixed text lives in messages/*.json under `events.*`. Only the
  * template is translated — interpolated data (names, channels, stage names,
- * formatted money, and still some typed text: a lead's lost reason, a
- * reservation's release reason, a photograph's file name — BACKLOG) stays as
- * stored. A task's title, a document's title or file name and a deal's lost
- * reason are NOT interpolated, from new payloads or old ones
- * (T-event-typed-text-shape): the line states the fact, and which task or
+ * formatted money, and still some typed text: a reservation's release reason,
+ * a photograph's file name — BACKLOG) stays as stored. A task's title, a
+ * document's title or file name and a deal's or lead's lost reason are NOT
+ * interpolated, from new payloads or old ones (T-event-typed-text-shape,
+ * T-lead-lost-reason-shape): the line states the fact, and which task or
  * document it was arrives separately as `current_title`, read from its row.
  *
  * `entityType` is the event's entity: one event type can be written against
- * more than one (a deal's `lost` and a lead's `lost`), and they need not read
- * the same.
+ * more than one (a task's `completed` and any other entity's), and they need
+ * not read the same.
  */
 const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string) => string> = {
   created: (p, t) => {
@@ -184,17 +184,14 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string)
   },
   won: (p, t) => (p.override === true ? t("wonOverride") : t("won")),
   won_override: (_p, t) => t("wonOverrideAuthorized"),
-  lost: (p, t, entityType) => {
-    // A DEAL's reason lives on `deals.lost_reason`, and the deal page prints it
-    // from there. Since T-event-typed-text-shape the event carries none, and an
-    // older event's copy is not reprinted: it is typed text in a chain nothing
-    // can erase, and the row may say something else by now.
-    if (entityType === "deal") return t("lost");
-    // A LEAD's `lost` (closeLead) still carries and prints its typed reason — a
-    // separate writer, left for its own change (BACKLOG).
-    const reason = asText(p.reason);
-    return reason ? t("lostReason", { reason }) : t("lost");
-  },
+  // A lost reason is never read from the payload, for a deal
+  // (T-event-typed-text-shape) or a lead (T-lead-lost-reason-shape): new events
+  // carry none, and an older event's copy is not reprinted — it is typed text in
+  // a chain nothing can erase, and the row may say something else by now (a
+  // lead's reopen clears it, a re-close replaces it). The deal page and the leads
+  // inbox print the CURRENT reason from `deals.lost_reason` / `leads.lost_reason`.
+  lost: (_p, t) => t("lost"),
+  // an older `spam` event may carry a typed reason too; this line never read it
   spam: (_p, t) => t("spam"),
   // Written since the security and mandate work but never registered, so the
   // timeline printed the raw verb ("mfa reset") — the evidence was recorded,

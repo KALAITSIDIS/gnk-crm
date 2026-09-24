@@ -836,7 +836,10 @@ export async function closeLead(
     entityType: "lead",
     entityId: lead.id,
     eventType: parsed.data.outcome,
-    payload: { reason: parsed.data.reason ?? null },
+    // No `reason`: it is typed text that names people, and the chain is beyond
+    // erasure and correction (SEC-03). `leads.lost_reason` keeps it and the inbox
+    // prints it from there; the event type says lost or spam, which is the act.
+    payload: {},
   });
   revalidatePath("/leads");
   return { error: null, savedAt: Date.now() };
