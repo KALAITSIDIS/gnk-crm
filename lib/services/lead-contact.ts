@@ -120,10 +120,13 @@ function uniformLineEnds(message: string): string {
  * words. Ambiguous is not repaired either; the message is left whole for a
  * person to read.
  *
- * What this cannot see: a break that forged a PERFECT header (a name of
- * "Ann\nEmail: x@y" when no e-mail was given) is the same bytes as a real
- * one. The input rule (lib/validators/single-line.ts, 0114) is the fix; this
- * reader is the backstop for what was stored before it.
+ * What this cannot see: a break that forged a header the grammar accepts is
+ * the same bytes as a real one — a name of "Ann\nEmail: x@y" when no e-mail
+ * was given, or "Ann\nEmail: x@y\n\n…" pushing the real Email and Phone lines
+ * below a forged one. Only the lead's `created` event (has_email/has_phone)
+ * can contradict such a header. The input rule (lib/validators/
+ * single-line.ts, 0114) is the fix; this reader is the backstop for what was
+ * stored before it.
  */
 export function readWebsiteEnquiry(message: string | null | undefined): WebsiteEnquiryReading {
   if (!message) return { kind: "not_website" };

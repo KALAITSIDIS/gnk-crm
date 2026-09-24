@@ -34,8 +34,10 @@ export function hasLineBreak(value: string): boolean {
 
 /**
  * The zod refinement both doors' schemas spread into `.refine(...)`, right
- * after `.trim()`: a break at either END is trimmed like a space and only an
- * EMBEDDED one is refused; placed before the caps, so a long value with a
+ * after `.trim()`: JavaScript's trim removes a break at either END like a
+ * space — every one of these but NEL, which it does not count as whitespace,
+ * so a NEL is refused wherever it sits (as the database refuses it) — and an
+ * EMBEDDED break is refused. Placed before the caps, so a long value with a
  * break is told about the break. `reason` lets a caller that maps issues to
  * codes (the proposal door) tell this apart from "required" without reading
  * the sentence.

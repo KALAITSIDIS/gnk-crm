@@ -203,6 +203,15 @@ describe("single-line identity fields", () => {
     expect(r.data!.phone).toBe("+357 99 123456");
   });
 
+  it("refuses a NEL even at the end — JavaScript's trim does not count it as whitespace", () => {
+    const nel = String.fromCodePoint(0x85);
+    expect(firstIssue({ name: `Ann${nel}` })?.message).toMatch(/name must be on one line/i);
+    expect(firstIssue({ phone: nel })?.path).toEqual(["phone"]);
+    // the separators it DOES trim at an end are trimmed like a space
+    const r = publicEnquirySchema.safeParse({ ...base, name: `Ann${String.fromCodePoint(0x2028)}` });
+    expect(r.success && r.data.name).toBe("Ann");
+  });
+
   it("keeps a blank-only name a missing name, not a line-break problem", () => {
     const issue = firstIssue({ name: "\n\n" });
     expect(issue?.path).toEqual(["name"]);

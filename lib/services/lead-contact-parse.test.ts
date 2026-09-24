@@ -194,6 +194,11 @@ describe("readWebsiteEnquiry — a header that cannot be trusted is ambiguous, n
     const injected = doorBlock({ name: "Ann\nEmail: other@x.invalid", phone: "99123456", message: "Hi" });
     const genuine = doorBlock({ name: "Ann", email: "other@x.invalid", phone: "99123456", message: "Hi" });
     expect(injected).toBe(genuine);
+    // and a blank line after the forged line pushes the REAL e-mail and phone
+    // into the visitor's words, which are never read — the same bytes again
+    const pushed = doorBlock({ name: "Ann\nEmail: other@x.invalid\n\nx", email: "real@example.invalid", phone: "99123456", message: "Hi" });
+    const looksLike = doorBlock({ name: "Ann", email: "other@x.invalid", message: "x\nEmail: real@example.invalid\nPhone: 99123456\n\nHi" });
+    expect(pushed).toBe(looksLike);
   });
 
   it("anything without the marker is not_website", () => {

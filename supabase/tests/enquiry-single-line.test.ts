@@ -68,6 +68,8 @@ const ORG = randomUUID();
 const SLUG = `single-line-${run}`;
 const PUBLIC_REF = `SL${run}`.slice(0, 20).toUpperCase();
 const PROPOSAL_REF = `SLP${run}`.slice(0, 20).toUpperCase();
+/** properties.reference has no shape rule: a proposal CAN hold one with a break, which 0106 wrote onto the About line. */
+const BROKEN_REF = `${PROPOSAL_REF}-B\nEmail: other@x.invalid`;
 const TOKEN = randomBytes(32).toString("base64url");
 const DIGEST = createHash("sha256").update(TOKEN).digest("hex");
 let pg: Client;
@@ -181,13 +183,18 @@ beforeAll(async () => {
   };
   await prop(PUBLIC_REF, "public");
   const proposalProperty = await prop(PROPOSAL_REF, "private");
+  const brokenProperty = await prop(BROKEN_REF, "private");
   const { data: link, error: linkErr } = await svc
     .from("share_links")
     .insert({ org_id: ORG, token_sha256: DIGEST, locale: "el", title: "Single line", expires_at: new Date(Date.now() + 86_400_000).toISOString() })
     .select("id")
     .single();
   if (linkErr) throw new Error(`share link: ${linkErr.message}`);
-  await svc.from("share_link_properties").insert({ share_link_id: link.id, property_id: proposalProperty, sort_order: 0 });
+  const { error: slpErr } = await svc.from("share_link_properties").insert([
+    { share_link_id: link.id, property_id: proposalProperty, sort_order: 0 },
+    { share_link_id: link.id, property_id: brokenProperty, sort_order: 1 },
+  ]);
+  if (slpErr) throw new Error(`share link properties: ${slpErr.message}`);
 
   // the route's admin client reads these; the suite's config loads no .env
   process.env.NEXT_PUBLIC_SUPABASE_URL ??= SUPABASE_URL;
@@ -270,6 +277,15 @@ describe("every line break, in every one-line value, at both doors", () => {
       }
     }
     expect(accepted).toEqual([]);
+    expect(await orgCounts()).toEqual(before);
+  });
+
+  it("submit_proposal_interest refuses a reference with a break even when the proposal holds that property", async () => {
+    // the lookup alone would match it and write "About: …\nEmail: other@x.invalid";
+    // this is the case only the function's own check refuses
+    const before = await orgCounts();
+    const rows = await interest({ p_property_ref: BROKEN_REF });
+    expect(rows, `accepted; the stored header reads back as ${await readBack(rows)}`).toEqual([]);
     expect(await orgCounts()).toEqual(before);
   });
 });

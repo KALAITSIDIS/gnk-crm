@@ -27,7 +27,10 @@
 --   and a typed reference carrying 'Email: …' wrote an Email line after About.
 -- Measured before this migration: submit_public_enquiry accepted all 37 of
 -- the test's variants; submit_proposal_interest 27 of 36 (the other 9 only
--- because a reference with a break matched no property).
+-- because a reference with a break matched no property). properties.reference
+-- has no shape rule, though, so a proposal CAN hold a reference with a break,
+-- and 0106 would have written it onto the About line; the self-test below
+-- plants one, and the new check is what refuses it.
 --
 -- THE RULE, in both functions and before anything is looked up or written:
 -- p_name, p_email, p_phone and p_property_ref must not contain a line break —
@@ -525,6 +528,7 @@ declare
   v_breaks text[] := array[chr(10), chr(11), chr(12), chr(13), chr(133), chr(8232), chr(8233),
                            chr(13) || chr(10), chr(10) || chr(10)];
   v_prop   uuid;
+  v_broken uuid;
   v_link   uuid;
   v_br     text;
   v_row    record;
@@ -536,10 +540,16 @@ begin
     insert into properties (org_id, reference, property_type, visibility, status, title, asking_price)
     values (v_org, 'SELFTEST-0114', 'villa', 'private', 'available', '{"en":"0114 self-test"}'::jsonb, 1)
     returning id into v_prop;
+    -- properties.reference has no shape rule, so a proposal CAN hold one with a
+    -- break — which the proposal door would write onto the About line
+    insert into properties (org_id, reference, property_type, visibility, status, title, asking_price)
+    values (v_org, 'SELFTEST-0114-B' || chr(10) || 'Email: x@example.invalid', 'villa', 'private', 'available',
+            '{"en":"0114 self-test"}'::jsonb, 1)
+    returning id into v_broken;
     insert into share_links (org_id, token_sha256, locale, title, expires_at)
     values (v_org, v_digest, 'en', '0114 self-test', now() + interval '1 day')
     returning id into v_link;
-    insert into share_link_properties (share_link_id, property_id, sort_order) values (v_link, v_prop, 0);
+    insert into share_link_properties (share_link_id, property_id, sort_order) values (v_link, v_prop, 0), (v_link, v_broken, 1);
 
     -- every break, in every one-line value, at both doors
     foreach v_br in array v_breaks loop
@@ -565,6 +575,10 @@ begin
     -- a break at the END is still inside the header line: the function trims spaces only
     select count(*) into n from submit_public_enquiry(v_slug, 'Ann' || chr(10), 'a@example.invalid', null, 'words');
     if n <> 0 then raise exception '0114 aborted: a trailing line break was accepted'; end if;
+    -- a reference the proposal DOES hold, with a break in it: the check refuses it, not the lookup
+    select count(*) into n from submit_proposal_interest(v_digest, 'SELFTEST-0114-B' || chr(10) || 'Email: x@example.invalid',
+                                                          'Ann', 'a@example.invalid', null, null);
+    if n <> 0 then raise exception '0114 aborted: a proposal reference with a line break was accepted'; end if;
     if exists (select 1 from leads where org_id = v_org)
        or exists (select 1 from notification_jobs where org_id = v_org)
        or exists (select 1 from events where org_id = v_org and entity_type = 'lead') then
@@ -593,7 +607,10 @@ begin
     select * into v_row from submit_public_enquiry(
       v_slug, 'Γιώργος O''Brien-Παπαδόπουλος', 'a@example.invalid', '+357 99 123456',
       'typed again', 'SELFTEST-0114', 'selftest-0114-door');
-    if not v_row.replayed or v_row.lead_id <> v_lead.id then raise exception '0114 aborted: the website replay made a second lead'; end if;
+    -- NOT FOUND leaves every field NULL, and NULL would slip past a plain `not`
+    if not found or v_row.replayed is not true or v_row.lead_id is distinct from v_lead.id then
+      raise exception '0114 aborted: the website replay did not answer with the first lead';
+    end if;
 
     -- the proposal door too
     select * into v_row from submit_proposal_interest(
@@ -614,7 +631,9 @@ begin
     if n <> 1 then raise exception '0114 aborted: the proposal interest has % desk-alert rows', n; end if;
     select * into v_row from submit_proposal_interest(
       v_digest, 'SELFTEST-0114', 'Анна-Мария Иванова', null, '+7 (495) 123-45-67', 'again', 'selftest-0114-proposal');
-    if not v_row.replayed or v_row.lead_id <> v_lead.id then raise exception '0114 aborted: the proposal replay made a second lead'; end if;
+    if not found or v_row.replayed is not true or v_row.lead_id is distinct from v_lead.id then
+      raise exception '0114 aborted: the proposal replay did not answer with the first lead';
+    end if;
     select count(*) into n from leads where org_id = v_org;
     if n <> 2 then raise exception '0114 aborted: % leads for two enquiries and two replays', n; end if;
 
