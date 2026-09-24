@@ -2446,7 +2446,11 @@ VERIFY, run before starting.
 - **Clock-dependent tests found by the 2026-09-24 sweep, S/M.** A read-only sweep at `ed6166c` (DECISIONS
   `T-rls-stage-tenure-one-clock`, Landing; two refuters per candidate) found 21 more tests that can fail while
   the code is right. Line numbers are at `9d79157`. Grouped, most urgent first:
-  - **Dated THIS WEEK — first.** `supabase/tests/lead-escalation-preview.test.ts` (fixtures 2026-09-25 to
+  - ~~**Dated THIS WEEK — first.**~~ **FIXED 2026-09-24 — DECISIONS `T-escalation-test-dates-far-future`: both
+    files' hand-dated leads moved to 2099 (2026's calendar, the same weekdays and DST switches), each file
+    now fails if one is dated before 2098, and a simulated cron tick at 29 September 2026 breaks the old file
+    and not the new one.** VERIFY (fixed): `grep -c "2026-09-25T19:00:00Z"
+    supabase/tests/lead-escalation-preview.test.ts` → 0. The original: `supabase/tests/lead-escalation-preview.test.ts` (fixtures 2026-09-25 to
     2026-09-28; its header relies on "the leads are dated in the future relative to the suite's clock") and
     `supabase/tests/lead-escalation.test.ts:391`. From 2026-09-28T06:15Z a live `lead-escalation` cron tick (every
     five minutes, real `now()`) inside the test's policy-ON stretch can mint rows these tests assert do not
@@ -2476,8 +2480,8 @@ VERIFY, run before starting.
   - **A whole-table check.** `supabase/tests/rls.test.ts:4057` asserts `events_partition_health` finds no
     `occurred_at` inversion in the WHOLE events table, which any concurrent writer creates (the 0108 note).
     Fix: scope the check to the test's own event ids.
-  **VERIFY:** `grep -n "2026-09-25T19:00:00Z" supabase/tests/lead-escalation-preview.test.ts` — a hit means the
-  urgent pair is still open; every other bullet names its file and line.
+  **VERIFY:** every open bullet names its file and line at `9d79157`; `grep -n "Date.UTC(2027, 0, 11)" tests/e2e/contact-merge.spec.ts`
+  — a hit means the e2e fixed-date bullet is still open.
 - ~~**RLS test 15 compares a client clock and a database timestamp as strings, S.**~~ **FIXED 2026-09-24 —
   DECISIONS `T-rls-stage-tenure-one-clock`: the test reads the deal's `stage_entered_at` from the database
   before the owner's move and asserts it changed and did not go backwards — one clock, parsed. Not the

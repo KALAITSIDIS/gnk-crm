@@ -18,8 +18,12 @@ type Job = Database["public"]["Tables"]["notification_jobs"]["Row"];
  * enquiry swept on Monday 09:20 Nicosia, and a Saturday-night enquiry across
  * the 25 October daylight-saving switch. The policy row stays OFF for the
  * whole file except inside one test that proves the preview agrees with the
- * real sweep; the leads are dated in the future relative to the suite's
- * clock, so the live five-minute cron can mint nothing while it is on.
+ * real sweep. The dates are in 2099 — the same calendar as 2026 (Friday 25
+ * September, switches on 29 March and 25 October) — so the live five-minute
+ * cron, on the real clock, can never find one of these leads due while the
+ * policy is on. They were in 2026 until the 2026-09-24 clock sweep: from 28
+ * September 2026 the cron could have minted one inside that stretch. The
+ * first test below keeps it so.
  *
  * The preview must WRITE NOTHING: policies, leads, jobs, events. The
  * "writes nothing" test compares snapshots taken before the first preview
@@ -52,8 +56,8 @@ let agentB: TestUser;
 let policyBefore: unknown;
 
 const HOURS = { days: [1, 2, 3, 4, 5], start: "09:00", end: "18:00" };
-const MONDAY_0920 = "2026-09-28T06:20:00Z"; // Monday 28 September 09:20 Asia/Nicosia (summer time)
-const FRIDAY_2200 = "2026-09-25T19:00:00Z"; // Friday 25 September 22:00 local → due Monday 09:15 (06:15Z)
+const MONDAY_0920 = "2099-09-28T06:20:00Z"; // Monday 28 September 2099 09:20 Asia/Nicosia (summer time; 2099 has 2026's calendar)
+const FRIDAY_2200 = "2099-09-25T19:00:00Z"; // Friday 25 September 22:00 local → due Monday 09:15 (06:15Z)
 const STRANGER = "11111111-1111-1111-1111-111111111111";
 
 const policy = (recipients: string[], extra: Record<string, unknown> = {}) => ({
@@ -219,15 +223,15 @@ beforeAll(async () => {
   inB = await submit("in-b", SLUG_Q);
 
   await patchLead(friday, { received_at: FRIDAY_2200 });
-  await patchLead(monday, { received_at: "2026-09-28T06:00:00Z" }); // Monday 09:00 local → due 09:15
-  await patchLead(young, { received_at: "2026-09-28T06:10:00Z" }); // Monday 09:10 local → due 09:25
-  await patchLead(backlog, { received_at: "2026-09-01T07:00:00Z" }); // due 1 September 10:15 local — weeks before
-  await patchLead(answered, { received_at: FRIDAY_2200, first_response_at: "2026-09-28T06:05:00Z" });
+  await patchLead(monday, { received_at: "2099-09-28T06:00:00Z" }); // Monday 09:00 local → due 09:15
+  await patchLead(young, { received_at: "2099-09-28T06:10:00Z" }); // Monday 09:10 local → due 09:25
+  await patchLead(backlog, { received_at: "2099-09-01T07:00:00Z" }); // due 1 September 10:15 local — weeks before
+  await patchLead(answered, { received_at: FRIDAY_2200, first_response_at: "2099-09-28T06:05:00Z" });
   await patchLead(closed, { received_at: FRIDAY_2200, status: "lost", lost_reason: "test" });
   await patchLead(redacted, { received_at: FRIDAY_2200, message: REDACTED });
   await patchLead(withJob, { received_at: FRIDAY_2200 });
   await patchLead(assigned, { received_at: FRIDAY_2200, assigned_agent_id: agentA2.id });
-  await patchLead(dst, { received_at: "2026-10-24T19:00:00Z" });
+  await patchLead(dst, { received_at: "2099-10-24T19:00:00Z" });
   await patchLead(inB, { received_at: FRIDAY_2200 });
   const { error: jobErr } = await svc.from("notification_jobs").insert({ org_id: ORG_P, lead_id: withJob, kind: "lead_escalation" });
   if (jobErr) throw new Error(`with-job: ${jobErr.message}`);
@@ -280,6 +284,21 @@ describe("who may preview", () => {
   });
 });
 
+describe("the fixtures are beyond the live cron's reach", () => {
+  // The one test that switches the policy ON lets the live five-minute cron
+  // sweep every org on the REAL clock. Dated in 2026, these leads became due
+  // to it from 28 September 2026 and could be minted inside that stretch,
+  // breaking `minted = 3` (the 2026-09-24 clock sweep). Received after 2098,
+  // none is ever due to it, whatever day the suite runs.
+  it("every enquiry this file makes was received after 2098", async () => {
+    const { data, error } = await svc.from("leads").select("received_at").in("id", made);
+    expect(error).toBeNull();
+    expect(data, "each fixture is read back").toHaveLength(made.length);
+    const reachable = (data ?? []).map((l) => l.received_at).filter((at) => Date.parse(at) < Date.UTC(2098, 0, 1));
+    expect(reachable, "dated within the live cron's reach").toEqual([]);
+  });
+});
+
 describe("what the preview says, on Monday 28 September at 09:20 Nicosia", () => {
   let doc: Preview;
 
@@ -310,7 +329,7 @@ describe("what the preview says, on Monday 28 September at 09:20 Nicosia", () =>
       expect(leadOf(doc, id), `${label} is not an enquiry to escalate, so it is not listed`).toBeNull();
     }
     expect(leadOf(doc, inB), "another organisation's enquiry never appears").toBeNull();
-    expect(new Date(leadOf(doc, friday)!.due_at).toISOString()).toBe("2026-09-28T06:15:00.000Z");
+    expect(new Date(leadOf(doc, friday)!.due_at).toISOString()).toBe("2099-09-28T06:15:00.000Z");
   });
 
   it("counts the sweep's jobs apart from the worker's e-mails", () => {
@@ -381,11 +400,11 @@ describe("the cases an admin most needs to see", () => {
   });
 
   it("the Saturday-night enquiry across the October switch is due Monday 09:15 WINTER time", async () => {
-    const { doc, error } = await preview(adminA.client, policy([adminA.id]), { now: "2026-10-26T07:20:00Z" });
+    const { doc, error } = await preview(adminA.client, policy([adminA.id]), { now: "2099-10-26T07:20:00Z" });
     expect(error).toBeNull();
     const row = leadOf(doc!, dst)!;
     expect(row.verdict).toBe("due");
-    expect(new Date(row.due_at).toISOString()).toBe("2026-10-26T07:15:00.000Z");
+    expect(new Date(row.due_at).toISOString()).toBe("2099-10-26T07:15:00.000Z");
     expect(leadOf(doc!, friday)?.verdict, "a month later the September enquiries are past the cutoff").toBe("past_cutoff");
   });
 
@@ -395,7 +414,7 @@ describe("the cases an admin most needs to see", () => {
     expect(leadOf(wide.doc!, backlog)?.verdict).toBe("due");
     const flat = await preview(adminA.client, policy([adminA.id], { working_hours: null }), { now: MONDAY_0920 });
     expect(flat.error).toBeNull();
-    expect(new Date(leadOf(flat.doc!, friday)!.due_at).toISOString()).toBe("2026-09-25T19:15:00.000Z");
+    expect(new Date(leadOf(flat.doc!, friday)!.due_at).toISOString()).toBe("2099-09-25T19:15:00.000Z");
   });
 
   it("is bounded: the limit cuts the list, due enquiries first, and says so", async () => {

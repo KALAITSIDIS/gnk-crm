@@ -341,27 +341,33 @@ describe("the minting sweep", () => {
  * working hours and the right one for a lead received outside them.
  *
  * The sweep takes `p_now` so the brief's example runs on its own dates
- * whatever day the suite runs: Friday 25 September 2026 22:00 Asia/Nicosia
- * (19:00Z), swept Monday 28 September 09:20 (06:20Z).
+ * whatever day the suite runs: Friday 25 September 22:00 Asia/Nicosia
+ * (19:00Z), swept Monday 28 September 09:20 (06:20Z) — in 2099, which has
+ * 2026's calendar. They were in 2026 until the 2026-09-24 clock sweep: the
+ * live cron (the file header) could have minted one of these leads inside an
+ * ON stretch from 28 September 2026. The last test keeps them out of reach.
  */
 describe("the age cutoff counts from the end of the wait, not from arrival (finding 3, 2026-09-22)", () => {
-  const MONDAY_0920 = "2026-09-28T06:20:00Z";
+  const MONDAY_0920 = "2099-09-28T06:20:00Z";
   let friday: string;
   let monday: string;
   let backlog: string;
+  /** every lead this block dates by hand — the last test checks them all */
+  const dated: string[] = [];
   const hoursPolicy = () => ({ ...onFlat([adminA.id]), working_hours: HOURS });
 
   beforeAll(async () => {
     friday = await submit("test-org-a", "friday-night");
     monday = await submit("test-org-a", "monday-control");
     backlog = await submit("test-org-a", "backlog");
-    await receivedAt(friday, "2026-09-25T19:00:00Z"); // Friday 22:00 local → due Monday 09:15 local (06:15Z)
-    await receivedAt(monday, "2026-09-28T06:00:00Z"); // Monday 09:00 local → due 09:15 local (06:15Z)
-    await receivedAt(backlog, "2026-09-01T07:00:00Z"); // Tuesday 1 September 10:00 local → due 10:15; weeks before the sweep
+    dated.push(friday, monday, backlog);
+    await receivedAt(friday, "2099-09-25T19:00:00Z"); // Friday 22:00 local → due Monday 09:15 local (06:15Z)
+    await receivedAt(monday, "2099-09-28T06:00:00Z"); // Monday 09:00 local → due 09:15 local (06:15Z)
+    await receivedAt(backlog, "2099-09-01T07:00:00Z"); // Tuesday 1 September 10:00 local → due 10:15; weeks before the sweep
   });
 
   it("the due time itself is unchanged: Friday 22:00 Nicosia is due Monday 09:15", async () => {
-    expect(await dueAt("2026-09-25T19:00:00Z", hoursPolicy())).toBe("2026-09-28T06:15:00.000Z");
+    expect(await dueAt("2099-09-25T19:00:00Z", hoursPolicy())).toBe("2099-09-28T06:15:00.000Z");
   });
 
   it("a Friday-night enquiry, 59 hours old and five minutes overdue on Monday morning, receives its one escalation; the Monday control does too; the weeks-old backlog does not", async () => {
@@ -383,11 +389,12 @@ describe("the age cutoff counts from the end of the wait, not from arrival (find
 
   it("the guard still bites when the wait ended more than max_age_hours ago: the same Friday enquiry swept on Thursday is left alone", async () => {
     const thursday = await submit("test-org-a", "friday-night-swept-thursday");
-    await receivedAt(thursday, "2026-09-25T19:00:00Z");
+    dated.push(thursday);
+    await receivedAt(thursday, "2099-09-25T19:00:00Z");
     await setPolicy(hoursPolicy());
     try {
       // due Monday 06:15Z; Thursday 1 October 06:20Z is 72 hours after that
-      await raise(ORG_A, "2026-10-01T06:20:00Z");
+      await raise(ORG_A, "2099-10-01T06:20:00Z");
       expect(await escalationJobs(thursday)).toHaveLength(0);
     } finally {
       await setPolicy({ ...onFlat([adminA.id]), enabled: false });
@@ -396,14 +403,29 @@ describe("the age cutoff counts from the end of the wait, not from arrival (find
 
   it("a lead not yet due at the sweep's instant is untouched, however it is dated", async () => {
     const early = await submit("test-org-a", "friday-night-swept-sunday");
-    await receivedAt(early, "2026-09-25T19:00:00Z");
+    dated.push(early);
+    await receivedAt(early, "2099-09-25T19:00:00Z");
     await setPolicy(hoursPolicy());
     try {
-      await raise(ORG_A, "2026-09-27T12:00:00Z"); // Sunday noon: nothing has opened yet
+      await raise(ORG_A, "2099-09-27T12:00:00Z"); // Sunday noon: nothing has opened yet
       expect(await escalationJobs(early)).toHaveLength(0);
     } finally {
       await setPolicy({ ...onFlat([adminA.id]), enabled: false });
     }
+  });
+
+  // The policy is global and the live cron sweeps every org on the REAL clock
+  // (see the file header). A hand-dated lead within the cron's reach can be
+  // minted inside one of the ON stretches above and break a "0 rows" check —
+  // the 2026 dates this block used to carry would have from 28 September 2026
+  // (the 2026-09-24 clock sweep). A lead received after 2098 is never due to
+  // the live cron, whatever day the suite runs.
+  it("every lead this block dates is beyond the live cron's reach", async () => {
+    const { data, error } = await svc.from("leads").select("received_at").in("id", dated);
+    expect(error).toBeNull();
+    expect(data, "each dated lead is read back").toHaveLength(dated.length);
+    const reachable = (data ?? []).map((l) => l.received_at).filter((at) => Date.parse(at) < Date.UTC(2098, 0, 1));
+    expect(reachable, "dated within the live cron's reach").toEqual([]);
   });
 });
 
