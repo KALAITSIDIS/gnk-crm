@@ -2401,7 +2401,7 @@ VERIFY, run before starting.
 - **Titles, a file name and a lost reason enter the chain by value, S/M.** Written into the
   hash-chained payload, and typed or chosen by people ("Call Maria about the deposit", "Andreou
   passport scan.pdf") — or BUILT from a person's name by the system, which nobody types:
-  - a task's title (`lib/actions/tasks.ts`: `created`, `completed`, `reopened`). Some task titles are
+  - a task's title (`lib/actions/tasks.ts`: `completed`, `reopened`). Some task titles are
     machine-built from a name: the `deal_no_contact` nudge is `'No contact in N days: ' || d.title`
     (0078's `create_followup_nudges`), and a deal converted from a lead is titled with the buyer's display
     name; the `retention_expired` task is built from the contact's `display_name` (0078), which erasure
@@ -2410,9 +2410,8 @@ VERIFY, run before starting.
     `document_uploaded`, `document_deleted`);
   - a mandate file's NAME (`mandates.ts`, `document_uploaded`);
   - a lost deal's typed reason (`deals.ts`, `lost`).
-  The task's `created` title is NOT printed (the `created` line reads `amount` only), so that one is a
-  plain payload edit, like the deal's was. The rest are RENDERED from the payload (`completed` /
-  `reopened` / `document_uploaded` / `document_deleted` / `lost` in `lib/services/events.ts`), so the
+  All of these are RENDERED from the payload (`completed` / `reopened` / `document_uploaded` /
+  `document_deleted` / `lost` in `lib/services/events.ts`), so the
   fix is 0094's shape: the event carries the row's id and the line joins the row (`deals.lost_reason`
   already holds the reason). A deleted document has no row left to join, which needs a decision (a
   tombstone row, or "a document" without its name). Found by T-updated-event-shape-only and its
@@ -2427,6 +2426,11 @@ VERIFY, run before starting.
     before the fix keep it (ids 14 and 70, operator test data) — the chain cannot be edited.** VERIFY
     (fixed): `grep -n -A8 'eventType: "created",' lib/actions/leads.ts | grep -E -- "-\s+title,$"` —
     no hit.
+  - ~~**A quick-added task's `created` event carries its title.**~~ **FIXED 2026-09-24 — DECISIONS
+    `T-task-created-title-shape`: `quickAddTask` no longer writes the title into the task's `created`
+    event, which is now `{ due_at, ...the linked ids }`; the row keeps the title. Hosted held 0 task
+    `created` events when measured, so no chain copy exists.** VERIFY (fixed):
+    `grep -n "payload: { title: d.title" lib/actions/tasks.ts` — no hit.
 - ~~**RLS test 15 compares a client clock and a database timestamp as strings, S.**~~ **FIXED 2026-09-24 —
   DECISIONS `T-rls-stage-tenure-one-clock`: the test reads the deal's `stage_entered_at` from the database
   before the owner's move and asserts it changed and did not go backwards — one clock, parsed. Not the

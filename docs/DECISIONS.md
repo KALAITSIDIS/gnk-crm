@@ -7583,3 +7583,21 @@ Remote branch deleted; worktree removed.
 - `npm run typecheck` exit 0, `npm run lint` exit 0, `npx vitest run` 2497/2497 across 196 files.
 
 **The sweep for siblings.** A read-only sweep looked for the same defect class across the tests on `origin/main`, with two refuters per candidate. The classes were: a string comparison of timestamps, a runner clock compared with a database or server clock, equality across precisions, and day boundaries that depend on the hour the suite runs. The database-test finder read every file under `supabase/tests/` and found test 15 only (confirmed twice). The e2e and pattern finders' results are recorded at this change's landing.
+
+
+## T-task-created-title-shape — a quick-added task's `created` event carries its due date and linked ids, never its title (2026-09-24; no migration)
+
+**The leak** (BACKLOG's titles entry; the operator asked for it next, after T-deal-created-title-shape). `quickAddTask` (`lib/actions/tasks.ts`) wrote the task's `title` into the task's hash-chained `created` event. A task title is text somebody typed, and it often names a person ("Call Maria about the deposit"), so it sat where neither erasure nor a correction can reach it (SEC-03).
+
+**Why a payload edit is enough.** Nothing reads it. The timeline's `created` line prints an amount only (`lib/services/events.ts`), and `ENTITY_PREFIX_KEY` overrides offers only, so a task's `created` event renders as "created". No SQL writes or reads task events, and `quickAddTask` is the only writer of a task `created` event: the other task events (`superseded` from `mandates.ts` and `followup-tasks.ts`) carry a kind, a reason or an id. The `title` key is gone, and the payload is `{ due_at, ...link }`, i.e. the Cyprus end-of-day due time or null plus whichever of `property_id` / `contact_id` / `deal_id` the task is linked to. The task ROW keeps the title, where the task list shows it and an edit can change it.
+
+**Not changed here.** `completed` and `reopened` (`toggleTaskDone`) still write `{ title }`, and the timeline prints it from the payload. That remains open in BACKLOG as a row-join fix. It is also the route by which system-built titles (the `deal_no_contact` nudge, `retention_expired`) reach the chain when ticked.
+
+**Existing events.** Measured on hosted 2026-09-24 (counts only): 0 task `created` events, and 0 `completed` / `reopened` events carrying a title. So there is no chain copy to live with, and this fix lands ahead of the leak.
+
+**Tests, red first.** `lib/actions/task-created-event-payload.test.ts` drives the real `quickAddTask` through `lib/testing/fake-client.ts` (a link check per linked table, then the insert). It checks three things:
+- the title's words (a name, a phone number, "deposit") appear in no logged payload;
+- the `created` payload is exactly `{ due_at, contact_id, deal_id }` for a dated task linked twice (`due_at` = 2026-10-01T20:59Z, Cyprus 23:59);
+- the payload is exactly `{ due_at: null }` for a bare task.
+
+It also pins that the insert still writes the title to the row. RED before the fix: 3 of 4, each because the title was in the payload; the row pin passed. GREEN after: 4/4, and #50's AST payload scan still passes.

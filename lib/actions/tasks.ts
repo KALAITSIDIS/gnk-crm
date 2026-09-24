@@ -84,7 +84,10 @@ export async function quickAddTask(
     entityType: "task",
     entityId: created.id,
     eventType: "created",
-    payload: { title: d.title, due_at: dueAt, ...link },
+    // no `title`: it is typed text, often about a person, and the chain is
+    // beyond erasure and correction (SEC-03). The row holds it; the timeline's
+    // `created` line never printed it.
+    payload: { due_at: dueAt, ...link },
   });
 
   revalidatePath("/tasks");
