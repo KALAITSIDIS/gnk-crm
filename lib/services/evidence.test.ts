@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { reportContentHash, sortChronological, type EvidenceRow } from "./evidence";
+import { fakeClient } from "@/lib/testing/fake-client";
+import { assembleEvidence, reportContentHash, sortChronological, type EvidenceRow } from "./evidence";
 
 let seq = 0;
 const row = (occurredAt: string, line: string, extra?: Partial<EvidenceRow>): EvidenceRow => ({
@@ -73,5 +74,80 @@ describe("reportContentHash", () => {
     const a = [row("2026-07-10T09:00:00Z", "x", { id: 1 })];
     const b = [row("2026-07-10T09:00:00Z", "x", { id: 999 })];
     expect(reportContentHash(a)).toBe(reportContentHash(b));
+  });
+});
+
+/**
+ * T-event-typed-text-shape: the commission evidence report renders its lines
+ * through describeEvent, so it prints no document title (or file name) and no
+ * deal lost reason — not from a new payload, which carries none, and not from
+ * an older one, which does. The PDF is a new document at rest; it must not
+ * re-publish what the chain cannot erase. Driven through the real assembler.
+ */
+describe("assembleEvidence prints no typed text from event payloads", () => {
+  const CONTACT = "66666666-6666-4666-8666-666666666666";
+  const DEAL = "77777777-7777-4777-8777-777777777777";
+  const DOC = "88888888-8888-4888-8888-888888888888";
+
+  it("renders legacy and new document and deal-lost events as neutral lines", async () => {
+    const at = (m: number) => `2026-09-${String(m).padStart(2, "0")}T10:00:00Z`;
+    const ev = (id: number, entity_type: string, entity_id: string, event_type: string, payload: unknown) => ({
+      id,
+      occurred_at: at(id),
+      entity_type,
+      entity_id,
+      event_type,
+      actor_id: null,
+      payload,
+    });
+    const caller = fakeClient({
+      contacts: [{ data: { id: CONTACT, display_name: "Fixture Buyer", phone_e164: null, email: null }, error: null }],
+      organizations: [{ data: { name: "Fixture Agency" }, error: null }],
+      deals: [
+        {
+          data: [{ id: DEAL, title: "Fixture deal", status: "lost", expected_value: null, commission_split_notes: null, property_id: null }],
+          error: null,
+        },
+      ],
+      events: [
+        // the contact family is awaited first, then the deal family
+        {
+          data: [
+            ev(1, "contact", CONTACT, "document_uploaded", { document_id: DOC, title: "passport_AB1234567.pdf", doc_type: "id_document", visibility: "admin_only" }),
+            ev(2, "contact", CONTACT, "document_deleted", { document_id: DOC, title: "Andreou source of funds.pdf" }),
+            ev(3, "contact", CONTACT, "document_uploaded", { document_id: DOC, doc_type: "contract", visibility: "internal" }),
+          ],
+          error: null,
+        },
+        {
+          data: [
+            ev(4, "deal", DEAL, "lost", { reason: "Eleni Charalambous bought elsewhere", stage: "Lost" }),
+            ev(5, "deal", DEAL, "lost", { stage: "Lost" }),
+          ],
+          error: null,
+        },
+      ],
+    });
+    const admin = fakeClient({});
+
+    const out = await assembleEvidence(caller.client as never, admin.client as never, "org-1", {
+      contactId: CONTACT,
+      generatedBy: { name: "Admin", role: "admin" },
+    });
+    if ("errorKey" in out) throw new Error(`assembly failed: ${out.errorKey}`);
+
+    expect(out.rows.map((r) => r.line)).toEqual([
+      "Document uploaded",
+      "Document deleted",
+      "Document uploaded",
+      "Marked lost",
+      "Marked lost",
+    ]);
+    const text = JSON.stringify(out.rows);
+    for (const word of ["passport", "AB1234567", "Andreou", "Eleni", "Charalambous"]) {
+      expect(text, `${word} reached the evidence rows`).not.toContain(word);
+    }
+    // the evidence path never asks the admin client for anything but slips and the chain
+    expect(admin.calls).toEqual([]);
   });
 });

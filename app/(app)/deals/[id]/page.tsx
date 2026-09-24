@@ -94,6 +94,7 @@ export default async function DealDetailPage({
     readEntityTimeline({
       orgId: profile.orgId,
       viewerRole: profile.role,
+      viewer: supabase,
       entityType: "deal",
       entityIds: [id],
       limit: 50,
@@ -102,6 +103,7 @@ export default async function DealDetailPage({
     readEntityTimeline({
       orgId: profile.orgId,
       viewerRole: profile.role,
+      viewer: supabase,
       entityType: "offer",
       entityIds: offerIds,
       limit: 50,

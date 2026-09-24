@@ -121,6 +121,7 @@ export default async function ContactDetailPage({
     readEntityTimeline({
       orgId: profile.orgId,
       viewerRole: profile.role,
+      viewer: supabase,
       entityType: "contact",
       entityIds: [id, ...(mergedRows ?? []).map((m) => m.id)],
       limit: 50,

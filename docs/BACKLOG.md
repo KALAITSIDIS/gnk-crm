@@ -2398,7 +2398,17 @@ VERIFY, run before starting.
     deals, mandates, properties and party defaults: check each for client fields. The `updated`
     timeline line does not read `changed` (`lib/services/events.ts`). Existing events cannot be
     edited. Found by T-merged-event-ids-only.
-- **Titles, a file name and a lost reason enter the chain by value, S/M.** Written into the
+- ~~**Titles, a file name and a lost reason enter the chain by value.**~~ **FIXED 2026-09-24 — DECISIONS
+  `T-event-typed-text-shape`: `toggleTaskDone` logs `completed` / `reopened` as `{}`; the contact and
+  property uploads and deletions log `{ document_id, doc_type, visibility }`; the mandate upload logs
+  `{ document_id, doc_type: 'mandate_agreement', visibility }` (it had no id at all); `markDealLost` logs
+  `{ stage? }`. The rows keep the text. The timeline prints none of it from ANY payload, old or new: a
+  live task's or document's title is read from its row on the VIEWER's client and shown as a labelled
+  "current title" (`lib/services/event-context.ts`), a deleted document reads "Document deleted" (no
+  tombstone), and the deal page prints the reason from `deals.lost_reason`. Hosted, counts only
+  (2026-09-24): 3 contact `document_deleted` events and 1 deal `lost` event keep their copies — the chain
+  cannot be edited — and are no longer rendered anywhere.** VERIFY (fixed): both greps below — no hit.
+  - **Titles, a file name and a lost reason enter the chain by value (original).** Written into the
   hash-chained payload, and typed or chosen by people ("Call Maria about the deposit", "Andreou
   passport scan.pdf") — or BUILT from a person's name by the system, which nobody types:
   - a task's title (`lib/actions/tasks.ts`: `completed`, `reopened`). Some task titles are
@@ -2416,7 +2426,7 @@ VERIFY, run before starting.
   already holds the reason). A deleted document has no row left to join, which needs a decision (a
   tombstone row, or "a document" without its name). Found by T-updated-event-shape-only and its
   pre-merge review, the system-built titles by T-deal-created-title-shape's review; not built there.
-  **VERIFY:** each of these two greps (run from the repo root) hits a writer; any hit means that
+  **VERIFY (original):** each of these two greps (run from the repo root) hits a writer; any hit means that
   writer is still open:
   `grep -nE "payload: \{ (title|reason: lostReason|document_id: doc\.id, title)" lib/actions/tasks.ts lib/actions/mandates.ts lib/actions/contact-documents.ts lib/actions/property-documents.ts lib/actions/deals.ts` ·
   `grep -n -A4 'eventType: "document_deleted"' lib/actions/contact-documents.ts lib/actions/property-documents.ts | grep "title: doc.title"`.
@@ -2443,6 +2453,42 @@ VERIFY, run before starting.
   the contact's own tasks to a fixed phrase, or leave system-built ones), then add it to the erasure run.
   Found by T-task-created-title-shape's review; not built there. **VERIFY:**
   `grep -n "tasks" lib/services/erasure-run.ts` — no hit means still open.
+- **More event payloads carry typed text by value, S/M.** Found by T-event-typed-text-shape's sweep and
+  left out of its scope on purpose (a different writer each, and the same fix shape: ids in the event, the
+  text on the row, a neutral line). Each is rendered from the payload today, except where said:
+  - a LEAD's `lost` / `spam` reason (`closeLead`, `lib/actions/leads.ts`: `{ reason }`, free text up to 500
+    characters), printed by the `lost` line for a lead (the deal branch no longer reads it; the `spam` line
+    prints none, but the chain holds it all the same). Hosted held 5
+    lead `lost` events with a reason (counts only, 2026-09-24). NOT a row join: `leads.lost_reason` is
+    mutable (a reopen clears it, a re-close replaces it), so the current value is not the event's;
+  - a reservation's release reason (`lib/actions/reservations.ts`: `reservation_status_changed`
+    `{ reason: release_reason }`, free text up to 300), printed by `reservationStatusReason`;
+  - a photograph's FILE NAME (`lib/actions/media.ts` and `scripts/import/media.mts`: `media_uploaded`
+    `{ file }`), printed by `mediaUploadedFile`; `deleteMedia` reads older `media_uploaded` payloads with the
+    admin client and copies `file` forward into `media_deleted`;
+  - viewing feedback (`lib/actions/viewings.ts`: `viewing_feedback` `{ comment, liked, disliked }`),
+    printed by `viewingFeedback*` and passed by the payload scan's `REVIEWED` map.
+  **VERIFY** — one grep per writer, and a hit means THAT writer is still open:
+  `grep -n "payload: { reason: parsed.data.reason" lib/actions/leads.ts` ·
+  `grep -n "reason: release_reason" lib/actions/reservations.ts` ·
+  `grep -nE "file: (file\.)?name," lib/actions/media.ts scripts/import/media.mts` ·
+  `grep -n "\.\.\.feedback," lib/actions/viewings.ts`.
+- **`markDealLost` and `markDealWon` do not fold the open-status check into their UPDATE, S.** Each reads
+  `status = 'open'` and then updates `.eq("id", dealId)` only (`lib/actions/deals.ts`), so a double submit,
+  or Won and Lost at the same moment, can both pass: two terminal events in the chain, and a won deal
+  flipped to lost (or `lost_reason` overwritten; `markDealWon` does not clear it). `closeLead` and the
+  reservation transitions already fold theirs in (`.in("status", …)`, `.eq("status", from)`). Found by
+  T-event-typed-text-shape's sweep; not built there (it preserves the deal transitions as they are).
+  **VERIFY** — one per action, and no hit means THAT action is still open:
+  `grep -n -A12 'status: "lost",' lib/actions/deals.ts | grep 'eq("status", "open")'` ·
+  `grep -n -A12 'status: "won",' lib/actions/deals.ts | grep 'eq("status", "open")'`.
+- **Erasure leaves a lost deal's typed reason on the row, S — NEEDS AN OPERATOR DECISION.** Contact
+  erasure blanks notes, lead messages and conversation notes but never `deals.lost_reason` (or
+  `leads.lost_reason`, BACKLOG's T-contact-erasure line). Since T-event-typed-text-shape the ROW is the
+  only copy a new lost deal makes, so a rule on the row now reaches all of it. Decide whether the
+  retention basis keeps it, like identity, or it is typed text, like the notes. Found by
+  T-event-typed-text-shape; not built there. **VERIFY:** `grep -n "lost_reason" lib/services/erasure-run.ts
+  lib/actions/contact-erasure.ts` — no hit means still open.
 - **Clock-dependent tests found by the 2026-09-24 sweep, S/M.** A read-only sweep at `ed6166c` (DECISIONS
   `T-rls-stage-tenure-one-clock`, Landing; two refuters per candidate) found 21 more tests that can fail while
   the code is right. Line numbers are at `9d79157`. Grouped, most urgent first:

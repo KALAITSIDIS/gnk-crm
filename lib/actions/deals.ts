@@ -570,7 +570,12 @@ export async function markDealWon(
   return { error: null, savedAt: Date.now() };
 }
 
-/** Guarded Lost flow (T3.4): a reason is mandatory and lands in the event. */
+/**
+ * Guarded Lost flow (T3.4): a reason is mandatory and lands on the deal ROW
+ * (`deals.lost_reason`, which the deal page prints). The event records the act
+ * and the lost stage — not the reason, which is typed text that names people,
+ * in a chain nothing can erase (SEC-03, DECISIONS T-event-typed-text-shape).
+ */
 export async function markDealLost(
   _prev: DealSectionState,
   formData: FormData,
@@ -624,7 +629,8 @@ export async function markDealLost(
     entityType: "deal",
     entityId: dealId,
     eventType: "lost",
-    payload: { reason: lostReason, ...(lostStage ? { stage: lostStage.name } : {}) },
+    // `stage` is the office's pipeline stage name, as the `won` event carries it
+    payload: { ...(lostStage ? { stage: lostStage.name } : {}) },
   });
 
   revalidatePath(`/deals/${dealId}`);

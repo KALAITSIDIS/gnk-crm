@@ -17,6 +17,9 @@ vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => admin.client }
 
 const { readEntityTimeline } = await import("./entity-timeline");
 
+// the VIEWER's client — a blank fake; see event-context.test.ts for what it is asked
+const viewer = () => fakeClient({}).client as never;
+
 const row = (id: number, event_type: string) => ({
   id,
   occurred_at: `2026-09-0${id}T10:00:00Z`,
@@ -37,7 +40,7 @@ describe("readEntityTimeline", () => {
       orgId: "org-1",
       entityType: "contact",
       entityIds: ["c1"],
-      limit: 50, viewerRole: "admin",
+      limit: 50, viewerRole: "admin", viewer: viewer(),
     });
     expect(
       rows.map((r) => r.event_type),
@@ -52,7 +55,7 @@ describe("readEntityTimeline", () => {
       orgId: "org-1",
       entityType: "contact",
       entityIds: ["c1", "c2"],
-      limit: 50, viewerRole: "admin",
+      limit: 50, viewerRole: "admin", viewer: viewer(),
     });
     expect(svc.argsOf("events", "eq")).toEqual(
       expect.arrayContaining([
@@ -69,7 +72,7 @@ describe("readEntityTimeline", () => {
     // a missing filter becomes a whole-org read.
     const svc = fakeClient({});
     admin.client = svc.client;
-    expect(await readEntityTimeline({ orgId: "org-1", entityType: "key", entityIds: [], limit: 20, viewerRole: "admin" }))
+    expect(await readEntityTimeline({ orgId: "org-1", entityType: "key", entityIds: [], limit: 20, viewerRole: "admin", viewer: viewer() }))
       .toEqual([]);
     expect(svc.served.events ?? 0).toBe(0);
   });
@@ -81,7 +84,7 @@ describe("readEntityTimeline", () => {
     const svc = fakeClient({});
     admin.client = svc.client;
     expect(
-      await readEntityTimeline({ orgId: "", entityType: "contact", entityIds: ["c1"], limit: 50, viewerRole: "admin" }),
+      await readEntityTimeline({ orgId: "", entityType: "contact", entityIds: ["c1"], limit: 50, viewerRole: "admin", viewer: viewer() }),
     ).toEqual([]);
     expect(svc.served.events ?? 0, "no query at all").toBe(0);
     expect(err).toHaveBeenCalled();
@@ -91,7 +94,7 @@ describe("readEntityTimeline", () => {
   it("newest first, and capped", async () => {
     const svc = fakeClient({ events: [{ data: [], error: null }] });
     admin.client = svc.client;
-    await readEntityTimeline({ orgId: "o", entityType: "deal", entityIds: ["d1"], limit: 50, viewerRole: "admin" });
+    await readEntityTimeline({ orgId: "o", entityType: "deal", entityIds: ["d1"], limit: 50, viewerRole: "admin", viewer: viewer() });
     expect(svc.argsOf("events", "order")).toEqual([["occurred_at", { ascending: false }]]);
     expect(svc.argsOf("events", "limit")).toEqual([[50]]);
   });
@@ -112,7 +115,7 @@ describe("readEntityTimeline", () => {
     admin.client = svc.client;
 
     expect(
-      await readEntityTimeline({ orgId: "o", entityType: "contact", entityIds: ["c1"], limit: 50, viewerRole: "admin" }),
+      await readEntityTimeline({ orgId: "o", entityType: "contact", entityIds: ["c1"], limit: 50, viewerRole: "admin", viewer: viewer() }),
     ).toEqual([]);
     expect(err).toHaveBeenCalledWith(
       "timeline read failed:",
@@ -166,6 +169,7 @@ describe("document titles: the one thing this reader must not hand over", () => 
       entityIds: ["c1"],
       limit: 50,
       viewerRole,
+      viewer: viewer(),
     });
   };
 
@@ -374,6 +378,7 @@ describe("a won deal is not announced to agents who may not read it", () => {
       entityIds: ["p1"],
       limit: 50,
       viewerRole,
+      viewer: viewer(),
     });
   };
 
@@ -460,5 +465,60 @@ describe("a won deal is not announced to agents who may not read it", () => {
       { ...followup("listing_status_check"), event_type: "price_changed" },
     ]);
     expect((row.payload as Record<string, unknown>).kind).toBe("listing_status_check");
+  });
+});
+
+describe("a task's or document's title comes from its ROW, read as the VIEWER (T-event-typed-text-shape)", () => {
+  /*
+   * The events are read as the system — which events exist is a fact about the
+   * record. What a document is CALLED is not: `documents_select` withholds an
+   * admin_only row from agents, so the title must be asked for on the caller's
+   * own client, where RLS answers. Asking the admin client would hand a passport
+   * scan's name to every agent through the timeline.
+   */
+  const DOC = "55555555-5555-4555-8555-555555555555";
+  const uploaded = {
+    id: 9,
+    occurred_at: "2026-09-24T10:00:00Z",
+    event_type: "document_uploaded",
+    entity_type: "contact",
+    entity_id: "c1",
+    payload: { document_id: DOC, doc_type: "contract", visibility: "internal" },
+  };
+
+  it("asks the viewer's client for the title, and the system's client for the events only", async () => {
+    const svc = fakeClient({ events: [{ data: [uploaded], error: null }] });
+    admin.client = svc.client;
+    const mine = fakeClient({ documents: [{ data: [{ id: DOC, title: "Sale agreement.pdf" }], error: null }] });
+
+    const [row] = await readEntityTimeline({
+      orgId: "org-1",
+      entityType: "contact",
+      entityIds: ["c1"],
+      limit: 50,
+      viewerRole: "agent",
+      viewer: mine.client as never,
+    });
+
+    expect(row.current_title).toBe("Sale agreement.pdf");
+    expect(svc.calls.filter((c) => c.table === "documents"), "never the admin client").toEqual([]);
+    expect(mine.argsOf("documents", "in")).toEqual([["id", [DOC]]]);
+    expect(mine.argsOf("documents", "eq")).toEqual([["org_id", "org-1"]]);
+  });
+
+  it("a row the viewer cannot read (RLS returns nothing) leaves the line neutral", async () => {
+    const svc = fakeClient({ events: [{ data: [uploaded], error: null }] });
+    admin.client = svc.client;
+    const mine = fakeClient({ documents: [{ data: [], error: null }] });
+    const [row] = await readEntityTimeline({
+      orgId: "org-1",
+      entityType: "contact",
+      entityIds: ["c1"],
+      limit: 50,
+      viewerRole: "agent",
+      viewer: mine.client as never,
+    });
+    expect(row.current_title).toBeUndefined();
+    expect(row.event_type).toBe("document_uploaded");
   });
 });

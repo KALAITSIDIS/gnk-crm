@@ -16,8 +16,8 @@ import { fakeClient, type FakePage } from "@/lib/testing/fake-client";
  * deal-created-event-payload.test.ts, and every logged payload is searched for
  * the fixture's own words.
  *
- * The `completed` / `reopened` events still carry the title — the timeline
- * prints it from the payload, so that is a row join (BACKLOG), not this edit.
+ * The `completed` / `reopened` events no longer carry it either since
+ * T-event-typed-text-shape; task-done-event-payload.test.ts pins those.
  */
 
 const state = vi.hoisted(() => ({ client: null as unknown }));

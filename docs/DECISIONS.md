@@ -7791,3 +7791,104 @@ Its five low/info points, verified before acting:
   Hosted then showed 0 leads, 0 lead events and 0 pending jobs in the window.
 - **Post-deploy checks:** CSP nonce on 16 of 16 `/login` scripts, the feed 200, `/leads` 307, the site's `/` and `/contact` 200, and no runtime errors in either project.
 - **Still open, both older than this work and out of its scope:** the site has no 320-character e-mail cap, and a U+0000 reaches Postgres. In both cases a script's post is still a 502 plus a report.
+
+## T-event-typed-text-shape — task, document and lost-deal events carry ids, not typed text; timelines read the name from the row as the viewer (2026-09-24; no migration)
+
+**The brief** (audit of `e8155d6`, treated as hypotheses; the BACKLOG entry "Titles, a file name and a lost reason enter the chain by value"). Inspected at CRM `e8155d693e222b8a8c7b1f614ea4f1f789dcbc9f` and gnk-web `b158f3729caebbbfba8d4a5510a784bf176656d5`, both still `origin/main` when the work began. Branch `fix/event-payload-typed-text`.
+
+**Verdicts — all five CONFIRMED at `e8155d6`:**
+- `toggleTaskDone` (`lib/actions/tasks.ts:140`) logged `completed` / `reopened` as `{ title: task.title }`. It selected `title` only for that payload. Some titles are built from a person's name by the system (`retention_expired`, the `deal_no_contact` nudge on a deal titled with the buyer's name).
+- `uploadContactDocument` / `deleteContactDocument` (`contact-documents.ts:96,152`) and the property pair (`property-documents.ts:89,143`) logged the document `title`, which defaults to the uploaded FILE's name.
+- `uploadMandateDocument` (`mandates.ts:486`) logged `{ title: file.name }` and nothing else — not even the document's id, although it had it.
+- `markDealLost` (`deals.ts:627`) logged `{ reason: lostReason, stage? }`, the typed reason (3–2000 characters).
+- **Why the values were there:** the timeline printed them FROM the payload (`completedTitle`, `reopenedTitle`, `documentUploadedTitle`, `documentDeletedTitle`, `lostReason` in `lib/services/events.ts`). Where they showed:
+  - the contact and property Activity tabs (documents, with `redactDocumentTitles` withholding non-internal titles from non-admins);
+  - the deal Activity section (the reason, a second time — the header already prints `deals.lost_reason`);
+  - the admin dashboard feed (all of them, including the mandate file name and task titles — the only screen for task events);
+  - the commission evidence report (documents and reasons, into the PDF).
+- **Reproduced through the REAL actions and the REAL `logEvent`** (mocked auth, cache, storage and transport only): 11 of 22 new writer tests failed on `e8155d6`, each because a title, file name or reason reached the inserted row. Their 11 controls passed: the rows still get the text, and the no-op, refused and failed updates log nothing. That proves the write path, not production data (below).
+- **No other writer of these events exists.** `move_deal_to_stage` refuses a lost target and writes no event (0067); no SQL writes `completed`, `reopened`, `document_*` or a deal `lost`; no SQL reads `payload->>'title'` or `'reason'`. The reporting engine counts `lost` events by type only. gnk-web reads no events.
+
+**Hosted, measured read-only, counts only (no payload value selected):** 3 contact `document_deleted` events carry a `title`; 1 deal `lost` event carries a `reason`; 0 task `completed` / `reopened`; 0 `document_uploaded`. 5 lead `lost` events carry a reason (a different writer, below). 3 `evidence_report_generated`. The operator recorded on 2026-09-13 that production rows are test data; the values were not read.
+
+**The fix.**
+- **Writers — explicit payloads.**
+  - `completed` / `reopened` = `{}`: the entity id is the task, and `toggleTaskDone` no longer selects the title.
+  - Document upload and deletion = `{ document_id, doc_type, visibility }`; the delete pre-read no longer selects the title.
+  - Mandate upload = `{ document_id, doc_type: "mandate_agreement", visibility }`, reading `visibility` back from the inserted row like the other two. The id is the ONLY link from that event to that file, because `signed_document_id` moves on "Replace doc".
+  - Lost = `{ stage? }`, the office's stage name, as `won` carries it.
+  - Every row keeps its text; nothing is truncated, hashed, renamed or nested. The update conditions, the no-op early return, the zero-row refusal and the storage behaviour are unchanged.
+- **Renderer — no typed text from ANY payload, old or new.**
+  - `completed` / `reopened` on a task → "Task completed" / "Task reopened" (new keys `taskCompleted` / `taskReopened`; the bare "Completed" stays for any other entity).
+  - `document_uploaded` / `document_deleted` → "Document uploaded" / "Document deleted".
+  - `lost` on a DEAL → "Marked lost".
+  - The four `*Title` messages are gone in EN, EL and RU. `EVENT_LINES` entries now receive the entity type, because a lead's `lost` is a separate writer and keeps its old reading (BACKLOG).
+- **Which task or document — from the row, as the viewer.** New `lib/services/event-context.ts`, `attachCurrentTitles(viewer, orgId, events)`:
+  - It reads `tasks.title` for task `completed` / `reopened` events and `documents.title` for `document_uploaded` (via `payload.document_id`): one query per table, on the VIEWER's client, plus an explicit `org_id` filter.
+  - Ids that are not uuids are never sent; one malformed payload would otherwise fail the lookup for the whole page.
+  - A missing, deleted, redacted or unreadable row leaves the line neutral. The payload's old copy is never consulted, and `document_deleted` is not even looked up (no row, no tombstone).
+  - The value lands in a new `TimelineEvent.current_title`. `EventTimeline` renders it through `describeEventContext` as a LABELLED "current title: …" (EN), "τρέχων τίτλος: …" (EL), "текущее название: …" (RU), before the caller's note. It is never inside the line, because the row may have changed since the event: an admin may edit a document's title in the database.
+- **Why the viewer's client, when the events are read as the system.** `readEntityTimeline` reads EVENTS with the admin client (T-timeline), but `documents_select` (admin or internal) hides an admin_only passport scan from agents and listing managers, and `tasks_select` hides tasks that are not theirs. The 0094 notes join uses the admin client safely only because notes are org-readable; copying it here would have printed a passport's file name on every agent's timeline.
+  - So `readEntityTimeline` takes a required `viewer` (the page's own `supabase`; five call sites), and the admin dashboard passes its session client with the profile's org (a new `orgId` prop).
+  - A forged event (any staff member can insert one with any payload) therefore exposes nothing the viewer could not already read.
+- **`redactDocumentTitles` stays** as a second lock on the older payloads that still hold a title. It no longer affects what is printed.
+- **Deals get no join.** The deal page's header already prints `deals.lost_reason` from the row, as the CURRENT context. A timeline line joined to it would present today's reason as an older event's, and `markDealWon` does not clear it.
+
+**Consequences, stated rather than hidden.**
+- **Evidence report hash.** `reportContentHash` hashes the rendered lines, and its docstring promised "recomputable by regenerating".
+  - A report generated before this change whose rows held a document title or a deal reason now recomputes to a different hash.
+  - Nothing recomputes it: `verifyEvidenceReport` matches the stored `pdf_sha256`, which this does not touch, and the actor names in the hash were already mutable. Hosted holds 3 evidence reports. The docstring now says so.
+  - The alternative — keep printing the old text in NEW PDFs — would re-publish what the chain cannot erase, so it was rejected.
+- **Older events** keep their copies, because the chain is append-only (3 + 1 on hosted). They are no longer printed on any screen or report. `scripts/backup/export-events.sql` still dumps `payload::text`, so backups hold them, as they hold every chained payload.
+- **What the screens now say.** "Task completed — X" becomes "Task completed (current title: X · actor)". A deleted document's events read "Document uploaded" and "Document deleted" with no name, for everyone, admins included.
+
+**Tests.**
+- **Writers, red first** (real actions, real `logEvent`, `lib/testing/fake-client.ts` transport): `task-done-event-payload.test.ts`, `document-event-payload.test.ts` (contact, property and mandate; typed title AND defaulted file name; deletes; refused deletes) and `deal-lost-event-payload.test.ts`. Every inserted row is searched for the fixture's synthetic words. RED 11/22 on the old code, GREEN 22/22.
+- `document-events-carry-visibility.test.ts` pinned the title in the delete payload; it now pins the exact title-free shape.
+- **Renderer** (`events.test.ts`):
+  - legacy AND new payloads of all six shapes render the neutral line, and no legacy line contains its text;
+  - malformed payloads do not throw, and each line goes through the translator;
+  - a lead's `lost` still prints its reason;
+  - `describeEventContext` labels the current title.
+- **Lookup** (`event-context.test.ts`):
+  - which client is asked (the admin client is mocked to throw);
+  - one read per table with de-duplicated ids, and the org filter;
+  - no payload fallback, `document_deleted` never looked up, and no query when nothing needs one;
+  - uuid-only ids; a failed read gives neutral lines plus a log; no org is refused.
+- **Reader** (`entity-timeline.test.ts`): the title comes from the viewer's fake, and the system's fake is never asked for a document.
+- **Evidence** (`evidence.test.ts`): the real `assembleEvidence` prints "Document uploaded" / "Document deleted" / "Marked lost" for legacy and new payloads, with none of their words.
+- **Database** (`supabase/tests/event-context.test.ts`, local stack, real RLS). The service client is the control that every row exists.
+  - An agent gets their own task's and the internal document's title, but not a colleague's task, the admin_only passport scan, or another org's rows.
+  - An admin gets their whole org and nothing of another. Naming another org buys nothing.
+  - A deleted row reads as nothing.
+- **Browser** (`tests/e2e/event-typed-text.spec.ts`, real forms, seed admin). It uploads and deletes a property document, ticks and reopens a task, and marks a deal lost.
+  - The stored payloads are the exact id shapes.
+  - The Activity tab and the admin feed show the labelled current title, and after the delete neither line names the document.
+  - The deal header prints the reason, and the Activity line does not.
+- `messages.test.ts` compiles the new keys in all three locales, and the payload AST scan still passes.
+- **Callers** (`tests/unit/timeline-viewer-client.test.ts`, added after review): the services cannot see a CALLER
+  handing them the admin client (same type; the properties page holds one in scope; every e2e signs in as an
+  admin). So this walks the source with the TypeScript parser: every `readEntityTimeline({ viewer })` and
+  `attachCurrentTitles(viewer, …)` must pass a variable bound to `await createClient()` from
+  `@/lib/supabase/server`. Swapping one to `admin` fails it, and so does the dashboard's.
+- **Mutation proofs** (throwaway worktree, one exact replacement each, restored in `finally`): 17 of 17 killed.
+  They cover the lookup asking the admin client, the org filter dropped, the uuid check dropped, `document_deleted`
+  looked up, a payload fallback, the reader passing the admin client, each renderer printing its old text again,
+  an unlabelled current title, the title renamed or nested, the mandate id dropped, a truncated reason, and the
+  no-op and zero-row guards removed. Two survivors the review found (the mandate's `visibility` read-back)
+  are now pinned.
+
+**Review.** Five read-only lenses (correctness, security, requirements, tests, docs), two refuters per finding:
+correctness, security and requirements found nothing. Ten test and docs points were raised and every one was
+refuted as a defect of the shipped code (one docs point split 1–1). The true ones were cheap, and are done: the
+caller guard, the mandate read-back pin, the e2e task dated a year overdue so it is on `/tasks` page 1
+whatever the local database holds, five comment and doc sentences made exact, and a VERIFY grep per writer.
+The "a burst of org events evicts the feed line" flake was refuted with evidence (one worker; routes warmed
+in setup; no source of ten events in the window) and is left.
+
+**Compatibility and deploy order.** No migration, no hosted step. Not deploy-coupled (release-compat): an old app renders a new payload through its untitled branches ("Completed", "Document uploaded", "Marked lost"), and a new app renders an old payload neutrally. Order: branch CI green → merge → deploy READY → probes.
+
+**Not changed here — BACKLOG.**
+- The same shape of leak in other writers: a lead's `lost` / `spam` reason, a reservation's release reason, a photograph's file name, viewing feedback text.
+- `markDealLost` / `markDealWon` do not fold the open-status check into their UPDATE.
+- Erasure leaves `deals.lost_reason` (and task titles, already listed) on the ROW, now the only copy a new lost deal makes. That needs an operator decision.

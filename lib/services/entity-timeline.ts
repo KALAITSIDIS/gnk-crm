@@ -1,4 +1,7 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { Database } from "@/lib/supabase/database.types";
+import { attachCurrentTitles } from "@/lib/services/event-context";
 import type { TimelineEvent } from "@/lib/services/events";
 import { NOTE_ERASED_LABEL } from "@/lib/services/notes";
 
@@ -68,8 +71,18 @@ export async function readEntityTimeline(opts: {
   /** ids the CALLER already read through RLS. See the note above. */
   entityIds: readonly string[];
   limit: number;
-  /** the VIEWER's role — decides whether a document's title may be shown */
+  /**
+   * the VIEWER's role — decides whether an older payload keeps its document
+   * title (redactDocumentTitles) and whether a won-deal follow-up keeps its kind
+   */
   viewerRole: string;
+  /**
+   * The VIEWER's own client. The events come from the system; what a document
+   * is CALLED comes from its row, read as the viewer, so RLS decides whether
+   * they may see it (lib/services/event-context.ts). Never pass the admin
+   * client here — tests/unit/timeline-viewer-client.test.ts checks every caller.
+   */
+  viewer: SupabaseClient<Database>;
 }): Promise<TimelineRow[]> {
   if (opts.entityIds.length === 0) return [];
   /*
@@ -106,7 +119,8 @@ export async function readEntityTimeline(opts: {
     return [];
   }
   const rows = await attachNotes((data ?? []) as unknown as TimelineRow[], opts.orgId);
-  return redactWonDealKinds(redactDocumentTitles(rows, opts.viewerRole), opts.viewerRole);
+  const redacted = redactWonDealKinds(redactDocumentTitles(rows, opts.viewerRole), opts.viewerRole);
+  return attachCurrentTitles(opts.viewer, opts.orgId, redacted);
 }
 
 /**
@@ -158,7 +172,7 @@ async function attachNotes(rows: TimelineRow[], orgId: string): Promise<Timeline
   });
 }
 
-/** The two event types whose payload carries a document's title. */
+/** The two event types whose OLDER payloads carry a document's title. */
 const DOCUMENT_EVENTS = new Set(["document_uploaded", "document_deleted"]);
 
 /**
@@ -171,9 +185,10 @@ const DOCUMENT_EVENTS = new Set(["document_uploaded", "document_deleted"]);
  * "the most sensitive PII the desk holds", admin-only by need-to-know (SEC-02),
  * "enforced three deep".
  *
- * But the upload files an event on the CONTACT — a type this reader returns
- * org-wide — whose payload carries the title, and `describeEvent` prints that
- * title verbatim. The title defaults to the uploaded FILE NAME. So showing the
+ * But the upload filed an event on the CONTACT — a type this reader returns
+ * org-wide — whose payload carried the title, and `describeEvent` printed that
+ * title verbatim (until T-event-typed-text-shape, below). The title defaults to
+ * the uploaded FILE NAME. So showing the
  * whole history without this step would put "Document uploaded —
  * passport_AB123456.pdf" on every agent's and listing manager's screen, and
  * undo three layers of enforcement with a line of prose.
@@ -207,6 +222,13 @@ const DOCUMENT_EVENTS = new Set(["document_uploaded", "document_deleted"]);
  * choosing this: production holds three `document_deleted` events, all predating
  * the field, and zero `document_uploaded` — so failing closed costs three lines
  * that were already anonymous.
+ *
+ * SINCE T-event-typed-text-shape (2026-09-24) NO NEW EVENT CARRIES A TITLE, and
+ * `describeEvent` prints none from any payload, old or new: a live document's
+ * name comes from its row, read as the viewer (`attachCurrentTitles`, which
+ * `documents_select` gates exactly as this function tries to). This step stays
+ * as a second lock on the older payloads that still hold one, so that nothing
+ * downstream of this reader can print what the viewer may not read.
  */
 function redactDocumentTitles(rows: TimelineRow[], viewerRole: string): TimelineRow[] {
   if (viewerRole === "admin") return rows;

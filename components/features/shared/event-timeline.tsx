@@ -1,5 +1,10 @@
 import { getTranslations } from "next-intl/server";
-import { describeEvent, type EventTranslator, type TimelineEvent } from "@/lib/services/events";
+import {
+  describeEvent,
+  describeEventContext,
+  type EventTranslator,
+  type TimelineEvent,
+} from "@/lib/services/events";
 import { formatDateTime } from "@/lib/utils/format";
 
 /**
@@ -15,6 +20,10 @@ import { formatDateTime } from "@/lib/utils/format";
  * under the heading "what happened to it". The reader carries the org filter
  * and the document-title redaction that RLS would otherwise have applied; if
  * you add a caller, read its notes first.
+ *
+ * The muted annotation is the source row's CURRENT title, labelled as such
+ * (lib/services/event-context.ts reads it with the viewer's permissions), and
+ * then the caller's note.
  */
 export async function EventTimeline({
   events,
@@ -30,17 +39,20 @@ export async function EventTimeline({
   }
   return (
     <ul className="divide-y divide-border">
-      {events.map((e) => (
-        <li key={e.id} className="flex items-baseline justify-between gap-4 py-2 text-sm">
-          <span className="text-text-1">
-            {describeEvent(e, t)}
-            {e.note ? (
-              <span className="ml-2 text-xs font-normal text-text-3">({e.note})</span>
-            ) : null}
-          </span>
-          <span className="shrink-0 text-xs text-text-3">{formatDateTime(e.occurred_at)}</span>
-        </li>
-      ))}
+      {events.map((e) => {
+        const context = describeEventContext(e, t);
+        return (
+          <li key={e.id} className="flex items-baseline justify-between gap-4 py-2 text-sm">
+            <span className="text-text-1">
+              {describeEvent(e, t)}
+              {context ? (
+                <span className="ml-2 text-xs font-normal text-text-3">({context})</span>
+              ) : null}
+            </span>
+            <span className="shrink-0 text-xs text-text-3">{formatDateTime(e.occurred_at)}</span>
+          </li>
+        );
+      })}
     </ul>
   );
 }

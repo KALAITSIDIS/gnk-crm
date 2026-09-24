@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 import { Card, CardEmpty } from "@/components/features/dashboard/card";
 import { EventTimeline } from "@/components/features/shared/event-timeline";
+import { attachCurrentTitles } from "@/lib/services/event-context";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
 import { formatDate, formatMoney, formatResponseMinutes } from "@/lib/utils/format";
@@ -91,7 +92,7 @@ function BarList({
   );
 }
 
-export async function AdminDashboard() {
+export async function AdminDashboard({ orgId }: { orgId: string }) {
   const t = await getTranslations("dashboard.admin");
   const supabase = await createClient();
 
@@ -221,13 +222,17 @@ export async function AdminDashboard() {
     .map((e) => e.entity_id!);
   const refIds = [...new Set([...expiringIds, ...eventPropIds])];
 
-  const [actorProfilesRes, refPropsRes] = await Promise.all([
+  const [actorProfilesRes, refPropsRes, feedEvents] = await Promise.all([
     profileIds.length
       ? supabase.from("profiles").select("id, full_name").in("id", profileIds)
       : Promise.resolve({ data: [], error: null }),
     refIds.length
       ? supabase.from("properties").select("id, reference").in("id", refIds)
       : Promise.resolve({ data: [], error: null }),
+    // which task was ticked, which document went up: their events carry ids
+    // only (T-event-typed-text-shape), so the names come from the rows, read on
+    // this same caller client
+    attachCurrentTitles(supabase, orgId, latestEvents),
   ]);
   const actorName = new Map(
     unwrapRows(actorProfilesRes, "actor profiles").map((p) => [p.id, p.full_name]),
@@ -237,7 +242,7 @@ export async function AdminDashboard() {
   );
 
   // annotate the feed with who did it and, for property events, which listing
-  const timelineEvents = latestEvents.map((e) => {
+  const timelineEvents = feedEvents.map((e) => {
     const ref = e.entity_type === "property" && e.entity_id ? propRef.get(e.entity_id) : null;
     const actor = e.actor_id ? (actorName.get(e.actor_id) ?? null) : t("system");
     return { ...e, note: [ref, actor].filter(Boolean).join(" · ") || null };

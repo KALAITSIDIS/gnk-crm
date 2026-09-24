@@ -123,6 +123,14 @@ export function sortChronological<T extends { occurredAt: string; id: number }>(
  * filters — NOT the hash of the PDF file (which contains this hash). The
  * event id is deliberately excluded so hashes of previously stored reports
  * stay recomputable.
+ *
+ * Recomputable with the CURRENT renderer: `line` is re-rendered on every
+ * regeneration, and so is an actor's name. Since T-event-typed-text-shape
+ * (2026-09-24) a document's title and a deal's lost reason are no longer
+ * printed from any payload (task events are never in a report), so a report
+ * generated before then whose rows held one recomputes to a different hash.
+ * A stored report is verified by
+ * its `pdf_sha256` (verifyEvidenceReport), which that does not touch.
  */
 export function reportContentHash(rows: EvidenceRow[]): string {
   const canonical = rows.map((r) => [
