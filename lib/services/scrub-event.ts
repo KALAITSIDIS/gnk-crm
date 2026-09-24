@@ -89,6 +89,9 @@ interface EventLike {
   breadcrumbs?: BreadcrumbLike[];
   exception?: unknown;
   message?: string;
+  transaction?: string;
+  tags?: unknown;
+  extra?: unknown;
 }
 
 export function scrubSensitiveHeaders<T extends EventLike>(event: T): T {
@@ -124,8 +127,123 @@ const QUERY_ONLY_KEYS = ["url.query", "http.query", "http.fragment"] as const;
  * alone: no shape measured puts one there, and prose is not a URL.
  */
 export function stripUrlQueries(text: string): string {
-  const absolute = text.replace(/(\b[a-z][a-z0-9+.-]*:\/\/[^\s?#]*)[?#]\S*/gi, "$1");
+  // Linear: a scheme may start only after a character no scheme contains, and
+  // each match runs to the end of its URL, so no position is scanned twice.
+  // (`\b` plus a required query let `"a://".repeat(n)` or `"a.".repeat(n)`
+  // rescan the rest of the string from every position: seconds for 64 KB, on
+  // the browser's main thread — the 2026-09-23 review.)
+  const absolute = text.replace(/(^|[^a-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/[^\s?#]*)(?:[?#]\S*)?/gi, "$1$2");
   return absolute.startsWith("/") ? absolute.replace(/[?#][\s\S]*$/, "") : absolute;
+}
+
+// ---------------------------------------------------------------------------
+// TOKENS IN THE PATH (T-sentry-path-token-redaction, 2026-09-23).
+//
+// Cutting the query keeps the path, and two routes' paths ARE the credential:
+//
+//   /p/<token>                      a buyer's proposal or availability link:
+//                                   43 base64url characters; the row holds
+//                                   only their sha256 (share-links-token.ts)
+//   /api/portals/<portal>/<token>   a portal's feed: 64 hex, "the whole of the
+//                                   caller's proof" (portals/token.ts, 0097)
+//
+// Next names both transactions by their route (`GET /p/[token]`), but the path
+// itself rides wherever a URL does: `event.request.url`, the root span's
+// `http.target`, onRequestError's `request_path`, the browser's location.href
+// and a pageload's `url.full`, the Referer on the interest form's POST from
+// the proposal page, a navigation breadcrumb. The secret segment becomes
+// `[token]` — the route's own name for it — and the rest of the path stays,
+// so an event still says which kind of page, or which portal's feed.
+//
+// A path counts where one can START: at the start of a value, after a
+// character no path segment is made of (whitespace, a quote, `(`, `=`, `:`)
+// or after a percent escape (`GET%20%2Fp%2F…`, a transaction name inside a
+// `baggage` header), or straight after an absolute or protocol-relative URL's
+// origin — any origin, because a preview deployment's host is not the
+// production one. A slash may be percent-encoded or doubled. Unlike the query
+// cut above, a relative path inside prose counts too: a false match costs one
+// segment of debugging detail, a miss costs a credential. A stack frame's
+// `…/server/app/p/[token]/page.js` is a file, not the route, and is left
+// alone. `app/` holds no other secret segment: a test walks it.
+//
+// The secret itself is matched by the tokens' own alphabet — base64url for a
+// link, hex for a feed — so it cannot swallow the separator before a second
+// URL in the same value (`/p/A,/p/B`) or a stack frame's `:12:5`. A "token"
+// outside that alphabet is refused by both routes, and is no credential.
+
+/** The alphabet of both tokens: base64url (share-links-token.ts) and hex (portals/token.ts). */
+const TOKEN_CHARS = String.raw`[\w-]+`;
+/**
+ * A slash, raw or percent-encoded, doubled or tripled at most. Bounded on
+ * purpose: `+` backtracks over a long run of slashes from every position in
+ * it, and 64 KB of `%2F` took seven seconds (the test that holds this).
+ */
+const SLASH = String.raw`(?:\/|%2f){1,3}`;
+/** An optional origin, raw or percent-encoded: a scheme, then `//` and a host. */
+const ORIGIN = String.raw`(?:[a-z][a-z0-9+.-]*(?::|%3a))?(?:(?:\/|%2f){2}(?:[^\/\s?#%]|%(?!2f)[0-9a-f]{2})*)?`;
+/** Group 1, kept: the start of the value, a delimiter or a percent escape, then an optional origin. */
+const PATH_START = String.raw`((?:^|[^\w.~%/+-]|%[0-9a-f]{2})${ORIGIN})`;
+
+/** Group 2, kept: the route up to its secret segment, which is replaced. */
+const TOKEN_PATHS = [
+  new RegExp(String.raw`${PATH_START}(${SLASH}p${SLASH})${TOKEN_CHARS}`, "gi"),
+  new RegExp(String.raw`${PATH_START}(${SLASH}api${SLASH}portals${SLASH}${TOKEN_CHARS}${SLASH})${TOKEN_CHARS}`, "gi"),
+];
+
+/**
+ * The same token where Next carries a route's params outside its path:
+ *
+ *   - the router state it sends with every RSC request and server action made
+ *     FROM a page (`next-router-state-tree`, percent-encoded JSON), where a
+ *     dynamic segment is the tuple `["token","<value>","d",null]`
+ *     (flight-data-helpers.js). No such request leaves /p/<token> today — the
+ *     page has no Link, router call or action — so this shuts a door a future
+ *     "back to listings" link would open without anyone thinking of Sentry;
+ *   - the `nxtPtoken=<value>` query param Vercel's routing adds
+ *     (route-module.js). A query is cut wherever a URL is recognised; this is
+ *     for one quoted inside prose.
+ *
+ * Both routes call their secret `token`; the test that walks app/ holds that.
+ */
+const PARAM_TOKENS = [
+  new RegExp(String.raw`((?:\[|%5B)(?:"|%22)token(?:"|%22)(?:,|%2C)(?:"|%22))${TOKEN_CHARS}`, "gi"),
+  new RegExp(String.raw`(\bnxtPtoken=)${TOKEN_CHARS}`, "gi"),
+];
+
+/** What the secret segment becomes: the name the route itself gives it. */
+export const TOKEN_SEGMENT = "[token]";
+
+/** Every tokenised route's secret segment in `text`, replaced by `[token]`; the rest of each path kept. */
+export function redactPathTokens(text: string): string {
+  let out = text;
+  for (const pattern of TOKEN_PATHS) out = out.replace(pattern, `$1$2${TOKEN_SEGMENT}`);
+  for (const pattern of PARAM_TOKENS) out = out.replace(pattern, `$1${TOKEN_SEGMENT}`);
+  return out;
+}
+
+/** A value that may hold a URL, as it may leave: no query, no fragment, no token in its path. */
+export function scrubUrlText(text: string): string {
+  return redactPathTokens(stripUrlQueries(text));
+}
+
+/**
+ * `createDsc`, server and browser: the transaction name in the trace header,
+ * which no `beforeSend*` hook sees — it travels in envelope headers, in the
+ * `baggage` request header and in a page's `<meta name="baggage">`.
+ *
+ * On Vercel, Next opens a page's root span with only `http.method` and
+ * `http.target` (app-page-runtime.js) and adds its route after the response.
+ * A DSC made in between is named by @sentry/opentelemetry's own `createDsc`
+ * listener from `http.target` — `GET /p/<token>` — and one is: the one Next
+ * renders into the page's `<meta name="baggage">` (clientTraceMetadata, which
+ * withSentryConfig turns on) for the browser to continue. The browser freezes
+ * it, a frozen DSC skips `createDsc`, and every envelope from the page and the
+ * interest POST's `baggage` would carry the token. So the SERVER's hook is the
+ * one that matters; the browser's is for a DSC it makes itself. Registered
+ * after init, it runs after the SDK's listener and has the last word.
+ */
+export function scrubDsc(dsc: { transaction?: string }): void {
+  if (typeof dsc.transaction === "string") dsc.transaction = scrubUrlText(dsc.transaction);
 }
 
 /**
@@ -139,10 +257,10 @@ function scrubData(data: unknown): void {
   for (const key of QUERY_ONLY_KEYS) delete data[key];
   for (const [key, value] of Object.entries(data)) {
     if (typeof value === "string") {
-      data[key] = stripUrlQueries(value);
+      data[key] = scrubUrlText(value);
     } else if (Array.isArray(value)) {
       value.forEach((item, i) => {
-        if (typeof item === "string") value[i] = stripUrlQueries(item);
+        if (typeof item === "string") value[i] = scrubUrlText(item);
       });
     }
   }
@@ -153,9 +271,9 @@ interface SpanLike {
   data?: Record<string, unknown>;
 }
 
-/** `beforeSendSpan`: a span's name and attributes, without any URL's query. */
+/** `beforeSendSpan`: a span's name and attributes, without any URL's query or path token. */
 export function scrubSpanUrls<T extends SpanLike>(span: T): T {
-  if (typeof span.description === "string") span.description = stripUrlQueries(span.description);
+  if (typeof span.description === "string") span.description = scrubUrlText(span.description);
   scrubData(span.data);
   return span;
 }
@@ -165,9 +283,9 @@ interface BreadcrumbLike {
   data?: Record<string, unknown>;
 }
 
-/** `beforeBreadcrumb`: a fetch breadcrumb keeps its method, path and status, not its query. */
+/** `beforeBreadcrumb`: a fetch breadcrumb keeps its method, path and status, not its query or a path token. */
 export function scrubBreadcrumbUrls<T extends BreadcrumbLike>(breadcrumb: T): T {
-  if (typeof breadcrumb.message === "string") breadcrumb.message = stripUrlQueries(breadcrumb.message);
+  if (typeof breadcrumb.message === "string") breadcrumb.message = scrubUrlText(breadcrumb.message);
   scrubData(breadcrumb.data);
   return breadcrumb;
 }
@@ -196,13 +314,13 @@ export function scrubBreadcrumbUrls<T extends BreadcrumbLike>(breadcrumb: T): T 
 // The path stays everywhere: `/contacts` is what a person debugging needs.
 // The query, the cookies and the body go; the secrets are redacted above.
 
-/** `event.request`: the URL's path, no query, no cookies, no body; URL-valued headers cut. */
+/** `event.request`: the URL's path (token redacted), no query, no cookies, no body; URL-valued headers cut. */
 function scrubRequest(request: RequestLike | undefined): void {
   if (!isRecord(request)) return;
   delete request.query_string;
   delete request.cookies;
   delete request.data;
-  if (typeof request.url === "string") request.url = stripUrlQueries(request.url);
+  if (typeof request.url === "string") request.url = scrubUrlText(request.url);
   scrubData(request.headers);
 }
 
@@ -225,13 +343,13 @@ function scrubException(exception: unknown): void {
   if (!isRecord(exception) || !Array.isArray(exception.values)) return;
   for (const value of exception.values) {
     if (!isRecord(value)) continue;
-    if (typeof value.value === "string") value.value = stripUrlQueries(value.value);
+    if (typeof value.value === "string") value.value = scrubUrlText(value.value);
     const frames = isRecord(value.stacktrace) ? value.stacktrace.frames : undefined;
     if (!Array.isArray(frames)) continue;
     for (const frame of frames) {
       if (!isRecord(frame)) continue;
-      if (typeof frame.filename === "string") frame.filename = stripUrlQueries(frame.filename);
-      if (typeof frame.abs_path === "string") frame.abs_path = stripUrlQueries(frame.abs_path);
+      if (typeof frame.filename === "string") frame.filename = scrubUrlText(frame.filename);
+      if (typeof frame.abs_path === "string") frame.abs_path = scrubUrlText(frame.abs_path);
     }
   }
 }
@@ -249,7 +367,15 @@ export function scrubEvent<T extends EventLike>(event: T): T {
   scrubRequest(event.request);
   scrubContexts(event.contexts);
   scrubException(event.exception);
-  if (typeof event.message === "string") event.message = stripUrlQueries(event.message);
+  if (typeof event.message === "string") event.message = scrubUrlText(event.message);
+  // Parameterised (`GET /p/[token]`, and `/p/[token]` in the browser from the
+  // route manifest withSentryConfig injects), except where the manifest has no
+  // match: then the browser names a pageload by the raw pathname.
+  if (typeof event.transaction === "string") event.transaction = scrubUrlText(event.transaction);
+  // Nothing measured puts a URL here; the browser's wrap() puts a callback's
+  // arguments in `extra`, and a string among them is cut like any other.
+  scrubData(event.tags);
+  scrubData(event.extra);
   if (Array.isArray(event.spans)) {
     for (const span of event.spans) if (isRecord(span)) scrubSpanUrls(span);
   }

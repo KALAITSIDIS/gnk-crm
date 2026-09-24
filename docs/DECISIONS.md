@@ -7346,7 +7346,6 @@ Production (Sentry spans dataset, 30 days, sample-extrapolated counts only — n
 
 **Operator items, not done here.** (1) Sentry → Settings → Security & Privacy for `gnk-crm`: whether ingest stored the bearer secret, the forward key and the session cookie depends on the project's server-side data scrubbing, which the connector cannot read. Unless it shows they were filtered, rotate `CRON_SECRET` with the Vault `cron_secret` (they rotate together) and the site's `CRM_FORWARD_KEY` after this deploys. (2) Supabase sessions: refresh tokens rotate on use, so a token copied into an old event is likely spent; "sign out everywhere" for the two admins closes it regardless. (3) Search terms and enquiry bodies are not what default scrubbers catch; every production row is test data (operator, 2026-09-13), so nothing names a real person — deleting the project's older events stays available if wanted.
 
-
 ## T-refuse-unarchive-erased — an erased contact stays archived: `unarchiveContact` refuses one and the contact page no longer offers it (2026-09-23; no migration)
 
 **The defect** (BACKLOG, found by the T-enquiry-contact-suggestions design review; confirmed against `90990d1`, the merge of PR #48). `unarchiveContact` (`lib/actions/contacts.ts`) read `id, is_archived, merged_into_id` and refused only a merged contact, and the contact page showed its button whenever `mayUpdate && (!is_archived || !merged_into_id)` — so an erased contact, which erasure leaves archived, got Unarchive. Erasure (`planContactErasure`) deliberately KEEPS the name, e-mail and phone (identity retained for AML), so one click put that retained identity back into active use: it re-took the phone/e-mail slot under `contacts_phone_unique` / `contacts_email_unique` (both partial on `is_archived = false`), re-entered `checkContactDuplicate` and the profile editor's duplicate checks (both filter `is_archived` only) and the contact picker (`lib/actions/entity-search.ts`, same filter), and made "Possible existing contact" say "no match" while Create contact was refused as a duplicate. Hosted held 0 erased-but-active contacts on 2026-09-23; the local database holds 23 (test fixtures, counted the same evening).
@@ -7371,7 +7370,6 @@ Production (Sentry spans dataset, 30 days, sample-extrapolated counts only — n
 **Deploy.** Code only — no migration, no environment variable, nothing on hosted.
 
 **Landing (2026-09-23 night).** On the operator's word ("merge PR #49 and deploy"). First, an independent three-lens review of the PR's head (recorded above) found no blocker or major issue; its minor points on the action and tests were fixed in `9f87d55` before the merge. Main moved twice while it waited (PR #50, then PR #52 landed); each time main was merged in (`e83367b`, `e6f4a9a` — DECISIONS end-of-file conflicts only, main's entries kept first) and branch CI re-run: green on every commit (`fafbcc1`, `a2eb44a`, `9f87d55`, `e83367b`, `e6f4a9a`: checks, rls, e2e). PR #49 merged pinned to `e6f4a9a` → main `3d9f476` (merge commit) at 20:06:17Z; Vercel production `dpl_2cPa7vpwSuC9WosiFn9FqM9tEQpn` READY 20:07:14Z, built from `3d9f476`, aliased to gnk-crm.vercel.app, functions in fra1; CI on the merge commit green (run 35913718422: checks, rls, e2e). Verified by three independent read-only checkers: `/login` 200 with the CSP nonce on 16 of 16 scripts; `/contacts`, `/settings` and a contact detail path 307 → `/login` signed out; the public feed 200; the alert sweep 401 without its bearer; `x-vercel-id` fra1::fra1; no runtime error in 24 h; no Sentry issue first seen and no error event since the merge; hosted still at 0113, 1 erased contact and 0 erased-but-active, 0 `unarchived` contact events, `verify_events_chain` true. **Measured on production through the operator's Chrome (an admin — both active users are admins):** the one erased contact's page shows the erasure banner and NO Archive/Unarchive button — the exact case where the old page offered Unarchive. Nothing clicked, nothing written. Nothing to apply on hosted. Remote branch deleted.
-
 
 ## T-updated-event-shape-only — an edit records WHICH fields moved; a person's identifiers and typed text stay out of the chain (2026-09-23; no migration)
 
@@ -7415,3 +7413,128 @@ The seven nits are all fixed: `0073` was described as a live feed reader when it
 **Merged with `T-merged-event-ids-only`, `T-sentry-incoming-request-scrub` and `T-refuse-unarchive-erased`.** PR #50 landed first (main `595241e`), then PR #52 (`eb9d12d`) and PR #49 (`3d9f476`), each followed by its landing docs. #49 changes `unarchiveContact` in the same file as `updateContactSection` and merged without a conflict; #52's code does not overlap. Main was merged in four times, and each time the only DECISIONS conflict was entries or landing paragraphs appended at the end, resolved by keeping every entry in landing order. The fourth merge brought only #49's landing docs (`c171ee3`), so the code merged is the code branch CI passed on `4e751ae` (run 35914370532: checks, rls, e2e), and the unit suite was re-run on the resolved tree. BACKLOG merged cleanly but ended up with two copies of the profile-edit entry, #50's open one and this branch's struck one. They are folded into one struck entry, with #50's wording kept as the `(original)` sub-bullet. #50's rebuilt key scan (`event-payload-privacy.test.ts`) passes on this branch's payloads. `section`, `deal_id` and `changed` are keys it allows, and it descends only into object and array literals, so the `changesForChain(…)` call is outside what it reads. That is why this change's proof is the behavioural test and not the scan.
 
 **Landing (2026-09-23 night).** On the operator's word ("merge PR #51 and deploy"). First, an adversarial pre-merge review (see above). Then main was merged in until the PR held everything already landed: #50, #52 and #49 had all merged in the meantime. The last of those merges brought docs only, so the code merged is the code branch CI passed on `4e751ae` (run 35914370532: checks, rls, e2e). PR #51 → main `10e9076` (merge commit, pinned to `3cda881`). Vercel production `dpl_Dg9vWLbzdCHqtabueq4aeHmg73GP` READY and aliased to gnk-crm.vercel.app (fra1). Probes: `/login` 200 with the CSP nonce on 16 of 16 scripts, and `/contacts` 307 to login. No runtime errors in the hour after, and no Sentry issue first seen after the deploy. CI on the merge commit (run 35916241188): checks and e2e green on the first attempt. `rls` failed test 15 (`move_deal_to_stage`: "stage_entered_at must restart") and passed when the failed job was rerun (attempt 2, all green). That failure is not this change, which touches no SQL and no deal stage. The test compares `new Date().toISOString()` (milliseconds, `Z`) with PostgREST's `stage_entered_at` (microseconds, `+00:00`) as strings, so a database time later in the same millisecond compares as earlier (`'5' < 'Z'`; measured in node). It is now a BACKLOG line with the one-line fix. Remote branch deleted. Nothing on hosted.
+
+## T-sentry-path-token-redaction — a proposal link's or a portal feed's token no longer reaches Sentry, in a path or in a trace header (2026-09-23; no migration)
+
+**The brief** (the BACKLOG line T-sentry-incoming-request-scrub left): that scrub keeps every path, and two paths ARE the credential. They are the proposal link `/p/<token>` and the portal feed `/api/portals/<portal>/<token>` ("the token in the path is the whole of the caller's proof"). The brief:
+- wherever `scrub-event.ts` cuts URLs, replace the segment after `/p/` and after `/api/portals/<portal>/` with `[token]`, and keep the rest of the path;
+- test every carrier for each route, the real-SDK test included;
+- check `app/` for any other secret segment.
+
+**Built on PR #52.** The branch started from `fix/sentry-incoming-request-scrub` (`aad675d`) while #52 was open. #52 landed while this was being built (main `eb9d12d`), and so did #49 and #51. `origin/main` was merged in (DECISIONS and BACKLOG append conflicts only; `scrub-event.ts`, its test and both instrumentation files are identical between `aad675d` and that main), and the PR targets `main`.
+
+**Production, counts only.** Sentry spans and errors datasets; no event was read, so no token entered a transcript.
+- 31,070 transactions in 30 days. **0** are named on either route (`transaction:*/p/*`, `transaction:*/api/portals/*`). The same wildcard finds 860 for `*/contacts*`, so the query shape works.
+- **0** error events on either route in 90 days.
+- The feed's portal connection shipped disabled (M1), and the desk has sent no real proposal link.
+- The interest POST from the proposal page has 10 transactions. None carries a referer (`has:http.request.header.referer` finds 0 of them, against 20,900 transactions overall), and none carries a `baggage` header (0, against 20,140).
+
+**The leak was latent: nothing to rotate or revoke.**
+
+**Every carrier, and where each is cut.** `scrubUrlText` is the query cut followed by `redactPathTokens`. It now runs everywhere the query cut ran:
+- `event.request.url` (absolute, from `httpRequestToRequestData`), and every header value: `referer`/`Referer`, `next-url`, `next-router-state-tree`, `baggage`.
+- Every context's own values (`nextjs.request_path` = `req.url`) and its `data`: the root span's `http.target`, `http.url` and copied `http.request.header.*`, and a browser pageload's `url.full`/`url.path`.
+- Span names and data, and breadcrumb messages and data (a navigation breadcrumb's `from`/`to`, a console breadcrumb's logged strings).
+- An exception's value, its frames' `filename`/`abs_path`, and `event.message`.
+- **New targets:**
+  - `event.transaction`. The browser names a pageload from the route manifest `withSentryConfig` injects, but by the raw pathname where the manifest has no match (`appRouterRoutingInstrumentation.js`, source `url`).
+  - Top-level strings in `event.tags` and `event.extra`. The browser's `wrap()` puts a callback's arguments in `extra`.
+- The interest POST's body holds the token; `request.data` was already dropped by #52.
+
+**The trace header (found by the review; the carrier none of the `beforeSend*` hooks can reach).**
+- **Where it comes from.** On Vercel, Next opens a page's root span with only `http.method` and `http.target` (`app-page-runtime.js`) and adds `http.route` after the response. A DSC made in between is named by @sentry/opentelemetry's own `createDsc` listener from `http.target`. The listener checks the `sentry.source` ATTRIBUTE, which is unset, not the source it inferred. The result is `GET /p/<token>`.
+- **Where it goes.** One DSC is made in between: the one Next renders into the page's `<meta name="baggage">`, because `withSentryConfig` turns on `clientTraceMetadata` (on the ~10% of loads the server samples).
+- **Why the browser cannot fix it.** The browser freezes that DSC, and a frozen DSC skips `createDsc`. Every envelope header from the page would then carry it, and so would the `baggage` header on the interest POST.
+- **Measured with the SDK's own code.** A real OpenTelemetry SERVER span (`@opentelemetry/sdk-trace-base`, which @sentry/node itself runs on) with only those two attributes, and the real `enhanceDscWithOpenTelemetryRootSpanName`, give `sentry-transaction=GET%20%2Fp%2F<token>` in the baggage header.
+- **The fix.** `scrubDsc` on `createDsc`, registered after `Sentry.init` in both instrumentation files. Listeners run in registration order, so it has the last word. The server's hook is the one that matters; the browser's covers a DSC the browser starts itself.
+
+**Latent, closed anyway: route params outside the path.**
+- `next-router-state-tree`, which Next sends with every RSC request and server action made FROM a page. It keeps each dynamic segment as `["token","<value>","d",null]` (`flight-data-helpers.js`), and the SDK copies the header onto the root span. The proposal page has no `Link`, router call or server action today, so this closes a door a future "back to listings" link would open.
+- `nxtPtoken=<value>`, the prefixed query Vercel's routing hands a route's params in (`route-module.js`). A recognised URL loses its query anyway; this covers one quoted inside prose.
+- Both rules key on the param NAME `token`.
+
+**The rule.** A path counts where one can START:
+- at the start of a value;
+- after a character no path segment is made of (whitespace, a quote, `(`, `=`, `:`);
+- after a percent escape (`GET%20%2Fp%2F…` inside a `baggage` header);
+- straight after an absolute or protocol-relative origin, raw or percent-encoded.
+
+A slash may be percent-encoded, doubled or tripled. There, `/p/<token>` becomes `/p/[token]` and `/api/portals/<portal>/<token>` becomes `/api/portals/<portal>/[token]`. The secret is matched by the tokens' own alphabet (`[\w-]`: base64url and hex), so it never swallows the separator before a second URL (`/p/A,/p/B`) or a frame's `:12:5`. A "token" outside that alphabet is refused by both routes and is no credential.
+
+**Decisions.**
+- **Any origin, not our host.** A preview deployment and localhost are other hosts; a rule bound to `gnk-crm.vercel.app` would miss them. The cost: a third party's `https://x/p/42` loses one segment of detail.
+- **A relative path inside prose counts** (`GET /p/<token> 500`). The query cut leaves prose alone; this does not, because the costs are lopsided. A false match hides one segment; a miss hands out a credential. A stack frame's `…/server/app/p/[token]/page.js` is untouched, because `/p/` there follows `app`.
+- **`[token]` is the replacement.** It is the route's own name, so a redacted path reads like the transaction name, and an already-parameterised value (`/api/portals/[portal]/[token]`) passes through unchanged.
+- **Linear time, held by a test.** The scrub runs on the browser's main thread.
+  - A first draft let a slash repeat without bound. 64 KB of `%2F` then took 7.1 s, because it backtracked from every position. Now at most three slashes.
+  - #52's query cut rescanned from every position on `"a://".repeat(n)` (~2.3 s for 64 KB, found by the review). It now lets a scheme start only after a character no scheme contains, and consumes each URL whole.
+  - Measured after both fixes, the worst of 21 hostile 64 KB inputs took 4 ms.
+- **No lookbehind, named groups or `s`/`u`/`v` flags.** The module ships in the browser bundle, and on Safari before 16.4 a lookbehind is a SyntaxError at parse time. That would take `instrumentation-client.ts` down with it.
+- **A test walks `app/`, so the check is not a one-off grep.** The dynamic segments are:
+  - `[id]` ×4 (contacts, deals, properties, viewings): a uuid behind a signed-in session;
+  - `[portal]`: a public registry name;
+  - `[token]` ×2.
+
+  An unclassified segment name fails the suite. So does a `[token]` route that `redactPathTokens` does not strip on a preview origin, which means a third tokenised route under a new prefix fails until it is covered.
+- **Not built:**
+  - Dot segments (`/./p/<token>`): browsers normalise them before sending.
+  - Objects inside a breadcrumb's `arguments` and contexts nested deeper than `.data`: #52's rule stands, the app's own logged objects are not rewritten, and nothing measured nests a URL deeper.
+
+**Checked, not a carrier.**
+- Query-borne credentials (a Storage signed URL's `?token=`, auth callback codes) are already cut by the query scrub.
+- `x-matched-path` is the route (`/p/[token]`).
+- Vercel's `x-now-route-matches` does carry route params, but Next's own `base-server.js` says Vercel sends it only on ISR revalidation, and both routes are dynamic. Read, not measured.
+- The server's outgoing fetches (`site-revalidate`, `maps-resolver`, PostgREST) carry no path token; the lookups send the sha256.
+- The portal feed renders no HTML, so it has no meta tag. Its route handler's span carries `next.route` from the start (the review, `app-route/module.js`).
+
+**Independent review** (a code-reviewer agent, against the installed Next 16.3.5 and @sentry 10.65 sources, before the PR). Each finding was verified in the source before acting:
+- **Fixed:**
+  - the trace header (above; reproduced with the real listener before fixing);
+  - percent-encoded paths;
+  - a secret segment that swallowed separators;
+  - doubled slashes;
+  - `nxtPtoken`;
+  - `tags`/`extra`;
+  - #52's quadratic query cut;
+  - a weak leak check. The test token was `FAKE-SHARE-TOKEN_aaaa…`, and the pattern matched only the prefix. Tokens are now sha256 digests, made the way the real ones are, and any 8-character chunk of either counts as a leak.
+- **Declined:** dot segments.
+- **Confirmed fine:**
+  - scrubbing `event.transaction` does not touch the DSC or grouping;
+  - standalone web-vital spans pass `beforeSendSpan`;
+  - the browser pageload name is `/p/[token]` from the manifest.
+
+**Tests.** `lib/services/scrub-event.test.ts`, 30 → 55.
+- **The rule:** positives; negatives (route names, file paths, `/contacts/…`, a bare `/api/portals/<portal>`, `/p`, `/pages/1`, a third party's `…/shop/p/42`); query and token together; percent-encoded paths, several URLs in one value, doubled slashes, `nxtPtoken`.
+- **For EACH route, four carriers:**
+  - a server error event (`request.url`, `referer`, `request_path`);
+  - Next's root span and a sampled transaction (`http.target`, `http.url`, the copied referer);
+  - a browser event (location.href, `Referer`, `url.full`/`url.path`, a pageload named by its raw path);
+  - a navigation breadcrumb, a logged URL and an exception message.
+- **The proposal page:**
+  - the interest POST's Referer, body and `baggage`;
+  - an RSC request's `next-url` and router state tree (the tree keeps its shape);
+  - `tags`/`extra`.
+- **The trace header:** the real OpenTelemetry span and the real SDK listener. The test asserts the token IS in the baggage header without the hook, and is not with it. A second test covers `scrubDsc` on a DSC with no transaction.
+- **The linear-time bound:** five hostile 64 KB inputs, 1 s each.
+- **The `app/` walk:** two tests.
+- **The real-SDK test** (`ServerRuntimeClient` + `requestDataIntegration()` + `httpRequestToRequestData()`, the scrub as both hooks), now parameterised by the incoming request. The original `/contacts?q=` case is unchanged. Three cases are added: a buyer opening a proposal link, a crawler pulling a feed with a query, and the interest POST with the link as Referer.
+- **Wiring:** `createDsc` → `scrubDsc` after `Sentry.init`, in both instrumentation files.
+
+The tests were written after the implementation, so mutation proves them instead. Each mutation was restored after its run.
+- **First round:** a no-op `redactPathTokens` turns 16 red; dropping the `event.transaction` line turns 2 red; dropping the router-state rule turns 1 red.
+- **Review round**, nine mutations, each caught:
+  - `scrubDsc` doing nothing;
+  - an unbounded slash run;
+  - the old query cut;
+  - a separator-swallowing segment;
+  - no encoded slash;
+  - no `nxtP` rule;
+  - no `tags`/`extra`;
+  - the server hook unwired;
+  - the browser hook unwired.
+
+Measured 2026-09-23: typecheck and lint clean; unit 193 files / 2378 tests.
+
+**State.** PR #53 (KALAITSIDIS/gnk-crm) open against `main`, NOT merged — the operator approves the merge and the deploy. Main moved twice more while it was open (#49, then #51, each a DECISIONS append conflict, main's entries kept first). On the tree merged with #51 (`6020dab`): typecheck and lint clean; unit 196 files / 2497 tests with `--testTimeout=30000`. At the default 5 s, the run before it lost `evidence-pdf` and two repo-scan tests to timeouts while other sessions held the CPU at 70%; all three pass alone.
+
+**Deploy.** Code only: no migration, no environment variable. It takes effect with the deploy (the browser half with the build). After it, two counts-only checks, both of which must stay 0 (a redacted value contains the word `token`, a live one does not): `is_transaction:true transaction:*/p/* !transaction:*token*`, and `is_transaction:true http.request.header.baggage:*%2Fp%2F* !http.request.header.baggage:*token*`.
