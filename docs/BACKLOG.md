@@ -2401,7 +2401,7 @@ VERIFY, run before starting.
 - **Titles, a file name and a lost reason enter the chain by value, S/M.** Written into the
   hash-chained payload, and typed or chosen by people ("Call Maria about the deposit", "Andreou
   passport scan.pdf") — or BUILT from a person's name by the system, which nobody types:
-  - a task's title (`lib/actions/tasks.ts`: `created`, `completed`, `reopened`). Some task titles are
+  - a task's title (`lib/actions/tasks.ts`: `completed`, `reopened`). Some task titles are
     machine-built from a name: the `deal_no_contact` nudge is `'No contact in N days: ' || d.title`
     (0078's `create_followup_nudges`), and a deal converted from a lead is titled with the buyer's display
     name; the `retention_expired` task is built from the contact's `display_name` (0078), which erasure
@@ -2410,9 +2410,8 @@ VERIFY, run before starting.
     `document_uploaded`, `document_deleted`);
   - a mandate file's NAME (`mandates.ts`, `document_uploaded`);
   - a lost deal's typed reason (`deals.ts`, `lost`).
-  The task's `created` title is NOT printed (the `created` line reads `amount` only), so that one is a
-  plain payload edit, like the deal's was. The rest are RENDERED from the payload (`completed` /
-  `reopened` / `document_uploaded` / `document_deleted` / `lost` in `lib/services/events.ts`), so the
+  All of these are RENDERED from the payload (`completed` / `reopened` / `document_uploaded` /
+  `document_deleted` / `lost` in `lib/services/events.ts`), so the
   fix is 0094's shape: the event carries the row's id and the line joins the row (`deals.lost_reason`
   already holds the reason). A deleted document has no row left to join, which needs a decision (a
   tombstone row, or "a document" without its name). Found by T-updated-event-shape-only and its
@@ -2427,6 +2426,23 @@ VERIFY, run before starting.
     before the fix keep it (ids 14 and 70, operator test data) — the chain cannot be edited.** VERIFY
     (fixed): `grep -n -A8 'eventType: "created",' lib/actions/leads.ts | grep -E -- "-\s+title,$"` —
     no hit.
+  - ~~**A quick-added task's `created` event carries its title.**~~ **FIXED 2026-09-24 — DECISIONS
+    `T-task-created-title-shape`: `quickAddTask` no longer writes the title into the task's `created`
+    event, which is now `{ due_at, ...the linked ids }`; the row keeps the title. Hosted held 0 task
+    `created` events when measured, so no chain copy exists.** VERIFY (fixed):
+    `grep -n "payload: { title: d.title" lib/actions/tasks.ts` — no hit.
+- **Erasure leaves a person's name in task titles, S.** A task title is typed text ("Call Maria about the
+  deposit"), and some are built from a name by the system (`retention_expired` from the contact's
+  `display_name`; the `deal_no_contact` nudge from the deal title, which a converted deal takes from the
+  buyer's name). Contact erasure (`lib/services/erasure-run.ts`) blanks the contact's notes, its leads'
+  messages and its conversation notes (0094), but never touches `tasks`. The app also has no task edit
+  (`lib/actions/tasks.ts` adds, ticks and reassigns only), so a name typed into a task title outlives an
+  Article 17 request on the ROW. The rows this concerns are the ones linked to the contact
+  (`tasks.contact_id`), or linked to a deal or lead of theirs. Erasure keeps identity for AML by design,
+  so the question is typed text, like the notes it already blanks. Decide the rule (blank the title of
+  the contact's own tasks to a fixed phrase, or leave system-built ones), then add it to the erasure run.
+  Found by T-task-created-title-shape's review; not built there. **VERIFY:**
+  `grep -n "tasks" lib/services/erasure-run.ts` — no hit means still open.
 - **Clock-dependent tests found by the 2026-09-24 sweep, S/M.** A read-only sweep at `ed6166c` (DECISIONS
   `T-rls-stage-tenure-one-clock`, Landing; two refuters per candidate) found 21 more tests that can fail while
   the code is right. Line numbers are at `9d79157`. Grouped, most urgent first:

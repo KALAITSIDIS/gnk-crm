@@ -7642,3 +7642,23 @@ Measured 2026-09-24, on the tree merged with main after #54: typecheck and lint 
 **State.** PR #56 (KALAITSIDIS/gnk-crm) open against `main`, NOT merged — the operator approves the merge and the deploy.
 
 **Deploy.** Code only: no migration, no environment variable. After it, the BACKLOG's own check must return nothing: `is_transaction:true has:http.request.header.x_vercel_proxied_for !http.request.header.x_vercel_proxied_for:"[Filtered]" !http.request.header.x_vercel_proxied_for:"[redacted]"`. So must the same query for `x_vercel_ja4_digest`, and `has:http.request.header.cookie.sb_yjgirvzgoiywdojnpkpd_auth_token` for new transactions.
+
+
+## T-task-created-title-shape — a quick-added task's `created` event carries its due date and linked ids, never its title (2026-09-24; no migration)
+
+**The leak** (BACKLOG's titles entry; the operator asked for it next, after T-deal-created-title-shape). `quickAddTask` (`lib/actions/tasks.ts`) wrote the task's `title` into the task's hash-chained `created` event. A task title is text somebody typed, and it often names a person ("Call Maria about the deposit"), so it sat where neither erasure nor a correction can reach it (SEC-03).
+
+**Why a payload edit is enough.** Nothing reads it. The timeline's `created` line prints an amount only (`lib/services/events.ts`), and `ENTITY_PREFIX_KEY` overrides offers only, so a task's `created` event renders as "created". `quickAddTask` is the only writer of a task `created` event, in TypeScript or SQL. The other task events are listed here because the first draft of this entry got them wrong (found by review). In TypeScript: `superseded` from `mandates.ts` and `followup-tasks.ts` (a kind, a reason, an id) and `assigned` from `reassignTask` (ids and the new assignee's name; staff, which the payload scan allows). In SQL: thirteen migrations (0012 to 0098) write task `superseded` / `reassigned` events carrying kinds, reasons and ids, plus an installment's `label`. None writes a `created` event, none carries a task title, and no migration reads a task event's payload. The `title` key is gone, and the payload is `{ due_at, ...link }`, i.e. the Cyprus end-of-day due time or null plus whichever of `property_id` / `contact_id` / `deal_id` the task is linked to. The task ROW keeps the title, where the task list shows it. The app has no task edit today, and contact erasure does not touch tasks, so a name typed into a title stays on that row too. That gap is now a BACKLOG line. But a row can be corrected or cleared; the event could not.
+
+**Not changed here.** `completed` and `reopened` (`toggleTaskDone`) still write `{ title }`, and the timeline prints it from the payload. That remains open in BACKLOG as a row-join fix. It is also the route by which system-built titles (the `deal_no_contact` nudge, `retention_expired`) reach the chain when ticked.
+
+**Existing events.** Measured on hosted 2026-09-24 (counts only): 0 task `created` events, and 0 `completed` / `reopened` events carrying a title. So there is no chain copy to live with, and this fix lands ahead of the leak.
+
+**Tests, red first.** `lib/actions/task-created-event-payload.test.ts` drives the real `quickAddTask` through `lib/testing/fake-client.ts` (a link check per linked table, then the insert). It checks three things:
+- the title's words (a name, a phone number, "deposit") appear in no logged payload;
+- the `created` payload is exactly `{ due_at, contact_id, deal_id }` for a dated task linked twice (`due_at` = 2026-10-01T20:59Z, Cyprus 23:59);
+- the payload is exactly `{ due_at: null }` for a bare task.
+
+It also pins that the insert still writes the title to the row. RED before the fix: 3 of 4, each because the title was in the payload; the row pin passed. GREEN after: 4/4, and #50's AST payload scan still passes.
+
+**Review.** A two-lens check before merge, readers and writers plus tests and records (eight agents, two refuters per finding), found no code defect. It confirmed one false sentence in this entry, now corrected above: the first draft said "no SQL writes or reads task events", and thirteen migrations write task `superseded` / `reassigned` events (none a `created`, none with a title). Two more corrections, one refuted on scope but true, and a nit, are also fixed. The record and the test header said "an edit can change" a task title, but there is no task edit and erasure never touches tasks; that is now a BACKLOG line, "Erasure leaves a person's name in task titles". And the list of other task events left out `assigned` and the SQL ones.
