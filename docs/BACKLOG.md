@@ -2431,6 +2431,18 @@ VERIFY, run before starting.
     event, which is now `{ due_at, ...the linked ids }`; the row keeps the title. Hosted held 0 task
     `created` events when measured, so no chain copy exists.** VERIFY (fixed):
     `grep -n "payload: { title: d.title" lib/actions/tasks.ts` — no hit.
+- **Erasure leaves a person's name in task titles, S.** A task title is typed text ("Call Maria about the
+  deposit"), and some are built from a name by the system (`retention_expired` from the contact's
+  `display_name`; the `deal_no_contact` nudge from the deal title, which a converted deal takes from the
+  buyer's name). Contact erasure (`lib/services/erasure-run.ts`) blanks the contact's notes, its leads'
+  messages and its conversation notes (0094), but never touches `tasks`. The app also has no task edit
+  (`lib/actions/tasks.ts` adds, ticks and reassigns only), so a name typed into a task title outlives an
+  Article 17 request on the ROW. The rows this concerns are the ones linked to the contact
+  (`tasks.contact_id`), or linked to a deal or lead of theirs. Erasure keeps identity for AML by design,
+  so the question is typed text, like the notes it already blanks. Decide the rule (blank the title of
+  the contact's own tasks to a fixed phrase, or leave system-built ones), then add it to the erasure run.
+  Found by T-task-created-title-shape's review; not built there. **VERIFY:**
+  `grep -n "tasks" lib/services/erasure-run.ts` — no hit means still open.
 - ~~**RLS test 15 compares a client clock and a database timestamp as strings, S.**~~ **FIXED 2026-09-24 —
   DECISIONS `T-rls-stage-tenure-one-clock`: the test reads the deal's `stage_entered_at` from the database
   before the owner's move and asserts it changed and did not go backwards — one clock, parsed. Not the

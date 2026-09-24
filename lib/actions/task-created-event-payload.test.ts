@@ -10,9 +10,11 @@ import { fakeClient, type FakePage } from "@/lib/testing/fake-client";
  * task's hash-chained `created` event, where neither erasure nor a correction
  * can reach it. Nothing reads it there: the timeline's `created` line prints an
  * amount only, and no entity override exists for tasks. The title stays on the
- * task ROW, where the task list shows it and an edit can change it. Driven
- * through the real action, like deal-created-event-payload.test.ts, and every
- * logged payload is searched for the fixture's own words.
+ * task ROW, where the task list shows it — there is no task edit, and erasure
+ * does not touch tasks (BACKLOG), but a row can be corrected and the event
+ * could not. Driven through the real action, like
+ * deal-created-event-payload.test.ts, and every logged payload is searched for
+ * the fixture's own words.
  *
  * The `completed` / `reopened` events still carry the title — the timeline
  * prints it from the payload, so that is a row join (BACKLOG), not this edit.
