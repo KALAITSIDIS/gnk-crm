@@ -348,7 +348,6 @@
     "reservationCreatedAmount": "Reservation created — deposit {amount}",
     "reservationExtended": "Reservation extended",
     "reservationStatus": "Reservation {from} → {to}",
-    "reservationStatusReason": "Reservation {from} → {to} — {reason}",
     "reservationUpdated": "Reservation updated",
     "reservationExpired": "Reservation expired automatically",
     "requirementAdded": "Buyer requirement added",

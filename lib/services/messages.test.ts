@@ -44,7 +44,6 @@ const SAMPLE_PARAMS = {
   section: "profile",
   from: "New",
   to: "Qualified",
-  reason: "budget",
   name: "A. Name",
   channel: "phone",
   holder: "A. Agent",

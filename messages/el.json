@@ -348,7 +348,6 @@
     "reservationCreatedAmount": "Δημιουργήθηκε κράτηση — προκαταβολή {amount}",
     "reservationExtended": "Παρατάθηκε η κράτηση",
     "reservationStatus": "Κράτηση {from} → {to}",
-    "reservationStatusReason": "Κράτηση {from} → {to} — {reason}",
     "reservationUpdated": "Ενημερώθηκε η κράτηση",
     "reservationExpired": "Η κράτηση έληξε αυτόματα",
     "requirementAdded": "Προστέθηκε απαίτηση αγοραστή",

@@ -19,7 +19,11 @@ import { fixtureProfile, isLocal, opTimeout, serviceClient } from "./helpers";
  *   lost" alone;
  * - closing a lead as lost does the same (T-lead-lost-reason-shape): the inbox
  *   prints the reason from the lead, the event is `{}`, and the admin feed's
- *   line is "Marked lost" alone.
+ *   line is "Marked lost" alone;
+ * - releasing a reservation too (T-reservation-release-reason-shape): the
+ *   Reservation tab's "Earlier holds" prints the reason from the row, the event
+ *   is `{ reservation_id, from, to }`, and the Activity line is "Reservation
+ *   held → released" alone.
  *
  * What an agent may NOT see (an admin_only document, a colleague's task) is
  * measured against the real policies in supabase/tests/event-context.test.ts —
@@ -35,6 +39,20 @@ const TASK_TITLE = "E2E call Kyriakoula Palaiopoulou about the deposit";
 const REASON = "E2E Eleni Charalambous bought her cousin's villa instead";
 const LEAD_MESSAGE = "E2E typed-text lead — asking about a two-bed";
 const LEAD_REASON = "E2E Andreas Kyprianou went with his brother-in-law";
+const RES_REF = "E2ETYPED02";
+const RES_BUYER = "E2ETypedResBuyer";
+const RES_REASON = "E2E Elena Hadjipetrou's mother fell ill, call back in May";
+
+/** reservations restrict their property's delete (0044), so they go first */
+async function removeReservationFixture(svc: SupabaseClient): Promise<void> {
+  const { data: props } = await svc.from("properties").select("id").eq("reference", RES_REF);
+  for (const p of props ?? []) {
+    await svc.from("tasks").delete().eq("property_id", p.id);
+    await svc.from("reservations").delete().eq("property_id", p.id);
+    await svc.from("properties").delete().eq("id", p.id);
+  }
+  await svc.from("contacts").delete().eq("first_name", RES_BUYER);
+}
 
 async function removeFixture(svc: SupabaseClient): Promise<void> {
   await svc.from("tasks").delete().eq("title", TASK_TITLE);
@@ -291,5 +309,72 @@ test("closing a lead as lost keeps the reason on the lead; the event and the adm
     }
   } finally {
     await removeFixture(svc);
+  }
+});
+
+test("releasing a reservation keeps the reason on the hold; the event and the Activity line carry none", async ({ page }) => {
+  const svc = serviceClient();
+  await removeReservationFixture(svc);
+  const { orgId } = await fixtureProfile(svc);
+  const { data: prop } = await svc
+    .from("properties")
+    .insert({ org_id: orgId, reference: RES_REF, property_type: "apartment", status: "reserved", asking_price: 250000 })
+    .select("id")
+    .single();
+  const propertyId = prop!.id as string;
+  const { data: buyer } = await svc
+    .from("contacts")
+    .insert({ org_id: orgId, first_name: RES_BUYER })
+    .select("id")
+    .single();
+  const { data: hold } = await svc
+    .from("reservations")
+    .insert({
+      org_id: orgId,
+      property_id: propertyId,
+      contact_id: buyer!.id,
+      status: "held",
+      expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+    })
+    .select("id")
+    .single();
+  const reservationId = hold!.id as string;
+
+  try {
+    await page.goto(`/properties/${propertyId}`, { waitUntil: "networkidle" });
+    await openTab(page, /^Reservation$/);
+    const panel = page.getByRole("tabpanel");
+    await panel.getByLabel(/^reason$/i).fill(RES_REASON);
+    await panel.getByRole("button", { name: /^release$/i }).click();
+    // no toast on success: the status event is the action's last write, so wait for it
+    await expect.poll(async () => (await eventsOf(svc, propertyId, "reservation_status_changed")).length, {
+      timeout: opTimeout(15_000),
+    }).toBe(1);
+    expect(await eventsOf(svc, propertyId, "reservation_status_changed")).toEqual([
+      { reservation_id: reservationId, from: "held", to: "released" },
+    ]);
+    const { data: row } = await svc.from("reservations").select("status, release_reason").eq("id", reservationId).single();
+    expect(row).toEqual({ status: "released", release_reason: RES_REASON });
+
+    // the Reservation tab's "Earlier holds" prints the reason — from the ROW
+    await page.reload({ waitUntil: "networkidle" });
+    await openTab(page, /^Reservation$/);
+    await page.getByRole("tabpanel").getByText(/Earlier holds/).click();
+    await expect(page.getByRole("tabpanel").getByText(RES_REASON, { exact: false })).toBeVisible();
+
+    // the Activity line states the move, and nothing of why
+    await openTab(page, /^Activity$/);
+    const timeline = page.getByRole("tabpanel");
+    await expect(timeline.locator("li", { hasText: "Reservation held → released" })).toHaveCount(1);
+    for (const word of ["Elena", "Hadjipetrou", "mother"]) {
+      await expect(timeline).not.toContainText(word);
+    }
+
+    await page.goto("/dashboard", { waitUntil: "networkidle" });
+    for (const word of ["Elena", "Hadjipetrou", "mother"]) {
+      await expect(page.locator("body")).not.toContainText(word);
+    }
+  } finally {
+    await removeReservationFixture(svc);
   }
 });

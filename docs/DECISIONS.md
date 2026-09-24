@@ -7929,3 +7929,40 @@ Refuted but cheap, also done: the unit test now proves the update names THIS lea
 **Not changed here.** Erasure still leaves `leads.lost_reason` (and `deals.lost_reason`) on the row. That is BACKLOG's operator decision, widened to name leads, `redactLead` and `redact_stale_enquiries`. The reservation release reason, photo file names and viewing feedback stay on BACKLOG.
 
 **Landing (2026-09-24 night).** On the operator's word ("merge #61 and verify the deploy"). Main was re-checked right before the merge (`08b0587`, unmoved). PR #61 → main `fdbc5e4`, pinned to `cf8b76d` (branch CI green on `dde7371` and `cf8b76d`). Vercel production `dpl_DS6Fm8RcLD4rq4tPRFSx6omoV19v` READY and aliased. CI on the merge commit green (run 36048639522: checks, rls, e2e). Verified read-only in the operator's Chrome: the commission-evidence preview of the test contact whose leads hold older reasoned `lost` / `spam` events renders bare "Marked lost" / "Marked spam" lines, and `/leads?status=lost` shows each of the 5 lost leads with its reason from the row. The request is on the new deployment in Vercel's logs (200), with no runtime errors and no new Sentry issue. `/login` 200 with the CSP nonce on 16 of 16 scripts; protected routes 307. Nothing on hosted. Remote branch deleted, worktree removed.
+
+## T-reservation-release-reason-shape — a reservation's status event carries no typed release reason (2026-09-24; no migration)
+
+**The leak** (operator: "fix the reservation release reason leak next"; BACKLOG "More event payloads carry typed text by value"). Inspected at `fdbc5e4` (`origin/main` when the work began).
+- **The writer.** `transitionReservation` (`lib/actions/reservations.ts:242-249`) logged `reservation_status_changed` on the PROPERTY as `{ reservation_id, from, to, reason: release_reason ?? null }`. The release reason is free text an agent types, up to 300 characters (`optText(300)`), so it entered the hash-chained payload, beyond erasure and correction (SEC-03).
+- **Where it printed.** The line printed it (`reservationStatusReason`) on the property's Activity tab, on the admin dashboard feed, and in a property-scoped commission evidence report. That report lists every hold on the property, so it printed OTHER buyers' reasons on a report about one buyer.
+- **Worse than the row.** The row dropped a reason posted with a live target (`isLiveReservation(to) ? null : …`, line 231), but the event did not. So a crafted Confirm or Convert with a reason put text into the chain that no row ever held.
+
+**Verified, not assumed** (a read-only scouting workflow of three readers and a critic, at `fdbc5e4`).
+- **The only producer of typed text in any reservation event.** Every other reservation-family payload holds ids, enum values, amounts, dates, staff plan labels or SYSTEM-built strings:
+  - `expire_reservations` (0090) writes `reservation_expired` with no reason; `'expired automatically'` stays on the row;
+  - the task `superseded` reasons from 0052/0090 and `followup-tasks.ts` are fixed or enum-built.
+  None of these was touched, since tests and the renderer branch on them. No SQL writes `reservation_status_changed`, and none reads `payload->>'reason'`.
+- **The row is the current record and is already shown.** Terminal states admit no further transition and the UPDATE is conditional on `.eq("status", from)`, so the app writes a row's reason once. The property page's Reservation tab lists it under "Earlier holds" for the same org-wide audience (`reservations_select`) as the Activity tab. So no timeline join was added, as with deals.
+- **RED first**, through the real `transitionReservation` and the real `logEvent` (`lib/actions/reservation-transition-event-payload.test.ts`). 5 of 8 failed on `fdbc5e4`, each because the payload carried `reason`: the typed text for release, confirm-with-reason, converted and the word search; `null` for a reasonless release. The 3 controls passed: the row write with its status precondition, a changed-underneath hold and a final hold log nothing.
+- **Hosted, read-only, counts only:** 0 `reservation_status_changed` events. No chain copy exists; the fix lands ahead of the leak.
+
+**The fix.**
+- `transitionReservation` logs `{ reservation_id, from, to }`, with no `reason` key. A reason posted with a live target is now kept nowhere, as the row never kept it. The row write, its precondition, the live-hold prompt closing and the convert prompt are unchanged.
+- The line prints `Reservation {from} → {to}` from any payload, old or new. `reservationStatusReason` is gone in EN, EL and RU. `{reason}` is now used by no message, so `messages.test.ts` drops it from its sample parameters.
+
+**Tests.**
+- The writer test above: 8/8 after the fix, with every inserted row searched for the synthetic name, phone and e-mail on released, confirmed and expired targets.
+- `events.test.ts`: legacy (typed and `null`) and new payloads render "Reservation held → released" / "… → confirmed"; a payload without from/to renders "Reservation updated"; malformed payloads do not throw; the line goes through the translator.
+- `evidence.test.ts`: the real `assembleEvidence`, scoped to a property, renders a hold's legacy release reason as the neutral line.
+- `tests/e2e/event-typed-text.spec.ts` gains a Release flow through the real Reservation tab:
+  - the stored event is exactly `{ reservation_id, from: "held", to: "released" }`, and the row holds the reason;
+  - "Earlier holds" shows the reason, from the row;
+  - the Activity line is "Reservation held → released" with none of the reason's words, and the dashboard neither.
+  Its teardown deletes tasks, then reservations, then the property, because a reservation restricts its property's delete (0044). The whole spec passes on desktop AND mobile (12/12).
+- Mutation proofs (one exact replacement each, restored after): 5 of 5 killed. They were the reason restored, truncated under another key, or nested for non-live targets; the status precondition dropped; and the line printing a legacy reason.
+
+**Found on the way — BACKLOG, not built here.**
+- `request_lead_escalation_recovery` (0111) writes the admin-typed recovery reason into the `lead_escalation` event. It is SQL, so the fix is a migration.
+- Erasure never touches `reservations`, so a hold's `release_reason` and `notes` outlive Article 17. That is added to the open erasure decision.
+
+**Compatibility and deploy order.** No migration, no hosted step, not deploy-coupled: an old app renders a new payload as `Reservation {from} → {to}`, and a new app renders an old one the same. Evidence reports whose rows held a release reason recompute to a different content hash if regenerated; verification is by `pdf_sha256` (see T-event-typed-text-shape). Order: branch CI green → merge → deploy READY → probes.
