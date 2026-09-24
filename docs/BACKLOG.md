@@ -2427,15 +2427,20 @@ VERIFY, run before starting.
     before the fix keep it (ids 14 and 70, operator test data) — the chain cannot be edited.** VERIFY
     (fixed): `grep -n -A8 'eventType: "created",' lib/actions/leads.ts | grep -E -- "-\s+title,$"` —
     no hit.
-- **RLS test 15 compares a client clock and a database timestamp as strings, S.** `supabase/tests/rls.test.ts`
-  (`move_deal_to_stage`, "stage_entered_at must restart") takes `t0 = new Date().toISOString()` and asserts
-  `moved.stage_entered_at >= t0` on the STRINGS. `t0` has milliseconds and `Z`; PostgREST returns microseconds and
-  `+00:00`, so a database time later in the same millisecond compares as earlier (`"…10.123456+00:00" >=
-  "…10.123Z"` is false: `'4' < 'Z'`). It failed once on main's CI for `10e9076` (run 35916241188, attempt 1) and
-  passed on the rerun; nothing in that merge touched deals. The fix is one line: compare
-  `Date.parse(moved.stage_entered_at) >= Date.parse(t0)`. Same class as the note "an assertion that can only fail
-  rarely". Found by T-updated-event-shape-only's landing. **VERIFY:**
-  `grep -n "moved.stage_entered_at >= t0" supabase/tests/rls.test.ts` — a hit means still open.
+- ~~**RLS test 15 compares a client clock and a database timestamp as strings, S.**~~ **FIXED 2026-09-24 —
+  DECISIONS `T-rls-stage-tenure-one-clock`: the test reads the deal's `stage_entered_at` from the database
+  before the owner's move and asserts it changed and did not go backwards — one clock, parsed. Not the
+  `Date.parse(t0)` fix proposed below: that still compares the runner's clock with the database's, which on the
+  local stack differ by up to ~1 ms (measured).** VERIFY (fixed):
+  `grep -n "moved.stage_entered_at >= t0" supabase/tests/rls.test.ts` — no hit.
+  - **RLS test 15 compares a client clock and a database timestamp as strings (original).**
+    `supabase/tests/rls.test.ts` (`move_deal_to_stage`, "stage_entered_at must restart") takes
+    `t0 = new Date().toISOString()` and asserts `moved.stage_entered_at >= t0` on the STRINGS. `t0` has
+    milliseconds and `Z`; PostgREST returns microseconds and `+00:00`, so a database time later in the same
+    millisecond compares as earlier (`"…10.123456+00:00" >= "…10.123Z"` is false: `'4' < 'Z'`). It failed once
+    on main's CI for `10e9076` (run 35916241188, attempt 1) and passed on the rerun; nothing in that merge
+    touched deals. The fix is one line: compare `Date.parse(moved.stage_entered_at) >= Date.parse(t0)`. Same
+    class as the note "an assertion that can only fail rarely". Found by T-updated-event-shape-only's landing.
 - **The door keeps line breaks in name, phone and reference, S.** `publicEnquirySchema`
   (`lib/validators/public-enquiry.ts`) trims but keeps interior newlines, and 0101 writes the values
   raw into the header block, so a name like `Ann\nEmail: x@y` becomes an `Email:` line that

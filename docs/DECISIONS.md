@@ -7568,6 +7568,21 @@ Remote branch deleted; worktree removed.
 - **Checks after the deploy.** `/login` 200 with the CSP nonce on 16 of 16 scripts, `/leads` 307 to login, no runtime errors, and no Sentry issue first seen after the deploy. CI on the merge commit was green on the first attempt (run 35969130506: checks, rls, e2e).
 - Nothing on hosted. Remote branch deleted.
 
+## T-rls-stage-tenure-one-clock — RLS test 15 judges "tenure restarts" against the row's own previous value, not the runner's clock (2026-09-24; test only)
+
+**The flake** (BACKLOG, found at T-updated-event-shape-only's landing). `supabase/tests/rls.test.ts` test 15 (`move_deal_to_stage`) took `t0 = new Date().toISOString()` before the owner's move and asserted `moved.stage_entered_at >= t0` on the STRINGS. `t0` has milliseconds and `Z`; PostgREST returns `timestamptz` with microseconds and `+00:00`. So a database time later in the SAME millisecond compares as earlier (`"…10.123456+00:00" >= "…10.123Z"` is false, because `'4' < 'Z'`, measured in node). It failed main's CI once for `10e9076` (run 35916241188, attempt 1) and passed on the rerun; nothing in that merge touched deals.
+
+**Why not the one-line fix BACKLOG proposed.** `Date.parse(moved.stage_entered_at) >= Date.parse(t0)` fixes the formats but still compares two clocks, the runner's and the database's. Measured on the local stack 2026-09-24: the database clock ran 0.03–1.04 ms ahead of this machine's over 20 samples (round trips up to 14 ms). That drift is small, but it is not guaranteed, and on Windows the stack runs in a WSL2 VM whose clock can drift further.
+
+**The fix.** The test reads the deal's `stage_entered_at` from the database (service client) just before the owner's move. It then asserts two things: the value after the move is not the same as before ("must restart"), and it did not go backwards (compared parsed, `Date.parse` on both sides). Both values come from the database's clock. The earlier checks are unchanged: the blocked listing-manager and other-agent moves, the stage id, the single `stage_changed` event and its actor.
+
+**Proof.** Local stack at 0113:
+- Test 15 passes, run alone and in the whole `rls.test.ts`. The three reds in that file, 41, 42 and 57, are the public-feed residue that fails identically on untouched `main` against this local database and passes on CI's fresh one.
+- Mutation check: `move_deal_to_stage` was reinstalled with `stage_entered_at = stage_entered_at` in place of `now()`, and test 15 then failed on "stage_entered_at must restart" (`expected '…:26.001643+00:00' not to be '…:26.001643+00:00'`). The saved definition was restored, and its `md5(prosrc)` matched the original. The event path was not touched, so the chain was not at risk. Scratch script only; nothing committed.
+- `npm run typecheck` exit 0, `npm run lint` exit 0, `npx vitest run` 2497/2497 across 196 files.
+
+**The sweep for siblings.** A read-only sweep looked for the same defect class across the tests on `origin/main`, with two refuters per candidate. The classes were: a string comparison of timestamps, a runner clock compared with a database or server clock, equality across precisions, and day boundaries that depend on the hour the suite runs. The database-test finder read every file under `supabase/tests/` and found test 15 only (confirmed twice). The e2e and pattern finders' results are recorded at this change's landing.
+
 ## T-sentry-span-header-scrub — a request header's value reaches Sentry only when its name is on a list; cookie attributes are dropped (2026-09-24; no migration)
 
 **The brief** (BACKLOG, from #52's landing): `x-vercel-proxied-for` — very likely the caller's IP — was stored raw as the span attribute `http.request.header.x_vercel_proxied_for` on every sampled server transaction. The SDK's header copy also stored every cookie NAME as an attribute key. The line proposed adding `proxied` to the name fragments, applying the fragments to span attributes, and dropping cookie attributes.
