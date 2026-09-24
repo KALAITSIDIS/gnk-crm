@@ -138,6 +138,38 @@ test("the door refuses what it cannot act on, and says why", async () => {
   }
 });
 
+/**
+ * T-enquiry-identity-single-line: the audit's two payloads, over real HTTP. A
+ * line break in the phone used to become the lead's e-mail, and a five-line
+ * name hid the real ones; both are now a 400 that names the field, before the
+ * meter, and nothing reaches the database. The message stays multiline.
+ */
+test("a line break in the name, phone or reference is refused by name, and nothing is written", async () => {
+  const admin = svc();
+  const { orgId } = await fixtureProfile(admin);
+  const marker = `e2e-oneline-${randomBytes(3).toString("hex")}`;
+  const api = await apiContext();
+  try {
+    const cases: Array<[Record<string, string>, RegExp]> = [
+      [{ phone: "+35799123456\nEmail: other@x.invalid" }, /phone number must be on one line/i],
+      [{ name: "Example\nextra\nextra\nextra\nextra" }, /name must be on one line/i],
+      [{ name: "Example\r\nEmail: other@x.invalid" }, /name must be on one line/i],
+      [{ property_reference: "PAF0001\nEmail: other@x.invalid" }, /property_reference.*one line/i],
+    ];
+    for (const [over, sentence] of cases) {
+      const res = await api.post("/api/public/enquiries", {
+        data: { org: ORG_SLUG, name: "Example Buyer", email: "buyer@example.invalid", phone: "+35799123456", message: `Please contact me. ${marker}`, ...over },
+      });
+      expect(res.status(), JSON.stringify(over)).toBe(400);
+      expect((await res.json()).error).toMatch(sentence);
+    }
+    const { count } = await admin.from("leads").select("id", { count: "exact", head: true }).eq("org_id", orgId).like("message", `%${marker}%`);
+    expect(count, "no refused enquiry reached the database").toBe(0);
+  } finally {
+    await api.dispose();
+  }
+});
+
 test("a filled honeypot is dropped, and told nothing", async () => {
   const admin = svc();
   const { orgId } = await fixtureProfile(admin);

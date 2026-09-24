@@ -2496,7 +2496,17 @@ VERIFY, run before starting.
     on main's CI for `10e9076` (run 35916241188, attempt 1) and passed on the rerun; nothing in that merge
     touched deals. The fix is one line: compare `Date.parse(moved.stage_entered_at) >= Date.parse(t0)`. Same
     class as the note "an assertion that can only fail rarely". Found by T-updated-event-shape-only's landing.
-- **The door keeps line breaks in name, phone and reference, S.** `publicEnquirySchema`
+- ~~**The door keeps line breaks in name, phone and reference, S.**~~ **FIXED 2026-09-24 on branch
+  `fix/enquiry-identity-single-line` (migration 0114, NOT yet on hosted) — DECISIONS
+  `T-enquiry-identity-single-line`.** Both doors now REFUSE a line break (every Unicode mandatory break)
+  in the name, e-mail, phone and reference — at the routes (a 400 naming the field; the proposal door's
+  `name_line_break` / `phone_line_break` in EN/EL/RU) and in both functions (0114: zero rows, nothing
+  written). Refused, not collapsed to a space as suggested below: a rewritten value is one the visitor did
+  not type. The reader (`readWebsiteEnquiry`) now takes the header as the doors' exact grammar and calls
+  anything else ambiguous — no last-value-wins, no skipped lines, no five-line window — so a header stored
+  before 0114 is left to the desk. VERIFY (fixed): `grep -n "oneLine" lib/validators/public-enquiry.ts`
+  and `grep -c "v_breaks" supabase/migrations/0114_enquiry_identity_single_line.sql` — hits mean fixed.
+  - **The door keeps line breaks in name, phone and reference (original).** `publicEnquirySchema`
   (`lib/validators/public-enquiry.ts`) trims but keeps interior newlines, and 0101 writes the values
   raw into the header block, so a name like `Ann\nEmail: x@y` becomes an `Email:` line that
   `parseWebsiteEnquiry` reads, and extra lines can push the real Email/Phone past its five-line

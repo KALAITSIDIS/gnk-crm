@@ -347,3 +347,36 @@ describe("the door is idempotent by key, and accelerates the desk alert", () => 
     }
   });
 });
+
+/**
+ * T-enquiry-identity-single-line: a line break in a value the door writes onto
+ * one header line is a 400 naming the field — before the meter, before the
+ * function, before any alert — so a site developer sees why, and nothing is
+ * spent or written. The database refuses the same shapes (0114) for a caller
+ * that skips this file.
+ */
+describe("a line break in a one-line field", () => {
+  it.each([
+    ["phone", { phone: "+35799123456\nEmail: other@x.invalid" }, /phone number must be on one line/i],
+    ["name", { name: "Example\nextra\nextra\nextra\nextra" }, /name must be on one line/i],
+    ["name (CR)", { name: "Example\rEmail: other@x.invalid" }, /name must be on one line/i],
+    ["name (CRLF)", { name: "Example\r\nEmail: other@x.invalid" }, /name must be on one line/i],
+    ["property_reference", { property_reference: "PAF0001\nEmail: other@x.invalid" }, /property_reference.*one line/i],
+  ] as const)("in the %s is a 400 that says so, and nothing is metered or submitted", async (_field, body, sentence) => {
+    const res = await post({}, body);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toMatch(sentence);
+    expect(state.hits, "the meter is not spent").toEqual([]);
+    expect(state.submits, "the function is never called").toEqual([]);
+    expect(runEnquiryAlertWorker).not.toHaveBeenCalled();
+    expect(sendEnquiryAck).not.toHaveBeenCalled();
+  });
+
+  it("a multiline message with header-shaped lines is accepted and reaches the function whole", async () => {
+    const message = "Hello\nEmail: my old one bounced\r\nPhone: after 6\n\nThanks";
+    const res = await post({}, { phone: "+357 99 123456", message });
+    expect(res.status).toBe(202);
+    expect(state.submits).toHaveLength(1);
+    expect(state.submits[0]).toMatchObject({ p_name: "A Buyer", p_phone: "+357 99 123456", p_message: message });
+  });
+});

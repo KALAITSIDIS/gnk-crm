@@ -19,13 +19,22 @@
 export const INTEREST_LOCALES = ["en", "el", "ru"] as const;
 export type InterestLocale = (typeof INTEREST_LOCALES)[number];
 
-/** The codes a VISITOR can cause with the form; each has a sentence in every locale. */
+/**
+ * The codes a VISITOR can cause with the form; each has a sentence in every
+ * locale. The two `_line_break` codes (T-enquiry-identity-single-line) are
+ * rare from this page — its inputs drop LF and CR, so only a PASTED NEL,
+ * U+2028 or the like reaches them — and common from a script. Either way
+ * they get a sentence of their own, never "please enter your name" to
+ * someone who did.
+ */
 export const VISITOR_PROBLEM_CODES = [
   "name_required",
   "name_too_long",
+  "name_line_break",
   "email_invalid",
   "email_too_long",
   "phone_too_long",
+  "phone_line_break",
   "message_too_long",
   "contact_required",
 ] as const;
@@ -71,9 +80,11 @@ export const INTEREST_COPY: Record<InterestLocale, InterestCopy> = {
     problems: {
       name_required: "Please enter your name.",
       name_too_long: "Your name is too long (200 characters at most).",
+      name_line_break: "Please write your name on one line.",
       email_invalid: "That email address does not look right — please check it.",
       email_too_long: "That email address is too long (320 characters at most).",
       phone_too_long: "That phone number is too long (40 characters at most).",
+      phone_line_break: "Please write the phone number on one line.",
       message_too_long: "Your message is too long (5000 characters at most).",
       contact_required: "Please give an email address or a phone number.",
     },
@@ -97,9 +108,11 @@ export const INTEREST_COPY: Record<InterestLocale, InterestCopy> = {
     problems: {
       name_required: "Παρακαλούμε γράψτε το όνομά σας.",
       name_too_long: "Το όνομα είναι πολύ μεγάλο (έως 200 χαρακτήρες).",
+      name_line_break: "Παρακαλούμε γράψτε το όνομά σας σε μία γραμμή.",
       email_invalid: "Η διεύθυνση email δεν φαίνεται σωστή — παρακαλούμε ελέγξτε την.",
       email_too_long: "Η διεύθυνση email είναι πολύ μεγάλη (έως 320 χαρακτήρες).",
       phone_too_long: "Ο αριθμός τηλεφώνου είναι πολύ μεγάλος (έως 40 χαρακτήρες).",
+      phone_line_break: "Παρακαλούμε γράψτε τον αριθμό τηλεφώνου σε μία γραμμή.",
       message_too_long: "Το μήνυμά σας είναι πολύ μεγάλο (έως 5000 χαρακτήρες).",
       contact_required: "Δώστε μια διεύθυνση email ή έναν αριθμό τηλεφώνου.",
     },
@@ -123,9 +136,11 @@ export const INTEREST_COPY: Record<InterestLocale, InterestCopy> = {
     problems: {
       name_required: "Пожалуйста, укажите ваше имя.",
       name_too_long: "Имя слишком длинное (не более 200 символов).",
+      name_line_break: "Пожалуйста, укажите ваше имя в одну строку.",
       email_invalid: "Адрес эл. почты выглядит неверно — проверьте его, пожалуйста.",
       email_too_long: "Адрес эл. почты слишком длинный (не более 320 символов).",
       phone_too_long: "Номер телефона слишком длинный (не более 40 символов).",
+      phone_line_break: "Пожалуйста, укажите номер телефона в одну строку.",
       message_too_long: "Сообщение слишком длинное (не более 5000 символов).",
       contact_required: "Укажите адрес эл. почты или номер телефона.",
     },

@@ -39,6 +39,35 @@ describe("every visitor-caused code speaks every locale", () => {
   });
 });
 
+/**
+ * T-enquiry-identity-single-line: a name or phone with a line break is refused
+ * with its own code. The page must say THAT, in the proposal's language —
+ * not "please enter your name" to someone who did.
+ */
+describe("a line break in the name or the phone", () => {
+  it("is a visitor code with its own sentence in every locale, distinct from 'required' and 'too long'", () => {
+    expect(VISITOR_PROBLEM_CODES).toContain("name_line_break");
+    expect(VISITOR_PROBLEM_CODES).toContain("phone_line_break");
+    for (const locale of INTEREST_LOCALES) {
+      const t = INTEREST_COPY[locale].problems;
+      expect(t.name_line_break, locale).not.toBe(t.name_required);
+      expect(t.name_line_break, locale).not.toBe(t.name_too_long);
+      expect(t.phone_line_break, locale).not.toBe(t.phone_too_long);
+      expect(interestProblemText(locale, "name_line_break")).toBe(t.name_line_break);
+      expect(interestProblemText(locale, "phone_line_break")).toBe(t.phone_line_break);
+    }
+  });
+
+  it("says 'one line' in each language", () => {
+    expect(INTEREST_COPY.en.problems.name_line_break).toMatch(/one line/i);
+    expect(INTEREST_COPY.en.problems.phone_line_break).toMatch(/one line/i);
+    expect(INTEREST_COPY.el.problems.name_line_break).toMatch(/μία γραμμή/);
+    expect(INTEREST_COPY.el.problems.phone_line_break).toMatch(/μία γραμμή/);
+    expect(INTEREST_COPY.ru.problems.name_line_break).toMatch(/одну строку/);
+    expect(INTEREST_COPY.ru.problems.phone_line_break).toMatch(/одну строку/);
+  });
+});
+
 describe("a code the page does not know", () => {
   it("is the generic sentence in that locale — never English, never empty, never a throw", () => {
     for (const locale of INTEREST_LOCALES) {

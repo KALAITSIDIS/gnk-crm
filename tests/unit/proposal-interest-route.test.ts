@@ -146,6 +146,21 @@ describe("shape: a useful 400 before anything touches the database", () => {
     expect(state.submits).toHaveLength(0);
   });
 
+  it("a line break in the name or the phone is its own code on its own field — never 'name required' (T-enquiry-identity-single-line)", async () => {
+    const body = async (over: Record<string, unknown>) => (await post(over)).json();
+    expect(await body({ name: "Example\nextra\nextra\nextra\nextra" })).toMatchObject({ code: "name_line_break", field: "name" });
+    expect(await body({ name: "Example\r\nEmail: other@x.invalid" })).toMatchObject({ code: "name_line_break", field: "name" });
+    expect(await body({ phone: "+35799123456\nEmail: other@x.invalid" })).toMatchObject({ code: "phone_line_break", field: "phone" });
+    expect(await body({ property_reference: "PAF0007\nEmail: other@x.invalid" })).toMatchObject({
+      code: "property_reference_invalid",
+      field: null,
+    });
+    const b = (await body({ name: "A\nB" })) as { error?: string };
+    expect(b.error).toMatch(/name must be on one line/i);
+    expect(state.hits, "the meter is not spent").toHaveLength(0);
+    expect(state.submits, "the function is never called").toHaveLength(0);
+  });
+
   it("transport refusals carry a code too: 415 and unparseable JSON", async () => {
     const unsupported = await post({}, { "content-type": "text/plain" });
     expect(await unsupported.json()).toMatchObject({ code: "unsupported_media_type", field: null });

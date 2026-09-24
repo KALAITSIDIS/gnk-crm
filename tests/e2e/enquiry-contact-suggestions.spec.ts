@@ -309,4 +309,47 @@ test.describe("Lead inbox — possible existing contact", () => {
     await expect(row.getByText("No active contact has this enquiry's e-mail or phone.")).toBeVisible({ timeout: opTimeout(30_000) });
     await expect(row.getByRole("button", { name: /create contact/i })).toBeVisible();
   });
+
+  /**
+   * T-enquiry-identity-single-line. Before 0114 a line break in the phone
+   * stored a second Email line, and the inbox matched — and "Create contact"
+   * would have created — on that injected address. The header is now read as
+   * AMBIGUOUS: nothing is suggested (not even the contact who holds the
+   * injected address), Create contact is not offered, Link contact is, and
+   * the enquiry itself is shown whole for the desk to read.
+   */
+  test("an enquiry stored with an ambiguous header is left to the desk — no guessed match, no Create contact", async ({ page }) => {
+    const { orgId } = await fixtureProfile(svc);
+    const tok = randomBytes(3).toString("hex");
+    const injected = `e2e-injected-${tok}@example.invalid`;
+    await contact(orgId, "Holds", `Injected ${tok}`, { email: injected });
+    const visitor = `Visitor ambiguous ${tok}`;
+    // exactly what the door wrote for the audit's case A before 0114
+    const stored = [
+      "Website enquiry",
+      `Name: ${visitor}`,
+      `Email: buyer-${tok}@example.invalid`,
+      "Phone: +35799123456",
+      `Email: ${injected}`,
+      "",
+      `Please contact me. ${tok}`,
+    ].join("\n");
+    await lead(orgId, { received_at: new Date().toISOString(), message: stored });
+
+    const problems = watchForProblems(page);
+    await page.goto("/leads", { waitUntil: "networkidle" });
+    const row = rowOf(page, visitor);
+    await expect(row.getByText("This enquiry's details could not be read — link the contact by hand.")).toBeVisible({
+      timeout: opTimeout(30_000),
+    });
+    await expect(row.getByRole("group", { name: /possible existing contact/i })).toHaveCount(0);
+    await expect(row.getByText(`Holds Injected ${tok}`)).toHaveCount(0);
+    await expect(row.getByRole("button", { name: /create contact/i })).toHaveCount(0);
+    await expect(row.getByRole("button", { name: /link contact/i }).first()).toBeVisible();
+    // the enquiry is untouched and readable in full
+    await row.getByText("· more").click();
+    await expect(row.getByText(`Email: ${injected}`)).toBeVisible();
+    await expect(row.getByText(`Please contact me. ${tok}`)).toBeVisible();
+    assertNoProblems(problems, "leads (ambiguous header)");
+  });
 });
