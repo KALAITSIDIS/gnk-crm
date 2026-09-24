@@ -2443,6 +2443,41 @@ VERIFY, run before starting.
   the contact's own tasks to a fixed phrase, or leave system-built ones), then add it to the erasure run.
   Found by T-task-created-title-shape's review; not built there. **VERIFY:**
   `grep -n "tasks" lib/services/erasure-run.ts` — no hit means still open.
+- **Clock-dependent tests found by the 2026-09-24 sweep, S/M.** A read-only sweep at `ed6166c` (DECISIONS
+  `T-rls-stage-tenure-one-clock`, Landing; two refuters per candidate) found 21 more tests that can fail while
+  the code is right. Line numbers are at `9d79157`. Grouped, most urgent first:
+  - **Dated THIS WEEK — first.** `supabase/tests/lead-escalation-preview.test.ts` (fixtures 2026-09-25 to
+    2026-09-28; its header relies on "the leads are dated in the future relative to the suite's clock") and
+    `supabase/tests/lead-escalation.test.ts:391`. From 2026-09-28T06:15Z a live `lead-escalation` cron tick (every
+    five minutes, real `now()`) inside the test's policy-ON stretch can mint rows these tests assert do not
+    exist; a DST fixture repeats the risk from 2026-10-26. Fix: move the fixed dates to a far-future year with
+    the same weekdays and DST switches (the 2099 precedent of `enquiry-contact-suggestions`), or pause the job
+    for the ON stretch (`cron.alter_job(active := false)` through the pg client).
+  - **Fixed dates in e2e that expire.** `tests/e2e/mandate-lifecycle.spec.ts:138` (from 2026-12-02 the renewal
+    starts today instead of at the fixture's expiry); `contact-merge.spec.ts:163` and
+    `payment-schedule-totals.spec.ts:87` (from 2027-01-11 the fixed `expires_at` breaks
+    `reservation_window_ordered`); `deal-close.spec.ts:137` (from 2027-06-30). Fix: dates relative to today.
+  - **Runner clock against database clock, thin margins.** `supabase/tests/enquiry-alert-key-lifetime.test.ts:270`
+    (`hoursAgo(0)` against the claim's `next_attempt_at <= now()`); `enquiry-alert-sweep-runs.test.ts:193` (60 s)
+    and `:268` (floor of 25 minutes); `enquiry-meta.test.ts:205` (61 minutes against 60);
+    `enquiry-alert-outbox.test.ts:349` (10 s). They fail when the database clock lags the runner, which the
+    WSL2 VM can after a host sleep. Fix: one clock (read the row's own timestamps, or pass `p_now`), or
+    margins of minutes, as the sibling tests already use.
+  - **Quarter-hour rate-limit windows.** `supabase/tests/rls.test.ts:4461` and `:5353`,
+    `tests/e2e/public-enquiry.spec.ts:435`, `tests/e2e/proposal-interest.spec.ts:218` (every post shares one
+    loopback address and one budget). A burst that crosses :00/:15/:30/:45 starts a new window. Fix: do not
+    start within seconds of a boundary, or give each test its own metered address (public-enquiry's
+    `x-forwarded-for` pattern).
+  - **Cyprus midnight and DST.** `supabase/tests/rls.test.ts:1734` (14 × 24 h against 14 calendar days across a
+    DST switch; test 51 already does it in date space); `tests/e2e/deal-close.spec.ts:207` and
+    `reservation-convert.spec.ts:187` (`due_at > Date.now()` read after the action, so a Cyprus midnight in
+    between fails it); `lib/services/followup-tasks.test.ts:173` (a one-second window at 23:59:59). Fix: take the
+    time BEFORE the action, or pin the clock.
+  - **A whole-table check.** `supabase/tests/rls.test.ts:4057` asserts `events_partition_health` finds no
+    `occurred_at` inversion in the WHOLE events table, which any concurrent writer creates (the 0108 note).
+    Fix: scope the check to the test's own event ids.
+  **VERIFY:** `grep -n "2026-09-25T19:00:00Z" supabase/tests/lead-escalation-preview.test.ts` — a hit means the
+  urgent pair is still open; every other bullet names its file and line.
 - ~~**RLS test 15 compares a client clock and a database timestamp as strings, S.**~~ **FIXED 2026-09-24 —
   DECISIONS `T-rls-stage-tenure-one-clock`: the test reads the deal's `stage_entered_at` from the database
   before the owner's move and asserts it changed and did not go backwards — one clock, parsed. Not the
@@ -2519,22 +2554,31 @@ VERIFY, run before starting.
     replace the segment after `/p/` and `/api/portals/<portal>/` with `[token]` — plus a test per
     route; not built there because it contradicts that brief's "keep the path". **VERIFY:**
     `grep -n "\[token\]" lib/services/scrub-event.ts` — no hit means still open.
-- **Sentry still stores `x-vercel-proxied-for` (an IP) and cookie names as span attributes, S.**
-  Measured after T-sentry-incoming-request-scrub deployed (2026-09-23; counts only, no value read):
-  every sampled server transaction carries `http.request.header.x_vercel_proxied_for` raw and
-  IPv4-shaped — GET /login 190, middleware GET 180, GET /offline 110, the enquiry-alert cron 10 — on
-  the same events whose `x_forwarded_for` is `[Filtered]`, and its distinct values follow the caller,
-  so it is very likely the caller's IP (an admin's; a buyer's on `/p/<token>`). No fragment in
-  `SENSITIVE_HEADER_FRAGMENTS` or the SDK's lists matches `proxied-for`, so `event.request.headers`
-  lets it through too. The SDK's header copy onto the root span (`addHeadersAsAttributes`) also
-  stores every cookie NAME (`http.request.header.cookie.<name>`) and the value of any cookie whose
-  name misses its list. Pre-existing, not a regression. Fix: add `proxied` to the fragments; in
-  `scrubData`, redact `http.request.header.<name>` attributes whose name (underscores read as
-  hyphens) is sensitive and drop `http.request.header.cookie.*`; put `x-vercel-proxied-for` and a
-  non-sensitive cookie in the test fixtures. **VERIFY:** `grep -n '"proxied"' lib/services/scrub-event.ts`
-  — no hit means still open; after a deploy the Sentry spans query `is_transaction:true
-  has:http.request.header.x_vercel_proxied_for !http.request.header.x_vercel_proxied_for:"[Filtered]"
-  !http.request.header.x_vercel_proxied_for:"[redacted]"` must return nothing.
+- ~~**Sentry still stores `x-vercel-proxied-for` (an IP) and cookie names as span attributes, S.**~~
+  **BUILT 2026-09-24 on branch `fix/sentry-span-header-scrub`, PR #56 — not merged (the operator approves).**
+  DECISIONS `T-sentry-span-header-scrub`. Measured first (counts only): `x-vercel-proxied-for` AND
+  `x-vercel-ja4-digest` (the TLS client fingerprint, which nobody had named) were raw on all 10,060
+  sampled server transactions in 7 days, so a fragment would have been one more miss. A header's VALUE
+  now travels only when its name is on `HEADERS_KEPT` (and not sensitive by name), on
+  `event.request.headers` and on every `http.request/response.header.*` span attribute; the rest are
+  `[redacted]`, and cookie attributes are dropped. **VERIFY:** `grep -n "HEADERS_KEPT" lib/services/scrub-event.ts`
+  — no hit means not landed.
+  - **Sentry still stores `x-vercel-proxied-for` (an IP) and cookie names as span attributes, S (original).**
+    Measured after T-sentry-incoming-request-scrub deployed (2026-09-23; counts only, no value read):
+    every sampled server transaction carries `http.request.header.x_vercel_proxied_for` raw and
+    IPv4-shaped — GET /login 190, middleware GET 180, GET /offline 110, the enquiry-alert cron 10 — on
+    the same events whose `x_forwarded_for` is `[Filtered]`, and its distinct values follow the caller,
+    so it is very likely the caller's IP (an admin's; a buyer's on `/p/<token>`). No fragment in
+    `SENSITIVE_HEADER_FRAGMENTS` or the SDK's lists matches `proxied-for`, so `event.request.headers`
+    lets it through too. The SDK's header copy onto the root span (`addHeadersAsAttributes`) also
+    stores every cookie NAME (`http.request.header.cookie.<name>`) and the value of any cookie whose
+    name misses its list. Pre-existing, not a regression. Fix: add `proxied` to the fragments; in
+    `scrubData`, redact `http.request.header.<name>` attributes whose name (underscores read as
+    hyphens) is sensitive and drop `http.request.header.cookie.*`; put `x-vercel-proxied-for` and a
+    non-sensitive cookie in the test fixtures. **VERIFY:** `grep -n '"proxied"' lib/services/scrub-event.ts`
+    — no hit means still open; after a deploy the Sentry spans query `is_transaction:true
+    has:http.request.header.x_vercel_proxied_for !http.request.header.x_vercel_proxied_for:"[Filtered]"
+    !http.request.header.x_vercel_proxied_for:"[redacted]"` must return nothing.
 - **A contact's enquiries are listed nowhere, S (nice-to-have).** "Possible existing contact" shows
   a contact's three most recent linked enquiries and says "Showing the 3 most recent only."; the
   contact page has no Leads tab and the inbox has no contact filter, so the rest are reachable only
