@@ -102,10 +102,11 @@ describe("describeEvent registry (T3.5) — English parity", () => {
     );
   });
 
-  it("renders photo deletes with the recovered filename, bare without", () => {
+  it("renders photo deletes as the bare fact, whatever file name an older payload carries", () => {
+    // T-media-file-name-shape: the name is never printed; the row never kept one
     expect(
       describeEvent(ev("media_deleted", { media_id: "x", file: "images (4).jpg" }, "property"), t),
-    ).toBe("Photo deleted — images (4).jpg");
+    ).toBe("Photo deleted");
     expect(describeEvent(ev("media_deleted", { media_id: "x" }, "property"), t)).toBe(
       "Photo deleted",
     );
@@ -340,6 +341,11 @@ describe("typed text is never printed from a payload (T-event-typed-text-shape)"
     ["reservation confirmed with a reason", ev("reservation_status_changed", { reservation_id: "r1", from: "held", to: "confirmed", reason: REASON }, "property"), "Reservation held → confirmed"],
     ["reservation converted with a reason", ev("reservation_status_changed", { reservation_id: "r1", from: "confirmed", to: "converted", reason: REASON }, "property"), "Reservation confirmed → converted"],
     ["reservation expired with a reason", ev("reservation_status_changed", { reservation_id: "r1", from: "held", to: "expired", reason: REASON }, "property"), "Reservation held → expired"],
+    // T-media-file-name-shape: the upload wrote `{ media_id, file, kind, watermarked }`, the
+    // importer `{ media_id, file, watermarked, source }`, and a delete copied `file` forward
+    ["photo uploaded", ev("media_uploaded", { media_id: "m1", file: FILE, kind: "photo", watermarked: false }, "property"), "Photo uploaded"],
+    ["photo imported", ev("media_uploaded", { media_id: "m1", file: FILE, watermarked: true, source: "import_script" }, "property"), "Photo uploaded"],
+    ["photo deleted", ev("media_deleted", { media_id: "m1", file: FILE, bulk: true }, "property"), "Photo deleted"],
   ] as const;
 
   it.each(LEGACY)("a LEGACY %s payload renders the neutral line", (_name, e, line) => {
@@ -376,6 +382,8 @@ describe("typed text is never printed from a payload (T-event-typed-text-shape)"
     ["lead spam", ev("spam", {}, "lead"), "Marked spam"],
     ["reservation released", ev("reservation_status_changed", { reservation_id: "r1", from: "held", to: "released" }, "property"), "Reservation held → released"],
     ["reservation without from/to", ev("reservation_status_changed", { reservation_id: "r1" }, "property"), "Reservation updated"],
+    ["photo uploaded", ev("media_uploaded", { media_id: "m1", kind: "photo", watermarked: false, content_sha256: "ab".repeat(32) }, "property"), "Photo uploaded"],
+    ["photo deleted", ev("media_deleted", { media_id: "m1", content_sha256: "ab".repeat(32) }, "property"), "Photo deleted"],
   ] as const)("a NEW minimal %s payload renders the same line", (_name, e, line) => {
     expect(describeEvent(e, t)).toBe(line);
   });
@@ -390,6 +398,8 @@ describe("typed text is never printed from a payload (T-event-typed-text-shape)"
       ["lost", "lead"],
       ["spam", "lead"],
       ["reservation_status_changed", "property"],
+      ["media_uploaded", "property"],
+      ["media_deleted", "property"],
     ] as const) {
       expect(() => describeEvent(ev(type, payload, entity), t)).not.toThrow();
     }
@@ -407,6 +417,8 @@ describe("typed text is never printed from a payload (T-event-typed-text-shape)"
     expect(
       describeEvent(ev("reservation_status_changed", { from: "held", to: "released", reason: REASON }, "property"), fake),
     ).toBe("KEY:reservationStatus");
+    expect(describeEvent(ev("media_uploaded", { file: FILE }, "property"), fake)).toBe("KEY:mediaUploaded");
+    expect(describeEvent(ev("media_deleted", { file: FILE }, "property"), fake)).toBe("KEY:mediaDeleted");
   });
 });
 

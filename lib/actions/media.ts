@@ -122,6 +122,11 @@ export async function uploadPropertyMedia(
     const failed = results.find((r) => r.error);
     if (failed?.error) return { error: `Upload failed: ${failed.error.message}`, savedAt: null };
 
+    // 0088: the ORIGINAL bytes, so "this photograph is already on <reference>"
+    // is a fact the worklist can state (a warning, never a score change — a
+    // development's units share exteriors). The upload event carries it too.
+    const contentSha256 = createHash("sha256").update(input).digest("hex");
+
     const { data: row, error: insertErr } = await supabase
       .from("property_media")
       .insert({
@@ -137,10 +142,7 @@ export async function uploadPropertyMedia(
         path_jpeg: kind === "photo" ? renditionPath("jpeg") : null,
         width: processed.width,
         height: processed.height,
-        // 0088: the ORIGINAL bytes, so "this photograph is already on
-        // <reference>" is a fact the worklist can state (a warning, never a
-        // score change — a development's units share exteriors).
-        content_sha256: createHash("sha256").update(input).digest("hex"),
+        content_sha256: contentSha256,
         sort_order: nextSort++,
         // only photos are cover-eligible: a floor-plan cover would score the
         // 5 cover points while the feed (photos-only) shows no cover at all
@@ -170,7 +172,11 @@ export async function uploadPropertyMedia(
       entityType: "property",
       entityId: propertyId,
       eventType: "media_uploaded",
-      payload: { media_id: row.id, file: file.name, kind, watermarked: processed.watermarked },
+      // No file name: it is whatever the uploader's machine called the file
+      // ("Andreou villa front.jpg"), and the chain is beyond erasure (SEC-03).
+      // The id names the photo; the digest of its bytes says WHICH image it
+      // was, and outlives the row — the row never stored the name at all.
+      payload: { media_id: row.id, kind, watermarked: processed.watermarked, content_sha256: contentSha256 },
     });
   }
 
@@ -402,7 +408,7 @@ export async function deleteMediaBulk(
     .delete()
     .eq("property_id", propertyId)
     .in("id", mediaIds)
-    .select("id, kind, storage_path_original, path_thumb, path_card, path_full, path_jpeg, is_cover");
+    .select("id, kind, storage_path_original, path_thumb, path_card, path_full, path_jpeg, is_cover, content_sha256");
   if (error) return { error: error.message, deleted: 0 };
   if (!deletedRows || deletedRows.length === 0) {
     return {
@@ -444,40 +450,13 @@ export async function deleteMediaBulk(
     }
   }
 
-  // Recover each photo's original filename from its media_uploaded event —
-  // property_media never stored it, and "Photo deleted" alone tells the
-  // timeline reader nothing (audit 2026-07-16). Best-effort: a miss just
-  // renders the bare line, as before.
-  //
-  // AS THE SYSTEM, because "what was this photo called" is a fact about the
-  // photo. On the caller's client `events_select` (0063) shows a non-admin only
-  // rows where `actor_id = auth.uid()`, while `property_media_delete` admits
-  // admin OR listing_manager — so a listing manager tidying a gallery somebody
-  // else filled found no upload event and wrote a permanent, hash-chained
-  // `media_deleted` with no filename, where the identical delete by an admin
-  // would have carried one. The event is append-only; there is no fixing it
-  // afterwards. org_id is filtered explicitly — the admin client has no RLS to
-  // do it — and the payload read is filenames only, so nothing here is widened
-  // beyond what the property timeline already shows the whole org.
-  const { data: uploadEvents } = await admin
-    .from("events")
-    .select("payload")
-    .eq("org_id", profile.orgId)
-    .eq("entity_type", "property")
-    .eq("entity_id", propertyId)
-    .eq("event_type", "media_uploaded")
-    .limit(1000);
-  const fileByMedia = new Map<string, string>();
-  for (const e of uploadEvents ?? []) {
-    const p = e.payload as { media_id?: unknown; file?: unknown } | null;
-    if (typeof p?.media_id === "string" && typeof p.file === "string") {
-      fileByMedia.set(p.media_id, p.file);
-    }
-  }
-
-  // one event per photo (guardrail 1) — the timeline keeps per-photo granularity
+  // One event per photo (guardrail 1) — the timeline keeps per-photo
+  // granularity. The photo is named by its id and the digest of its bytes,
+  // taken from the ROW the delete just returned. Until T-media-file-name-shape
+  // this read the photo's file name back out of its `media_uploaded` event with
+  // the admin client and copied it forward — typed text the chain fed itself
+  // (SEC-03). Nothing is looked up now, so nothing depends on who is deleting.
   for (const m of deletedRows) {
-    const file = fileByMedia.get(m.id);
     await logEvent(supabase, {
       orgId: profile.orgId,
       actorId: profile.id,
@@ -486,7 +465,8 @@ export async function deleteMediaBulk(
       eventType: "media_deleted",
       payload: {
         media_id: m.id,
-        ...(file ? { file } : {}),
+        // an imported photo whose digest was never backfilled has none to give
+        ...(m.content_sha256 ? { content_sha256: m.content_sha256 } : {}),
         ...(deletedRows.length > 1 ? { bulk: true } : {}),
       },
     });

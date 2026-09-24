@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { test, expect, type Page } from "@playwright/test";
+import sharp from "sharp";
 import { type SupabaseClient } from "@supabase/supabase-js";
 import { fixtureProfile, isLocal, opTimeout, serviceClient } from "./helpers";
 
@@ -23,7 +25,10 @@ import { fixtureProfile, isLocal, opTimeout, serviceClient } from "./helpers";
  * - releasing a reservation too (T-reservation-release-reason-shape): the
  *   Reservation tab's "Earlier holds" prints the reason from the row, the event
  *   is `{ reservation_id, from, to }`, and the Activity line is "Reservation
- *   held → released" alone.
+ *   held → released" alone;
+ * - uploading and deleting a photo (T-media-file-name-shape): the events carry
+ *   the id and the digest of the image's bytes, never the file's name, and the
+ *   Activity lines are "Photo uploaded" / "Photo deleted".
  *
  * What an agent may NOT see (an admin_only document, a colleague's task) is
  * measured against the real policies in supabase/tests/event-context.test.ts —
@@ -42,6 +47,27 @@ const LEAD_REASON = "E2E Andreas Kyprianou went with his brother-in-law";
 const RES_REF = "E2ETYPED02";
 const RES_BUYER = "E2ETypedResBuyer";
 const RES_REASON = "E2E Elena Hadjipetrou's mother fell ill, call back in May";
+
+const MEDIA_REF = "E2ETYPED03";
+// a camera-roll name that carries a person — it must reach no event
+const PHOTO_NAME = "E2E Andreou Kyriakos villa front 99111222.jpg";
+
+/** a photo's rows cascade with the property; its stored files do not */
+async function removeMediaFixture(svc: SupabaseClient): Promise<void> {
+  const { data: props } = await svc.from("properties").select("id").eq("reference", MEDIA_REF);
+  for (const p of props ?? []) {
+    const { data: media } = await svc
+      .from("property_media")
+      .select("storage_path_original, path_thumb, path_card, path_full, path_jpeg")
+      .eq("property_id", p.id);
+    for (const m of media ?? []) {
+      const renditions = [m.path_thumb, m.path_card, m.path_full, m.path_jpeg].filter(Boolean) as string[];
+      if (renditions.length) await svc.storage.from("media").remove(renditions);
+      if (m.storage_path_original) await svc.storage.from("documents").remove([m.storage_path_original]);
+    }
+    await svc.from("properties").delete().eq("id", p.id);
+  }
+}
 
 /** reservations restrict their property's delete (0044), so they go first */
 async function removeReservationFixture(svc: SupabaseClient): Promise<void> {
@@ -379,5 +405,63 @@ test("releasing a reservation keeps the reason on the hold; the event and the Ac
     }
   } finally {
     await removeReservationFixture(svc);
+  }
+});
+
+test("a photo's events carry its id and digest, never its file name", async ({ page }) => {
+  const svc = serviceClient();
+  await removeMediaFixture(svc);
+  const { orgId } = await fixtureProfile(svc);
+  // a draft listing: no watermark is asked for
+  const { data: prop } = await svc
+    .from("properties")
+    .insert({ org_id: orgId, reference: MEDIA_REF, property_type: "apartment", status: "available" })
+    .select("id")
+    .single();
+  const propertyId = prop!.id as string;
+  const image = await sharp({
+    create: { width: 64, height: 48, channels: 3, background: { r: 30, g: 110, b: 90 } },
+  })
+    .jpeg()
+    .toBuffer();
+  const digest = createHash("sha256").update(image).digest("hex");
+
+  try {
+    await page.goto(`/properties/${propertyId}`, { waitUntil: "networkidle" });
+    await openTab(page, /^Media/);
+    const panel = page.getByRole("tabpanel");
+    await panel.locator('input[type="file"][name="files"]').setInputFiles({ name: PHOTO_NAME, mimeType: "image/jpeg", buffer: image });
+    await panel.getByRole("button", { name: /^upload$/i }).click();
+    await expect.poll(async () => (await eventsOf(svc, propertyId, "media_uploaded")).length, {
+      timeout: opTimeout(30_000),
+    }).toBe(1);
+    const [uploaded] = await eventsOf(svc, propertyId, "media_uploaded");
+    const { data: row } = await svc.from("property_media").select("id, content_sha256").eq("property_id", propertyId).single();
+    // the small image reaches the server as it was chosen — the digest is of those bytes
+    expect(uploaded).toEqual({ media_id: row!.id, kind: "photo", watermarked: false, content_sha256: digest });
+    expect(row!.content_sha256).toBe(digest);
+    expect(JSON.stringify(uploaded)).not.toMatch(/Andreou|Kyriakos|99111222|\.jpg/);
+
+    // delete it through the tile's own button (a native confirm)
+    await page.reload({ waitUntil: "networkidle" });
+    await openTab(page, /^Media/);
+    page.once("dialog", (d) => void d.accept());
+    await page.getByRole("tabpanel").getByTitle("Delete").first().click();
+    await expect.poll(async () => (await eventsOf(svc, propertyId, "media_deleted")).length, {
+      timeout: opTimeout(15_000),
+    }).toBe(1);
+    expect(await eventsOf(svc, propertyId, "media_deleted")).toEqual([{ media_id: row!.id, content_sha256: digest }]);
+
+    // the Activity tab says what happened to a photo, and nothing of its file's name
+    await page.reload({ waitUntil: "networkidle" });
+    await openTab(page, /^Activity$/);
+    const timeline = page.getByRole("tabpanel");
+    await expect(timeline.locator("li", { hasText: "Photo uploaded" })).toHaveCount(1);
+    await expect(timeline.locator("li", { hasText: "Photo deleted" })).toHaveCount(1);
+    for (const word of ["Andreou", "Kyriakos", "99111222"]) {
+      await expect(timeline).not.toContainText(word);
+    }
+  } finally {
+    await removeMediaFixture(svc);
   }
 });

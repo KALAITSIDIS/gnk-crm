@@ -257,7 +257,9 @@ for (const { row, line } of withPhotos) {
       entity_type: "property",
       entity_id: property.id,
       event_type: "media_uploaded",
-      payload: { media_id: mediaRow.id, file: name, watermarked: processed.watermarked, source: "import_script" },
+      // no file name — it is whatever the folder called the photo, and the chain
+      // is beyond erasure (SEC-03, T-media-file-name-shape); the id names it
+      payload: { media_id: mediaRow.id, watermarked: processed.watermarked, source: "import_script" },
     });
     if (eventErr) {
       failed = `${name}: photo stored but its event failed — ${eventErr.message}`;
