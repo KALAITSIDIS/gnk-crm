@@ -733,8 +733,20 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(await stageChangedCount(), "blocked moves must write no event").toBe(before);
 
     // owning agent: move succeeds, stage tenure restarts, and the
-    // stage_changed event lands in the same transaction with the right actor
-    const t0 = new Date().toISOString();
+    // stage_changed event lands in the same transaction with the right actor.
+    // "Restarts" is judged against the row's OWN previous value, read from the
+    // database — one clock. This used to compare `new Date().toISOString()`
+    // with PostgREST's timestamp AS STRINGS: milliseconds and `Z` against
+    // microseconds and `+00:00`, so a move landing later in the same
+    // millisecond compared as earlier ('4' < 'Z') and failed main's CI once
+    // (run 35916241188, attempt 1). The local stack's clock runs within ~1 ms
+    // of the runner's, so that millisecond is a real window, not a theory.
+    const { data: prior, error: priorErr } = await svc
+      .from("deals")
+      .select("stage_entered_at")
+      .eq("id", dealA1)
+      .single();
+    if (priorErr) throw priorErr;
     const ownerMove = await agentA1.client.rpc("move_deal_to_stage", {
       p_deal_id: dealA1,
       p_stage_id: stage2.id,
@@ -747,7 +759,11 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       .eq("id", dealA1)
       .single();
     expect(moved?.stage_id).toBe(stage2.id);
-    expect(moved && moved.stage_entered_at >= t0, "stage_entered_at must restart").toBe(true);
+    expect(moved?.stage_entered_at, "stage_entered_at must restart").not.toBe(prior!.stage_entered_at);
+    expect(
+      Date.parse(moved!.stage_entered_at) >= Date.parse(prior!.stage_entered_at),
+      "stage_entered_at must not move backwards",
+    ).toBe(true);
     expect(await stageChangedCount()).toBe(before + 1);
 
     const { data: lastEvent } = await svc
