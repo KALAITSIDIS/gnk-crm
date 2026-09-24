@@ -2499,7 +2499,7 @@ VERIFY, run before starting.
     route; not built there because it contradicts that brief's "keep the path". **VERIFY:**
     `grep -n "\[token\]" lib/services/scrub-event.ts` — no hit means still open.
 - ~~**Sentry still stores `x-vercel-proxied-for` (an IP) and cookie names as span attributes, S.**~~
-  **BUILT 2026-09-24 on branch `fix/sentry-span-header-scrub` — not merged (the operator approves).**
+  **BUILT 2026-09-24 on branch `fix/sentry-span-header-scrub`, PR #56 — not merged (the operator approves).**
   DECISIONS `T-sentry-span-header-scrub`. Measured first (counts only): `x-vercel-proxied-for` AND
   `x-vercel-ja4-digest` (the TLS client fingerprint, which nobody had named) were raw on all 10,060
   sampled server transactions in 7 days, so a fragment would have been one more miss. A header's VALUE

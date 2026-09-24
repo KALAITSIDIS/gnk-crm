@@ -7620,4 +7620,6 @@ Fixed: `if-none-match`/`if-modified-since` added to the list; the list's comment
 
 Measured 2026-09-24, on the tree merged with main after #54: typecheck and lint clean; unit 197 files / 2508 tests (`--testTimeout=30000`).
 
+**State.** PR #56 (KALAITSIDIS/gnk-crm) open against `main`, NOT merged — the operator approves the merge and the deploy.
+
 **Deploy.** Code only: no migration, no environment variable. After it, the BACKLOG's own check must return nothing: `is_transaction:true has:http.request.header.x_vercel_proxied_for !http.request.header.x_vercel_proxied_for:"[Filtered]" !http.request.header.x_vercel_proxied_for:"[redacted]"`. So must the same query for `x_vercel_ja4_digest`, and `has:http.request.header.cookie.sb_yjgirvzgoiywdojnpkpd_auth_token` for new transactions.
