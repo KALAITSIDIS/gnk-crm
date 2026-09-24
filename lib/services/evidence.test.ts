@@ -79,8 +79,9 @@ describe("reportContentHash", () => {
 
 /**
  * T-event-typed-text-shape: the commission evidence report renders its lines
- * through describeEvent, so it prints no document title (or file name) and no
- * deal lost reason — not from a new payload, which carries none, and not from
+ * through describeEvent, so it prints no document title (or file name), no
+ * deal or lead lost reason and no reservation release reason — not from a new
+ * payload, which carries none, and not from
  * an older one, which does. The PDF is a new document at rest; it must not
  * re-publish what the chain cannot erase. Driven through the real assembler.
  */
@@ -179,5 +180,35 @@ describe("assembleEvidence prints no typed text from event payloads", () => {
     expect(out.rows.map((r) => r.line)).toEqual(["Marked lost", "Marked spam", "Marked lost"]);
     const text = JSON.stringify(out.rows);
     for (const word of ["Andreas", "Kyprianou", "99 555 666"]) expect(text).not.toContain(word);
+  });
+
+  it("renders a property-scoped report's legacy release reasons as neutral lines (T-reservation-release-reason-shape)", async () => {
+    // A report about ONE buyer, scoped to a property, lists every hold on that
+    // property — other buyers' too. Their typed reasons used to print here.
+    const PROPERTY = "aaaaaaaa-1111-4111-8111-111111111111";
+    const caller = fakeClient({
+      contacts: [{ data: { id: CONTACT, display_name: "Fixture Buyer", phone_e164: null, email: null }, error: null }],
+      organizations: [{ data: { name: "Fixture Agency" }, error: null }],
+      deals: [{ data: [], error: null }],
+      events: [
+        {
+          data: [
+            { id: 1, occurred_at: "2026-09-01T10:00:00Z", entity_type: "property", entity_id: PROPERTY, event_type: "reservation_status_changed", actor_id: null, payload: { reservation_id: "r1", from: "held", to: "released", reason: "Elena Hadjipetrou withdrew, 99 777 888" } },
+            { id: 2, occurred_at: "2026-09-02T10:00:00Z", entity_type: "property", entity_id: PROPERTY, event_type: "reservation_status_changed", actor_id: null, payload: { reservation_id: "r2", from: "held", to: "released" } },
+          ],
+          error: null,
+        },
+      ],
+      properties: [{ data: [{ id: PROPERTY, reference: "PAF0999" }], error: null }],
+    });
+    const out = await assembleEvidence(caller.client as never, fakeClient({}).client as never, "org-1", {
+      contactId: CONTACT,
+      propertyId: PROPERTY,
+      generatedBy: { name: "Admin", role: "admin" },
+    });
+    if ("errorKey" in out) throw new Error(`assembly failed: ${out.errorKey}`);
+    expect(out.rows.map((r) => r.line)).toEqual(["Reservation held → released", "Reservation held → released"]);
+    const text = JSON.stringify(out.rows);
+    for (const word of ["Elena", "Hadjipetrou", "99 777 888"]) expect(text).not.toContain(word);
   });
 });

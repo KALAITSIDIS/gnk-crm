@@ -2462,18 +2462,28 @@ VERIFY, run before starting.
     reason (counts only) — the chain cannot be edited.** (original) `closeLead`, `lib/actions/leads.ts`:
     `{ reason }`, free text up to 500 characters, printed by the `lost` line for a lead; NOT a row join,
     because `leads.lost_reason` is mutable (a reopen clears it, a re-close replaces it);
-  - a reservation's release reason (`lib/actions/reservations.ts`: `reservation_status_changed`
-    `{ reason: release_reason }`, free text up to 300), printed by `reservationStatusReason`;
+  - ~~a reservation's release reason~~ **FIXED 2026-09-24 — DECISIONS `T-reservation-release-reason-shape`:
+    `transitionReservation` logs `reservation_status_changed` as `{ reservation_id, from, to }`; the row keeps
+    the reason and the Reservation tab's "Earlier holds" prints it; the line prints no reason from any
+    payload. Hosted held 0 such events — no chain copy exists.** (original) `lib/actions/reservations.ts`:
+    `{ reason: release_reason }`, free text up to 300, printed by `reservationStatusReason`;
   - a photograph's FILE NAME (`lib/actions/media.ts` and `scripts/import/media.mts`: `media_uploaded`
     `{ file }`), printed by `mediaUploadedFile`; `deleteMedia` reads older `media_uploaded` payloads with the
     admin client and copies `file` forward into `media_deleted`;
   - viewing feedback (`lib/actions/viewings.ts`: `viewing_feedback` `{ comment, liked, disliked }`),
-    printed by `viewingFeedback*` and passed by the payload scan's `REVIEWED` map.
-  **VERIFY** — one grep per writer, and a hit means THAT writer is still open (the lead one is fixed and
-  must stay silent): `grep -n "payload: { reason: parsed.data.reason" lib/actions/leads.ts` ·
+    printed by `viewingFeedback*` and passed by the payload scan's `REVIEWED` map;
+  - an escalation RECOVERY reason — SQL, found by T-reservation-release-reason-shape's scouts:
+    `request_lead_escalation_recovery` (latest body 0111) writes the admin-typed reason (up to 200
+    characters, required for a resend; `recoverLeadEscalation` in `lib/actions/leads.ts`) into the
+    `lead_escalation` event as `'reason', v_reason`. No line prints it (no `lead_escalation` entry in
+    `EVENT_LINES`), but the chain holds it, and the TypeScript payload scan cannot see SQL. The fix is a
+    forward migration re-creating the function without the key (a return shape is untouched).
+  **VERIFY** — one grep per writer, and a hit means THAT writer is still open (the lead and reservation
+  ones are fixed and must stay silent): `grep -n "payload: { reason: parsed.data.reason" lib/actions/leads.ts` ·
   `grep -n "reason: release_reason" lib/actions/reservations.ts` ·
   `grep -nE "file: (file\.)?name," lib/actions/media.ts scripts/import/media.mts` ·
-  `grep -n "\.\.\.feedback," lib/actions/viewings.ts`.
+  `grep -n "\.\.\.feedback," lib/actions/viewings.ts` ·
+  `grep -ln "function public.request_lead_escalation_recovery" supabase/migrations/*.sql | tail -1 | xargs grep -n "'reason', v_reason"`.
 - **`markDealLost` and `markDealWon` do not fold the open-status check into their UPDATE, S.** Each reads
   `status = 'open'` and then updates `.eq("id", dealId)` only (`lib/actions/deals.ts`), so a double submit,
   or Won and Lost at the same moment, can both pass: two terminal events in the chain, and a won deal
@@ -2483,17 +2493,21 @@ VERIFY, run before starting.
   **VERIFY** — one per action, and no hit means THAT action is still open:
   `grep -n -A12 'status: "lost",' lib/actions/deals.ts | grep 'eq("status", "open")'` ·
   `grep -n -A12 'status: "won",' lib/actions/deals.ts | grep 'eq("status", "open")'`.
-- **Erasure leaves a lost deal's or lead's typed reason on the row, S — NEEDS AN OPERATOR DECISION.** Contact
+- **Erasure leaves a lost deal's or lead's typed reason, and a reservation's release reason and notes, on
+  the row, S — NEEDS AN OPERATOR DECISION.** Contact
   erasure blanks notes, lead messages and conversation notes but never `deals.lost_reason` or
   `leads.lost_reason` (BACKLOG's T-contact-erasure line); neither does `redactLead` (Article 17 on an
-  unlinked enquiry: the message only) nor `redact_stale_enquiries` (the message and notes). Since
-  T-event-typed-text-shape (deals) and T-lead-lost-reason-shape (leads) the ROW is the only copy a new
-  close makes, so a rule on the row now reaches all of it. Decide whether the retention basis keeps it,
+  unlinked enquiry: the message only) nor `redact_stale_enquiries` (the message and notes). Erasure
+  never touches `reservations` at all, so a hold's `release_reason` and `notes` (typed, up to 300 and
+  2000 characters) outlive Article 17 too. Since T-event-typed-text-shape (deals),
+  T-lead-lost-reason-shape (leads) and T-reservation-release-reason-shape (reservations) the ROW is the
+  only copy a new close makes, so a rule on the row now reaches all of it. Decide whether the retention basis keeps it,
   like identity, or it is typed text, like the notes. Found by T-event-typed-text-shape; not built there.
   **VERIFY** — one per path, and a hit means THAT path now handles it:
   `grep -n "lost_reason" lib/services/erasure-run.ts lib/actions/contact-erasure.ts` ·
   `grep -n -A30 "export async function redactLead" lib/actions/leads.ts | grep lost_reason` ·
-  `grep -ln "function public.redact_stale_enquiries" supabase/migrations/*.sql | tail -1 | xargs grep -n lost_reason`.
+  `grep -ln "function public.redact_stale_enquiries" supabase/migrations/*.sql | tail -1 | xargs grep -n lost_reason` ·
+  `grep -n "reservations" lib/services/erasure-run.ts lib/actions/contact-erasure.ts`.
 - **`redactLead` leaves the enquiry's conversation notes, S.** Article 17 on an UNLINKED enquiry
   (`redactLead`, `lib/actions/leads.ts`) rewrites `leads.message` and logs `redacted`, but never blanks the
   lead's `interaction_notes` — the desk's own words about the enquiry, which 0094 made erasable exactly so

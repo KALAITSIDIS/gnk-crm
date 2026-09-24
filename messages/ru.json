@@ -348,7 +348,6 @@
     "reservationCreatedAmount": "Создана бронь — депозит {amount}",
     "reservationExtended": "Бронь продлена",
     "reservationStatus": "Бронь {from} → {to}",
-    "reservationStatusReason": "Бронь {from} → {to} — {reason}",
     "reservationUpdated": "Бронь обновлена",
     "reservationExpired": "Срок брони истёк автоматически",
     "requirementAdded": "Добавлен запрос покупателя",

@@ -333,6 +333,13 @@ describe("typed text is never printed from a payload (T-event-typed-text-shape)"
     // T-lead-lost-reason-shape: closeLead wrote `{ reason }` on both outcomes
     ["lead lost", ev("lost", { reason: REASON }, "lead"), "Marked lost"],
     ["lead spam", ev("spam", { reason: REASON }, "lead"), "Marked spam"],
+    // T-reservation-release-reason-shape: transitionReservation wrote `{ reservation_id, from, to, reason }`
+    ["reservation released", ev("reservation_status_changed", { reservation_id: "r1", from: "held", to: "released", reason: REASON }, "property"), "Reservation held → released"],
+    ["reservation with a null reason", ev("reservation_status_changed", { reservation_id: "r1", from: "held", to: "confirmed", reason: null }, "property"), "Reservation held → confirmed"],
+    // a crafted Confirm put its reason in the chain and never on the row
+    ["reservation confirmed with a reason", ev("reservation_status_changed", { reservation_id: "r1", from: "held", to: "confirmed", reason: REASON }, "property"), "Reservation held → confirmed"],
+    ["reservation converted with a reason", ev("reservation_status_changed", { reservation_id: "r1", from: "confirmed", to: "converted", reason: REASON }, "property"), "Reservation confirmed → converted"],
+    ["reservation expired with a reason", ev("reservation_status_changed", { reservation_id: "r1", from: "held", to: "expired", reason: REASON }, "property"), "Reservation held → expired"],
   ] as const;
 
   it.each(LEGACY)("a LEGACY %s payload renders the neutral line", (_name, e, line) => {
@@ -367,6 +374,8 @@ describe("typed text is never printed from a payload (T-event-typed-text-shape)"
     ["deal lost without one", ev("lost", {}, "deal"), "Marked lost"],
     ["lead lost", ev("lost", {}, "lead"), "Marked lost"],
     ["lead spam", ev("spam", {}, "lead"), "Marked spam"],
+    ["reservation released", ev("reservation_status_changed", { reservation_id: "r1", from: "held", to: "released" }, "property"), "Reservation held → released"],
+    ["reservation without from/to", ev("reservation_status_changed", { reservation_id: "r1" }, "property"), "Reservation updated"],
   ] as const)("a NEW minimal %s payload renders the same line", (_name, e, line) => {
     expect(describeEvent(e, t)).toBe(line);
   });
@@ -380,6 +389,7 @@ describe("typed text is never printed from a payload (T-event-typed-text-shape)"
       ["lost", "deal"],
       ["lost", "lead"],
       ["spam", "lead"],
+      ["reservation_status_changed", "property"],
     ] as const) {
       expect(() => describeEvent(ev(type, payload, entity), t)).not.toThrow();
     }
@@ -394,6 +404,9 @@ describe("typed text is never printed from a payload (T-event-typed-text-shape)"
     expect(describeEvent(ev("lost", { reason: REASON }, "deal"), fake)).toBe("KEY:lost");
     expect(describeEvent(ev("lost", { reason: REASON }, "lead"), fake)).toBe("KEY:lost");
     expect(describeEvent(ev("spam", { reason: REASON }, "lead"), fake)).toBe("KEY:spam");
+    expect(
+      describeEvent(ev("reservation_status_changed", { from: "held", to: "released", reason: REASON }, "property"), fake),
+    ).toBe("KEY:reservationStatus");
   });
 });
 

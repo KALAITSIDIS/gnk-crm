@@ -12,7 +12,8 @@ import { describe, expect, it } from "vitest";
  * is always ahead of UTC, so the error is one-directional: always early.
  *
  * WHY A SOURCE SCAN. Two of the four historical sites (`markDealWon`,
- * `transitionReservation`) have no unit test at all, so there is no behaviour to
+ * `transitionReservation`) have no unit test of their due dates — the latter's
+ * only test pins its event payload — so there is no behaviour to
  * pin. Behaviour is pinned where a harness exists
  * (lib/services/followup-tasks.test.ts, lib/services/match-alerts.test.ts,
  * lib/validators/reservations.test.ts); this pins the SHAPE everywhere else,

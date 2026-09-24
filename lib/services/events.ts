@@ -150,12 +150,14 @@ const asMoney = (v: unknown): string | null => {
  * Each entry chooses a message key (and its interpolation values) from the
  * payload; the fixed text lives in messages/*.json under `events.*`. Only the
  * template is translated — interpolated data (names, channels, stage names,
- * formatted money, and still some typed text: a reservation's release reason,
- * a photograph's file name, viewing feedback — BACKLOG) stays as stored. A task's title, a
- * document's title or file name and a deal's or lead's lost reason are NOT
- * interpolated, from new payloads or old ones (T-event-typed-text-shape,
- * T-lead-lost-reason-shape): the line states the fact, and which task or
- * document it was arrives separately as `current_title`, read from its row.
+ * formatted money, and still some typed text: a photograph's file name,
+ * viewing feedback — BACKLOG) stays as stored. A task's title, a document's
+ * title or file name, a deal's or lead's lost reason and a reservation's
+ * release reason are NOT interpolated, from new payloads or old ones
+ * (T-event-typed-text-shape, T-lead-lost-reason-shape,
+ * T-reservation-release-reason-shape): the line states the fact, and which
+ * task or document it was arrives separately as `current_title`, read from its
+ * row.
  *
  * `entityType` is the event's entity, for the lines that read differently by
  * entity: `completed` / `reopened` say "Task …" only for a task.
@@ -397,16 +399,14 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string)
     return amount ? t("reservationCreatedAmount", { amount }) : t("reservationCreated");
   },
   reservation_extended: (_p, t) => t("reservationExtended"),
+  // The release reason is never read from the payload: new events carry none
+  // (T-reservation-release-reason-shape), and an older event's copy is not
+  // reprinted — typed text in a chain nothing can erase. The property page's
+  // Reservation tab prints the reason from `reservations.release_reason`.
   reservation_status_changed: (p, t) => {
     const from = asText(p.from);
     const to = asText(p.to);
-    const reason = asText(p.reason);
-    if (from && to) {
-      return reason
-        ? t("reservationStatusReason", { from, to, reason })
-        : t("reservationStatus", { from, to });
-    }
-    return t("reservationUpdated");
+    return from && to ? t("reservationStatus", { from, to }) : t("reservationUpdated");
   },
   // actor-null: written by the nightly expire_reservations() sweep, not a user
   reservation_expired: (_p, t) => t("reservationExpired"),

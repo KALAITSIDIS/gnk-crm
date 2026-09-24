@@ -127,7 +127,8 @@ export function sortChronological<T extends { occurredAt: string; id: number }>(
  * Recomputable with the CURRENT renderer: `line` is re-rendered on every
  * regeneration, and so is an actor's name. Since T-event-typed-text-shape
  * (2026-09-24) a document's title and a deal's lost reason — and since
- * T-lead-lost-reason-shape a lead's — are no longer printed from any payload
+ * T-lead-lost-reason-shape a lead's, since T-reservation-release-reason-shape a
+ * reservation's release reason — are no longer printed from any payload
  * (task events are never in a report), so a report
  * generated before then whose rows held one recomputes to a different hash.
  * A stored report is verified by

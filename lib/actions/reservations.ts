@@ -245,7 +245,11 @@ export async function transitionReservation(
     entityType: "property",
     entityId: existing.property_id,
     eventType: "reservation_status_changed",
-    payload: { reservation_id, from, to, reason: release_reason ?? null },
+    // No `reason`: the release reason is typed text that names people, and the
+    // chain is beyond erasure and correction (SEC-03). The row keeps it — the
+    // Reservation tab's "Earlier holds" prints it from there — and a reason
+    // posted with a live target is not kept anywhere, as the row never kept it.
+    payload: { reservation_id, from, to },
   });
 
   /*
