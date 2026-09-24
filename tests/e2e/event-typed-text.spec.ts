@@ -151,7 +151,15 @@ test("ticking a task logs `{}`, and the admin feed still names it from the row",
   const { id: adminId, orgId } = await fixtureProfile(svc);
   const { data: task } = await svc
     .from("tasks")
-    .insert({ org_id: orgId, title: TASK_TITLE, assignee_id: adminId, created_by: adminId })
+    .insert({
+      org_id: orgId,
+      title: TASK_TITLE,
+      assignee_id: adminId,
+      created_by: adminId,
+      // a year overdue, so it is first on /tasks page 1 (due_at asc, 25 a page)
+      // whatever else the local database holds — nudges.spec.ts does the same
+      due_at: new Date(Date.now() - 365 * 86_400_000).toISOString(),
+    })
     .select("id")
     .single();
   const taskId = task!.id as string;

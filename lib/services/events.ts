@@ -150,9 +150,11 @@ const asMoney = (v: unknown): string | null => {
  * Each entry chooses a message key (and its interpolation values) from the
  * payload; the fixed text lives in messages/*.json under `events.*`. Only the
  * template is translated — interpolated data (names, channels, stage names,
- * formatted money) stays as stored. A task's title, a document's title or file
- * name and a deal's lost reason are NOT interpolated, from new payloads or old
- * ones (T-event-typed-text-shape): the line states the fact, and which task or
+ * formatted money, and still some typed text: a lead's lost reason, a
+ * reservation's release reason, a photograph's file name — BACKLOG) stays as
+ * stored. A task's title, a document's title or file name and a deal's lost
+ * reason are NOT interpolated, from new payloads or old ones
+ * (T-event-typed-text-shape): the line states the fact, and which task or
  * document it was arrives separately as `current_title`, read from its row.
  *
  * `entityType` is the event's entity: one event type can be written against

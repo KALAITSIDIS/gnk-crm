@@ -292,6 +292,22 @@ describe("mandate documents", () => {
     expect(leaked(fake), "the mandate file's name reached the hash chain").toEqual([]);
   });
 
+  it("upload: the event's visibility is read back from the inserted ROW, not assumed", async () => {
+    // A value the column default ('internal') cannot produce, so a payload that
+    // hard-coded the default, or a select that stopped asking for the column,
+    // shows up here rather than as a silently missing field.
+    const fake = install({
+      mandates: [
+        { data: { id: MANDATE_ID, org_id: "org-1", property_id: PROPERTY_ID }, error: null },
+        { data: null, error: null },
+      ],
+      documents: [{ data: { id: DOC_ID, visibility: "admin_only" }, error: null }],
+    });
+    expect((await uploadMandateDocument(idle, form({ mandate_id: MANDATE_ID }))).error).toBeNull();
+    expect(fake.argsOf("documents", "select").map((a) => String(a[0]))).toEqual(["id, visibility"]);
+    expect(inserted(fake)[0].payload).toMatchObject({ visibility: "admin_only" });
+  });
+
   it("a non-admin upload is refused before anything is written or logged", async () => {
     state.role = "agent";
     const fake = install({});

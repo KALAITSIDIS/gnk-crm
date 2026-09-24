@@ -7806,7 +7806,7 @@ Its five low/info points, verified before acting:
   - the deal Activity section (the reason, a second time — the header already prints `deals.lost_reason`);
   - the admin dashboard feed (all of them, including the mandate file name and task titles — the only screen for task events);
   - the commission evidence report (documents and reasons, into the PDF).
-- **Reproduced through the REAL actions and the REAL `logEvent`** (mocked auth, cache and transport only): 11 of 22 new writer tests failed on `e8155d6`, each because a title, file name or reason reached the inserted row. Their 11 controls passed: the rows still get the text, and the no-op, refused and failed updates log nothing. That proves the write path, not production data (below).
+- **Reproduced through the REAL actions and the REAL `logEvent`** (mocked auth, cache, storage and transport only): 11 of 22 new writer tests failed on `e8155d6`, each because a title, file name or reason reached the inserted row. Their 11 controls passed: the rows still get the text, and the no-op, refused and failed updates log nothing. That proves the write path, not production data (below).
 - **No other writer of these events exists.** `move_deal_to_stage` refuses a lost target and writes no event (0067); no SQL writes `completed`, `reopened`, `document_*` or a deal `lost`; no SQL reads `payload->>'title'` or `'reason'`. The reporting engine counts `lost` events by type only. gnk-web reads no events.
 
 **Hosted, measured read-only, counts only (no payload value selected):** 3 contact `document_deleted` events carry a `title`; 1 deal `lost` event carries a `reason`; 0 task `completed` / `reopened`; 0 `document_uploaded`. 5 lead `lost` events carry a reason (a different writer, below). 3 `evidence_report_generated`. The operator recorded on 2026-09-13 that production rows are test data; the values were not read.
@@ -7866,6 +7866,25 @@ Its five low/info points, verified before acting:
   - The Activity tab and the admin feed show the labelled current title, and after the delete neither line names the document.
   - The deal header prints the reason, and the Activity line does not.
 - `messages.test.ts` compiles the new keys in all three locales, and the payload AST scan still passes.
+- **Callers** (`tests/unit/timeline-viewer-client.test.ts`, added after review): the services cannot see a CALLER
+  handing them the admin client (same type; the properties page holds one in scope; every e2e signs in as an
+  admin). So this walks the source with the TypeScript parser: every `readEntityTimeline({ viewer })` and
+  `attachCurrentTitles(viewer, …)` must pass a variable bound to `await createClient()` from
+  `@/lib/supabase/server`. Swapping one to `admin` fails it, and so does the dashboard's.
+- **Mutation proofs** (throwaway worktree, one exact replacement each, restored in `finally`): 17 of 17 killed.
+  They cover the lookup asking the admin client, the org filter dropped, the uuid check dropped, `document_deleted`
+  looked up, a payload fallback, the reader passing the admin client, each renderer printing its old text again,
+  an unlabelled current title, the title renamed or nested, the mandate id dropped, a truncated reason, and the
+  no-op and zero-row guards removed. Two survivors the review found (the mandate's `visibility` read-back)
+  are now pinned.
+
+**Review.** Five read-only lenses (correctness, security, requirements, tests, docs), two refuters per finding:
+correctness, security and requirements found nothing. Ten test and docs points were raised and every one was
+refuted as a defect of the shipped code (one docs point split 1–1). The true ones were cheap, and are done: the
+caller guard, the mandate read-back pin, the e2e task dated a year overdue so it is on `/tasks` page 1
+whatever the local database holds, five comment and doc sentences made exact, and a VERIFY grep per writer.
+The "a burst of org events evicts the feed line" flake was refuted with evidence (one worker; routes warmed
+in setup; no source of ten events in the window) and is left.
 
 **Compatibility and deploy order.** No migration, no hosted step. Not deploy-coupled (release-compat): an old app renders a new payload through its untitled branches ("Completed", "Document uploaded", "Marked lost"), and a new app renders an old payload neutrally. Order: branch CI green → merge → deploy READY → probes.
 

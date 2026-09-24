@@ -2455,9 +2455,10 @@ VERIFY, run before starting.
   `grep -n "tasks" lib/services/erasure-run.ts` — no hit means still open.
 - **More event payloads carry typed text by value, S/M.** Found by T-event-typed-text-shape's sweep and
   left out of its scope on purpose (a different writer each, and the same fix shape: ids in the event, the
-  text on the row, a neutral line). Each is rendered from the payload today:
+  text on the row, a neutral line). Each is rendered from the payload today, except where said:
   - a LEAD's `lost` / `spam` reason (`closeLead`, `lib/actions/leads.ts`: `{ reason }`, free text up to 500
-    characters), printed by the `lost` line for a lead (the deal branch no longer reads it). Hosted held 5
+    characters), printed by the `lost` line for a lead (the deal branch no longer reads it; the `spam` line
+    prints none, but the chain holds it all the same). Hosted held 5
     lead `lost` events with a reason (counts only, 2026-09-24). NOT a row join: `leads.lost_reason` is
     mutable (a reopen clears it, a re-close replaces it), so the current value is not the event's;
   - a reservation's release reason (`lib/actions/reservations.ts`: `reservation_status_changed`
@@ -2467,16 +2468,20 @@ VERIFY, run before starting.
     admin client and copies `file` forward into `media_deleted`;
   - viewing feedback (`lib/actions/viewings.ts`: `viewing_feedback` `{ comment, liked, disliked }`),
     printed by `viewingFeedback*` and passed by the payload scan's `REVIEWED` map.
-  **VERIFY:** `grep -n "payload: { reason: parsed.data.reason" lib/actions/leads.ts` and
-  `grep -n "file: file.name" lib/actions/media.ts` — a hit means still open.
+  **VERIFY** — one grep per writer, and a hit means THAT writer is still open:
+  `grep -n "payload: { reason: parsed.data.reason" lib/actions/leads.ts` ·
+  `grep -n "reason: release_reason" lib/actions/reservations.ts` ·
+  `grep -nE "file: (file\.)?name," lib/actions/media.ts scripts/import/media.mts` ·
+  `grep -n "\.\.\.feedback," lib/actions/viewings.ts`.
 - **`markDealLost` and `markDealWon` do not fold the open-status check into their UPDATE, S.** Each reads
   `status = 'open'` and then updates `.eq("id", dealId)` only (`lib/actions/deals.ts`), so a double submit,
   or Won and Lost at the same moment, can both pass: two terminal events in the chain, and a won deal
   flipped to lost (or `lost_reason` overwritten; `markDealWon` does not clear it). `closeLead` and the
   reservation transitions already fold theirs in (`.in("status", …)`, `.eq("status", from)`). Found by
   T-event-typed-text-shape's sweep; not built there (it preserves the deal transitions as they are).
-  **VERIFY:** `grep -n -A12 "status: \"lost\"," lib/actions/deals.ts | grep 'eq("status", "open")'` —
-  no hit means still open.
+  **VERIFY** — one per action, and no hit means THAT action is still open:
+  `grep -n -A12 'status: "lost",' lib/actions/deals.ts | grep 'eq("status", "open")'` ·
+  `grep -n -A12 'status: "won",' lib/actions/deals.ts | grep 'eq("status", "open")'`.
 - **Erasure leaves a lost deal's typed reason on the row, S — NEEDS AN OPERATOR DECISION.** Contact
   erasure blanks notes, lead messages and conversation notes but never `deals.lost_reason` (or
   `leads.lost_reason`, BACKLOG's T-contact-erasure line). Since T-event-typed-text-shape the ROW is the
