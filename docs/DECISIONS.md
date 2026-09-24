@@ -7687,3 +7687,67 @@ It also pins that the insert still writes the title to the row. RED before the f
 **The failure, reproduced.** A throwaway copy of the preview file had one line added inside its ON stretch: `raise_lead_escalations(ORG_P, p_now := 2026-09-29T06:20Z)`, the live cron as it would run on 29 September. With the 2026 fixtures it fails exactly as predicted (`expected +0 to be 3`: the simulated tick minted all three first). With the 2099 fixtures it passes 20/20. The copy was removed. The preview file uses throwaway organisations, so the simulation left nothing on the local stack. Both files pass on the local stack (0113): 45/45.
 
 **Landing (2026-09-24 late morning).** On the operator's word ("merge #58"). Main was checked right before the merge (`e663ccd` held all of it). PR #58 → main `0fa7bdb`, pinned to `e663ccd`; branch CI was green (run 35977881328). Vercel production `dpl_GKH28Ur3MJrBGp8oJwwwVqDbXXfp` READY. It is a tests-only change, so the app is unchanged: `/login` 200, CSP nonce on 16 of 16 scripts, no runtime errors. CI on the merge commit was green on the first attempt (run 35988936451: checks, rls, e2e), with the rls job running both files against a fresh database. Remote branch deleted. The time bomb was defused four days before it would have gone off.
+
+## T-enquiry-identity-single-line — both enquiry doors refuse a line break in a one-line value, and the reader refuses to guess (2026-09-24; migration 0114, NOT on hosted)
+
+**The brief** (enquiry-validation audit of `e980575`, treated as hypotheses). Reviewed at `e980575062499ddbc6e28164e0c68a1562d411b9`, still `origin/main` when the work began. Branch `fix/enquiry-identity-single-line`.
+
+**Verdicts.**
+- *The routes accept line breaks in one-line fields* — **CONFIRMED.** `publicEnquirySchema` and `proposalInterestSchema` trimmed `name`, `phone` and `property_reference` but kept interior CR/LF (`lib/validators/public-enquiry.ts:16,21-24,30-33`, `lib/validators/proposal-interest.ts:25-28` at `e980575`). Only the e-mail was safe: `z.email()` refuses a break.
+- *The database accepts them too* — **CONFIRMED.** The live bodies are 0101's `submit_public_enquiry` (`0101_enquiry_alert_outbox.sql:229-241`, caps only) and 0106's `submit_proposal_interest` (`0106_proposal_interest.sql:72-80`). No later migration redefines either (0107–0113 checked). Both write the values raw into the header (`0101:289-296`, `0106:117-125`). Hosted is on the same bodies: prosrc md5 `6dbfe847…` and `75953881…`, identical to local 0113 (measured 2026-09-24, read-only).
+- *Case A: a phone carrying `Email: …` changes the parsed e-mail* — **CONFIRMED.** Through the real function and the old reader, `p_phone = '+35799123456' || LF || 'Email: other@x.invalid'` read back as `{"email":"other@x.invalid"}`. `alertFromLead` would have made that the desk alert's Reply-To, and "Create contact" would have used it for the new contact.
+- *Case B: a five-line name hides the contact details* — **CONFIRMED.** It read back as `{"name":"Example","email":null,"phone":null}`.
+- *Other shapes* — **CONFIRMED.** A reference of `PAF0001` + LF + `Email: …` read back with the e-mail `other@x.invalid (no published listing with that reference)`. The old reader normalised a lone CR into a line break, so CR and CRLF injections behaved like LF. A blank line inside the name ended the header early.
+- **Measured before the fix:** `submit_public_enquiry` accepted all 37 of the test's variants (7 Unicode breaks + CRLF + blank line, in the name, e-mail, phone and reference, plus a trailing LF). `submit_proposal_interest` accepted 27 of 36; the other 9 were refused only because a reference with a break matched no property.
+
+**Root cause.** Identity travels as text. The doors serialise it into labelled lines of `leads.message`, and every consumer parses it back (`lib/services/lead-contact.ts`). Neither boundary kept a value to one line. The reader took the last value for a label, skipped lines it did not know and stopped after five lines, so an injected line was either believed or silently lost.
+
+**The fix — refuse, at every boundary.**
+- `lib/validators/single-line.ts` is the ONE definition of a line break: Unicode's mandatory breaks (UAX #14 BK/CR/LF/NL: LF VT FF CR NEL LS PS). A LINE SEPARATOR starts a new line in the inbox and in an e-mail as surely as LF does, and no real name or number contains one. Tab and no-break space stay allowed. `oneLine(message)` is the refinement both schemas apply right after `.trim()` and before the caps. A break at either end is trimmed like a space; an embedded one is refused; a long value with a break is told about the break.
+- **Website door:** a 400 naming the field ("The name must be on one line — remove the line break.", and the same for the phone number and `property_reference`), before the meter.
+- **Proposal door:** two new stable codes, `name_line_break` and `phone_line_break`, on their fields, with sentences in EN, EL and RU. They are needed because the old mapping would have called a refused name "required". A break in the page-supplied reference is `property_reference_invalid`.
+- **0114:** both functions re-created from 0101's and 0106's bodies. It was GENERATED by exact, count-checked insertions, so the only differences are `v_breaks` (`chr()` of the same seven code points) and four checks on `v_name`, `v_email`, `v_phone` and `v_ref`. They sit before the org or token lookup, the replay and every write: zero rows, and no lead, no event, no job. The functions trim spaces only, as they always have, so a direct caller's trailing LF is refused too. Signatures, return shapes, grants, SECURITY DEFINER, search_path, routing, assignment, events, the desk-alert row and the block's bytes are unchanged. The self-test compares whole messages.
+- **The message stays multiline.** `p_meta` goes to criteria, not the header.
+
+**Refuse, not normalise.** BACKLOG's entry suggested collapsing CR/LF to a space. That was a suggestion in a findings list; no DECISIONS entry adopted it. It would store a value the visitor did not type (`+357 99 Email: x@y` as a phone). A browser's one-line input cannot hold a break (the new e2e shows Chromium turning a pasted newline into a space), so only scripts meet the refusal, and they are told why.
+
+**The reader — no guessing** (`readWebsiteEnquiry`). The header is every line up to the first EMPTY line and must be the doors' exact grammar:
+- `Name` first, then `Email`, `Phone` and `About` at most once each, in that order;
+- each on one line, with a value;
+- at least one of `Email` / `Phone`. The door has refused an enquiry without one since 0084, so a header with neither means a blank line in the name pushed them below.
+
+Anything else is `ambiguous`, with a reason (`unknown_line`, `duplicate_label`, `out_of_order`, `stray_line_break`, `empty_value`, `missing_name`, `no_contact`). Only a block that is CRLF throughout still has its CRLFs forgiven (a desk-typed block, as before). A CR mixed in with the door's LFs came from a value and is refused. Nothing below the header is ever read for identity. `parseWebsiteEnquiry` returns null for ambiguous, so every consumer takes its EXISTING manual path:
+- the desk alert and the escalation cancel `lead_unreadable` (the inbox chip shows it; the lead stays in the inbox);
+- "Possible existing contact" shows "This enquiry's details could not be read — link the contact by hand.";
+- Create contact is not offered, and the action refuses before any lookup;
+- the message is shown whole and never rewritten.
+
+Two existing unit expectations moved with the `no_contact` rule: a header with no Email/Phone line was `no_identifiers` and is now `unreadable`. Neither shape is one a door writes.
+
+**What cannot be detected, recorded.** A break that forged a PERFECT header is the same bytes as a genuine one, for example a name `Ann` + LF + `Email: x@y` when no e-mail was given (a unit test pins the identity). The input rule is the fix; the reader is the backstop. **Historical data, measured 2026-09-24 (read-only, counts only):**
+- hosted: 8 website blocks, all 8 in the strict grammar; 0 with a non-LF break in the header; 0 phone-channel leads carrying an Email line (the one forgery the channel column can reveal, since 0092);
+- local: 208 leads, and all 101 website ones read identically under the old and the new reader.
+
+No stored row is rewritten.
+
+**Tests** (red first; every one of these failed on `e980575`'s code and passes after):
+- unit: `single-line.test.ts`, the two validator files, `proposal-interest-copy.test.ts`, `lead-contact-parse.test.ts` (both cases, CR/CRLF, U+2028, duplicates, order, blank lines, legacy formats, the proposal block, a round trip over 7 names × 3 e-mails × 4 phones × 3 references × 3 messages), the match, alert, escalation and worker consumers, `leads-link-contact.test.ts`, and both route files;
+- DB: `supabase/tests/enquiry-single-line.test.ts`, a throwaway org. It covers every break in every one-line value at both functions; valid multilingual enquiries written once and replayed; both REAL route handlers against the local stack (only the IP hash and `after()` stubbed, nothing sent); identity consistent from the form through storage, the reader, the match keys, the alert and the contact lookup (a decoy contact named in the visitor's words is not suggested); and an ambiguous stored row left to a person;
+- e2e: the proposal form in EN/EL/RU (the break is put into the page's request in flight; the right sentence appears under the right field, nothing is written, and the untampered correction is ONE lead); the inbox on an ambiguous stored row; the website door over HTTP;
+- 0114's own self-test runs inside a subtransaction that is always rolled back, so it leaves nothing, not even an event. Run against 0101's or 0106's body it aborts: `0114 aborted: a value with a line break (U+000A) was accepted`.
+
+**Results** (local stack at 0114, 2026-09-24):
+- gates: typecheck 0, lint 0, unit 2571/2571 (199 files);
+- DB: the eight enquiry and release-compat suites 102/102. The full RLS suite is 358/363; the five reds are the recorded local residue that fails on main too: RLS 41/42/57 (feed fixtures), and sweep-runs and cron on `23505` `enquiry_alert_sweep_runs_request_id_key`;
+- e2e desktop: proposal-interest 11/11, enquiry-contact-suggestions 6/6, public-enquiry 9/9;
+- RED before the fix: 42 unit tests failed (plus the new module's file), and 8 of the DB file's 11. The e2e additions were not run against the old code; the route, DB and unit tests pinning the same behaviours were.
+- The first two e2e runs failed on the test's own assumptions, both corrected in the spec. Chromium turns a pasted newline into a space, not nothing. The file's older tests share one address's five-per-quarter-hour budget, which the new tests now leave alone by posting under their own `x-forwarded-for`.
+
+**Compatibility.** Neither parameters nor return shapes move, so this is not deploy-coupled (release-compat).
+- New DB + old app: a script's line break gets the old routes' existing refusal (the door's 400 "Unknown `org`." / the proposal door's 404), a misleading sentence until the deploy, with nothing written.
+- New app + old DB: the routes refuse first; only a direct service_role call stays open until 0114.
+- **gnk-web** needs no change. Its inputs cannot hold a break, and it forwards the CRM's sentence on a refusal. A scripted post with a break through the site's `/api/enquiry` now gets its 502 "That did not send" with that sentence, plus one `enquiry.refused` report. Mirroring the rule in the site's schema would answer it locally instead; that is optional.
+
+**Deploy order** (on approval): branch CI green → apply 0114 on hosted per HANDOFF §3 (the self-test runs there and leaves nothing; ledger row; prosrc md5s = local; advisors) → merge → deploy READY → probes.
+
+**Rollback.** A forward migration re-creating both functions from 0101's and 0106's bodies verbatim. That reopens only the direct-call path; the routes keep refusing. Keep the reader: it refuses to guess, which is safe with either body. No data moves.

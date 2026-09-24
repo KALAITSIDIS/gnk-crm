@@ -96,6 +96,14 @@ describe("eligibility at the moment of sending", () => {
     expect(escalationIneligibility({ ...open, message: "[erased at the contact's request]", first_response_at: "x" })).toBe("lead_redacted");
     expect(escalationIneligibility({ ...open, message: "typed by the desk" })).toBe("lead_unreadable");
   });
+  it("an ambiguous header is unreadable too — a colleague is never chased with an injected address", () => {
+    // T-enquiry-identity-single-line: the audit's case B as the door stored it before 0114
+    const caseB = "Website enquiry\nName: Example\nextra\nextra\nextra\nextra\nEmail: buyer@example.invalid\nPhone: +35799123456\n\nPlease contact me.";
+    expect(escalationIneligibility({ ...open, message: caseB })).toBe("lead_unreadable");
+    expect(
+      escalationFromLead({ message: caseB, received_at: "2026-09-22T10:00:00Z" }, { assigneeName: null, waitMeasuredAt: new Date("2026-09-22T11:00:00Z") }),
+    ).toBeNull();
+  });
 });
 
 describe("who is told", () => {

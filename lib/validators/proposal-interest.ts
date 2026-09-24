@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isWellFormedShareToken } from "@/lib/services/share-links";
+import { oneLine } from "@/lib/validators/single-line";
 
 /**
  * What the proposal page posts when a buyer says "I'm interested" (0106).
@@ -22,10 +23,25 @@ const blankToUndefined = (v: unknown) => (typeof v === "string" && v.trim() === 
 export const proposalInterestSchema = z.object({
   /** The share token from the page URL; only its digest ever reaches the database. */
   token: z.string().refine(isWellFormedShareToken),
-  property_reference: z.string().trim().min(1).max(40),
-  name: z.string().trim().min(1).max(200),
+  // name, phone and reference are one line each in the header 0106 writes
+  // (T-enquiry-identity-single-line, 0114) — checked before the caps
+  property_reference: z
+    .string()
+    .trim()
+    .refine(...oneLine("The property reference must be on one line."))
+    .min(1)
+    .max(40),
+  name: z
+    .string()
+    .trim()
+    .refine(...oneLine("The name must be on one line."))
+    .min(1)
+    .max(200),
   email: z.preprocess(blankToUndefined, z.email().max(320).optional()),
-  phone: z.preprocess(blankToUndefined, z.string().trim().max(40).optional()),
+  phone: z.preprocess(
+    blankToUndefined,
+    z.string().trim().refine(...oneLine("The phone number must be on one line.")).max(40).optional(),
+  ),
   message: z.preprocess(blankToUndefined, z.string().trim().max(5000).optional()),
   /** HONEYPOT — a person never sees it; anything here is accepted and dropped. */
   website: z.preprocess(blankToUndefined, z.string().max(200).optional()),
@@ -36,17 +52,25 @@ export const proposalInterestSchema = z.object({
 export type ProposalInterestInput = z.infer<typeof proposalInterestSchema>;
 
 /**
- * Every way this door refuses a body, as a stable word. The first seven are
+ * Every way this door refuses a body, as a stable word. The first nine are
  * what a VISITOR can cause with the form and each has a sentence in every
  * locale; the rest are what only the PAGE can get wrong (its token, its
  * reference, its key) and land on the page's generic sentence.
+ *
+ * `name_line_break` / `phone_line_break` (T-enquiry-identity-single-line):
+ * the page's own inputs cannot hold a line break (the browser inserts a
+ * space), so a visitor meets these only through a client that is not the
+ * page. They still say what is wrong rather than "required", which is what
+ * the mapping below would have said.
  */
 export const PROPOSAL_INTEREST_ERROR_CODES = [
   "name_required",
   "name_too_long",
+  "name_line_break",
   "email_invalid",
   "email_too_long",
   "phone_too_long",
+  "phone_line_break",
   "message_too_long",
   "contact_required",
   "invalid_token",
@@ -68,9 +92,11 @@ export interface ProposalInterestProblem {
 export const PROPOSAL_INTEREST_ERROR_TEXT: Record<ProposalInterestErrorCode, string> = {
   name_required: "A name is required.",
   name_too_long: "The name is too long (200 characters at most).",
+  name_line_break: "The name must be on one line — remove the line break.",
   email_invalid: "That email address is not valid.",
   email_too_long: "The email address is too long (320 characters at most).",
   phone_too_long: "The phone number is too long (40 characters at most).",
+  phone_line_break: "The phone number must be on one line — remove the line break.",
   message_too_long: "The message is too long (5000 characters at most).",
   contact_required: "An email address or a phone number is required.",
   invalid_token: "That link is not valid.",
@@ -79,24 +105,30 @@ export const PROPOSAL_INTEREST_ERROR_TEXT: Record<ProposalInterestErrorCode, str
   invalid_request: "Invalid request.",
 };
 
-/** The shape of a zod issue this mapping reads — the code and the path, nothing version-specific. */
-type IssueLike = { code: string; path: ReadonlyArray<PropertyKey> };
+/**
+ * The shape of a zod issue this mapping reads — the code, the path and, for a
+ * refinement, the `reason` the schema gave it; nothing version-specific.
+ */
+type IssueLike = { code: string; path: ReadonlyArray<PropertyKey>; params?: Record<string, unknown> };
 
 /**
  * One issue → one code and field. Reads the field from the path and the
- * kind of failure from zod's code: `too_big` is always "too long"; anything
- * else on a required field is "required", on the e-mail "not valid". A
- * field this door does not ask a visitor for is the page's own mistake.
+ * kind of failure from zod's code: `too_big` is always "too long", a
+ * `line_break` refinement is "one line"; anything else on a required field is
+ * "required", on the e-mail "not valid". A field this door does not ask a
+ * visitor for is the page's own mistake.
  */
 export function interestProblemFromIssue(issue: IssueLike): ProposalInterestProblem {
   const field = String(issue.path[0] ?? "");
   const tooLong = issue.code === "too_big";
+  const lineBreak = issue.code === "custom" && issue.params?.reason === "line_break";
   switch (field) {
     case "name":
-      return { code: tooLong ? "name_too_long" : "name_required", field: "name" };
+      return { code: tooLong ? "name_too_long" : lineBreak ? "name_line_break" : "name_required", field: "name" };
     case "email":
       return { code: tooLong ? "email_too_long" : "email_invalid", field: "email" };
     case "phone":
+      if (lineBreak) return { code: "phone_line_break", field: "phone" };
       return tooLong ? { code: "phone_too_long", field: "phone" } : { code: "invalid_request", field: null };
     case "message":
       return tooLong ? { code: "message_too_long", field: "message" } : { code: "invalid_request", field: null };

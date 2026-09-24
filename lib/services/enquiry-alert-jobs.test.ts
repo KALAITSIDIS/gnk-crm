@@ -182,6 +182,31 @@ describe("rebuilding the alert from the lead", () => {
     expect(alertFromLead({ message: "Called about the villa", criteria: {} })).toBeNull();
     expect(alertFromLead({ message: null, criteria: {} })).toBeNull();
   });
+
+  it("is nothing for an ambiguous header — an injected address never becomes the alert's Reply-To", () => {
+    // T-enquiry-identity-single-line, the audit's case A as the door stored it
+    // before 0114: the old reader handed the worker other@x.invalid, and the
+    // desk's reply went to whoever that is. Null → the worker cancels the job
+    // `lead_unreadable`, which the inbox chip shows; the lead stays in the inbox.
+    const caseA = [
+      "Website enquiry",
+      "Name: Example Buyer",
+      "Email: buyer@example.invalid",
+      "Phone: +35799123456",
+      "Email: other@x.invalid",
+      "",
+      "Please contact me.",
+    ].join("\n");
+    expect(alertFromLead({ message: caseA, criteria: {} })).toBeNull();
+  });
+
+  it("takes the header's e-mail, not a header-shaped line in the visitor's words", () => {
+    const a = alertFromLead({
+      message: "Website enquiry\nName: A Buyer\nEmail: buyer@example.invalid\n\nEmail: decoy@example.invalid\nPhone: 000",
+      criteria: {},
+    });
+    expect(a).toMatchObject({ email: "buyer@example.invalid", phone: null, message: "Email: decoy@example.invalid\nPhone: 000" });
+  });
 });
 
 describe("the escalation's key (0107)", () => {

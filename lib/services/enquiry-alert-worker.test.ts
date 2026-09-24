@@ -376,6 +376,16 @@ describe("a claimed job", () => {
     expect(completions(rpcCalls)[0]).toMatchObject({ p_outcome: "cancelled", p_result: "lead_redacted" });
   });
 
+  it("an ambiguous header is cancelled as unreadable, and nothing is sent — no guessed Reply-To", async () => {
+    // T-enquiry-identity-single-line: the audit's case A as stored before 0114
+    const caseA = "Website enquiry\nName: Example Buyer\nEmail: buyer@example.invalid\nPhone: +35799123456\nEmail: other@x.invalid\n\nPlease contact me.";
+    const { client, rpcCalls } = makeClient({ claim: [job()], lead: { id: "lead-1", message: caseA, criteria: {} } });
+    const run = await runEnquiryAlertWorker(client, { workerId: "w1" }, { send: sender({ outcome: "accepted", providerMessageId: "x" }) });
+    expect(run.cancelled).toBe(1);
+    expect(sent).toHaveLength(0);
+    expect(completions(rpcCalls)[0]).toMatchObject({ p_outcome: "cancelled", p_result: "lead_unreadable" });
+  });
+
   it("a lead that is gone is cancelled too", async () => {
     const { client, rpcCalls } = makeClient({ claim: [job()], lead: null });
     await runEnquiryAlertWorker(client, { workerId: "w1" }, { send: sender({ outcome: "accepted", providerMessageId: "x" }) });
@@ -595,6 +605,12 @@ describe("a lead escalation (0107)", () => {
     ["closed as lost", { status: "lost" }, "lead_closed"],
     ["converted", { status: "converted" }, "lead_closed"],
     ["redacted", { message: REDACTED }, "lead_redacted"],
+    // T-enquiry-identity-single-line: the audit's case B as stored before 0114
+    [
+      "with an ambiguous header",
+      { message: "Website enquiry\nName: Example\nextra\nextra\nextra\nextra\nEmail: buyer@example.invalid\nPhone: +35799123456\n\nHi" },
+      "lead_unreadable",
+    ],
   ] as const)("a lead %s is cancelled with the reason, and nothing is sent", async (_what, over, reason) => {
     const { client, rpcCalls, tablesRead } = makeEscalationClient({ lead: escalationLead(over) });
     const run = await runEnquiryAlertWorker(client, { workerId: "w1" }, { sendEscalation: escalationSender({ outcome: "accepted", providerMessageId: "x" }) });

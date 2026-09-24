@@ -1,3 +1,5 @@
+import { hasLineBreak } from "@/lib/validators/single-line";
+
 /**
  * Pure helpers for the "link or create a contact" decision when capturing a lead
  * (doc 02 §C4 "link/create contact (dedup applies)"). Kept out of the "use
@@ -47,46 +49,131 @@ export interface ParsedWebsiteEnquiry {
 }
 
 /**
- * The person behind a website enquiry, read from the block the door writes
- * (0084, kept by 0092/0096/0098; audit LR-08):
+ * Why a header that opens with the door's marker cannot be trusted
+ * (T-enquiry-identity-single-line). Each is a shape the doors never write:
+ *  - `unknown_line`      a header line that is not `Name|Email|Phone|About: …`
+ *                        (case B: a name carrying extra lines)
+ *  - `duplicate_label`   a label twice (case A: a phone carrying `Email: …`)
+ *  - `out_of_order`      labels out of Name → Email → Phone → About order
+ *  - `stray_line_break`  a CR, or another Unicode line break, inside a value
+ *  - `empty_value`       a label with nothing after it
+ *  - `missing_name`      no Name line first
+ *  - `no_contact`        neither Email nor Phone — the door has refused that
+ *                        since 0084, so a blank line inside the name has
+ *                        pushed the real ones below the header
+ */
+export type WebsiteEnquiryAmbiguity =
+  | "unknown_line"
+  | "duplicate_label"
+  | "out_of_order"
+  | "stray_line_break"
+  | "empty_value"
+  | "missing_name"
+  | "no_contact";
+
+export type WebsiteEnquiryReading =
+  | { kind: "parsed"; person: ParsedWebsiteEnquiry }
+  /** not the door's block at all: desk-typed, redacted, empty */
+  | { kind: "not_website" }
+  /** the door's marker, but a header nobody can read without guessing */
+  | { kind: "ambiguous"; reason: WebsiteEnquiryAmbiguity };
+
+const LABELS = ["Name", "Email", "Phone", "About"] as const;
+type Label = (typeof LABELS)[number];
+const LABEL_LINE = /^(Name|Email|Phone|About): ([^]*)$/;
+
+/**
+ * The door writes LF. A block typed on Windows arrives as CRLF THROUGHOUT and
+ * has always been read (a desk-typed lead); it is the only CR this reader
+ * forgives. A CR anywhere else — mixed in with the door's LFs — came from a
+ * value, and stays in the line to be refused.
+ */
+function uniformLineEnds(message: string): string {
+  const crlf = message.match(/\r\n/g)?.length ?? 0;
+  if (crlf === 0) return message;
+  const cr = message.match(/\r/g)?.length ?? 0;
+  const lf = message.match(/\n/g)?.length ?? 0;
+  return crlf === cr && crlf === lf ? message.replace(/\r\n/g, "\n") : message;
+}
+
+/**
+ * The person behind a website enquiry, read from the block the doors write
+ * (0084, kept by 0092/0096/0098/0101; the proposal door 0106; audit LR-08):
  *
  *   Website enquiry
  *   Name: …
  *   Email: …          (when given)
  *   Phone: …          (when given)
- *   About: …          (when a reference was typed)
+ *   About: …          (a typed reference; always, from a proposal)
  *   <blank>
  *   <the visitor's own words>
  *
- * HEADER LINES ONLY. The reader stops at the first blank line and never looks
- * past the fifth, so a visitor who writes "Email: my old one bounced" in the
- * message body cannot be mistaken for the header. Anything that does not open
- * with the marker — a desk-typed lead, a redacted one — is null, and the desk
- * links or creates the contact by hand as before.
+ * THE DOORS' GRAMMAR, EXACTLY (T-enquiry-identity-single-line). The header is
+ * every line up to the first empty one: Name first, then Email, Phone and
+ * About at most once each and in that order, each with a value on its one
+ * line, and at least one way to reply. Anything else is AMBIGUOUS — never
+ * the last value for a label, never a line skipped, never a window that
+ * stops looking — because until 0114 a line break in a value wrote a line
+ * of its own, and the old reader turned that into someone else's e-mail
+ * (case A) or no e-mail at all (case B). Nothing below the header is ever
+ * read for identity: "Email: my old one bounced" in the visitor's words is
+ * words. Ambiguous is not repaired either; the message is left whole for a
+ * person to read.
+ *
+ * What this cannot see: a break that forged a PERFECT header (a name of
+ * "Ann\nEmail: x@y" when no e-mail was given) is the same bytes as a real
+ * one. The input rule (lib/validators/single-line.ts, 0114) is the fix; this
+ * reader is the backstop for what was stored before it.
+ */
+export function readWebsiteEnquiry(message: string | null | undefined): WebsiteEnquiryReading {
+  if (!message) return { kind: "not_website" };
+  const lines = uniformLineEnds(message).split("\n");
+  if (lines[0]?.trim() !== "Website enquiry") return { kind: "not_website" };
+
+  const end = lines.indexOf("", 1);
+  const header = lines.slice(1, end === -1 ? lines.length : end);
+  const values: Partial<Record<Label, string>> = {};
+  let last = -1;
+  for (const line of header) {
+    const m = LABEL_LINE.exec(line);
+    if (!m) return { kind: "ambiguous", reason: "unknown_line" };
+    const label = m[1] as Label;
+    const at = LABELS.indexOf(label);
+    if (values[label] !== undefined) return { kind: "ambiguous", reason: "duplicate_label" };
+    if (last === -1 && label !== "Name") return { kind: "ambiguous", reason: "missing_name" };
+    if (at <= last) return { kind: "ambiguous", reason: "out_of_order" };
+    // before the trim, which would drop a CR at the end of the line
+    if (hasLineBreak(m[2]!)) return { kind: "ambiguous", reason: "stray_line_break" };
+    const value = m[2]!.trim();
+    if (!value) return { kind: "ambiguous", reason: "empty_value" };
+    values[label] = value;
+    last = at;
+  }
+  if (values.Name === undefined) return { kind: "ambiguous", reason: "missing_name" };
+  if (values.Email === undefined && values.Phone === undefined) return { kind: "ambiguous", reason: "no_contact" };
+
+  return {
+    kind: "parsed",
+    person: {
+      name: values.Name,
+      email: values.Email ?? null,
+      phone: values.Phone ?? null,
+      // the door appends its own note when the typed reference matched nothing
+      about: values.About?.replace(/\s*\(no published listing with that reference\)\s*$/, "").trim() || null,
+    },
+  };
+}
+
+/**
+ * The person, or null when there is no one to read reliably — not the door's
+ * block, or an ambiguous header (readWebsiteEnquiry). Every consumer treats
+ * null as "the desk links or creates the contact by hand": the desk alert and
+ * the escalation cancel as `lead_unreadable`, "Possible existing contact"
+ * says the details could not be read, and "Create contact" refuses.
  */
 export function parseWebsiteEnquiry(message: string | null | undefined): ParsedWebsiteEnquiry | null {
-  if (!message) return null;
-  const lines = message.replace(/\r\n?/g, "\n").split("\n");
-  if (lines[0]?.trim() !== "Website enquiry") return null;
-
-  let name: string | null = null;
-  let email: string | null = null;
-  let phone: string | null = null;
-  let about: string | null = null;
-  for (const line of lines.slice(1, 6)) {
-    if (line.trim() === "") break;
-    const m = /^(Name|Email|Phone|About): (.*)$/.exec(line);
-    if (!m) continue;
-    const value = m[2]!.trim() || null;
-    if (m[1] === "Name") name = value;
-    else if (m[1] === "Email") email = value;
-    else if (m[1] === "Phone") phone = value;
-    // the door appends its own note when the typed reference matched nothing
-    else if (m[1] === "About")
-      about = value?.replace(/\s*\(no published listing with that reference\)\s*$/, "").trim() || null;
-  }
-  if (!name) return null;
-  return { name, email, phone, about };
+  const read = readWebsiteEnquiry(message);
+  return read.kind === "parsed" ? read.person : null;
 }
 
 /**

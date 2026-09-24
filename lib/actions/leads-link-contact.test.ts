@@ -305,6 +305,18 @@ describe("createContactFromEnquiry — around the suggestions", () => {
     expect(fake.argsOf("contacts", "insert")).toEqual([]);
   });
 
+  it("refuses an ambiguous header BEFORE any lookup — a contact is never made from a guessed identity", async () => {
+    // T-enquiry-identity-single-line: the audit's case A as the door stored it
+    // before 0114. The old reader made this contact with other@x.invalid.
+    const caseA = "Website enquiry\nName: Example Buyer\nEmail: buyer@example.invalid\nPhone: +35799123456\nEmail: other@x.invalid\n\nPlease contact me.";
+    const fake = setup([{ data: websiteLead({ message: caseA }), error: null }]);
+    const r = await createContactFromEnquiry(LEAD);
+    expect(r.error).toMatch(/details could not be read — link or create the contact by hand/i);
+    expect(fake.argsOf("contacts", "insert")).toEqual([]);
+    expect(fake.served.contacts ?? 0, "not even the duplicate check runs").toBe(0);
+    expect(logEvent).not.toHaveBeenCalled();
+  });
+
   it("still returns an ordinary duplicate as one", async () => {
     setup(
       [{ data: websiteLead(), error: null }],

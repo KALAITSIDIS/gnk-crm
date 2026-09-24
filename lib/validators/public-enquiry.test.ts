@@ -124,3 +124,118 @@ describe("public enquiry input", () => {
     expect(publicEnquirySchema.safeParse(base).data!.meta).toBeUndefined();
   });
 });
+
+/**
+ * T-enquiry-identity-single-line. The door writes name, e-mail, phone and the
+ * typed reference onto ONE header line each (0101's block); a line break in
+ * any of them wrote a second line the parser read back as another field. The
+ * audit's two reproductions, from e980575:
+ *   A — a phone of "+35799123456\nEmail: other@x.invalid" made the parsed
+ *       e-mail other@x.invalid instead of the e-mail field;
+ *   B — a name of "Example\nextra\nextra\nextra\nextra" pushed the real
+ *       contact lines out of the parser's window.
+ * Both were ACCEPTED here. The message stays multiline: it is the one field
+ * written below the header, where a line is just a line.
+ */
+describe("single-line identity fields", () => {
+  const firstIssue = (over: Record<string, unknown>) => {
+    const r = publicEnquirySchema.safeParse({ ...base, ...over });
+    return r.success ? null : r.error.issues[0]!;
+  };
+
+  it("refuses the audit's case A — a phone carrying an Email: line — naming the phone", () => {
+    const issue = firstIssue({
+      org: "audit",
+      name: "Example Buyer",
+      email: "buyer@example.invalid",
+      phone: "+35799123456\nEmail: other@x.invalid",
+      message: "Please contact me.",
+    });
+    expect(issue?.path).toEqual(["phone"]);
+    expect(issue?.message).toMatch(/phone number must be on one line/i);
+  });
+
+  it("refuses the audit's case B — a name of five lines — naming the name, not 'required'", () => {
+    const issue = firstIssue({
+      org: "audit",
+      name: "Example\nextra\nextra\nextra\nextra",
+      email: "buyer@example.invalid",
+      phone: "+35799123456",
+      message: "Please contact me.",
+    });
+    expect(issue?.path).toEqual(["name"]);
+    expect(issue?.message).toMatch(/name must be on one line/i);
+    expect(issue?.message).not.toMatch(/required/i);
+  });
+
+  it("refuses CR, LF and CRLF alike, and a blank line inside a value", () => {
+    for (const br of ["\n", "\r", "\r\n", "\n\n", "\n \n"]) {
+      expect(firstIssue({ name: `Ann${br}Smith` })?.path, JSON.stringify(br)).toEqual(["name"]);
+      expect(firstIssue({ phone: `99${br}123456` })?.path, JSON.stringify(br)).toEqual(["phone"]);
+      expect(firstIssue({ property_reference: `PAF0001${br}Email: x@y.invalid` })?.path, JSON.stringify(br)).toEqual([
+        "property_reference",
+      ]);
+    }
+  });
+
+  it("refuses an injected label in the reference, which the door writes as the About: line", () => {
+    const issue = firstIssue({ property_reference: "PAF0001\nPhone: +44 20 7946 0958" });
+    expect(issue?.path).toEqual(["property_reference"]);
+    expect(issue?.message).toMatch(/property_reference.*one line/i);
+  });
+
+  it("refuses the other Unicode line breaks too", () => {
+    for (const cp of [0x0b, 0x0c, 0x85, 0x2028, 0x2029]) {
+      expect(firstIssue({ name: `Ann${String.fromCodePoint(cp)}Email: x@y.invalid` })?.path, `U+${cp.toString(16)}`).toEqual([
+        "name",
+      ]);
+    }
+  });
+
+  it("refuses an e-mail with a line break — it is not an address", () => {
+    expect(firstIssue({ email: "buyer@example.invalid\nPhone: 1" })?.path).toEqual(["email"]);
+  });
+
+  it("trims a break at either END, as it trims spaces — only an embedded break is refused", () => {
+    const r = publicEnquirySchema.safeParse({ ...base, name: "\nAnn Smith\r\n", phone: " +357 99 123456\n" });
+    expect(r.success).toBe(true);
+    expect(r.data!.name).toBe("Ann Smith");
+    expect(r.data!.phone).toBe("+357 99 123456");
+  });
+
+  it("keeps a blank-only name a missing name, not a line-break problem", () => {
+    const issue = firstIssue({ name: "\n\n" });
+    expect(issue?.path).toEqual(["name"]);
+    expect(issue?.message).toMatch(/name is required/i);
+  });
+
+  it("accepts real names and international numbers as before", () => {
+    for (const [name, phone] of [
+      ["Γιώργος Παπαδόπουλος", "+357 99 123456"],
+      ["Анна-Мария Иванова", "+7 (495) 123-45-67"],
+      ["Seán O'Brien", "(+44) 20 7946 0958"],
+      ["Jean-Luc Picard-Smith", "00357 99 123456 ext. 12"],
+    ]) {
+      const r = publicEnquirySchema.safeParse({ ...base, name, phone });
+      expect(r.success, name).toBe(true);
+      expect(r.data!.name).toBe(name);
+      expect(r.data!.phone).toBe(phone);
+    }
+  });
+
+  it("keeps the message multiline, header-shaped lines and all", () => {
+    const message = "Hello,\nEmail: my old address bounced\nPhone: call after 6\r\n\r\nThanks";
+    const r = publicEnquirySchema.safeParse({ ...base, message });
+    expect(r.success).toBe(true);
+    expect(r.data!.message).toBe(message);
+  });
+
+  it("keeps the existing caps and optional fields", () => {
+    expect(publicEnquirySchema.safeParse({ ...base, name: "Ω".repeat(200) }).success).toBe(true);
+    expect(publicEnquirySchema.safeParse({ ...base, name: "Ω".repeat(201) }).success).toBe(false);
+    const r = publicEnquirySchema.safeParse({ ...base, phone: "", property_reference: "  " });
+    expect(r.success).toBe(true);
+    expect(r.data!.phone).toBeUndefined();
+    expect(r.data!.property_reference).toBeUndefined();
+  });
+});

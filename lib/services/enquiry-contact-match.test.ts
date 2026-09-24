@@ -99,7 +99,26 @@ describe("enquiryMatchKeys", () => {
 
   it("says there is nothing to match on when neither identifier is usable", () => {
     expect(enquiryMatchKeys(block(["Name: A", "Phone: 12345"]))).toEqual({ kind: "no_identifiers" });
-    expect(enquiryMatchKeys(block(["Name: A", "About: PAF0001"]))).toEqual({ kind: "no_identifiers" });
+    expect(enquiryMatchKeys(block(["Name: A", "Email: not an address", "About: PAF0001"]))).toEqual({ kind: "no_identifiers" });
+  });
+
+  it("a header with NO e-mail or phone line is unreadable, not 'nothing to match' — the door never writes one", () => {
+    // T-enquiry-identity-single-line: the door has refused an enquiry without a
+    // way to reply since 0084, so such a header means the contact lines were
+    // pushed below it (a blank line inside the name) — the desk decides
+    expect(enquiryMatchKeys(block(["Name: A", "About: PAF0001"]))).toEqual({ kind: "unreadable" });
+  });
+
+  it("an ambiguous header is unreadable — the audit's case A no longer matches on the injected address", () => {
+    const caseA = block(["Name: Example Buyer", "Email: buyer@example.invalid", "Phone: +35799123456", "Email: other@x.invalid"], "Please contact me.");
+    expect(enquiryMatchKeys(caseA)).toEqual({ kind: "unreadable" });
+    const caseB = block(["Name: Example", "extra", "extra", "extra", "extra", "Email: buyer@example.invalid", "Phone: +35799123456"]);
+    expect(enquiryMatchKeys(caseB)).toEqual({ kind: "unreadable" });
+  });
+
+  it("matches on the header's own e-mail and phone when the visitor's words look like a header", () => {
+    const stored = block(["Name: A", "Email: A@Example.invalid", "Phone: 99 123456"], "Email: decoy@example.invalid\nPhone: +44 20 7946 0958");
+    expect(enquiryMatchKeys(stored)).toEqual({ kind: "keys", keys: { email: "a@example.invalid", phoneE164: "+35799123456" } });
   });
 
   it("reads nothing from a redacted, a desk-typed or an empty message — erased details are never rebuilt", () => {
@@ -119,8 +138,10 @@ describe("enquiryMatchKeys", () => {
   });
 
   it("never takes an identifier from the visitor's own words below the header", () => {
+    // no contact line in the header: unreadable (see above) — and still
+    // nothing is taken from the words
     expect(enquiryMatchKeys(block(["Name: A"], "Email: someone-else@example.invalid\nPhone: 99123456"))).toEqual({
-      kind: "no_identifiers",
+      kind: "unreadable",
     });
   });
 });

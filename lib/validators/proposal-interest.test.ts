@@ -87,6 +87,54 @@ describe("a way to reply", () => {
   });
 });
 
+/**
+ * T-enquiry-identity-single-line: the name and the phone land on ONE line of
+ * the header block each (0106 writes the website door's block), so a line
+ * break in either is refused — and reported as what it is. Before this, a
+ * name with a break was ACCEPTED, and had the schema refused it, the mapping
+ * would have told the visitor their name was "required".
+ */
+describe("a line break in a one-line field", () => {
+  it("in the name is name_line_break on the name — never name_required", () => {
+    for (const br of ["\n", "\r", "\r\n", "\n\n"]) {
+      expect(problemFor({ name: `Example${br}extra` }), JSON.stringify(br)).toEqual({ code: "name_line_break", field: "name" });
+    }
+    expect(problemFor({ name: "Example\nextra\nextra\nextra\nextra" })).toEqual({ code: "name_line_break", field: "name" });
+  });
+
+  it("in the phone is phone_line_break on the phone", () => {
+    expect(problemFor({ phone: "+35799123456\nEmail: other@x.invalid" })).toEqual({ code: "phone_line_break", field: "phone" });
+    expect(problemFor({ phone: `+357${String.fromCodePoint(0x2028)}99` })).toEqual({ code: "phone_line_break", field: "phone" });
+  });
+
+  it("in the reference is the page's own mistake — the page supplies it, not the visitor", () => {
+    expect(problemFor({ property_reference: "PAF0007\nEmail: x@y.invalid" })).toEqual({
+      code: "property_reference_invalid",
+      field: null,
+    });
+  });
+
+  it("an over-long name that also breaks is still reported — the break first", () => {
+    expect(problemFor({ name: `${"x".repeat(200)}\nmore` })).toEqual({ code: "name_line_break", field: "name" });
+  });
+
+  it("a blank-only name is still name_required — trimming leaves nothing to break", () => {
+    expect(problemFor({ name: "\r\n" })).toEqual({ code: "name_required", field: "name" });
+  });
+
+  it("real names and numbers pass, and the message stays multiline", () => {
+    for (const [name, phone] of [
+      ["Γιώργος Παπαδόπουλος", "+357 99 123456"],
+      ["Анна-Мария Иванова", "+7 (495) 123-45-67"],
+      ["Seán O'Brien", "(+44) 20 7946 0958"],
+    ]) {
+      const parsed = proposalInterestSchema.safeParse({ ...valid(), name, phone, message: "Line one\nEmail: not a header\n\nLine four" });
+      expect(parsed.success, name).toBe(true);
+      if (parsed.success) expect(parsed.data.message).toBe("Line one\nEmail: not a header\n\nLine four");
+    }
+  });
+});
+
 describe("every code has its English sentence", () => {
   it("so the API's `error` field is never empty and never zod's words", () => {
     for (const code of PROPOSAL_INTEREST_ERROR_CODES) {

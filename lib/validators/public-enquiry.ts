@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { cleanEnquiryMeta } from "@/lib/services/enquiry-meta";
+import { oneLine } from "@/lib/validators/single-line";
 
 /**
  * What a website may post to the enquiry door (0084).
@@ -9,18 +10,30 @@ import { cleanEnquiryMeta } from "@/lib/services/enquiry-meta";
  * false, not to be the security boundary. If the two ever disagree the
  * function wins, which is the right way round.
  *
- * Caps match 0084 exactly — 200 / 320 / 40 / 5000 / 40.
+ * Caps match 0084 exactly — 200 / 320 / 40 / 5000 / 40. Name, phone and
+ * reference are one line each (0114); the e-mail needs no rule of its own,
+ * because an address with a line break in it is not an address.
  */
 export const publicEnquirySchema = z.object({
   org: z.string().trim().min(1, "An `org` slug is required.").max(80),
-  name: z.string().trim().min(1, "A name is required.").max(200),
+  name: z
+    .string()
+    .trim()
+    .refine(...oneLine("The name must be on one line — remove the line break."))
+    .min(1, "A name is required.")
+    .max(200),
   email: z.preprocess(
     (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
     z.email("That email address is not valid.").max(320).optional(),
   ),
   phone: z.preprocess(
     (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
-    z.string().trim().max(40).optional(),
+    z
+      .string()
+      .trim()
+      .refine(...oneLine("The phone number must be on one line — remove the line break."))
+      .max(40)
+      .optional(),
   ),
   message: z.preprocess(
     (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
@@ -29,7 +42,12 @@ export const publicEnquirySchema = z.object({
   /** A listing reference the enquiry is about, e.g. PAF0001. */
   property_reference: z.preprocess(
     (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
-    z.string().trim().max(40).optional(),
+    z
+      .string()
+      .trim()
+      .refine(...oneLine("The `property_reference` must be on one line — remove the line break."))
+      .max(40)
+      .optional(),
   ),
   /**
    * HONEYPOT. A field a person never sees and never fills; a bot that fills

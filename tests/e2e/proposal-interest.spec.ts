@@ -228,4 +228,82 @@ test.describe("Proposal interest", () => {
       }
     });
   }
+
+  /**
+   * T-enquiry-identity-single-line. The name and the phone are one line each
+   * of the header the CRM reads the person back from, so the server refuses a
+   * line break in either (400 `name_line_break` / `phone_line_break`, and 0114
+   * in the database). The page's own inputs cannot hold one — the browser
+   * turns it into a space, which the first step shows — so the break is put into the page's
+   * request in flight, as a client other than this page would send it. The
+   * page must still say what is wrong, in its language, under that field —
+   * not "please enter your name" — keep what was typed and its key, and the
+   * untampered correction must be ONE lead with the name the visitor typed.
+   */
+  for (const locale of ["en", "el", "ru"] as const) {
+    test(`a ${locale} proposal names a line break in the name or the phone in ${locale}, and nothing is written`, async ({ page }) => {
+      const admin = serviceClient();
+      const t = INTEREST_COPY[locale];
+      const s = await seedProposal(admin, locale);
+      const keys: string[] = [];
+      let inject: "name" | "phone" | null = null;
+      // its own visitor address, so its own meter budget: the tests above
+      // spend this connection's five (public-enquiry.spec.ts, "EVERY TEST GETS
+      // ITS OWN VISITOR ADDRESS"; RFC 3849's documentation prefix)
+      const visitor = `2001:db8:${randomBytes(4).toString("hex")}::${locale.charCodeAt(0)}`;
+      await page.route("**/api/public/proposals/interest", async (route) => {
+        const body = route.request().postDataJSON() as Record<string, string>;
+        keys.push(body.idempotency_key!);
+        if (inject === "name") body.name = `${body.name}\nEmail: other@x.invalid`;
+        if (inject === "phone") body.phone = `${body.phone}\r\nEmail: other@x.invalid`;
+        await route.continue({
+          postData: JSON.stringify(body),
+          headers: { ...route.request().headers(), "x-forwarded-for": visitor },
+        });
+      });
+      try {
+        await openAndExpress(page, s.token, t.cta);
+        const name = page.getByLabel(t.name);
+        const email = page.getByLabel(t.email, { exact: true });
+        const phone = page.getByLabel(t.phone, { exact: true });
+
+        // the page's input cannot carry a break: Chromium inserts a space for it
+        await name.fill("Ann\nSmith");
+        expect(await name.inputValue()).not.toMatch(/[\r\n]/);
+
+        await name.fill(`Buyer ${locale}`);
+        await email.fill(`buyer-${s.reference}@example.invalid`);
+        await phone.fill("+357 99 123456");
+
+        inject = "name";
+        await page.getByRole("button", { name: t.send }).click();
+        await expectProblemOn(page, name, t.problems.name_line_break);
+        await expect(page.getByText(t.problems.name_required)).toHaveCount(0);
+        await expect(name, "what was typed survives the refusal").toHaveValue(`Buyer ${locale}`);
+
+        inject = "phone";
+        await page.getByRole("button", { name: t.send }).click();
+        await expectProblemOn(page, phone, t.problems.phone_line_break);
+        await expect(name).not.toHaveAttribute("aria-invalid", "true");
+
+        const { count: refused } = await admin.from("leads").select("id", { count: "exact", head: true }).eq("property_id", s.propertyId);
+        expect(refused, "neither refusal wrote a lead").toBe(0);
+
+        inject = null;
+        await page.getByRole("button", { name: t.send }).click();
+        await expect(page.getByRole("status")).toContainText(t.done);
+        expect(keys).toHaveLength(3);
+        expect(new Set(keys).size, "the same idempotency key on every post").toBe(1);
+
+        const { data: leads } = await admin.from("leads").select("id, message").eq("property_id", s.propertyId);
+        expect(leads, "exactly one lead").toHaveLength(1);
+        const message = String(leads![0]!.message);
+        expect(message).toContain(`\nName: Buyer ${locale}\nEmail: buyer-${s.reference}@example.invalid\nPhone: +357 99 123456\n`);
+        expect(message).not.toContain("other@x.invalid");
+      } finally {
+        await page.unroute("**/api/public/proposals/interest");
+        await cleanup(admin, s);
+      }
+    });
+  }
 });
