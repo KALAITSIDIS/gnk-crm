@@ -22,6 +22,7 @@ import { enhanceDscWithOpenTelemetryRootSpanName } from "@sentry/opentelemetry";
 import type { ErrorEvent, TransactionEvent } from "@sentry/core";
 import { describe, expect, it, vi } from "vitest";
 import {
+  HEADERS_KEPT,
   REDACTED,
   SENSITIVE_HEADERS,
   TOKEN_SEGMENT,
@@ -180,7 +181,23 @@ const PAGE = `https://gnk-crm.vercel.app/contacts?q=${SEARCH}`;
 const PAGE_PATH = "https://gnk-crm.vercel.app/contacts";
 const TARGET = `/contacts?q=${SEARCH}&_rsc=1x2y3`;
 const ENQUIRY = JSON.stringify({ name: "Maria Enquirer", email: "maria@example.invalid", phone: "+35799123456" });
-const LEAKS = /maria|35799123456|FAKE-SESSION-TOKEN|FAKE-CRON-SECRET|FAKE-FORWARD-KEY|198\.51\.100\.22/i;
+/**
+ * Headers Vercel adds to every request a function sees — measured on production
+ * spans (T-sentry-span-header-scrub, 2026-09-24, counts only): on all 10,060
+ * sampled server transactions in 7 days, `x-vercel-proxied-for` (IPv4-shaped;
+ * its values follow the caller) and `x-vercel-ja4-digest` (the TLS client
+ * fingerprint: a device identifier) were stored raw, beside a `[Filtered]`
+ * `x-forwarded-for`. `x-vercel-id` is the request id Vercel's logs are keyed by.
+ */
+const VERCEL_ADDS = {
+  "x-vercel-proxied-for": "203.0.113.77",
+  "x-vercel-ja4-digest": "t13d1516h2_FAKEJA4_0001",
+  "x-vercel-id": "fra1::fra1::fake1-1790000000000-abcdef",
+};
+/** A cookie whose name no filter calls sensitive: the SDK stored its NAME, and its value raw. */
+const FAKE_COOKIE = "gnk_fake_pref=FAKE-COOKIE-VALUE";
+const LEAKS =
+  /maria|35799123456|FAKE-SESSION-TOKEN|FAKE-CRON-SECRET|FAKE-FORWARD-KEY|198\.51\.100\.22|203\.0\.113\.77|FAKEJA4|gnk_fake_pref|FAKE-COOKIE-VALUE/i;
 
 describe("no incoming request's query, cookie, secret or body travels in an error or a transaction", () => {
   it("cuts a value that is itself a relative URL at its query or fragment, keeping the path", () => {
@@ -746,6 +763,126 @@ describe("what the path-token review found (2026-09-23)", () => {
   });
 });
 
+describe("a header's value travels only when it is on the list (T-sentry-span-header-scrub, 2026-09-24)", () => {
+  /**
+   * The fragment rule above names what is sensitive, and Vercel kept adding
+   * what nobody had named: `x-vercel-proxied-for` and `x-vercel-ja4-digest`
+   * went past it on every sampled transaction. So a header's VALUE now travels
+   * only when its name is on HEADERS_KEPT; every other header keeps its name
+   * and says `[redacted]`. A cookie is dropped whole — the SDK's copy makes the
+   * cookie's NAME part of the attribute key.
+   */
+  const ORDINARY = {
+    host: "gnk-crm.vercel.app",
+    "user-agent": "Mozilla/5.0",
+    accept: "text/html",
+    "accept-language": "el-GR",
+    "content-type": "application/json",
+    "x-matched-path": "/contacts",
+    rsc: "1",
+    "next-url": "/contacts",
+    "sentry-trace": "a".repeat(32),
+    "x-vercel-id": VERCEL_ADDS["x-vercel-id"],
+  };
+
+  it("redacts a header nobody named: Vercel's proxied-for address, its TLS fingerprint, one it adds tomorrow", () => {
+    const event = scrubEvent({
+      request: {
+        headers: {
+          ...ORDINARY,
+          "x-vercel-proxied-for": VERCEL_ADDS["x-vercel-proxied-for"],
+          "x-vercel-ja4-digest": VERCEL_ADDS["x-vercel-ja4-digest"],
+          "x-vercel-new-thing": "FAKE-UNKNOWN",
+          "X-Now-Route-Matches": "nxtPtoken=FAKE-UNKNOWN",
+        } as Record<string, string>,
+      },
+    });
+    expect(JSON.stringify(event)).not.toMatch(/203\.0\.113\.77|FAKEJA4|FAKE-UNKNOWN/);
+    for (const name of ["x-vercel-proxied-for", "x-vercel-ja4-digest", "x-vercel-new-thing", "X-Now-Route-Matches"]) {
+      expect(event.request.headers[name], `${name} is present and unreadable`).toBe(REDACTED);
+    }
+    for (const [name, value] of Object.entries(ORDINARY)) expect(event.request.headers[name], name).toBe(value);
+  });
+
+  it("does the same to the root span's header attributes, whose names have underscores for hyphens", () => {
+    const span = scrubSpanUrls({
+      description: "GET /contacts",
+      data: {
+        "http.method": "GET",
+        "http.route": "/contacts",
+        "http.request.header.x_vercel_proxied_for": VERCEL_ADDS["x-vercel-proxied-for"],
+        "http.request.header.x_vercel_ja4_digest": VERCEL_ADDS["x-vercel-ja4-digest"],
+        "http.request.header.x_forwarded_for": "[Filtered]",
+        "http.request.header.user_agent": "Mozilla/5.0",
+        "http.request.header.accept_language": "el-GR",
+        "http.request.header.x_vercel_id": VERCEL_ADDS["x-vercel-id"],
+      } as Record<string, unknown>,
+    });
+    expect(span.data).toEqual({
+      "http.method": "GET",
+      "http.route": "/contacts",
+      "http.request.header.x_vercel_proxied_for": REDACTED,
+      "http.request.header.x_vercel_ja4_digest": REDACTED,
+      "http.request.header.x_forwarded_for": REDACTED,
+      "http.request.header.user_agent": "Mozilla/5.0",
+      "http.request.header.accept_language": "el-GR",
+      "http.request.header.x_vercel_id": VERCEL_ADDS["x-vercel-id"],
+    });
+  });
+
+  it("drops every cookie attribute — request cookies and a response's Set-Cookie — name and value", () => {
+    const event = scrubEvent({
+      contexts: {
+        trace: {
+          data: {
+            "http.request.header.cookie.sb_yjg_auth_token": "[Filtered]",
+            "http.request.header.cookie.gnk_fake_pref": "FAKE-COOKIE-VALUE",
+            "http.response.header.set_cookie.gnk_fake_pref": "FAKE-COOKIE-VALUE",
+            "http.response.header.content_type": "text/html",
+            "http.route": "/contacts",
+          } as Record<string, unknown>,
+        },
+      },
+    });
+    expect(event.contexts.trace.data).toEqual({ "http.response.header.content_type": "text/html", "http.route": "/contacts" });
+  });
+
+  it("drops the bare cookie keys the SDK makes for an empty cookie or a Set-Cookie array, and keeps a conditional GET", () => {
+    // The review's probe: an empty Cookie becomes `…header.cookie`, a Node
+    // array Set-Cookie `…header.set_cookie` — no `.<name>` suffix on either.
+    const span = scrubSpanUrls({
+      data: {
+        "http.request.header.cookie": "[Filtered]",
+        "http.response.header.set_cookie": "gnk_fake_pref=FAKE-COOKIE-VALUE",
+        "http.request.header.cookie2": "FAKE-COOKIE-VALUE",
+        "http.request.header.if_none_match": 'W/"feed-etag"',
+      } as Record<string, unknown>,
+    });
+    expect(span.data).toEqual({ "http.request.header.cookie2": REDACTED, "http.request.header.if_none_match": 'W/"feed-etag"' });
+  });
+
+  it("holds against the SDK's own header copy, whatever keys it makes", () => {
+    // httpHeadersToSpanAttributes is what @sentry/nextjs's addHeadersAsAttributes
+    // calls: if an SDK upgrade changes the key shape, this is where it shows.
+    const attributes = httpHeadersToSpanAttributes(
+      { ...ORDINARY, ...VERCEL_ADDS, cookie: `sb-yjg-auth-token=FAKE-SESSION-TOKEN; ${FAKE_COOKIE}` },
+      false,
+    );
+    expect(JSON.stringify(attributes), "the SDK alone stores all of it").toMatch(/203\.0\.113\.77|FAKEJA4|gnk_fake_pref/);
+    const span = scrubSpanUrls({ data: { ...attributes } as Record<string, unknown> });
+    expect(JSON.stringify(span)).not.toMatch(LEAKS);
+    expect(span.data["http.request.header.user_agent"]).toBe("Mozilla/5.0");
+    expect(span.data["http.request.header.x_vercel_id"]).toBe(VERCEL_ADDS["x-vercel-id"]);
+  });
+
+  it("never lets a header the SDK itself filters back through, even if someone lists it", () => {
+    for (const name of HEADERS_KEPT) {
+      const sdk = httpHeadersToSpanAttributes({ [name]: "v" }, false);
+      expect(Object.values(sdk), `${name} is on the list but the SDK filters it`).not.toContain("[Filtered]");
+    }
+  });
+});
+
 describe("the installed SDK's own event, through scrubEvent, carries none of it", () => {
   /**
    * The shapes above are copies; this one RequestData builds. A real core
@@ -774,10 +911,11 @@ describe("the installed SDK's own event, through scrubEvent, carries none of it"
       host: "gnk-crm.vercel.app",
       "x-forwarded-proto": "https",
       referer: PAGE,
-      cookie: "sb-yjg-auth-token=FAKE-SESSION-TOKEN",
+      cookie: `sb-yjg-auth-token=FAKE-SESSION-TOKEN; ${FAKE_COOKIE}`,
       authorization: "Bearer FAKE-CRON-SECRET",
       "x-gnk-visitor-ip": "198.51.100.22",
       "x-gnk-forward-key": "FAKE-FORWARD-KEY",
+      ...VERCEL_ADDS,
     },
     body: ENQUIRY,
   };
@@ -822,7 +960,9 @@ describe("the installed SDK's own event, through scrubEvent, carries none of it"
             data: {
               "http.target": incoming.url,
               "http.route": incoming.route,
-              ...(incoming.headers.referer && { "http.request.header.referer": incoming.headers.referer }),
+              // What @sentry/nextjs's addHeadersAsAttributes puts on the root
+              // span: the SDK's own copy, cookies split one attribute each.
+              ...httpHeadersToSpanAttributes(incoming.headers, false),
             },
           },
         },
@@ -843,7 +983,17 @@ describe("the installed SDK's own event, through scrubEvent, carries none of it"
       expect(event.request?.url).toBe(PAGE_PATH);
       expect(event.request?.headers?.cookie).toBe(REDACTED);
       expect(event.request?.method).toBe("POST");
+      expect(event.request?.headers?.["x-vercel-proxied-for"], "present and unreadable").toBe(REDACTED);
+      expect(event.request?.headers?.["x-vercel-ja4-digest"]).toBe(REDACTED);
+      expect(event.request?.headers?.["x-vercel-id"], "the id Vercel's logs are keyed by stays").toBe(VERCEL_ADDS["x-vercel-id"]);
     }
+    // The root span's copy of the headers, built by the SDK's own function.
+    const data = (sent[1]!.contexts?.trace?.data ?? {}) as Record<string, unknown>;
+    expect(data["http.request.header.x_vercel_proxied_for"]).toBe(REDACTED);
+    expect(data["http.request.header.x_vercel_ja4_digest"]).toBe(REDACTED);
+    expect(data["http.request.header.x_vercel_id"]).toBe(VERCEL_ADDS["x-vercel-id"]);
+    expect(data["http.request.header.host"]).toBe("gnk-crm.vercel.app");
+    expect(Object.keys(data).filter((key) => key.startsWith("http.request.header.cookie")), "no cookie, by name or value").toEqual([]);
   });
 
   // A buyer opening a proposal link, a portal's crawler pulling its feed, and

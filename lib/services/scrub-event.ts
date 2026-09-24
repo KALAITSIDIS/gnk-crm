@@ -37,6 +37,13 @@
  * applies to span attributes but never to `event.request`, so a Vercel OIDC
  * token or a visitor's `x-vercel-ip-city` travelled raw.
  *
+ * And naming what is sensitive was not enough (T-sentry-span-header-scrub,
+ * 2026-09-24): Vercel adds headers nobody had named, and two went past both
+ * lists on every sampled transaction — `x-vercel-proxied-for` (the caller's
+ * address) and `x-vercel-ja4-digest` (the caller's TLS fingerprint). So a
+ * header's VALUE now travels only when its name is on HEADERS_KEPT (below);
+ * every other header, today's and tomorrow's, is present and unreadable.
+ *
  * Pure, and tested, because the alternative is finding out from a Sentry
  * event that it did not work. Wired through `scrubEventOrDrop`: if it throws,
  * the event is dropped — left to the SDK, a throwing `beforeSend` makes it
@@ -70,6 +77,55 @@ function isSensitiveHeader(name: string): boolean {
   );
 }
 
+/**
+ * The headers, lower-case, whose VALUE may travel: what a person debugging a
+ * request needs (which client, what it asked for — conditional GETs included,
+ * the feeds answer 304 on `if-none-match` — which Next route and request kind,
+ * the trace, Vercel's request id for its own logs). Nothing here proves
+ * anything or pins a person down: the client hints and `accept-language` are
+ * coarse, as is the edge region that opens `x-vercel-id`. A header off this
+ * list keeps its name and loses its value. `referer`, `next-url`, `baggage`
+ * and the router state still pass through the URL and token scrub.
+ */
+export const HEADERS_KEPT = [
+  "accept", "accept-encoding", "accept-language", "cache-control", "connection", "content-length",
+  "content-type", "host", "if-modified-since", "if-none-match", "origin", "pragma", "priority",
+  "purpose", "referer", "te", "upgrade-insecure-requests", "user-agent",
+  "sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform", "sec-fetch-dest", "sec-fetch-mode",
+  "sec-fetch-site", "sec-purpose",
+  "rsc", "next-action", "next-router-prefetch", "next-router-segment-prefetch", "next-router-state-tree",
+  "next-url", "x-matched-path", "x-middleware-prefetch", "x-nextjs-data",
+  "baggage", "sentry-trace", "traceparent", "tracestate",
+  "x-vercel-id", "x-vercel-deployment-url",
+] as const;
+
+/** On the list, and not sensitive by name either: a listed name can never re-admit what the SDK filters. */
+function headerValueTravels(name: string): boolean {
+  const lower = name.toLowerCase();
+  return (HEADERS_KEPT as readonly string[]).includes(lower) && !isSensitiveHeader(lower);
+}
+
+/**
+ * The SDK's copy of the headers onto a span (`httpHeadersToSpanAttributes`,
+ * which @sentry/nextjs's addHeadersAsAttributes calls): one attribute per
+ * header, `http.request.header.<name>` with `-` written as `_`, and one per
+ * COOKIE, `http.request.header.cookie.<cookie name>` — so the key itself holds
+ * the cookie's name, and a value whose name misses the SDK's list is raw.
+ * Response headers take `http.response.header.`.
+ */
+const HEADER_ATTRIBUTE = /^http\.(?:request|response)\.header\.(.+)$/;
+const COOKIE_ATTRIBUTE = /^http\.(?:request|response)\.header\.(?:set_)?cookie(?:\.|$)/;
+
+/** A span attribute that copies a header: dropped if it is a cookie, redacted unless the header travels. */
+function scrubHeaderAttribute(data: Record<string, unknown>, key: string): void {
+  if (COOKIE_ATTRIBUTE.test(key)) {
+    delete data[key];
+    return;
+  }
+  const name = HEADER_ATTRIBUTE.exec(key)?.[1];
+  if (name !== undefined && !headerValueTravels(name.replace(/_/g, "-"))) data[key] = REDACTED;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -94,11 +150,12 @@ interface EventLike {
   extra?: unknown;
 }
 
+/** `event.request.headers`: every header keeps its name; only a listed one keeps its value. */
 export function scrubSensitiveHeaders<T extends EventLike>(event: T): T {
   const headers = event.request?.headers;
   if (!isRecord(headers)) return event;
   for (const name of Object.keys(headers)) {
-    if (isSensitiveHeader(name)) headers[name] = REDACTED;
+    if (!headerValueTravels(name)) headers[name] = REDACTED;
   }
   return event;
 }
@@ -255,6 +312,9 @@ export function scrubDsc(dsc: { transaction?: string }): void {
 function scrubData(data: unknown): void {
   if (!isRecord(data)) return;
   for (const key of QUERY_ONLY_KEYS) delete data[key];
+  for (const key of Object.keys(data)) {
+    if (HEADER_ATTRIBUTE.test(key)) scrubHeaderAttribute(data, key);
+  }
   for (const [key, value] of Object.entries(data)) {
     if (typeof value === "string") {
       data[key] = scrubUrlText(value);

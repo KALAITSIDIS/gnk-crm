@@ -2503,22 +2503,31 @@ VERIFY, run before starting.
     replace the segment after `/p/` and `/api/portals/<portal>/` with `[token]` — plus a test per
     route; not built there because it contradicts that brief's "keep the path". **VERIFY:**
     `grep -n "\[token\]" lib/services/scrub-event.ts` — no hit means still open.
-- **Sentry still stores `x-vercel-proxied-for` (an IP) and cookie names as span attributes, S.**
-  Measured after T-sentry-incoming-request-scrub deployed (2026-09-23; counts only, no value read):
-  every sampled server transaction carries `http.request.header.x_vercel_proxied_for` raw and
-  IPv4-shaped — GET /login 190, middleware GET 180, GET /offline 110, the enquiry-alert cron 10 — on
-  the same events whose `x_forwarded_for` is `[Filtered]`, and its distinct values follow the caller,
-  so it is very likely the caller's IP (an admin's; a buyer's on `/p/<token>`). No fragment in
-  `SENSITIVE_HEADER_FRAGMENTS` or the SDK's lists matches `proxied-for`, so `event.request.headers`
-  lets it through too. The SDK's header copy onto the root span (`addHeadersAsAttributes`) also
-  stores every cookie NAME (`http.request.header.cookie.<name>`) and the value of any cookie whose
-  name misses its list. Pre-existing, not a regression. Fix: add `proxied` to the fragments; in
-  `scrubData`, redact `http.request.header.<name>` attributes whose name (underscores read as
-  hyphens) is sensitive and drop `http.request.header.cookie.*`; put `x-vercel-proxied-for` and a
-  non-sensitive cookie in the test fixtures. **VERIFY:** `grep -n '"proxied"' lib/services/scrub-event.ts`
-  — no hit means still open; after a deploy the Sentry spans query `is_transaction:true
-  has:http.request.header.x_vercel_proxied_for !http.request.header.x_vercel_proxied_for:"[Filtered]"
-  !http.request.header.x_vercel_proxied_for:"[redacted]"` must return nothing.
+- ~~**Sentry still stores `x-vercel-proxied-for` (an IP) and cookie names as span attributes, S.**~~
+  **BUILT 2026-09-24 on branch `fix/sentry-span-header-scrub`, PR #56 — not merged (the operator approves).**
+  DECISIONS `T-sentry-span-header-scrub`. Measured first (counts only): `x-vercel-proxied-for` AND
+  `x-vercel-ja4-digest` (the TLS client fingerprint, which nobody had named) were raw on all 10,060
+  sampled server transactions in 7 days, so a fragment would have been one more miss. A header's VALUE
+  now travels only when its name is on `HEADERS_KEPT` (and not sensitive by name), on
+  `event.request.headers` and on every `http.request/response.header.*` span attribute; the rest are
+  `[redacted]`, and cookie attributes are dropped. **VERIFY:** `grep -n "HEADERS_KEPT" lib/services/scrub-event.ts`
+  — no hit means not landed.
+  - **Sentry still stores `x-vercel-proxied-for` (an IP) and cookie names as span attributes, S (original).**
+    Measured after T-sentry-incoming-request-scrub deployed (2026-09-23; counts only, no value read):
+    every sampled server transaction carries `http.request.header.x_vercel_proxied_for` raw and
+    IPv4-shaped — GET /login 190, middleware GET 180, GET /offline 110, the enquiry-alert cron 10 — on
+    the same events whose `x_forwarded_for` is `[Filtered]`, and its distinct values follow the caller,
+    so it is very likely the caller's IP (an admin's; a buyer's on `/p/<token>`). No fragment in
+    `SENSITIVE_HEADER_FRAGMENTS` or the SDK's lists matches `proxied-for`, so `event.request.headers`
+    lets it through too. The SDK's header copy onto the root span (`addHeadersAsAttributes`) also
+    stores every cookie NAME (`http.request.header.cookie.<name>`) and the value of any cookie whose
+    name misses its list. Pre-existing, not a regression. Fix: add `proxied` to the fragments; in
+    `scrubData`, redact `http.request.header.<name>` attributes whose name (underscores read as
+    hyphens) is sensitive and drop `http.request.header.cookie.*`; put `x-vercel-proxied-for` and a
+    non-sensitive cookie in the test fixtures. **VERIFY:** `grep -n '"proxied"' lib/services/scrub-event.ts`
+    — no hit means still open; after a deploy the Sentry spans query `is_transaction:true
+    has:http.request.header.x_vercel_proxied_for !http.request.header.x_vercel_proxied_for:"[Filtered]"
+    !http.request.header.x_vercel_proxied_for:"[redacted]"` must return nothing.
 - **A contact's enquiries are listed nowhere, S (nice-to-have).** "Possible existing contact" shows
   a contact's three most recent linked enquiries and says "Showing the 3 most recent only."; the
   contact page has no Leads tab and the inbox has no contact filter, so the rest are reachable only
