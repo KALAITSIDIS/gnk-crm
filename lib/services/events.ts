@@ -151,15 +151,14 @@ const asMoney = (v: unknown): string | null => {
  * payload; the fixed text lives in messages/*.json under `events.*`. Only the
  * template is translated — interpolated data (names, channels, stage names,
  * formatted money, and still some typed text: a reservation's release reason,
- * a photograph's file name — BACKLOG) stays as stored. A task's title, a
+ * a photograph's file name, viewing feedback — BACKLOG) stays as stored. A task's title, a
  * document's title or file name and a deal's or lead's lost reason are NOT
  * interpolated, from new payloads or old ones (T-event-typed-text-shape,
  * T-lead-lost-reason-shape): the line states the fact, and which task or
  * document it was arrives separately as `current_title`, read from its row.
  *
- * `entityType` is the event's entity: one event type can be written against
- * more than one (a task's `completed` and any other entity's), and they need
- * not read the same.
+ * `entityType` is the event's entity, for the lines that read differently by
+ * entity: `completed` / `reopened` say "Task …" only for a task.
  */
 const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string) => string> = {
   created: (p, t) => {

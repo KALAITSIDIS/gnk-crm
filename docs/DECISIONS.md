@@ -7902,7 +7902,7 @@ in setup; no source of ten events in the window) and is left.
 **Verified, not assumed.**
 - `closeLead` is the only writer of a lead `lost` / `spam` event, in TypeScript or SQL. No migration inserts an event of either type (every `insert into events` statement was scanned), and no SQL reads `payload->>'reason'`.
 - There is no lead detail page or lead timeline. The event is rendered by the admin feed and the evidence report only; the leads inbox prints `Reason:` from `leads.lost_reason`.
-- **RED first, through the real `closeLead` and the real `logEvent`** (`lib/actions/lead-close-event-payload.test.ts`, mocked auth, cache and transport only): 4 of 9 failed on `3493354`, each because the typed reason reached the inserted row. The 5 controls passed: the row still gets the status and reason, the `.in("status", open)` precondition is folded into the write, and a changed-underneath, non-open, another agent's or reasonless close logs nothing.
+- **RED first, through the real `closeLead` and the real `logEvent`** (`lib/actions/lead-close-event-payload.test.ts`, mocked auth, cache and transport only): 4 of 9 failed on `3493354`, each because the payload carried a `reason` key: the typed reason in three, `null` in the reasonless spam case. The 5 controls passed: the row still gets the status and reason, the `.in("status", open)` precondition is folded into the write, and a changed-underneath, non-open, another agent's or reasonless close logs nothing.
 - **Hosted, read-only, counts only:** 5 lead `lost` events and 3 of 5 lead `spam` events carry a non-empty reason. They stay: the chain cannot be edited. They are no longer printed anywhere.
 
 **The fix.**
@@ -7916,6 +7916,13 @@ in setup; no source of ten events in the window) and is left.
 - `evidence.test.ts`: the real `assembleEvidence` renders a lead family's legacy reasons as neutral lines.
 - `tests/e2e/event-typed-text.spec.ts` gains a lead flow through the real Close dialog. The row holds the reason, the stored event is `{}`, `/leads?status=lost` shows `Reason: …` from the row, and the admin feed has "Marked lost" with the reason nowhere on the page.
 - Mutation proofs (one exact replacement each, restored after): the reason restored, truncated or nested in the payload, the `lost` / `spam` lines printing a legacy reason, and the open-status precondition dropped — 6 of 6 killed.
+
+**Review.** Three read-only lenses (correctness, tests, docs), two refuters per finding. Correctness found nothing. Confirmed and fixed:
+- the new e2e lead flow could never pass in the phone project — a lead card folds Close behind More… below 768px (CI runs desktop only); it now opens More… first on a narrow viewport;
+- BACKLOG called `redactLead` a message-and-notes redaction: it rewrites the message ONLY, so an unlinked enquiry's conversation notes survive Article 17 — now its own BACKLOG entry, not built here;
+- the red count's wording, the erasure entry's VERIFY (one grep per path), and two comments.
+
+Refuted but cheap, also done: the unit test now proves the update names THIS lead, and the e2e leak check covers every word of the reason.
 
 **Compatibility and deploy order.** No migration, no hosted step, not deploy-coupled: an old app renders a new `{}` payload as "Marked lost", and a new app renders an old payload the same. Evidence reports whose lead rows held a reason recompute to a different content hash if regenerated; verification is by `pdf_sha256` (see T-event-typed-text-shape). Order: branch CI green → merge → deploy READY → probes.
 

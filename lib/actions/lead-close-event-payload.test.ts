@@ -66,6 +66,11 @@ describe("closeLead keeps the reason on the lead, not in the chain", () => {
     expect(fake.argsOf("leads", "update")).toEqual([[{ status: "lost", lost_reason: REASON }]]);
     // race-safe precondition folded into the write, unchanged
     expect(fake.argsOf("leads", "in")).toEqual([["status", ["new", "contacted", "qualified"]]]);
+    // and the write names THIS lead: the id filter is chained onto the update
+    // itself (the read before it filters on the id too, so order is the proof)
+    const leadCalls = fake.calls.filter((c) => c.table === "leads");
+    const at = leadCalls.findIndex((c) => c.method === "update");
+    expect(leadCalls.slice(at + 1).find((c) => c.method === "eq")?.args).toEqual(["id", LEAD_ID]);
   });
 
   it("lost: ONE event, typed `lost`, on the lead, with an empty payload", async () => {

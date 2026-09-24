@@ -250,7 +250,7 @@ test("marking a deal lost keeps the reason on the deal; the event and the Activi
   }
 });
 
-test("closing a lead as lost keeps the reason on the lead; the event and the admin feed line carry none", async ({ page }) => {
+test("closing a lead as lost keeps the reason on the lead; the event and the admin feed line carry none", async ({ page }, testInfo) => {
   const svc = serviceClient();
   await removeFixture(svc);
   const { orgId } = await fixtureProfile(svc);
@@ -266,6 +266,8 @@ test("closing a lead as lost keeps the reason on the lead; the event and the adm
     await page.goto("/leads", { waitUntil: "networkidle" });
     const row = page.locator("li", { hasText: LEAD_MESSAGE });
     await expect(row).toBeVisible({ timeout: opTimeout(30_000) });
+    // on a phone a lead card folds Close behind More… (phone-layout.spec.ts)
+    if ((testInfo.project.use.viewport?.width ?? 1280) < 768) await row.getByRole("button", { name: "More…" }).click();
     await row.getByRole("button", { name: /^close$/i }).click();
     const dialog = page.getByRole("dialog");
     await dialog.getByLabel(/reason/i).fill(LEAD_REASON);
@@ -284,7 +286,9 @@ test("closing a lead as lost keeps the reason on the lead; the event and the adm
     // the admin feed says it was lost, and nothing of why
     await page.goto("/dashboard", { waitUntil: "networkidle" });
     await expect(page.locator("li", { hasText: "Marked lost" }).first()).toBeVisible();
-    await expect(page.locator("body")).not.toContainText("Kyprianou");
+    for (const word of ["Andreas", "Kyprianou", "brother-in-law"]) {
+      await expect(page.locator("body")).not.toContainText(word);
+    }
   } finally {
     await removeFixture(svc);
   }

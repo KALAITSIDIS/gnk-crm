@@ -2486,10 +2486,23 @@ VERIFY, run before starting.
 - **Erasure leaves a lost deal's or lead's typed reason on the row, S — NEEDS AN OPERATOR DECISION.** Contact
   erasure blanks notes, lead messages and conversation notes but never `deals.lost_reason` or
   `leads.lost_reason` (BACKLOG's T-contact-erasure line); neither does `redactLead` (Article 17 on an
-  unlinked enquiry) nor `redact_stale_enquiries`, which rewrite the message and notes only. Since
+  unlinked enquiry: the message only) nor `redact_stale_enquiries` (the message and notes). Since
   T-event-typed-text-shape (deals) and T-lead-lost-reason-shape (leads) the ROW is the only copy a new
   close makes, so a rule on the row now reaches all of it. Decide whether the retention basis keeps it,
-  like identity, or it is typed text, like the notes. Found by T-event-typed-text-shape; not built there. **VERIFY:** `grep -n "lost_reason" lib/services/erasure-run.ts
+  like identity, or it is typed text, like the notes. Found by T-event-typed-text-shape; not built there.
+  **VERIFY** — one per path, and a hit means THAT path now handles it:
+  `grep -n "lost_reason" lib/services/erasure-run.ts lib/actions/contact-erasure.ts` ·
+  `grep -n -A30 "export async function redactLead" lib/actions/leads.ts | grep lost_reason` ·
+  `grep -ln "function public.redact_stale_enquiries" supabase/migrations/*.sql | tail -1 | xargs grep -n lost_reason`.
+- **`redactLead` leaves the enquiry's conversation notes, S.** Article 17 on an UNLINKED enquiry
+  (`redactLead`, `lib/actions/leads.ts`) rewrites `leads.message` and logs `redacted`, but never blanks the
+  lead's `interaction_notes` — the desk's own words about the enquiry, which 0094 made erasable exactly so
+  they could go with the message. Contact erasure and `redact_stale_enquiries` (0094) both blank them.
+  Authenticated has no UPDATE on `interaction_notes` (a BEFORE UPDATE trigger admits only a redaction), so
+  the fix is a service-role or definer path like contact erasure's. Found by T-lead-lost-reason-shape's
+  review (a refuter-confirmed docs point); not built there.
+  **VERIFY:** `grep -n -A40 "export async function redactLead" lib/actions/leads.ts | grep interaction_notes`
+  — no hit means still open. **VERIFY:** `grep -n "lost_reason" lib/services/erasure-run.ts
   lib/actions/contact-erasure.ts` — no hit means still open.
 - **Clock-dependent tests found by the 2026-09-24 sweep, S/M.** A read-only sweep at `ed6166c` (DECISIONS
   `T-rls-stage-tenure-one-clock`, Landing; two refuters per candidate) found 21 more tests that can fail while
