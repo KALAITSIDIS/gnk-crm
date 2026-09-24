@@ -7894,3 +7894,36 @@ in setup; no source of ten events in the window) and is left.
 - Erasure leaves `deals.lost_reason` (and task titles, already listed) on the ROW, now the only copy a new lost deal makes. That needs an operator decision.
 
 **Landing (2026-09-24 evening).** On the operator's word ("merge #60 and verify the deploy"). Main was re-checked right before the merge (`e8155d6`, unmoved). PR #60 → main `3493354`, pinned to `a0b07ab` (branch CI green on `c5c3c91` and `a0b07ab`). Vercel production `dpl_3gv4apiNcL4Yh6RttVobL8FMW1Hr` READY and aliased. CI on the merge commit green (run 36041402769: checks, rls, e2e). Verified read-only in the operator's Chrome: the contact with the 3 older titled `document_deleted` events shows three bare "Document deleted" lines to an admin, and the deal with the older reasoned `lost` event shows a bare "Marked lost" while its header prints `deals.lost_reason`; the admin feed renders. Those requests are on the new deployment in Vercel's logs (200), with no runtime errors and no new Sentry issue. `/login` 200 with the CSP nonce on 16 of 16 scripts; protected routes 307. Nothing on hosted. Worktree removed.
+
+## T-lead-lost-reason-shape — a lead's `lost` / `spam` event carries no typed reason (2026-09-24; no migration)
+
+**The leak** (operator: "fix the lead lost reason leak next"; BACKLOG "More event payloads carry typed text by value", found by T-event-typed-text-shape's sweep). Inspected at `3493354` (`origin/main` when the work began). `closeLead` (`lib/actions/leads.ts:833-840`) logged the lead's `lost` or `spam` event as `{ reason: parsed.data.reason ?? null }`. The reason is free text an agent types, up to 500 characters: required for `lost`, optional for `spam`. So it entered the hash-chained payload, beyond erasure and correction (SEC-03). The `lost` line printed it for a lead (T-event-typed-text-shape had made only the deal branch neutral), on the admin dashboard feed and in the commission evidence report's lead family. The `spam` line never printed it, but the chain held it all the same.
+
+**Verified, not assumed.**
+- `closeLead` is the only writer of a lead `lost` / `spam` event, in TypeScript or SQL. No migration inserts an event of either type (every `insert into events` statement was scanned), and no SQL reads `payload->>'reason'`.
+- There is no lead detail page or lead timeline. The event is rendered by the admin feed and the evidence report only; the leads inbox prints `Reason:` from `leads.lost_reason`.
+- **RED first, through the real `closeLead` and the real `logEvent`** (`lib/actions/lead-close-event-payload.test.ts`, mocked auth, cache and transport only): 4 of 9 failed on `3493354`, each because the payload carried a `reason` key: the typed reason in three, `null` in the reasonless spam case. The 5 controls passed: the row still gets the status and reason, the `.in("status", open)` precondition is folded into the write, and a changed-underneath, non-open, another agent's or reasonless close logs nothing.
+- **Hosted, read-only, counts only:** 5 lead `lost` events and 3 of 5 lead `spam` events carry a non-empty reason. They stay: the chain cannot be edited. They are no longer printed anywhere.
+
+**The fix.**
+- `closeLead` logs `{}` for both outcomes: the event type is the act, and the entity id names the lead. The row write, its race-safe precondition and every refusal are unchanged.
+- The `lost` line prints no reason from any payload, for any entity. The `lostReason` message is gone in EN, EL and RU. `{reason}` stays in `messages.test.ts`'s sample parameters, because `reservationStatusReason` still uses it (BACKLOG).
+- **No row join.** `leads.lost_reason` is mutable (`correctLead`'s reopen clears it, a re-close replaces it), so today's value is not an older event's. The inbox's closed scope already prints the CURRENT reason from the row, which is the separately identified current context.
+
+**Tests.**
+- The writer test above: 9/9 green after the fix. Every inserted row is searched for the fixture's synthetic name, phone and e-mail, on both outcomes.
+- `events.test.ts`: a lead's legacy `lost` and `spam` payloads with a reason render "Marked lost" / "Marked spam", new minimal payloads render the same, malformed payloads do not throw, and both go through the translator. The old lead test that pinned the reason in the line now pins its absence.
+- `evidence.test.ts`: the real `assembleEvidence` renders a lead family's legacy reasons as neutral lines.
+- `tests/e2e/event-typed-text.spec.ts` gains a lead flow through the real Close dialog. The row holds the reason, the stored event is `{}`, `/leads?status=lost` shows `Reason: …` from the row, and the admin feed has "Marked lost" with the reason nowhere on the page.
+- Mutation proofs (one exact replacement each, restored after): the reason restored, truncated or nested in the payload, the `lost` / `spam` lines printing a legacy reason, and the open-status precondition dropped — 6 of 6 killed.
+
+**Review.** Three read-only lenses (correctness, tests, docs), two refuters per finding. Correctness found nothing. Confirmed and fixed:
+- the new e2e lead flow could never pass in the phone project — a lead card folds Close behind More… below 768px (CI runs desktop only); it now opens More… first on a narrow viewport;
+- BACKLOG called `redactLead` a message-and-notes redaction: it rewrites the message ONLY, so an unlinked enquiry's conversation notes survive Article 17 — now its own BACKLOG entry, not built here;
+- the red count's wording, the erasure entry's VERIFY (one grep per path), and two comments.
+
+Refuted but cheap, also done: the unit test now proves the update names THIS lead, and the e2e leak check covers every word of the reason.
+
+**Compatibility and deploy order.** No migration, no hosted step, not deploy-coupled: an old app renders a new `{}` payload as "Marked lost", and a new app renders an old payload the same. Evidence reports whose lead rows held a reason recompute to a different content hash if regenerated; verification is by `pdf_sha256` (see T-event-typed-text-shape). Order: branch CI green → merge → deploy READY → probes.
+
+**Not changed here.** Erasure still leaves `leads.lost_reason` (and `deals.lost_reason`) on the row. That is BACKLOG's operator decision, widened to name leads, `redactLead` and `redact_stale_enquiries`. The reservation release reason, photo file names and viewing feedback stay on BACKLOG.

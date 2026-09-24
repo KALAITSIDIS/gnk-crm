@@ -74,10 +74,9 @@ describe("describeEvent registry (T3.5) — English parity", () => {
     expect(describeEvent(ev("won", { override: true }), t)).toBe("Marked won — admin override");
   });
 
-  it("renders a lead's lost with its reason — closeLead is a separate writer, unchanged here", () => {
-    expect(describeEvent(ev("lost", { reason: "budget fell through" }, "lead"), t)).toBe(
-      "Marked lost — budget fell through",
-    );
+  it("renders a lead's lost as the bare fact, whatever reason an older payload carries", () => {
+    // T-lead-lost-reason-shape: the inbox prints the CURRENT reason from the row
+    expect(describeEvent(ev("lost", { reason: "budget fell through" }, "lead"), t)).toBe("Marked lost");
   });
 
   it("renders a merged event written before 2026-09-23 with the name it carries", () => {
@@ -331,6 +330,9 @@ describe("typed text is never printed from a payload (T-event-typed-text-shape)"
     ],
     ["mandate document uploaded (the old { title: file.name } shape)", ev("document_uploaded", { title: FILE }, "mandate"), "Document uploaded"],
     ["deal lost", ev("lost", { reason: REASON, stage: "Lost" }, "deal"), "Marked lost"],
+    // T-lead-lost-reason-shape: closeLead wrote `{ reason }` on both outcomes
+    ["lead lost", ev("lost", { reason: REASON }, "lead"), "Marked lost"],
+    ["lead spam", ev("spam", { reason: REASON }, "lead"), "Marked spam"],
   ] as const;
 
   it.each(LEGACY)("a LEGACY %s payload renders the neutral line", (_name, e, line) => {
@@ -363,6 +365,8 @@ describe("typed text is never printed from a payload (T-event-typed-text-shape)"
     ],
     ["deal lost with a stage", ev("lost", { stage: "Lost" }, "deal"), "Marked lost"],
     ["deal lost without one", ev("lost", {}, "deal"), "Marked lost"],
+    ["lead lost", ev("lost", {}, "lead"), "Marked lost"],
+    ["lead spam", ev("spam", {}, "lead"), "Marked spam"],
   ] as const)("a NEW minimal %s payload renders the same line", (_name, e, line) => {
     expect(describeEvent(e, t)).toBe(line);
   });
@@ -374,6 +378,8 @@ describe("typed text is never printed from a payload (T-event-typed-text-shape)"
       ["document_uploaded", "contact"],
       ["document_deleted", "property"],
       ["lost", "deal"],
+      ["lost", "lead"],
+      ["spam", "lead"],
     ] as const) {
       expect(() => describeEvent(ev(type, payload, entity), t)).not.toThrow();
     }
@@ -386,6 +392,8 @@ describe("typed text is never printed from a payload (T-event-typed-text-shape)"
     expect(describeEvent(ev("document_uploaded", { title: FILE }, "contact"), fake)).toBe("KEY:documentUploaded");
     expect(describeEvent(ev("document_deleted", { title: FILE }, "property"), fake)).toBe("KEY:documentDeleted");
     expect(describeEvent(ev("lost", { reason: REASON }, "deal"), fake)).toBe("KEY:lost");
+    expect(describeEvent(ev("lost", { reason: REASON }, "lead"), fake)).toBe("KEY:lost");
+    expect(describeEvent(ev("spam", { reason: REASON }, "lead"), fake)).toBe("KEY:spam");
   });
 });
 

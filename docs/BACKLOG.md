@@ -2456,11 +2456,12 @@ VERIFY, run before starting.
 - **More event payloads carry typed text by value, S/M.** Found by T-event-typed-text-shape's sweep and
   left out of its scope on purpose (a different writer each, and the same fix shape: ids in the event, the
   text on the row, a neutral line). Each is rendered from the payload today, except where said:
-  - a LEAD's `lost` / `spam` reason (`closeLead`, `lib/actions/leads.ts`: `{ reason }`, free text up to 500
-    characters), printed by the `lost` line for a lead (the deal branch no longer reads it; the `spam` line
-    prints none, but the chain holds it all the same). Hosted held 5
-    lead `lost` events with a reason (counts only, 2026-09-24). NOT a row join: `leads.lost_reason` is
-    mutable (a reopen clears it, a re-close replaces it), so the current value is not the event's;
+  - ~~a LEAD's `lost` / `spam` reason~~ **FIXED 2026-09-24 — DECISIONS `T-lead-lost-reason-shape`: `closeLead`
+    logs `lost` / `spam` as `{}`; `leads.lost_reason` keeps the reason and the inbox prints it; the `lost` line
+    prints no reason from any payload, for a lead or a deal. Hosted keeps 5 `lost` and 3 `spam` events with a
+    reason (counts only) — the chain cannot be edited.** (original) `closeLead`, `lib/actions/leads.ts`:
+    `{ reason }`, free text up to 500 characters, printed by the `lost` line for a lead; NOT a row join,
+    because `leads.lost_reason` is mutable (a reopen clears it, a re-close replaces it);
   - a reservation's release reason (`lib/actions/reservations.ts`: `reservation_status_changed`
     `{ reason: release_reason }`, free text up to 300), printed by `reservationStatusReason`;
   - a photograph's FILE NAME (`lib/actions/media.ts` and `scripts/import/media.mts`: `media_uploaded`
@@ -2468,8 +2469,8 @@ VERIFY, run before starting.
     admin client and copies `file` forward into `media_deleted`;
   - viewing feedback (`lib/actions/viewings.ts`: `viewing_feedback` `{ comment, liked, disliked }`),
     printed by `viewingFeedback*` and passed by the payload scan's `REVIEWED` map.
-  **VERIFY** — one grep per writer, and a hit means THAT writer is still open:
-  `grep -n "payload: { reason: parsed.data.reason" lib/actions/leads.ts` ·
+  **VERIFY** — one grep per writer, and a hit means THAT writer is still open (the lead one is fixed and
+  must stay silent): `grep -n "payload: { reason: parsed.data.reason" lib/actions/leads.ts` ·
   `grep -n "reason: release_reason" lib/actions/reservations.ts` ·
   `grep -nE "file: (file\.)?name," lib/actions/media.ts scripts/import/media.mts` ·
   `grep -n "\.\.\.feedback," lib/actions/viewings.ts`.
@@ -2482,12 +2483,26 @@ VERIFY, run before starting.
   **VERIFY** — one per action, and no hit means THAT action is still open:
   `grep -n -A12 'status: "lost",' lib/actions/deals.ts | grep 'eq("status", "open")'` ·
   `grep -n -A12 'status: "won",' lib/actions/deals.ts | grep 'eq("status", "open")'`.
-- **Erasure leaves a lost deal's typed reason on the row, S — NEEDS AN OPERATOR DECISION.** Contact
-  erasure blanks notes, lead messages and conversation notes but never `deals.lost_reason` (or
-  `leads.lost_reason`, BACKLOG's T-contact-erasure line). Since T-event-typed-text-shape the ROW is the
-  only copy a new lost deal makes, so a rule on the row now reaches all of it. Decide whether the
-  retention basis keeps it, like identity, or it is typed text, like the notes. Found by
-  T-event-typed-text-shape; not built there. **VERIFY:** `grep -n "lost_reason" lib/services/erasure-run.ts
+- **Erasure leaves a lost deal's or lead's typed reason on the row, S — NEEDS AN OPERATOR DECISION.** Contact
+  erasure blanks notes, lead messages and conversation notes but never `deals.lost_reason` or
+  `leads.lost_reason` (BACKLOG's T-contact-erasure line); neither does `redactLead` (Article 17 on an
+  unlinked enquiry: the message only) nor `redact_stale_enquiries` (the message and notes). Since
+  T-event-typed-text-shape (deals) and T-lead-lost-reason-shape (leads) the ROW is the only copy a new
+  close makes, so a rule on the row now reaches all of it. Decide whether the retention basis keeps it,
+  like identity, or it is typed text, like the notes. Found by T-event-typed-text-shape; not built there.
+  **VERIFY** — one per path, and a hit means THAT path now handles it:
+  `grep -n "lost_reason" lib/services/erasure-run.ts lib/actions/contact-erasure.ts` ·
+  `grep -n -A30 "export async function redactLead" lib/actions/leads.ts | grep lost_reason` ·
+  `grep -ln "function public.redact_stale_enquiries" supabase/migrations/*.sql | tail -1 | xargs grep -n lost_reason`.
+- **`redactLead` leaves the enquiry's conversation notes, S.** Article 17 on an UNLINKED enquiry
+  (`redactLead`, `lib/actions/leads.ts`) rewrites `leads.message` and logs `redacted`, but never blanks the
+  lead's `interaction_notes` — the desk's own words about the enquiry, which 0094 made erasable exactly so
+  they could go with the message. Contact erasure and `redact_stale_enquiries` (0094) both blank them.
+  Authenticated has no UPDATE on `interaction_notes` (a BEFORE UPDATE trigger admits only a redaction), so
+  the fix is a service-role or definer path like contact erasure's. Found by T-lead-lost-reason-shape's
+  review (a refuter-confirmed docs point); not built there.
+  **VERIFY:** `grep -n -A40 "export async function redactLead" lib/actions/leads.ts | grep interaction_notes`
+  — no hit means still open. **VERIFY:** `grep -n "lost_reason" lib/services/erasure-run.ts
   lib/actions/contact-erasure.ts` — no hit means still open.
 - **Clock-dependent tests found by the 2026-09-24 sweep, S/M.** A read-only sweep at `ed6166c` (DECISIONS
   `T-rls-stage-tenure-one-clock`, Landing; two refuters per candidate) found 21 more tests that can fail while
