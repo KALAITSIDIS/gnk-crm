@@ -463,7 +463,9 @@ export async function uploadMandateDocument(
       storage_path: path,
       uploaded_by: profile.id,
     })
-    .select("id")
+    // visibility comes back so the event records what the row says (the
+    // column default), as the contact and property uploads do
+    .select("id, visibility")
     .single();
   if (docErr) {
     // the row was rejected — don't orphan the uploaded object
@@ -483,7 +485,11 @@ export async function uploadMandateDocument(
     entityType: "mandate",
     entityId: mandateId,
     eventType: "document_uploaded",
-    payload: { title: file.name },
+    // The uploaded document's id, not the file's name: a name is whatever the
+    // uploader's machine called it ("Andreou mandate signed.pdf"), and the chain
+    // is beyond erasure (SEC-03). The id is also the only link from THIS event to
+    // THIS file — `signed_document_id` moves to the newest one on "Replace doc".
+    payload: { document_id: doc.id, doc_type: "mandate_agreement", visibility: doc.visibility },
   });
 
   revalidatePath(`/properties/${m.property_id}`);

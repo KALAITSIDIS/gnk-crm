@@ -97,6 +97,13 @@ export interface TimelineEvent {
   payload: Json;
   /** caller-supplied annotation, e.g. the merged-contact source name */
   note?: string | null;
+  /**
+   * The source row's CURRENT title (a task's, a document's), read with the
+   * VIEWER's permissions by lib/services/event-context.ts — never from the
+   * payload. It is rendered with a "current title" label, not as part of the
+   * line, because a row can change after the event it is attached to.
+   */
+  current_title?: string | null;
 }
 
 type P = Record<string, unknown>;
@@ -143,9 +150,16 @@ const asMoney = (v: unknown): string | null => {
  * Each entry chooses a message key (and its interpolation values) from the
  * payload; the fixed text lives in messages/*.json under `events.*`. Only the
  * template is translated — interpolated data (names, channels, stage names,
- * user-typed reasons, file names, formatted money) stays as stored.
+ * formatted money) stays as stored. A task's title, a document's title or file
+ * name and a deal's lost reason are NOT interpolated, from new payloads or old
+ * ones (T-event-typed-text-shape): the line states the fact, and which task or
+ * document it was arrives separately as `current_title`, read from its row.
+ *
+ * `entityType` is the event's entity: one event type can be written against
+ * more than one (a deal's `lost` and a lead's `lost`), and they need not read
+ * the same.
  */
-const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
+const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string) => string> = {
   created: (p, t) => {
     const amount = asMoney(p.amount);
     return amount ? t("createdAmount", { amount }) : t("created");
@@ -168,7 +182,14 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
   },
   won: (p, t) => (p.override === true ? t("wonOverride") : t("won")),
   won_override: (_p, t) => t("wonOverrideAuthorized"),
-  lost: (p, t) => {
+  lost: (p, t, entityType) => {
+    // A DEAL's reason lives on `deals.lost_reason`, and the deal page prints it
+    // from there. Since T-event-typed-text-shape the event carries none, and an
+    // older event's copy is not reprinted: it is typed text in a chain nothing
+    // can erase, and the row may say something else by now.
+    if (entityType === "deal") return t("lost");
+    // A LEAD's `lost` (closeLead) still carries and prints its typed reason — a
+    // separate writer, left for its own change (BACKLOG).
     const reason = asText(p.reason);
     return reason ? t("lostReason", { reason }) : t("lost");
   },
@@ -255,14 +276,12 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
     if (holder) return t("keyLostHolder", { holder });
     return t("keyLost");
   },
-  completed: (p, t) => {
-    const title = asText(p.title);
-    return title ? t("completedTitle", { title }) : t("completed");
-  },
-  reopened: (p, t) => {
-    const title = asText(p.title);
-    return title ? t("reopenedTitle", { title }) : t("reopened");
-  },
+  // A task's title is never read from the payload: new events carry none
+  // (T-event-typed-text-shape) and an older event's copy is not reprinted. The
+  // timeline's reader attaches the task's CURRENT title from its row, with the
+  // viewer's permissions, as `current_title` (lib/services/event-context.ts).
+  completed: (_p, t, entityType) => (entityType === "task" ? t("taskCompleted") : t("completed")),
+  reopened: (_p, t, entityType) => (entityType === "task" ? t("taskReopened") : t("reopened")),
   invited: (p, t) => {
     const email = asText(p.email);
     const role = asText(p.role);
@@ -302,14 +321,12 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator) => string> = {
   evidence_report_generated: (p, t) =>
     t("evidenceGenerated", { count: Number(p.rows) || 0, ok: p.chain_ok === true ? "yes" : "no" }),
   viewing_confirmation_generated: (_p, t) => t("viewingConfirmationGenerated"),
-  document_uploaded: (p, t) => {
-    const title = asText(p.title);
-    return title ? t("documentUploadedTitle", { title }) : t("documentUploaded");
-  },
-  document_deleted: (p, t) => {
-    const title = asText(p.title);
-    return title ? t("documentDeletedTitle", { title }) : t("documentDeleted");
-  },
+  // Same rule as a task's: the title (or the uploaded file's name) is never read
+  // from the payload. A live document's CURRENT title arrives as `current_title`
+  // when the viewer may read the row; a deleted one has no row, and "Document
+  // deleted" is the whole line.
+  document_uploaded: (_p, t) => t("documentUploaded"),
+  document_deleted: (_p, t) => t("documentDeleted"),
   renewal_task_created: (_p, t) => t("renewalTaskCreated"),
   // 0053: the mandate ended and the agency still holds keys. Written against
   // the MANDATE, like renewal_task_created — it is a fact about the contract
@@ -631,7 +648,24 @@ export function describeEvent(
   t: EventTranslator,
 ): string {
   const p = asObject(e.payload);
-  const line = EVENT_LINES[e.event_type]?.(p, t) ?? e.event_type.replace(/_/g, " ");
+  const line =
+    EVENT_LINES[e.event_type]?.(p, t, e.entity_type) ?? e.event_type.replace(/_/g, " ");
   const prefixKey = ENTITY_PREFIX_KEY[e.entity_type];
   return prefixKey ? `${t(prefixKey)}: ${line}` : line;
+}
+
+/**
+ * The muted annotation after a line: the source row's current title, LABELLED
+ * as current ("current title: …") so it never reads as the event's own words,
+ * then the caller's note. Null when there is neither.
+ */
+export function describeEventContext(
+  e: Pick<TimelineEvent, "current_title" | "note">,
+  t: EventTranslator,
+): string | null {
+  const parts = [
+    e.current_title ? t("currentTitle", { title: e.current_title }) : null,
+    e.note || null,
+  ].filter((v): v is string => Boolean(v));
+  return parts.length > 0 ? parts.join(" · ") : null;
 }

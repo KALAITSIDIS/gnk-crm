@@ -165,6 +165,7 @@ export default async function PropertyDetailPage({
       // provably their org, and it is available before `profile` is resolved
       orgId: p.org_id as string,
       viewerRole: profile.role,
+      viewer: supabase,
       entityType: "property",
       entityIds: [id],
       limit: 50,
@@ -176,6 +177,7 @@ export default async function PropertyDetailPage({
       : readEntityTimeline({
           orgId: p.org_id as string,
           viewerRole: profile.role,
+          viewer: supabase,
           entityType: "key",
           // keyIds came from a keys read on the caller's own client
           entityIds: keyIds,

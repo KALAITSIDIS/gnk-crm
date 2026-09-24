@@ -13,6 +13,9 @@ vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => admin.client }
 
 const { readEntityTimeline } = await import("./entity-timeline");
 
+// the VIEWER's client — a blank fake; see event-context.test.ts for what it is asked
+const viewer = () => fakeClient({}).client as never;
+
 const ev = (id: number, payload: Record<string, unknown>) => ({
   id,
   occurred_at: `2026-09-1${id}T10:00:00Z`,
@@ -29,7 +32,7 @@ describe("readEntityTimeline and notes", () => {
       interaction_notes: [{ data: [{ id: "n1", body: "Wants a viewing on Saturday", redacted_at: null }], error: null }],
     });
     admin.client = svc.client;
-    const rows = await readEntityTimeline({ orgId: "org-1", entityType: "contact", entityIds: ["c1"], limit: 50, viewerRole: "admin" });
+    const rows = await readEntityTimeline({ orgId: "org-1", entityType: "contact", entityIds: ["c1"], limit: 50, viewerRole: "admin", viewer: viewer() });
     expect(rows[0]!.note).toBe("Wants a viewing on Saturday");
     // the join is org-bound too: the admin client has no other boundary
     const notesCall = svc.calls.find((c) => c.table === "interaction_notes" && c.method === "eq" && c.args[0] === "org_id");
@@ -42,7 +45,7 @@ describe("readEntityTimeline and notes", () => {
       interaction_notes: [{ data: [{ id: "n1", body: null, redacted_at: "2026-09-13T10:00:00Z" }], error: null }],
     });
     admin.client = svc.client;
-    const rows = await readEntityTimeline({ orgId: "org-1", entityType: "contact", entityIds: ["c1"], limit: 50, viewerRole: "admin" });
+    const rows = await readEntityTimeline({ orgId: "org-1", entityType: "contact", entityIds: ["c1"], limit: 50, viewerRole: "admin", viewer: viewer() });
     expect(rows[0]!.note).toBe(NOTE_ERASED_LABEL);
   });
 
@@ -51,7 +54,7 @@ describe("readEntityTimeline and notes", () => {
       events: [{ data: [ev(1, { channel: "email", note: "Old inline note" })], error: null }],
     });
     admin.client = svc.client;
-    const rows = await readEntityTimeline({ orgId: "org-1", entityType: "contact", entityIds: ["c1"], limit: 50, viewerRole: "admin" });
+    const rows = await readEntityTimeline({ orgId: "org-1", entityType: "contact", entityIds: ["c1"], limit: 50, viewerRole: "admin", viewer: viewer() });
     expect(rows[0]!.note).toBe("Old inline note");
     expect(svc.served.interaction_notes ?? 0, "no note lookup when nothing references one").toBe(0);
   });

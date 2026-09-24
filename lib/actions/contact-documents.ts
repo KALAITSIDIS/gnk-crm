@@ -93,7 +93,10 @@ export async function uploadContactDocument(
     entityType: "contact",
     entityId: contactId,
     eventType: "document_uploaded",
-    payload: { document_id: doc.id, title, doc_type: docType, visibility: doc.visibility },
+    // No `title`: it is typed, or it IS the uploaded file's name
+    // ("passport_AB123456.pdf"), and the chain is beyond erasure (SEC-03). The
+    // row keeps it; a timeline reads it back with the viewer's own permissions.
+    payload: { document_id: doc.id, doc_type: docType, visibility: doc.visibility },
   });
 
   revalidatePath(`/contacts/${contactId}`);
@@ -110,12 +113,10 @@ export async function deleteContactDocument(
 
   const { data: doc } = await supabase
     .from("documents")
-    // doc_type comes back so the deletion event can carry it: entity-timeline
-    // decides whether a non-admin may see a document TITLE from the payload's
-    // doc_type, and the row is gone by the time anyone reads the timeline, so
-    // a payload without it is withheld forever (fail-closed, correctly — but
-    // that means every deleted title deed lost its name too).
-    .select("id, org_id, title, doc_type, visibility, storage_path, entity_type, entity_id")
+    // doc_type and visibility come back so the deletion event can carry them —
+    // the row is gone by the time anyone reads the timeline. The title does
+    // not: the event names the document by id and reads "Document deleted".
+    .select("id, org_id, doc_type, visibility, storage_path, entity_type, entity_id")
     .eq("id", documentId)
     .maybeSingle();
   if (!doc) return { error: "Document not found" };
@@ -149,7 +150,6 @@ export async function deleteContactDocument(
     eventType: "document_deleted",
     payload: {
       document_id: documentId,
-      title: doc.title,
       doc_type: doc.doc_type,
       visibility: doc.visibility,
     },

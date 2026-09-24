@@ -110,7 +110,7 @@ export async function toggleTaskDone(
 
   const { data: task } = await supabase
     .from("tasks")
-    .select("id, org_id, title, is_done")
+    .select("id, org_id, is_done")
     .eq("id", taskId)
     .maybeSingle();
   if (!task) return { error: "Task not found" };
@@ -137,7 +137,11 @@ export async function toggleTaskDone(
     entityType: "task",
     entityId: taskId,
     eventType: done ? "completed" : "reopened",
-    payload: { title: task.title },
+    // no `title`, for the reason `created` has none: it is typed text (or built
+    // from a person's name by a nudge), and the chain is beyond erasure and
+    // correction (SEC-03). The entity id names the task; a timeline reads the
+    // title from the row with the viewer's permissions (lib/services/event-context.ts).
+    payload: {},
   });
 
   revalidatePath("/tasks");

@@ -2,13 +2,21 @@ import { describe, expect, it, vi } from "vitest";
 import { fakeClient } from "@/lib/testing/fake-client";
 
 /**
- * A `document_deleted` event must carry `doc_type`, because that is the only
- * thing left that can decide who may read its title.
+ * A `document_deleted` event must carry `doc_type` and `visibility`, because
+ * the row is gone afterwards and nothing else can say what the document was.
  *
- * `lib/services/entity-timeline.ts` withholds a document's title from a
- * non-admin unless `contactDocVisibility(payload.doc_type) === "internal"`, and
- * it FAILS CLOSED when the payload has no readable doc_type — correctly, because
- * an unrecognised shape must not hand over a passport filename.
+ * SINCE T-event-typed-text-shape (2026-09-24) NEITHER EVENT CARRIES THE TITLE.
+ * A title is typed, or it is the uploaded file's name, and the chain is beyond
+ * erasure (SEC-03). The payloads are exactly `{ document_id, doc_type,
+ * visibility }` (document-event-payload.test.ts drives every writer through the
+ * real logEvent); a timeline reads a live document's title from its row with
+ * the viewer's permissions, and a deleted one reads "Document deleted". The
+ * history below is why these two fields are here at all.
+ *
+ * `lib/services/entity-timeline.ts` withholds a legacy payload's title from a
+ * non-admin unless `payload.visibility === "internal"`, and it FAILS CLOSED
+ * when the payload has no readable visibility — correctly, because an
+ * unrecognised shape must not hand over a passport filename.
  *
  * But neither delete path sent the field. Both wrote `{ document_id, title }`,
  * so for the whole `document_deleted` half the doc_type branch was DEAD and the
@@ -96,12 +104,12 @@ describe("the deletion event carries the doc_type the timeline needs", () => {
     expect(logEvent.mock.calls[0][1]).toMatchObject({
       eventType: "document_deleted",
       entityType: "contact",
-      payload: {
-        document_id: "doc-1",
-        title: "passport_AB123456.pdf",
-        doc_type: "id_document",
-        visibility: "admin_only",
-      },
+    });
+    // exact: the passport's file name is on the (now deleted) row, never here
+    expect((logEvent.mock.calls[0][1] as { payload: unknown }).payload).toEqual({
+      document_id: "doc-1",
+      doc_type: "id_document",
+      visibility: "admin_only",
     });
   });
 
@@ -113,12 +121,11 @@ describe("the deletion event carries the doc_type the timeline needs", () => {
     expect(logEvent.mock.calls[0][1]).toMatchObject({
       eventType: "document_deleted",
       entityType: "property",
-      payload: {
-        document_id: "doc-1",
-        title: "Title deed PAF0001.pdf",
-        doc_type: "title_deed",
-        visibility: "internal",
-      },
+    });
+    expect((logEvent.mock.calls[0][1] as { payload: unknown }).payload).toEqual({
+      document_id: "doc-1",
+      doc_type: "title_deed",
+      visibility: "internal",
     });
   });
 

@@ -27,7 +27,7 @@ export default async function DashboardPage() {
           <CronHealth />
           {/* audit 2026-09-15 LST-03: published_below_threshold() finally has a screen */}
           <ListingHealth />
-          <AdminDashboard />
+          <AdminDashboard orgId={profile.orgId} />
         </>
       ) : (
         <AgentDashboard profileId={profile.id} />

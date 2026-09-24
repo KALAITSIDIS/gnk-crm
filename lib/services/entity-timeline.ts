@@ -1,4 +1,7 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { Database } from "@/lib/supabase/database.types";
+import { attachCurrentTitles } from "@/lib/services/event-context";
 import type { TimelineEvent } from "@/lib/services/events";
 import { NOTE_ERASED_LABEL } from "@/lib/services/notes";
 
@@ -70,6 +73,13 @@ export async function readEntityTimeline(opts: {
   limit: number;
   /** the VIEWER's role — decides whether a document's title may be shown */
   viewerRole: string;
+  /**
+   * The VIEWER's own client. The events come from the system; what a task or
+   * document is CALLED comes from its row, read as the viewer, so RLS decides
+   * whether they may see it (lib/services/event-context.ts). Never pass the
+   * admin client here.
+   */
+  viewer: SupabaseClient<Database>;
 }): Promise<TimelineRow[]> {
   if (opts.entityIds.length === 0) return [];
   /*
@@ -106,7 +116,8 @@ export async function readEntityTimeline(opts: {
     return [];
   }
   const rows = await attachNotes((data ?? []) as unknown as TimelineRow[], opts.orgId);
-  return redactWonDealKinds(redactDocumentTitles(rows, opts.viewerRole), opts.viewerRole);
+  const redacted = redactWonDealKinds(redactDocumentTitles(rows, opts.viewerRole), opts.viewerRole);
+  return attachCurrentTitles(opts.viewer, opts.orgId, redacted);
 }
 
 /**
@@ -207,6 +218,13 @@ const DOCUMENT_EVENTS = new Set(["document_uploaded", "document_deleted"]);
  * choosing this: production holds three `document_deleted` events, all predating
  * the field, and zero `document_uploaded` — so failing closed costs three lines
  * that were already anonymous.
+ *
+ * SINCE T-event-typed-text-shape (2026-09-24) NO NEW EVENT CARRIES A TITLE, and
+ * `describeEvent` prints none from any payload, old or new: a live document's
+ * name comes from its row, read as the viewer (`attachCurrentTitles`, which
+ * `documents_select` gates exactly as this function tries to). This step stays
+ * as a second lock on the older payloads that still hold one, so that nothing
+ * downstream of this reader can print what the viewer may not read.
  */
 function redactDocumentTitles(rows: TimelineRow[], viewerRole: string): TimelineRow[] {
   if (viewerRole === "admin") return rows;

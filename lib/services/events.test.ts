@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createTranslator } from "next-intl";
 import en from "@/messages/en.json";
-import { describeEvent, type EventTranslator } from "./events";
+import { describeEvent, describeEventContext, type EventTranslator } from "./events";
 
 const ev = (event_type: string, payload: unknown = {}, entity_type = "deal") => ({
   entity_type,
@@ -74,8 +74,8 @@ describe("describeEvent registry (T3.5) — English parity", () => {
     expect(describeEvent(ev("won", { override: true }), t)).toBe("Marked won — admin override");
   });
 
-  it("renders lost with its reason", () => {
-    expect(describeEvent(ev("lost", { reason: "budget fell through" }), t)).toBe(
+  it("renders a lead's lost with its reason — closeLead is a separate writer, unchanged here", () => {
+    expect(describeEvent(ev("lost", { reason: "budget fell through" }, "lead"), t)).toBe(
       "Marked lost — budget fell through",
     );
   });
@@ -300,6 +300,117 @@ describe("describeEvent registry (T3.5) — English parity", () => {
   it("tolerates malformed payloads", () => {
     expect(describeEvent(ev("lost", null), t)).toBe("Marked lost");
     expect(describeEvent(ev("stage_changed", [1, 2]), t)).toBe("Stage");
+  });
+});
+
+/**
+ * T-event-typed-text-shape: a task's title, a document's title (or its file
+ * name) and a deal's typed lost reason are never printed from a payload — not
+ * from a new one, which carries none, and not from an older one, which does and
+ * cannot be edited. The line is the fact; which task or document is attached
+ * separately, from its row, as a LABELLED current title (describeEventContext).
+ */
+describe("typed text is never printed from a payload (T-event-typed-text-shape)", () => {
+  // synthetic, and distinctive enough that any leak shows up in the output
+  const TASK = "Call Kyriakoula Palaiopoulou about the deposit";
+  const FILE = "Andreou passport AB1234567.pdf";
+  const REASON = "Eleni Charalambous bought elsewhere";
+
+  const LEGACY = [
+    ["task completed", ev("completed", { title: TASK }, "task"), "Task completed"],
+    ["task reopened", ev("reopened", { title: TASK }, "task"), "Task reopened"],
+    [
+      "contact document uploaded",
+      ev("document_uploaded", { document_id: "d1", title: FILE, doc_type: "contract", visibility: "internal" }, "contact"),
+      "Document uploaded",
+    ],
+    [
+      "property document deleted",
+      ev("document_deleted", { document_id: "d1", title: FILE, doc_type: "title_deed", visibility: "internal" }, "property"),
+      "Document deleted",
+    ],
+    ["mandate document uploaded (the old { title: file.name } shape)", ev("document_uploaded", { title: FILE }, "mandate"), "Document uploaded"],
+    ["deal lost", ev("lost", { reason: REASON, stage: "Lost" }, "deal"), "Marked lost"],
+  ] as const;
+
+  it.each(LEGACY)("a LEGACY %s payload renders the neutral line", (_name, e, line) => {
+    expect(describeEvent(e, t)).toBe(line);
+  });
+
+  it("no legacy line contains any of the typed text it carries", () => {
+    const out = LEGACY.map(([, e]) => describeEvent(e, t)).join("\n");
+    expect([TASK, FILE, REASON].filter((s) => out.includes(s))).toEqual([]);
+    for (const word of ["Kyriakoula", "Andreou", "AB1234567", "Eleni"]) expect(out).not.toContain(word);
+  });
+
+  it.each([
+    ["task completed", ev("completed", {}, "task"), "Task completed"],
+    ["task reopened", ev("reopened", {}, "task"), "Task reopened"],
+    [
+      "document uploaded",
+      ev("document_uploaded", { document_id: "d1", doc_type: "id_document", visibility: "admin_only" }, "contact"),
+      "Document uploaded",
+    ],
+    [
+      "document deleted",
+      ev("document_deleted", { document_id: "d1", doc_type: "title_deed", visibility: "internal" }, "property"),
+      "Document deleted",
+    ],
+    [
+      "mandate document uploaded",
+      ev("document_uploaded", { document_id: "d1", doc_type: "mandate_agreement", visibility: "internal" }, "mandate"),
+      "Document uploaded",
+    ],
+    ["deal lost with a stage", ev("lost", { stage: "Lost" }, "deal"), "Marked lost"],
+    ["deal lost without one", ev("lost", {}, "deal"), "Marked lost"],
+  ] as const)("a NEW minimal %s payload renders the same line", (_name, e, line) => {
+    expect(describeEvent(e, t)).toBe(line);
+  });
+
+  it.each([null, [], "text", 7])("tolerates a %j payload on every one of these types", (payload) => {
+    for (const [type, entity] of [
+      ["completed", "task"],
+      ["reopened", "task"],
+      ["document_uploaded", "contact"],
+      ["document_deleted", "property"],
+      ["lost", "deal"],
+    ] as const) {
+      expect(() => describeEvent(ev(type, payload, entity), t)).not.toThrow();
+    }
+  });
+
+  it("routes each line through the translator in every locale (no hard-coded English)", () => {
+    const fake: EventTranslator = (key) => `KEY:${key}`;
+    expect(describeEvent(ev("completed", { title: TASK }, "task"), fake)).toBe("KEY:taskCompleted");
+    expect(describeEvent(ev("reopened", { title: TASK }, "task"), fake)).toBe("KEY:taskReopened");
+    expect(describeEvent(ev("document_uploaded", { title: FILE }, "contact"), fake)).toBe("KEY:documentUploaded");
+    expect(describeEvent(ev("document_deleted", { title: FILE }, "property"), fake)).toBe("KEY:documentDeleted");
+    expect(describeEvent(ev("lost", { reason: REASON }, "deal"), fake)).toBe("KEY:lost");
+  });
+});
+
+describe("describeEventContext — the current title, labelled, then the note", () => {
+  it("labels a row's current title so it never reads as the event's own words", () => {
+    expect(describeEventContext({ current_title: "Sale agreement.pdf" }, t)).toBe(
+      "current title: Sale agreement.pdf",
+    );
+  });
+
+  it("joins it with the caller's note", () => {
+    expect(describeEventContext({ current_title: "Call the notary", note: "PAF0001 · A. Admin" }, t)).toBe(
+      "current title: Call the notary · PAF0001 · A. Admin",
+    );
+  });
+
+  it("is the note alone, or nothing, when no row was readable", () => {
+    expect(describeEventContext({ note: "A. Admin" }, t)).toBe("A. Admin");
+    expect(describeEventContext({ current_title: null, note: null }, t)).toBeNull();
+    expect(describeEventContext({}, t)).toBeNull();
+  });
+
+  it("goes through the translator", () => {
+    const fake: EventTranslator = (key, values) => `KEY:${key}:${JSON.stringify(values)}`;
+    expect(describeEventContext({ current_title: "X" }, fake)).toBe('KEY:currentTitle:{"title":"X"}');
   });
 });
 
