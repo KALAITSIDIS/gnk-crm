@@ -7688,7 +7688,7 @@ It also pins that the insert still writes the title to the row. RED before the f
 
 **Landing (2026-09-24 late morning).** On the operator's word ("merge #58"). Main was checked right before the merge (`e663ccd` held all of it). PR #58 → main `0fa7bdb`, pinned to `e663ccd`; branch CI was green (run 35977881328). Vercel production `dpl_GKH28Ur3MJrBGp8oJwwwVqDbXXfp` READY. It is a tests-only change, so the app is unchanged: `/login` 200, CSP nonce on 16 of 16 scripts, no runtime errors. CI on the merge commit was green on the first attempt (run 35988936451: checks, rls, e2e), with the rls job running both files against a fresh database. Remote branch deleted. The time bomb was defused four days before it would have gone off.
 
-## T-enquiry-identity-single-line — both enquiry doors refuse a line break in a one-line value, and the reader refuses to guess (2026-09-24; migration 0114, NOT on hosted)
+## T-enquiry-identity-single-line — both enquiry doors refuse a line break in a one-line value, and the reader refuses to guess (2026-09-24; migration 0114, on hosted)
 
 **The brief** (enquiry-validation audit of `e980575`, treated as hypotheses). Reviewed at `e980575062499ddbc6e28164e0c68a1562d411b9`, still `origin/main` when the work began. Branch `fix/enquiry-identity-single-line`.
 
@@ -7771,3 +7771,23 @@ Its five low/info points, verified before acting:
 **Deploy order** (on approval): branch CI green → apply 0114 on hosted per HANDOFF §3 (the self-test runs there and leaves nothing; ledger row; prosrc md5s = local; advisors) → merge → deploy READY → probes.
 
 **Rollback.** A forward migration re-creating both functions from 0101's and 0106's bodies verbatim. That reopens only the direct-call path; the routes keep refusing. Keep the reader: it refuses to guess, which is safe with either body. No data moves.
+
+**Landing (2026-09-24, late afternoon).** On the operator's word ("apply 0114 to hosted, merge #59 and #12"), in the repo's order: migration first, then the merge.
+
+- **Hosted 0114.** Applied in separate `execute_sql` stages, each pasted verbatim from the file: the door function, the proposal function, the self-test, a verify, then the ledger row.
+  - Both prosrc md5s equal local: `65da4d2d2efb3762dbca32277971a0a6` (door) and `a58d35e8fd0277ca8ed6c2ca4b9193c9` (proposal).
+  - The ACLs are still `postgres` + `service_role` only, with SECURITY DEFINER and `search_path=public`.
+  - The self-test passed on hosted. Its subtransaction left 0 orgs, properties, share links or leads, and no event whose org is missing.
+  - The ledger is at 114 rows, max `0114`, `non_filename_versions` 0.
+  - The advisors show the same by-design security residual, with neither door listed (both are service_role only), and performance INFO only.
+- **Merges.**
+  - #59 → main `ee722e1`, pinned to `2ab400a`. Vercel `dpl_BmSaGLq5hirwiXfwdbe6cHQiE6m5` READY. CI on the merge commit was green on the first attempt (run 36018999571: checks, rls, e2e).
+  - gnk-web #12 → `b158f37`, pinned to `04e951e`. `dpl_xax5eVmg5KEtMA5xnNPFoLWvwoLJ` READY. CI green (run 36019062030). That branch's own CI had one failure, a Google Fonts download in `next build`; the re-run of identical source passed.
+- **Live probes, each refused before the rate meter:**
+  - the CRM website door with the audit's five-line name → 400 "The name must be on one line — remove the line break.";
+  - the proposal door with a CRLF name → 400 `{code: name_line_break, field: name}`;
+  - the site with the audit's phone → 400 "Please write your phone number on one line.".
+
+  Hosted then showed 0 leads, 0 lead events and 0 pending jobs in the window.
+- **Post-deploy checks:** CSP nonce on 16 of 16 `/login` scripts, the feed 200, `/leads` 307, the site's `/` and `/contact` 200, and no runtime errors in either project.
+- **Still open, both older than this work and out of its scope:** the site has no 320-character e-mail cap, and a U+0000 reaches Postgres. In both cases a script's post is still a 502 plus a report.

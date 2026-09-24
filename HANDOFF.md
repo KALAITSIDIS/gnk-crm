@@ -1,7 +1,18 @@
 # HANDOFF — 2026-08-08
 
 
-**2026-09-24, latest (afternoon, enquiry identity — BRANCH READY, NOT LANDED; hosted stays at 0113): a line break in an enquirer's name, e-mail, phone or reference can no longer rewrite who the CRM thinks enquired.** The enquiry-validation audit of `e980575` was reproduced and CONFIRMED in full. With the real functions and the old reader, a phone carrying `Email: other@x.invalid` became the lead's e-mail (the desk alert's Reply-To, "Possible existing contact", "Create contact"), and a five-line name hid the e-mail and phone. The website door accepted 37/37 line-break variants; the proposal door accepted 27/36.
+**2026-09-24, latest (late afternoon, enquiry identity): a line break in an enquirer's name, e-mail, phone or reference can no longer rewrite who the CRM thinks enquired — LANDED on the operator's word ("apply 0114 to hosted, merge #59 and #12"):**
+- **Hosted 0114 first.** Separate `execute_sql` stages: door function, proposal function, self-test, verify, ledger. Both prosrc md5s equal local (door `65da4d2d…`, proposal `a58d35e8…`); ACLs are service_role-only as before. The self-test passed on hosted and left nothing (0 orgs, properties, links, leads or orphan events). The ledger is at 114, `non_filename_versions` 0. The advisors show nothing new: the same by-design security residual, performance INFO only.
+- **Merges.** PR #59 → main `ee722e1` (pinned to `2ab400a`). Vercel production `dpl_BmSaGLq5hirwiXfwdbe6cHQiE6m5` READY; CI on the merge commit green on the first attempt (run 36018999571: checks, rls, e2e). gnk-web PR #12 → main `b158f37` (pinned to `04e951e`). Production `dpl_xax5eVmg5KEtMA5xnNPFoLWvwoLJ` READY; CI green (run 36019062030).
+- **Probes that write nothing** (refused before the meter; 0 leads and events in the window, checked on hosted):
+  - CRM website door, five-line name → 400 "The name must be on one line…";
+  - proposal door, CRLF name → 400 `name_line_break`/`name`;
+  - site, phone carrying `Email:` → 400 "Please write your phone number on one line.".
+- **Post-deploy checks:** CSP nonce on 16 of 16 `/login` scripts; feed 200; `/leads` 307; site `/` and `/contact` 200; no runtime errors in either project.
+
+The earlier record follows, as it was before landing.
+
+**Before landing (afternoon):** The enquiry-validation audit of `e980575` was reproduced and CONFIRMED in full. With the real functions and the old reader, a phone carrying `Email: other@x.invalid` became the lead's e-mail (the desk alert's Reply-To, "Possible existing contact", "Create contact"), and a five-line name hid the e-mail and phone. The website door accepted 37/37 line-break variants; the proposal door accepted 27/36.
 
 Branch `fix/enquiry-identity-single-line` (worktree `.worktrees/gnk-crm/enquiry-identity`):
 - both routes refuse a line break with a 400 naming the field (the proposal door adds `name_line_break` / `phone_line_break` in EN/EL/RU);

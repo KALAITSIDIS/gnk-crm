@@ -2496,8 +2496,8 @@ VERIFY, run before starting.
     on main's CI for `10e9076` (run 35916241188, attempt 1) and passed on the rerun; nothing in that merge
     touched deals. The fix is one line: compare `Date.parse(moved.stage_entered_at) >= Date.parse(t0)`. Same
     class as the note "an assertion that can only fail rarely". Found by T-updated-event-shape-only's landing.
-- ~~**The door keeps line breaks in name, phone and reference, S.**~~ **FIXED 2026-09-24 on branch
-  `fix/enquiry-identity-single-line` (migration 0114, NOT yet on hosted) — DECISIONS
+- ~~**The door keeps line breaks in name, phone and reference, S.**~~ **FIXED and LANDED 2026-09-24 (PR #59 →
+  main `ee722e1`, migration 0114 on hosted; the site mirrors it, gnk-web #12 → `b158f37`) — DECISIONS
   `T-enquiry-identity-single-line`.** Both doors now REFUSE a line break (every Unicode mandatory break)
   in the name, e-mail, phone and reference — at the routes (a 400 naming the field; the proposal door's
   `name_line_break` / `phone_line_break` in EN/EL/RU) and in both functions (0114: zero rows, nothing
