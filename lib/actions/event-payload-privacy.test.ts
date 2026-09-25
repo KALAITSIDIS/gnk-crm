@@ -53,6 +53,11 @@ const FORBIDDEN = [
   "display_name",
   "first_name",
   "last_name",
+  // a buyer's viewing feedback (T-viewing-feedback-shape). Whole `_` parts are
+  // matched, so `liked` does not cover `disliked`: both are listed.
+  "comment",
+  "liked",
+  "disliked",
 ];
 /** A key that says a thing exists, points at it or proves it — never what it is. */
 const SHAPE_PREFIXES = ["has_"];
@@ -77,10 +82,6 @@ const REVIEWED: Record<string, Record<string, string>> = {
   },
   "unit-inheritance.ts": {
     "[column]": "the name of the unit column whose inheritance changed, never a client's field",
-  },
-  "viewings.ts": {
-    "...feedback":
-      "the viewing-feedback form (rating, what was liked or not, a comment) on the PROPERTY timeline, which the viewing_feedback line prints — about a viewing, not a client identifier",
   },
 };
 
@@ -234,6 +235,18 @@ describe("the payload scan can see what it exists to catch", () => {
       texts(`x({ payload: JSON.parse(JSON.stringify({ message: m })) })`),
       "through the Json cast",
     ).toEqual(["message: …"]);
+  });
+
+  // T-viewing-feedback-shape: the spread was replaced by explicit keys, which a
+  // spread-only rule would have let straight back in as literal keys
+  it("catches a buyer's feedback words as literal keys — `liked` does not cover `disliked`", () => {
+    expect(texts(`x({ payload: { viewing_id: v, liked: l, disliked: d, comment: c } })`)).toEqual([
+      "liked: …",
+      "disliked: …",
+      "comment: …",
+    ]);
+    expect(texts(`x({ payload: { buyer_comment: c } })`), "a prefix").toEqual(["buyer_comment: …"]);
+    expect(texts(`x({ payload: { viewing_id: v, reference: r, rating: 4 } })`), "the new shape").toEqual([]);
   });
 
   it("refuses what it cannot read rather than passing it", () => {
