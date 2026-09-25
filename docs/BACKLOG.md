@@ -2476,7 +2476,11 @@ VERIFY, run before starting.
     `deleteMedia` read older `media_uploaded` payloads with the admin client and copied `file` forward;
   - viewing feedback (`lib/actions/viewings.ts`: `viewing_feedback` `{ comment, liked, disliked }`),
     printed by `viewingFeedback*` and passed by the payload scan's `REVIEWED` map;
-  - an escalation RECOVERY reason — SQL, found by T-reservation-release-reason-shape's scouts:
+  - ~~an escalation RECOVERY reason~~ **FIXED 2026-09-25 — DECISIONS `T-escalation-recovery-reason-shape`:
+    migration 0115 re-creates `request_lead_escalation_recovery` without the `'reason'` key and without the
+    reason requirement (`p_reason` accepted and ignored, so the apply is not deploy-coupled); the Review &
+    resend dialog asks for no typed text. Hosted held 0 `recovery_requested` events when checked.** (original)
+    SQL, found by T-reservation-release-reason-shape's scouts:
     `request_lead_escalation_recovery` (latest body 0111) writes the admin-typed reason (up to 200
     characters, required for a resend; `recoverLeadEscalation` in `lib/actions/leads.ts`) into the
     `lead_escalation` event as `'reason', v_reason`. No line prints it (no `lead_escalation` entry in

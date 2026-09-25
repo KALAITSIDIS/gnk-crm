@@ -32,8 +32,9 @@ type Job = Database["public"]["Tables"]["notification_jobs"]["Row"];
  *     safe to present again, `resend` only when it is not — one row never
  *     admits both, and nothing rotates a key on its own;
  *   - two simultaneous requests → one transition;
- *   - the event: the admin, the action, the previous state, the reason —
- *     ids and words, never a person — under the org's chain lock.
+ *   - the event: the admin, the action, the previous state — ids and fixed
+ *     words, never a person and never typed text (0115 dropped the reason) —
+ *     under the org's chain lock.
  *
  * FIXTURES REACH THEIR STATE THROUGH THE REAL CLAIM AND COMPLETION (the 0104
  * lesson: a row that writes a clock by hand describes a shape the claim
@@ -370,21 +371,17 @@ describe("retry keeps the key; resend is the only way to a new one", () => {
       previous_state: "failed",
       previous_category: "transient",
       previous_result: "timeout",
-      reason: null,
     });
+    expect(ev!.payload, "no typed text in the chain (0115)").not.toHaveProperty("reason");
     expect(JSON.stringify(ev!.payload), "ids and words only").not.toContain("example.invalid");
   });
 
-  it("a conflict refuses retry and admits resend with a reason: the key rotates, its clock and presentation count clear", async () => {
+  it("a conflict refuses retry and admits resend without asking for typed text: the key rotates, its clock and presentation count clear", async () => {
     const { lead, job } = await closedBy("conflict", "failed", { p_category: "conflict", p_result: "invalid_idempotent_request" });
     const retry = await recover(adminA.client, job.id, "retry");
     expect(retry.error?.message).toMatch(/resend/i);
-    const noReason = await recover(adminA.client, job.id, "resend");
-    expect(noReason.error?.message).toMatch(/reason/i);
-    const blank = await recover(adminA.client, job.id, "resend", "   ");
-    expect(blank.error?.message).toMatch(/reason/i);
 
-    const res = await recover(adminA.client, job.id, "resend", "Recipients were corrected; the first e-mail never reached anyone.");
+    const res = await recover(adminA.client, job.id, "resend");
     expect(res.error).toBeNull();
     expect(res.row).toMatchObject({ state: "pending", attempts: 0, key_serial: 2, key_attempts: 0, first_attempted_at: null, last_category: null, last_result: null });
     const [ev] = await recoveries(lead);
@@ -395,8 +392,8 @@ describe("retry keeps the key; resend is the only way to a new one", () => {
       previous_state: "failed",
       previous_category: "conflict",
       previous_result: "invalid_idempotent_request",
-      reason: "Recipients were corrected; the first e-mail never reached anyone.",
     });
+    expect(ev!.payload, "no typed text in the chain (0115)").not.toHaveProperty("reason");
   });
 
   it("a key older than the window, and the two review words, refuse retry and need resend", async () => {
@@ -423,12 +420,20 @@ describe("retry keeps the key; resend is the only way to a new one", () => {
     expect((await recover(adminA.client, beyond.job.id, "resend", "decided")).error).toBeNull();
   });
 
-  it("a reason is kept to 200 characters", async () => {
-    const { lead, job } = await closedBy("long", "failed", { p_category: "conflict", p_result: "invalid_idempotent_request" });
-    const res = await recover(adminA.client, job.id, "resend", "x".repeat(400));
+  it("a p_reason from a caller deployed before 0115 is accepted and written nowhere — not in the lead's events, not in the job row", async () => {
+    const { lead, job } = await closedBy("typed", "failed", { p_category: "conflict", p_result: "invalid_idempotent_request" });
+    // synthetic, shaped like what an admin might really type about a person
+    const typed = "Called Zenobia Quillfeather-Test on +357 99 000 111, zq.test@example.invalid";
+    const res = await recover(adminA.client, job.id, "resend", typed);
     expect(res.error).toBeNull();
-    const [ev] = await recoveries(lead);
-    expect(String(ev!.payload.reason)).toHaveLength(200);
+    expect(res.row).toMatchObject({ state: "pending", key_serial: 2 });
+    expect(await recoveries(lead)).toHaveLength(1);
+    const { data: rows, error } = await svc.from("events").select("*").eq("entity_id", lead);
+    expect(error).toBeNull();
+    const everything = JSON.stringify(rows) + JSON.stringify(await jobById(job.id));
+    for (const word of ["Zenobia", "Quillfeather", "000 111", "zq.test"]) {
+      expect(everything, `"${word}" is nowhere in the lead's events or the job`).not.toContain(word);
+    }
   });
 });
 

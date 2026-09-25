@@ -60,22 +60,27 @@ describe("recoverLeadEscalation", () => {
     expect(revalidatePath).toHaveBeenCalledWith("/leads");
   });
 
-  it("resend: passes the reason, trimmed", async () => {
+  it("resend: sends the job id and the action and nothing typed (0115 — the chain keeps no reason)", async () => {
     reset();
     state.rpc.mockResolvedValue({ data: [{ id: JOB, lead_id: "lead-1", state: "pending" }], error: null });
-    await recoverLeadEscalation({ jobId: JOB, action: "resend", reason: "  the recipients were fixed  " });
-    expect(state.rpc).toHaveBeenCalledWith("request_lead_escalation_recovery", {
-      p_job_id: JOB,
-      p_action: "resend",
-      p_reason: "the recipients were fixed",
-    });
+    await recoverLeadEscalation({ jobId: JOB, action: "resend" });
+    expect(state.rpc).toHaveBeenCalledWith("request_lead_escalation_recovery", { p_job_id: JOB, p_action: "resend" });
   });
 
-  it("refuses malformed input before asking anything: a non-uuid, an unknown action, a reason over 200 characters", async () => {
+  it("a stale browser still posting a reason has it dropped before the database is asked", async () => {
+    reset();
+    state.rpc.mockResolvedValue({ data: [{ id: JOB, lead_id: "lead-1", state: "pending" }], error: null });
+    const stale = { jobId: JOB, action: "resend", reason: "Called Zenobia Quillfeather-Test on +357 99 000 111" };
+    await recoverLeadEscalation(stale as never);
+    expect(state.rpc).toHaveBeenCalledTimes(1);
+    expect(state.rpc.mock.calls[0]![1]).toEqual({ p_job_id: JOB, p_action: "resend" });
+    expect(JSON.stringify(state.rpc.mock.calls)).not.toContain("Zenobia");
+  });
+
+  it("refuses malformed input before asking anything: a non-uuid, an unknown action", async () => {
     reset();
     await expect(recoverLeadEscalation({ jobId: "job-7", action: "retry" })).rejects.toThrow(/invalid/i);
     await expect(recoverLeadEscalation({ jobId: JOB, action: "reset" as never })).rejects.toThrow(/invalid/i);
-    await expect(recoverLeadEscalation({ jobId: JOB, action: "resend", reason: "x".repeat(201) })).rejects.toThrow(/200/);
     expect(state.rpc).not.toHaveBeenCalled();
     expect(state.afters).toHaveLength(0);
   });
@@ -86,7 +91,7 @@ describe("recoverLeadEscalation", () => {
       data: null,
       error: { code: "P0001", message: "The same key is still safe to reuse — use Retry, which cannot send a second copy." },
     });
-    await expect(recoverLeadEscalation({ jobId: JOB, action: "resend", reason: "x" })).rejects.toThrow(/still safe to reuse/);
+    await expect(recoverLeadEscalation({ jobId: JOB, action: "resend" })).rejects.toThrow(/still safe to reuse/);
     expect(state.afters).toHaveLength(0);
     expect(revalidatePath).not.toHaveBeenCalled();
   });
