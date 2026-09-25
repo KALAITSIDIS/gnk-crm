@@ -77,10 +77,11 @@ export async function readEntityTimeline(opts: {
    */
   viewerRole: string;
   /**
-   * The VIEWER's own client. The events come from the system; what a document
-   * is CALLED comes from its row, read as the viewer, so RLS decides whether
-   * they may see it (lib/services/event-context.ts). Never pass the admin
-   * client here — tests/unit/timeline-viewer-client.test.ts checks every caller.
+   * The VIEWER's own client. The events come from the system; what a task or
+   * document is CALLED, and what a viewing's buyer says now, come from their
+   * rows, read as the viewer, so RLS decides whether they may see it
+   * (lib/services/event-context.ts). Never pass the admin client here —
+   * tests/unit/timeline-viewer-client.test.ts checks every caller.
    */
   viewer: SupabaseClient<Database>;
 }): Promise<TimelineRow[]> {

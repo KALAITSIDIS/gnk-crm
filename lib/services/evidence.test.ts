@@ -217,6 +217,9 @@ describe("assembleEvidence prints no typed text from event payloads", () => {
     // feedback on that property — OTHER buyers' words too, in a PDF made to be
     // handed to a third party in a commission dispute.
     const PROPERTY = "aaaaaaaa-1111-4111-8111-111111111111";
+    // real uuids: an id the context reader would actually look up
+    const V1 = "bbbbbbbb-1111-4111-8111-111111111111";
+    const V2 = "bbbbbbbb-2222-4222-8222-222222222222";
     const caller = fakeClient({
       contacts: [{ data: { id: CONTACT, display_name: "Fixture Buyer", phone_e164: null, email: null }, error: null }],
       organizations: [{ data: { name: "Fixture Agency" }, error: null }],
@@ -224,13 +227,25 @@ describe("assembleEvidence prints no typed text from event payloads", () => {
       events: [
         {
           data: [
-            { id: 1, occurred_at: "2026-09-01T10:00:00Z", entity_type: "property", entity_id: PROPERTY, event_type: "viewing_feedback", actor_id: null, payload: { viewing_id: "v1", reference: "PAF0999", rating: 4, liked: "Zenobia Quillfeather loved it", disliked: "price", comment: "call 99 000 111" } },
-            { id: 2, occurred_at: "2026-09-02T10:00:00Z", entity_type: "property", entity_id: PROPERTY, event_type: "viewing_feedback", actor_id: null, payload: { viewing_id: "v2", reference: "PAF0999", rating: 2 } },
+            { id: 1, occurred_at: "2026-09-01T10:00:00Z", entity_type: "property", entity_id: PROPERTY, event_type: "viewing_feedback", actor_id: null, payload: { viewing_id: V1, reference: "PAF0999", rating: 4, liked: "Zenobia Quillfeather loved it", disliked: "price", comment: "call 99 000 111" } },
+            { id: 2, occurred_at: "2026-09-02T10:00:00Z", entity_type: "property", entity_id: PROPERTY, event_type: "viewing_feedback", actor_id: null, payload: { viewing_id: V2, reference: "PAF0999", rating: 2 } },
           ],
           error: null,
         },
       ],
       properties: [{ data: [{ id: PROPERTY, reference: "PAF0999" }], error: null }],
+      // the buyer's own viewings read (none), then — should anything ever wire
+      // the current-feedback reader into the report — rows whose words it would print
+      viewings: [
+        { data: [], error: null },
+        {
+          data: [
+            { id: V1, property_id: PROPERTY, feedback: { rating: 4, liked: null, disliked: null, comment: "Current words of Zenobia" } },
+            { id: V2, property_id: PROPERTY, feedback: { rating: 2, liked: "Current words of Andreas", disliked: null, comment: null } },
+          ],
+          error: null,
+        },
+      ],
     });
     const admin = fakeClient({});
     const out = await assembleEvidence(caller.client as never, admin.client as never, "org-1", {
@@ -241,9 +256,12 @@ describe("assembleEvidence prints no typed text from event payloads", () => {
     if ("errorKey" in out) throw new Error(`assembly failed: ${out.errorKey}`);
     expect(out.rows.map((r) => r.line)).toEqual(["Viewing feedback ★★★★", "Viewing feedback ★★"]);
     const text = JSON.stringify(out.rows);
-    for (const word of ["Zenobia", "Quillfeather", "99 000 111", "price"]) expect(text).not.toContain(word);
+    for (const word of ["Zenobia", "Quillfeather", "99 000 111", "price", "Current words", "Andreas"]) {
+      expect(text).not.toContain(word);
+    }
     // the report attaches no CURRENT feedback either: it reads the buyer's own
-    // viewings for their slips, and never the feedback column
+    // viewings for their slips — once — and never the feedback column
+    expect(caller.served.viewings).toBe(1);
     expect(caller.argsOf("viewings", "select").flat().join(" ")).not.toMatch(/feedback/);
     expect(admin.calls).toEqual([]);
   });

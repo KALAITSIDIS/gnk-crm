@@ -82,7 +82,11 @@ describe("saveViewingFeedback logs the act and the rating, not the buyer's words
     expect(fake.argsOf("viewings", "update")).toEqual([
       [{ feedback: { rating: 4, liked: LIKED, disliked: DISLIKED, comment: COMMENT } }],
     ]);
-    expect(fake.argsOf("viewings", "eq")).toContainEqual(["id", VIEWING_ID]);
+    // the UPDATE itself names THIS viewing — only filters chained after it count
+    // (the read before it carries the same eq, so membership alone proves nothing)
+    const viewingCalls = fake.calls.filter((c) => c.table === "viewings");
+    const afterUpdate = viewingCalls.slice(viewingCalls.findIndex((c) => c.method === "update") + 1);
+    expect(afterUpdate.find((c) => c.method === "eq")?.args).toEqual(["id", VIEWING_ID]);
 
     const rows = inserted(fake);
     expect(rows).toHaveLength(1);

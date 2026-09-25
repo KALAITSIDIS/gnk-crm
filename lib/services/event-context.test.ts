@@ -2,8 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fakeClient, type FakePage } from "@/lib/testing/fake-client";
 
 /**
- * attachCurrentTitles — which task or document an id-only event is about, read
- * from the row AS THE VIEWER (T-event-typed-text-shape).
+ * attachCurrentTitles — which task or document an id-only event is about, and
+ * what a viewing's buyer says now, read from the row AS THE VIEWER
+ * (T-event-typed-text-shape, T-viewing-feedback-shape).
  *
  * What is pinned here is the transport contract: the client it is handed is the
  * one asked (never the admin client), one query per table however many events,
@@ -248,6 +249,22 @@ describe("attachCurrentTitles — a viewing's current feedback", () => {
     ]);
     expect(out.every((e) => e.current_feedback === undefined)).toBe(true);
     expect(JSON.stringify(out.map((e) => e.current_feedback ?? null))).not.toMatch(/Zenobia|Too dark/);
+  });
+
+  it("one viewing named in two letter cases is still ONE viewing — the older save never carries today's words", async () => {
+    // Postgres answers in lowercase whatever it was asked; z.guid() admits an
+    // uppercase id into a payload through a hand-made form post
+    const VX = "5c0ffee0-abcd-4def-8abc-defabcdefabc"; // letters, so the case can differ
+    expect(VX.toUpperCase()).not.toBe(VX);
+    const { fake, client } = viewer({
+      viewings: [{ data: [row(VX, { rating: 5, liked: null, disliked: null, comment: "Today's words" })], error: null }],
+    });
+    const out = await attachCurrentTitles(client, ORG, [
+      fb(VX.toUpperCase(), "2026-09-24T10:00:00Z"), // the newest save
+      fb(VX, "2026-09-20T10:00:00Z"), // an older one
+    ]);
+    expect(out.map((e) => e.current_feedback ?? null)).toEqual(["Today's words", null]);
+    expect(fake.argsOf("viewings", "in")).toEqual([["id", [VX]]]);
   });
 
   it("attaches nothing when the viewing belongs to ANOTHER property than the event's", async () => {

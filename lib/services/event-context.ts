@@ -75,10 +75,16 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type Source = { table: "tasks" | "documents"; id: string };
 
+/**
+ * A uuid from the payload, LOWERCASED: Postgres returns a row's id in
+ * lowercase whatever case it was asked in, and `z.guid()` lets an uppercase
+ * one through to a payload. Without this one key, a viewing named in two cases
+ * is two "newest" events, and an older save could carry today's words.
+ */
 function payloadId(e: ContextEvent, key: string): string | null {
   const p = e.payload;
   const id = p && typeof p === "object" && !Array.isArray(p) ? (p as Record<string, unknown>)[key] : null;
-  return typeof id === "string" && UUID.test(id) ? id : null;
+  return typeof id === "string" && UUID.test(id) ? id.toLowerCase() : null;
 }
 
 function sourceOf(e: ContextEvent): Source | null {
