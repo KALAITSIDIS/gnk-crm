@@ -587,8 +587,13 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string)
   // documents kept under it were destroyed (B11)
   retention_purged: (p, t) =>
     t("retentionPurged", { count: Number(p.documents_destroyed) || 0 }),
-  imported: (p, t) => {
-    const ref = asText(p.reference) ?? asText(p.name);
+  // T-imported-identity-shape: the CSV importers wrote a contact's `name`
+  // (first + last, else the company) and an owner's `name ?? phone`; the line
+  // printed it. Never again, from any payload — the contact's page IS the
+  // contact and the evidence header names it from the row. A PROPERTY's
+  // `reference` is the office's own code and still prints, on a property only.
+  imported: (p, t, entityType) => {
+    const ref = entityType === "property" ? asText(p.reference) : null;
     return ref ? t("importedRef", { ref }) : t("imported");
   },
   // A photo's file name is never read from the payload: new events carry

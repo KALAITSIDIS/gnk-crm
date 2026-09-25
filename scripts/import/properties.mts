@@ -91,8 +91,10 @@ async function ensureOwnerContact(
     .select("id")
     .single();
   if (error) throw new Error(`owner contact: ${error.message}`);
+  // No `name` — nor the phone it fell back to: the row holds them, and the
+  // chain is beyond erasure and correction (T-imported-identity-shape). `as`
+  // says which role created it; the report note below stays local.
   await logImported(supabase, orgId, "contact", created.id, {
-    name: name ?? phone,
     as: "owner",
     batch: report.batch,
   });
