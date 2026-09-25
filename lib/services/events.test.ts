@@ -1,4 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// the describeEvent guard reports to Sentry (T-rescheduled-line-crash)
+const sentry = vi.hoisted(() => ({ captureMessage: vi.fn() }));
+vi.mock("@sentry/nextjs", () => sentry);
+beforeEach(() => sentry.captureMessage.mockClear());
 import { createTranslator } from "next-intl";
 import en from "@/messages/en.json";
 import { describeEvent, describeEventContext, type EventTranslator } from "./events";
@@ -435,7 +440,12 @@ describe("typed text is never printed from a payload (T-event-typed-text-shape)"
       ["media_deleted", "property"],
       ["viewing_feedback", "property"],
     ] as const) {
+      // since the describeEvent guard, a throwing line no longer throws out of
+      // here — it logs "timeline line failed:". That log is the failure now.
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
       expect(() => describeEvent(ev(type, payload, entity), t)).not.toThrow();
+      expect(err.mock.calls.filter((c) => c[0] === "timeline line failed:"), `${type}/${entity}`).toEqual([]);
+      err.mockRestore();
     }
   });
 
@@ -499,6 +509,27 @@ describe("typed text is never printed from a payload (T-event-typed-text-shape)"
     expect(err).toHaveBeenCalledTimes(1);
     expect(err).toHaveBeenCalledWith("timeline line failed:", { event_type: "stage_changed", error: "RangeError" });
     expect(JSON.stringify(err.mock.calls)).not.toMatch(/Zenobia|99000111|boom/);
+    // and Sentry hears of it — tags only, no message text from the error or the payload
+    expect(sentry.captureMessage).toHaveBeenCalledWith("[timeline] line failed", {
+      level: "error",
+      tags: { event_type: "stage_changed", error: "RangeError" },
+    });
+    expect(JSON.stringify(sentry.captureMessage.mock.calls)).not.toMatch(/Zenobia|99000111|boom/);
+    err.mockRestore();
+  });
+
+  it("an unregistered type is reported as 'unregistered' — its name is text anyone typed", () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const throwing: EventTranslator = (key) => {
+      if (key === "offerPrefix") throw new TypeError("x");
+      return `KEY:${key}`;
+    };
+    expect(describeEvent(ev("Zenobia_Quillfeather", {}, "offer"), throwing)).toBe("Zenobia Quillfeather");
+    expect(sentry.captureMessage).toHaveBeenCalledWith("[timeline] line failed", {
+      level: "error",
+      tags: { event_type: "unregistered", error: "TypeError" },
+    });
+    expect(JSON.stringify([...err.mock.calls, ...sentry.captureMessage.mock.calls])).not.toMatch(/Zenobia/);
     err.mockRestore();
   });
 

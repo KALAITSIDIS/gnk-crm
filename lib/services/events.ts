@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Json } from "@/lib/supabase/database.types";
 import { portalById } from "@/lib/services/portals/registry";
@@ -138,18 +139,30 @@ const asDateText = (v: unknown): string | null => {
 };
 
 /**
+ * A payload number, coerced only from a number or a string. `Number(v)` on an
+ * object whose own `toString` / `valueOf` is not a function (jsonb can hold
+ * `{"toString":0}`, and JSON.parse makes it an own property) throws TypeError,
+ * and on a deeply nested array it overflows the stack — any org member may
+ * insert any payload (0071), so every line's numbers go through here
+ * (T-rescheduled-line-crash). Anything else is NaN, which the lines already
+ * treat as missing.
+ */
+const asNumber = (v: unknown): number =>
+  typeof v === "number" ? v : typeof v === "string" && v.trim() ? Number(v) : NaN;
+
+/**
  * The registry's name for a portal id, falling back to the id itself — a row
  * written before a portal was renamed, or for an id the registry no longer
  * carries, still reads rather than rendering blank.
  */
 const portalName = (p: P): string => {
-  const id = String(p.portal ?? "");
+  const id = typeof p.portal === "string" ? p.portal : "";
   return portalById(id)?.name ?? id;
 };
 
 const asMoney = (v: unknown): string | null => {
   if (v === null || v === undefined || v === "") return null;
-  const n = Number(v);
+  const n = asNumber(v);
   if (!Number.isFinite(n)) return null;
   return new Intl.NumberFormat("de-DE", {
     style: "currency",
@@ -326,7 +339,7 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string)
     return t("locationsUpdated");
   },
   evidence_report_generated: (p, t) =>
-    t("evidenceGenerated", { count: Number(p.rows) || 0, ok: p.chain_ok === true ? "yes" : "no" }),
+    t("evidenceGenerated", { count: asNumber(p.rows) || 0, ok: p.chain_ok === true ? "yes" : "no" }),
   viewing_confirmation_generated: (_p, t) => t("viewingConfirmationGenerated"),
   // Same rule as a task's: the title (or the uploaded file's name) is never read
   // from the payload. A live document's CURRENT title arrives as `current_title`
@@ -339,20 +352,20 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string)
   // the MANDATE, like renewal_task_created — it is a fact about the contract
   // ending, and that is the timeline a dispute reads.
   key_recall_task_created: (p, t) =>
-    t("keyRecallTaskCreated", { count: Number(p.keys) || 0 }),
+    t("keyRecallTaskCreated", { count: asNumber(p.keys) || 0 }),
   // Price-drop alert: the first push use of the matching engine. Fired by the
   // property save, not by a cron, because the rules live in TypeScript.
   price_drop_matched: (p, t) =>
-    t("priceDropMatched", { count: Number(p.buyers) || 0 }),
+    t("priceDropMatched", { count: asNumber(p.buyers) || 0 }),
   // The mirror: the property came onto the market rather than changing price.
   new_listing_matched: (p, t) =>
-    t("newListingMatched", { count: Number(p.buyers) || 0 }),
+    t("newListingMatched", { count: asNumber(p.buyers) || 0 }),
   // 0047's nightly warning, actor-null: written by warn_expiring_reservations()
   reservation_expiring_soon: (p, t) =>
-    t("reservationExpiringSoon", { days: Number(p.days) || 2 }),
+    t("reservationExpiringSoon", { days: asNumber(p.days) || 2 }),
   // 0048: a block reprice, aggregated into one alert against the project
   bulk_price_drop_matched: (p, t) =>
-    t("bulkPriceDropMatched", { count: Number(p.buyers) || 0 }),
+    t("bulkPriceDropMatched", { count: asNumber(p.buyers) || 0 }),
   // 0050 payment schedules. Amounts are frozen at apply time, so the event
   // records what was quoted rather than what a later price would say.
   reservation_schedule_applied: (p, t) => {
@@ -363,7 +376,7 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string)
     const amount = asMoney(p.total);
     return plan && amount
       ? t("scheduleAppliedPlan", { plan, amount })
-      : t("scheduleApplied", { count: Number(p.lines) || 0 });
+      : t("scheduleApplied", { count: asNumber(p.lines) || 0 });
   },
   reservation_schedule_cleared: (_p, t) => t("scheduleCleared"),
   installment_paid: (p, t) => {
@@ -393,7 +406,7 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string)
   },
   installment_due_soon: (p, t) => {
     const label = asText(p.label) ?? "";
-    const days = Number(p.days);
+    const days = asNumber(p.days);
     if (!Number.isFinite(days)) return t("installmentDueSoon", { days: 0, label });
     return days < 0
       ? t("installmentOverdue", { days: Math.abs(days), label })
@@ -454,26 +467,26 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string)
   opened: (p, t) => {
     if (asText(p.kind) === "availability") {
       return t("shareLinkAvailabilityOpened", {
-        available: Number(p.available_count) || 0,
-        total: Number(p.unit_count) || 0,
+        available: asNumber(p.available_count) || 0,
+        total: asNumber(p.unit_count) || 0,
       });
     }
-    const count = Number(p.property_count) || 0;
+    const count = asNumber(p.property_count) || 0;
     return t("shareLinkOpened", { count });
   },
   // Shared by BOTH kinds: revokeShareLink always writes views_at_revocation,
   // so this one needs no branch.
   revoked: (p, t) => {
-    const views = Number(p.views_at_revocation) || 0;
+    const views = asNumber(p.views_at_revocation) || 0;
     return t("shareLinkRevoked", { count: views });
   },
   // B7 follow-up nudges (0020). One event type for both rules; the line is
   // chosen from payload.kind, like stages_updated / locations_updated.
   followup_task_created: (p, t) => {
     const kind = asText(p.kind);
-    if (kind === "deal_no_contact") return t("followupNoContact", { days: Number(p.days) || 14 });
+    if (kind === "deal_no_contact") return t("followupNoContact", { days: asNumber(p.days) || 14 });
     if (kind === "viewing_feedback")
-      return t("followupViewingFeedback", { hours: Number(p.hours) || 48 });
+      return t("followupViewingFeedback", { hours: asNumber(p.hours) || 48 });
     // 0075: the buyer who no-showed is the one most in need of a call
     if (kind === "viewing_no_show") return t("followupViewingNoShow");
     // 0076: a listing still reading on-market after the thing that should have
@@ -531,7 +544,7 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string)
     return t("superseded");
   },
   route_updated: (p, t) => {
-    const count = Number(p.stops) || 0;
+    const count = asNumber(p.stops) || 0;
     const date = asText(p.route_date);
     return date ? t("routeUpdatedDate", { count, date }) : t("routeUpdated", { count });
   },
@@ -567,7 +580,7 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string)
   // insert any payload, and "★".repeat(1e9) throws RangeError, which took the
   // property page, the admin feed and evidence generation down with it.
   viewing_feedback: (p, t) => {
-    const rating = Number(p.rating);
+    const rating = asNumber(p.rating);
     return Number.isInteger(rating) && rating >= 1 && rating <= 5
       ? t("viewingFeedbackStars", { stars: "★".repeat(rating) })
       : t("viewingFeedback");
@@ -590,7 +603,7 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string)
   // second stage of erasure: the AML retention duty ran out and the KYC
   // documents kept under it were destroyed (B11)
   retention_purged: (p, t) =>
-    t("retentionPurged", { count: Number(p.documents_destroyed) || 0 }),
+    t("retentionPurged", { count: asNumber(p.documents_destroyed) || 0 }),
   // T-imported-identity-shape: the CSV importers wrote a contact's `name`
   // (first + last, else the company) and an owner's `name ?? phone`; the line
   // printed it. Never again, from any payload — the contact's page IS the
@@ -624,7 +637,7 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string)
     return p.alt === null ? t("mediaAltCleared") : t("mediaAltSet");
   },
   publish_override: (p, t) =>
-    t("publishOverride", { score: Number(p.score) || 0, threshold: Number(p.threshold) || 0 }),
+    t("publishOverride", { score: asNumber(p.score) || 0, threshold: asNumber(p.threshold) || 0 }),
   // 0095 portal syndication. The first two sit on the property — its timeline
   // is where "who put this on JamesEdition, and when" is asked; the other four
   // are org-level, because a connection belongs to the organisation and every
@@ -646,7 +659,7 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string)
   // stage names/channels), `count` the rows written. Filters, if any, live in
   // the payload for the audit record but are not shown on the one-line timeline.
   exported: (p, t) =>
-    t("exported", { count: Number(p.count) || 0, list: asText(p.list) ?? "records" }),
+    t("exported", { count: asNumber(p.count) || 0, list: asText(p.list) ?? "records" }),
 };
 
 /** Entity prefixes for feeds that mix entities (deal page merges offer events). */
@@ -660,30 +673,43 @@ const ENTITY_PREFIX_KEY: Partial<Record<string, string>> = {
  * translator; the commission evidence record passes an English one so the
  * preview matches its deliberately-English PDF.
  *
- * A line that throws reads as the bare event type (T-rescheduled-line-crash).
- * Every line trusts its payload's types, any org member may insert any payload
- * (0071), and an event can never be deleted from the hash chain — so one
- * crashing event would take its timeline, the admin feed and the evidence
- * report down for good. The log names the type and the error's NAME only: the
- * message can quote the payload. This is a last resort, not the fix —
- * lib/services/event-lines-crafted-payload.test.ts fails for any line that
- * ever reaches it.
+ * Any org member may insert any event, with any type and payload (0071), and an
+ * event can never be deleted from the hash chain — so one event that breaks
+ * its line would take its timeline, the admin feed and the evidence report
+ * down for good (T-rescheduled-line-crash). Hence:
+ * - only a type the registry OWNS is rendered: `EVENT_LINES["constructor"]` is
+ *   Object, whose "line" is an object React cannot render (the same for the
+ *   entity prefix map);
+ * - a line that throws, or returns anything but a string, reads as the bare
+ *   event type. The log and the Sentry report name the type (a registered one
+ *   only — an unregistered type is text anyone typed) and the error's NAME
+ *   only: a message can quote the payload.
+ * That is a last resort, not the fix: lib/services/event-lines-crafted-payload.test.ts
+ * fails for any registered line that ever reaches it.
  */
 export function describeEvent(
   e: Pick<TimelineEvent, "entity_type" | "event_type" | "payload">,
   t: EventTranslator,
 ): string {
-  const bare = e.event_type.replace(/_/g, " ");
+  const bare = String(e.event_type ?? "").replace(/_/g, " ");
+  const render = Object.hasOwn(EVENT_LINES, e.event_type) ? EVENT_LINES[e.event_type] : undefined;
   try {
     const p = asObject(e.payload);
-    const line = EVENT_LINES[e.event_type]?.(p, t, e.entity_type) ?? bare;
-    const prefixKey = ENTITY_PREFIX_KEY[e.entity_type];
+    const line = render ? render(p, t, e.entity_type) : bare;
+    if (typeof line !== "string") throw new TypeError("a timeline line must be a string");
+    const prefixKey = Object.hasOwn(ENTITY_PREFIX_KEY, e.entity_type) ? ENTITY_PREFIX_KEY[e.entity_type] : undefined;
     return prefixKey ? `${t(prefixKey)}: ${line}` : line;
   } catch (err) {
-    console.error("timeline line failed:", {
-      event_type: e.event_type,
+    const detail = {
+      event_type: render ? e.event_type : "unregistered",
       error: err instanceof Error ? err.name : typeof err,
-    });
+    };
+    console.error("timeline line failed:", detail);
+    try {
+      Sentry.captureMessage("[timeline] line failed", { level: "error", tags: detail });
+    } catch {
+      // reporting must never be what takes the page down
+    }
     return bare;
   }
 }

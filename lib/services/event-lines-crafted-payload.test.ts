@@ -63,7 +63,38 @@ const CRAFTED: ReadonlyArray<readonly [string, unknown]> = [
   ["a nested object", { from: "x", to: { a: [1] } }],
   ["an empty array", []],
   ["an array", ["x", 1, null]],
+  // found by the review: JSON.parse makes these OWN data properties, and
+  // Number() / String() / a template literal on them throw TypeError
+  ["an object with its own toString", JSON.parse('{"toString":0}')],
+  ["an object with toString and valueOf", JSON.parse('{"toString":0,"valueOf":0}')],
+  // String([[[…]]]) recurses once per level: a deep enough array overflows the stack
+  ["a deeply nested array", JSON.parse("[".repeat(5000) + "]".repeat(5000))],
+  // a key that is absent reads as undefined
+  ["an absent value", undefined],
+  // a string used to look something up in a map reaches Object.prototype
+  ['"constructor"', "constructor"],
+  ['"__proto__"', "__proto__"],
+  ['"toString"', "toString"],
+  ['"hasOwnProperty"', "hasOwnProperty"],
 ];
+
+/**
+ * The payload keys a line compares with a string literal before it decides
+ * what to read next — `reason`, `kind`, `action` … — and every literal they
+ * are compared with, both read from the source. A uniform crafted value never
+ * equals "availability", so without these the branches behind a discriminator
+ * (and the fields only they read) were never reached.
+ */
+function discriminators(): { keys: Set<string>; literals: string[] } {
+  const keys = new Set<string>();
+  for (const m of source.matchAll(/\bp\.([a-z_]+)\s*(?:===|!==)\s*"/g)) keys.add(m[1]);
+  for (const m of source.matchAll(/asText\(p\.([a-z_]+)\)\s*(?:===|!==)\s*"/g)) keys.add(m[1]);
+  for (const m of source.matchAll(/const ([a-zA-Z]+) = asText\(p\.([a-z_]+)\)/g)) {
+    if (new RegExp(`\\b${m[1]}\\s*(?:===|!==)\\s*"`).test(source)) keys.add(m[2]);
+  }
+  const literals = [...new Set([...source.matchAll(/(?:===|!==)\s*"([^"]+)"/g)].map((m) => m[1]))];
+  return { keys, literals };
+}
 
 /** A payload whose every key reads as `value`. */
 const everyKey = (value: unknown) =>
@@ -115,11 +146,18 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
-function sweep(payloadFor: () => unknown): string[] {
+function sweep(
+  payloadFor: () => unknown,
+  opts: {
+    types?: readonly string[];
+    entities?: readonly string[];
+    translators?: ReadonlyArray<readonly [string, EventTranslator]>;
+  } = {},
+): string[] {
   const found: string[] = [];
-  for (const event_type of registeredTypes()) {
-    for (const entity_type of ENTITY_TYPES) {
-      for (const [locale, t] of translators) {
+  for (const event_type of opts.types ?? registeredTypes()) {
+    for (const entity_type of opts.entities ?? ENTITY_TYPES) {
+      for (const [locale, t] of opts.translators ?? translators) {
         guardHits = [];
         try {
           const line = describeEvent({ entity_type, event_type, payload: payloadFor() as never }, t);
@@ -150,6 +188,63 @@ describe("no timeline line throws on a crafted payload", () => {
   it.each(CRAFTED.map((_, i) => [i] as const))("every registered line survives mixed crafted fields (rotation %i)", (shift) => {
     expect(sweep(() => mixedKeys(shift))).toEqual([]);
   });
+
+  it.each([
+    ["an empty object", {}],
+    ["null", null],
+    ["an array", []],
+    ["a string", "payload"],
+  ] as const)("every registered line survives %s as the whole payload", (_name, payload: unknown) => {
+    expect(sweep(() => payload)).toEqual([]);
+  });
+
+  describe("behind a discriminator", () => {
+    const { keys, literals } = discriminators();
+
+    it("reads the discriminators (a broken reader must not pass as an empty sweep)", () => {
+      expect([...keys]).toEqual(expect.arrayContaining(["kind", "reason", "action"]));
+      expect(literals).toEqual(expect.arrayContaining(["availability", "installment_due"]));
+      expect(literals.length).toBeGreaterThan(15);
+    });
+
+    // the discriminator keys answer the literal, every other key a crafted
+    // value; English and the entities lines branch on, to keep this fast (the
+    // uniform sweeps above cover every entity and locale)
+    const ENTITIES = ["property", "contact", "deal", "offer", "task", "lead", "share_link", "viewing"];
+    it.each(literals.map((l) => [l] as const))("every line survives %s with crafted fields beside it", (literal) => {
+      const found: string[] = [];
+      for (const [, value] of CRAFTED) {
+        const payload = () =>
+          new Proxy({} as Record<string, unknown>, {
+            get: (_t, key) => (typeof key !== "string" ? undefined : keys.has(key) ? literal : value),
+            has: () => true,
+          });
+        found.push(...sweep(payload, { entities: ENTITIES, translators: [translators[0]] }));
+      }
+      expect([...new Set(found)]).toEqual([]);
+    });
+  });
+
+  it.each(["constructor", "__proto__", "toString", "hasOwnProperty", "valueOf", "prototype"])(
+    "an event_type or entity_type named %s reads as a string, never an object, and never reaches the guard",
+    (name) => {
+      for (const [, t] of translators) {
+        for (const e of [
+          { entity_type: "property", event_type: name, payload: { from: "x" } },
+          { entity_type: name, event_type: "stage_changed", payload: { from: "a", to: "b" } },
+          { entity_type: name, event_type: name, payload: {} },
+        ]) {
+          guardHits = [];
+          const line = describeEvent(e as never, t);
+          expect(typeof line, `${e.entity_type}/${e.event_type}`).toBe("string");
+          expect(guardHits, `${e.entity_type}/${e.event_type}`).toEqual([]);
+          // nothing of Object.prototype leaks into the text either (a prefix
+          // looked up by name would print a function's source)
+          expect(line, `${e.entity_type}/${e.event_type}`).not.toMatch(/function|native code|\[object|=>/);
+        }
+      }
+    },
+  );
 
   it("a real date beside a word — the mix that uniform values cannot reach — reads bare", () => {
     const [, t] = translators[0];

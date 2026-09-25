@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatResponseMinutes } from "./format";
+import { formatDate, formatDateTime, formatResponseMinutes } from "./format";
 
 describe("formatResponseMinutes (0042)", () => {
   it("renders the three values verified on the dashboard", () => {
@@ -45,5 +45,30 @@ describe("formatResponseMinutes (0042)", () => {
     // 0042 filters these out in SQL, so this is belt-and-braces: a corrected
     // clock must never render as a negative duration if one ever reaches here.
     expect(formatResponseMinutes(-5)).toBe("—");
+  });
+});
+
+/**
+ * T-rescheduled-line-crash: a date that cannot be built renders as an em dash,
+ * as formatNumber / formatArea already do — never a thrown RangeError. Intl's
+ * format(new Date("x")) throws, and a far-future timestamptz (Postgres goes
+ * to 294276 AD; JavaScript cannot parse "200000-01-01T00:00:00+00:00") on a
+ * crafted event's occurred_at would take the timeline, the admin feed and the
+ * evidence report down with it.
+ */
+describe("formatDateTime / formatDate never throw on an unbuildable date", () => {
+  it.each([
+    ["a word", "x"],
+    ["an impossible date", "2026-13-45T99:99:00Z"],
+    ["a year JavaScript cannot parse, as PostgREST returns it", "200000-01-01T00:00:00+00:00"],
+    ["an invalid Date object", new Date(Number.NaN)],
+  ] as const)("%s reads as an em dash", (_name, v) => {
+    expect(formatDateTime(v)).toBe("—");
+    expect(formatDate(v)).toBe("—");
+  });
+
+  it("a real timestamp still formats", () => {
+    expect(formatDateTime("2026-09-25T07:00:00Z")).toMatch(/2026/);
+    expect(formatDate("2026-09-25T07:00:00Z")).toMatch(/2026/);
   });
 });
