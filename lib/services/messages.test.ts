@@ -46,7 +46,6 @@ const SAMPLE_PARAMS = {
   to: "Qualified",
   name: "A. Name",
   channel: "phone",
-  holder: "A. Agent",
   code: "K12",
   title: "Doc title",
   email: "a@b.com",

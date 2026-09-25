@@ -146,11 +146,32 @@ describe("describeEvent registry (T3.5) — English parity", () => {
     ).toBe("Lead corrected — reopened, first-response reset");
   });
 
-  it("renders key movements with code and holder", () => {
-    expect(
-      describeEvent(ev("key_checkout", { key_code: "K12", holder: "A. Agent" }, "key"), t),
-    ).toBe("Key K12 checked out to A. Agent");
+  it("renders key movements with the key's code — never a holder (T-key-holder-shape)", () => {
+    expect(describeEvent(ev("key_checkout", { key_code: "K12", movement_id: "m1" }, "key"), t)).toBe(
+      "Key K12 checked out",
+    );
     expect(describeEvent(ev("key_lost", { key_code: "K12" }, "key"), t)).toBe("Key K12 marked lost");
+  });
+
+  // The RPC (0013) wrote `{ key_code, holder }`: an external holder's or the
+  // OWNER's typed name, or a staff member's full name. The movement row keeps
+  // it, and the History dialog shows it from there; the line prints it from no
+  // payload — old, new, or one inserted by hand (events_insert, 0071).
+  it.each([
+    ["checkout (legacy, typed holder)", "key_checkout", { key_code: "K12", holder: "Zenobia Keyholder" }, "Key K12 checked out"],
+    ["transfer (legacy, the owner)", "key_transfer", { key_code: "K12", holder: "Andreas Ownerkey" }, "Key K12 handed to owner"],
+    ["lost (legacy, the cached holder)", "key_lost", { key_code: "K12", holder: "Andreas Ownerkey" }, "Key K12 marked lost"],
+    ["return (legacy)", "key_return", { key_code: "K12", holder: "Zenobia Keyholder" }, "Key K12 returned to office"],
+    ["checkout with a holder and no code", "key_checkout", { holder: "Zenobia Keyholder" }, "Key checked out"],
+    ["transfer with a holder and no code", "key_transfer", { holder: "Andreas Ownerkey" }, "Key handed to owner"],
+    ["lost with a holder and no code", "key_lost", { holder: "Andreas Ownerkey" }, "Key marked lost"],
+    ["checkout (new)", "key_checkout", { key_code: "K12", movement_id: "m1" }, "Key K12 checked out"],
+    ["transfer (new)", "key_transfer", { key_code: "K12", movement_id: "m2" }, "Key K12 handed to owner"],
+    ["lost (new)", "key_lost", { key_code: "K12", movement_id: "m3" }, "Key K12 marked lost"],
+  ] as const)("a key %s line names no holder", (_name, type, payload, line) => {
+    const out = describeEvent(ev(type, payload, "key"), t);
+    expect(out).toBe(line);
+    for (const w of ["Zenobia", "Keyholder", "Andreas", "Ownerkey"]) expect(out).not.toContain(w);
   });
 
   it("renders the evidence-generated line with plural and chain state", () => {
