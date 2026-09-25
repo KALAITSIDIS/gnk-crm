@@ -2589,7 +2589,16 @@ VERIFY, run before starting.
   **VERIFY** — one per action, and no hit means THAT action is still open:
   `grep -n -A12 'status: "lost",' lib/actions/deals.ts | grep 'eq("status", "open")'` ·
   `grep -n -A12 'status: "won",' lib/actions/deals.ts | grep 'eq("status", "open")'`.
-- **A crafted `rescheduled` event crashes three pages, S.** The same class T-viewing-feedback-shape closed for
+- ~~**A crafted `rescheduled` event crashes three pages, S.**~~ **FIXED 2026-09-25 — DECISIONS
+  `T-rescheduled-line-crash`: not one line but a class. `rescheduled` formats only parseable dates;
+  every line's numbers go through `asNumber` (a jsonb object with its own `toString`, or a deep array,
+  broke 26 more lines); `describeEvent` renders only a type the registry OWNS (`constructor` returned
+  `Object`), insists on a string, and a throwing line reads as its bare type with a tags-only Sentry
+  report; `formatDateTime` / `formatDate` read an unbuildable date as "—" (a crafted far-future
+  `occurred_at`). A sweep feeds every registered line crafted values and fails on a throw or a guard hit.
+  Hosted held 0 `rescheduled` events.** **VERIFY (fixed):** `grep -n "asDateText(p.from)" lib/services/events.ts`
+  and `grep -n "Object.hasOwn(EVENT_LINES" lib/services/events.ts` — both must hit. (original) The same class
+  T-viewing-feedback-shape closed for
   the rating: the line (`lib/services/events.ts`, WF-1) passes any non-blank `from` / `to` to
   `formatDateTime` (`lib/utils/format.ts`), whose `Intl.DateTimeFormat#format(new Date("x"))` throws
   `RangeError: Invalid time value`. Any active org member may insert any payload (`events_insert`, 0071),
@@ -2600,6 +2609,20 @@ VERIFY, run before starting.
   line in `describeEvent`, since every renderer trusts its payload's types. **VERIFY:**
   `grep -n -A8 "rescheduled: (p, t)" lib/services/events.ts | grep -E "isNaN|Date.parse|valid"` — no hit
   means still open.
+- **A crafted event's `occurred_at` is bounded only in the renderer, S (migration).** Found by
+  T-rescheduled-line-crash's review. `events_insert` (0071) lets a member set `occurred_at`; a far-future
+  timestamptz (Postgres goes to 294276 AD) comes back from PostgREST as text JavaScript cannot parse, and
+  `formatDateTime` threw on it — the timeline, the admin feed ("latest 10" orders by it, so a year-200000 row
+  sits on top for good) and the evidence report. The renderer now prints "—"; the row still sorts first and
+  skews `occurred_at_inversion`. Decide: a BEFORE INSERT that stamps `now()` for session writers (the restore
+  path runs with triggers off), or a CHECK bounding it near `now()`. **VERIFY:** `grep -ln "occurred_at"
+  supabase/migrations/*.sql | xargs grep -ln "events_occurred_at_bound\|occurred_at := now()"` — no hit means open.
+- **One crafted `note_id` blanks every note on a timeline, S.** `attachNotes` (`lib/services/entity-timeline.ts`)
+  sends every `conversation_logged` payload's `note_id` to `.in("id", …)` without a uuid check, so one
+  malformed id fails the whole read and every note body on that timeline disappears while the event is in
+  the latest 50. Filter with the uuid test and lowercasing `event-context.ts`'s `payloadId` uses. Found by
+  T-rescheduled-line-crash's review. **VERIFY:** `grep -n -A12 "async function attachNotes"
+  lib/services/entity-timeline.ts | grep -i uuid` — no hit means open.
 - **Erasure leaves a lost deal's or lead's typed reason, a reservation's release reason and notes, a
   viewing's feedback, and a key's typed holder, on the row, S — NEEDS AN OPERATOR DECISION.** Contact
   erasure blanks notes, lead messages and conversation notes but never `deals.lost_reason` or
