@@ -59,7 +59,6 @@ const SAMPLE_PARAMS = {
   note: "a note",
   retention: "2031-07-21",
   ref: "PAF0001",
-  file: "photo.jpg",
   score: 40,
   threshold: 60,
   list: "contacts",

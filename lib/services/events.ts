@@ -150,14 +150,14 @@ const asMoney = (v: unknown): string | null => {
  * Each entry chooses a message key (and its interpolation values) from the
  * payload; the fixed text lives in messages/*.json under `events.*`. Only the
  * template is translated — interpolated data (names, channels, stage names,
- * formatted money, and still some typed text: a photograph's file name,
+ * formatted money, a photo's published alt text, and still some typed text:
  * viewing feedback — BACKLOG) stays as stored. A task's title, a document's
- * title or file name, a deal's or lead's lost reason and a reservation's
- * release reason are NOT interpolated, from new payloads or old ones
- * (T-event-typed-text-shape, T-lead-lost-reason-shape,
- * T-reservation-release-reason-shape): the line states the fact, and which
- * task or document it was arrives separately as `current_title`, read from its
- * row.
+ * title or file name, a deal's or lead's lost reason, a reservation's release
+ * reason and a photo's file name are NOT interpolated, from new payloads or
+ * old ones (T-event-typed-text-shape, T-lead-lost-reason-shape,
+ * T-reservation-release-reason-shape, T-media-file-name-shape): the line
+ * states the fact, and which task or document it was arrives separately as
+ * `current_title`, read from its row.
  *
  * `entityType` is the event's entity, for the lines that read differently by
  * entity: `completed` / `reopened` say "Task …" only for a task.
@@ -581,14 +581,14 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string)
     const ref = asText(p.reference) ?? asText(p.name);
     return ref ? t("importedRef", { ref }) : t("imported");
   },
-  media_uploaded: (p, t) => {
-    const file = asText(p.file);
-    return file ? t("mediaUploadedFile", { file }) : t("mediaUploaded");
-  },
-  media_deleted: (p, t) => {
-    const file = asText(p.file);
-    return file ? t("mediaDeletedFile", { file }) : t("mediaDeleted");
-  },
+  // A photo's file name is never read from the payload: new events carry
+  // none (T-media-file-name-shape), and an older event's copy is not
+  // reprinted — whatever the uploader's machine called the file, in a chain
+  // nothing can erase. The row never stored a name, so there is none to read
+  // back; the line is the fact, as `media_cover_set` and `media_reordered`
+  // have always been.
+  media_uploaded: (_p, t) => t("mediaUploaded"),
+  media_deleted: (_p, t) => t("mediaDeleted"),
   // written by the price_history DB trigger (T1.7); from/to are numeric
   price_changed: (p, t) => {
     const from = asMoney(p.from);

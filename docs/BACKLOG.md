@@ -2467,9 +2467,13 @@ VERIFY, run before starting.
     the reason and the Reservation tab's "Earlier holds" prints it; the line prints no reason from any
     payload. Hosted held 0 such events — no chain copy exists.** (original) `lib/actions/reservations.ts`:
     `{ reason: release_reason }`, free text up to 300, printed by `reservationStatusReason`;
-  - a photograph's FILE NAME (`lib/actions/media.ts` and `scripts/import/media.mts`: `media_uploaded`
-    `{ file }`), printed by `mediaUploadedFile`; `deleteMedia` reads older `media_uploaded` payloads with the
-    admin client and copies `file` forward into `media_deleted`;
+  - ~~a photograph's FILE NAME~~ **FIXED 2026-09-25 — DECISIONS `T-media-file-name-shape`: `media_uploaded` is
+    `{ media_id, kind, watermarked, content_sha256 }` (the importer's `{ media_id, watermarked, source }`),
+    `media_deleted` is `{ media_id, content_sha256?, bulk? }` read from the deleted row, and `deleteMedia` no
+    longer reads old events at all; the lines print no file name from any payload. Hosted keeps 35 upload and
+    29 delete events with a name (counts only) — the chain cannot be edited.** (original) `lib/actions/media.ts`
+    and `scripts/import/media.mts`: `media_uploaded` `{ file }`, printed by `mediaUploadedFile`;
+    `deleteMedia` read older `media_uploaded` payloads with the admin client and copied `file` forward;
   - viewing feedback (`lib/actions/viewings.ts`: `viewing_feedback` `{ comment, liked, disliked }`),
     printed by `viewingFeedback*` and passed by the payload scan's `REVIEWED` map;
   - an escalation RECOVERY reason — SQL, found by T-reservation-release-reason-shape's scouts:
@@ -2477,13 +2481,28 @@ VERIFY, run before starting.
     characters, required for a resend; `recoverLeadEscalation` in `lib/actions/leads.ts`) into the
     `lead_escalation` event as `'reason', v_reason`. No line prints it (no `lead_escalation` entry in
     `EVENT_LINES`), but the chain holds it, and the TypeScript payload scan cannot see SQL. The fix is a
-    forward migration re-creating the function without the key (a return shape is untouched).
-  **VERIFY** — one grep per writer, and a hit means THAT writer is still open (the lead and reservation
-  ones are fixed and must stay silent): `grep -n "payload: { reason: parsed.data.reason" lib/actions/leads.ts` ·
+    forward migration re-creating the function without the key (a return shape is untouched);
+  - an IMPORTED person's name or phone — found by T-media-file-name-shape's scouts and review:
+    `scripts/import/contacts.mts` logs `imported` with `{ name }`, built from the row's first and last name
+    (or company name), and `scripts/import/properties.mts` logs the owner contact it creates with
+    `{ name: name ?? phone, as: "owner" }` — the PHONE NUMBER when no name was given. `importedRef` prints
+    it on the contact's Activity tab and in an un-narrowed evidence report. That is identity in the chain,
+    which T-merged-event-ids-only ruled out for `merged`. (A property import's `reference` is the office's
+    own code, not typed text; the default `batch` label is the CSV's own file name, the operator's.)
+  **VERIFY** — one grep per writer, and a hit means THAT writer is still open (the lead, reservation and
+  photo ones are fixed and must stay silent): `grep -n "payload: { reason: parsed.data.reason" lib/actions/leads.ts` ·
   `grep -n "reason: release_reason" lib/actions/reservations.ts` ·
   `grep -nE "file: (file\.)?name," lib/actions/media.ts scripts/import/media.mts` ·
   `grep -n "\.\.\.feedback," lib/actions/viewings.ts` ·
-  `grep -ln "function public.request_lead_escalation_recovery" supabase/migrations/*.sql | tail -1 | xargs grep -n "'reason', v_reason"`.
+  `grep -ln "function public.request_lead_escalation_recovery" supabase/migrations/*.sql | tail -1 | xargs grep -n "'reason', v_reason"` ·
+  `grep -n "name: detail" scripts/import/contacts.mts` · `grep -n "name: name ?? phone" scripts/import/properties.mts`.
+- **NOTE — a photo's alt text stays in its event, by the marketing-copy rule.** `setMediaAlt` logs `media_alt_set`
+  `{ media_id, alt }` and the line prints it. It is staff-written copy PUBLISHED through the feed and the portals,
+  which T-updated-event-shape-only keeps by value on purpose ("what was advertised when is evidence in a
+  dispute"); T-media-file-name-shape left it alone. Two facts for whoever revisits it: `media_alt_set` is
+  missing from the evidence report's `MEDIA_NOISE` (`lib/services/evidence.ts`), so alt text reaches a
+  property-scoped report — never a recorded decision — and the rule's own escape hatch applies if an alt is
+  ever found naming a person.
 - **`markDealLost` and `markDealWon` do not fold the open-status check into their UPDATE, S.** Each reads
   `status = 'open'` and then updates `.eq("id", dealId)` only (`lib/actions/deals.ts`), so a double submit,
   or Won and Lost at the same moment, can both pass: two terminal events in the chain, and a won deal
