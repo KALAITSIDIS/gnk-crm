@@ -256,13 +256,13 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string)
     const name = asText(p.signer_name);
     return name ? t("slipSignedBy", { name }) : t("slipSigned");
   },
+  // A key's HOLDER is never read from the payload (T-key-holder-shape): 0013
+  // logged the typed name of an external holder or the property's owner, or a
+  // staff member's full name, and 0116 logs `{ key_code, movement_id }`. The
+  // movement row keeps the holder; the History dialog shows it from there.
   key_checkout: (p, t) => {
     const code = asText(p.key_code);
-    const holder = asText(p.holder);
-    if (code && holder) return t("keyCheckoutCodeHolder", { code, holder });
-    if (code) return t("keyCheckoutCode", { code });
-    if (holder) return t("keyCheckoutHolder", { holder });
-    return t("keyCheckout");
+    return code ? t("keyCheckoutCode", { code }) : t("keyCheckout");
   },
   key_return: (p, t) => {
     const code = asText(p.key_code);
@@ -270,19 +270,11 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string)
   },
   key_transfer: (p, t) => {
     const code = asText(p.key_code);
-    const holder = asText(p.holder);
-    if (code && holder) return t("keyTransferCodeHolder", { code, holder });
-    if (code) return t("keyTransferCode", { code });
-    if (holder) return t("keyTransferHolder", { holder });
-    return t("keyTransfer");
+    return code ? t("keyTransferCode", { code }) : t("keyTransfer");
   },
   key_lost: (p, t) => {
     const code = asText(p.key_code);
-    const holder = asText(p.holder);
-    if (code && holder) return t("keyLostCodeHolder", { code, holder });
-    if (code) return t("keyLostCode", { code });
-    if (holder) return t("keyLostHolder", { holder });
-    return t("keyLost");
+    return code ? t("keyLostCode", { code }) : t("keyLost");
   },
   // A task's title is never read from the payload: new events carry none
   // (T-event-typed-text-shape) and an older event's copy is not reprinted. The
