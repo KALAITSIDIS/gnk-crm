@@ -159,10 +159,11 @@ const asMoney = (v: unknown): string | null => {
  * formatted money, a photo's published alt text) stays as stored. A task's
  * title, a document's title or file name, a deal's or lead's lost reason, a
  * reservation's release reason, a photo's file name, a buyer's viewing
- * feedback and an imported contact's name or phone are NOT interpolated, from
- * new payloads or old ones (T-event-typed-text-shape, T-lead-lost-reason-shape,
- * T-reservation-release-reason-shape, T-media-file-name-shape,
- * T-viewing-feedback-shape, T-imported-identity-shape): the line states the
+ * feedback, an imported contact's name or phone and a key's holder are NOT
+ * interpolated, from new payloads or old ones (T-event-typed-text-shape,
+ * T-lead-lost-reason-shape, T-reservation-release-reason-shape,
+ * T-media-file-name-shape, T-viewing-feedback-shape, T-imported-identity-shape,
+ * T-key-holder-shape): the line states the
  * fact, and which task or document it was — or what the buyer says now —
  * arrives separately as `current_title` / `current_feedback`, read from its row.
  *

@@ -2508,9 +2508,13 @@ VERIFY, run before starting.
   `grep -n "reason: release_reason" lib/actions/reservations.ts` ·
   `grep -nE "file: (file\.)?name," lib/actions/media.ts scripts/import/media.mts` ·
   `grep -n -A12 'eventType: "viewing_feedback"' lib/actions/viewings.ts | grep -v "//" | grep -E "liked|comment|\.\.\.feedback"` ·
-  `grep -ln "function public.request_lead_escalation_recovery" supabase/migrations/*.sql | tail -1 | xargs grep -n "'reason', v_reason"` ·
+  `grep -ln "function public.request_lead_escalation_recovery" supabase/migrations/*.sql | tail -1 | xargs grep -n "'reason', v_reason" | grep -v -- "--"` ·
   `grep -n "name: detail" scripts/import/contacts.mts` · `grep -n "name: name ?? phone" scripts/import/properties.mts`.
-- **A key's typed HOLDER goes into the chain — an owner's name on a transfer, S/M (SQL).** Found by
+- ~~**A key's typed HOLDER goes into the chain — an owner's name on a transfer, S/M (SQL).**~~ **FIXED
+  2026-09-25 — DECISIONS `T-key-holder-shape`: migration 0116 re-creates `record_key_movement` from 0013's
+  text with the event payload `{ key_code, movement_id }` (the row keeps the holder); the key lines read no
+  holder from any payload. Hosted (counts only): 1 checkout + 1 return carry a typed name, none a staff
+  name — they stay in the chain and are no longer printed.** (original) Found by
   T-imported-identity-shape's scouting critic. `record_key_movement` (0013, never re-created) logs key events
   with `jsonb_build_object('key_code', …, 'holder', v_holder_name)`, and `v_holder_name` is the free-typed
   `p_holder_name` whenever no staff profile is given: `transferKey` (`lib/actions/keys.ts`, "hand a key to
@@ -2521,7 +2525,34 @@ VERIFY, run before starting.
   with an ids/shape payload (e.g. `holder_profile_id`, `has_holder_name`; it `returns void`, so no return shape
   moves) and lines that stop reading `holder`. **Hosted (read-only, counts only, 2026-09-25): 4 key events, 2
   with a non-blank `holder`.** **VERIFY:** `grep -ln "function public.record_key_movement" supabase/migrations/*.sql |
-  tail -1 | xargs grep -n "'holder', v_holder_name"` — a hit means still open.
+  tail -1 | xargs grep -n "'holder', v_holder_name" | grep -v -- "--"` — a hit means still open.
+- **`record_key_movement` has no second-factor check, S (SQL).** Since 0059 `mfa_satisfied()` passes only an
+  aal2 JWT, and every RPC since 0101 refuses without it; 0013 (and 0116, which changed only the event)
+  does not — an aal1 session of an active admin, agent or listing manager can move keys through
+  `/rpc/record_key_movement` (the tables themselves are aal2-gated since 0029). Found by T-key-holder-shape's
+  scouts, by reading; not run. **VERIFY:** `grep -ln "record_key_movement" supabase/migrations/*.sql | tail -1 |
+  xargs grep -n "mfa_satisfied"` — no hit means open.
+- **A staff id that matches no active profile silently discards a typed key holder, S (SQL).**
+  `record_key_movement` sets `v_holder_name` from `p_holder_name`, then `select … into v_holder_id,
+  v_holder_name` from `profiles` when an id is given — a non-STRICT SELECT INTO with no row NULLs both, so
+  the comment's "the typed name, if any, is used instead" does not hold. Found by T-key-holder-shape's
+  scouts, by reading PL/pgSQL semantics; not run. Kept byte-for-byte in 0116.
+- **Key movements can bypass the RPC, S.** `key_movements` still admits a direct INSERT by any staff
+  member (0002, a policy from the retired T4.6 app-side writer; RLS test 13 asserts it on purpose) and
+  `property_keys` a direct UPDATE of the holder cache by admins and listing managers — a movement row, or
+  a holder that `return` / `mark_lost` then copy, with no event. Found by T-key-holder-shape's scouts.
+- **Four list exports write the raw URL query string into the chain, S.** `logListExport`
+  (`lib/services/export-audit.ts`) is handed `filters: sp` by the keys, contacts, leads and properties export
+  routes — every search param, the search box included (it matches a contact's name, phone and e-mail, and a
+  key's holder), so a name typed into search and exported is in an `exported` event for good. Pipeline,
+  performance, tasks and viewings pass shape only. Same SEC-03 class; found by T-key-holder-shape's scouts.
+  **VERIFY:** `grep -n "filters: sp" app/\(app\)/*/export/route.ts` — a hit means open.
+- **A signed viewing slip's `signer_name` goes into the chain, S.** `lib/actions/viewing-slips.ts` logs
+  `viewing_slip_signed` with `signer_name` — the buyer's own name — and the line prints it
+  (`slipSignedBy`). The payload scan does not flag `signer_name`. **Hosted (read-only, counts only,
+  2026-09-25): 1 such event with a name, while `viewing_slips` holds 0 rows — the slip is gone, the chain
+  copy stays.** Found by T-key-holder-shape's review of `events.ts`. **VERIFY:** `grep -n -A8 'eventType: "viewing_slip_signed"'
+  lib/actions/viewing-slips.ts | grep signer_name` — a hit means open (the slip ROW keeps the name by design).
 - **`archive-records.mts` writes the operator's typed `--reason` into `archived`, S.** Staff-typed text in the
   chain, the class the lead-lost, reservation-release and escalation-recovery fixes closed; no line prints it.
   There is no mutable row to hold the reason instead — decide whether a reason is needed at all, or a fixed
@@ -2569,8 +2600,8 @@ VERIFY, run before starting.
   line in `describeEvent`, since every renderer trusts its payload's types. **VERIFY:**
   `grep -n -A8 "rescheduled: (p, t)" lib/services/events.ts | grep -E "isNaN|Date.parse|valid"` — no hit
   means still open.
-- **Erasure leaves a lost deal's or lead's typed reason, a reservation's release reason and notes, and a
-  viewing's feedback, on the row, S — NEEDS AN OPERATOR DECISION.** Contact
+- **Erasure leaves a lost deal's or lead's typed reason, a reservation's release reason and notes, a
+  viewing's feedback, and a key's typed holder, on the row, S — NEEDS AN OPERATOR DECISION.** Contact
   erasure blanks notes, lead messages and conversation notes but never `deals.lost_reason` or
   `leads.lost_reason` (BACKLOG's T-contact-erasure line); neither does `redactLead` (Article 17 on an
   unlinked enquiry: the message only) nor `redact_stale_enquiries` (the message and notes). Erasure
@@ -2589,7 +2620,13 @@ VERIFY, run before starting.
   `grep -n -A30 "export async function redactLead" lib/actions/leads.ts | grep lost_reason` ·
   `grep -ln "function public.redact_stale_enquiries" supabase/migrations/*.sql | tail -1 | xargs grep -n lost_reason` ·
   `grep -n "reservations" lib/services/erasure-run.ts lib/actions/contact-erasure.ts` ·
-  `grep -n "viewings" lib/services/erasure-run.ts lib/actions/contact-erasure.ts | grep -i feedback`.
+  `grep -n "viewings" lib/services/erasure-run.ts lib/actions/contact-erasure.ts | grep -i feedback` ·
+  `grep -n "key_movements\|current_holder_name" lib/services/erasure-run.ts lib/actions/contact-erasure.ts`.
+  Since T-key-holder-shape the rows are the ONLY home of a key's typed holder — an owner's name on a
+  transfer — in `key_movements.holder_name` (append-only for every session role) and
+  `property_keys.current_holder_name`; neither is linked to a contact, so contact erasure cannot find them.
+  Backups (`scripts/backup/export.mjs`, the nightly pg_dump) hold every copy already written, whatever the
+  decision — their retention is the real horizon.
 - **`redactLead` leaves the enquiry's conversation notes, S.** Article 17 on an UNLINKED enquiry
   (`redactLead`, `lib/actions/leads.ts`) rewrites `leads.message` and logs `redacted`, but never blanks the
   lead's `interaction_notes` — the desk's own words about the enquiry, which 0094 made erasable exactly so
