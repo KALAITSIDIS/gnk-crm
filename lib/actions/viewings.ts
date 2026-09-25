@@ -395,8 +395,11 @@ export type FeedbackActionState = { error: string | null; savedAt: number | null
 
 /**
  * Save viewing feedback (T4.3). Allowed once the viewing is completed. Stored
- * on the viewing; also recorded as a property-scoped event so it surfaces on
- * the property's activity timeline (C7 acceptance).
+ * on the viewing — the ONE home of the buyer's words, overwritten by each
+ * save — and recorded as a property-scoped event that says a viewing's
+ * feedback was saved, with its rating (T-viewing-feedback-shape). The property
+ * timeline still shows the words (C7 acceptance), read from this row with the
+ * viewer's permissions and labelled as current (lib/services/event-context.ts).
  */
 export async function saveViewingFeedback(
   _prev: FeedbackActionState,
@@ -435,8 +438,8 @@ export async function saveViewingFeedback(
    * The returned row is the proof, for the same reason as updateViewingStatus
    * above: the policy is narrower than the guard, and RLS refuses an UPDATE by
    * matching zero rows with no error. Without this, feedback could be reported
-   * saved, stored nowhere, and still published to the property's timeline —
-   * where it would read as the buyer's own words about a viewing.
+   * saved, stored nowhere, and still logged on the property's timeline as a
+   * viewing's feedback that no row holds.
    */
   const { data: saved, error } = await supabase
     .from("viewings")
@@ -454,10 +457,14 @@ export async function saveViewingFeedback(
     entityType: "property",
     entityId: v.property_id,
     eventType: "viewing_feedback",
+    // No `liked`, `disliked` or `comment`: they are the buyer's words, typed by
+    // the agent and often naming people, and the chain is beyond erasure and
+    // correction (SEC-03). The row keeps them. `rating` is a 1–5 score nobody
+    // types; `reference` is the office's own code for the property.
     payload: {
       viewing_id: d.viewing_id,
       reference: (v.properties as { reference: string } | null)?.reference ?? null,
-      ...feedback,
+      rating: feedback.rating,
     },
   });
 

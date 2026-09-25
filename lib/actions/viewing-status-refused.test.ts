@@ -116,10 +116,11 @@ describe("updateViewingStatus proves its write before it logs one", () => {
 
 describe("saveViewingFeedback proves its write too", () => {
   /**
-   * The same shape one screen along. Feedback is a buyer's own words about a
-   * property, and it is published to that property's timeline — so reporting it
-   * saved when the row never took it puts words in the timeline that exist
-   * nowhere else, attributable to a viewing that does not carry them.
+   * The same shape one screen along. The row is the one home of the buyer's
+   * words; the property's timeline logs that feedback was saved, with its
+   * rating (T-viewing-feedback-shape — the event carries no words). Reporting
+   * it saved when the row never took it would log a feedback event, and stars,
+   * for a viewing whose row holds none of it.
    */
   const completed = (over: Record<string, unknown> = {}) => ({
     id: "viewing-1",
@@ -139,7 +140,7 @@ describe("saveViewingFeedback proves its write too", () => {
     return fd;
   };
 
-  it("refuses instead of publishing feedback the row never took", async () => {
+  it("refuses instead of logging feedback the row never took", async () => {
     setup([
       { data: completed(), error: null },
       { data: [], error: null }, // the UPDATE — filtered away
@@ -148,11 +149,11 @@ describe("saveViewingFeedback proves its write too", () => {
     expect(res.error).toMatch(/refused/i);
     expect(
       logEvent,
-      "no viewing_feedback event on the property for words that were not stored",
+      "no viewing_feedback event on the property for feedback that was not stored",
     ).not.toHaveBeenCalled();
   });
 
-  it("publishes when the write lands", async () => {
+  it("logs the feedback event when the write lands", async () => {
     setup([
       { data: completed(), error: null },
       { data: [{ id: "viewing-1" }], error: null },

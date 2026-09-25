@@ -229,9 +229,10 @@ export async function AdminDashboard({ orgId }: { orgId: string }) {
     refIds.length
       ? supabase.from("properties").select("id, reference").in("id", refIds)
       : Promise.resolve({ data: [], error: null }),
-    // which task was ticked, which document went up: their events carry ids
-    // only (T-event-typed-text-shape), so the names come from the rows, read on
-    // this same caller client
+    // which task was ticked, which document went up, what a viewing's buyer
+    // says now: their events carry ids only (T-event-typed-text-shape,
+    // T-viewing-feedback-shape), so the words come from the rows, read on this
+    // same caller client
     attachCurrentTitles(supabase, orgId, latestEvents),
   ]);
   const actorName = new Map(

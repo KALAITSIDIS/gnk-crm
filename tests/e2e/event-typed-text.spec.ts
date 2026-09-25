@@ -28,7 +28,12 @@ import { fixtureProfile, isLocal, opTimeout, serviceClient } from "./helpers";
  *   held → released" alone;
  * - uploading and deleting a photo (T-media-file-name-shape): the events carry
  *   the id and the digest of the image's bytes, never the file's name, and the
- *   Activity lines are "Photo uploaded" / "Photo deleted".
+ *   Activity lines are "Photo uploaded" / "Photo deleted";
+ * - saving a viewing's feedback (T-viewing-feedback-shape): the viewing keeps
+ *   the buyer's words and its page shows them; the event is
+ *   `{ viewing_id, reference, rating }`; the Activity tab and the admin feed
+ *   print the stars and, on the newest save only, the comment NOW, labelled
+ *   "current feedback" — and nothing from an older-shape payload.
  *
  * What an agent may NOT see (an admin_only document, a colleague's task) is
  * measured against the real policies in supabase/tests/event-context.test.ts —
@@ -476,5 +481,144 @@ test("a photo's events carry its id and digest, never its file name", async ({ p
     }
   } finally {
     await removeMediaFixture(svc);
+  }
+});
+
+const FB_REF = "E2ETYPED04";
+const FB_BUYER = "E2ETypedFbBuyer";
+// synthetic buyer's words — each distinct, so a leak names its source
+const FB_LIKED = "E2E Zenobia Quillfeather loved the terrace";
+const FB_DISLIKED = "E2E kitchen too small for Andreas, call 99000111";
+const FB_COMMENT_1 = "E2E will offer after the survey";
+const FB_COMMENT_2 = "E2E second visit booked with her sister";
+const FB_LEGACY = "E2E Legacyname Oldwords said no";
+
+/** a viewing's tasks restrict its delete (tasks.viewing_id NO ACTION), so they go first */
+async function removeFeedbackFixture(svc: SupabaseClient): Promise<void> {
+  const { data: props } = await svc.from("properties").select("id").eq("reference", FB_REF);
+  for (const p of props ?? []) {
+    const { data: viewings } = await svc.from("viewings").select("id").eq("property_id", p.id);
+    const ids = (viewings ?? []).map((v) => v.id as string);
+    if (ids.length) {
+      const t = await svc.from("tasks").delete().in("viewing_id", ids);
+      if (t.error) throw new Error(`teardown tasks: ${t.error.message}`);
+      const v = await svc.from("viewings").delete().in("id", ids);
+      if (v.error) throw new Error(`teardown viewings: ${v.error.message}`);
+    }
+    await svc.from("tasks").delete().eq("property_id", p.id);
+    await svc.from("properties").delete().eq("id", p.id);
+  }
+  await svc.from("contacts").delete().eq("first_name", FB_BUYER);
+}
+
+test("viewing feedback stays on the viewing; the event carries the rating, and the timeline labels the words as current", async ({ page }) => {
+  // T-viewing-feedback-shape
+  const svc = serviceClient();
+  await removeFeedbackFixture(svc);
+  const { id: adminId, orgId } = await fixtureProfile(svc);
+  const { data: prop } = await svc
+    .from("properties")
+    .insert({ org_id: orgId, reference: FB_REF, property_type: "apartment", status: "available" })
+    .select("id")
+    .single();
+  const propertyId = prop!.id as string;
+  const { data: buyer } = await svc
+    .from("contacts")
+    .insert({ org_id: orgId, first_name: FB_BUYER, contact_types: ["buyer"] })
+    .select("id")
+    .single();
+  // completed an hour ago with no feedback yet: inside the 48-hour nudge window
+  const { data: viewing } = await svc
+    .from("viewings")
+    .insert({
+      org_id: orgId,
+      property_id: propertyId,
+      contact_id: buyer!.id,
+      agent_id: adminId,
+      scheduled_at: new Date(Date.now() - 3_600_000).toISOString(),
+      status: "completed",
+    })
+    .select("id")
+    .single();
+  const viewingId = viewing!.id as string;
+
+  try {
+    // An OLDER event on this viewing in the shape written before this change —
+    // the buyer's words in the payload. It must print none of them.
+    const { error: legacyErr } = await svc.from("events").insert({
+      org_id: orgId,
+      actor_id: null,
+      entity_type: "property",
+      entity_id: propertyId,
+      event_type: "viewing_feedback",
+      payload: { viewing_id: viewingId, reference: FB_REF, rating: 2, liked: FB_LEGACY, disliked: FB_LEGACY, comment: FB_LEGACY },
+    });
+    expect(legacyErr).toBeNull();
+
+    // ---------- save through the real form ----------
+    await page.goto(`/viewings/${viewingId}`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "4 stars" }).click();
+    await page.locator("#fb-liked").fill(FB_LIKED);
+    await page.locator("#fb-disliked").fill(FB_DISLIKED);
+    await page.locator("#fb-comment").fill(FB_COMMENT_1);
+    await page.getByRole("button", { name: /save feedback/i }).click();
+    await expect.poll(async () => (await eventsOf(svc, propertyId, "viewing_feedback")).length, {
+      timeout: opTimeout(15_000),
+    }).toBe(2);
+
+    // the ROW keeps every word; the EVENT names the viewing and carries the rating
+    const { data: row } = await svc.from("viewings").select("feedback").eq("id", viewingId).single();
+    expect(row!.feedback).toEqual({ rating: 4, liked: FB_LIKED, disliked: FB_DISLIKED, comment: FB_COMMENT_1 });
+    const [saved] = await eventsOf(svc, propertyId, "viewing_feedback");
+    expect(saved).toEqual({ viewing_id: viewingId, reference: FB_REF, rating: 4 });
+    expect(JSON.stringify(saved)).not.toMatch(/Zenobia|terrace|Andreas|99000111|survey/);
+
+    // the viewing page — the words' home — shows them
+    await page.reload({ waitUntil: "networkidle" });
+    await expect(page.getByText(FB_COMMENT_1)).toBeVisible();
+    await expect(page.getByText(FB_DISLIKED)).toBeVisible();
+
+    // ---------- the property's Activity tab ----------
+    await page.goto(`/properties/${propertyId}`, { waitUntil: "networkidle" });
+    await openTab(page, /^Activity$/);
+    let timeline = page.getByRole("tabpanel");
+    await expect(timeline.locator("li", { hasText: "Viewing feedback" })).toHaveCount(2);
+    // the newest line: its stars, and the comment NOW, labelled as current
+    await expect(timeline.locator("li", { hasText: "Viewing feedback ★★★★" })).toContainText(
+      `current feedback: ${FB_COMMENT_1}`,
+    );
+    // the older-shape line: its stars only — no words of its own, no current ones
+    const legacyLine = timeline.locator("li", { hasText: "Viewing feedback ★★" }).filter({ hasNotText: "★★★" });
+    await expect(legacyLine).toHaveCount(1);
+    await expect(legacyLine).not.toContainText("current feedback");
+    await expect(timeline.locator("li", { hasText: "current feedback" })).toHaveCount(1);
+    for (const word of ["Legacyname", "Oldwords", "Zenobia", "Andreas", "99000111"]) {
+      await expect(timeline).not.toContainText(word);
+    }
+
+    // ---------- update it: the new save is the newest; the old comment is gone everywhere ----------
+    await page.goto(`/viewings/${viewingId}`, { waitUntil: "networkidle" });
+    await page.locator("#fb-comment").fill(FB_COMMENT_2);
+    await page.getByRole("button", { name: /update feedback/i }).click();
+    await expect.poll(async () => (await eventsOf(svc, propertyId, "viewing_feedback")).length, {
+      timeout: opTimeout(15_000),
+    }).toBe(3);
+    await page.goto(`/properties/${propertyId}`, { waitUntil: "networkidle" });
+    await openTab(page, /^Activity$/);
+    timeline = page.getByRole("tabpanel");
+    await expect(timeline.locator("li", { hasText: "Viewing feedback" })).toHaveCount(3);
+    await expect(timeline.locator("li", { hasText: "current feedback" })).toHaveCount(1);
+    await expect(timeline).toContainText(`current feedback: ${FB_COMMENT_2}`);
+    await expect(timeline).not.toContainText(FB_COMMENT_1);
+
+    // the admin dashboard feed: the same labelled current words, none from any payload
+    await page.goto("/dashboard", { waitUntil: "networkidle" });
+    const feed = page.locator("li", { hasText: "Viewing feedback ★★★★" }).first();
+    await expect(feed).toContainText(`current feedback: ${FB_COMMENT_2}`);
+    for (const word of ["Legacyname", "Oldwords", FB_COMMENT_1]) {
+      await expect(page.locator("main")).not.toContainText(word);
+    }
+  } finally {
+    await removeFeedbackFixture(svc);
   }
 });

@@ -56,7 +56,9 @@ const SAMPLE_PARAMS = {
   ok: "yes",
   date: "2026-07-20",
   stars: "★★★",
-  note: "a note",
+  // a viewing's current feedback, read from its row (T-viewing-feedback-shape);
+  // `note` went with the lines that printed the buyer's words from the payload
+  feedback: "Liked the light",
   retention: "2031-07-21",
   ref: "PAF0001",
   score: 40,

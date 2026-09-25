@@ -315,6 +315,7 @@ describe("typed text is never printed from a payload (T-event-typed-text-shape)"
   const TASK = "Call Kyriakoula Palaiopoulou about the deposit";
   const FILE = "Andreou passport AB1234567.pdf";
   const REASON = "Eleni Charalambous bought elsewhere";
+  const FEEDBACK = "Zenobia Quillfeather loved the terrace, call 99 000 111";
 
   const LEGACY = [
     ["task completed", ev("completed", { title: TASK }, "task"), "Task completed"],
@@ -346,6 +347,12 @@ describe("typed text is never printed from a payload (T-event-typed-text-shape)"
     ["photo uploaded", ev("media_uploaded", { media_id: "m1", file: FILE, kind: "photo", watermarked: false }, "property"), "Photo uploaded"],
     ["photo imported", ev("media_uploaded", { media_id: "m1", file: FILE, watermarked: true, source: "import_script" }, "property"), "Photo uploaded"],
     ["photo deleted", ev("media_deleted", { media_id: "m1", file: FILE, bulk: true }, "property"), "Photo deleted"],
+    // T-viewing-feedback-shape: saveViewingFeedback spread `{ rating, liked, disliked, comment }`
+    ["viewing feedback", ev("viewing_feedback", { viewing_id: "v1", reference: "PAF0001", rating: 4, liked: FEEDBACK, disliked: FEEDBACK, comment: FEEDBACK }, "property"), "Viewing feedback ★★★★"],
+    ["viewing feedback with a comment and no rating", ev("viewing_feedback", { viewing_id: "v1", comment: FEEDBACK }, "property"), "Viewing feedback"],
+    ["viewing feedback with only a liked", ev("viewing_feedback", { viewing_id: "v1", rating: 2, liked: FEEDBACK, comment: null }, "property"), "Viewing feedback ★★"],
+    // the renderer is keyed by type alone — a crafted one on another entity prints no words either
+    ["viewing feedback on a contact", ev("viewing_feedback", { comment: FEEDBACK }, "contact"), "Viewing feedback"],
   ] as const;
 
   it.each(LEGACY)("a LEGACY %s payload renders the neutral line", (_name, e, line) => {
@@ -354,8 +361,10 @@ describe("typed text is never printed from a payload (T-event-typed-text-shape)"
 
   it("no legacy line contains any of the typed text it carries", () => {
     const out = LEGACY.map(([, e]) => describeEvent(e, t)).join("\n");
-    expect([TASK, FILE, REASON].filter((s) => out.includes(s))).toEqual([]);
-    for (const word of ["Kyriakoula", "Andreou", "AB1234567", "Eleni"]) expect(out).not.toContain(word);
+    expect([TASK, FILE, REASON, FEEDBACK].filter((s) => out.includes(s))).toEqual([]);
+    for (const word of ["Kyriakoula", "Andreou", "AB1234567", "Eleni", "Zenobia", "terrace", "99 000 111"]) {
+      expect(out).not.toContain(word);
+    }
   });
 
   it.each([
@@ -384,6 +393,8 @@ describe("typed text is never printed from a payload (T-event-typed-text-shape)"
     ["reservation without from/to", ev("reservation_status_changed", { reservation_id: "r1" }, "property"), "Reservation updated"],
     ["photo uploaded", ev("media_uploaded", { media_id: "m1", kind: "photo", watermarked: false, content_sha256: "ab".repeat(32) }, "property"), "Photo uploaded"],
     ["photo deleted", ev("media_deleted", { media_id: "m1", content_sha256: "ab".repeat(32) }, "property"), "Photo deleted"],
+    ["viewing feedback", ev("viewing_feedback", { viewing_id: "v1", reference: "PAF0001", rating: 5 }, "property"), "Viewing feedback ★★★★★"],
+    ["viewing feedback without a reference", ev("viewing_feedback", { viewing_id: "v1", reference: null, rating: 1 }, "property"), "Viewing feedback ★"],
   ] as const)("a NEW minimal %s payload renders the same line", (_name, e, line) => {
     expect(describeEvent(e, t)).toBe(line);
   });
@@ -400,9 +411,27 @@ describe("typed text is never printed from a payload (T-event-typed-text-shape)"
       ["reservation_status_changed", "property"],
       ["media_uploaded", "property"],
       ["media_deleted", "property"],
+      ["viewing_feedback", "property"],
     ] as const) {
       expect(() => describeEvent(ev(type, payload, entity), t)).not.toThrow();
     }
+  });
+
+  // Any org member may insert any payload (events_insert, 0071): the rating is
+  // not trusted to be the 1–5 the form enforces. A huge one made
+  // "★".repeat() throw RangeError and took the whole property page, the admin
+  // feed and evidence generation down with it.
+  it.each([
+    ["an enormous rating", 1e9],
+    ["Infinity", Infinity],
+    ["a fraction", 2.5],
+    ["zero", 0],
+    ["a negative", -3],
+    ["six", 6],
+    ["a non-numeric string", "lots"],
+    ["an object", { stars: 5 }],
+  ] as const)("prints no stars for %s, and never throws", (_name, rating) => {
+    expect(describeEvent(ev("viewing_feedback", { viewing_id: "v1", rating }, "property"), t)).toBe("Viewing feedback");
   });
 
   it("routes each line through the translator in every locale (no hard-coded English)", () => {
@@ -419,6 +448,12 @@ describe("typed text is never printed from a payload (T-event-typed-text-shape)"
     ).toBe("KEY:reservationStatus");
     expect(describeEvent(ev("media_uploaded", { file: FILE }, "property"), fake)).toBe("KEY:mediaUploaded");
     expect(describeEvent(ev("media_deleted", { file: FILE }, "property"), fake)).toBe("KEY:mediaDeleted");
+    expect(describeEvent(ev("viewing_feedback", { rating: 3, comment: FEEDBACK }, "property"), fake)).toBe(
+      "KEY:viewingFeedbackStars",
+    );
+    expect(describeEvent(ev("viewing_feedback", { comment: FEEDBACK, liked: FEEDBACK }, "property"), fake)).toBe(
+      "KEY:viewingFeedback",
+    );
   });
 });
 
@@ -444,6 +479,15 @@ describe("describeEventContext — the current title, labelled, then the note", 
   it("goes through the translator", () => {
     const fake: EventTranslator = (key, values) => `KEY:${key}:${JSON.stringify(values)}`;
     expect(describeEventContext({ current_title: "X" }, fake)).toBe('KEY:currentTitle:{"title":"X"}');
+    expect(describeEventContext({ current_feedback: "Y" }, fake)).toBe('KEY:currentFeedback:{"feedback":"Y"}');
+  });
+
+  // T-viewing-feedback-shape: the viewing row's feedback NOW, never the event's words
+  it("labels a viewing's current feedback, then the caller's note", () => {
+    expect(describeEventContext({ current_feedback: "Loved the light" }, t)).toBe("current feedback: Loved the light");
+    expect(describeEventContext({ current_feedback: "Loved the light", note: "PAF0001 · A. Admin" }, t)).toBe(
+      "current feedback: Loved the light · PAF0001 · A. Admin",
+    );
   });
 });
 

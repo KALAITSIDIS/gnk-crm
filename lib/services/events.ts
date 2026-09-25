@@ -104,6 +104,12 @@ export interface TimelineEvent {
    * line, because a row can change after the event it is attached to.
    */
   current_title?: string | null;
+  /**
+   * A viewing's CURRENT feedback (its comment, else what was liked), read from
+   * `viewings.feedback` the same way and labelled "current feedback" — on the
+   * newest `viewing_feedback` event per viewing only (T-viewing-feedback-shape).
+   */
+  current_feedback?: string | null;
 }
 
 type P = Record<string, unknown>;
@@ -150,14 +156,15 @@ const asMoney = (v: unknown): string | null => {
  * Each entry chooses a message key (and its interpolation values) from the
  * payload; the fixed text lives in messages/*.json under `events.*`. Only the
  * template is translated — interpolated data (names, channels, stage names,
- * formatted money, a photo's published alt text, and still some typed text:
- * viewing feedback — BACKLOG) stays as stored. A task's title, a document's
- * title or file name, a deal's or lead's lost reason, a reservation's release
- * reason and a photo's file name are NOT interpolated, from new payloads or
- * old ones (T-event-typed-text-shape, T-lead-lost-reason-shape,
- * T-reservation-release-reason-shape, T-media-file-name-shape): the line
- * states the fact, and which task or document it was arrives separately as
- * `current_title`, read from its row.
+ * formatted money, a photo's published alt text) stays as stored. A task's
+ * title, a document's title or file name, a deal's or lead's lost reason, a
+ * reservation's release reason, a photo's file name and a buyer's viewing
+ * feedback are NOT interpolated, from new payloads or old ones
+ * (T-event-typed-text-shape, T-lead-lost-reason-shape,
+ * T-reservation-release-reason-shape, T-media-file-name-shape,
+ * T-viewing-feedback-shape): the line states the fact, and which task or
+ * document it was — or what the buyer says now — arrives separately as
+ * `current_title` / `current_feedback`, read from its row.
  *
  * `entityType` is the event's entity, for the lines that read differently by
  * entity: `completed` / `reopened` say "Task …" only for a task.
@@ -549,14 +556,17 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string)
       ? t("viewingRescheduled", { from: formatDateTime(from), to: formatDateTime(to) })
       : t("viewingRescheduledBare");
   },
+  // T-viewing-feedback-shape: the rating's stars and nothing the buyer said,
+  // from any payload — the words (old events carry `liked` / `disliked` /
+  // `comment`) arrive, when at all, as `current_feedback` from the row. The
+  // rating is not trusted to be the form's 1–5 either: any org member may
+  // insert any payload, and "★".repeat(1e9) throws RangeError, which took the
+  // property page, the admin feed and evidence generation down with it.
   viewing_feedback: (p, t) => {
     const rating = Number(p.rating);
-    const stars = Number.isFinite(rating) && rating > 0 ? "★".repeat(rating) : null;
-    const note = asText(p.comment) ?? asText(p.liked);
-    if (stars && note) return t("viewingFeedbackStarsNote", { stars, note });
-    if (stars) return t("viewingFeedbackStars", { stars });
-    if (note) return t("viewingFeedbackNote", { note });
-    return t("viewingFeedback");
+    return Number.isInteger(rating) && rating >= 1 && rating <= 5
+      ? t("viewingFeedbackStars", { stars: "★".repeat(rating) })
+      : t("viewingFeedback");
   },
   // Since 2026-09-23 the payload is `{ merged_contact_id, dropped_fields }` —
   // ids and shape only (DECISIONS T-merged-event-ids-only) — and the contact
@@ -653,16 +663,18 @@ export function describeEvent(
 }
 
 /**
- * The muted annotation after a line: the source row's current title, LABELLED
- * as current ("current title: …") so it never reads as the event's own words,
- * then the caller's note. Null when there is neither.
+ * The muted annotation after a line: the source row's current title or a
+ * viewing's current feedback, LABELLED as current ("current title: …",
+ * "current feedback: …") so it never reads as the event's own words, then the
+ * caller's note. Null when there is none of them.
  */
 export function describeEventContext(
-  e: Pick<TimelineEvent, "current_title" | "note">,
+  e: Pick<TimelineEvent, "current_title" | "current_feedback" | "note">,
   t: EventTranslator,
 ): string | null {
   const parts = [
     e.current_title ? t("currentTitle", { title: e.current_title }) : null,
+    e.current_feedback ? t("currentFeedback", { feedback: e.current_feedback }) : null,
     e.note || null,
   ].filter((v): v is string => Boolean(v));
   return parts.length > 0 ? parts.join(" · ") : null;

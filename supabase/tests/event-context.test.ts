@@ -189,3 +189,99 @@ describe("a timeline's current titles are what the VIEWER may read", () => {
     expect(e.current_title).toBeUndefined();
   });
 });
+
+/**
+ * T-viewing-feedback-shape: a `viewing_feedback` event carries
+ * `{ viewing_id, reference, rating }`; the buyer's words are read back from
+ * `viewings.feedback` on the viewer's client. `viewings_select` is org-wide
+ * (0030) — the same audience as the property timeline it annotates — so every
+ * role of the org sees it, and nobody sees another org's. Measured here, not
+ * assumed from the policy text.
+ */
+describe("a viewing's current feedback is what the VIEWER may read", () => {
+  let lm: TestUser;
+  const seeded = { propA: "", propB: "", buyerA: "", buyerB: "", viewingA: "", viewingB: "" };
+  const WORDS = { A: `ZZCTX ${run} Zenobia liked the terrace`, B: `ZZCTX ${run} other org feedback` };
+
+  async function one(table: string, row: Record<string, unknown>): Promise<string> {
+    const { data, error } = await svc.from(table).insert(row).select("id").single();
+    if (error) throw new Error(`seed ${table}: ${error.message}`);
+    return data.id as string;
+  }
+
+  // an hour ago and already carrying feedback: the 48-hour nudge sweep has nothing to mint
+  const viewingRow = (org: string, property_id: string, contact_id: string, agent_id: string, comment: string) => ({
+    org_id: org,
+    property_id,
+    contact_id,
+    agent_id,
+    scheduled_at: new Date(Date.now() - 3_600_000).toISOString(),
+    status: "completed",
+    feedback: { rating: 4, liked: null, disliked: null, comment },
+  });
+
+  const eventFor = (viewing_id: string, property: string) => ({
+    entity_type: "property",
+    entity_id: property,
+    event_type: "viewing_feedback",
+    occurred_at: new Date().toISOString(),
+    payload: { viewing_id, reference: null, rating: 4 },
+  });
+
+  async function seenBy(client: SupabaseClient, org: string) {
+    const [a, b] = await attachCurrentTitles(client as never, org, [
+      eventFor(seeded.viewingA, seeded.propA),
+      eventFor(seeded.viewingB, seeded.propB),
+    ]);
+    return { A: a.current_feedback ?? null, B: b.current_feedback ?? null };
+  }
+
+  beforeAll(async () => {
+    lm = await createTestUser(svc, `ctx-lm-${run}@test.local`, "listing_manager", ORG_A);
+    seeded.propA = await one("properties", { org_id: ORG_A, reference: `ZZCTXA${run}`.slice(0, 20), property_type: "apartment", status: "available" });
+    seeded.propB = await one("properties", { org_id: ORG_B, reference: `ZZCTXB${run}`.slice(0, 20), property_type: "apartment", status: "available" });
+    seeded.buyerA = await one("contacts", { org_id: ORG_A, first_name: `ZZCTXA${run}`, contact_types: ["buyer"] });
+    seeded.buyerB = await one("contacts", { org_id: ORG_B, first_name: `ZZCTXB${run}`, contact_types: ["buyer"] });
+    // the viewing is the COLLEAGUE's, so the agent reading it is not its agent
+    seeded.viewingA = await one("viewings", viewingRow(ORG_A, seeded.propA, seeded.buyerA, colleague.id, WORDS.A));
+    seeded.viewingB = await one("viewings", viewingRow(ORG_B, seeded.propB, seeded.buyerB, outsider.id, WORDS.B));
+  });
+
+  afterAll(async () => {
+    const viewings = [seeded.viewingA, seeded.viewingB].filter(Boolean);
+    // tasks.viewing_id is NO ACTION: a nudge task, if any appeared, must go first
+    const t = await svc.from("tasks").delete().in("viewing_id", viewings);
+    if (t.error) throw new Error(`teardown tasks: ${t.error.message}`);
+    const v = await svc.from("viewings").delete().in("id", viewings);
+    if (v.error) throw new Error(`teardown viewings: ${v.error.message}`);
+    await svc.from("contacts").delete().in("id", [seeded.buyerA, seeded.buyerB].filter(Boolean));
+    await svc.from("properties").delete().in("id", [seeded.propA, seeded.propB].filter(Boolean));
+  });
+
+  it("control: both viewings exist with their feedback (the service client reads them)", async () => {
+    const { data } = await svc.from("viewings").select("id, feedback").in("id", [seeded.viewingA, seeded.viewingB]);
+    expect(data).toHaveLength(2);
+  });
+
+  it("every role of the org reads its own org's feedback — and none of another org's", async () => {
+    for (const who of [admin, agent, lm]) {
+      expect(await seenBy(who.client, ORG_A), who.email).toEqual({ A: WORDS.A, B: null });
+    }
+  });
+
+  it("the other org's admin reads only the other org's", async () => {
+    expect(await seenBy(outsider.client, ORG_B)).toEqual({ A: null, B: WORDS.B });
+  });
+
+  it("naming ANOTHER org buys nothing", async () => {
+    expect(await seenBy(agent.client, ORG_B)).toEqual({ A: null, B: null });
+    expect(await seenBy(outsider.client, ORG_A)).toEqual({ A: null, B: null });
+  });
+
+  it("an event naming another property's viewing gets nothing, even for an admin", async () => {
+    const [e] = await attachCurrentTitles(admin.client as never, ORG_A, [
+      eventFor(seeded.viewingA, crypto.randomUUID()),
+    ]);
+    expect(e.current_feedback).toBeUndefined();
+  });
+});

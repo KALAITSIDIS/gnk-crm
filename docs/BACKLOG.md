@@ -2474,7 +2474,12 @@ VERIFY, run before starting.
     29 delete events with a name (counts only) — the chain cannot be edited.** (original) `lib/actions/media.ts`
     and `scripts/import/media.mts`: `media_uploaded` `{ file }`, printed by `mediaUploadedFile`;
     `deleteMedia` read older `media_uploaded` payloads with the admin client and copied `file` forward;
-  - viewing feedback (`lib/actions/viewings.ts`: `viewing_feedback` `{ comment, liked, disliked }`),
+  - ~~viewing feedback~~ **FIXED 2026-09-25 — DECISIONS `T-viewing-feedback-shape`: `saveViewingFeedback` logs
+    `{ viewing_id, reference, rating }`; the row keeps the words; the line prints the stars only (an integer
+    1–5), from any payload; the property timeline and the admin feed show the viewing's CURRENT comment,
+    labelled, on the newest save only, read on the viewer's client. The payload scan forbids `comment` /
+    `liked` / `disliked`. Hosted held 0 viewings and 0 such events — no chain copy exists.** (original)
+    `lib/actions/viewings.ts`: `viewing_feedback` `{ comment, liked, disliked }`,
     printed by `viewingFeedback*` and passed by the payload scan's `REVIEWED` map;
   - ~~an escalation RECOVERY reason~~ **FIXED 2026-09-25 — DECISIONS `T-escalation-recovery-reason-shape`:
     migration 0115 re-creates `request_lead_escalation_recovery` without the `'reason'` key and without the
@@ -2493,11 +2498,11 @@ VERIFY, run before starting.
     it on the contact's Activity tab and in an un-narrowed evidence report. That is identity in the chain,
     which T-merged-event-ids-only ruled out for `merged`. (A property import's `reference` is the office's
     own code, not typed text; the default `batch` label is the CSV's own file name, the operator's.)
-  **VERIFY** — one grep per writer, and a hit means THAT writer is still open (the lead, reservation and
-  photo ones are fixed and must stay silent): `grep -n "payload: { reason: parsed.data.reason" lib/actions/leads.ts` ·
+  **VERIFY** — one grep per writer, and a hit means THAT writer is still open (the lead, reservation,
+  photo, viewing-feedback and escalation-recovery ones are fixed and must stay silent): `grep -n "payload: { reason: parsed.data.reason" lib/actions/leads.ts` ·
   `grep -n "reason: release_reason" lib/actions/reservations.ts` ·
   `grep -nE "file: (file\.)?name," lib/actions/media.ts scripts/import/media.mts` ·
-  `grep -n "\.\.\.feedback," lib/actions/viewings.ts` ·
+  `grep -n -A12 'eventType: "viewing_feedback"' lib/actions/viewings.ts | grep -v "//" | grep -E "liked|comment|\.\.\.feedback"` ·
   `grep -ln "function public.request_lead_escalation_recovery" supabase/migrations/*.sql | tail -1 | xargs grep -n "'reason', v_reason"` ·
   `grep -n "name: detail" scripts/import/contacts.mts` · `grep -n "name: name ?? phone" scripts/import/properties.mts`.
 - **NOTE — a photo's alt text stays in its event, by the marketing-copy rule.** `setMediaAlt` logs `media_alt_set`
@@ -2516,21 +2521,38 @@ VERIFY, run before starting.
   **VERIFY** — one per action, and no hit means THAT action is still open:
   `grep -n -A12 'status: "lost",' lib/actions/deals.ts | grep 'eq("status", "open")'` ·
   `grep -n -A12 'status: "won",' lib/actions/deals.ts | grep 'eq("status", "open")'`.
-- **Erasure leaves a lost deal's or lead's typed reason, and a reservation's release reason and notes, on
-  the row, S — NEEDS AN OPERATOR DECISION.** Contact
+- **A crafted `rescheduled` event crashes three pages, S.** The same class T-viewing-feedback-shape closed for
+  the rating: the line (`lib/services/events.ts`, WF-1) passes any non-blank `from` / `to` to
+  `formatDateTime` (`lib/utils/format.ts`), whose `Intl.DateTimeFormat#format(new Date("x"))` throws
+  `RangeError: Invalid time value`. Any active org member may insert any payload (`events_insert`, 0071),
+  and `describeEvent` is unguarded, so one `{ from: "x" }` on a property takes its Activity tab, the admin
+  feed and a property-scoped evidence report down. Pre-existing (`ebcfec5`); found by
+  T-viewing-feedback-shape's review (three refuters confirmed the crash; not that change's defect).
+  Fix: format only a parseable date, else `viewingRescheduledBare` — and consider a try/catch around each
+  line in `describeEvent`, since every renderer trusts its payload's types. **VERIFY:**
+  `grep -n -A8 "rescheduled: (p, t)" lib/services/events.ts | grep -E "isNaN|Date.parse|valid"` — no hit
+  means still open.
+- **Erasure leaves a lost deal's or lead's typed reason, a reservation's release reason and notes, and a
+  viewing's feedback, on the row, S — NEEDS AN OPERATOR DECISION.** Contact
   erasure blanks notes, lead messages and conversation notes but never `deals.lost_reason` or
   `leads.lost_reason` (BACKLOG's T-contact-erasure line); neither does `redactLead` (Article 17 on an
   unlinked enquiry: the message only) nor `redact_stale_enquiries` (the message and notes). Erasure
   never touches `reservations` at all, so a hold's `release_reason` and `notes` (typed, up to 300 and
-  2000 characters) outlive Article 17 too. Since T-event-typed-text-shape (deals),
-  T-lead-lost-reason-shape (leads) and T-reservation-release-reason-shape (reservations) the ROW is the
-  only copy a new close makes, so a rule on the row now reaches all of it. Decide whether the retention basis keeps it,
+  2000 characters) outlive Article 17 too. Nor does it touch `viewings.feedback`: the buyer's `liked`,
+  `disliked` and `comment` (2000 characters each) on the erased contact's viewings stay on
+  `/viewings/[id]` and, since T-viewing-feedback-shape, show as "current feedback" on the property's
+  Activity tab and the admin feed. (A blanking rule should keep `feedback` non-null — a completed viewing
+  with null feedback past 48 h makes the nudge sweep, 0078, mint a new "Log viewing feedback" task.)
+  Since T-event-typed-text-shape (deals),
+  T-lead-lost-reason-shape (leads), T-reservation-release-reason-shape (reservations) and
+  T-viewing-feedback-shape (viewings) the ROW is the only copy a new close or save makes, so a rule on the row now reaches all of it. Decide whether the retention basis keeps it,
   like identity, or it is typed text, like the notes. Found by T-event-typed-text-shape; not built there.
   **VERIFY** — one per path, and a hit means THAT path now handles it:
   `grep -n "lost_reason" lib/services/erasure-run.ts lib/actions/contact-erasure.ts` ·
   `grep -n -A30 "export async function redactLead" lib/actions/leads.ts | grep lost_reason` ·
   `grep -ln "function public.redact_stale_enquiries" supabase/migrations/*.sql | tail -1 | xargs grep -n lost_reason` ·
-  `grep -n "reservations" lib/services/erasure-run.ts lib/actions/contact-erasure.ts`.
+  `grep -n "reservations" lib/services/erasure-run.ts lib/actions/contact-erasure.ts` ·
+  `grep -n "viewings" lib/services/erasure-run.ts lib/actions/contact-erasure.ts | grep -i feedback`.
 - **`redactLead` leaves the enquiry's conversation notes, S.** Article 17 on an UNLINKED enquiry
   (`redactLead`, `lib/actions/leads.ts`) rewrites `leads.message` and logs `redacted`, but never blanks the
   lead's `interaction_notes` — the desk's own words about the enquiry, which 0094 made erasable exactly so

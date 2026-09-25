@@ -21,9 +21,9 @@ import { formatDateTime } from "@/lib/utils/format";
  * and the document-title redaction that RLS would otherwise have applied; if
  * you add a caller, read its notes first.
  *
- * The muted annotation is the source row's CURRENT title, labelled as such
- * (lib/services/event-context.ts reads it with the viewer's permissions), and
- * then the caller's note.
+ * The muted annotation is the source row's CURRENT title, or a viewing's
+ * CURRENT feedback, labelled as such (lib/services/event-context.ts reads it
+ * with the viewer's permissions), and then the caller's note.
  */
 export async function EventTimeline({
   events,
