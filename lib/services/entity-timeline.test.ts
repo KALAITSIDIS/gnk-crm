@@ -91,11 +91,16 @@ describe("readEntityTimeline", () => {
     err.mockRestore();
   });
 
-  it("newest first, and capped", async () => {
+  it("newest first, ties broken by chain order, and capped", async () => {
     const svc = fakeClient({ events: [{ data: [], error: null }] });
     admin.client = svc.client;
     await readEntityTimeline({ orgId: "o", entityType: "deal", entityIds: ["d1"], limit: 50, viewerRole: "admin", viewer: viewer() });
-    expect(svc.argsOf("events", "order")).toEqual([["occurred_at", { ascending: false }]]);
+    // a close writes won_override and won in ONE transaction, so they share
+    // occurred_at (0117); within an org, id order is chain order (0109)
+    expect(svc.argsOf("events", "order")).toEqual([
+      ["occurred_at", { ascending: false }],
+      ["id", { ascending: false }],
+    ]);
     expect(svc.argsOf("events", "limit")).toEqual([[50]]);
   });
 

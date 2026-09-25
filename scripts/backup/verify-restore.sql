@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 116::bigint as migrations,
+    2::bigint as auth_users, 117::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -182,6 +182,9 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   ('next_reference',       true,  false, true, true),
   ('record_key_movement',  true,  false, true, true),
   ('move_deal_to_stage',   false, false, true, true),
+  -- 0117: authenticated ONLY — a close needs an accountable actor, and the
+  -- service role would bypass every policy the invoker body relies on
+  ('close_deal',           false, false, true, false),
   ('add_deal_stage',       false, false, true, true),
   ('reorder_stage',        false, false, true, true),
   ('admin_dashboard_stats',false, false, true, true),
@@ -275,6 +278,8 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   ('trg_price_history',            true, false, false, false),
   ('trg_supersede_deal_nudges',    true, false, false, false),
   ('trg_supersede_viewing_nudges', true, false, false, false),
+  -- 0117: revoked from all four roles explicitly, so hosted matches local
+  ('trg_deals_closed_guard',       false, false, false, false),
   -- 0101: erasure cancels a lead's pending desk alert — a trigger body, and
   -- the one definer function here that even service_role may not call
   ('cancel_lead_notification_jobs', true, false, false, false),

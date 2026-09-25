@@ -2580,15 +2580,101 @@ VERIFY, run before starting.
   missing from the evidence report's `MEDIA_NOISE` (`lib/services/evidence.ts`), so alt text reaches a
   property-scoped report — never a recorded decision — and the rule's own escape hatch applies if an alt is
   ever found naming a person.
-- **`markDealLost` and `markDealWon` do not fold the open-status check into their UPDATE, S.** Each reads
+- ~~**`markDealLost` and `markDealWon` do not fold the open-status check into their UPDATE, S.**~~ **FIXED 2026-09-25 — DECISIONS
+  `T-atomic-deal-close` (migration 0117): the whole close — the row lock, the open-status check under it, the UPDATE
+  folded on `status = 'open'`, and every event of the close — is one transaction in `close_deal`; a competing or
+  repeated close answers `already_closed` / `conflict` and writes nothing; a refused event rolls the whole close back.
+  The `deals_closed_guard` trigger refuses a USER SESSION's change to a closed deal's outcome or closing details,
+  which also covers the deployed pre-0117 actions in the hosted-first window. Reproduced first against `6366ef8`
+  (the real actions on the real local stack: two Lost events, a won deal flipped to lost, a closed deal with no
+  event), then green.** **VERIFY (fixed):** `grep -c 'rpc("close_deal"' lib/actions/deals.ts` — must print 1 ·
+  `grep -c "where id = v_deal.id and status = 'open'" supabase/migrations/0117_atomic_deal_close.sql` — must print 2 ·
+  `grep -n "create trigger deals_closed_guard" supabase/migrations/0117_atomic_deal_close.sql` — must hit.
+  (original) Each reads
   `status = 'open'` and then updates `.eq("id", dealId)` only (`lib/actions/deals.ts`), so a double submit,
   or Won and Lost at the same moment, can both pass: two terminal events in the chain, and a won deal
   flipped to lost (or `lost_reason` overwritten; `markDealWon` does not clear it). `closeLead` and the
   reservation transitions already fold theirs in (`.in("status", …)`, `.eq("status", from)`). Found by
   T-event-typed-text-shape's sweep; not built there (it preserves the deal transitions as they are).
-  **VERIFY** — one per action, and no hit means THAT action is still open:
-  `grep -n -A12 'status: "lost",' lib/actions/deals.ts | grep 'eq("status", "open")'` ·
-  `grep -n -A12 'status: "won",' lib/actions/deals.ts | grep 'eq("status", "open")'`.
+- **A direct write can still close an OPEN deal without `close_deal`, S — deploy-coupled (code first).**
+  `deals_update` (0100) restricts rows, not columns, so an admin or the deal's agent can PATCH `status` /
+  `won_at` / `final_value` / `lost_reason` on an OPEN deal through PostgREST: no accepted-offer rule, no mandatory
+  reason, no event (guardrail 1). 0117's guard binds only rows that are ALREADY closed, because refusing
+  open → won/lost would refuse the deployed pre-0117 actions' own closes until the new app ships. Once the
+  `close_deal` app is deployed: refuse open → won/lost for user sessions unless the change is made inside
+  `close_deal` (a transaction-local setting `close_deal` sets and the guard reads, or column UPDATE revoked on
+  those columns with `close_deal` turned definer — which then needs its own role/ownership checks). Flip the
+  "KNOWN GAP" case in `supabase/tests/deal-close.test.ts`; `rls.test.ts` ~1819 is a service-role write and
+  stays legal if the rule binds user sessions only. Found by T-atomic-deal-close. **VERIFY:** the KNOWN GAP
+  test in `supabase/tests/deal-close.test.ts` still asserts `direct.error` is null — while it does, open.
+- **A committed Won's reminders are at-most-once, S.** `listing_status_check` and `reservation_still_live` are
+  raised by the action AFTER `close_deal` commits, only by the request that got `closed`. A crash or timeout
+  between the commit and those steps — or an answer lost on the way back, which the action reports as
+  "could not confirm" — leaves them unraised, and a retry answers `already_closed`, which deliberately does not
+  re-run them (two requests would race the read-then-insert dedupe; `tasks` has no unique index) — and after a
+  crash the page no longer offers the Won button anyway. What tells the user to check by hand is the Won dialog's
+  own message for a request that never came back (`unconfirmedCloseText("won")` in `lib/validators/deals.ts`,
+  the same text the action returns for an unknown answer), kept on screen until dismissed; nothing re-raises the
+  reminders. Separately, two DIFFERENT deals won at once on
+  one property can both pass that dedupe. Fix: raise them inside `close_deal` through a definer helper under a
+  savepoint (atomic with the close, a failed prompt still never rolls the win back), or a sweep that raises them
+  for won deals whose listing still reads on-market or whose hold is live; and a partial unique index
+  `(org_id, property_id, kind) where not is_done` for these two kinds (check hosted for duplicates first).
+  Found by T-atomic-deal-close. **VERIFY:** `grep -ln "insert into tasks" supabase/migrations/*.sql | xargs grep -ln "listing_status_check"` — no hit means open (a migration that inserts tasks AND names the kind is a SQL raiser).
+- **NaN is a legal price, S.** `numeric` admits `'NaN'`, and it passes every `>= 0` CHECK: `offers.amount`,
+  `deals.final_value`, `deals.expected_value` (0076/0077). A direct PostgREST write can store it; every
+  report that sums `coalesce(final_value, expected_value)` then reads NaN. `close_deal` refuses it (typed or from
+  the offer), nothing else does. Fix: `check (x <> 'NaN')` on the three columns, after checking hosted holds none.
+  Found by T-atomic-deal-close's design critique. **VERIFY:** `grep -n "'NaN'" supabase/migrations/*.sql | grep -i check` — no hit means open.
+- **`move_deal_to_stage` locks FOR UPDATE, S.** The strongest row lock conflicts with the FOR KEY SHARE every
+  foreign-key check on a task / offer / viewing / reservation takes on its deal, so a move blocks those inserts
+  and can deadlock against the nightly `create_followup_nudges` (it holds an org's chain lock, then its tasks
+  insert checks `deal_id`). 0117's `close_deal` uses FOR NO KEY UPDATE for exactly this. Fix: the same in 0067's
+  function (re-create with that one word changed). Found by T-atomic-deal-close's design critique. **VERIFY:**
+  `grep -ilE "create or replace function (public\.)?move_deal_to_stage" supabase/migrations/*.sql | tail -1 | xargs grep -n -i "for no key update"` — no hit means open (it reads the newest migration that defines the function, whatever its name).
+- **NOTE — a close and the nightly nudge sweep can still deadlock through the nudge tasks (rare, fails safe).**
+  Pre-dates 0117 (the old PATCH fired the same trigger). A close's `deals_supersede_nudges` locks the deal's open
+  `deal_no_contact` tasks, then waits for the org's events-chain lock; `create_followup_nudges` (one transaction
+  for every org) may already hold that lock from an earlier event while it updates those same tasks — arm 3 after
+  a `deal_no_contact_days` change, arm 5 for a deactivated assignee. PostgreSQL aborts one side (40P01): a close
+  answers "nothing was changed", a sweep runs again the next night. 0117's FOR NO KEY UPDATE removed only the
+  foreign-key half of this. A structural fix would take the chain lock before the task update in the trigger, or
+  the task rows before any event in the sweep — neither is needed while it fails safe.
+- **The deal nudge supersession writes across organisations, S.** `trg_supersede_deal_nudges` (0025, SECURITY
+  DEFINER) matches tasks by `deal_id` with no org predicate and writes its `superseded` event into the TASK's
+  org; `tasks_insert` checks only the inserter's org and `tasks.deal_id` carries no tenant FK. So a member of
+  org B who learns an org-A deal id can plant a `deal_no_contact` task on it, and org A's close then marks it
+  done and writes a permanent event into org B's chain, attributed to an org-A user (measured in a rolled-back
+  experiment). Pre-dates 0117; the close transaction now carries it. Fix: `and t.org_id = new.org_id` in the
+  trigger; composite tenant FKs `(deal_id, org_id)` on `tasks` and `offers`. Found by T-atomic-deal-close's
+  design critique. **VERIFY:** `grep -n "t.org_id = new.org_id" supabase/migrations/*.sql` — no hit means open.
+- **Offers stay editable on a closed deal, S.** `updateOfferStatus` never checks the deal's status (only
+  `saveOffer` does), so an offer still `submitted` / `countered` on a won or lost deal can be accepted,
+  rejected, withdrawn or expired afterwards — accepted on a LOST deal, it even answers `wonEligible` — bumping
+  the closed deal's `last_activity_at` with no deal event. The app cannot move an ACCEPTED offer
+  (`OFFER_TRANSITIONS.accepted` is empty), but nothing in the database stops a direct PostgREST PATCH doing so:
+  `offers` has no status trigger or CHECK, and `offers_update` limits rows, not transitions. And "one accepted
+  offer per deal" (T3.2) is a check-then-act in the action with no unique index. `close_deal` now records the justifying `offer_id` in the `won` event and holds
+  the offer FOR SHARE during the close. Fix: refuse offer transitions on a non-open deal; a partial unique index
+  `offers(deal_id) where status = 'accepted'` after checking hosted. Found by T-atomic-deal-close. **VERIFY:**
+  `grep -n -A30 "export async function updateOfferStatus" lib/actions/deals.ts | grep 'status !== "open"'` — no hit means open.
+- **The dashboard's "won this month" lost `final_value` again, S.** 0093 rebuilt `admin_dashboard_stats` from
+  0057's body and silently undid 0076's `coalesce(final_value, expected_value)`: the tile sums `expected_value`
+  only, while every report reads the confirmed price. No test pins it. Fix: restore the coalesce in a new
+  migration and pin `won_month.total` against a deal whose final value differs from its estimate. Found by
+  T-atomic-deal-close's scouting. **VERIFY:** `grep -il "create or replace function \(public\.\)\?admin_dashboard_stats" supabase/migrations/*.sql | tail -1 | xargs grep -n "final_value"` — no hit means open (today it reads 0093).
+- **On a phone, a deal with an offer cannot be closed from its page, S.** Once the deal page lists an offer it
+  overflows the 390 px viewport, the page renders wider than the screen, and the Won / Lost dialog opens partly
+  off it: in Playwright's mobile project (Pixel 5) the dialog's submit button stays covered by the overlay and
+  never becomes clickable. Measured on untouched `6366ef8` (`tests/e2e/deal-close.spec.ts` fails on mobile
+  exactly so), and on this branch for the new `deal-close-outcomes.spec.ts`; a deal WITHOUT an offer
+  (`event-typed-text.spec.ts`) closes fine. CI runs desktop only, so nothing red shows. The offers table is the
+  likely widener. Found by T-atomic-deal-close's mobile run. **VERIFY:**
+  `npx playwright test --project=setup --project=mobile tests/e2e/auth.setup.ts tests/e2e/deal-close.spec.ts`
+  — a click timeout on the dialog's "Mark won" means open.
+- **NOTE — a superseded deal nudge renders the generic line.** The close transaction's `deals_supersede_nudges`
+  writes `superseded` with `reason: 'deal_closed'` (or `'deal_contacted'`); `EVENT_LINES.superseded` knows only
+  `'deal_contacted_or_closed'`, so these read as the generic "superseded" sentence. Cosmetic; pre-dates 0117.
 - ~~**A crafted `rescheduled` event crashes three pages, S.**~~ **FIXED 2026-09-25 — DECISIONS
   `T-rescheduled-line-crash`: not one line but a class. `rescheduled` formats only parseable dates;
   every line's numbers go through `asNumber` (a jsonb object with its own `toString`, or a deep array,
@@ -2645,6 +2731,12 @@ VERIFY, run before starting.
   `grep -n "reservations" lib/services/erasure-run.ts lib/actions/contact-erasure.ts` ·
   `grep -n "viewings" lib/services/erasure-run.ts lib/actions/contact-erasure.ts | grep -i feedback` ·
   `grep -n "key_movements\|current_holder_name" lib/services/erasure-run.ts lib/actions/contact-erasure.ts`.
+  Since T-atomic-deal-close (0117) the `deals_closed_guard` trigger refuses a USER SESSION's change to
+  `deals.lost_reason` on a closed deal — including blanking it (pinned in `supabase/tests/deal-close.test.ts`).
+  Contact erasure writes on the admin's USER session (`createClient`; only its notes redaction and storage go
+  through `createAdminClient()`), so a blanking step written like its neighbours would be refused on every lost
+  deal and stop the erasure part-way: put it on `createAdminClient()` or in a definer function, which the guard
+  deliberately does not bind.
   Since T-key-holder-shape the rows are the ONLY home of a key's typed holder — an owner's name on a
   transfer — in `key_movements.holder_name` (append-only for every session role) and
   `property_keys.current_holder_name`; neither is linked to a contact, so contact erasure cannot find them.

@@ -142,6 +142,8 @@ export async function AdminDashboard({ orgId }: { orgId: string }) {
       .from("events")
       .select("id, occurred_at, entity_type, entity_id, event_type, payload, actor_id")
       .order("occurred_at", { ascending: false })
+      // one transaction, one occurred_at (a close, 0117): id is chain order
+      .order("id", { ascending: false })
       .limit(10),
   ]);
 

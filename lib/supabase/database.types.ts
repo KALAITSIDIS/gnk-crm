@@ -3265,6 +3265,16 @@ export type Database = {
           retried: number
         }[]
       }
+      close_deal: {
+        Args: {
+          p_deal_id: string
+          p_final_value?: number
+          p_lost_reason?: string
+          p_outcome: string
+          p_override?: boolean
+        }
+        Returns: Json
+      }
       complete_notification_job: {
         Args: {
           p_category?: string
