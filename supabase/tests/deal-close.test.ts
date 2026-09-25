@@ -384,6 +384,41 @@ describe("competing closes serialise on the row: one transition, one terminal ev
     const evs = await events(deal);
     expect(count(evs, "won") + count(evs, "lost")).toBe(1);
   });
+
+  it("0118: a direct PATCH queued behind a close is refused either way — the closed row (commit) or the open-row rule (rollback)", async () => {
+    for (const end of ["commit", "rollback"] as const) {
+      const deal = await newDeal();
+      await asUser(a, agent.id);
+      await closeSql(a, deal, "lost", { reason: "Held close" });
+      await asUser(b, admin.id);
+      const pidB = await pidOf(b);
+      let done = false;
+      const pb = b
+        .query("update deals set status = 'won', won_at = now() where id = $1", [deal])
+        .then(
+          () => null,
+          (e: Error) => e.message,
+        )
+        .finally(() => {
+          done = true;
+        });
+      await until("the PATCH waits for the close's row lock", waitsOnRowLock(pidB));
+      expect(done, "the PATCH must wait while the close holds the row").toBe(false);
+      await a.query(end);
+      const refusal = await pb;
+      await b.query("rollback");
+      if (end === "commit") {
+        // re-evaluated against the committed version: the closed-row branch
+        expect(refusal).toBe("Deal is already lost — it cannot be marked won");
+        expect((await row(deal)).status).toBe("lost");
+        expect((await events(deal)).map((e) => e.event_type)).toEqual(["lost"]);
+      } else {
+        expect(refusal).toBe("Deal is open — it is marked won only from the deal page (close_deal)");
+        expect((await row(deal)).status).toBe("open");
+        expect(await events(deal)).toEqual([]);
+      }
+    }
+  });
 });
 
 describe("a repeated request after completion", () => {
@@ -694,49 +729,65 @@ describe("0118: close_deal as a definer admits exactly whom deals_update admits"
   // deal's agent_id or created_by — and require_aal2 on top. A definer body is
   // not held by any of it, so it restates the rule; this compares the two
   // DIFFERENTIALLY, persona by persona, through PostgREST: close_deal must
-  // succeed exactly where a PATCH of an ordinary column succeeds.
-  async function canEdit(client: SupabaseClient, dealId: string) {
+  // succeed exactly where a PATCH of an ordinary column succeeds — and each
+  // refusal must be the one its rule gives, not any error at all.
+  type Probe = { ok: boolean; answer: string };
+  async function edit(client: SupabaseClient, dealId: string): Promise<Probe> {
     const r = await client
       .from("deals")
       .update({ title: `ZZTEST differential ${RUN}` })
       .eq("id", dealId)
-      .select("id")
-      .maybeSingle();
-    return r.data?.id === dealId;
+      .select("id");
+    if (r.error) return { ok: false, answer: r.error.code ?? r.error.message };
+    return { ok: r.data?.length === 1 && r.data[0]!.id === dealId, answer: `${r.data?.length ?? 0} row(s)` };
   }
-  async function canClose(client: SupabaseClient, dealId: string) {
+  async function close(client: SupabaseClient, dealId: string): Promise<Probe> {
     const r = await rpc(client, dealId, "lost", { reason: "Differential probe" });
-    return (r.data as Result | null)?.result === "closed";
+    if (r.error) return { ok: false, answer: r.error.code === "P0001" ? r.error.message : (r.error.code ?? r.error.message) };
+    return { ok: (r.data as Result).result === "closed", answer: (r.data as Result).result };
   }
+  /** newDeal, then one column set as postgres */
+  const dealWith = (owner: string, createdBy: string) => async () => {
+    const id = await newDeal({ owner });
+    await o.query("update deals set created_by = $1 where id = $2", [createdBy, id]);
+    return id;
+  };
 
-  it("persona by persona: the same answer as the RLS policy, and the expected one", async () => {
+  it("persona by persona: the same answer as the RLS policy, and the rule's own refusal", async () => {
     const aal1 = anonClient();
     const signIn = await aal1.auth.signInWithPassword({ email: agent.email, password: TEST_PASSWORD });
     expect(signIn.error).toBeNull();
-    // created_by alone qualifies an agent: the deal is otherAgent's, the creator is agent
-    const createdByAgent = async () => {
-      const id = await newDeal({ owner: otherAgent.id });
-      await o.query("update deals set created_by = $1 where id = $2", [agent.id, id]);
-      return id;
-    };
-    const cases: { who: string; client: () => SupabaseClient; deal: () => Promise<string>; expected: boolean }[] = [
-      { who: "the deal's agent", client: () => agent.client, deal: () => newDeal(), expected: true },
-      { who: "the deal's creator (not its agent)", client: () => agent.client, deal: createdByAgent, expected: true },
-      { who: "an admin (another agent's deal)", client: () => admin.client, deal: () => newDeal(), expected: true },
-      { who: "another agent of the organisation", client: () => otherAgent.client, deal: () => newDeal(), expected: false },
-      { who: "a listing manager", client: () => lm.client, deal: () => newDeal(), expected: false },
-      { who: "another organisation's admin", client: () => otherAdmin.client, deal: () => newDeal(), expected: false },
-      { who: "the deal's agent at aal1", client: () => aal1, deal: () => newDeal(), expected: false },
-      { who: "anon", client: () => anonClient(), deal: () => newDeal(), expected: false },
+    const cases: {
+      who: string;
+      client: () => SupabaseClient;
+      deal: () => Promise<string>;
+      edit: string;
+      close: string;
+    }[] = [
+      // the agent_id arm alone: an admin created the deal and assigned it
+      { who: "the deal's agent (created by an admin)", client: () => agent.client, deal: dealWith(agent.id, admin.id), edit: "1 row(s)", close: "closed" },
+      // the created_by arm alone: the deal is another agent's, the creator is `agent`
+      { who: "the deal's creator (not its agent)", client: () => agent.client, deal: dealWith(otherAgent.id, agent.id), edit: "1 row(s)", close: "closed" },
+      { who: "an admin (another agent's deal)", client: () => admin.client, deal: () => newDeal(), edit: "1 row(s)", close: "closed" },
+      { who: "another agent of the organisation", client: () => otherAgent.client, deal: () => newDeal(), edit: "0 row(s)", close: "Deal not found" },
+      { who: "a listing manager", client: () => lm.client, deal: () => newDeal(), edit: "0 row(s)", close: "You do not have permission to close deals." },
+      { who: "another organisation's admin", client: () => otherAdmin.client, deal: () => newDeal(), edit: "0 row(s)", close: "Deal not found" },
+      // a user of ANOTHER organisation named as this deal's agent and creator:
+      // only the organisation predicate stands between them and the close
+      { who: "another organisation's user named as the deal's agent", client: () => otherAdmin.client, deal: dealWith(otherAdmin.id, otherAdmin.id), edit: "0 row(s)", close: "Deal not found" },
+      { who: "the deal's agent at aal1", client: () => aal1, deal: () => newDeal(), edit: "0 row(s)", close: "Second factor required." },
+      { who: "anon", client: () => anonClient(), deal: () => newDeal(), edit: "42501", close: "42501" },
     ];
     for (const c of cases) {
       // a fresh deal for each probe: the edit must not decide the close
       const editDeal = await c.deal();
       const closeDeal = await c.deal();
-      const edit = await canEdit(c.client(), editDeal);
-      const close = await canClose(c.client(), closeDeal);
-      expect({ who: c.who, edit, close }).toEqual({ who: c.who, edit: c.expected, close: c.expected });
-      if (!c.expected) {
+      const e = await edit(c.client(), editDeal);
+      const x = await close(c.client(), closeDeal);
+      expect({ who: c.who, edit: e.answer, close: x.answer }).toEqual({ who: c.who, edit: c.edit, close: c.close });
+      // the differential itself: the close succeeds exactly where the edit does
+      expect(x.ok, c.who).toBe(e.ok);
+      if (!x.ok) {
         expect((await row(closeDeal)).status, c.who).toBe("open");
         expect(await events(closeDeal), c.who).toEqual([]);
       }
@@ -747,9 +798,70 @@ describe("0118: close_deal as a definer admits exactly whom deals_update admits"
     // `inactive` is deactivated by "a deactivated user is refused" above; make sure
     const deal = await newDeal({ owner: inactive.id });
     await o.query("update profiles set is_active = false where id = $1", [inactive.id]);
-    expect(await canEdit(inactive.client, deal)).toBe(false);
-    expect(await canClose(inactive.client, deal)).toBe(false);
+    expect(await edit(inactive.client, deal)).toEqual({ ok: false, answer: "0 row(s)" });
+    expect(await close(inactive.client, deal)).toEqual({ ok: false, answer: "Account deactivated." });
     expect((await row(deal)).status).toBe("open");
+  });
+
+  describe("the caller is read AGAIN under the row lock (0117's RLS re-read it at every statement)", () => {
+    /** Session `a` (postgres) holds the deal's row; `b` closes as `uid` and is seen waiting. */
+    async function closeBehindLock(
+      dealId: string,
+      uid: string,
+      opts: Parameters<typeof closeSql>[3],
+      duringWait: () => Promise<void>,
+    ) {
+      await a.query("begin");
+      await a.query("select id from deals where id = $1 for update", [dealId]);
+      await asUser(b, uid);
+      const pidB = await pidOf(b);
+      const pb = settled(closeSql(b, dealId, "won", opts));
+      await until("the close waits for the row", waitsOnRowLock(pidB));
+      await duringWait();
+      await a.query("commit");
+      const outcome = await pb.value().then(
+        (r) => ({ result: r, error: null as string | null }),
+        (e: Error) => ({ result: null, error: e.message }),
+      );
+      await b.query("rollback");
+      return outcome;
+    }
+
+    it("an admin demoted to agent while the override Won waits is refused — nothing written", async () => {
+      const deal = await newDeal(); // agent's deal, no accepted offer: only an admin override closes it
+      try {
+        const out = await closeBehindLock(deal, admin.id, { override: true }, async () => {
+          await o.query("update profiles set role = 'agent' where id = $1", [admin.id]);
+        });
+        expect(out).toEqual({ result: null, error: "Deal not found" });
+      } finally {
+        await o.query("update profiles set role = 'admin' where id = $1", [admin.id]);
+      }
+      expect((await row(deal)).status).toBe("open");
+      expect(await events(deal)).toEqual([]);
+      // control: the same admin, not demoted, closes it the same way
+      await asUser(b, admin.id);
+      expect(await closeSql(b, deal, "won", { override: true })).toMatchObject({ result: "closed", override: true });
+      await b.query("commit");
+    });
+
+    it("the deal's agent deactivated while the Won waits is refused — nothing written", async () => {
+      const deal = await newDeal({ owner: otherAgent.id, accepted: 1000 });
+      try {
+        const out = await closeBehindLock(deal, otherAgent.id, {}, async () => {
+          await o.query("update profiles set is_active = false where id = $1", [otherAgent.id]);
+        });
+        expect(out).toEqual({ result: null, error: "Account deactivated." });
+      } finally {
+        await o.query("update profiles set is_active = true where id = $1", [otherAgent.id]);
+      }
+      expect((await row(deal)).status).toBe("open");
+      expect(await events(deal)).toEqual([]);
+      // control: reactivated, the same agent closes it
+      await asUser(b, otherAgent.id);
+      expect(await closeSql(b, deal, "won")).toMatchObject({ result: "closed", status: "won" });
+      await b.query("commit");
+    });
   });
 
   it("the definer resolves nothing through search_path the caller could shadow", async () => {
@@ -758,12 +870,27 @@ describe("0118: close_deal as a definer admits exactly whom deals_update admits"
          from pg_proc p where p.oid = 'public.close_deal(uuid,text,numeric,text,boolean)'::regprocedure`,
     );
     expect(rows[0]!.owner).toBe("postgres");
-    expect(rows[0]!.config).toEqual(["search_path=public"]);
-    // every relation it reads or writes is schema-qualified (a pg_temp table
-    // named `deals` is searched BEFORE search_path for relations)
+    // pg_temp LAST: left out, it is searched FIRST for relations and types
+    expect(rows[0]!.config).toEqual(["search_path=public, pg_temp"]);
+    // and the relations it reads or writes are schema-qualified anyway
     const code = rows[0]!.src.replace(/--[^\n]*/g, "");
     const bare = code.match(/\b(?:from|join|update|into)\s+(?!public\.)(deals|offers|deal_stages|events)\b/gi);
     expect(bare).toBeNull();
+  });
+
+  it("no SECURITY DEFINER function but close_deal writes deals — the guard exempts definer bodies, so any other would be a second door", async () => {
+    const { rows } = await o.query<{ fn: string }>(
+      `select n.nspname || '.' || p.proname as fn
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where p.prosecdef
+          and n.nspname not in ('pg_catalog', 'information_schema')
+          and regexp_replace(p.prosrc, '--[^\\n]*', '', 'g') ~* '(update|insert\\s+into)\\s+(public\\.)?deals\\y'
+          and not exists (select 1 from pg_depend d
+                           where d.classid = 'pg_proc'::regclass and d.objid = p.oid
+                             and d.refclassid = 'pg_extension'::regclass and d.deptype = 'e')
+        order by 1`,
+    );
+    expect(rows.map((r) => r.fn)).toEqual(["public.close_deal"]);
   });
 });
 
@@ -1125,6 +1252,7 @@ describe("0118: no user-session path but close_deal makes a deal won or lost", (
       ["born won", () => ({ status: "won", won_at: nowIso(), final_value: 1 }), "A deal is created open — it is marked won or lost only from the deal page (close_deal)"],
       ["born lost", () => ({ status: "lost", lost_at: nowIso(), lost_reason: "Never open" }), "A deal is created open — it is marked won or lost only from the deal page (close_deal)"],
       ["open but carrying won_at", () => ({ won_at: nowIso() }), "A new deal cannot carry closing details — they are written when it is marked won or lost"],
+      ["open but carrying lost_at", () => ({ lost_at: nowIso() }), "A new deal cannot carry closing details — they are written when it is marked won or lost"],
       ["open but carrying a lost_reason", () => ({ lost_reason: "Pre-written" }), "A new deal cannot carry closing details — they are written when it is marked won or lost"],
       ["open but carrying a final_value", () => ({ final_value: 99 }), "A new deal cannot carry closing details — they are written when it is marked won or lost"],
       ["open in the Won stage", () => ({ stage_id: wonStage.id }), "Use the deal page to mark this deal won or lost (guarded flow)"],
@@ -1132,16 +1260,19 @@ describe("0118: no user-session path but close_deal makes a deal won or lost", (
       ["open in another organisation's stage", () => ({ stage_id: foreignOpen }), "Stage not found"],
     ];
     for (const [label, extra, message] of refusals) {
-      it(`refuses a deal ${label}: nothing inserted, no event`, async () => {
-        const before = await orgDealCount();
-        const r = await agent.client.from("deals").insert(insertable(extra())).select("id");
-        expect(r.error?.code, JSON.stringify(r.error)).toBe("P0001");
-        expect(r.error?.message).toBe(message);
-        expect(await orgDealCount()).toBe(before);
-      });
+      for (const who of ["agent", "admin"] as const) {
+        it(`refuses a deal ${label} (${who}): nothing inserted`, async () => {
+          const before = await orgDealCount();
+          const client = who === "agent" ? agent.client : admin.client;
+          const r = await client.from("deals").insert(insertable(extra())).select("id");
+          expect(r.error?.code, JSON.stringify(r.error)).toBe("P0001");
+          expect(r.error?.message).toBe(message);
+          expect(await orgDealCount()).toBe(before);
+        });
+      }
     }
 
-    it("an ordinary open deal is still created by a user session (convertLead / createDeal's shape)", async () => {
+    it("an ordinary open deal is still created by a user session (convertLead's shape)", async () => {
       const r = await agent.client.from("deals").insert(insertable({ expected_value: 300000 })).select("id, status").single();
       expect(r.error).toBeNull();
       expect(r.data!.status).toBe("open");
@@ -1165,7 +1296,7 @@ describe("0118: no user-session path but close_deal makes a deal won or lost", (
       expect(await events(deal)).toEqual([]);
     });
 
-    it("an upsert onto an existing CLOSED deal cannot reopen or re-detail it (the UPDATE arm, 0117's guard)", async () => {
+    it("an upsert onto an existing CLOSED deal cannot move its stage (the UPDATE arm, 0117's guard)", async () => {
       const deal = await newDeal();
       await rpc(agent.client, deal, "lost", { reason: "Closed before upsert" });
       const before = await row(deal);
@@ -1175,14 +1306,28 @@ describe("0118: no user-session path but close_deal makes a deal won or lost", (
         .from("deals")
         .upsert(insertable({ id: deal }), { onConflict: "id" })
         .select("id");
-      expect(r.error?.message).toMatch(/^Deal is already lost — /);
+      expect(r.error?.message).toBe("Deal is already lost — its closing details cannot be changed");
       expect(await row(deal)).toEqual(before);
+    });
+
+    it("an upsert cannot REOPEN a closed deal either: an explicit open row passes the INSERT arm, the UPDATE arm refuses", async () => {
+      const deal = await newDeal();
+      await rpc(agent.client, deal, "lost", { reason: "Closed before reopen upsert" });
+      const before = await row(deal);
+      const r = await agent.client
+        .from("deals")
+        .upsert(insertable({ id: deal, status: "open" }), { onConflict: "id" })
+        .select("id");
+      expect(r.error?.message).toBe("Deal is already lost — a closed deal cannot be reopened");
+      expect(await row(deal)).toEqual(before);
+      expect((await events(deal)).map((e) => e.event_type)).toEqual(["lost"]);
     });
 
     it("an upsert of a NEW deal born won is refused; an ordinary upsert still merges", async () => {
       const id = randomUUID();
       const born = await agent.client.from("deals").upsert(insertable({ id, status: "won", won_at: nowIso() }), { onConflict: "id" });
       expect(born.error?.code).toBe("P0001");
+      expect(born.error?.message).toBe("A deal is created open — it is marked won or lost only from the deal page (close_deal)");
       expect((await o.query("select 1 from deals where id = $1", [id])).rowCount).toBe(0);
       const deal = await newDeal();
       const merge = await agent.client
@@ -1210,12 +1355,13 @@ describe("0118: no user-session path but close_deal makes a deal won or lost", (
       expect((await row(deal)).status).toBe("open");
     });
 
-    // The role itself is chosen by PostgREST from the VERIFIED token: its login
-    // role (authenticator) may become service_role, so the signature is the
-    // whole gate — which is what this probes. (A SQL session cannot be the
-    // probe: SET ROLE checks the LOGIN role's memberships, and the harness
-    // logs in as postgres.)
-    it("a token claiming service_role that the project did not sign is rejected before any SQL runs", async () => {
+    // An ASSUMPTION the guard stands on, not 0118 code: the role is chosen by
+    // PostgREST from the VERIFIED token. Its login role (authenticator) may
+    // become service_role, so the signature is the whole gate — pinned here so
+    // a platform change that weakened it would show red. (A SQL session cannot
+    // be the probe: SET ROLE checks the LOGIN role's memberships, and the
+    // harness logs in as postgres.)
+    it("assumption: a token claiming service_role that the project did not sign is rejected before any SQL runs", async () => {
       const deal = await newDeal();
       const b64 = (v: object) => Buffer.from(JSON.stringify(v)).toString("base64url");
       const unsigned = `${b64({ alg: "HS256", typ: "JWT" })}.${b64({ role: "service_role", sub: agent.id, exp: 4102444800 })}.${Buffer.from("not-the-secret").toString("base64url")}`;
@@ -1230,8 +1376,9 @@ describe("0118: no user-session path but close_deal makes a deal won or lost", (
 
     it("no session flag opens the gate: setting one and PATCHing is still refused, and set_config is not an exposed RPC", async () => {
       const deal = await newDeal();
+      // set_config lives in pg_catalog, which PostgREST does not expose
       const viaRest = await agent.client.rpc("set_config", { setting_name: "role", new_value: "service_role", is_local: true });
-      expect(viaRest.error).not.toBeNull();
+      expect(viaRest.error?.code).toBe("PGRST202");
       await asUser(a, agent.id);
       for (const [k, v] of [["gnk.close_deal", deal], ["app.closing", "on"], ["request.close_deal", "true"]]) {
         await a.query("select set_config($1, $2, true)", [k, v]);

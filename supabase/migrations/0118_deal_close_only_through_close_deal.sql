@@ -19,21 +19,24 @@
 --
 -- THE DEPENDENCY, CONFIRMED BEFORE THIS FILE WAS WRITTEN (2026-09-25):
 -- production (gnk-crm.vercel.app, dpl_7BFFpRnoN9cDzuk2XquP7A9Yn7FL) serves
--- aa01ef8, whose markDealWon / markDealLost call close_deal and write the
--- deal row no other way; main (3a72498) differs from it in docs only; hosted
--- is at 0117 with close_deal's body md5 = local. An application OLDER than
--- aa01ef8 closes a deal with a PATCH, which this migration refuses — see
--- DECISIONS T-deal-close-db-boundary for the deploy order and the rollback.
+-- aa01ef8, whose markDealWon / markDealLost close a deal only through
+-- close_deal (their only other deal write is the health recompute after a
+-- committed Won); main (3a72498) differs from it in docs only; hosted is at
+-- 0117 with close_deal's body md5 = local. An application OLDER than aa01ef8
+-- closes a deal with a PATCH, which this migration refuses: from here on no
+-- application older than aa01ef8 can close a deal (it fails closed — the
+-- PATCH is refused before its event writes, nothing is written). See DECISIONS
+-- T-deal-close-db-boundary for the deploy order and the rollback.
 --
 -- THE DESIGN — who may change status is decided by the ROLE the statement runs
 -- as, which a PostgREST caller cannot choose (it comes from the signed JWT):
 --
 -- A. close_deal becomes SECURITY DEFINER (owner postgres). Its body is 0117's,
---    with the one thing an invoker body got from RLS restated explicitly —
---    see "WHAT THE DEFINER BODY RESTATES" below. Everything else (the
---    session identity, the aal2 check, the role check before any read, the
---    lock, the status under the lock, the rules, the events, the answers) is
---    0117's text. EXECUTE stays authenticated-only.
+--    with what an invoker body got from RLS restated explicitly — see "WHAT
+--    THE DEFINER BODY RESTATES" below. Everything else (the session identity,
+--    the aal2 check, the role check before any read, the lock, the status
+--    under the lock, the rules, the events, the answers) is 0117's text.
+--    EXECUTE stays authenticated-only.
 --
 -- B. deals_closed_guard now fires BEFORE INSERT OR UPDATE and, for a USER
 --    SESSION (current_user authenticated or anon — PostgREST's two roles),
@@ -82,20 +85,45 @@
 --     org)` after the lock found nothing — is REMOVED: under RLS it could not
 --     see another agent's deal, but as postgres it would answer "You do not
 --     have permission" for it and "Deal not found" for a missing id: an
---     existence oracle. Every refusal after the role check is 'Deal not found'.
---   - every relation is schema-qualified, so the definer's search_path (public,
---     the repo's convention) cannot be shadowed by a pg_temp relation.
+--     existence oracle. Every deal the caller may not close — another
+--     organisation's, another agent's, a missing id — reads 'Deal not found';
+--     the two unreachable "You do not have permission to close this deal"
+--     sentences (0 rows updated under the lock) read the same now.
+--   - TIMING. 0117's RLS read the caller's profile again at every statement
+--     after the lock (the UPDATE, each event insert), so a deactivation, a
+--     demotion, a move to another organisation or a lost second factor
+--     committed while the close WAITED for the row lock refused it there. The
+--     definer re-reads all of it under the lock (step 4b) — measured: an
+--     admin demoted during the wait no longer completes an override Won.
+--   - search_path is `public, pg_temp`: unlisted, pg_temp is searched FIRST
+--     for relations and types; listed last, it cannot shadow anything. Every
+--     relation is also schema-qualified. (Only a raw SQL session could create
+--     a temp object; no PostgREST caller can. The repo's other definers keep
+--     `public`, out of scope here.)
 --   supabase/tests/deal-close.test.ts proves the restatement DIFFERENTIALLY:
 --   for every persona, close_deal succeeds exactly where a PostgREST PATCH of
---   an ordinary column succeeds.
+--   an ordinary column succeeds; and a second session demotes / deactivates
+--   the caller while its close waits for the lock.
 --
--- Unchanged: the rules, messages, payloads and answers of close_deal (no
+-- Unchanged: the rules, payloads, answers and grants of close_deal (no
 -- signature or return-shape change, so no release-compat entry and no type
 -- regeneration); the Won follow-ups stay app-side; listing status and
 -- reservations are not touched; no row is repaired and no event is minted —
 -- hosted (read-only, 2026-09-25) holds one deal, lost, with its lost_at,
 -- reason, Lost stage and `lost` event, and no open deal carrying a closing
--- detail or a terminal stage.
+-- detail or a terminal stage. 0118 adds no constraint: nothing validates the
+-- rows that already exist (the guard judges a WRITE, comparing NEW with OLD).
+--
+-- Visible changes for a DIRECT PostgREST caller: a refused deal INSERT now
+-- answers 400 / P0001 from the guard (it runs BEFORE the RLS WITH CHECK)
+-- where 0117 answered 403 / 42501 — an aal1 or deactivated session reads
+-- "Stage not found"; the app keys on neither. Advisors: close_deal joins the
+-- by-design `authenticated_security_definer_function_executable` WARNs (+1).
+--
+-- ROLLBACK (DECISIONS): a FORWARD migration re-creating 0117's two bodies and
+-- the UPDATE-only trigger IN ONE TRANSACTION — never close_deal back to an
+-- invoker while this guard body is installed: its own UPDATE would then run
+-- as `authenticated` and every close would be refused.
 --
 -- NOT DONE HERE (BACKLOG — each is its own workflow, none makes a deal won or
 -- lost without close_deal):
@@ -110,7 +138,8 @@
 --     events from the same session (they change no deal);
 --   * deals_insert does not bind created_by / agent_id to the caller;
 --   * on a CLOSED deal, expected_value and agent_id stay editable (reports
---     read both) and deal_type is writable on any deal;
+--     read both); deal_type, created_at and stage_entered_at are writable on
+--     any deal by a direct PATCH (reports time-to-close and time-in-stage);
 --   * an admin may flip a stage's is_won / is_lost flag (deal_stages_update)
 --     with open deals sitting in it — configuration, not a transition;
 --   * a direct PATCH may move an open deal to a non-terminal stage of another
@@ -135,7 +164,8 @@ create or replace function public.close_deal(
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+-- pg_temp LAST: unlisted, it is searched FIRST for relations and types
+set search_path = public, pg_temp
 as $$
 declare
   v_uid         uuid := auth.uid();
@@ -219,7 +249,7 @@ begin
   --    organisation, or an agent who is the deal's agent or its creator.
   --    A deal outside that — another organisation's, another agent's, a
   --    missing id — is one answer, so the id cannot be used as an oracle.
-  select d.id, d.org_id, d.deal_type, d.status, d.stage_id, d.property_id, d.agent_id
+  select d.id, d.org_id, d.deal_type, d.status, d.stage_id, d.property_id, d.agent_id, d.created_by
     into v_deal
     from public.deals d
    where d.id = p_deal_id
@@ -227,6 +257,28 @@ begin
      and (v_role = 'admin' or d.agent_id = v_uid or d.created_by = v_uid)
      for no key update;
   if not found then
+    raise exception 'Deal not found';
+  end if;
+
+  -- 4b. the caller, read AGAIN now that the row is held. Step 1 read the
+  --     profile before a possible wait for this lock; 0117's RLS re-read it at
+  --     every later statement (the UPDATE, each event insert), so a
+  --     deactivation, a demotion, a move to another organisation or a lost
+  --     second factor committed during the wait refused the close there. A
+  --     definer body must ask again: this statement has a fresh snapshot, and
+  --     v_role — which the override rule below reads — is the current one.
+  if not (select public.mfa_satisfied()) then
+    raise exception 'Second factor required.';
+  end if;
+  v_org  := (select public.current_org_id());
+  v_role := (select public.current_role_gnk());
+  if v_org is null then
+    raise exception 'Account deactivated.';
+  end if;
+  if v_org <> v_deal.org_id
+     or v_role is null or v_role not in ('admin', 'agent')
+     or (v_role <> 'admin' and v_deal.agent_id is distinct from v_uid
+                           and v_deal.created_by is distinct from v_uid) then
     raise exception 'Deal not found';
   end if;
 
@@ -366,7 +418,7 @@ create or replace function public.trg_deals_closed_guard()
 returns trigger
 language plpgsql
 security invoker
-set search_path = public
+set search_path = public, pg_temp
 as $$
 declare
   v_stage_ok boolean;
@@ -406,7 +458,7 @@ begin
     if tg_op = 'INSERT' or new.stage_id is distinct from old.stage_id then
       select not (s.is_won or s.is_lost)
         into v_stage_ok
-        from deal_stages s
+        from public.deal_stages s
        where s.id = new.stage_id and s.org_id = new.org_id;
       if v_stage_ok is null then
         raise exception 'Stage not found';
@@ -457,7 +509,7 @@ begin
   select p.prosrc into src from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
    where ns.nspname = 'public' and p.proname = 'close_deal'
      and p.prosecdef and pg_get_userbyid(p.proowner) = 'postgres'
-     and 'search_path=public' = any (p.proconfig)
+     and 'search_path=public, pg_temp' = any (p.proconfig)
      and p.prorettype = 'jsonb'::regtype
      and pg_get_function_identity_arguments(p.oid)
          = 'p_deal_id uuid, p_outcome text, p_final_value numeric, p_lost_reason text, p_override boolean';
@@ -472,6 +524,14 @@ begin
   if src !~ 'mfa_satisfied\(\)'
      or src !~ 'd\.org_id = v_org\s+and \(v_role = ''admin'' or d\.agent_id = v_uid or d\.created_by = v_uid\)\s+for no key update' then
     raise exception '0118 aborted: close_deal no longer restates require_aal2 and deals_update in its lock query';
+  end if;
+  -- …and the caller read AGAIN under the lock (step 4b): 0117's RLS re-read
+  -- the profile at every statement after the lock, a definer body must ask
+  if (select count(*) from regexp_matches(src, 'mfa_satisfied\(\)', 'g')) < 2
+     or (select count(*) from regexp_matches(src, 'current_org_id\(\)', 'g')) < 2
+     or (select count(*) from regexp_matches(src, 'current_role_gnk\(\)', 'g')) < 2
+     or src !~ 'v_deal\.agent_id is distinct from v_uid\s+and v_deal\.created_by is distinct from v_uid' then
+    raise exception '0118 aborted: close_deal no longer re-reads the caller under the lock';
   end if;
   if src ~* 'permission to close this deal' then
     raise exception '0118 aborted: close_deal distinguishes a deal it may not close from a missing one (existence oracle)';
@@ -497,8 +557,26 @@ begin
      or has_function_privilege('service_role', 'public.trg_deals_closed_guard()', 'execute') then
     raise exception '0118 aborted: the guard trigger body is callable';
   end if;
-  if exists (select 1 from pg_proc p where p.oid = 'public.trg_deals_closed_guard()'::regprocedure and p.prosecdef) then
-    raise exception '0118 aborted: the guard must run as the caller — current_user is how it tells a user session';
+  if exists (select 1 from pg_proc p where p.oid = 'public.trg_deals_closed_guard()'::regprocedure
+              and (p.prosecdef or not ('search_path=public, pg_temp' = any (p.proconfig)))) then
+    raise exception '0118 aborted: the guard must run as the caller (current_user is how it tells a user session), with pg_temp last';
+  end if;
+
+  -- The guard exempts every role but authenticated / anon, so a SECURITY
+  -- DEFINER body that writes deals would be a second door. There is exactly
+  -- one, and it is close_deal. (Extension-owned functions are out of scope.)
+  select string_agg(ns.nspname || '.' || p.proname, ', ' order by ns.nspname, p.proname) into src
+    from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
+   where p.prosecdef
+     and ns.nspname not in ('pg_catalog', 'information_schema')
+     and regexp_replace(p.prosrc, '--[^\n]*', '', 'g')
+         ~* '(update|insert\s+into)\s+(public\.)?deals\y'
+     and not (ns.nspname = 'public' and p.proname = 'close_deal')
+     and not exists (select 1 from pg_depend d
+                      where d.classid = 'pg_proc'::regclass and d.objid = p.oid
+                        and d.refclassid = 'pg_extension'::regclass and d.deptype = 'e');
+  if src is not null then
+    raise exception '0118 aborted: a SECURITY DEFINER function other than close_deal writes deals: %', src;
   end if;
 
   select count(*) into n from pg_trigger t
