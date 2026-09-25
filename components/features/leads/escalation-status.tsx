@@ -15,8 +15,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
 /**
@@ -28,8 +26,11 @@ import { cn } from "@/lib/utils";
  *   Retry escalation — one click; the same provider key, which cannot send
  *                      a second copy;
  *   Review & resend  — a dialog that says the earlier e-mail may already
- *                      have been accepted, asks for a reason (kept on the
- *                      timeline), and only then creates a NEW logical send.
+ *                      have been accepted and, only on an explicit
+ *                      confirmation, creates a NEW logical send. It asks for
+ *                      no typed text (0115): the event records who, when,
+ *                      which action and why the worker stopped, and the
+ *                      append-only chain must never hold words about a person.
  *
  * The wording lives in lib/services/lead-escalation-status.ts where a test
  * pins it; the rules live in request_lead_escalation_recovery, which refuses
@@ -43,12 +44,9 @@ const TONE_CLASSES: Record<DeskAlertTone, string> = {
   neutral: "text-text-3",
 };
 
-const REASON_MAX = 200;
-
 export function EscalationChip({ job, isAdmin }: { job: EscalationJob | null; isAdmin: boolean }) {
   const [pending, startTransition] = useTransition();
   const [open, setOpen] = useState(false);
-  const [reason, setReason] = useState("");
   const status = escalationStatus(job, new Date());
   if (!job || !status) return null;
 
@@ -65,17 +63,13 @@ export function EscalationChip({ job, isAdmin }: { job: EscalationJob | null; is
   const resend = () =>
     startTransition(async () => {
       try {
-        await recoverLeadEscalation({ jobId: job.id, action: "resend", reason });
+        await recoverLeadEscalation({ jobId: job.id, action: "resend" });
         setOpen(false);
-        setReason("");
         toast.success("Escalation queued under a new key — sending now");
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Could not resend the escalation");
       }
     });
-
-  const reasonId = `escalation-reason-${job.id}`;
-  const canConfirm = reason.trim().length > 0 && reason.length <= REASON_MAX && !pending;
 
   return (
     <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
@@ -119,26 +113,14 @@ export function EscalationChip({ job, isAdmin }: { job: EscalationJob | null; is
               </DialogDescription>
             </DialogHeader>
             <p className="text-xs text-text-3">Why the worker stopped: {status.detail ?? status.label}.</p>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor={reasonId}>Reason</Label>
-              <Textarea
-                id={reasonId}
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                maxLength={REASON_MAX}
-                rows={3}
-                placeholder="What was checked, and why a second e-mail is right"
-                aria-describedby={`${reasonId}-hint`}
-              />
-              <p id={`${reasonId}-hint`} className="text-xs text-text-3">
-                Kept on the lead&apos;s timeline with your name — no personal details, {REASON_MAX} characters at most.
-              </p>
-            </div>
+            <p className="text-xs text-text-3">
+              The audit log records that you resent it, when, and why the worker stopped.
+            </p>
             <DialogFooter>
               <Button type="button" variant="outline" disabled={pending} onClick={() => setOpen(false)}>
                 Cancel
               </Button>
-              <Button type="button" disabled={!canConfirm} onClick={resend}>
+              <Button type="button" disabled={pending} onClick={resend}>
                 {pending ? "Resending…" : "Resend under a new key"}
               </Button>
             </DialogFooter>

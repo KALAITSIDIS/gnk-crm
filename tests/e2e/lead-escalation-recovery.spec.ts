@@ -21,8 +21,8 @@ import {
  * supabase/tests/lead-escalation-recovery.test.ts; the wording is
  * lib/services/lead-escalation-status.test.ts's. This spec covers what only
  * the running app can prove: a website lead carrying BOTH kinds shows both
- * chips with the right words; Review & resend asks for a reason and, once
- * confirmed, the row is pending under a NEW key with the admin's event; Retry
+ * chips with the right words; Review & resend warns, asks for no typed text
+ * (0115) and, once confirmed, the row is pending under a NEW key with the admin's event; Retry
  * on a plain failure leaves the key alone; a lead with no escalation row
  * renders the desk alert alone; and an agent sees the status without the
  * controls.
@@ -158,7 +158,7 @@ test.describe("Lead inbox — escalation status and recovery", () => {
     }
   });
 
-  test("a lead carrying both kinds shows both; Review & resend needs a reason and re-queues the escalation under a NEW key with the admin's event", async ({ page }) => {
+  test("a lead carrying both kinds shows both; Review & resend warns, asks for no typed text, and re-queues the escalation under a NEW key with the admin's event", async ({ page }) => {
     const { id: adminId, orgId } = await fixtureProfile(svc);
     const lead = await submit("both");
     const deskId = await deskAlertFailed(lead);
@@ -179,9 +179,12 @@ test.describe("Lead inbox — escalation status and recovery", () => {
     await row.getByRole("button", { name: /review & resend/i }).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByText(/may already have accepted/i)).toBeVisible();
-    // no reason, no send: the confirm stays disabled and nothing moved
-    await expect(dialog.getByRole("button", { name: /resend under a new key/i })).toBeDisabled();
-    await dialog.getByLabel(/reason/i).fill("Recipients were corrected; the first e-mail reached nobody.");
+    // 0115: no free-text box — the chain keeps the facts (who, when, which
+    // action, the previous state), never words typed about a person
+    await expect(dialog.getByRole("textbox")).toHaveCount(0);
+    await expect(dialog.getByText(/audit log records that you resent it/i)).toBeVisible();
+    // opening the dialog moved nothing
+    expect(await jobOf(lead, "lead_escalation")).toMatchObject({ state: "failed", key_serial: 1 });
     await dialog.getByRole("button", { name: /resend under a new key/i }).click();
     await expect(page.getByText(/escalation queued under a new key/i)).toBeVisible({ timeout: opTimeout(20_000) });
     await expect(page.getByRole("dialog")).toBeHidden({ timeout: opTimeout(20_000) });
@@ -201,8 +204,8 @@ test.describe("Lead inbox — escalation status and recovery", () => {
       key_rotated: true,
       previous_state: "failed",
       previous_result: "invalid_idempotent_request",
-      reason: "Recipients were corrected; the first e-mail reached nobody.",
     });
+    expect(events[0]!.payload, "no typed text in the chain (0115)").not.toHaveProperty("reason");
     expect(JSON.stringify(events[0]!.payload), "ids and words only — no address").not.toContain("example.invalid");
 
     // the row now reads as queued, with no control
@@ -235,7 +238,8 @@ test.describe("Lead inbox — escalation status and recovery", () => {
       first_attempted_at: before.first_attempted_at,
     });
     const [ev] = await recoveryEvents(lead);
-    expect(ev!.payload).toMatchObject({ action: "retry", key_rotated: false, previous_result: "validation_error", reason: null });
+    expect(ev!.payload).toMatchObject({ action: "retry", key_rotated: false, previous_result: "validation_error" });
+    expect(ev!.payload, "no typed text in the chain (0115)").not.toHaveProperty("reason");
 
     // the second lead: a desk alert chip and nothing about an escalation
     const plainRow = rowOf(page, "plain");

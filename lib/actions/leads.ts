@@ -555,7 +555,9 @@ const recoverEscalationSchema = z.object({
   // z.guid(), not z.uuid() — the project's convention (lib/validators/deals.ts)
   jobId: z.guid({ message: "Invalid notification id." }),
   action: z.enum(["retry", "resend"], { message: "Invalid action." }),
-  reason: z.string().trim().max(200, "A reason is at most 200 characters.").optional(),
+  // no `reason` since 0115: the chain keeps the facts, never typed text
+  // (SEC-03). z.object strips the key a browser loaded before this deploy
+  // still posts, so it never reaches the database.
 });
 
 export type RecoverEscalationInput = z.input<typeof recoverEscalationSchema>;
@@ -566,14 +568,13 @@ export type RecoverEscalationInput = z.input<typeof recoverEscalationSchema>;
  * on, somebody to receive it, no live lease, not accepted, not merely
  * queued, and WHICH of the two actions the row admits: `retry` under the
  * same provider key while it is safe, `resend` under a new key only when it
- * is not (a reason required). The browser supplies nothing but the job id,
- * the action and the reason; every fact is derived server-side. The worker
- * is then kicked for THAT job.
+ * is not. The browser supplies nothing but the job id and the action; every
+ * fact is derived server-side. The worker is then kicked for THAT job.
  */
 export async function recoverLeadEscalation(input: RecoverEscalationInput): Promise<void> {
   const parsed = recoverEscalationSchema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? "Invalid input.");
-  const { jobId, action, reason } = parsed.data;
+  const { jobId, action } = parsed.data;
 
   const supabase = await createClient();
   await getCurrentProfile(supabase);
@@ -581,7 +582,6 @@ export async function recoverLeadEscalation(input: RecoverEscalationInput): Prom
   const { data, error } = await supabase.rpc("request_lead_escalation_recovery", {
     p_job_id: jobId,
     p_action: action,
-    ...(reason ? { p_reason: reason } : {}),
   });
   if (error) {
     // P0001 is `raise exception` — the function's own words, meant to be read.
