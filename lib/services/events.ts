@@ -131,6 +131,12 @@ const asObject = (payload: Json | null | undefined): P =>
 const asText = (v: unknown): string | null =>
   typeof v === "string" && v.trim() ? v : null;
 
+/** A string a Date can be built from — formatting anything else throws. */
+const asDateText = (v: unknown): string | null => {
+  const s = asText(v);
+  return s && !Number.isNaN(Date.parse(s)) ? s : null;
+};
+
 /**
  * The registry's name for a portal id, falling back to the id itself — a row
  * written before a portal was renamed, or for an id the registry no longer
@@ -542,10 +548,14 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string)
       : t("statusRegressionOverrideBare");
   },
   // WF-1: NOT folded into status_changed — that renderer prints raw from/to
-  // strings and would show ISO timestamps; this one formats them
+  // strings and would show ISO timestamps; this one formats them. Only a value
+  // that PARSES is formatted (T-rescheduled-line-crash): any org member may
+  // insert any payload (0071), and Intl's format(new Date("x")) throws
+  // RangeError — which took the Activity tab, the admin feed and a
+  // property-scoped evidence report down with one inserted event.
   rescheduled: (p, t) => {
-    const from = asText(p.from);
-    const to = asText(p.to);
+    const from = asDateText(p.from);
+    const to = asDateText(p.to);
     return from && to
       ? t("viewingRescheduled", { from: formatDateTime(from), to: formatDateTime(to) })
       : t("viewingRescheduledBare");
@@ -649,16 +659,33 @@ const ENTITY_PREFIX_KEY: Partial<Record<string, string>> = {
  * `events` namespace — general-purpose timelines pass the request-locale
  * translator; the commission evidence record passes an English one so the
  * preview matches its deliberately-English PDF.
+ *
+ * A line that throws reads as the bare event type (T-rescheduled-line-crash).
+ * Every line trusts its payload's types, any org member may insert any payload
+ * (0071), and an event can never be deleted from the hash chain — so one
+ * crashing event would take its timeline, the admin feed and the evidence
+ * report down for good. The log names the type and the error's NAME only: the
+ * message can quote the payload. This is a last resort, not the fix —
+ * lib/services/event-lines-crafted-payload.test.ts fails for any line that
+ * ever reaches it.
  */
 export function describeEvent(
   e: Pick<TimelineEvent, "entity_type" | "event_type" | "payload">,
   t: EventTranslator,
 ): string {
-  const p = asObject(e.payload);
-  const line =
-    EVENT_LINES[e.event_type]?.(p, t, e.entity_type) ?? e.event_type.replace(/_/g, " ");
-  const prefixKey = ENTITY_PREFIX_KEY[e.entity_type];
-  return prefixKey ? `${t(prefixKey)}: ${line}` : line;
+  const bare = e.event_type.replace(/_/g, " ");
+  try {
+    const p = asObject(e.payload);
+    const line = EVENT_LINES[e.event_type]?.(p, t, e.entity_type) ?? bare;
+    const prefixKey = ENTITY_PREFIX_KEY[e.entity_type];
+    return prefixKey ? `${t(prefixKey)}: ${line}` : line;
+  } catch (err) {
+    console.error("timeline line failed:", {
+      event_type: e.event_type,
+      error: err instanceof Error ? err.name : typeof err,
+    });
+    return bare;
+  }
 }
 
 /**
