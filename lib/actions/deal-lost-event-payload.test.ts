@@ -1,131 +1,128 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fakeClient, type FakePage } from "@/lib/testing/fake-client";
 
 /**
  * Marking a deal lost stores the typed reason on the DEAL ROW and logs the act
  * — which deal, that it was lost, and the lost stage's name — never the
  * reason itself (audit SEC-03, DECISIONS T-event-typed-text-shape).
  *
- * The reason is free text an agent types, up to 2000 characters, and it names
- * people ("Eleni chose her cousin's villa"). Until this change `markDealLost`
- * copied it into the hash-chained `lost` event. `deals.lost_reason` has always
- * held it too, and the deal page prints it from there; the timeline line now
- * says only "Marked lost", so the CURRENT reason (a reopened-and-relost deal's
- * reason is not the first one's) is never presented as an old event's.
+ * Since 0117 the whole close — the lock, the open-status check, the UPDATE and
+ * the `lost` event — happens inside `close_deal`, in one transaction, and the
+ * event's shape is pinned where it is built: supabase/tests/deal-close.test.ts
+ * (`{ stage }` exactly, and not one word of the reason anywhere in the
+ * organisation's chain). What THIS file pins is the action's side of that
+ * contract: the reason leaves the action exactly once, as `p_lost_reason` to
+ * `close_deal`, and the action writes nothing itself — no table, no event —
+ * so there is no second path by which the words could reach the chain.
  *
- * The real action calls the real `logEvent`; the assertions read the row that
- * reached `events.insert`.
+ * The mocked client exposes `rpc` and nothing else: any `.from(...)` the
+ * action attempted would throw here, and every test below would fail.
  */
 
-const state = vi.hoisted(() => ({ client: null as unknown }));
+const state = vi.hoisted(() => ({
+  rpc: vi.fn<(name: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }>>(),
+}));
+const revalidatePath = vi.hoisted(() => vi.fn());
 
-vi.mock("@/lib/supabase/server", () => ({ createClient: async () => state.client }));
+vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ rpc: state.rpc }) }));
 vi.mock("@/lib/services/auth", () => ({
   getCurrentProfile: async () => ({ id: "agent-1", orgId: "org-1", role: "agent" }),
 }));
-vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("next/cache", () => ({ revalidatePath }));
 
 const { markDealLost } = await import("@/lib/actions/deals");
 
 const DEAL_ID = "9c1d2e3f-4a5b-4c6d-8e7f-0a1b2c3d4e01";
-const STAGE_ID = "9c1d2e3f-4a5b-4c6d-8e7f-0a1b2c3d4e02";
 // synthetic: a name, a phone number and an e-mail — none may reach the chain
 const REASON =
   "Eleni Charalambous bought her cousin's villa instead; call 99 333 444 or eleni.c@example.invalid";
-const WORDS = ["Eleni", "Charalambous", "cousin", "99 333 444", "eleni.c", "example.invalid"];
 
-const openDeal: FakePage = {
-  data: { id: DEAL_ID, org_id: "org-1", deal_type: "sale", status: "open" },
-  error: null,
-};
-
-function markLost(pages: Record<string, FakePage[]>, reason = REASON) {
-  const fake = fakeClient(pages);
-  state.client = fake.client;
+function markLost(reason = REASON) {
   const fd = new FormData();
   fd.set("deal_id", DEAL_ID);
   fd.set("lost_reason", reason);
-  return { fake, result: markDealLost({ error: null, savedAt: null }, fd) };
+  return markDealLost({ error: null, savedAt: null }, fd);
 }
 
-const inserted = (fake: ReturnType<typeof fakeClient>) =>
-  fake.argsOf("events", "insert").map((args) => args[0] as Record<string, unknown>);
+const closed = { result: "closed", status: "lost", deal_id: DEAL_ID, org_id: "org-1", stage: "Lost" };
 
 beforeEach(() => {
-  state.client = null;
+  state.rpc.mockReset();
+  revalidatePath.mockReset();
 });
 
-describe("markDealLost keeps the reason on the deal, not in the chain", () => {
-  it("stores the typed reason on the deal row and moves it to the lost stage", async () => {
-    const { fake, result } = markLost({
-      deals: [openDeal, { data: { id: DEAL_ID }, error: null }],
-      deal_stages: [{ data: { id: STAGE_ID, name: "Lost" }, error: null }],
+describe("markDealLost hands the reason to close_deal and writes nothing itself", () => {
+  it("sends the trimmed reason as p_lost_reason, and only there", async () => {
+    state.rpc.mockResolvedValue({ data: closed, error: null });
+    const result = await markLost(`  ${REASON}  `);
+    expect(result).toMatchObject({ error: null, notice: null });
+    expect(result.savedAt).toEqual(expect.any(Number));
+    expect(state.rpc).toHaveBeenCalledTimes(1);
+    expect(state.rpc).toHaveBeenCalledWith("close_deal", {
+      p_outcome: "lost",
+      p_deal_id: DEAL_ID,
+      p_lost_reason: REASON,
     });
-    expect((await result).error).toBeNull();
-    const [patch] = fake.argsOf("deals", "update")[0] as [Record<string, unknown>];
-    expect(patch).toMatchObject({ status: "lost", lost_reason: REASON, stage_id: STAGE_ID });
-    expect(typeof patch.lost_at).toBe("string");
   });
 
-  it("logs ONE lost event carrying the lost stage's name only", async () => {
-    const { fake, result } = markLost({
-      deals: [openDeal, { data: { id: DEAL_ID }, error: null }],
-      deal_stages: [{ data: { id: STAGE_ID, name: "Lost" }, error: null }],
-    });
-    expect((await result).error).toBeNull();
-    const rows = inserted(fake);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      org_id: "org-1",
-      actor_id: "agent-1",
-      entity_type: "deal",
-      entity_id: DEAL_ID,
-      event_type: "lost",
-    });
-    expect(rows[0].payload).toEqual({ stage: "Lost" });
+  it("revalidates the deal, the pipeline, the dashboard and the tasks the close supersedes", async () => {
+    state.rpc.mockResolvedValue({ data: closed, error: null });
+    await markLost();
+    expect(revalidatePath.mock.calls.map((c) => c[0])).toEqual([
+      `/deals/${DEAL_ID}`,
+      "/pipeline",
+      "/dashboard",
+      "/tasks",
+    ]);
   });
 
-  it("logs an empty payload when the pipeline has no lost stage", async () => {
-    const { fake, result } = markLost({
-      deals: [openDeal, { data: { id: DEAL_ID }, error: null }],
-      deal_stages: [{ data: null, error: null }],
-    });
-    expect((await result).error).toBeNull();
-    expect(inserted(fake)[0].payload).toEqual({});
+  it("a missing or too-short reason is refused before anything is asked of the database", async () => {
+    for (const reason of ["  ", "ab"]) {
+      const result = await markLost(reason);
+      expect(result.error).toMatch(/reason/i);
+      expect(result.savedAt).toBeNull();
+    }
+    expect(state.rpc).not.toHaveBeenCalled();
   });
 
-  it("puts none of the reason's words anywhere in the inserted event row", async () => {
-    const { fake, result } = markLost({
-      deals: [openDeal, { data: { id: DEAL_ID }, error: null }],
-      deal_stages: [{ data: { id: STAGE_ID, name: "Lost" }, error: null }],
+  it("a repeat of a Lost that already landed is not an error, and says nothing changed", async () => {
+    state.rpc.mockResolvedValue({
+      data: { result: "already_closed", status: "lost", deal_id: DEAL_ID },
+      error: null,
     });
-    expect((await result).error).toBeNull();
-    const text = JSON.stringify(inserted(fake));
-    expect(WORDS.filter((w) => text.includes(w)), "a lost reason reached the hash chain").toEqual([]);
+    const result = await markLost();
+    expect(result.error).toBeNull();
+    expect(result.savedAt).toEqual(expect.any(Number));
+    expect(result.notice).toBe("This deal was already marked lost — nothing was changed.");
+    expect(result.alreadyClosed, "the dialog must not announce a repeat as a fresh success").toBe(true);
   });
 
-  it("a refused update (RLS: not this agent's deal) logs no phantom event", async () => {
-    const { fake, result } = markLost({
-      deals: [openDeal, { data: null, error: null }],
-      deal_stages: [{ data: { id: STAGE_ID, name: "Lost" }, error: null }],
+  it("a deal already WON answers conflict: an error, nothing saved", async () => {
+    state.rpc.mockResolvedValue({
+      data: { result: "conflict", status: "won", deal_id: DEAL_ID },
+      error: null,
     });
-    expect((await result).error).toMatch(/permission/);
-    expect(inserted(fake)).toEqual([]);
+    const result = await markLost();
+    expect(result).toEqual({
+      error: "This deal was already marked won — it was not marked lost.",
+      savedAt: null,
+      pageRefreshed: true,
+    });
+    // the page is refreshed so it shows the outcome that did commit
+    expect(revalidatePath).toHaveBeenCalledWith(`/deals/${DEAL_ID}`);
   });
 
-  it("a deal that is not open is refused before anything is written or logged", async () => {
-    const { fake, result } = markLost({
-      deals: [{ data: { id: DEAL_ID, org_id: "org-1", deal_type: "sale", status: "won" }, error: null }],
-    });
-    expect((await result).error).toMatch(/already won/);
-    expect(fake.argsOf("deals", "update")).toEqual([]);
-    expect(inserted(fake)).toEqual([]);
+  it("the function's own refusal (P0001) is shown as it is", async () => {
+    state.rpc.mockResolvedValue({ data: null, error: { code: "P0001", message: "Deal not found" } });
+    expect(await markLost()).toEqual({ error: "Deal not found", savedAt: null });
   });
 
-  it("a missing reason is refused before anything is written or logged", async () => {
-    const { fake, result } = markLost({ deals: [openDeal] }, "  ");
-    expect((await result).error).toMatch(/reason/i);
-    expect(fake.argsOf("deals", "update")).toEqual([]);
-    expect(inserted(fake)).toEqual([]);
+  it("an unknown answer says so — and, for a Lost, says nothing about a Won's reminders", async () => {
+    state.rpc.mockResolvedValue({ data: null, error: { message: "TypeError: fetch failed", code: "" } });
+    const result = await markLost();
+    expect(result.error).toBe(
+      "Could not confirm whether the deal was closed — reload the page to see its current state.",
+    );
+    expect(result.pageRefreshed).toBe(true);
+    expect(revalidatePath).toHaveBeenCalledWith(`/deals/${DEAL_ID}`);
   });
 });

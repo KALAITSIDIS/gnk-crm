@@ -108,6 +108,23 @@ export const markWonSchema = z.object({
   final_value: optionalMoney,
 });
 
+/**
+ * Said when a close's result is UNKNOWN: the request may never have reached
+ * the database, or it committed and the answer was lost — including the
+ * server function dying after `close_deal` committed a Won, before its
+ * reminders ran (T-atomic-deal-close). The reminders a Won raises run only
+ * after a CONFIRMED close, so a Won that may have landed says so; a Lost has
+ * no reminders to lose. Here, not in the "use server" actions file, because
+ * the dialog's own catch (a request that never came back) says it too — one
+ * text, so the two cannot drift.
+ */
+export function unconfirmedCloseText(outcome: "won" | "lost"): string {
+  const base = "Could not confirm whether the deal was closed — reload the page to see its current state.";
+  return outcome === "won"
+    ? `${base} If it now shows Won, check the listing status and any live hold yourself: their reminders may not have been created.`
+    : base;
+}
+
 export const markLostSchema = z.object({
   deal_id: z.guid("Missing deal"),
   lost_reason: z

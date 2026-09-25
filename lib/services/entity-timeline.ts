@@ -105,6 +105,9 @@ export async function readEntityTimeline(opts: {
     .eq("entity_type", opts.entityType)
     .in("entity_id", opts.entityIds as string[])
     .order("occurred_at", { ascending: false })
+    // events of one transaction share occurred_at (a close writes won_override
+    // and won together, 0117); within an org, id order is chain order (0109)
+    .order("id", { ascending: false })
     .limit(opts.limit);
 
   // A timeline that silently shows nothing is indistinguishable from a record

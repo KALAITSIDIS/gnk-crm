@@ -105,6 +105,22 @@ export async function completeListingStatusChecks(
  */
 export const LIVE_HOLD_TASK_KIND = "reservation_still_live";
 
+/**
+ * What a prompt raiser did, told apart so the caller can say the TRUE thing
+ * (T-atomic-deal-close). supabase-js resolves a failed request as `{ error }`
+ * rather than throwing, and a bare count could not tell "there was no live
+ * hold" from "the reminder could not be created":
+ *
+ * - `not_needed`      — no live hold, nothing to ask;
+ * - `already_open`    — a prompt is already open on the property;
+ * - `raised`          — task and its `followup_task_created` event written;
+ * - `not_raised`      — a read or the insert failed, so THIS call created no
+ *                       reminder (one may already be open, or an insert whose
+ *                       answer was lost may have landed) — the user checks;
+ * - `raised_unlogged` — the task exists, its event could not be written.
+ */
+export type PromptOutcome = "not_needed" | "already_open" | "raised" | "not_raised" | "raised_unlogged";
+
 export async function raiseLiveHoldCheck(
   supabase: SupabaseClient<Database>,
   params: {
@@ -115,11 +131,11 @@ export async function raiseLiveHoldCheck(
     assigneeId: string;
     propertyReference: string;
   },
-): Promise<number> {
+): Promise<PromptOutcome> {
   const admin = createAdminClient();
 
   // Only a LIVE hold is worth asking about — 0044's own definition.
-  const { data: live } = await admin
+  const { data: live, error: liveErr } = await admin
     .from("reservations")
     .select("id")
     .eq("org_id", params.orgId)
@@ -127,13 +143,17 @@ export async function raiseLiveHoldCheck(
     .in("status", ["held", "confirmed"])
     .limit(1)
     .maybeSingle();
-  if (!live) return 0;
+  if (liveErr) {
+    console.error("reservation_still_live: the live-hold read failed:", liveErr.code);
+    return "not_raised";
+  }
+  if (!live) return "not_needed";
 
   // Asked of the DATABASE, not of the reader: `tasks_select` is scoped to
   // admin/assignee/creator, so on the caller's client this question is answered
   // from the subset they happen to see. org_id is explicit — the admin client
   // has no RLS to add it.
-  const { data: already } = await admin
+  const { data: already, error: alreadyErr } = await admin
     .from("tasks")
     .select("id")
     .eq("org_id", params.orgId)
@@ -141,7 +161,11 @@ export async function raiseLiveHoldCheck(
     .eq("kind", LIVE_HOLD_TASK_KIND)
     .eq("is_done", false)
     .limit(1);
-  if (already?.length) return 0;
+  if (alreadyErr) {
+    console.error("reservation_still_live: the open-prompt read failed:", alreadyErr.code);
+    return "not_raised";
+  }
+  if (already?.length) return "already_open";
 
   const { data: task, error } = await supabase
     .from("tasks")
@@ -162,26 +186,34 @@ export async function raiseLiveHoldCheck(
     .select("id")
     .single();
 
-  // A failed prompt must never roll back the win — logged loudly instead.
+  // A failed prompt must never roll back the win — logged loudly instead, and
+  // answered so the caller can tell the user.
   if (error || !task) {
     console.error("reservation_still_live task failed:", error?.message);
-    return 0;
+    return "not_raised";
   }
 
-  await logEvent(supabase, {
-    orgId: params.orgId,
-    actorId: params.actorId,
-    entityType: "property",
-    entityId: params.propertyId,
-    eventType: "followup_task_created",
-    payload: {
-      kind: LIVE_HOLD_TASK_KIND,
-      task_id: task.id,
-      deal_id: params.dealId,
-      reservation_id: live.id,
-    },
-  });
-  return 1;
+  try {
+    await logEvent(supabase, {
+      orgId: params.orgId,
+      actorId: params.actorId,
+      entityType: "property",
+      entityId: params.propertyId,
+      eventType: "followup_task_created",
+      payload: {
+        kind: LIVE_HOLD_TASK_KIND,
+        task_id: task.id,
+        deal_id: params.dealId,
+        reservation_id: live.id,
+      },
+    });
+  } catch (e) {
+    // the error NAME only: a Sentry report follows in the caller, and a console
+    // line becomes its breadcrumb
+    console.error("reservation_still_live event failed:", e instanceof Error ? e.name : typeof e);
+    return "raised_unlogged";
+  }
+  return "raised";
 }
 
 

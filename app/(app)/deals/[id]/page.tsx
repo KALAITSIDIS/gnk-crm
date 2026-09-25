@@ -135,7 +135,15 @@ export default async function DealDetailPage({
 
   // combined feed: deal events + this deal's offer events (rich lines: T3.5)
   const events = [...(dealEventsRes.data ?? []), ...(offerEventsRes.data ?? [])]
-    .sort((a, b) => (a.occurred_at < b.occurred_at ? 1 : -1))
+    // newest first; events of one transaction share occurred_at (a close
+    // writes won_override and won together, 0117), and id is chain order
+    .sort((a, b) =>
+      a.occurred_at === b.occurred_at
+        ? Number(b.id) - Number(a.id)
+        : a.occurred_at < b.occurred_at
+          ? 1
+          : -1,
+    )
     .slice(0, 50);
 
   // WF-8: lapsed is DERIVED on read, per-request clock, Cyprus end-of-day —

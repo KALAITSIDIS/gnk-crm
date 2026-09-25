@@ -137,7 +137,7 @@ describe("raiseLiveHoldCheck — the won deal's other leftover", () => {
     const svc = fakeClient({ reservations: [{ data: null, error: null }] });
     admin.client = svc.client;
     const caller = fakeClient({});
-    expect(await raiseLiveHoldCheck(caller.client as never, args)).toBe(0);
+    expect(await raiseLiveHoldCheck(caller.client as never, args)).toBe("not_needed");
     expect(svc.served.tasks ?? 0, "it does not even ask about tasks").toBe(0);
     expect(logEvent).not.toHaveBeenCalled();
   });
@@ -159,7 +159,7 @@ describe("raiseLiveHoldCheck — the won deal's other leftover", () => {
     admin.client = svc.client;
     const caller = fakeClient({ tasks: [{ data: { id: "t1" }, error: null }] });
 
-    expect(await raiseLiveHoldCheck(caller.client as never, args)).toBe(1);
+    expect(await raiseLiveHoldCheck(caller.client as never, args)).toBe("raised");
 
     const [insert] = caller.argsOf("tasks", "insert");
     const row = insert[0] as Record<string, unknown>;
@@ -234,7 +234,7 @@ describe("raiseLiveHoldCheck — the won deal's other leftover", () => {
     admin.client = svc.client;
     const caller = fakeClient({});
 
-    expect(await raiseLiveHoldCheck(caller.client as never, args)).toBe(0);
+    expect(await raiseLiveHoldCheck(caller.client as never, args)).toBe("already_open");
     expect(
       svc.argsOf("tasks", "eq"),
       "org-scoped explicitly — the admin client has no RLS to add it",
@@ -261,13 +261,55 @@ describe("raiseLiveHoldCheck — the won deal's other leftover", () => {
 
     expect(
       await raiseLiveHoldCheck(caller.client as never, args),
-      "the deal is won — a failed prompt must not undo that",
-    ).toBe(0);
+      "the deal is won — a failed prompt must not undo that, but it says so",
+    ).toBe("not_raised");
     expect(err, "but it is never silent").toHaveBeenCalledWith(
       "reservation_still_live task failed:",
       "kind not registered",
     );
     expect(logEvent).not.toHaveBeenCalled();
+    err.mockRestore();
+  });
+
+  /*
+   * T-atomic-deal-close: a bare count could not tell "no live hold" from "the
+   * reminder could not be created", so markDealWon could not tell the user. A
+   * failed READ is not "nothing to do" — supabase-js resolves it as { error }.
+   */
+  it("a failed live-hold read is not_raised, never not_needed", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const svc = fakeClient({ reservations: [{ data: null, error: { message: "boom", code: "57014" } }] });
+    admin.client = svc.client;
+    const caller = fakeClient({});
+    expect(await raiseLiveHoldCheck(caller.client as never, args)).toBe("not_raised");
+    expect(caller.served.tasks ?? 0).toBe(0);
+    err.mockRestore();
+  });
+
+  it("a failed open-prompt read is not_raised, and nothing is inserted blind", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const svc = fakeClient({
+      reservations: [{ data: { id: "res-1" }, error: null }],
+      tasks: [{ data: null, error: { message: "boom", code: "08006" } }],
+    });
+    admin.client = svc.client;
+    const caller = fakeClient({});
+    expect(await raiseLiveHoldCheck(caller.client as never, args)).toBe("not_raised");
+    expect(caller.served.tasks ?? 0, "no insert without knowing none is open").toBe(0);
+    err.mockRestore();
+  });
+
+  it("a task whose event cannot be written is raised_unlogged — the task exists", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const svc = fakeClient({
+      reservations: [{ data: { id: "res-1" }, error: null }],
+      tasks: [{ data: [], error: null }],
+    });
+    admin.client = svc.client;
+    const caller = fakeClient({ tasks: [{ data: { id: "t1" }, error: null }] });
+    logEvent.mockRejectedValueOnce(new Error("logEvent failed (property.followup_task_created): refused"));
+    expect(await raiseLiveHoldCheck(caller.client as never, args)).toBe("raised_unlogged");
+    expect(caller.argsOf("tasks", "insert")).toHaveLength(1);
     err.mockRestore();
   });
 });
