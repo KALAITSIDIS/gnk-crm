@@ -169,7 +169,10 @@ for (const r of rows) {
       report.add({ row: line, outcome: "error", detail: error.message });
       continue;
     }
-    await logImported(supabase, orgId, "contact", created.id, { name: detail, batch: report.batch });
+    // No `name`: the row holds it, and the chain is beyond erasure and an
+    // Article 16 correction (T-imported-identity-shape, the
+    // T-merged-event-ids-only rule). The event's entity IS the contact.
+    await logImported(supabase, orgId, "contact", created.id, { batch: report.batch });
 
     // SEC-06 (2026-09-02): a consent granted through THIS path used to leave
     // no consent_changed event at all — the trail existed only for the CRM

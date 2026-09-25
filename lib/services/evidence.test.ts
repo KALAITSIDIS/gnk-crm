@@ -265,4 +265,33 @@ describe("assembleEvidence prints no typed text from event payloads", () => {
     expect(caller.argsOf("viewings", "select").flat().join(" ")).not.toMatch(/feedback/);
     expect(admin.calls).toEqual([]);
   });
+
+  it("renders the contact's legacy imported event without the name it carries (T-imported-identity-shape)", async () => {
+    // An admin's un-narrowed report includes the contact's own actor-null
+    // `imported` event; the CSV importers wrote `{ name }` into it. The header
+    // names the contact from the row — the line must not reprint the chain's copy.
+    const caller = fakeClient({
+      contacts: [{ data: { id: CONTACT, display_name: "Fixture Buyer", phone_e164: null, email: null }, error: null }],
+      organizations: [{ data: { name: "Fixture Agency" }, error: null }],
+      deals: [{ data: [], error: null }],
+      events: [
+        {
+          data: [
+            { id: 1, occurred_at: "2026-09-01T10:00:00Z", entity_type: "contact", entity_id: CONTACT, event_type: "imported", actor_id: null, payload: { source: "csv_import", name: "Zenobia Quillfeather", batch: "b1" } },
+            { id: 2, occurred_at: "2026-09-02T10:00:00Z", entity_type: "contact", entity_id: CONTACT, event_type: "imported", actor_id: null, payload: { source: "csv_import", name: "+35799778899", as: "owner", batch: "b1" } },
+            { id: 3, occurred_at: "2026-09-03T10:00:00Z", entity_type: "contact", entity_id: CONTACT, event_type: "imported", actor_id: null, payload: { source: "csv_import", batch: "b1" } },
+          ],
+          error: null,
+        },
+      ],
+    });
+    const out = await assembleEvidence(caller.client as never, fakeClient({}).client as never, "org-1", {
+      contactId: CONTACT,
+      generatedBy: { name: "Admin", role: "admin" },
+    });
+    if ("errorKey" in out) throw new Error(`assembly failed: ${out.errorKey}`);
+    expect(out.rows.map((r) => r.line)).toEqual(["Imported from CSV", "Imported from CSV", "Imported from CSV"]);
+    const text = JSON.stringify(out.rows);
+    for (const word of ["Zenobia", "Quillfeather", "99778899"]) expect(text).not.toContain(word);
+  });
 });

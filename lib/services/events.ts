@@ -158,16 +158,17 @@ const asMoney = (v: unknown): string | null => {
  * template is translated — interpolated data (names, channels, stage names,
  * formatted money, a photo's published alt text) stays as stored. A task's
  * title, a document's title or file name, a deal's or lead's lost reason, a
- * reservation's release reason, a photo's file name and a buyer's viewing
- * feedback are NOT interpolated, from new payloads or old ones
- * (T-event-typed-text-shape, T-lead-lost-reason-shape,
+ * reservation's release reason, a photo's file name, a buyer's viewing
+ * feedback and an imported contact's name or phone are NOT interpolated, from
+ * new payloads or old ones (T-event-typed-text-shape, T-lead-lost-reason-shape,
  * T-reservation-release-reason-shape, T-media-file-name-shape,
- * T-viewing-feedback-shape): the line states the fact, and which task or
- * document it was — or what the buyer says now — arrives separately as
- * `current_title` / `current_feedback`, read from its row.
+ * T-viewing-feedback-shape, T-imported-identity-shape): the line states the
+ * fact, and which task or document it was — or what the buyer says now —
+ * arrives separately as `current_title` / `current_feedback`, read from its row.
  *
  * `entityType` is the event's entity, for the lines that read differently by
- * entity: `completed` / `reopened` say "Task …" only for a task.
+ * entity: `completed` / `reopened` say "Task …" only for a task, and
+ * `imported` prints a reference only for a property.
  */
 const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string) => string> = {
   created: (p, t) => {
@@ -587,8 +588,13 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string)
   // documents kept under it were destroyed (B11)
   retention_purged: (p, t) =>
     t("retentionPurged", { count: Number(p.documents_destroyed) || 0 }),
-  imported: (p, t) => {
-    const ref = asText(p.reference) ?? asText(p.name);
+  // T-imported-identity-shape: the CSV importers wrote a contact's `name`
+  // (first + last, else the company) and an owner's `name ?? phone`; the line
+  // printed it. Never again, from any payload — the contact's page IS the
+  // contact and the evidence header names it from the row. A PROPERTY's
+  // `reference` is the office's own code and still prints, on a property only.
+  imported: (p, t, entityType) => {
+    const ref = entityType === "property" ? asText(p.reference) : null;
     return ref ? t("importedRef", { ref }) : t("imported");
   },
   // A photo's file name is never read from the payload: new events carry

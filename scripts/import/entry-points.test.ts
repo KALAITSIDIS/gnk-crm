@@ -201,6 +201,96 @@ describe("positive controls — the recorder sees every write a well-formed file
   }, 60_000);
 });
 
+/**
+ * T-imported-identity-shape: an imported person is named on their ROW and
+ * nowhere in the chain. Until this change contacts.mts logged `imported` with
+ * `{ name }` (first + last name, else the company) and properties.mts logged
+ * the owner contact it creates with `{ name: name ?? phone, as: "owner" }` —
+ * identity in an append-only chain that neither erasure nor an Article 16
+ * correction can reach (the T-merged-event-ids-only rule).
+ *
+ * Checked on the exact request bodies the real scripts send. Case-SENSITIVE
+ * on distinctive words: the kept values include `as: "owner"`, the
+ * `zz-entry-…` batch and the ZZ references, which a case-folded check of
+ * "Owner" or "Zz" would trip on.
+ */
+describe("the importers name a person on the row, never in the chain (T-imported-identity-shape)", () => {
+  const eventBodies = () =>
+    writes()
+      .filter((w) => w.path === "/rest/v1/events")
+      .map((w) => JSON.parse(w.body) as Record<string, unknown>);
+  const importedEvents = () => eventBodies().filter((e) => e.event_type === "imported");
+
+  it("contacts.mts live: the contact row carries the name; its imported event is { source, batch }", async () => {
+    const { path, base } = csv(
+      [
+        "first_name,last_name,phone,email,budget_min,consent_marketing",
+        "Zenobia,Quillfeather,99 44 55 66,zq.import@example.com,,true",
+      ].join("\n"),
+    );
+    try {
+      const r = await run("contacts.mts", ["--file", path, "--org", ORG, "--batch", base]);
+      expect(r.code, r.stderr).toBe(0);
+
+      // positive control: the name and the number really went to the ROW
+      const row = JSON.parse(writes().find((w) => w.path === "/rest/v1/contacts")!.body) as Record<string, unknown>;
+      expect(row).toMatchObject({ first_name: "Zenobia", last_name: "Quillfeather", phone_e164: "+35799445566" });
+
+      const imported = importedEvents();
+      expect(imported).toHaveLength(1);
+      expect(imported[0]).toMatchObject({ actor_id: null, entity_type: "contact", entity_id: ROW_ID, event_type: "imported" });
+      expect(imported[0].payload).toEqual({ source: "csv_import", batch: base });
+
+      const chain = JSON.stringify(eventBodies());
+      for (const word of ["Zenobia", "Quillfeather", "99445566", "99 44 55 66", "zq.import", "example.com"]) {
+        expect(chain, `"${word}" reached the chain`).not.toContain(word);
+      }
+    } finally {
+      for (const f of reportsFor(base)) unlinkSync(join(REPORTS, f));
+    }
+  }, 60_000);
+
+  it("contacts.mts live: a company-only row is not named in the chain either", async () => {
+    const { path, base } = csv(["company_name,phone", "Quillfeather Holdings Test Ltd,99 44 55 67"].join("\n"));
+    try {
+      const r = await run("contacts.mts", ["--file", path, "--org", ORG, "--batch", base]);
+      expect(r.code, r.stderr).toBe(0);
+      expect(importedEvents().map((e) => e.payload)).toEqual([{ source: "csv_import", batch: base }]);
+      expect(JSON.stringify(eventBodies())).not.toContain("Quillfeather");
+    } finally {
+      for (const f of reportsFor(base)) unlinkSync(join(REPORTS, f));
+    }
+  }, 60_000);
+
+  it("properties.mts live: the owner row carries the name; the owner's imported event is { source, as, batch }", async () => {
+    const { path, base } = csv(
+      [PROPERTY_HEADER, 'ZZCSVID1,apartment,PAF,Zz Csv Area,99 77 88 99,Andreas Oldowner,exclusive,"250,000",85'].join("\n"),
+    );
+    try {
+      const r = await run("properties.mts", ["--file", path, "--org", ORG, "--batch", base]);
+      expect(r.code, r.stderr).toBe(0);
+
+      const owner = JSON.parse(writes().find((w) => w.path === "/rest/v1/contacts")!.body) as Record<string, unknown>;
+      expect(owner).toMatchObject({ first_name: "Andreas Oldowner", phone_e164: "+35799778899", contact_types: ["owner"] });
+
+      const byEntity = Object.fromEntries(importedEvents().map((e) => [e.entity_type as string, e.payload]));
+      expect(Object.keys(byEntity).sort()).toEqual(["contact", "mandate", "property"]);
+      expect(byEntity.contact).toEqual({ source: "csv_import", as: "owner", batch: base });
+      // the office's own code stays: it is not a person, and the property line prints it
+      expect(byEntity.mandate).toEqual({ source: "csv_import", property: "ZZCSVID1", batch: base });
+      expect(byEntity.property).toMatchObject({ source: "csv_import", reference: "ZZCSVID1", batch: base });
+      expect(Object.keys(byEntity.property as object).sort()).toEqual(["batch", "reference", "score", "source", "visibility"]);
+
+      const chain = JSON.stringify(eventBodies());
+      for (const word of ["Andreas", "Oldowner", "99778899", "99 77 88 99"]) {
+        expect(chain, `"${word}" reached the chain`).not.toContain(word);
+      }
+    } finally {
+      for (const f of reportsFor(base)) unlinkSync(join(REPORTS, f));
+    }
+  }, 60_000);
+});
+
 describe("media.mts logs a photo by id and digest, never by its file name (T-media-file-name-shape)", () => {
   it("live: the row and the media_uploaded event carry the digest of the file's bytes, and no word of its name", async () => {
     const root = join(dir, "media-root");

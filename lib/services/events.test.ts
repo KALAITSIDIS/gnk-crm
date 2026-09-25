@@ -783,3 +783,52 @@ describe("portal lines name the portal, not its id", () => {
   }
 });
 
+
+/**
+ * T-imported-identity-shape: the `imported` line names no person, from any
+ * payload. Until this change the CSV importers wrote `{ name }` for a contact
+ * (first + last name, else the company) and `{ name: name ?? phone, as:
+ * "owner" }` for an owner contact, and the line printed "Imported — <name>".
+ * The contact's page IS the contact, and the evidence report prints the name
+ * from the row. A property's `reference` is the office's own code and still
+ * prints — on a property only, so a crafted `reference` on a contact does not.
+ */
+describe("the imported line names no person, from any payload (T-imported-identity-shape)", () => {
+  const NAME = "Zenobia Quillfeather";
+  const PHONE = "+35799778899";
+
+  it.each([
+    ["a contact (legacy { name })", ev("imported", { source: "csv_import", name: NAME, batch: "b1" }, "contact"), "Imported from CSV"],
+    ["a company (legacy { name })", ev("imported", { source: "csv_import", name: "Quillfeather Holdings Ltd", batch: "b1" }, "contact"), "Imported from CSV"],
+    ["an owner (legacy { name, as })", ev("imported", { source: "csv_import", name: NAME, as: "owner", batch: "b1" }, "contact"), "Imported from CSV"],
+    ["an owner with no name (legacy phone fallback)", ev("imported", { source: "csv_import", name: PHONE, as: "owner", batch: "b1" }, "contact"), "Imported from CSV"],
+    ["a contact (new)", ev("imported", { source: "csv_import", batch: "b1" }, "contact"), "Imported from CSV"],
+    ["an owner (new)", ev("imported", { source: "csv_import", as: "owner", batch: "b1" }, "contact"), "Imported from CSV"],
+    ["a mandate", ev("imported", { source: "csv_import", property: "PAF0001", batch: "b1" }, "mandate"), "Imported from CSV"],
+    ["a property", ev("imported", { source: "csv_import", reference: "PAF0001", batch: "b1", visibility: "draft", score: 40 }, "property"), "Imported — PAF0001"],
+    ["a property whose legacy payload also had a name", ev("imported", { reference: "PAF0001", name: NAME }, "property"), "Imported — PAF0001"],
+    ["a property with no reference", ev("imported", { source: "csv_import", name: NAME }, "property"), "Imported from CSV"],
+    ["a crafted reference on a contact", ev("imported", { reference: NAME }, "contact"), "Imported from CSV"],
+  ] as const)("%s", (_name, e, line) => {
+    expect(describeEvent(e, t)).toBe(line);
+  });
+
+  it("no imported line carries the name or the number", () => {
+    const out = [
+      ev("imported", { name: NAME }, "contact"),
+      ev("imported", { name: PHONE, as: "owner" }, "contact"),
+      ev("imported", { name: NAME }, "property"),
+      ev("imported", { reference: NAME }, "contact"),
+      ev("imported", { name: NAME }, "mandate"),
+    ]
+      .map((e) => describeEvent(e, t))
+      .join("\n");
+    for (const word of ["Zenobia", "Quillfeather", "99778899"]) expect(out).not.toContain(word);
+  });
+
+  it("goes through the translator", () => {
+    const fake: EventTranslator = (key, values) => `KEY:${key}${values ? JSON.stringify(values) : ""}`;
+    expect(describeEvent(ev("imported", { name: NAME }, "contact"), fake)).toBe("KEY:imported");
+    expect(describeEvent(ev("imported", { reference: "PAF0001" }, "property"), fake)).toBe('KEY:importedRef{"ref":"PAF0001"}');
+  });
+});

@@ -2491,7 +2491,12 @@ VERIFY, run before starting.
     `lead_escalation` event as `'reason', v_reason`. No line prints it (no `lead_escalation` entry in
     `EVENT_LINES`), but the chain holds it, and the TypeScript payload scan cannot see SQL. The fix is a
     forward migration re-creating the function without the key (a return shape is untouched);
-  - an IMPORTED person's name or phone — found by T-media-file-name-shape's scouts and review:
+  - ~~an IMPORTED person's name or phone~~ **FIXED 2026-09-25 — DECISIONS `T-imported-identity-shape`: a contact
+    import logs `imported` as `{ source, batch }`, the owner contact a property import creates as
+    `{ source, as: "owner", batch }`; the line reads no name from any payload and prints a reference on a
+    PROPERTY only. (The owner PHONE fallback was latent: `contact_has_name` refuses a nameless owner before
+    the event.) Hosted held 0 `imported` events — no chain copy exists.** (original) found by
+    T-media-file-name-shape's scouts and review:
     `scripts/import/contacts.mts` logs `imported` with `{ name }`, built from the row's first and last name
     (or company name), and `scripts/import/properties.mts` logs the owner contact it creates with
     `{ name: name ?? phone, as: "owner" }` — the PHONE NUMBER when no name was given. `importedRef` prints
@@ -2499,12 +2504,44 @@ VERIFY, run before starting.
     which T-merged-event-ids-only ruled out for `merged`. (A property import's `reference` is the office's
     own code, not typed text; the default `batch` label is the CSV's own file name, the operator's.)
   **VERIFY** — one grep per writer, and a hit means THAT writer is still open (the lead, reservation,
-  photo, viewing-feedback and escalation-recovery ones are fixed and must stay silent): `grep -n "payload: { reason: parsed.data.reason" lib/actions/leads.ts` ·
+  photo, viewing-feedback, escalation-recovery and importer ones are fixed and must stay silent): `grep -n "payload: { reason: parsed.data.reason" lib/actions/leads.ts` ·
   `grep -n "reason: release_reason" lib/actions/reservations.ts` ·
   `grep -nE "file: (file\.)?name," lib/actions/media.ts scripts/import/media.mts` ·
   `grep -n -A12 'eventType: "viewing_feedback"' lib/actions/viewings.ts | grep -v "//" | grep -E "liked|comment|\.\.\.feedback"` ·
   `grep -ln "function public.request_lead_escalation_recovery" supabase/migrations/*.sql | tail -1 | xargs grep -n "'reason', v_reason"` ·
   `grep -n "name: detail" scripts/import/contacts.mts` · `grep -n "name: name ?? phone" scripts/import/properties.mts`.
+- **A key's typed HOLDER goes into the chain — an owner's name on a transfer, S/M (SQL).** Found by
+  T-imported-identity-shape's scouting critic. `record_key_movement` (0013, never re-created) logs key events
+  with `jsonb_build_object('key_code', …, 'holder', v_holder_name)`, and `v_holder_name` is the free-typed
+  `p_holder_name` whenever no staff profile is given: `transferKey` (`lib/actions/keys.ts`, "hand a key to
+  the property owner") passes only a typed name, and `checkoutKey` accepts an external holder. `return` and
+  `mark_lost` copy the row's cached `current_holder_name` into their own events, so one typed name is written
+  again on later movements. The key lines print it on the property page's key rows (read as the system).
+  Identity in the chain, the T-merged-event-ids-only rule. Fix: a forward migration re-creating the function
+  with an ids/shape payload (e.g. `holder_profile_id`, `has_holder_name`; it `returns void`, so no return shape
+  moves) and lines that stop reading `holder`. **Hosted (read-only, counts only, 2026-09-25): 4 key events, 2
+  with a non-blank `holder`.** **VERIFY:** `grep -ln "function public.record_key_movement" supabase/migrations/*.sql |
+  tail -1 | xargs grep -n "'holder', v_holder_name"` — a hit means still open.
+- **`archive-records.mts` writes the operator's typed `--reason` into `archived`, S.** Staff-typed text in the
+  chain, the class the lead-lost, reservation-release and escalation-recovery fixes closed; no line prints it.
+  There is no mutable row to hold the reason instead — decide whether a reason is needed at all, or a fixed
+  category. **Hosted (read-only, counts only, 2026-09-25): 10 `archived` events, 7 with a reason.** Found by
+  T-imported-identity-shape's scouts. **VERIFY:** `grep -n -A8 'event_type: "archived"'
+  scripts/maintenance/archive-records.mts | grep -w reason` — a hit means still open.
+- **A phone-only owner row: the dry run promises what the live run refuses, S.** `properties.mts` on a row
+  with `owner_phone`, a blank `owner_name` and no existing contact of that number: the dry run reports "would
+  create owner +357…", the live insert fails `contact_has_name` (0001) — after any missing AREA was already
+  created, which stays with no event — and `docs/09_DATA_IMPORT_TEMPLATES.md` presents `owner_name` as
+  optional. Decide: refuse such a row before its first write (in the dry run too), or skip the owner with a
+  report note. Found by T-imported-identity-shape's scouting critic (by reading the migrations; not run against
+  a database). **VERIFY:** `grep -n "would create owner" scripts/import/properties.mts` — unchanged means open.
+- **NOTE — the importers' default `batch` label is the CSV's file name, and it is in every `imported` event.**
+  `batchIdFor` (`scripts/import/_rules.mts`) builds `<stamp>-<file basename>` when no `--batch` is given, and an
+  explicit `--batch` is free text; it is the handle a run is found (and reversed) by (DECISIONS, the importer
+  entries). Nothing renders it. Judged "the operator's own label" when first recorded; T-imported-identity-shape's
+  review points out a file named after a person ("Andreas Kyriakou - owner listings.csv") would put that name
+  into every event of the run. Operator's call: keep, or default to the timestamp alone and restrict `--batch`
+  to a safe charset. Not a change here.
 - **NOTE — a photo's alt text stays in its event, by the marketing-copy rule.** `setMediaAlt` logs `media_alt_set`
   `{ media_id, alt }` and the line prints it. It is staff-written copy PUBLISHED through the feed and the portals,
   which T-updated-event-shape-only keeps by value on purpose ("what was advertised when is evidence in a
