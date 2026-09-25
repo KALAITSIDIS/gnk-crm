@@ -1,7 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// the describeEvent guard reports to Sentry (T-rescheduled-line-crash)
+const sentry = vi.hoisted(() => ({ captureMessage: vi.fn() }));
+vi.mock("@sentry/nextjs", () => sentry);
+beforeEach(() => sentry.captureMessage.mockClear());
 import { createTranslator } from "next-intl";
 import en from "@/messages/en.json";
 import { describeEvent, describeEventContext, type EventTranslator } from "./events";
+import { formatDateTime } from "@/lib/utils/format";
 
 const ev = (event_type: string, payload: unknown = {}, entity_type = "deal") => ({
   entity_type,
@@ -434,7 +440,12 @@ describe("typed text is never printed from a payload (T-event-typed-text-shape)"
       ["media_deleted", "property"],
       ["viewing_feedback", "property"],
     ] as const) {
+      // since the describeEvent guard, a throwing line no longer throws out of
+      // here — it logs "timeline line failed:". That log is the failure now.
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
       expect(() => describeEvent(ev(type, payload, entity), t)).not.toThrow();
+      expect(err.mock.calls.filter((c) => c[0] === "timeline line failed:"), `${type}/${entity}`).toEqual([]);
+      err.mockRestore();
     }
   });
 
@@ -453,6 +464,73 @@ describe("typed text is never printed from a payload (T-event-typed-text-shape)"
     ["an object", { stars: 5 }],
   ] as const)("prints no stars for %s, and never throws", (_name, rating) => {
     expect(describeEvent(ev("viewing_feedback", { viewing_id: "v1", rating }, "property"), t)).toBe("Viewing feedback");
+  });
+
+  // The same class in WF-1's `rescheduled` line: any non-blank `from` / `to`
+  // went to formatDateTime, and Intl's format(new Date("x")) throws RangeError
+  // ("Invalid time value") — the property's Activity tab, the admin feed and
+  // a property-scoped evidence report down with one inserted event.
+  it.each([
+    ["words", { from: "x", to: "y" }],
+    ["a valid from and a word", { from: "2026-09-25T10:00:00Z", to: "soon" }],
+    ["a word and a valid to", { from: "earlier", to: "2026-09-25T11:00:00Z" }],
+    ["an impossible date", { from: "2026-13-45T99:99:00Z", to: "2026-09-25T11:00:00Z" }],
+    ['the strings "NaN" and "Infinity"', { from: "NaN", to: "Infinity" }],
+    ["numbers", { from: 1e308, to: -1 }],
+    ["objects", { from: { at: "2026-09-25" }, to: ["2026-09-26"] }],
+  ] as const)("a rescheduled line with %s reads bare, and never throws", (_name, payload) => {
+    expect(describeEvent(ev("rescheduled", payload, "viewing"), t)).toBe("Viewing rescheduled");
+  });
+
+  it("a rescheduled line with two real dates still prints both, formatted", () => {
+    const out = describeEvent(
+      ev("rescheduled", { from: "2026-09-25T07:00:00Z", to: "2026-09-26T08:30:00Z" }, "viewing"),
+      t,
+    );
+    // formatDateTime's own output (Asia/Nicosia), whatever the machine's zone
+    expect(out).toBe(
+      `Viewing rescheduled from ${formatDateTime("2026-09-25T07:00:00Z")} to ${formatDateTime("2026-09-26T08:30:00Z")}`,
+    );
+    expect(out).toMatch(/2026/);
+  });
+
+  // A line that throws anyway — a renderer bug, or a crafted shape nobody has
+  // thought of yet — must not take the page down: an event can never be deleted
+  // from the chain, so a crashing one would break that timeline for good.
+  it("a line that throws falls back to the bare event type, and logs the type — never the payload", () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const throwing: EventTranslator = (key) => {
+      if (key === "stageChange") throw new RangeError("boom Zenobia 99000111");
+      return `KEY:${key}`;
+    };
+    expect(describeEvent(ev("stage_changed", { from: "New", to: "Zenobia 99000111" }), throwing)).toBe("stage changed");
+    // other lines on the same page are untouched
+    expect(describeEvent(ev("lost", {}, "deal"), throwing)).toBe("KEY:lost");
+    expect(err).toHaveBeenCalledTimes(1);
+    expect(err).toHaveBeenCalledWith("timeline line failed:", { event_type: "stage_changed", error: "RangeError" });
+    expect(JSON.stringify(err.mock.calls)).not.toMatch(/Zenobia|99000111|boom/);
+    // and Sentry hears of it — tags only, no message text from the error or the payload
+    expect(sentry.captureMessage).toHaveBeenCalledWith("[timeline] line failed", {
+      level: "error",
+      tags: { event_type: "stage_changed", error: "RangeError" },
+    });
+    expect(JSON.stringify(sentry.captureMessage.mock.calls)).not.toMatch(/Zenobia|99000111|boom/);
+    err.mockRestore();
+  });
+
+  it("an unregistered type is reported as 'unregistered' — its name is text anyone typed", () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const throwing: EventTranslator = (key) => {
+      if (key === "offerPrefix") throw new TypeError("x");
+      return `KEY:${key}`;
+    };
+    expect(describeEvent(ev("Zenobia_Quillfeather", {}, "offer"), throwing)).toBe("Zenobia Quillfeather");
+    expect(sentry.captureMessage).toHaveBeenCalledWith("[timeline] line failed", {
+      level: "error",
+      tags: { event_type: "unregistered", error: "TypeError" },
+    });
+    expect(JSON.stringify([...err.mock.calls, ...sentry.captureMessage.mock.calls])).not.toMatch(/Zenobia/);
+    err.mockRestore();
   });
 
   it("routes each line through the translator in every locale (no hard-coded English)", () => {

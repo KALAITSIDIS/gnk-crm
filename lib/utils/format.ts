@@ -24,9 +24,19 @@ export function formatArea(sqm: number | string | null | undefined): string {
 
 const NICOSIA_TZ = "Asia/Nicosia";
 
+/**
+ * An unbuildable date is an em dash, as a non-finite number is above — never a
+ * thrown RangeError (T-rescheduled-line-crash): Intl's format() throws on an
+ * Invalid Date, and a crafted event's `occurred_at` can be a year JavaScript
+ * cannot parse (Postgres goes to 294276 AD), which took the timeline, the admin
+ * feed and the evidence report down with it.
+ */
+const isBuildable = (d: Date): boolean => !Number.isNaN(d.getTime());
+
 export function formatDateTime(iso: string | Date | null | undefined): string {
   if (!iso) return "—";
   const d = typeof iso === "string" ? new Date(iso) : iso;
+  if (!isBuildable(d)) return "—";
   return new Intl.DateTimeFormat("en-GB", {
     dateStyle: "medium",
     timeStyle: "short",
@@ -37,6 +47,7 @@ export function formatDateTime(iso: string | Date | null | undefined): string {
 export function formatDate(iso: string | Date | null | undefined): string {
   if (!iso) return "—";
   const d = typeof iso === "string" ? new Date(iso) : iso;
+  if (!isBuildable(d)) return "—";
   return new Intl.DateTimeFormat("en-GB", {
     dateStyle: "medium",
     timeZone: NICOSIA_TZ,
