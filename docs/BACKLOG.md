@@ -2694,9 +2694,9 @@ VERIFY, run before starting.
   answers "nothing was changed", a sweep runs again the next night. 0117's FOR NO KEY UPDATE removed only the
   foreign-key half of this. A structural fix would take the chain lock before the task update in the trigger, or
   the task rows before any event in the sweep — neither is needed while it fails safe.
-- ~~**The deal nudge supersession writes across organisations, S.**~~ **FIXED 2026-09-26 for TASKS — DECISIONS
-  `T-task-deal-org-isolation` (migration 0119; branch `fix/task-deal-org-isolation`, not landed at the time of
-  writing): `tasks (org_id, deal_id) → deals (org_id, id)` replaces the single-column key (0088's shape; NO ACTION
+- ~~**The deal nudge supersession writes across organisations, S.**~~ **FIXED and LANDED 2026-09-26 for TASKS (hosted
+  0119 first, then PR #71 → main `a1b846e`, deployed) — DECISIONS `T-task-deal-org-isolation` (migration 0119):
+  `tasks (org_id, deal_id) → deals (org_id, id)` replaces the single-column key (0088's shape; NO ACTION
   kept; `deals_org_id_id_key` is the referenced side; one relationship, so PostgREST embeds stay unambiguous), and
   `trg_supersede_deal_nudges` completes only the DEAL's organisation's reminders (`and t.org_id = new.org_id`).
   Reproduced first at 0118 through PostgREST with two throwaway organisations: B's INSERT, PATCH and UPSERT of a
