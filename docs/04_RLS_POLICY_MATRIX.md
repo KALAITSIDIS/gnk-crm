@@ -58,7 +58,7 @@ Legend: ✅ full · 🔒 restricted (condition in Notes) · ❌ denied
 | share_links | A AG LM (own org) | A AG LM (`created_by = uid`) | creator or A | ❌ **no policy** | anon: **no grant at all** — buyers reach data only via `resolve_share_link` |
 | share_link_properties | A AG LM (via parent link) | A AG LM (via parent link) | ❌ | creator or A | |
 | share_link_attempts | ❌ no policy, no grant | ❌ | ❌ | ❌ | written only by security-definer functions |
-| tasks | A ✅ · AG LM 🔒 (`assignee_id = uid` OR created_by = uid) | A AG LM | assignee or A | creator or A | |
+| tasks | A ✅ · AG LM 🔒 (`assignee_id = uid` OR created_by = uid) | A AG LM | assignee or A | creator or A | 0119: `tasks_org_deal_fkey` — `(org_id, deal_id) → deals (org_id, id)`, NO ACTION, replaces the single-column key: a task names a deal of its OWN organisation or none (the policies check only the caller's org; the key binds every writer, service_role included). `deals_supersede_nudges` (0025) completes only the deal's organisation's `deal_no_contact` reminders and writes their `superseded` events into that organisation's chain. |
 | cyprus_config | A AG LM (read) | A | A | ❌ | Edits write `config` events |
 | events | A ✅ · AG LM 🔒 (`actor_id = uid` OR entity is a record they can read — implement pragmatically: A + AG/LM where actor_id = uid; timeline pages assemble via server actions with service role for cross-entity reads, still org-scoped) | A AG LM 🔒 (`org_id = current_org_id()` **AND `actor_id = auth.uid()`** since 0071 — a staff session cannot append rows naming another user or "system"; null-actor rows come only from crons/service_role, which bypass RLS. Test 47) | ❌ **no policy + revoked** | ❌ **no policy + revoked** | The spine. An event names its author, enforced at the DB |
 

@@ -2694,14 +2694,62 @@ VERIFY, run before starting.
   answers "nothing was changed", a sweep runs again the next night. 0117's FOR NO KEY UPDATE removed only the
   foreign-key half of this. A structural fix would take the chain lock before the task update in the trigger, or
   the task rows before any event in the sweep — neither is needed while it fails safe.
-- **The deal nudge supersession writes across organisations, S.** `trg_supersede_deal_nudges` (0025, SECURITY
-  DEFINER) matches tasks by `deal_id` with no org predicate and writes its `superseded` event into the TASK's
-  org; `tasks_insert` checks only the inserter's org and `tasks.deal_id` carries no tenant FK. So a member of
-  org B who learns an org-A deal id can plant a `deal_no_contact` task on it, and org A's close then marks it
-  done and writes a permanent event into org B's chain, attributed to an org-A user (measured in a rolled-back
-  experiment). Pre-dates 0117; the close transaction now carries it. Fix: `and t.org_id = new.org_id` in the
-  trigger; composite tenant FKs `(deal_id, org_id)` on `tasks` and `offers`. Found by T-atomic-deal-close's
-  design critique. **VERIFY:** `grep -n "t.org_id = new.org_id" supabase/migrations/*.sql` — no hit means open.
+- ~~**The deal nudge supersession writes across organisations, S.**~~ **FIXED 2026-09-26 for TASKS — DECISIONS
+  `T-task-deal-org-isolation` (migration 0119; branch `fix/task-deal-org-isolation`, not landed at the time of
+  writing): `tasks (org_id, deal_id) → deals (org_id, id)` replaces the single-column key (0088's shape; NO ACTION
+  kept; `deals_org_id_id_key` is the referenced side; one relationship, so PostgREST embeds stay unambiguous), and
+  `trg_supersede_deal_nudges` completes only the DEAL's organisation's reminders (`and t.org_id = new.org_id`).
+  Reproduced first at 0118 through PostgREST with two throwaway organisations: B's INSERT, PATCH and UPSERT of a
+  task onto A's deal were accepted, and A's `close_deal` then completed B's task. Hosted, read-only: 0 tasks, so
+  the constraint validates trivially. The OFFERS half of this entry is NOT done — see the next item.**
+  **VERIFY (fixed):** `grep -n "t.org_id = new.org_id" supabase/migrations/*.sql` — hits 0119.
+  - **The deal nudge supersession writes across organisations, S (original).** `trg_supersede_deal_nudges` (0025, SECURITY
+    DEFINER) matches tasks by `deal_id` with no org predicate and writes its `superseded` event into the TASK's
+    org; `tasks_insert` checks only the inserter's org and `tasks.deal_id` carries no tenant FK. So a member of
+    org B who learns an org-A deal id can plant a `deal_no_contact` task on it, and org A's close then marks it
+    done and writes a permanent event into org B's chain, attributed to an org-A user (measured in a rolled-back
+    experiment). Pre-dates 0117; the close transaction now carries it. Fix: `and t.org_id = new.org_id` in the
+    trigger; composite tenant FKs `(deal_id, org_id)` on `tasks` and `offers`. Found by T-atomic-deal-close's
+    design critique.
+- **`offers.deal_id` carries no tenant tie, S.** The offers half of the entry above: `offers (deal_id) → deals (id)`
+  (0001, ON DELETE CASCADE) and `offers_insert` checks only the inserter's org, so a member of org B can still POST an
+  offer of B naming an org-A deal id. `close_deal` reads offers in the DEAL's own organisation (0117), so such a row
+  cannot satisfy the Won rule — `deal-close.test.ts` ("an 'accepted' offer planted on the deal from ANOTHER
+  organisation") plants exactly that row as its fixture. Fix: `offers (org_id, deal_id) → deals (org_id, id) on delete
+  cascade` on 0119's `deals_org_id_id_key`, replacing `offers_deal_id_fkey` (one relationship), types regenerated,
+  and that fixture rewritten to plant past the constraint. The same shape, on the same key, for the other deal-side
+  links: `reservations.deal_id` (0044, ON DELETE SET NULL — `createReservation` posts it from the form, so it is
+  also still an existence oracle on deal ids across organisations), `viewings.deal_id` and `leads.converted_deal_id`.
+  Left out of 0119 on purpose (its scope was tasks and the reminder trigger). **VERIFY:**
+  `grep -n "offers_org_deal_fkey" supabase/migrations/*.sql` — no hit means open.
+- **Every other `tasks.*` link is org-blind, and so is every sweep's parent join, S/M.** `viewing_id`, `mandate_id`,
+  `reservation_id`, `installment_id`, `lead_id`, `contact_id` and `property_id` on `tasks` reference their parent by
+  id alone (properties and leads already carry an `(org_id, id)` key; the others do not), and every supersede arm
+  joins tasks to its parent without an org predicate: `trg_supersede_viewing_nudges` (0020 — the exact twin of the
+  deal trigger), `create_followup_nudges` arms 4 / 4b / 4c (0078), `expire_mandates` (0053), `raise_key_recall_tasks`
+  (0091), `expire_reservations` (0090), `warn_expiring_reservations` / `remind_due_installments` (0052),
+  `raise_lead_sla_tasks` (0098). Same class as the entry above, one migration each in 0119's shape (preflight,
+  `(org_id, id)` key on the parent where missing, replace the single-column key, the predicate in the trigger);
+  `viewing_id` first, since its trigger writes an actor-attributed event into the task's org exactly as the deal one
+  did. Found by T-task-deal-org-isolation's scouting. **VERIFY:** `grep -n tasks_org_viewing_fkey supabase/migrations/*.sql`
+  — no hit means open.
+- **`createReservation` accepts a form `deal_id` without an RLS re-read, S.** `lib/actions/reservations.ts` re-reads
+  the property under RLS but copies `d.deal_id` from the form straight onto the hold, and `reservations.deal_id`
+  references `deals(id)` alone (0044). A posted foreign deal id therefore lands on the reservation; when that hold is
+  converted, `transitionReservation` copies it onto the `listing_status_check` task — which 0119's key now refuses
+  (23503), so the prompt is `console.error`-logged and not raised, with no event. The UI offers only the caller's
+  own deals, so this needs a crafted request. Fix: the `quickAddTask` idiom — `select id from deals where id = …`
+  on the caller's client before the insert, "That deal is no longer available to you." on a miss. Found by
+  T-task-deal-org-isolation's scouting. **VERIFY:** `grep -c "That deal is no longer available to you"
+  lib/actions/reservations.ts` — 0 means open.
+- **NOTE — `create_followup_nudges` steps 1 and 3 still join tasks to deals by `deal_id` alone (0078).** With
+  `tasks_org_deal_fkey` VALIDATED they can meet no cross-organisation row, so 0119 left the sweep's text alone.
+  `convalidated` is a catalogue flag, not a property of the rows: if that constraint is ever added NOT VALID (an
+  approved repair of pre-existing mismatches on a hosted database), or after a replica-mode load (`restore.mjs`,
+  `data.sql`) of a backup taken from a database that held a mismatch, add `and t.org_id = d.org_id` to step 3 and
+  `and t.org_id = s.org_id` to step 1's `not exists` in the same migration — the nightly sweep runs as postgres for
+  every organisation at once and would otherwise complete a mismatched row across organisations with a null actor
+  (step 3), or let one suppress a legitimate reminder (step 1).
 - **Offers stay editable on a closed deal, S.** `updateOfferStatus` never checks the deal's status (only
   `saveOffer` does), so an offer still `submitted` / `countered` on a won or lost deal can be accepted,
   rejected, withdrawn or expired afterwards — accepted on a LOST deal, it even answers `wonEligible` — bumping
