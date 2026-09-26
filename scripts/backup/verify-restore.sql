@@ -390,6 +390,16 @@ misc as (
   select 'INTEGRITY: event chain verifies for every org', 'true',
          (select coalesce(bool_and(verify_events_chain(id)), true)::text from organizations)
   union all
+  -- 0119: a task names a deal of its OWN organisation, or none. The composite
+  -- key guarantees it for every live write, but a replica-mode restore
+  -- (restore.mjs, data.sql) loads rows past every constraint and leaves the
+  -- key marked validated — this is the check the catalogue flag cannot give.
+  -- Non-zero means the SOURCE held mismatches (0119's preflight refuses to
+  -- constrain over them; the sweep's steps 1/3 would then act across
+  -- organisations — BACKLOG NOTE).
+  select 'INTEGRITY: no task names a deal of another organisation (0119)', '0',
+         (select count(*)::text from tasks t join deals d on d.id = t.deal_id where t.org_id <> d.org_id)
+  union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.
   -- signature_path / pdf_path equal storage.objects.name exactly (no bucket prefix).
