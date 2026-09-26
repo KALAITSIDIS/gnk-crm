@@ -2596,8 +2596,18 @@ VERIFY, run before starting.
   flipped to lost (or `lost_reason` overwritten; `markDealWon` does not clear it). `closeLead` and the
   reservation transitions already fold theirs in (`.in("status", …)`, `.eq("status", from)`). Found by
   T-event-typed-text-shape's sweep; not built there (it preserves the deal transitions as they are).
-- **A direct write can still close an OPEN deal without `close_deal`, S — deploy-coupled (code first).**
-  `deals_update` (0100) restricts rows, not columns, so an admin or the deal's agent can PATCH `status` /
+- ~~**A direct write can still close an OPEN deal without `close_deal`, S — deploy-coupled (code first).**~~
+  **FIXED 2026-09-26 on branch `fix/deal-close-db-boundary` (NOT LANDED until hosted 0118 + merge) — DECISIONS
+  `T-deal-close-db-boundary` (migration 0118): `close_deal` is SECURITY DEFINER with `deals_update` restated and the
+  caller re-read under the row lock; `deals_closed_guard` binds INSERT and OPEN rows for user sessions — no status
+  change, no closing detail, no terminal or foreign stage outside `close_deal`. Reproduced first at 0117 through
+  PostgREST: PATCH, POST and UPSERT each closed an open deal with no rule and no event, and closing details or a
+  terminal stage could be parked on an open deal (the BACKLOG text below named the PATCH only). Neither suggested
+  mechanism was used: a transaction-local setting is freely settable by any session, and column privileges cannot
+  express the stage rule.** **VERIFY (fixed):**
+  `grep -c "before insert or update on public.deals" supabase/migrations/0118_deal_close_only_through_close_deal.sql`
+  — must print 1 · `grep -c "KNOWN GAP (BACKLOG)" supabase/tests/deal-close.test.ts` — must print 0.
+  (original) `deals_update` (0100) restricts rows, not columns, so an admin or the deal's agent can PATCH `status` /
   `won_at` / `final_value` / `lost_reason` on an OPEN deal through PostgREST: no accepted-offer rule, no mandatory
   reason, no event (guardrail 1). 0117's guard binds only rows that are ALREADY closed, because refusing
   open → won/lost would refuse the deployed pre-0117 actions' own closes until the new app ships. Once the
@@ -2607,6 +2617,50 @@ VERIFY, run before starting.
   "KNOWN GAP" case in `supabase/tests/deal-close.test.ts`; `rls.test.ts` ~1819 is a service-role write and
   stays legal if the rule binds user sessions only. Found by T-atomic-deal-close. **VERIFY:** the KNOWN GAP
   test in `supabase/tests/deal-close.test.ts` still asserts `direct.error` is null — while it does, open.
+- **An offer can be born accepted, or an accepted one re-pointed, by a direct write — and `close_deal` then counts
+  it, S.** `close_deal` requires an accepted offer for an agent's Won, but `offers` has no database boundary:
+  `offers_insert` checks the organisation and the deal's owner, never `status`, and `offers_update` WITH CHECK is
+  organisation-only. Measured 2026-09-26 (local, rolled back): an agent session that POSTs an offer with
+  `status: 'accepted'` then closes Won — `close_deal` answers `closed` and the chain holds `won` (naming the
+  `offer_id`) with no offer `created` or `status_changed` event. No new AUTHORITY: an agent may already record and
+  accept an offer on their own deal in the app; what the direct write skips is the offer workflow's own event and
+  its single-accepted check (see "Offers stay editable on a closed deal" below for the PATCH half and the missing
+  unique index). An agent may also move an accepted offer's `deal_id` to another deal of the organisation. Fix: a
+  guard on `offers` like 0118's (born `submitted`, transitions only through an RPC that writes its event, `deal_id` /
+  `org_id` immutable) and the partial unique index. Found by T-deal-close-db-boundary's critic. **VERIFY:**
+  `MSYS_NO_PATHCONV=1 docker exec supabase_db_gnk-crm psql -U postgres -d postgres -Atc "select count(*) from pg_trigger where tgrelid='public.offers'::regclass and not tgisinternal"`
+  — 0 means open.
+- **A user session can hand-write a deal's terminal events, S.** `events_insert` checks only the organisation and
+  the actor, so the session that may close a deal may also POST `won` / `lost` / `won_override` events for it (or
+  for any deal of its organisation) without closing it; the chain keeps them for good. Measured at 0117 by
+  T-deal-close-db-boundary's reproduction (a hand-written `won` beside a PATCH-closed deal). 0118 makes the DEAL
+  unreachable, not the event. Fix: refuse the terminal deal event types in `events_insert` (only `close_deal`, a
+  definer, writes them) — after checking no app path writes them on the user session. **VERIFY:**
+  `MSYS_NO_PATHCONV=1 docker exec supabase_db_gnk-crm psql -U postgres -d postgres -Atc "select with_check ~ 'event_type' from pg_policies where tablename='events' and policyname='events_insert'"`
+  — `f` means open.
+- **`deals_insert` does not bind `agent_id` / `created_by` to the caller, S.** An agent may POST a deal attributed to
+  another user of the organisation (measured at 0117, and unchanged by 0118 — the deal is born open). `convertLead`
+  sends `created_by = profile.id`, so `created_by = auth.uid()` in the WITH CHECK costs the app nothing; `agent_id`
+  is legitimately another agent (lead assignment). **VERIFY:**
+  `MSYS_NO_PATHCONV=1 docker exec supabase_db_gnk-crm psql -U postgres -d postgres -Atc "select with_check ~ 'created_by' from pg_policies where tablename='deals' and policyname='deals_insert'"`
+  — `f` means open.
+- **Deal fields around a close that nothing freezes, S — a product decision first.** A direct PATCH may change
+  `deal_type` (an open deal then sits in another pipeline's stage; `close_deal` picks the new type's terminal
+  stage), `created_at` and `stage_entered_at` (reports compute time-to-close and time-in-stage from them), and on a
+  CLOSED deal `expected_value` and `agent_id` stay editable through the app itself (`updateDealSection` does not
+  check status; reports read both — a won deal's `coalesce(final_value, expected_value)`, agent performance). An
+  admin may also flip a stage's `is_won` / `is_lost` with open deals in it. None makes a deal won or lost without
+  `close_deal`. Found by T-deal-close-db-boundary's review. **VERIFY:**
+  `grep -rn "new.deal_type is distinct from old.deal_type" supabase/migrations/` — no hit means open.
+- **The restore pack does not pin `forbid_srs_api_writes` (0099), S.** `scripts/backup/verify-restore.sql` fails
+  closed on it on a migration-built database: `grants: UNPINNED forbid_srs_api_writes … secdef=false anon=true`
+  (measured on the local stack at 0118, 2026-09-26; the function is 0099's statement trigger guarding the PostGIS
+  catalogue). Pin its row (regenerate the list). **VERIFY:** `grep -c "forbid_srs_api_writes" scripts/backup/verify-restore.sql`
+  — 0 means open.
+- **NOTE — since 0118 a refused deal INSERT answers 400 / P0001, not 403 / 42501.** The guard runs BEFORE the RLS
+  WITH CHECK, so an aal1 or deactivated session POSTing a deal reads "Stage not found" (its own organisation's
+  stages are invisible to it) and a closing payload reads the guard's sentence. Nothing in the app keys on either
+  code; a future caller must not key on 42501 for deal INSERTs.
 - **A committed Won's reminders are at-most-once, S.** `listing_status_check` and `reservation_still_live` are
   raised by the action AFTER `close_deal` commits, only by the request that got `closed`. A crash or timeout
   between the commit and those steps — or an answer lost on the way back, which the action reports as
@@ -2736,7 +2790,9 @@ VERIFY, run before starting.
   Contact erasure writes on the admin's USER session (`createClient`; only its notes redaction and storage go
   through `createAdminClient()`), so a blanking step written like its neighbours would be refused on every lost
   deal and stop the erasure part-way: put it on `createAdminClient()` or in a definer function, which the guard
-  deliberately does not bind.
+  deliberately does not bind. (0118, T-deal-close-db-boundary: the same now holds on an OPEN deal — a maintenance
+  reopen leaves the previous lifecycle's `lost_reason` on the row, and a user session may no longer change or blank
+  it there either; the service role and definer bodies still may.)
   Since T-key-holder-shape the rows are the ONLY home of a key's typed holder — an owner's name on a
   transfer — in `key_movements.holder_name` (append-only for every session role) and
   `property_keys.current_holder_name`; neither is linked to a contact, so contact erasure cannot find them.

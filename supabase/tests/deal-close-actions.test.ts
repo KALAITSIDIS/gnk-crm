@@ -140,7 +140,15 @@ vi.mock("@/lib/supabase/admin", async () => {
   return { createAdminClient: () => h.serviceClient() };
 });
 
-import { markDealLost, markDealWon, type DealSectionState } from "@/lib/actions/deals";
+import {
+  logDealContact,
+  markDealLost,
+  markDealWon,
+  moveDealToStage,
+  updateDealSection,
+  type DealSectionState,
+} from "@/lib/actions/deals";
+import { convertLead } from "@/lib/actions/leads";
 
 type Outcome = { result: DealSectionState | null; thrown: string | null };
 
@@ -350,7 +358,11 @@ afterAll(async () => {
   await pg.query("delete from tasks where org_id = $1", [ORG]);
   await pg.query("delete from offers where org_id = $1", [ORG]);
   await pg.query("delete from reservations where org_id = $1", [ORG]);
+  // leads reference deals (converted_deal_id), deals reference contacts
+  await pg.query("delete from leads where org_id = $1", [ORG]);
   await pg.query("delete from deals where org_id = $1", [ORG]);
+  await pg.query("delete from interaction_notes where org_id = $1", [ORG]);
+  await pg.query("delete from contacts where org_id = $1", [ORG]);
   await pg.query("delete from properties where org_id = $1", [ORG]);
   for (const id of userIds) await svc.auth.admin.deleteUser(id);
   await pg.query("delete from profiles where org_id = $1", [ORG]);
@@ -598,5 +610,97 @@ describe("Won follow-ups through the real actions", () => {
     expect(out.result?.notice ?? "").toMatch(/listing status was created, but its timeline entry could not be recorded/);
     const tasks = await prompts(prop.id);
     expect(tasks.filter((x) => x.kind === "listing_status_check"), "the reminder exists").toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("0118: the deal's own writers still work through the real actions", () => {
+  // deals_closed_guard now binds INSERT and OPEN rows for user sessions. These
+  // are the app's user-session writers of deals (the 2026-09-25 survey): each
+  // must still succeed, and none may be able to reach a terminal state.
+  async function newLead() {
+    fixtureN += 1;
+    const { data: contact, error: cErr } = await svc
+      .from("contacts")
+      .insert({ org_id: ORG, first_name: "ZZTEST", last_name: `Convert-${RUN}-${fixtureN}`, created_by: agent.id })
+      .select("id")
+      .single();
+    if (cErr) throw new Error(`contact fixture: ${cErr.message}`);
+    const { data: lead, error: lErr } = await svc
+      .from("leads")
+      .insert({ org_id: ORG, source: "referral", message: `ZZTEST convert ${RUN}`, assigned_agent_id: agent.id, contact_id: contact.id })
+      .select("id")
+      .single();
+    if (lErr) throw new Error(`lead fixture: ${lErr.message}`);
+    return lead.id as string;
+  }
+
+  it("convertLead creates an OPEN deal on the user session (the one app INSERT of deals)", async () => {
+    const leadId = await newLead();
+    state.queue.push(await sessionClient(agent, "W"));
+    const fd = new FormData();
+    fd.set("lead_id", leadId);
+    fd.set("deal_type", "sale");
+    const out = await convertLead({ error: null, savedAt: null }, fd);
+    expect(out.error).toBeNull();
+    const { rows } = await pg.query(
+      `select d.id, d.status::text as status, d.stage_id, d.won_at, d.lost_at, d.lost_reason, d.final_value, d.created_by
+         from leads l join deals d on d.id = l.converted_deal_id where l.id = $1`,
+      [leadId],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      status: "open",
+      stage_id: openStage.id,
+      won_at: null,
+      lost_at: null,
+      lost_reason: null,
+      final_value: null,
+      created_by: agent.id,
+    });
+    expect((await eventsFor(rows[0].id)).map((e) => e.event_type)).toEqual(["created"]);
+  });
+
+  it("updateDealSection, logDealContact and moveDealToStage still write an open deal", async () => {
+    const deal = await newDeal();
+    const before = await dealRow(deal.id);
+
+    state.queue.push(await sessionClient(agent, "W"));
+    const details = new FormData();
+    for (const [k, v] of Object.entries({
+      deal_id: deal.id,
+      section: "details",
+      title: `ZZTEST edited ${RUN}`,
+      expected_value: "222000",
+      agent_id: agent.id,
+    })) details.set(k, v);
+    expect((await updateDealSection({ error: null, savedAt: null }, details)).error).toBeNull();
+
+    state.queue.push(await sessionClient(agent, "W"));
+    const contact = new FormData();
+    contact.set("deal_id", deal.id);
+    contact.set("channel", "phone");
+    expect((await logDealContact({ error: null, savedAt: null }, contact)).error).toBeNull();
+
+    const { data: s2 } = await svc
+      .from("deal_stages")
+      .select("id")
+      .eq("org_id", ORG)
+      .eq("deal_type", "sale")
+      .eq("sort_order", 2)
+      .single();
+    state.queue.push(await sessionClient(agent, "W"));
+    expect((await moveDealToStage(deal.id, s2!.id)).error).toBeNull();
+
+    // …and the kanban still cannot finish a deal
+    state.queue.push(await sessionClient(agent, "W"));
+    expect((await moveDealToStage(deal.id, wonStage.id)).error).toBe(
+      "Use the deal page to mark this deal won (guarded flow)",
+    );
+
+    const after = await dealRow(deal.id);
+    expect(after).toMatchObject({ status: "open", stage_id: s2!.id, won_at: null, lost_at: null, lost_reason: null, final_value: null });
+    expect(after.last_activity_at.getTime()).toBeGreaterThan(before.last_activity_at.getTime());
+    expect((await eventsFor(deal.id)).map((e) => e.event_type)).toEqual(["updated", "conversation_logged", "stage_changed"]);
   });
 });

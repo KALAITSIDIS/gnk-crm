@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 117::bigint as migrations,
+    2::bigint as auth_users, 118::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -182,9 +182,11 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   ('next_reference',       true,  false, true, true),
   ('record_key_movement',  true,  false, true, true),
   ('move_deal_to_stage',   false, false, true, true),
-  -- 0117: authenticated ONLY — a close needs an accountable actor, and the
-  -- service role would bypass every policy the invoker body relies on
-  ('close_deal',           false, false, true, false),
+  -- 0117: authenticated ONLY — a close needs an accountable actor.
+  -- 0118: SECURITY DEFINER — the one path by which a user session makes a
+  -- deal won or lost (deals_closed_guard refuses every other); it restates
+  -- deals_update and require_aal2 itself, and service_role still may not call it
+  ('close_deal',           true,  false, true, false),
   ('add_deal_stage',       false, false, true, true),
   ('reorder_stage',        false, false, true, true),
   ('admin_dashboard_stats',false, false, true, true),
@@ -280,8 +282,8 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   ('trg_supersede_viewing_nudges', true, false, false, false),
   -- 0117: revoked from all four roles explicitly, so hosted matches local
   ('trg_deals_closed_guard',       false, false, false, false),
-  -- 0101: erasure cancels a lead's pending desk alert — a trigger body, and
-  -- the one definer function here that even service_role may not call
+  -- 0101: erasure cancels a lead's pending desk alert — a trigger body that
+  -- even service_role may not call (like the definer trigger bodies above)
   ('cancel_lead_notification_jobs', true, false, false, false),
   ('protect_document_columns',     true, false, false, false),
   ('protect_profile_columns',      true, false, false, false)
