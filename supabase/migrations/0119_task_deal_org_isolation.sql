@@ -37,9 +37,11 @@
 --      DELETE stays NO ACTION (0001 named none): a deal with tasks still
 --      cannot be deleted. deals (org_id, id) UNIQUE is the referenced side and
 --      costs one index; the referencing side gets one too. A cross-organisation
---      id and a missing id now read the same 23503 — no existence oracle. The
---      constraint binds EVERY writer, service_role and definer bodies included:
---      unlike 0118's guard, which keys on the role, this is a fact about rows.
+--      id and a missing id now read the same 23503 — no existence oracle
+--      THROUGH TASKS (reservations.deal_id and leads.converted_deal_id keep
+--      theirs — BACKLOG). The constraint binds EVERY writer, service_role and
+--      definer bodies included: unlike 0118's guard, which keys on the role,
+--      this is a fact about rows.
 --
 --   B. THE TRIGGER. `and t.org_id = new.org_id` in trg_supersede_deal_nudges.
 --      With A validated the predicate cannot fail to hold; it is defence in
@@ -67,31 +69,46 @@
 -- DEPLOY ORDER: ADDITIVE — hosted before the merge. The deployed application
 -- (79f3b3e / aa01ef8) writes every task's org_id from the same row it read the
 -- deal from (quickAddTask verifies each link through RLS first; the Won
--- follow-ups, the nightly sweep and the lead cron copy the deal's own org), so
--- no request it sends is refused by A. No function signature, return shape or
--- grant changes — no release-compat entry. `database.types.ts` is regenerated:
--- the tasks Relationships entry `tasks_deal_id_fkey` becomes
--- `tasks_org_deal_fkey` over (org_id, deal_id); no TypeScript names either.
+-- follow-ups take close_deal's answer; the nightly sweep copies the deal's own
+-- org; the lead cron writes no deal_id), so no request it sends is refused by
+-- A. No function signature, return shape or grant changes — no release-compat
+-- entry. `database.types.ts` is regenerated: the tasks Relationships entry
+-- `tasks_deal_id_fkey` becomes `tasks_org_deal_fkey` over (org_id, deal_id);
+-- no TypeScript names either.
 --
 -- ROLLBACK (DECISIONS T-task-deal-org-isolation): a FORWARD migration that
 -- drops tasks_org_deal_fkey and tasks_org_deal_idx, re-adds
 -- `tasks_deal_id_fkey foreign key (deal_id) references deals(id)`, drops
--- deals_org_id_id_key, and re-creates trg_supersede_deal_nudges from 0025's
--- text; regenerate the types and move the verify-restore pin back. No data
--- moves either way: every row valid at 0119 is valid at 0118.
+-- deals_org_id_id_key, re-creates trg_supersede_deal_nudges from 0025's text
+-- and resets this file's `comment on function`; regenerate the types, move the
+-- verify-restore migrations pin FORWARD again (a rollback is one more ledger
+-- row), revert the test's catalogue block and the docs. No data moves either
+-- way: every row valid at 0119 is valid at 0118.
 --
--- NOT CHANGED HERE (BACKLOG): create_followup_nudges step 3 keeps its join
--- (with A validated it can meet no cross-organisation row — a NOTE says what
--- to do if this constraint is ever NOT VALID); trg_supersede_viewing_nudges
--- and the other tasks.* links (viewing_id, mandate_id, reservation_id,
--- installment_id, lead_id, contact_id, property_id) carry no tenant tie — the
--- same shape each, one migration each; offers.deal_id (the BACKLOG entry named
--- it too) — the offer workflow's own gap, recorded there.
+-- NOT CHANGED HERE (BACKLOG): create_followup_nudges steps 1 and 3 keep their
+-- joins (with A validated they can meet no cross-organisation row — a NOTE
+-- says what to do if this constraint is ever NOT VALID or a replica-mode
+-- restore loads rows past it); trg_supersede_viewing_nudges and the other
+-- tasks.* links (viewing_id, mandate_id, reservation_id, installment_id,
+-- lead_id, contact_id, property_id) carry no tenant tie — the same shape each,
+-- one migration each; the other deal-side keys (offers.deal_id — the BACKLOG
+-- entry named it too — reservations.deal_id, viewings.deal_id,
+-- leads.converted_deal_id) can use deals_org_id_id_key later.
 --
 -- Pins that move with this file: the migrations count (118 -> 119) in
 -- scripts/backup/verify-restore.sql. NO EXPLICIT begin/commit — the CLI wraps
 -- the file (HANDOFF §3), as does one execute_sql call.
 -- =============================================================================
+
+-- ADD CONSTRAINT takes an ACCESS EXCLUSIVE lock on deals and on tasks (0113's
+-- lesson): queued behind a long transaction — a close holding its row, a
+-- sweep — it would block every read of both tables behind it. Give up instead
+-- and apply again; hosted holds one deal and no tasks, so the scans themselves
+-- are instant. First, so the preflight's own reads are bounded too. Apply
+-- outside 03:00–04:00 UTC (pg_cron's clock: 06:00–07:00 Cyprus in summer),
+-- when the nightly sweeps update tasks joined to deals. Run twice by mistake,
+-- the file aborts at deals_org_id_id_key (42P07) and changes nothing.
+set local lock_timeout = '5s';
 
 -- ---------------------------------------------------------------------------
 -- 0. Preflight — abort, whole, over existing mismatches
@@ -113,13 +130,6 @@ end $$;
 -- ---------------------------------------------------------------------------
 -- A. The relationship: tasks (org_id, deal_id) → deals (org_id, id)
 -- ---------------------------------------------------------------------------
--- ADD CONSTRAINT takes an ACCESS EXCLUSIVE lock on deals and on tasks (0113's
--- lesson): queued behind a long transaction — a close holding its row, a
--- sweep — it would block every read of both tables behind it. Give up instead
--- and apply again; hosted holds one deal and no tasks, so the scans themselves
--- are instant. Apply outside the 03:00–04:00 Cyprus cron window.
-set local lock_timeout = '5s';
-
 alter table public.deals
   add constraint deals_org_id_id_key unique (org_id, id);
 

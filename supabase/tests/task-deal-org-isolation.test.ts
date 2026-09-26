@@ -15,16 +15,19 @@ import { createTestUser, ensureTestOrg, serviceClient, type TestUser } from "./h
  * task of B on it (INSERT, PATCH or UPSERT); and `trg_supersede_deal_nudges`
  * matched by `deal_id` alone, so A closing the deal — or logging contact on
  * it — completed B's task and wrote a `superseded` event into B's chain,
- * attributed to the A user. Every test in "B cannot…" and "…leaves B
- * untouched" was RED against 0118's exact catalogue before the migration.
+ * attributed to the A user. Ten tests were RED against 0118's exact catalogue
+ * before the migration: the five "B cannot…", the first three "…leaves B
+ * untouched" (the fourth pins 0118's own protections and was already green)
+ * and the two catalogue tests.
  *
  * TWO KINDS OF CALLER, as in deal-close.test.ts: supabase-js clients through
  * PostgREST — exactly how the app writes tasks and closes deals — and one `pg`
  * session as postgres for fixtures, verification and cleanup. That session
  * also PLANTS the cross-organisation row the constraint now refuses (with
- * `session_replication_role = replica`, which bypasses the referential
- * check the way a NOT VALID constraint or a restore would): the trigger's own
- * predicate is what must protect against a row the constraint could not stop.
+ * `session_replication_role = replica`, which skips the referential check the
+ * way a row written before a NOT VALID constraint, or loaded by a replica-mode
+ * restore, escapes it): the trigger's own predicate is what must protect
+ * against a row the constraint could not stop.
  *
  * TWO THROWAWAY ORGANISATIONS, deleted at the end as postgres, events included.
  */
@@ -78,8 +81,10 @@ async function seedTask(t: {
 /**
  * The row 0119's constraint refuses, written past it: organisation B's task
  * naming organisation A's deal. `session_replication_role = replica` disables
- * the referential triggers for this transaction only (postgres is superuser on
- * the local stack); the row is otherwise ordinary and committed.
+ * the referential triggers for this transaction only — the SET is permitted to
+ * postgres on the pinned local image (CI runs the same one); this file is never
+ * pointed at hosted, where postgres is not a superuser. The row is otherwise
+ * ordinary and committed.
  */
 async function plantCrossOrgTask(org: string, foreignDeal: string, assignee: string) {
   n += 1;
@@ -112,7 +117,13 @@ async function eventsMark() {
   return rows[0]!.m;
 }
 
-async function eventsSince(mark: string, org?: string) {
+/**
+ * Events written after `mark` in the given organisation(s) — always one of the
+ * two this file owns. Never the whole table: the local stack's own crons
+ * (lead-sla every 10 minutes, the nightly sweeps) write into other
+ * organisations on their own schedule, and that is not this trigger's doing.
+ */
+async function eventsSince(mark: string, orgs: string | string[] = [ORG_A, ORG_B]) {
   const { rows } = await o.query<{
     id: string;
     org_id: string;
@@ -123,8 +134,8 @@ async function eventsSince(mark: string, org?: string) {
     payload: Record<string, unknown>;
   }>(
     `select id::text, org_id, entity_type, entity_id, event_type, actor_id, payload
-       from events where id > $1::bigint and ($2::uuid is null or org_id = $2::uuid) order by id`,
-    [mark, org ?? null],
+       from events where id > $1::bigint and org_id = any($2::uuid[]) order by id`,
+    [mark, Array.isArray(orgs) ? orgs : [orgs]],
   );
   return rows;
 }
@@ -421,7 +432,7 @@ describe("closing or contacting A's deal leaves B's task and B's chain untouched
     expect(await taskRow(f.planted), "B's planted task").toMatchObject({ is_done: false, done_at: null, org_id: ORG_B });
     expect(await taskRow(f.ownB), "B's own reminder").toMatchObject({ is_done: false, done_at: null });
     expect(await eventsSince(mark, ORG_B), "nothing was written into B's chain").toEqual([]);
-    // …and nothing anywhere but A
+    // …and, of the two organisations, nothing but A's own events
     const elsewhere = (await eventsSince(mark)).filter((e) => e.org_id !== ORG_A);
     expect(elsewhere).toEqual([]);
     expect(await chainOk(ORG_B)).toBe(true);
