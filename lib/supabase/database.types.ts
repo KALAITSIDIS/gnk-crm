@@ -2596,13 +2596,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "tasks_deal_id_fkey"
-            columns: ["deal_id"]
-            isOneToOne: false
-            referencedRelation: "deals"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "tasks_installment_id_fkey"
             columns: ["installment_id"]
             isOneToOne: false
@@ -2636,6 +2629,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "mandates_safe"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_org_deal_fkey"
+            columns: ["org_id", "deal_id"]
+            isOneToOne: false
+            referencedRelation: "deals"
+            referencedColumns: ["org_id", "id"]
           },
           {
             foreignKeyName: "tasks_org_id_fkey"
