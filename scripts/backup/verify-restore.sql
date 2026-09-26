@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 119::bigint as migrations,
+    2::bigint as auth_users, 120::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -399,6 +399,11 @@ misc as (
   -- organisations — BACKLOG NOTE).
   select 'INTEGRITY: no task names a deal of another organisation (0119)', '0',
          (select count(*)::text from tasks t join deals d on d.id = t.deal_id where t.org_id <> d.org_id)
+  union all
+  -- 0120: the viewing twin — same reason, a replica-mode restore loads rows
+  -- past tasks_org_viewing_fkey and leaves it marked validated.
+  select 'INTEGRITY: no task names a viewing of another organisation (0120)', '0',
+         (select count(*)::text from tasks t join viewings v on v.id = t.viewing_id where t.org_id <> v.org_id)
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.
