@@ -2645,6 +2645,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "tasks_org_viewing_fkey"
+            columns: ["org_id", "viewing_id"]
+            isOneToOne: false
+            referencedRelation: "viewings"
+            referencedColumns: ["org_id", "id"]
+          },
+          {
             foreignKeyName: "tasks_property_id_fkey"
             columns: ["property_id"]
             isOneToOne: false
@@ -2656,13 +2663,6 @@ export type Database = {
             columns: ["reservation_id"]
             isOneToOne: false
             referencedRelation: "reservations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "tasks_viewing_id_fkey"
-            columns: ["viewing_id"]
-            isOneToOne: false
-            referencedRelation: "viewings"
             referencedColumns: ["id"]
           },
         ]

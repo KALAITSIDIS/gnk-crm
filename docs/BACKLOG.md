@@ -2722,17 +2722,56 @@ VERIFY, run before starting.
   also still an existence oracle on deal ids across organisations), `viewings.deal_id` and `leads.converted_deal_id`.
   Left out of 0119 on purpose (its scope was tasks and the reminder trigger). **VERIFY:**
   `grep -n "offers_org_deal_fkey" supabase/migrations/*.sql` — no hit means open.
-- **Every other `tasks.*` link is org-blind, and so is every sweep's parent join, S/M.** `viewing_id`, `mandate_id`,
+- **Every other `tasks.*` link is org-blind, and so is every sweep's parent join, S/M.** `mandate_id`,
   `reservation_id`, `installment_id`, `lead_id`, `contact_id` and `property_id` on `tasks` reference their parent by
   id alone (properties and leads already carry an `(org_id, id)` key; the others do not), and every supersede arm
-  joins tasks to its parent without an org predicate: `trg_supersede_viewing_nudges` (0020 — the exact twin of the
-  deal trigger), `create_followup_nudges` arms 4 / 4b / 4c (0078), `expire_mandates` (0053), `raise_key_recall_tasks`
-  (0091), `expire_reservations` (0090), `warn_expiring_reservations` / `remind_due_installments` (0052),
-  `raise_lead_sla_tasks` (0098). Same class as the entry above, one migration each in 0119's shape (preflight,
-  `(org_id, id)` key on the parent where missing, replace the single-column key, the predicate in the trigger);
-  `viewing_id` first, since its trigger writes an actor-attributed event into the task's org exactly as the deal one
-  did. Found by T-task-deal-org-isolation's scouting. **VERIFY:** `grep -n tasks_org_viewing_fkey supabase/migrations/*.sql`
-  — no hit means open.
+  joins tasks to its parent without an org predicate: `create_followup_nudges` arm 4c (0078), `expire_mandates`
+  (0053), `raise_key_recall_tasks` (0091), `expire_reservations` (0090), `warn_expiring_reservations` /
+  `remind_due_installments` (0052), `raise_lead_sla_tasks` (0098). Same class as the two fixed above, one migration
+  each in 0119's shape (preflight, `(org_id, id)` key on the parent where missing, replace the single-column key).
+  None of these has an edit-time TRIGGER, but ONE is an actor-attributed twin all the same and goes NEXT:
+  `mandate_id`. `setMandateStatus` calls `raise_key_recall_tasks(p_mandate, p_actor)` (0091) on the admin client at
+  edit time with the acting admin as `p_actor`; its `superseded` arm matches `key_recall` tasks by `t.mandate_id = m.id`
+  with no `t.org_id` predicate and writes each event into the TASK's organisation attributed to that admin — exactly
+  the deal / viewing shape; and the created arm's `not exists (… t.mandate_id = c.mandate_id and t.kind = 'key_recall')`
+  guard lets a planted row of another organisation stop the legitimate "Return keys" task from ever being raised. Fix it
+  in 0119's shape (`mandates_org_id_id_key`, `tasks_org_mandate_fkey`, `and t.org_id = m.org_id` in the superseded arm,
+  `and t.org_id = c.org_id` in the guard) and pin it RED first. The other app-side edit-time supersessions on these links
+  (`supersedeRenewalTasks` under the caller's RLS; `completeLiveHoldChecks` / `completeListingStatusChecks` on the admin
+  client with an explicit `org_id`) are already organisation-scoped, and the sweeps' supersessions carry a null actor —
+  lower severity, same fix. ORDER MATTERS: constrain every parent column a sweep COPIES into a task first (e.g. `viewings.property_id`, which arms 2 /
+  2b copy into `tasks.property_id` — see "A viewing's own parent links"), or the new tasks key turns one planted
+  parent row into a refused insert that aborts the whole nightly sweep for every organisation. Found by T-task-deal-org-isolation's scouting. ~~`viewing_id`~~ **FIXED 2026-09-26 — DECISIONS
+  `T-task-viewing-org-isolation` (migration 0120): `tasks (org_id, viewing_id) → viewings (org_id, id)` replaces the
+  single-column key and `trg_supersede_viewing_nudges` completes only the viewing's own organisation's reminders.**
+  **VERIFY:** `grep -hoE "add constraint tasks_org_[a-z]+_fkey" supabase/migrations/*.sql | sort -u | wc -l` — fewer
+  than 8 (deal, viewing, mandate, reservation, installment, lead, contact, property) means open; 2 today. (Counts only
+  the adds; check that no later migration drops one.)
+- **A viewing's own parent links are organisation-blind, S.** `viewings.property_id`, `contact_id` and `agent_id`
+  reference their parents by id alone (0001) and `viewings_insert` checks only the caller's org and role, so a member
+  of B can create a viewing of B naming A's property or contact. The nightly sweep's arms 2 / 2b (0078) join
+  `properties p on p.id = v.property_id` with no org predicate and copy `v.property_id` and `p.reference` into the
+  reminder — B's task then names A's property and carries its reference text. Fix: `viewings (org_id, property_id) →
+  properties (org_id, id)` on 0088's `properties_org_id_id_key`, a `contacts (org_id, id)` key and the same for
+  `contact_id`, each with 0119's preflight — BEFORE any `tasks.property_id` key (see the entry above). Found by
+  T-task-viewing-org-isolation's review. **VERIFY:** `grep -n viewings_org_property_fkey supabase/migrations/*.sql` —
+  no hit means open.
+- **The contact merge repoints rows of OTHER organisations, S.** `mergeContacts` proves both contacts are in the
+  caller's org (`lib/actions/merge-contacts.ts`), then repoints every referencing table on the ADMIN client with only
+  `.eq("contact_id", duplicateId)` — viewings, tasks, leads, deals, reservations, offers and the rest. Because those
+  `contact_id` columns are organisation-blind, a row of B that names A's duplicate contact (plantable as above) is
+  rewritten by A's merge. Not through any trigger. Fix: `.eq("org_id", profile.orgId)` on every repoint, and extend
+  `tests/unit/merge-repoints-every-fk.test.ts` to fail on a repoint without it. Found by
+  T-task-viewing-org-isolation's review. **VERIFY:** `grep -c 'eq("org_id"' lib/actions/merge-contacts.ts` — fewer
+  than the number of `.from(` repoints means open.
+- **A viewing slip can name another organisation's viewing, S (inferred, not reproduced).** `viewing_slips_insert`
+  admits an ADMIN of the caller's org without checking that `viewing_id` belongs to that org (the agent arm does, by
+  requiring the viewing's `agent_id`), and `viewing_slips.viewing_id` references `viewings(id)` alone with
+  `unique (viewing_id)`. So B's admin who knows an A viewing id could POST a slip for it: an existence oracle (accepted
+  vs 23503) and a denial of service — A's own slip would then fail the unique key. Found by
+  T-task-viewing-org-isolation's scouting; not reproduced. Fix: `viewing_slips (org_id, viewing_id) → viewings (org_id,
+  id) on delete cascade` on 0120's `viewings_org_id_id_key`. **VERIFY:** `grep -n viewing_slips_org_viewing_fkey
+  supabase/migrations/*.sql` — no hit means open.
 - **`createReservation` accepts a form `deal_id` without an RLS re-read, S.** `lib/actions/reservations.ts` re-reads
   the property under RLS but copies `d.deal_id` from the form straight onto the hold, and `reservations.deal_id`
   references `deals(id)` alone (0044). A posted foreign deal id therefore lands on the reservation; when that hold is
@@ -2742,8 +2781,12 @@ VERIFY, run before starting.
   on the caller's client before the insert, "That deal is no longer available to you." on a miss. Found by
   T-task-deal-org-isolation's scouting. **VERIFY:** `grep -c "That deal is no longer available to you"
   lib/actions/reservations.ts` — 0 means open.
-- **NOTE — `create_followup_nudges` steps 1 and 3 still join tasks to deals by `deal_id` alone (0078).** With
-  `tasks_org_deal_fkey` VALIDATED they can meet no cross-organisation row, so 0119 left the sweep's text alone.
+- **NOTE — `create_followup_nudges` steps 1 and 3 still join tasks to deals by `deal_id` alone (0078), and arms 2 / 2b
+  / 4 / 4b join tasks to viewings by `viewing_id` alone.** With `tasks_org_deal_fkey` (0119) and
+  `tasks_org_viewing_fkey` (0120) VALIDATED they can meet no cross-organisation row, so neither migration touched the
+  sweep's text. For the viewing arms the same applies: `and t.org_id = v.org_id` in arms 4 / 4b and `and t.org_id =
+  d.org_id` in the `not exists` guards of arms 2 / 2b (a planted row there would suppress a legitimate one-shot
+  reminder for good).
   `convalidated` is a catalogue flag, not a property of the rows: if that constraint is ever added NOT VALID (an
   approved repair of pre-existing mismatches on a hosted database), or after a replica-mode load (`restore.mjs`,
   `data.sql`) of a backup taken from a database that held a mismatch, add `and t.org_id = d.org_id` to step 3 and
