@@ -61,7 +61,9 @@ async function newViewing(
   const { rows } = await o.query<{ id: string }>(
     `insert into viewings (org_id, property_id, contact_id, agent_id, scheduled_at, status, created_by)
      values ($1, $2, $3, $4, now() - make_interval(hours => $5), $6, $4) returning id`,
-    [org, propertyOf[org], contactOf[org], agent, opts.hoursAgo ?? 72, opts.status ?? "completed"],
+    // default age 1h: younger than any feedback window, so the local stack's
+    // nightly sweep (03:15 UTC, every organisation) mints nothing for a fixture
+    [org, propertyOf[org], contactOf[org], agent, opts.hoursAgo ?? 1, opts.status ?? "completed"],
   );
   return rows[0]!.id;
 }
@@ -132,9 +134,10 @@ async function eventsMark() {
 
 /**
  * Events written after `mark` in the given organisation(s) — always one of the
- * two this file owns. Never the whole table: the local stack's own crons
- * (lead-sla every 10 minutes, the nightly sweeps) write into other
- * organisations on their own schedule, and that is not this trigger's doing.
+ * two this file owns. Never the whole table: the local stack's own crons write
+ * into every organisation on their own schedule (lead-sla every 10 minutes;
+ * the nightly sweep into these two as well — which is why fixture viewings are
+ * younger than any feedback window), and that is not this trigger's doing.
  */
 async function eventsSince(mark: string, orgs: string | string[] = [ORG_A, ORG_B]) {
   const { rows } = await o.query<{
@@ -410,7 +413,11 @@ describe("same-organisation links, tasks without a viewing, embeds, the sweep an
   });
 
   it("the nightly sweep still mints a feedback reminder in the viewing's own organisation (its insert meets the new key)", async () => {
-    const due = await newViewing(ORG_A, agentA.id, { status: "completed", hoursAgo: 96 });
+    // the window is one global setting (Settings → Nudges, 0052): read it, never assume 48h
+    const { rows: h } = await o.query<{ h: number }>(
+      "select public.nudge_threshold('viewing_feedback_hours', 48)::int as h",
+    );
+    const due = await newViewing(ORG_A, agentA.id, { status: "completed", hoursAgo: h[0]!.h + 24 });
     const r = await svc.rpc("create_followup_nudges", { p_org: ORG_A });
     expect(r.error).toBeNull();
     const { rows } = await o.query<{ org_id: string; assignee_id: string }>(
@@ -439,9 +446,6 @@ describe("saving feedback on, or moving, A's viewing leaves B's task and B's cha
     expect(await taskRow(f.planted), "B's planted task").toMatchObject({ is_done: false, done_at: null, org_id: ORG_B });
     expect(await taskRow(f.ownB), "B's own reminder").toMatchObject({ is_done: false, done_at: null });
     expect(await eventsSince(mark, ORG_B), "nothing was written into B's chain").toEqual([]);
-    // …and, of the two organisations, nothing but A's own events
-    const elsewhere = (await eventsSince(mark)).filter((e) => e.org_id !== ORG_A);
-    expect(elsewhere).toEqual([]);
     expect(await chainOk(ORG_B)).toBe(true);
     expect(await chainOk(ORG_A)).toBe(true);
   }

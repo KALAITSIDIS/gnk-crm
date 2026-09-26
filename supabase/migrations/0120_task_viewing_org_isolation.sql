@@ -30,8 +30,11 @@
 --      (tasks_org_viewing_fkey) REPLACES the single-column key, so PostgREST
 --      keeps ONE relationship between the two tables; ON DELETE / ON UPDATE
 --      NO ACTION exactly as 0020's key (a viewing with tasks still cannot be
---      deleted — no role can delete a viewing today: no DELETE grant, no
---      policy); MATCH SIMPLE, so a task with no viewing is exactly as before.
+--      deleted; no user session can delete a viewing today — authenticated
+--      holds no DELETE grant and there is no policy; only service_role or
+--      postgres could, no application path does, and the key still refuses
+--      them while a task names the viewing); MATCH SIMPLE, so a task with no
+--      viewing is exactly as before.
 --      viewings (org_id, id) UNIQUE is the referenced side; the referencing
 --      side gets an index. A cross-organisation id and a missing id now read
 --      the same 23503 — no existence oracle THROUGH TASKS. The constraint binds
@@ -186,10 +189,11 @@ comment on function public.trg_supersede_viewing_nudges() is
 -- ---------------------------------------------------------------------------
 do $$
 declare
-  c    record;
-  n    int;
-  src  text;
-  v_ok boolean;
+  c     record;
+  n     int;
+  src   text;
+  v_ok  boolean;
+  v_con text;
 begin
   -- exactly one foreign key from tasks to viewings, the composite one,
   -- validated, NO ACTION on delete and update, MATCH SIMPLE
@@ -280,10 +284,12 @@ begin
       insert into contacts (org_id, first_name)
         values (v_org_a, '0120 probe')
         returning id into v_contact;
-      -- any profile id satisfies viewings.agent_id's key; none exists on an
-      -- empty database, where the probe is skipped (it proves the key, and
-      -- the test file proves it everywhere)
-      select id into v_agent from profiles limit 1;
+      -- any profile id satisfies viewings.agent_id's key (held FOR KEY SHARE,
+      -- so it cannot vanish under the probe); none exists on an empty
+      -- database — CI's and `db reset`'s migration run, before seed.sql —
+      -- where the probe is skipped with a NOTICE (the test file proves the key
+      -- there)
+      select id into v_agent from profiles limit 1 for key share;
       if v_agent is null then
         raise exception using errcode = 'P0120', message = 'skip';
       end if;
@@ -299,7 +305,11 @@ begin
       raise exception using errcode = 'P0121', message = '0120 probe: a cross-organisation task was ACCEPTED';
     exception
       when foreign_key_violation then
-        v_ok := true;   -- refused, and the sub-block's inserts are gone
+        -- refused, and the sub-block's inserts are gone — but only THIS key's
+        -- refusal is the verdict: any other 23503 in the sub-block is a probe
+        -- that proved nothing
+        get stacked diagnostics v_con = constraint_name;
+        v_ok := (v_con = 'tasks_org_viewing_fkey');
       when sqlstate 'P0120' then
         v_ok := null;   -- no profile to name as agent: skipped, nothing written
       when sqlstate 'P0121' then
@@ -307,7 +317,8 @@ begin
     end;
   end;
   if v_ok is false then
-    raise exception '0120 aborted: tasks_org_viewing_fkey did not refuse a task naming another organisation''s viewing';
+    raise exception '0120 aborted: tasks_org_viewing_fkey did not refuse a task naming another organisation''s viewing (the probe met %)',
+      coalesce(v_con, 'no foreign-key violation — the cross-organisation row was accepted');
   end if;
   if v_ok is null then
     raise notice '0120: no profile exists — the constraint probe was skipped (the catalogue checks above still ran)';

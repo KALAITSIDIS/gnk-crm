@@ -432,9 +432,6 @@ describe("closing or contacting A's deal leaves B's task and B's chain untouched
     expect(await taskRow(f.planted), "B's planted task").toMatchObject({ is_done: false, done_at: null, org_id: ORG_B });
     expect(await taskRow(f.ownB), "B's own reminder").toMatchObject({ is_done: false, done_at: null });
     expect(await eventsSince(mark, ORG_B), "nothing was written into B's chain").toEqual([]);
-    // …and, of the two organisations, nothing but A's own events
-    const elsewhere = (await eventsSince(mark)).filter((e) => e.org_id !== ORG_A);
-    expect(elsewhere).toEqual([]);
     expect(await chainOk(ORG_B)).toBe(true);
     expect(await chainOk(ORG_A)).toBe(true);
   }
