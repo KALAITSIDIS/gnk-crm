@@ -2741,8 +2741,8 @@ VERIFY, run before starting.
   client with an explicit `org_id`) are already organisation-scoped, and the sweeps' supersessions carry a null actor —
   lower severity, same fix. ORDER MATTERS: constrain every parent column a sweep COPIES into a task first (e.g. `viewings.property_id`, which arms 2 /
   2b copy into `tasks.property_id` — see "A viewing's own parent links"), or the new tasks key turns one planted
-  parent row into a refused insert that aborts the whole nightly sweep for every organisation. Found by T-task-deal-org-isolation's scouting. ~~`viewing_id`~~ **FIXED 2026-09-26 — DECISIONS
-  `T-task-viewing-org-isolation` (migration 0120): `tasks (org_id, viewing_id) → viewings (org_id, id)` replaces the
+  parent row into a refused insert that aborts the whole nightly sweep for every organisation. Found by T-task-deal-org-isolation's scouting. ~~`viewing_id`~~ **FIXED and LANDED 2026-09-26 (hosted 0120 first, then PR #72 → main `d9e5c3e`,
+  deployed) — DECISIONS `T-task-viewing-org-isolation` (migration 0120): `tasks (org_id, viewing_id) → viewings (org_id, id)` replaces the
   single-column key and `trg_supersede_viewing_nudges` completes only the viewing's own organisation's reminders.**
   **VERIFY:** `grep -hoE "add constraint tasks_org_[a-z]+_fkey" supabase/migrations/*.sql | sort -u | wc -l` — fewer
   than 8 (deal, viewing, mandate, reservation, installment, lead, contact, property) means open; 2 today. (Counts only
