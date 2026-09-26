@@ -2597,7 +2597,7 @@ VERIFY, run before starting.
   reservation transitions already fold theirs in (`.in("status", …)`, `.eq("status", from)`). Found by
   T-event-typed-text-shape's sweep; not built there (it preserves the deal transitions as they are).
 - ~~**A direct write can still close an OPEN deal without `close_deal`, S — deploy-coupled (code first).**~~
-  **FIXED 2026-09-26 on branch `fix/deal-close-db-boundary` (NOT LANDED until hosted 0118 + merge) — DECISIONS
+  **FIXED and LANDED 2026-09-26 (hosted 0118 first, then PR #70 → main `365c44d`, deployed) — DECISIONS
   `T-deal-close-db-boundary` (migration 0118): `close_deal` is SECURITY DEFINER with `deals_update` restated and the
   caller re-read under the row lock; `deals_closed_guard` binds INSERT and OPEN rows for user sessions — no status
   change, no closing detail, no terminal or foreign stage outside `close_deal`. Reproduced first at 0117 through
