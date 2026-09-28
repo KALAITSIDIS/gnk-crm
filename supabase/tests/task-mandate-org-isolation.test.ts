@@ -126,10 +126,17 @@ async function seedTask(t: {
 /**
  * The row 0121's constraint refuses, written past it: organisation B's task
  * naming organisation A's mandate. `session_replication_role = replica`
- * disables the referential triggers for this transaction only — the SET is
- * permitted to postgres on the pinned local image (CI runs the same one); this
- * file is never pointed at hosted, where postgres is not a superuser. The row
- * is otherwise ordinary and committed.
+ * disables the referential triggers for this transaction only. postgres is
+ * not a superuser here either: the SET is allowed through supautils'
+ * `privileged_role_allowed_configs` — the same allowance hosted has, which
+ * the restore relies on (scripts/backup/pg-native.mjs) and which is exactly
+ * the operator-level path the functions' predicates and the restore pack's
+ * 0121 invariant row exist to cover. This file is never pointed at hosted
+ * because it COMMITS cross-organisation rows. No API role can do this.
+ *
+ * The plant must be COMMITTED before the call under test: planted in the same
+ * transaction, PostgreSQL re-checks the key on the self-heal's UPDATE and
+ * refuses it — the test would then pass through the key, not the predicate.
  */
 async function plantCrossOrgTask(
   org: string,
@@ -235,6 +242,8 @@ async function foreignWrites(mark: string, org: string) {
                                  and m.id = (select t.mandate_id from tasks t where t.id = e.entity_id))
                              or (e.payload->>'mandate_id' ~ '^[0-9a-f-]{36}$'
                                  and m.id = (e.payload->>'mandate_id')::uuid)))
+             or (e.entity_type = 'task'
+                 and exists (select 1 from tasks t where t.id = e.entity_id and t.org_id <> e.org_id))
              or exists (select 1 from profiles p where p.id = e.actor_id and p.org_id <> e.org_id))
       order by e.id`,
     [mark, org],
@@ -319,6 +328,13 @@ beforeAll(async () => {
     await o.query(`drop trigger if exists ${t.tgname} on public.events`);
     await o.query(`drop function if exists public.${t.tgname}()`);
   }
+  // a killed earlier run leaves its committed cross-organisation plants
+  // behind (afterAll never ran): they would make the restore pack's 0121
+  // invariant row, and any later preflight, report a mismatch on this machine
+  await o.query(
+    `delete from tasks t using mandates m
+      where m.id = t.mandate_id and t.org_id <> m.org_id and t.title like 'ZZTEST planted %'`,
+  );
 
   await ensureTestOrg(svc, ORG_A, `mandate-isolation A ${RUN}`, `mandate-isolation-a-${RUN}`);
   await ensureTestOrg(svc, ORG_B, `mandate-isolation B ${RUN}`, `mandate-isolation-b-${RUN}`);
@@ -595,6 +611,44 @@ describe("key recall at edit time (setMandateStatus's service-role call, the adm
     expect(await chainOk(ORG_A)).toBe(true);
   });
 
+  it("the seven days are CYPRUS days whatever calendar the session keeps (0091): with the session's day forced away from Cyprus's, the due date is still Cyprus's day + 7", async () => {
+    // `days: 7` above cannot tell 0091's anchor from 0053's `current_date + 7`
+    // except in the two or three hours a day when the UTC day lags Cyprus's.
+    // Here the SESSION's calendar is pushed to a zone whose date differs from
+    // Cyprus's right now — Pacific/Kiritimati (UTC+14) is a day ahead from
+    // 13:00 Cyprus time, Etc/GMT+12 (UTC-12) a day behind until 15:00, so one
+    // of them always disagrees — and a current_date anchor then misses by a
+    // day at any hour. The event hash formats occurred_at in UTC itself
+    // (trg_events_hash), so the chain is unaffected; the call is rolled back
+    // anyway so the setting cannot leak into the rest of the file.
+    const { mandate, property } = await newMandate(ORG_A, { agent: agentA.id });
+    await addKey(ORG_A, property, "checked_out");
+    await o.query("begin");
+    try {
+      let zone: string | null = null;
+      for (const z of ["Pacific/Kiritimati", "Etc/GMT+12"]) {
+        await o.query(`set local timezone = '${z}'`);
+        const { rows } = await o.query<{ differs: boolean }>(
+          "select current_date <> (now() at time zone 'Asia/Nicosia')::date as differs",
+        );
+        if (rows[0]!.differs) {
+          zone = z;
+          break;
+        }
+      }
+      expect(zone, "one of the two zones always disagrees with Cyprus's calendar — the precondition").not.toBeNull();
+      const { rows: raised } = await o.query<{ n: number }>("select public.raise_key_recall_tasks($1, $2) as n", [
+        mandate,
+        adminA.id,
+      ]);
+      expect(raised[0]!.n).toBe(1);
+      const [task] = await tasksOn(mandate, ORG_A, "key_recall");
+      expect(await dueShape(task!.id), `session zone ${zone}`).toMatchObject({ local_time: "23:59:00", days: 7 });
+    } finally {
+      await o.query("rollback");
+    }
+  });
+
   it("the assignee fallback is unchanged: no active agent and no creator → the organisation's oldest active admin", async () => {
     const { mandate, property } = await newMandate(ORG_A, { agent: null, createdBy: null });
     await addKey(ORG_A, property, "in_office");
@@ -659,7 +713,10 @@ describe("key recall at edit time (setMandateStatus's service-role call, the adm
     expect(await chainOk(ORG_B)).toBe(true);
   });
 
-  it("the action's own renewal supersession (supersedeRenewalTasks, the admin's RLS client) completes A's renewal rows only — B's planted row naming A's mandate is outside its reach", async () => {
+  it("tasks_update RLS keeps supersedeRenewalTasks' write (its filter, re-typed here as the admin's RLS client sends it) to A's renewal rows — B's planted row naming A's mandate is outside its reach", async () => {
+    // This pins the POLICY that scopes the action's write, not the action
+    // itself (which runs inside a Next request and is not driven here): were
+    // the action ever moved to the admin client, this test would not notice.
     const { mandate } = await newMandate(ORG_A, { status: "active", expiryInDays: 10, agent: agentA.id });
     const mine = await seedTask({ org: ORG_A, mandate, assignee: agentA.id, kind: "mandate_renewal" });
     const recall = await seedTask({ org: ORG_A, mandate, assignee: agentA.id, kind: "key_recall" });
@@ -722,7 +779,13 @@ describe("key recall at edit time (setMandateStatus's service-role call, the adm
     expect(await chainOk(ORG_A)).toBe(true);
   });
 
-  it("the server action is NOT one transaction: the termination commits on its own, a failed raise leaves no task, and the nightly run raises it (system-attributed)", async () => {
+  it("setMandateStatus's two writes, replayed as it sends them: a raise that fails after the committed termination leaves no task, and the nightly run catches it up (system-attributed)", async () => {
+    // The action (lib/actions/mandates.ts) sends the status UPDATE and, later,
+    // the raiser RPC as SEPARATE requests — read from the code, replayed here
+    // (the action itself runs inside a Next request and is not driven). So the
+    // termination standing after a failed raise is true by construction; what
+    // this test proves is the recovery: the function's own writes roll back
+    // whole, and the nightly sweep raises the reminder with a null actor.
     const { mandate, property } = await newMandate(ORG_A, { status: "active", expiryInDays: 200, agent: agentA.id });
     await addKey(ORG_A, property, "checked_out");
     // setMandateStatus's own write: the status, as the admin, through RLS — committed here
@@ -752,7 +815,7 @@ describe("key recall at edit time (setMandateStatus's service-role call, the adm
 });
 
 describe("the nightly run (expire_mandates as pg_cron runs it: every organisation, actor = system)", () => {
-  it("raises each organisation's own reminders in one pass, once however often it runs; B's planted rows neither block A's nor get completed; B's chain gets only B's own", async () => {
+  it("raises each organisation's own reminders in one pass, once however often it runs; B's planted rows neither block A's nor get completed; B's chain gets only B's own — RED at 0120", async () => {
     // A: two ended mandates, one with keys still held (raise), one with none (a planted B row must not be completed)
     const held = await newMandate(ORG_A, { agent: agentA.id });
     await addKey(ORG_A, held.property, "checked_out");

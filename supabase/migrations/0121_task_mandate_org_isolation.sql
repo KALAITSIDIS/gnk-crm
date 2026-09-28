@@ -38,11 +38,15 @@
 --      (tasks_org_mandate_fkey) REPLACES the single-column key, so PostgREST
 --      keeps ONE relationship between the two tables (mandates' own
 --      renewed_from_id key is to itself); ON DELETE / ON UPDATE NO ACTION
---      exactly as 0006's key — a mandate with tasks still cannot be deleted,
---      nor, through properties → mandates ON DELETE CASCADE (0001), its
---      property; no user session can delete a mandate at all (authenticated
---      holds no DELETE grant); MATCH SIMPLE, so a task with no mandate is
---      exactly as before. mandates (org_id, id) UNIQUE is the referenced side;
+--      as 0006's key — a mandate with tasks still cannot be deleted, nor,
+--      through properties → mandates ON DELETE CASCADE (0001), its property;
+--      no user session can delete a mandate at all (authenticated holds no
+--      DELETE grant). One thing is NEW: the update rule now covers
+--      mandates.org_id too, so a mandate with tasks cannot be moved to
+--      another organisation (0119 / 0120 did the same for deals and viewings;
+--      no application path writes mandates.org_id). MATCH SIMPLE, and both
+--      org_id columns are NOT NULL (asserted below), so a task with no
+--      mandate is exactly as before and nothing else escapes the check. mandates (org_id, id) UNIQUE is the referenced side;
 --      the referencing side gets tasks_org_mandate_idx (0006's
 --      tasks_mandate_idx stays: it serves lookups by mandate id alone). A
 --      cross-organisation id and a missing id now read the same 23503 — no
@@ -93,17 +97,22 @@
 -- drops tasks_org_mandate_fkey and tasks_org_mandate_idx, re-adds
 -- `tasks_mandate_id_fkey foreign key (mandate_id) references mandates(id)`,
 -- drops mandates_org_id_id_key, re-creates raise_key_recall_tasks from 0091's
--- text (with 0091's comment) and expire_mandates from 0053's (with no
--- comment); regenerate the types, move the verify-restore migrations pin
--- FORWARD (one more ledger row), remove its 0121 invariant row, revert the
--- test's catalogue block and the docs. No data moves either way: every row
--- valid at 0121 is valid at 0120.
+-- text INCLUDING 0091's `comment on function`, re-creates expire_mandates
+-- from 0053's text AND runs `comment on function public.expire_mandates() is
+-- null` (0053 set none; CREATE OR REPLACE keeps this file's comment, which
+-- would then be false); regenerate the types, move the verify-restore
+-- migrations pin FORWARD (one more ledger row), remove its 0121 invariant
+-- row, and remove supabase/tests/task-mandate-org-isolation.test.ts (its 13
+-- tests marked RED at 0120 fail on the rolled-back catalogue — reverting only
+-- its catalogue block is not enough; rls.test.ts #37 holds either way) and
+-- the docs. No data moves either way: every row valid at 0121 is valid at
+-- 0120.
 --
 -- NOT CHANGED HERE (BACKLOG): property_keys.property_id is organisation-blind
 -- too — a key of B filed on A's property counts as "held" for A's mandate
 -- (measured: on its own it raised a recall task in A) — as are
--- mandates.property_id and the assignee fallback's profile arms: each is a
--- different relationship, one migration each. The other tasks.* links
+-- mandates.property_id, mandates.renewed_from_id and the assignee fallback's
+-- profile arms: each is a different relationship, one migration each. The other tasks.* links
 -- (reservation_id, installment_id, lead_id, contact_id, property_id) and the
 -- other sweeps' parent joins stay as they are.
 --
@@ -113,15 +122,29 @@
 -- call.
 -- =============================================================================
 
--- ADD CONSTRAINT takes an ACCESS EXCLUSIVE lock on mandates and on tasks
--- (0113's lesson): queued behind a long transaction it would block every read
--- of both tables behind it. Give up instead and apply again; hosted holds 4
--- mandates and no tasks, so the scans themselves are instant. First, so the
--- preflight's own reads are bounded too. Apply outside 03:00–04:00 UTC
--- (pg_cron's clock: expire_mandates runs at 03:00), when the sweep updates
--- tasks joined to mandates. Run twice by mistake, the file aborts at
--- mandates_org_id_id_key (42P07) and changes nothing.
+-- ADD UNIQUE takes an ACCESS EXCLUSIVE lock on mandates and DROP CONSTRAINT
+-- one on tasks and mandates (the foreign-key ADD itself takes SHARE ROW
+-- EXCLUSIVE), all held to commit (0113's lesson): queued behind a long
+-- transaction they would block every read of both tables behind them. Give
+-- up instead and apply again; hosted holds 4 mandates and no tasks, so the
+-- scans themselves are instant. First, so the preflight's own reads are
+-- bounded too. Apply outside 03:00–04:00 UTC (pg_cron's clock:
+-- expire_mandates runs at 03:00) and away from a :x0 minute (raise_lead_sla_
+-- tasks writes tasks every 10 minutes): a collision costs at most 5 s and a
+-- clean 55P03 rollback — then apply again, and do NOT write the ledger row.
+-- Run twice by mistake, the file aborts at mandates_org_id_id_key (42P07) and
+-- changes nothing.
 set local lock_timeout = '5s';
+
+-- The file must run as ONE transaction (the CLI's wrapper, or one
+-- execute_sql call): otherwise SET LOCAL is a no-op and a failed assertion
+-- below would not undo the DDL before it. Refuse the unsafe path up front.
+do $$
+begin
+  if current_setting('lock_timeout') <> '5s' then
+    raise exception '0121 aborted: this file must run as ONE transaction (SET LOCAL lock_timeout did not take effect) — nothing was changed';
+  end if;
+end $$;
 
 -- ---------------------------------------------------------------------------
 -- 0. Preflight — abort, whole, over existing mismatches
@@ -372,7 +395,7 @@ language sql security definer set search_path = public as $$
   select raise_key_recall_tasks();
 $$;
 
--- create or replace keeps the ACL (0021 / 0022); restated so hosted and local
+-- create or replace keeps the ACL (0007 / 0022); restated so hosted and local
 -- cannot differ — pg_cron runs it as postgres and needs no grant
 revoke execute on function public.expire_mandates() from public, anon, authenticated, service_role;
 
@@ -428,15 +451,26 @@ begin
                     and conname = 'mandates_org_id_id_key' and contype = 'u') then
     raise exception '0121 aborted: mandates_org_id_id_key is missing';
   end if;
-  if not exists (select 1 from pg_indexes where schemaname = 'public' and tablename = 'tasks' and indexname = 'tasks_org_mandate_idx') then
-    raise exception '0121 aborted: tasks_org_mandate_idx is missing';
+  if not exists (select 1 from pg_indexes where schemaname = 'public' and tablename = 'tasks'
+                    and indexname = 'tasks_org_mandate_idx'
+                    and indexdef ~ '\(org_id, mandate_id\) WHERE \(mandate_id IS NOT NULL\)') then
+    raise exception '0121 aborted: tasks_org_mandate_idx is missing or is not (org_id, mandate_id) WHERE mandate_id IS NOT NULL';
   end if;
-  -- 0119's and 0120's keys are untouched
+  -- MATCH SIMPLE skips the check when ANY key column is null: the boundary
+  -- rests on both organisation columns being NOT NULL
+  if not (select attnotnull from pg_attribute where attrelid = 'public.tasks'::regclass and attname = 'org_id')
+     or not (select attnotnull from pg_attribute where attrelid = 'public.mandates'::regclass and attname = 'org_id') then
+    raise exception '0121 aborted: tasks.org_id or mandates.org_id is nullable — MATCH SIMPLE would not check such a row';
+  end if;
+  -- 0119's and 0120's keys are untouched: present, validated, same definition
   select count(*) into n from pg_constraint
    where conrelid = 'public.tasks'::regclass and convalidated
-     and conname in ('tasks_org_deal_fkey', 'tasks_org_viewing_fkey');
+     and ((conname = 'tasks_org_deal_fkey'
+           and pg_get_constraintdef(oid) = 'FOREIGN KEY (org_id, deal_id) REFERENCES deals(org_id, id)')
+       or (conname = 'tasks_org_viewing_fkey'
+           and pg_get_constraintdef(oid) = 'FOREIGN KEY (org_id, viewing_id) REFERENCES viewings(org_id, id)'));
   if n <> 2 then
-    raise exception '0121 aborted: 0119''s tasks_org_deal_fkey or 0120''s tasks_org_viewing_fkey is missing or not validated';
+    raise exception '0121 aborted: 0119''s tasks_org_deal_fkey or 0120''s tasks_org_viewing_fkey is missing, not validated, or changed';
   end if;
 
   -- raise_key_recall_tasks: definer, search_path, service-only; each
@@ -506,6 +540,7 @@ begin
   v_ok := null;
   declare
     v_org_a uuid; v_org_b uuid; v_prop uuid; v_mandate uuid;
+    v_step text := 'setup';  -- plpgsql variables survive the sub-block's rollback
   begin
     begin
       insert into organizations (name, slug)
@@ -521,10 +556,12 @@ begin
         values (v_org_a, v_prop, 'open')
         returning id into v_mandate;
       -- the same-organisation link, and a task without a mandate: both accepted
+      v_step := 'own';
       insert into tasks (org_id, title, mandate_id, kind) values (v_org_a, '0121 probe own', v_mandate, 'key_recall');
       insert into tasks (org_id, title)                   values (v_org_a, '0121 probe none');
       -- organisation B's row naming organisation A's mandate: the
       -- single-column key accepted this
+      v_step := 'cross';
       insert into tasks (org_id, title, mandate_id, kind) values (v_org_b, '0121 probe cross', v_mandate, 'key_recall');
       raise exception using errcode = 'P0121', message = '0121 probe: a cross-organisation task was ACCEPTED';
     exception
@@ -533,7 +570,12 @@ begin
         -- refusal is the verdict: any other 23503 in the sub-block is a probe
         -- that proved nothing
         get stacked diagnostics v_con = constraint_name;
-        v_ok := (v_con = 'tasks_org_mandate_fkey');
+        -- and only on the CROSS row: the same key refusing the own-org link
+        -- or the mandate-less task would be a broken key, not a verdict
+        v_ok := (v_con = 'tasks_org_mandate_fkey' and v_step = 'cross');
+        if v_step <> 'cross' then
+          v_con := v_con || ' (at the ' || v_step || ' step, before the cross-organisation insert)';
+        end if;
       when sqlstate 'P0121' then
         v_ok := false;  -- accepted, and the sub-block's inserts are gone too
     end;

@@ -3481,8 +3481,11 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
   });
 
 
-  it("37. key recall: raised when a mandate ends, survives expire_mandates(), and self-heals", async () => {
-    // 0053. The assertion that earns its keep is the expire_mandates() one.
+  it("37. key recall: raised when a mandate ends, idempotent, self-heals; the nightly sweep is cron-only", async () => {
+    // 0053. The assertion that earned its keep was meant to be the
+    // expire_mandates() one — but it never ran (see THE REGRESSION PIN LIVES
+    // ELSEWHERE below); task-mandate-org-isolation.test.ts runs the sweep as
+    // pg_cron does and holds that pin now ("the kinds stay distinct").
     // `tasks.mandate_id` carried exactly one kind until now, and BOTH supersede
     // paths matched on mandate_id alone — so a key_recall task, which by
     // definition hangs off a mandate that is no longer active, was completed on
@@ -3601,7 +3604,6 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     // ("the kinds stay distinct"). Here: the refusal itself, stated.
     const { error: sweepErr } = await svc.rpc("expire_mandates");
     expect(sweepErr?.code, "expire_mandates is cron-only (0022): the service role cannot run it").toBe("42501");
-    expect(await openRecalls()).toBe(1);
 
     // an agent can see it on their own task list
     const { data: agentSees } = await agentA1.client
