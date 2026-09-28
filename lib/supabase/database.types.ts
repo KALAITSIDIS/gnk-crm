@@ -2865,13 +2865,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "viewings_contact_id_fkey"
-            columns: ["contact_id"]
-            isOneToOne: false
-            referencedRelation: "contacts"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "viewings_created_by_fkey"
             columns: ["created_by"]
             isOneToOne: false
@@ -2886,6 +2879,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "viewings_org_contact_fkey"
+            columns: ["org_id", "contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["org_id", "id"]
+          },
+          {
             foreignKeyName: "viewings_org_id_fkey"
             columns: ["org_id"]
             isOneToOne: false
@@ -2893,11 +2893,11 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "viewings_property_id_fkey"
-            columns: ["property_id"]
+            foreignKeyName: "viewings_org_property_fkey"
+            columns: ["org_id", "property_id"]
             isOneToOne: false
             referencedRelation: "properties"
-            referencedColumns: ["id"]
+            referencedColumns: ["org_id", "id"]
           },
         ]
       }

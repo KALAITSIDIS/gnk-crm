@@ -2752,9 +2752,18 @@ VERIFY, run before starting.
   A's reminder, and the nightly self-heal completed every planted row dated on any day but A's expiry — an oracle on
   A's expiry date.** Its follow-on, "A mandate's and a key's own parent links are organisation-blind" below, is FIXED
   and LANDED (0122), so `mandates.property_id` — the ORDER MATTERS case for a `tasks.property_id` key — is constrained.
+  So is `viewings.property_id` since 0123 ("A viewing's own parent links" below, FIXED on its branch — not yet landed):
+  once 0123 is on hosted, every parent a sweep copies into `tasks.property_id` is tenant-bound and that key can follow.
   **VERIFY:** `grep -hoE "add constraint tasks_org_[a-z]+_fkey" supabase/migrations/*.sql | sort -u | wc -l` — fewer
   than 8 (deal, viewing, mandate, reservation, installment, lead, contact, property) means open; 3 today. (Counts only the adds; check that no later migration drops one.)
-- **A viewing's own parent links are organisation-blind, S.** `viewings.property_id`, `contact_id` and `agent_id`
+- ~~**A viewing's own parent links are organisation-blind, S.**~~ **FIXED on branch `fix/viewing-parent-org-isolation`
+  (2026-09-28, migration 0123) — NOT YET LANDED: hosted apply and merge each wait for the operator's word.** DECISIONS
+  `T-viewing-parent-org-isolation`: `viewings (org_id, property_id) → properties (org_id, id)` and `viewings (org_id,
+  contact_id) → contacts (org_id, id)` (NO ACTION, each replacing its single-column key; `contacts_org_id_id_key` new),
+  and `create_followup_nudges` arms 2 / 2b join only the viewing's own organisation's property. Measured at 0122
+  first (17 of the new file's 21 tests RED). `agent_id` / `created_by` are NOT fixed — they moved to the profile links
+  in "The remaining parent links of mandates, keys and properties" below; `deal_id` stays with the deal-side keys.
+  (original) `viewings.property_id`, `contact_id` and `agent_id`
   reference their parents by id alone (0001) and `viewings_insert` checks only the caller's org and role, so a member
   of B can create a viewing of B naming A's property or contact. The nightly sweep's arms 2 / 2b (0078) join
   `properties p on p.id = v.property_id` with no org predicate and copy `v.property_id` and `p.reference` into the
@@ -2808,7 +2817,10 @@ VERIFY, run before starting.
     property's agent to A's agent (200 — the form re-reads the agent under RLS, a direct PATCH does not), B's recall
     task was assigned to A's agent, who cannot see it, and A's profile id went into B's chain. profiles has no
     `(org_id, id)` key; a tenant-bound key there touches every `*_by` / `*agent_id` column — decide it as one change,
-    or add `and pr.org_id = …` to the two arms meanwhile.
+    or add `and pr.org_id = …` to the two arms meanwhile. The same holds for `viewings.agent_id` / `created_by`
+    (left out of 0123 on purpose): `create_followup_nudges` arms 2 / 2b take their first two assignee arms from them
+    with no `pr.org_id`, so a B viewing naming A's agent (201 — `viewings_insert` checks only the caller's org and
+    role, INFERRED from the policy text, not reproduced) would assign B's reminder to A's agent, who cannot see it.
   * `mandates.owner_contact_id` → contacts(id) (contacts has no `(org_id, id)` key; `saveMandate` copies the form's
     id): an oracle on contact ids, and A's contact merge then rewrites B's mandate (see the merge entry below).
   * `mandates.signed_document_id` → documents(id), NO ACTION: INFERRED — a B mandate naming A's document would stop A
