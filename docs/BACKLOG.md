@@ -2750,8 +2750,8 @@ VERIFY, run before starting.
   self-heal, and `expire_mandates`'s renewal guard (step 2) and renewal self-heal (step 3), read only the MANDATE's
   own organisation's tasks. The renewal pair was not in this entry's plan: measured, a planted renewal row suppressed
   A's reminder, and the nightly self-heal completed every planted row dated on any day but A's expiry — an oracle on
-  A's expiry date.** NEXT, before any further `tasks.*` twin: "A mandate's and a key's own parent links are
-  organisation-blind" below (its `mandates.property_id` half is the ORDER MATTERS case for a `tasks.property_id` key).
+  A's expiry date.** Its follow-on, "A mandate's and a key's own parent links are organisation-blind" below, is FIXED
+  on PR #74 (0122), so `mandates.property_id` — the ORDER MATTERS case for a `tasks.property_id` key — is constrained.
   **VERIFY:** `grep -hoE "add constraint tasks_org_[a-z]+_fkey" supabase/migrations/*.sql | sort -u | wc -l` — fewer
   than 8 (deal, viewing, mandate, reservation, installment, lead, contact, property) means open; 3 today. (Counts only the adds; check that no later migration drops one.)
 - **A viewing's own parent links are organisation-blind, S.** `viewings.property_id`, `contact_id` and `agent_id`
@@ -2763,7 +2763,14 @@ VERIFY, run before starting.
   `contact_id`, each with 0119's preflight — BEFORE any `tasks.property_id` key (see the entry above). Found by
   T-task-viewing-org-isolation's review. **VERIFY:** `grep -n viewings_org_property_fkey supabase/migrations/*.sql` —
   no hit means open.
-- **A mandate's and a key's own parent links are organisation-blind, S/M.** Found by T-task-mandate-org-isolation's
+- ~~**A mandate's and a key's own parent links are organisation-blind, S/M.**~~ **FIXED on PR #74 (migration 0122) —
+  hosted apply and merge in progress on the operator's word ("apply 0122 and merge #74"). DECISIONS
+  `T-mandate-key-parent-org-isolation`: `mandates (org_id, property_id)` and `property_keys (org_id, property_id) →
+  properties (org_id, id)` (ON DELETE CASCADE kept), `mandates (org_id, renewed_from_id) → mandates (org_id, id)`, each
+  replacing its single-column key; `mandates_one_active_per_property` re-keyed to `(org_id, property_id)` (the review
+  found the key alone left a 23505-before-23503 oracle on A's mandate state); the two sweeps read only the mandate's
+  own property and keys. The assignee-fallback bullet below is NOT fixed — it moved to "The remaining parent links of
+  mandates, keys and properties", further down.** (original) Found by T-task-mandate-org-isolation's
   scouting and MEASURED at 0121 on the local stack through PostgREST (aal2 sessions of two throwaway organisations):
   * `mandates.property_id` references `properties(id)` alone (0001, ON DELETE CASCADE) and `mandates_insert` /
     `mandates_update` check only the caller's org and role; `saveMandate` copies the form's `property_id` without an
@@ -2793,6 +2800,30 @@ VERIFY, run before starting.
   must be constrained BEFORE any `tasks (org_id, property_id)` key, or one planted mandate turns the renewal /
   key-recall INSERT into a refused row that aborts `expire_mandates` for every organisation. **VERIFY:**
   `grep -nE "mandates_org_property_fkey|property_keys_org_property_fkey" supabase/migrations/*.sql` — no hit means open.
+- **The remaining parent links of mandates, keys and properties point by id alone, S/M.** Left out of 0122 on purpose
+  (found by its scouting and review; catalogue-level unless marked MEASURED):
+  * PROFILES — `mandates.created_by`, `properties.assigned_agent_id`, `property_keys.current_holder_profile_id`,
+    `key_movements.holder_profile_id` / `created_by`, and the key-recall / renewal assignee fallback's first two arms
+    (`pr.id = assigned_agent_id` / `created_by`, no `pr.org_id`). MEASURED at 0121: after B's admin PATCHed B's
+    property's agent to A's agent (200 — the form re-reads the agent under RLS, a direct PATCH does not), B's recall
+    task was assigned to A's agent, who cannot see it, and A's profile id went into B's chain. profiles has no
+    `(org_id, id)` key; a tenant-bound key there touches every `*_by` / `*agent_id` column — decide it as one change,
+    or add `and pr.org_id = …` to the two arms meanwhile.
+  * `mandates.owner_contact_id` → contacts(id) (contacts has no `(org_id, id)` key; `saveMandate` copies the form's
+    id): an oracle on contact ids, and A's contact merge then rewrites B's mandate (see the merge entry below).
+  * `mandates.signed_document_id` → documents(id), NO ACTION: INFERRED — a B mandate naming A's document would stop A
+    deleting it (A's erasure / purge would remove the files, then fail on the row, 23503).
+  * `key_movements.key_id` → property_keys(id): any B staff member can INSERT a movement naming A's key id (an
+    oracle), and A deleting that key cascades B's append-only rows.
+  * Thirteen more links onto `properties(id)` are single-column: `deals.property_id`, `leads.property_id`,
+    `offers.property_id`, `payment_plans.project_id`, `price_history.property_id`, `price_list_items.unit_id`,
+    `price_lists.project_id`, `properties.parent_id`, `reservations.property_id`, `share_link_properties.property_id`,
+    `tasks.property_id`, `unit_types.project_id`, `viewings.property_id` (the last two already have entries above).
+    Whether each is writable cross-organisation depends on its policies — not yet read. `properties_org_id_id_key`
+    (0088) is the referenced side for all of them.
+  **VERIFY:** `grep -c "org_property_fkey\|org_owner_contact_fkey" supabase/migrations/*.sql` rising, and
+  `select count(*) from pg_constraint where contype = 'f' and confrelid = 'public.properties'::regclass and
+  array_length(conkey, 1) = 1` — 13 at 0122.
 - **The contact merge repoints rows of OTHER organisations, S.** `mergeContacts` proves both contacts are in the
   caller's org (`lib/actions/merge-contacts.ts`), then repoints every referencing table on the ADMIN client with only
   `.eq("contact_id", duplicateId)` — viewings, tasks, leads, deals, reservations, offers and the rest. Because those

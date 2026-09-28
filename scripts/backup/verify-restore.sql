@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 121::bigint as migrations,
+    2::bigint as auth_users, 122::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -411,6 +411,18 @@ misc as (
   -- defence.
   select 'INTEGRITY: no task names a mandate of another organisation (0121)', '0',
          (select count(*)::text from tasks t join mandates m on m.id = t.mandate_id where t.org_id <> m.org_id)
+  union all
+  -- 0122: a mandate's property and predecessor, and a key's property, are of
+  -- its own organisation — same reason as the rows above: a replica-mode
+  -- restore loads rows past the keys and leaves them marked validated.
+  select 'INTEGRITY: no mandate names a property of another organisation (0122)', '0',
+         (select count(*)::text from mandates m join properties p on p.id = m.property_id where m.org_id <> p.org_id)
+  union all
+  select 'INTEGRITY: no key opens a property of another organisation (0122)', '0',
+         (select count(*)::text from property_keys k join properties p on p.id = k.property_id where k.org_id <> p.org_id)
+  union all
+  select 'INTEGRITY: no mandate renews a mandate of another organisation (0122)', '0',
+         (select count(*)::text from mandates m join mandates r on r.id = m.renewed_from_id where m.org_id <> r.org_id)
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.

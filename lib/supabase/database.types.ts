@@ -1076,31 +1076,31 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "mandates_org_property_fkey"
+            columns: ["org_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["org_id", "id"]
+          },
+          {
+            foreignKeyName: "mandates_org_renewed_from_fkey"
+            columns: ["org_id", "renewed_from_id"]
+            isOneToOne: false
+            referencedRelation: "mandates"
+            referencedColumns: ["org_id", "id"]
+          },
+          {
+            foreignKeyName: "mandates_org_renewed_from_fkey"
+            columns: ["org_id", "renewed_from_id"]
+            isOneToOne: false
+            referencedRelation: "mandates_safe"
+            referencedColumns: ["org_id", "id"]
+          },
+          {
             foreignKeyName: "mandates_owner_contact_id_fkey"
             columns: ["owner_contact_id"]
             isOneToOne: false
             referencedRelation: "contacts"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "mandates_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "properties"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "mandates_renewed_from_id_fkey"
-            columns: ["renewed_from_id"]
-            isOneToOne: false
-            referencedRelation: "mandates"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "mandates_renewed_from_id_fkey"
-            columns: ["renewed_from_id"]
-            isOneToOne: false
-            referencedRelation: "mandates_safe"
             referencedColumns: ["id"]
           },
           {
@@ -1973,11 +1973,11 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "property_keys_property_id_fkey"
-            columns: ["property_id"]
+            foreignKeyName: "property_keys_org_property_fkey"
+            columns: ["org_id", "property_id"]
             isOneToOne: false
             referencedRelation: "properties"
-            referencedColumns: ["id"]
+            referencedColumns: ["org_id", "id"]
           },
         ]
       }
@@ -3019,31 +3019,31 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "mandates_org_property_fkey"
+            columns: ["org_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["org_id", "id"]
+          },
+          {
+            foreignKeyName: "mandates_org_renewed_from_fkey"
+            columns: ["org_id", "renewed_from_id"]
+            isOneToOne: false
+            referencedRelation: "mandates"
+            referencedColumns: ["org_id", "id"]
+          },
+          {
+            foreignKeyName: "mandates_org_renewed_from_fkey"
+            columns: ["org_id", "renewed_from_id"]
+            isOneToOne: false
+            referencedRelation: "mandates_safe"
+            referencedColumns: ["org_id", "id"]
+          },
+          {
             foreignKeyName: "mandates_owner_contact_id_fkey"
             columns: ["owner_contact_id"]
             isOneToOne: false
             referencedRelation: "contacts"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "mandates_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "properties"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "mandates_renewed_from_id_fkey"
-            columns: ["renewed_from_id"]
-            isOneToOne: false
-            referencedRelation: "mandates"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "mandates_renewed_from_id_fkey"
-            columns: ["renewed_from_id"]
-            isOneToOne: false
-            referencedRelation: "mandates_safe"
             referencedColumns: ["id"]
           },
           {
