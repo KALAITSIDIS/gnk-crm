@@ -211,6 +211,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await o.query("delete from tasks where org_id = any($1::uuid[])", [ORGS]);
   // one statement each: rows of either organisation may name the other's
+  await o.query("delete from key_movements where org_id = any($1::uuid[])", [ORGS]);
   await o.query("delete from property_keys where org_id = any($1::uuid[])", [ORGS]);
   await o.query("delete from mandates where org_id = any($1::uuid[])", [ORGS]);
   await o.query("delete from properties where org_id = any($1::uuid[])", [ORGS]);
@@ -293,6 +294,21 @@ describe("B cannot put a mandate on A's property (23503, nothing written) — RE
     expect(r.data).toEqual([{ id: mine }]);
   });
 
+  it("B's ACTIVE mandate on an A property that already has an active mandate reads the same 23503 as on one that has none — no oracle on A's mandate state (23505 while the one-active index was keyed by property alone)", async () => {
+    const busy = await newProperty(ORG_A);
+    await newMandate(ORG_A, busy.id, { status: "active", expiryInDays: 300 });
+    const idle = await newProperty(ORG_A);
+    const a = await adminB.client.from("mandates").insert(shape(busy.id, { status: "active" })).select("id");
+    const b = await adminB.client.from("mandates").insert(shape(idle.id, { status: "active" })).select("id");
+    expect(a.error?.code, "A's property under an active mandate").toBe("23503");
+    expect(b.error?.code, "A's property with none").toBe("23503");
+    expect(a.error?.message).toBe(b.error?.message);
+    // and A's own second active mandate on the busy property still hits the rule
+    const second = await newMandate(ORG_A, busy.id, { status: "draft", expiryInDays: 300 });
+    const r = await adminA.client.from("mandates").update({ status: "active" }).eq("id", second).select("id");
+    expect(r.error?.code, "setMandateStatus maps this 23505 to 'already has an active mandate'").toBe("23505");
+  });
+
   it("a mandate's organisation cannot be moved away from its property's — by a user session (RLS) or by the service role (the key)", async () => {
     const p = await newProperty(ORG_A);
     const m = await newMandate(ORG_A, p.id, { status: "draft" });
@@ -303,7 +319,7 @@ describe("B cannot put a mandate on A's property (23503, nothing written) — RE
     expect((await mandateRow(m))!.org_id).toBe(ORG_A);
   });
 
-  it("the refusal no longer tells B whether an A property id exists", async () => {
+  it("the key's refusal no longer tells B whether an A property id exists", async () => {
     const p = await newProperty(ORG_A);
     const a = await adminB.client.from("mandates").insert(shape(p.id)).select("id");
     const b = await adminB.client.from("mandates").insert(shape(randomUUID())).select("id");
@@ -345,7 +361,7 @@ describe("B cannot file a key on A's property (23503, nothing written) — RED a
     expect((await keyRow(kb))!.property_id).toBe(pb.id);
   });
 
-  it("a key's organisation cannot be moved away from its property's (the service role, the key); the oracle is closed", async () => {
+  it("a key's organisation cannot be moved away from its property's (the service role, the key); the key's refusal no longer tells B whether an A property id exists", async () => {
     const p = await newProperty(ORG_A);
     const k = await addKey(ORG_A, p.id, "in_office");
     const moved = await svc.from("property_keys").update({ org_id: ORG_B }).eq("id", k).select("id");
@@ -360,7 +376,7 @@ describe("B cannot file a key on A's property (23503, nothing written) — RED a
 });
 
 describe("B cannot name A's mandate as a B mandate's predecessor (23503) — RED at 0121", () => {
-  it("INSERT and UPDATE are refused; the oracle on mandate ids is closed", async () => {
+  it("INSERT and UPDATE are refused; the key's refusal no longer tells B whether an A mandate id exists", async () => {
     const pa = await newProperty(ORG_A);
     const ma = await newMandate(ORG_A, pa.id, { status: "expired" });
     const pb = await newProperty(ORG_B);
@@ -424,6 +440,18 @@ describe("same-organisation links, embeds and deletion stay as they were", () =>
     const keys = await adminA.client.from("property_keys").select("id, key_code, properties(reference)").eq("id", k).single();
     expect(keys.error).toBeNull();
     expect((keys.data as unknown as { properties: { reference: string } }).properties.reference).toBe(p.reference);
+    // the keys page's movement feed: key_movements -> property_keys -> properties
+    const { rows: mv } = await o.query<{ id: string }>(
+      `insert into key_movements (org_id, key_id, action, holder_name) values ($1, $2, 'checkout', 'ZZTEST holder') returning id`,
+      [ORG_A, k],
+    );
+    const feed = await adminA.client
+      .from("key_movements")
+      .select("id, property_keys(key_code, properties(reference))")
+      .eq("id", mv[0]!.id)
+      .single();
+    expect(feed.error).toBeNull();
+    expect((feed.data as unknown as { property_keys: { properties: { reference: string } } }).property_keys.properties.reference).toBe(p.reference);
   });
 
   it("deletion: a property still takes its mandates (predecessor and successor) and keys with it (ON DELETE CASCADE); a predecessor alone cannot be deleted under its successor (NO ACTION)", async () => {
@@ -535,6 +563,15 @@ describe("the catalogue: three tenant-bound, validated relationships; the sweeps
           and indexname in ('mandates_org_property_idx', 'mandates_org_renewed_from_idx', 'property_keys_org_property_idx') order by 1`,
     );
     expect(idx.map((i) => i.indexname)).toEqual(["mandates_org_property_idx", "mandates_org_renewed_from_idx", "property_keys_org_property_idx"]);
+    const { rows: active } = await o.query<{ indexdef: string }>(
+      "select indexdef from pg_indexes where schemaname = 'public' and indexname = 'mandates_one_active_per_property'",
+    );
+    expect(active).toEqual([
+      {
+        indexdef:
+          "CREATE UNIQUE INDEX mandates_one_active_per_property ON public.mandates USING btree (org_id, property_id) WHERE (status = 'active'::mandate_status)",
+      },
+    ]);
     const { rows: earlier } = await o.query<{ c: number }>(
       `select count(*)::int as c from pg_constraint where convalidated and conname in
          ('tasks_org_deal_fkey', 'tasks_org_viewing_fkey', 'tasks_org_mandate_fkey', 'mandates_org_id_id_key', 'properties_org_id_id_key')`,

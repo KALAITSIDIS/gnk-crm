@@ -36,7 +36,7 @@
 --
 -- THE FIX — 0119–0121's two layers:
 --
---   A. THE RELATIONSHIPS, each REPLACING its single-column key (one
+--   A. THE RELATIONSHIPS (and the active-mandate rule), each REPLACING its single-column key (one
 --      relationship per table pair, so PostgREST embeds stay unambiguous —
 --      the property list's `mandates_safe!inner(type, status)` included: the
 --      view exposes both org_id and property_id):
@@ -54,8 +54,19 @@
 --      property's mandates and keys, and mandates.org_id under a mandate's
 --      successors — no application path writes either. Each gets a
 --      referencing index; 0001's / 0036's single-column indexes stay.
---      mandates_one_active_per_property stays unique on property_id: once a
---      property's mandates are all its own organisation's, that is right.
+--      mandates_one_active_per_property is RE-KEYED from (property_id) to
+--      (org_id, property_id), still WHERE status = 'active'. With the key
+--      above every mandate of a property is that property's organisation's,
+--      so for valid rows the rule is unchanged (a second active mandate of
+--      the same property still answers 23505, which setMandateStatus turns
+--      into "This property already has an active mandate"). What changes is
+--      the ORDER of refusals for a foreign row: a unique index is checked at
+--      insert, a foreign key at the end of the statement, so on the old index
+--      B's ACTIVE mandate naming A's property answered 23505 when A's
+--      property had an active mandate and 23503 when it had none — an oracle
+--      on A's mandate state that the key alone left open (found by the review
+--      of this file). On (org_id, property_id) B's row never collides with
+--      A's, and every cross-organisation attempt reads the same 23503.
 --
 --   B. THE SWEEPS. raise_key_recall_tasks gains `and p.org_id = m.org_id` in
 --      its candidates' property join and `and k.org_id = m.org_id` in both of
@@ -105,8 +116,9 @@
 -- properties.assigned_agent_id, property_keys.current_holder_profile_id, the
 -- assignee fallback's first two arms — need a profiles (org_id, id) key and
 -- touch every *_by / *agent_id column: decided separately. mandates.
--- owner_contact_id (contacts has no (org_id, id) key yet) and
--- signed_document_id stay single-column.
+-- owner_contact_id (contacts has no (org_id, id) key yet),
+-- signed_document_id and key_movements.key_id (a movement of B can name A's
+-- key) stay single-column.
 --
 -- Pins that move with this file: the migrations count (121 -> 122) and 0122
 -- invariant rows in scripts/backup/verify-restore.sql. NO EXPLICIT
@@ -119,10 +131,11 @@
 -- commit (0113's lesson). Give up instead and apply again; hosted's tables
 -- are tiny, so the scans are instant. First, so the preflight's reads are
 -- bounded too. Apply outside 03:00–04:00 UTC (expire_mandates at 03:00) and
--- away from a :x0 minute (raise_lead_sla_tasks): a collision costs at most
--- 5 s and a clean 55P03 rollback — then apply again, and do NOT write the
--- ledger row. Run twice by mistake, the file aborts at the first DROP
--- CONSTRAINT (42704) and changes nothing.
+-- away from a :x0 minute (raise_lead_sla_tasks): a collision ends in a clean
+-- 55P03 rollback — then apply again, and do NOT write the
+-- ledger row. Each lock wait is bounded to 5 s separately; tables already
+-- locked stay locked while a later statement waits. Run twice by mistake,
+-- the file aborts at the first DROP CONSTRAINT (42704) and changes nothing.
 set local lock_timeout = '5s';
 
 -- The file must run as ONE transaction (the CLI's wrapper, or one
@@ -164,6 +177,18 @@ comment on constraint mandates_org_property_fkey on public.mandates is
   'Replaces the single-column FK on property_id (ON DELETE CASCADE, as that one was).';
 create index if not exists mandates_org_property_idx
   on public.mandates (org_id, property_id);
+
+-- the one-active-mandate rule, keyed by organisation too (see the header):
+-- the same rule for every valid row, and no 23505-before-23503 oracle
+drop index public.mandates_one_active_per_property;
+create unique index mandates_one_active_per_property
+  on public.mandates (org_id, property_id)
+  where status = 'active';
+comment on index public.mandates_one_active_per_property is
+  '0036 / 0122: one active mandate per property. Keyed (org_id, property_id) since 0122 — '
+  'with mandates_org_property_fkey the same rule for every valid row, and a foreign '
+  'organisation''s row can no longer collide with it (which answered 23505, an oracle on '
+  'the property''s mandate state).';
 
 alter table public.property_keys
   drop constraint property_keys_property_id_fkey;
@@ -462,6 +487,10 @@ begin
           or (indexname = 'mandates_org_renewed_from_idx'  and indexdef ~ '\(org_id, renewed_from_id\) WHERE \(renewed_from_id IS NOT NULL\)$'))) <> 3 then
     raise exception '0122 aborted: a referencing index is missing or has the wrong definition';
   end if;
+  if not exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'mandates_one_active_per_property'
+                    and indexdef = 'CREATE UNIQUE INDEX mandates_one_active_per_property ON public.mandates USING btree (org_id, property_id) WHERE (status = ''active''::mandate_status)') then
+    raise exception '0122 aborted: mandates_one_active_per_property is not UNIQUE (org_id, property_id) WHERE status = active';
+  end if;
   -- MATCH SIMPLE skips a row with any null key column: the boundary rests on
   -- every org_id involved being NOT NULL
   if exists (select 1 from pg_attribute
@@ -537,7 +566,7 @@ begin
   end if;
 
   -- the keys, exercised: two organisations; A's property, mandate and key
-  -- (accepted), then three cross-organisation rows, each in its own
+  -- (accepted), then four cross-organisation rows, each in its own
   -- sub-block and each refused by ITS key at ITS step (0121's probe shape).
   -- Needs no profile, so it runs on an empty database too.
   declare
@@ -547,6 +576,7 @@ begin
     for c in
       select * from (values
         ('mandate', 'mandates_org_property_fkey'),
+        ('active',  'mandates_org_property_fkey'),  -- B's ACTIVE mandate on A's property that HAS an active one: the key, not the index
         ('key',     'property_keys_org_property_fkey'),
         ('renewal', 'mandates_org_renewed_from_fkey')
       ) as t(kind, expect)
@@ -565,14 +595,16 @@ begin
           returning id into v_prop_b;
         -- the same-organisation links: all accepted
         v_step := 'own';
-        insert into mandates (org_id, property_id, type) values (v_org_a, v_prop_a, 'open') returning id into v_mandate_a;
-        insert into mandates (org_id, property_id, type, renewed_from_id) values (v_org_a, v_prop_a, 'open', v_mandate_a);
+        insert into mandates (org_id, property_id, type, status) values (v_org_a, v_prop_a, 'open', 'active') returning id into v_mandate_a;
+        insert into mandates (org_id, property_id, type, status, renewed_from_id) values (v_org_a, v_prop_a, 'open', 'draft', v_mandate_a);
         insert into property_keys (org_id, property_id, key_code) values (v_org_a, v_prop_a, 'ZZZ0122-K');
         -- organisation B's row naming organisation A's parent: the
         -- single-column keys accepted each of these
         v_step := 'cross';
         if c.kind = 'mandate' then
           insert into mandates (org_id, property_id, type) values (v_org_b, v_prop_a, 'open');
+        elsif c.kind = 'active' then
+          insert into mandates (org_id, property_id, type, status) values (v_org_b, v_prop_a, 'open', 'active');
         elsif c.kind = 'key' then
           insert into property_keys (org_id, property_id, key_code) values (v_org_b, v_prop_a, 'ZZZ0122-KB');
         else
@@ -583,6 +615,10 @@ begin
         when foreign_key_violation then
           get stacked diagnostics v_con = constraint_name;
           v_ok := (v_con = c.expect and v_step = 'cross');
+        when unique_violation then
+          -- the 23505-before-23503 oracle this file closes: a verdict, not a crash
+          get stacked diagnostics v_con = constraint_name;
+          v_ok := false;
         when sqlstate 'P0122' then
           v_ok := false;
       end;
