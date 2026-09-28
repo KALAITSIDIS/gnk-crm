@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 120::bigint as migrations,
+    2::bigint as auth_users, 121::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -404,6 +404,13 @@ misc as (
   -- past tasks_org_viewing_fkey and leaves it marked validated.
   select 'INTEGRITY: no task names a viewing of another organisation (0120)', '0',
          (select count(*)::text from tasks t join viewings v on v.id = t.viewing_id where t.org_id <> v.org_id)
+  union all
+  -- 0121: the mandate twin — same reason; here a mismatch would also let the
+  -- key-recall and renewal sweeps' guards read across organisations only if
+  -- their 0121 predicates were ever lost, so the row is the data half of that
+  -- defence.
+  select 'INTEGRITY: no task names a mandate of another organisation (0121)', '0',
+         (select count(*)::text from tasks t join mandates m on m.id = t.mandate_id where t.org_id <> m.org_id)
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.
