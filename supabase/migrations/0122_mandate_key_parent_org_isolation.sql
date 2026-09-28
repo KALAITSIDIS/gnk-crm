@@ -23,9 +23,10 @@
 --         property_id alone), so A could NOT activate its own mandate
 --         (23505) — a denial B could impose on any property it knew, and an
 --         oracle on A's mandate state;
---       - have raise_key_recall_tasks / expire_mandates raise B a reminder
---         whose title carries A's property reference and held-key count,
---         whose property_id is A's property and whose assignee is A's agent
+--       - have raise_key_recall_tasks raise B a "Return keys" reminder whose
+--         title carries A's property reference and held-key count, and
+--         expire_mandates a renewal reminder carrying A's reference — each
+--         with A's property as its property_id and A's agent as assignee
 --         (the sweeps join properties and count keys by property_id alone);
 --       - file a B key on A's property (201): counted as "held" for A's
 --         ended mandate, it on its own raised a "Return keys" task in A and
@@ -53,7 +54,9 @@
 --      parents: the update rule now also pins properties.org_id under a
 --      property's mandates and keys, and mandates.org_id under a mandate's
 --      successors — no application path writes either. Each gets a
---      referencing index; 0001's / 0036's single-column indexes stay.
+--      referencing index; 0001's mandates_prop_idx (property_id, status),
+--      0077's property_keys_property_idx and 0036's mandates_renewed_from_idx
+--      stay.
 --      mandates_one_active_per_property is RE-KEYED from (property_id) to
 --      (org_id, property_id), still WHERE status = 'active'. With the key
 --      above every mandate of a property is that property's organisation's,

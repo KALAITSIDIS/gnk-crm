@@ -287,7 +287,8 @@ describe("B cannot put a mandate on A's property (23503, nothing written) — RE
 
   it("A can still activate its own mandate: B's active mandate can no longer hold A's property (23505 at 0121)", async () => {
     const p = await newProperty(ORG_A);
-    await adminB.client.from("mandates").insert(shape(p.id, { status: "active" })).select("id");
+    const theirs = await adminB.client.from("mandates").insert(shape(p.id, { status: "active" })).select("id");
+    expect(theirs.error?.code, "B's active mandate is refused by the key").toBe("23503");
     const mine = await newMandate(ORG_A, p.id, { status: "draft", expiryInDays: 300 });
     const r = await adminA.client.from("mandates").update({ status: "active" }).eq("id", mine).select("id");
     expect(r.error, "no foreign mandate occupies A's one active slot").toBeNull();
@@ -407,6 +408,8 @@ describe("same-organisation links, embeds and deletion stay as they were", () =>
     expect(created.error).toBeNull();
     const moved = await adminA.client.from("mandates").update({ property_id: p2.id }).eq("id", created.data!.id).select("id");
     expect(moved.error).toBeNull();
+    expect(moved.data, "RLS would refuse an UPDATE by matching zero rows").toEqual([{ id: created.data!.id }]);
+    expect((await mandateRow(created.data!.id))!.property_id).toBe(p2.id);
     const prev = await newMandate(ORG_A, p1.id, { status: "expired" });
     const renewal = await adminA.client
       .from("mandates")
@@ -523,6 +526,9 @@ describe("the sweeps read only the mandate's own property and keys (rows planted
     const pa2 = await newProperty(ORG_A, agentA.id);
     await addKey(ORG_A, pa2.id, "checked_out");
     const recall = await plantMandate(ORG_B, pa2.id, "terminated");
+    // B's own key there too, as in the edit-time test: otherwise the held
+    // count alone would hide a lost property-join predicate on this path
+    await plantKey(ORG_B, pa2.id, "checked_out");
     // B's own, on B's own property: the job must serve B too
     const pb = await newProperty(ORG_B);
     await addKey(ORG_B, pb.id, "in_office");
