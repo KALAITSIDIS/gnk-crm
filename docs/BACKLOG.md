@@ -2744,9 +2744,17 @@ VERIFY, run before starting.
   parent row into a refused insert that aborts the whole nightly sweep for every organisation. Found by T-task-deal-org-isolation's scouting. ~~`viewing_id`~~ **FIXED and LANDED 2026-09-26 (hosted 0120 first, then PR #72 → main `d9e5c3e`,
   deployed) — DECISIONS `T-task-viewing-org-isolation` (migration 0120): `tasks (org_id, viewing_id) → viewings (org_id, id)` replaces the
   single-column key and `trg_supersede_viewing_nudges` completes only the viewing's own organisation's reminders.**
+  ~~`mandate_id`~~ **FIXED on branch `fix/task-mandate-org-isolation` (migration 0121, PR #73) — NOT YET LANDED: the
+  hosted apply and the merge wait for the operator's word. DECISIONS `T-task-mandate-org-isolation`: `tasks (org_id,
+  mandate_id) → mandates (org_id, id)` replaces the single-column key; `raise_key_recall_tasks`'s duplicate guard and
+  self-heal, and `expire_mandates`'s renewal guard (step 2) and renewal self-heal (step 3), read only the MANDATE's
+  own organisation's tasks. The renewal pair was not in this entry's plan: measured, a planted renewal row suppressed
+  A's reminder, and the nightly self-heal completed every planted row dated on any day but A's expiry — an oracle on
+  A's expiry date.** NEXT, before any further `tasks.*` twin: "A mandate's and a key's own parent links are
+  organisation-blind" below (its `mandates.property_id` half is the ORDER MATTERS case for a `tasks.property_id` key).
   **VERIFY:** `grep -hoE "add constraint tasks_org_[a-z]+_fkey" supabase/migrations/*.sql | sort -u | wc -l` — fewer
-  than 8 (deal, viewing, mandate, reservation, installment, lead, contact, property) means open; 2 today. (Counts only
-  the adds; check that no later migration drops one.)
+  than 8 (deal, viewing, mandate, reservation, installment, lead, contact, property) means open; 3 with 0121 (2 on a
+  `main` without it). (Counts only the adds; check that no later migration drops one.)
 - **A viewing's own parent links are organisation-blind, S.** `viewings.property_id`, `contact_id` and `agent_id`
   reference their parents by id alone (0001) and `viewings_insert` checks only the caller's org and role, so a member
   of B can create a viewing of B naming A's property or contact. The nightly sweep's arms 2 / 2b (0078) join
@@ -2756,6 +2764,36 @@ VERIFY, run before starting.
   `contact_id`, each with 0119's preflight — BEFORE any `tasks.property_id` key (see the entry above). Found by
   T-task-viewing-org-isolation's review. **VERIFY:** `grep -n viewings_org_property_fkey supabase/migrations/*.sql` —
   no hit means open.
+- **A mandate's and a key's own parent links are organisation-blind, S/M.** Found by T-task-mandate-org-isolation's
+  scouting and MEASURED at 0121 on the local stack through PostgREST (aal2 sessions of two throwaway organisations):
+  * `mandates.property_id` references `properties(id)` alone (0001, ON DELETE CASCADE) and `mandates_insert` /
+    `mandates_update` check only the caller's org and role; `saveMandate` copies the form's `property_id` without an
+    RLS re-read. B's admin INSERTed a B mandate naming A's property (201) and PATCHed it active (200); A could then
+    NOT activate its own mandate (23505 — `mandates_one_active_per_property` is unique on `property_id` alone: a
+    cross-organisation denial, and an oracle on A's mandate state). B terminating it raised, through
+    `raise_key_recall_tasks`, a task IN B whose title carries A's property reference and A's held-key count, whose
+    `property_id` is A's property and whose assignee is A's agent — although B cannot read the property. The
+    renewal sweep would copy the same. Nothing is written into A.
+  * `property_keys.property_id` references `properties(id)` alone and `property_keys_insert` / `_update` check only
+    the caller's org and role (`registerKey` copies the form's id; `record_key_movement` binds the KEY's org, never
+    its property's). B's admin filed a B key on A's property (201); `raise_key_recall_tasks` counts keys by
+    `property_id` alone, so that key on its own raised a "Return keys" task in A (the event's `keys` = 1, written
+    by A's admin), and while it stays `in_office` / `checked_out` A's task can never self-heal.
+  * The key-recall and renewal assignee fallback's first two arms (`pr.id = assigned_agent_id` /
+    `pr.id = created_by`, both functions) read profiles with no `pr.org_id` predicate, and `properties.assigned_agent_id`
+    references `profiles(id)` alone: after B's admin PATCHed B's property's agent to A's agent (200 — the app's
+    form re-reads the agent under RLS, a direct PATCH does not), B's recall task was assigned to A's agent — who
+    cannot see it (the fallback's "never an invisible task" defeated) — and A's profile id went into B's chain.
+  * `mandates.renewed_from_id` references `mandates(id)` alone — the last organisation-blind key onto mandates: a B
+    mandate can name A's mandate as its predecessor, an existence oracle on mandate ids outside tasks (found by the
+    review of 0121; inferred from the catalogue, not measured).
+  Fix in 0119's shape, one migration: `mandates (org_id, property_id) → properties (org_id, id)` and `property_keys
+  (org_id, property_id) → properties (org_id, id)` on 0088's `properties_org_id_id_key`, each with a preflight; a
+  profiles `(org_id, id)` key for the assignee columns is a larger change (every `*_by` / `*agent_id` column) —
+  decide it separately, or add `and pr.org_id = …` to the two arms meanwhile. ORDER MATTERS: `mandates.property_id`
+  must be constrained BEFORE any `tasks (org_id, property_id)` key, or one planted mandate turns the renewal /
+  key-recall INSERT into a refused row that aborts `expire_mandates` for every organisation. **VERIFY:**
+  `grep -nE "mandates_org_property_fkey|property_keys_org_property_fkey" supabase/migrations/*.sql` — no hit means open.
 - **The contact merge repoints rows of OTHER organisations, S.** `mergeContacts` proves both contacts are in the
   caller's org (`lib/actions/merge-contacts.ts`), then repoints every referencing table on the ADMIN client with only
   `.eq("contact_id", duplicateId)` — viewings, tasks, leads, deals, reservations, offers and the rest. Because those
