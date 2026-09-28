@@ -2752,8 +2752,10 @@ VERIFY, run before starting.
   A's reminder, and the nightly self-heal completed every planted row dated on any day but A's expiry — an oracle on
   A's expiry date.** Its follow-on, "A mandate's and a key's own parent links are organisation-blind" below, is FIXED
   and LANDED (0122), so `mandates.property_id` — the ORDER MATTERS case for a `tasks.property_id` key — is constrained.
-  So is `viewings.property_id` since 0123 ("A viewing's own parent links" below, FIXED on its branch — not yet landed):
-  once 0123 is on hosted, every parent a sweep copies into `tasks.property_id` is tenant-bound and that key can follow.
+  So is `viewings.property_id` since 0123 ("A viewing's own parent links" below, FIXED on its branch — not yet landed).
+  **That is NOT yet enough for a `tasks.property_id` key:** three more sweeps copy a property into it through links that
+  still point by id alone — see "The reservation, instalment and lead-SLA sweeps copy another organisation's property"
+  below, which must land first.
   **VERIFY:** `grep -hoE "add constraint tasks_org_[a-z]+_fkey" supabase/migrations/*.sql | sort -u | wc -l` — fewer
   than 8 (deal, viewing, mandate, reservation, installment, lead, contact, property) means open; 3 today. (Counts only the adds; check that no later migration drops one.)
 - ~~**A viewing's own parent links are organisation-blind, S.**~~ **FIXED on branch `fix/viewing-parent-org-isolation`
@@ -2827,20 +2829,47 @@ VERIFY, run before starting.
     deleting it (A's erasure / purge would remove the files, then fail on the row, 23503).
   * `key_movements.key_id` → property_keys(id): any B staff member can INSERT a movement naming A's key id (an
     oracle), and A deleting that key cascades B's append-only rows.
-  * Thirteen more links onto `properties(id)` are single-column: `deals.property_id`, `leads.property_id`,
+  * Twelve more links onto `properties(id)` are single-column: `deals.property_id`, `leads.property_id`,
     `offers.property_id`, `payment_plans.project_id`, `price_history.property_id`, `price_list_items.unit_id`,
     `price_lists.project_id`, `properties.parent_id`, `reservations.property_id`, `share_link_properties.property_id`,
-    `tasks.property_id`, `unit_types.project_id`, `viewings.property_id` (the last two already have entries above).
-    Whether each is writable cross-organisation depends on its policies — not yet read. `properties_org_id_id_key`
-    (0088) is the referenced side for all of them.
+    `tasks.property_id`, `unit_types.project_id` (`unit_types` already has an entry above; `viewings.property_id` was the
+    thirteenth — 0123, on its branch, not yet landed). Whether each is writable cross-organisation depends on its
+    policies — not yet read, except `reservations.property_id` and `leads.property_id` (see "The reservation, instalment
+    and lead-SLA sweeps" below). `properties_org_id_id_key` (0088) is the referenced side for all of them.
   **VERIFY:** `grep -c "org_property_fkey\|org_owner_contact_fkey" supabase/migrations/*.sql` rising, and
   `select count(*) from pg_constraint where contype = 'f' and confrelid = 'public.properties'::regclass and
-  array_length(conkey, 1) = 1` — 13 at 0122.
+  array_length(conkey, 1) = 1` — 13 at 0122, 12 at 0123 (measured on the local stack).
+- **The reservation, instalment and lead-SLA sweeps copy another organisation's property, S/M.** Found by
+  T-viewing-parent-org-isolation's review and confirmed by two independent read-only traces of the LATEST definitions
+  (catalogue- and code-level; NOT reproduced against a database). Three nightly / periodic sweeps still copy a property
+  into `tasks.property_id` and its reference into the title through org-blind joins:
+  `warn_expiring_reservations` (0052:310, `join properties p on p.id = r.property_id`; cron `50 3 * * *`),
+  `remind_due_installments` (0052:390-391, `join reservations r on r.id = i.reservation_id` AND `join properties p on
+  p.id = r.property_id` — two org-blind hops; cron `55 3 * * *`) and `raise_lead_sla_tasks` (0098:330, `left join
+  properties p on p.id = l.property_id`; cron every 10 minutes). Their parents point by id alone:
+  `reservations.property_id` (0044:47, ON DELETE RESTRICT), `reservation_installments.reservation_id` (0050:33) and
+  `leads.property_id` (0001:368); `reservations_insert` / `_update` (0044), `reservation_installments` insert (0050) and
+  `leads_insert` / `leads_update` (0030 / 0100) check only the caller's org (and role); authenticated holds INSERT /
+  UPDATE; the app's `createLead` accepts a form `property_id` without an RLS re-read (lib/actions/leads.ts). So a member
+  of B can put a reservation, an instalment or a lead on A's property (or A's reservation) and the sweep then gives B a
+  task titled "Reservation on <A's reference> lapses…", "Instalment … on <A's reference>…" or "Website enquiry
+  unanswered…: <A's reference>" carrying A's property id (and, for instalments, A's reservation and contact ids); with a
+  null `created_by` the reservation arm falls back to A's property agent as assignee. `reservations_one_live_per_property`
+  (0044:77-79) is unique on `property_id` alone: B's live hold on A's property blocks A's own (a cross-organisation
+  denial) and answers 23505 vs 23503 vs accepted — an oracle on A's hold state — the 0122 index shape. **ORDER MATTERS:**
+  this must land BEFORE any `tasks (org_id, property_id)` key, or one planted row turns that sweep's task INSERT into a
+  23503 that aborts the whole run for every organisation. Fix in 0122 / 0123's shape: `reservations (org_id,
+  property_id)`, `reservation_installments (org_id, reservation_id)` (needs a `reservations (org_id, id)` key) and
+  `leads (org_id, property_id)` composite keys with preflights, `reservations_one_live_per_property` re-keyed to
+  `(org_id, property_id)`, and `p.org_id = <parent>.org_id` (plus `r.org_id = i.org_id`) in the three sweeps; pin RED
+  first. **VERIFY:** `grep -nE "reservations_org_property_fkey|leads_org_property_fkey" supabase/migrations/*.sql` — no
+  hit means open.
 - **The contact merge repoints rows of OTHER organisations, S.** `mergeContacts` proves both contacts are in the
   caller's org (`lib/actions/merge-contacts.ts`), then repoints every referencing table on the ADMIN client with only
   `.eq("contact_id", duplicateId)` — viewings, tasks, leads, deals, reservations, offers and the rest. Because those
   `contact_id` columns are organisation-blind, a row of B that names A's duplicate contact (plantable as above) is
-  rewritten by A's merge. Not through any trigger. Fix: `.eq("org_id", profile.orgId)` on every repoint, and extend
+  rewritten by A's merge. (Since 0123 — on its branch, not yet landed — `viewings.contact_id` is bound to the contact's
+  organisation, so the viewings repoint can no longer meet a row of B; every other `contact_id` column still can.) Not through any trigger. Fix: `.eq("org_id", profile.orgId)` on every repoint, and extend
   `tests/unit/merge-repoints-every-fk.test.ts` to fail on a repoint without it. Found by
   T-task-viewing-org-isolation's review. **VERIFY:** `grep -c 'eq("org_id"' lib/actions/merge-contacts.ts` — fewer
   than the number of `.from(` repoints means open.

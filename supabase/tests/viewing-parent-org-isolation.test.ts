@@ -173,7 +173,13 @@ async function chainOk(org: string) {
   return rows[0]!.ok;
 }
 
-/** Nothing of B's — task or event — names or carries anything of A's property `p`. */
+/**
+ * Nothing of B's — task or event — names or carries anything of A's property
+ * `p`. The TASK half is what arms 2 / 2b broke at 0122 (title and
+ * property_id); their event payloads carry ids of B's own task and viewing
+ * only, so the EVENT half is defensive — it fails only if a future payload
+ * starts copying the property.
+ */
 async function bHoldsNothingOf(p: Parent) {
   expect(
     await count(
@@ -327,7 +333,7 @@ describe("B cannot put a viewing on A's property or A's contact (23503, nothing 
       expect(r.error?.code, who.email).toBe("23503");
       expect(r.data, who.email).toBeNull();
     }
-    expect(await count("select count(*)::int as c from viewings where property_id = $1", [propA.id])).toBe(0);
+    expect(await count("select count(*)::int as c from viewings where org_id = $1 and property_id = $2", [ORG_B, propA.id])).toBe(0);
   });
 
   it("INSERT naming A's contact — as B's agent and as B's admin", async () => {
@@ -335,7 +341,7 @@ describe("B cannot put a viewing on A's property or A's contact (23503, nothing 
       const r = await who.client.from("viewings").insert(createShape(who, propB.id, contactA.id)).select("id");
       expect(r.error?.code, who.email).toBe("23503");
     }
-    expect(await count("select count(*)::int as c from viewings where contact_id = $1", [contactA.id])).toBe(0);
+    expect(await count("select count(*)::int as c from viewings where org_id = $1 and contact_id = $2", [ORG_B, contactA.id])).toBe(0);
   });
 
   it("UPDATE — B's viewing cannot be re-pointed at A's property or A's contact, by its agent or by B's admin", async () => {
@@ -742,7 +748,13 @@ describe("the migration file: upgrade from 0122, refusal over existing mismatche
     expect(notices.some((x) => x.startsWith("0123: probes refused by their keys: {property,contact}"))).toBe(true);
   });
 
-  it("refuses, whole, over existing mismatches — with the counts and the way to list them — and leaves the catalogue and the rows exactly as they were", async () => {
+  // What proves this test is the message: the PREFLIGHT refused (with both
+  // counts), so it ran before the key additions, which would otherwise have
+  // failed 23503 on these rows. That it precedes ALL DDL is the file's text
+  // order, not something this test observes. The checks after the savepoint
+  // rollback restate that nothing was deleted, reassigned or repaired; a
+  // failed statement cannot leave partial DDL behind in any case.
+  it("refuses over existing mismatches in its preflight — with both counts and the way to list them — deleting, reassigning and repairing nothing", async () => {
     await rolledBack(async () => {
       await revertTo0122();
       // accepted by 0122's single-column keys: no plant needed
@@ -763,14 +775,39 @@ describe("the migration file: upgrade from 0122, refusal over existing mismatche
     });
   });
 
-  it("run a second time, it stops at its first DDL (42P07, contacts_org_id_id_key) and changes nothing", async () => {
+  it("refuses, before any DDL, when the live sweep is not 0078's body — an unrecorded change is not silently overwritten", async () => {
     await rolledBack(async () => {
-      await expect(o.query(file())).rejects.toMatchObject({ code: "42P07" });
+      await revertTo0122();
+      // a hotfix typed into an SQL editor: one title reworded
+      await o.query(`
+        do $$
+        declare b text;
+        begin
+          select prosrc into b from pg_proc where oid = 'public.create_followup_nudges(uuid)'::regprocedure;
+          execute format('create or replace function public.create_followup_nudges(p_org uuid default null) returns void '
+                         'language sql security definer set search_path = public as %L',
+                         replace(b, 'Log viewing feedback: ', 'Log feedback: '));
+        end $$;
+      `);
+      const tampered = await sweepMd5();
+      expect(tampered).not.toBe(MD5_0078);
+      await o.query("savepoint before_0123");
+      await expect(o.query(file())).rejects.toThrow(
+        new RegExp(`^0123 aborted: create_followup_nudges is not 0078's body on this database \\(md5 ${tampered}\\) — nothing was changed`),
+      );
+      // the message is the proof (the preflight precedes every DDL); this restates the state
+      await o.query("rollback to savepoint before_0123");
+      expect(await viewingKeys()).toEqual(KEYS_0122);
     });
-    expect(await viewingKeys()).toEqual(KEYS_0123);
   });
 
-  it("an in-flight write to viewings holds the file at its LOCK — before the preflight reads — until lock_timeout (55P03)", async () => {
+  it("run a second time, it stops in its preflight (the sweep is no longer 0078's)", async () => {
+    await rolledBack(async () => {
+      await expect(o.query(file())).rejects.toThrow(/^0123 aborted: create_followup_nudges is not 0078's body on this database/);
+    });
+  });
+
+  it("an in-flight write to viewings holds the file at its LOCK — before the preflight passes — until lock_timeout (55P03)", async () => {
     const writer = new Client({ connectionString: DB_URL });
     await writer.connect();
     const notices: string[] = [];

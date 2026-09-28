@@ -76,6 +76,9 @@
 -- own validation is the backstop behind that (a mismatch would abort the
 -- whole file with 23503, never half-apply it). The LOCK sits inside the
 -- preflight's DO block (a top-level LOCK TABLE is refused under the CLI).
+-- The preflight also refuses when the live create_followup_nudges is not
+-- 0078's body (md5, CRs stripped): section B restates 0078's text and must
+-- not silently overwrite an unrecorded change.
 --
 -- DEPLOY ORDER: ADDITIVE — hosted before the merge. Every legitimate writer
 -- takes the property and contact from the caller's own organisation (the
@@ -105,8 +108,15 @@
 -- no (org_id, id) key — the profile links are decided as one change),
 -- viewings.deal_id (the deal-side keys), viewing_slips.viewing_id, the
 -- sweep's task guards and self-heals on tasks.viewing_id / tasks.contact_id,
--- and tasks.property_id itself — which can now be constrained: every parent a
--- sweep copies into it (mandates since 0122, viewings here) is tenant-bound.
+-- and tasks.property_id itself — NOT yet constrainable: mandates (0122) and
+-- viewings (here) are tenant-bound, but warn_expiring_reservations,
+-- remind_due_installments (0052) and raise_lead_sla_tasks (0098) still copy a
+-- property into tasks through reservations.property_id,
+-- reservation_installments.reservation_id and leads.property_id, which point
+-- by id alone. A tasks (org_id, property_id) key before those would turn one
+-- planted reservation or lead into a 23503 that aborts that nightly run for
+-- every organisation (BACKLOG "The reservation, instalment and lead-SLA
+-- sweeps copy another organisation's property").
 --
 -- Pins that move with this file: the migrations count (122 -> 123) and two
 -- 0123 invariant rows in scripts/backup/verify-restore.sql. NO EXPLICIT
@@ -120,8 +130,8 @@
 -- instant. Apply outside 03:15–04:00 UTC (create_followup_nudges at 03:15)
 -- and away from a :x0 minute (raise_lead_sla_tasks): a collision ends in a
 -- clean 55P03 rollback — then apply again, and do NOT write the ledger row.
--- Run twice by mistake, the file aborts at contacts_org_id_id_key (42P07) and
--- changes nothing.
+-- Run twice by mistake, the file aborts in its preflight (the sweep is no
+-- longer 0078's) and changes nothing.
 set local lock_timeout = '5s';
 
 -- The file must run as ONE transaction (the CLI's wrapper, or one
@@ -139,7 +149,7 @@ end $$;
 -- 0. Preflight — abort, whole, over existing mismatches on either link
 -- ---------------------------------------------------------------------------
 do $$
-declare n_p int; n_c int;
+declare n_p int; n_c int; v_md5 text;
 begin
   -- Every lock the DDL below needs, at its strongest, BEFORE the counts: no
   -- viewing, property or contact can be written between the preflight and
@@ -158,7 +168,20 @@ begin
                     'where v.org_id <> p.org_id or v.org_id <> c.org_id; and decide before constraining',
                     n_p, n_c;
   end if;
-  raise notice '0123: preflight passed — no viewing names a property or a contact of another organisation';
+
+  -- The sweep this file replaces must be 0078's, byte for byte (CRs
+  -- stripped): section B restates 0078's text, so an unrecorded change on
+  -- the target — a hotfix typed into an SQL editor — would be silently
+  -- overwritten. Refuse instead, before any DDL.
+  select md5(replace(p.prosrc, E'\r', '')) into v_md5
+    from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
+   where ns.nspname = 'public' and p.proname = 'create_followup_nudges';
+  if v_md5 is distinct from '09f1d9363b2d3f699dbae71a8ef3f66a' then
+    raise exception '0123 aborted: create_followup_nudges is not 0078''s body on this database (md5 %) — nothing was changed. '
+                    'This file would overwrite it; diff the live body against 0078 and decide before applying',
+                    coalesce(v_md5, 'missing');
+  end if;
+  raise notice '0123: preflight passed — no viewing names a property or a contact of another organisation; the sweep is 0078''s';
 end $$;
 
 -- ---------------------------------------------------------------------------
