@@ -2617,20 +2617,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "tasks_mandate_id_fkey"
-            columns: ["mandate_id"]
-            isOneToOne: false
-            referencedRelation: "mandates"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "tasks_mandate_id_fkey"
-            columns: ["mandate_id"]
-            isOneToOne: false
-            referencedRelation: "mandates_safe"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "tasks_org_deal_fkey"
             columns: ["org_id", "deal_id"]
             isOneToOne: false
@@ -2643,6 +2629,20 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "organizations"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_org_mandate_fkey"
+            columns: ["org_id", "mandate_id"]
+            isOneToOne: false
+            referencedRelation: "mandates"
+            referencedColumns: ["org_id", "id"]
+          },
+          {
+            foreignKeyName: "tasks_org_mandate_fkey"
+            columns: ["org_id", "mandate_id"]
+            isOneToOne: false
+            referencedRelation: "mandates_safe"
+            referencedColumns: ["org_id", "id"]
           },
           {
             foreignKeyName: "tasks_org_viewing_fkey"

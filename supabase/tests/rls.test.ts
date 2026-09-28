@@ -3592,14 +3592,16 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     const { data: again } = await svc.rpc("raise_key_recall_tasks", { p_mandate: mandate!.id });
     expect(again, "a second call raises nothing").toBe(0);
 
-    // --- THE REGRESSION PIN -------------------------------------------------
-    // expire_mandates() takes no org argument, so this is a global sweep; the
-    // assertion is deliberately scoped to this fixture's mandate.
-    await svc.rpc("expire_mandates");
-    expect(
-      await openRecalls(),
-      "expire_mandates() must NOT complete the recall task — without the kind filter it matched on mandate_id alone and closed it every night",
-    ).toBe(1);
+    // --- THE REGRESSION PIN LIVES ELSEWHERE -----------------------------------
+    // This used to call expire_mandates() here and assert the recall task
+    // survived — but since 0022 not even the service role may execute it, the
+    // RPC was REFUSED, its error discarded, and the assertion could not fail.
+    // (Found by T-task-mandate-org-isolation.) The sweep is now run as pg_cron
+    // runs it — as postgres — in supabase/tests/task-mandate-org-isolation.test.ts
+    // ("the kinds stay distinct"). Here: the refusal itself, stated.
+    const { error: sweepErr } = await svc.rpc("expire_mandates");
+    expect(sweepErr?.code, "expire_mandates is cron-only (0022): the service role cannot run it").toBe("42501");
+    expect(await openRecalls()).toBe(1);
 
     // an agent can see it on their own task list
     const { data: agentSees } = await agentA1.client
