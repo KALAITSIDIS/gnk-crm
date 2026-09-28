@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 123::bigint as migrations,
+    2::bigint as auth_users, 124::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -432,6 +432,19 @@ misc as (
   union all
   select 'INTEGRITY: no viewing names a contact of another organisation (0123)', '0',
          (select count(*)::text from viewings v join contacts c on c.id = v.contact_id where v.org_id <> c.org_id)
+  union all
+  -- 0124: a reservation's property, an instalment line's reservation and a
+  -- lead's property are of its own organisation — same reason as the rows
+  -- above; a mismatch is also what the reservation, instalment and lead-SLA
+  -- sweeps would otherwise read across organisations.
+  select 'INTEGRITY: no reservation holds a property of another organisation (0124)', '0',
+         (select count(*)::text from reservations r join properties p on p.id = r.property_id where r.org_id <> p.org_id)
+  union all
+  select 'INTEGRITY: no instalment line belongs to a reservation of another organisation (0124)', '0',
+         (select count(*)::text from reservation_installments i join reservations r on r.id = i.reservation_id where i.org_id <> r.org_id)
+  union all
+  select 'INTEGRITY: no lead names a property of another organisation (0124)', '0',
+         (select count(*)::text from leads l join properties p on p.id = l.property_id where l.org_id <> p.org_id)
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.
