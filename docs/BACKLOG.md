@@ -2744,8 +2744,8 @@ VERIFY, run before starting.
   parent row into a refused insert that aborts the whole nightly sweep for every organisation. Found by T-task-deal-org-isolation's scouting. ~~`viewing_id`~~ **FIXED and LANDED 2026-09-26 (hosted 0120 first, then PR #72 → main `d9e5c3e`,
   deployed) — DECISIONS `T-task-viewing-org-isolation` (migration 0120): `tasks (org_id, viewing_id) → viewings (org_id, id)` replaces the
   single-column key and `trg_supersede_viewing_nudges` completes only the viewing's own organisation's reminders.**
-  ~~`mandate_id`~~ **FIXED on branch `fix/task-mandate-org-isolation` (migration 0121, PR #73) — NOT YET LANDED: the
-  hosted apply and the merge wait for the operator's word. DECISIONS `T-task-mandate-org-isolation`: `tasks (org_id,
+  ~~`mandate_id`~~ **FIXED and LANDED 2026-09-28 (hosted 0121 first, then PR #73 → main `615aaa7`, deployed).
+  DECISIONS `T-task-mandate-org-isolation`: `tasks (org_id,
   mandate_id) → mandates (org_id, id)` replaces the single-column key; `raise_key_recall_tasks`'s duplicate guard and
   self-heal, and `expire_mandates`'s renewal guard (step 2) and renewal self-heal (step 3), read only the MANDATE's
   own organisation's tasks. The renewal pair was not in this entry's plan: measured, a planted renewal row suppressed
@@ -2753,8 +2753,7 @@ VERIFY, run before starting.
   A's expiry date.** NEXT, before any further `tasks.*` twin: "A mandate's and a key's own parent links are
   organisation-blind" below (its `mandates.property_id` half is the ORDER MATTERS case for a `tasks.property_id` key).
   **VERIFY:** `grep -hoE "add constraint tasks_org_[a-z]+_fkey" supabase/migrations/*.sql | sort -u | wc -l` — fewer
-  than 8 (deal, viewing, mandate, reservation, installment, lead, contact, property) means open; 3 with 0121 (2 on a
-  `main` without it). (Counts only the adds; check that no later migration drops one.)
+  than 8 (deal, viewing, mandate, reservation, installment, lead, contact, property) means open; 3 today. (Counts only the adds; check that no later migration drops one.)
 - **A viewing's own parent links are organisation-blind, S.** `viewings.property_id`, `contact_id` and `agent_id`
   reference their parents by id alone (0001) and `viewings_insert` checks only the caller's org and role, so a member
   of B can create a viewing of B naming A's property or contact. The nightly sweep's arms 2 / 2b (0078) join
