@@ -2751,7 +2751,7 @@ VERIFY, run before starting.
   own organisation's tasks. The renewal pair was not in this entry's plan: measured, a planted renewal row suppressed
   A's reminder, and the nightly self-heal completed every planted row dated on any day but A's expiry — an oracle on
   A's expiry date.** Its follow-on, "A mandate's and a key's own parent links are organisation-blind" below, is FIXED
-  on PR #74 (0122), so `mandates.property_id` — the ORDER MATTERS case for a `tasks.property_id` key — is constrained.
+  and LANDED (0122), so `mandates.property_id` — the ORDER MATTERS case for a `tasks.property_id` key — is constrained.
   **VERIFY:** `grep -hoE "add constraint tasks_org_[a-z]+_fkey" supabase/migrations/*.sql | sort -u | wc -l` — fewer
   than 8 (deal, viewing, mandate, reservation, installment, lead, contact, property) means open; 3 today. (Counts only the adds; check that no later migration drops one.)
 - **A viewing's own parent links are organisation-blind, S.** `viewings.property_id`, `contact_id` and `agent_id`
@@ -2763,8 +2763,8 @@ VERIFY, run before starting.
   `contact_id`, each with 0119's preflight — BEFORE any `tasks.property_id` key (see the entry above). Found by
   T-task-viewing-org-isolation's review. **VERIFY:** `grep -n viewings_org_property_fkey supabase/migrations/*.sql` —
   no hit means open.
-- ~~**A mandate's and a key's own parent links are organisation-blind, S/M.**~~ **FIXED on PR #74 (migration 0122) —
-  hosted apply and merge in progress on the operator's word ("apply 0122 and merge #74"). DECISIONS
+- ~~**A mandate's and a key's own parent links are organisation-blind, S/M.**~~ **FIXED and LANDED 2026-09-28 (hosted 0122
+  first, then PR #74 → main `3f831a8`, deployed). DECISIONS
   `T-mandate-key-parent-org-isolation`: `mandates (org_id, property_id)` and `property_keys (org_id, property_id) →
   properties (org_id, id)` (ON DELETE CASCADE kept), `mandates (org_id, renewed_from_id) → mandates (org_id, id)`, each
   replacing its single-column key; `mandates_one_active_per_property` re-keyed to `(org_id, property_id)` (the review
