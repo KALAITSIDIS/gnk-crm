@@ -104,7 +104,8 @@
 -- re-adds `mandates_property_id_fkey foreign key (property_id) references
 -- properties(id) on delete cascade`, `property_keys_property_id_fkey` (the
 -- same) and `mandates_renewed_from_id_fkey foreign key (renewed_from_id)
--- references mandates(id)`, re-creates both functions from 0121's text
+-- references mandates(id)`, re-creates mandates_one_active_per_property on
+-- (property_id) WHERE status = 'active', re-creates both functions from 0121's text
 -- (with 0121's comments — CREATE OR REPLACE keeps this file's otherwise);
 -- regenerate the types, move the verify-restore migrations pin FORWARD,
 -- remove its 0122 invariant rows, remove
