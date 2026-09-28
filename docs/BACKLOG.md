@@ -2752,14 +2752,14 @@ VERIFY, run before starting.
   A's reminder, and the nightly self-heal completed every planted row dated on any day but A's expiry — an oracle on
   A's expiry date.** Its follow-on, "A mandate's and a key's own parent links are organisation-blind" below, is FIXED
   and LANDED (0122), so `mandates.property_id` — the ORDER MATTERS case for a `tasks.property_id` key — is constrained.
-  So is `viewings.property_id` since 0123 ("A viewing's own parent links" below, FIXED on its branch — not yet landed).
+  So is `viewings.property_id` since 0123 ("A viewing's own parent links" below, FIXED and LANDED 2026-09-28).
   **That is NOT yet enough for a `tasks.property_id` key:** three more sweeps copy a property into it through links that
   still point by id alone — see "The reservation, instalment and lead-SLA sweeps copy another organisation's property"
   below, which must land first.
   **VERIFY:** `grep -hoE "add constraint tasks_org_[a-z]+_fkey" supabase/migrations/*.sql | sort -u | wc -l` — fewer
   than 8 (deal, viewing, mandate, reservation, installment, lead, contact, property) means open; 3 today. (Counts only the adds; check that no later migration drops one.)
-- ~~**A viewing's own parent links are organisation-blind, S.**~~ **FIXED on branch `fix/viewing-parent-org-isolation`
-  (2026-09-28, migration 0123) — NOT YET LANDED: hosted apply and merge each wait for the operator's word.** DECISIONS
+- ~~**A viewing's own parent links are organisation-blind, S.**~~ **FIXED and LANDED 2026-09-28 (hosted 0123 first,
+  then PR #75 → main `e45bd74`, deployed).** DECISIONS
   `T-viewing-parent-org-isolation`: `viewings (org_id, property_id) → properties (org_id, id)` and `viewings (org_id,
   contact_id) → contacts (org_id, id)` (NO ACTION, each replacing its single-column key; `contacts_org_id_id_key` new),
   and `create_followup_nudges` arms 2 / 2b join only the viewing's own organisation's property. Measured at 0122
@@ -2833,7 +2833,7 @@ VERIFY, run before starting.
     `offers.property_id`, `payment_plans.project_id`, `price_history.property_id`, `price_list_items.unit_id`,
     `price_lists.project_id`, `properties.parent_id`, `reservations.property_id`, `share_link_properties.property_id`,
     `tasks.property_id`, `unit_types.project_id` (`unit_types` already has an entry above; `viewings.property_id` was the
-    thirteenth — 0123, on its branch, not yet landed). Whether each is writable cross-organisation depends on its
+    thirteenth — 0123, landed 2026-09-28). Whether each is writable cross-organisation depends on its
     policies — not yet read, except `reservations.property_id` and `leads.property_id` (see "The reservation, instalment
     and lead-SLA sweeps" below). `properties_org_id_id_key` (0088) is the referenced side for all of them.
   **VERIFY:** `grep -c "org_property_fkey\|org_owner_contact_fkey" supabase/migrations/*.sql` rising, and
@@ -2868,7 +2868,7 @@ VERIFY, run before starting.
   caller's org (`lib/actions/merge-contacts.ts`), then repoints every referencing table on the ADMIN client with only
   `.eq("contact_id", duplicateId)` — viewings, tasks, leads, deals, reservations, offers and the rest. Because those
   `contact_id` columns are organisation-blind, a row of B that names A's duplicate contact (plantable as above) is
-  rewritten by A's merge. (Since 0123 — on its branch, not yet landed — `viewings.contact_id` is bound to the contact's
+  rewritten by A's merge. (Since 0123 — landed 2026-09-28 — `viewings.contact_id` is bound to the contact's
   organisation, so the viewings repoint can no longer meet a row of B; every other `contact_id` column still can.) Not through any trigger. Fix: `.eq("org_id", profile.orgId)` on every repoint, and extend
   `tests/unit/merge-repoints-every-fk.test.ts` to fail on a repoint without it. Found by
   T-task-viewing-org-isolation's review. **VERIFY:** `grep -c 'eq("org_id"' lib/actions/merge-contacts.ts` — fewer
