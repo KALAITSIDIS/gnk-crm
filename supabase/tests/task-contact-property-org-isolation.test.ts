@@ -541,6 +541,18 @@ describe("B cannot create, re-point or upsert a reservation naming A's contact (
     await expect(newHold(ORG_B, { contact: aContact })).rejects.toMatchObject({ code: "23503", constraint: RES_KEY });
     expect(await holdsOn(aContact)).toBe(0);
   });
+
+  it("a hold of A that names A's contact cannot move to B together with a property of B — the contact key alone answers (service role)", async () => {
+    const aContact = await newContact(ORG_A);
+    const hold = await newHold(ORG_A, { contact: aContact });
+    const bProperty = (await newProperty(ORG_B)).id;
+    const moved = await svc.from("reservations").update({ org_id: ORG_B, property_id: bProperty }).eq("id", hold).select("id");
+    refusedBy(moved.error, RES_KEY, "hold moved with a B property");
+    expect(await row<{ org_id: string; contact_id: string }>("select org_id, contact_id from reservations where id = $1", [hold])).toEqual({
+      org_id: ORG_A,
+      contact_id: aContact,
+    });
+  });
 });
 
 describe("same-organisation and nullable links, the app's writers, embeds and deletion stay as they were", () => {
@@ -674,10 +686,10 @@ describe("same-organisation and nullable links, the app's writers, embeds and de
     expect((fromProperty.data as unknown as { tasks: { id: string }[] }).tasks.map((x) => x.id)).toEqual([task]);
   });
 
-  it("deletion: a contact or property with a task still cannot be deleted (NO ACTION), and the hold on it keeps its contact", async () => {
+  it("deletion: a contact or property with a task still cannot be deleted (NO ACTION) — a hold naming the contact too does not change that", async () => {
     await rolledBack(async () => {
       const contact = await newContact(ORG_A);
-      const hold = await newHold(ORG_A, { contact });
+      await newHold(ORG_A, { contact });
       await insertTask({ org: ORG_A, kind: null, contact });
       await o.query("savepoint del");
       await expect(o.query("delete from contacts where id = $1", [contact])).rejects.toMatchObject({
@@ -685,7 +697,6 @@ describe("same-organisation and nullable links, the app's writers, embeds and de
         constraint: expect.stringMatching(/^tasks_(org_contact|contact_id)_fkey$/),
       });
       await o.query("rollback to savepoint del");
-      expect((await row<{ c: string }>("select contact_id as c from reservations where id = $1", [hold]))!.c).toBe(contact);
       const property = (await newProperty(ORG_A)).id;
       await insertTask({ org: ORG_A, kind: null, property });
       await expect(o.query("delete from properties where id = $1", [property])).rejects.toMatchObject({
@@ -709,7 +720,7 @@ describe("same-organisation and nullable links, the app's writers, embeds and de
     expect(before.org_id).toBe(ORG_A);
   });
 
-  it("a hold's organisation cannot move off its property's or contact's (the service role is refused by a key)", async () => {
+  it("a hold's organisation cannot move off its property's (the service role is refused — by 0124's property key, which answers first)", async () => {
     const contact = await newContact(ORG_A);
     const hold = await newHold(ORG_A, { contact });
     const moved = await svc.from("reservations").update({ org_id: ORG_B }).eq("id", hold).select("id");

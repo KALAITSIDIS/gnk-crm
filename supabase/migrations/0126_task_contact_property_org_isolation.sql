@@ -10,9 +10,10 @@
 -- here 2026-09-29 against 2bad473 on the local stack at 0125, through
 -- PostgREST with aal2 sessions of two throwaway organisations, and pinned RED
 -- first by supabase/tests/task-contact-property-org-isolation.test.ts — its
--- 20 tests marked "RED at 0125" failed at 0125, each for the
--- reason it names, and the property link on its own too; its migration-file
--- tests need this file itself):
+-- 21 tests marked "RED at 0125" failed at 0125, each for the
+-- reason it names (20 on the local stack, the property link on its own too;
+-- the 21st, the review's hold-move test, on a fresh stack taken back to
+-- 0125); its migration-file tests need this file itself):
 --
 --   * reservations.contact_id (0044, ON DELETE SET NULL), tasks.contact_id and
 --     tasks.property_id (0001, NO ACTION) referenced their parent by id ALONE,
@@ -67,7 +68,7 @@
 --          and nothing else escapes the check.
 --        - Each referencing side gets a partial (org_id, x) index (the
 --          advisors' unindexed-foreign-key rule reads an index's leading
---          columns; 0044's / 0001's single-column indexes stay — they serve
+--          columns; 0044's / 0092's single-column indexes stay — they serve
 --          the lookups by the parent id alone, the contact and property
 --          pages). Neither table has a unique index naming these columns
 --          (asserted below), so no 23505 can answer before these keys' 23503.
@@ -163,8 +164,10 @@
 -- DEPLOY ORDER: ADDITIVE — hosted before the merge. Every writer of the three
 -- columns takes org_id and the contact / property from the same
 -- organisation: the sweeps from tenant-bound rows (above); the application's
--- task and reservation writers from rows re-read under the caller's RLS or
--- read on the admin client with an explicit org_id (DECISIONS lists each).
+-- task and reservation writers from rows re-read under the caller's RLS, read
+-- on the admin client with an explicit org_id, or — createReservation's form
+-- contact, mergeContacts' repoint — offered or proven only within the caller's
+-- organisation, without a re-read (NOT CHANGED above; DECISIONS lists each).
 -- No request the deployed application sends is refused by A. No function
 -- signature, return shape or grant changes — no release-compat entry.
 -- database.types.ts is regenerated: the Relationships entries
@@ -931,7 +934,7 @@ begin
       raise exception '0126 aborted: the single-column % is still there (two relationships would make PostgREST embeds ambiguous)', c.old;
     end if;
   end loop;
-  -- and their exact text, the form pg_dump writes and the restore pack reads
+  -- and their exact text (the form pg_dump writes)
   if (select count(*) from pg_constraint
         where (conname = 'reservations_org_contact_fkey' and pg_get_constraintdef(oid) = 'FOREIGN KEY (org_id, contact_id) REFERENCES contacts(org_id, id) ON DELETE SET NULL (contact_id)')
            or (conname = 'tasks_org_contact_fkey'        and pg_get_constraintdef(oid) = 'FOREIGN KEY (org_id, contact_id) REFERENCES contacts(org_id, id)')
@@ -1080,6 +1083,7 @@ begin
   -- empty database too.
   declare
     v_org_a uuid; v_org_b uuid; v_prop_a uuid; v_prop_b uuid; v_con_a uuid; v_res uuid;
+    v_state text; v_msg text;
     v_verdicts text[] := '{}';
   begin
     for c in
@@ -1139,7 +1143,7 @@ begin
 
     -- the reservation key's delete action: deleting a contact clears only the
     -- hold's contact_id; the hold keeps its organisation (and everything else)
-    v_ok := null; v_con := null; v_step := 'setup';
+    v_ok := null; v_con := null; v_state := null; v_msg := null; v_step := 'setup';
     begin
       insert into organizations (name, slug)
         values ('0126 probe A (rolled back)', '0126-probe-a-' || replace(gen_random_uuid()::text, '-', ''))
@@ -1159,11 +1163,15 @@ begin
       when sqlstate 'P0127' then
         null;  -- the verdict is v_ok; the sub-block's rows are gone
       when others then
-        get stacked diagnostics v_con = constraint_name;
+        -- a plain SET NULL would meet 23502 here, whose constraint_name is
+        -- empty: keep the state and the message, not only the constraint
+        get stacked diagnostics v_con = constraint_name, v_state = returned_sqlstate, v_msg = message_text;
         v_ok := false;
     end;
     if v_ok is distinct from true then
-      raise exception '0126 aborted: deleting a contact did not clear only its hold''s contact_id at the % step (met %)', v_step, coalesce(nullif(v_con, ''), 'no error');
+      raise exception '0126 aborted: deleting a contact did not clear only its hold''s contact_id at the % step (%)', v_step,
+        case when v_state is null then 'no error: the hold was not left with only its contact cleared'
+             else v_state || coalesce(' on ' || nullif(v_con, ''), '') || ': ' || v_msg end;
     end if;
     v_verdicts := v_verdicts || 'contact delete clears only contact_id'::text;
     raise notice '0126: probes: %', v_verdicts;
