@@ -54,10 +54,14 @@
 --      as before and nothing else escapes the check. Each referencing side
 --      gets a partial (org_id, x) index; 0047 / 0051 / 0098's single-column
 --      indexes stay (they serve lookups by the parent id alone). tasks has no
---      unique index but its primary key (asserted below), so no 23505 can
---      answer before these keys' 23503. A cross-organisation id and a missing
---      id now read the same 23503 — no existence oracle THROUGH TASKS. The
---      constraints bind EVERY writer, service_role and definer bodies included.
+--      unique index but its primary key (measured; the assertion below refuses
+--      any unique index naming one of these columns without org_id), so no
+--      23505 can answer before these keys' 23503. A cross-organisation id and a missing
+--      id now read the same 23503 — no existence oracle through THESE THREE
+--      task columns (tasks.contact_id / property_id stay single-column, and
+--      each parent's own primary key still answers a client-chosen id with
+--      23505 — BACKLOG). The constraints bind EVERY writer, service_role and
+--      definer bodies included.
 --
 --   B. THE SWEEPS. warn_expiring_reservations and remind_due_installments
 --      gain `and t.org_id = d.org_id` in their duplicate guards and `and
@@ -87,8 +91,11 @@
 -- FILE before any DDL if there are any: nothing is deleted, reassigned or
 -- repaired here, and no constraint is ever added NOT VALID by this file. It
 -- also refuses if any of the four bodies, or their attributes (definer,
--- search_path, volatility, EXECUTE grants), are not the ones this file
--- restates them from — an unrecorded hand edit is not overwritten. Hosted,
+-- search_path, volatility, argument list and defaults — cron calls
+-- raise_lead_sla_tasks() on its p_minutes DEFAULT 60 — strictness, parallel
+-- safety, leakproof, EXECUTE grants), are not the ones this file restates
+-- them from — an unrecorded hand edit is not overwritten. Comments are
+-- restated, not guarded. Hosted,
 -- read-only, 2026-09-29 05:04Z: ledger 0124, 1
 -- organisation, 2 profiles, 0 reservations, 0 instalment lines, 11 leads,
 -- 0 tasks, 0 mismatches, the four bodies and attributes exactly as 0124 /
@@ -106,15 +113,26 @@
 -- tasks — the order the sweeps themselves take them (each reads its parent,
 -- the instalment sweep the line before its reservation, and writes tasks
 -- last), so a sweep already running makes this file WAIT for it rather than
--- deadlock with it. What can still collide is a writer that holds tasks and
--- then checks a parent — an application task insert naming a reservation
--- (transitionReservation's follow-up, raiseLiveHoldCheck's prompt) checks its
--- key at the end of its statement — and that ends in a 40P01 deadlock: one of
--- the two is rolled back whole, cleanly. Apply outside 02:55–04:05 UTC (the
--- three reservation sweeps run at 03:45 / 03:50 / 03:55) and not within a
--- minute of a :x0 minute (raise_lead_sla_tasks runs every ten minutes), when
--- the site is quiet: a collision costs at most 5 s and a clean 55P03 or 40P01
--- rollback — then apply again, and do NOT write the ledger row. Run twice by
+-- deadlock with it. (A task insert takes a share lock only on the parents its
+-- NON-NULL keys name, at the end of its statement — measured on the local
+-- stack; among the four tables locked here, each sweep's inserts name only
+-- parents that sweep has already read.) What can still collide is a writer
+-- that holds tasks and then checks a parent — an application task insert
+-- naming a reservation (transitionReservation's follow-up, raiseLiveHoldCheck's
+-- prompt) checks its key at the end of its statement — or one statement that
+-- takes reservations before its lines (an admin's DELETE of a reservation over
+-- the API cascades into its lines; no screen sends one): either ends in a
+-- 40P01 deadlock, and one of the two is rolled back whole, cleanly (the app's
+-- follow-up prompt is then only logged, not raised). lock_timeout bounds EACH
+-- table's wait, not the statement's: the LOCK can wait up to 5 s on each of
+-- its four tables while holding the ones before it — up to about 20 s during
+-- which those tables are unreadable (the public enquiry door writes leads; the
+-- escalation sweep reads them every five minutes, the alert worker every two).
+-- Apply outside 02:55–04:05 UTC (the three reservation sweeps run at 03:45 /
+-- 03:50 / 03:55) and not within a minute of a :x0 minute (raise_lead_sla_tasks
+-- runs every ten minutes), when the site is quiet: a collision costs that wait
+-- and a clean 55P03 or 40P01 rollback — then apply again, and do NOT write the
+-- ledger row. Run twice by
 -- mistake, the file aborts in its preflight (the bodies are no longer the old
 -- ones) and changes nothing.
 --
@@ -141,7 +159,9 @@
 -- verify-restore migrations pin FORWARD (one more ledger row), remove its 0125
 -- rows, remove the new test file (its tests marked RED at 0124 fail on the
 -- rolled-back catalogue), revert the docs. No data moves either way: every
--- row valid at 0125 is valid at 0124.
+-- row valid at 0125 is valid at 0124. Roll 0125 back BEFORE 0124: its task
+-- key depends on 0124's reservations_org_id_id_key, so 0124's own rollback
+-- stops at that drop (2BP01, changing nothing) while 0125 is in place.
 --
 -- NOT CHANGED HERE (BACKLOG): tasks.contact_id and tasks.property_id stay
 -- single-column. property_id could follow now (since 0124 every sweep writer
@@ -198,14 +218,15 @@ begin
 
   -- the functions this file restates must be the ones it restates them FROM:
   -- the body (md5) AND the attributes CREATE OR REPLACE and the grants below
-  -- would silently reset — definer, search_path, volatility, EXECUTE grants
+  -- would silently reset — definer, search_path, volatility, the argument list
+  -- with its defaults, strictness, parallel safety, leakproof, EXECUTE grants
   for f in
     select * from (values
-      ('warn_expiring_reservations', 'public.warn_expiring_reservations(uuid)',   'ad1f48646a22f8b1bd9ae0acdd8de11a', '0124'),
-      ('remind_due_installments',    'public.remind_due_installments(uuid)',      '8be21b0e317d1c46ff3a0316e9dff40c', '0124'),
-      ('raise_lead_sla_tasks',       'public.raise_lead_sla_tasks(uuid, integer)', '292c1cd4e14cdfe5fcb4d29ecf33d895', '0124'),
-      ('expire_reservations',        'public.expire_reservations()',              'b7cdb54d68a76c5f2e1a3383391e85b4', '0090')
-    ) as t(name, sig, expect, src)
+      ('warn_expiring_reservations', 'public.warn_expiring_reservations(uuid)',   'ad1f48646a22f8b1bd9ae0acdd8de11a', '0124', 'p_org uuid DEFAULT NULL::uuid'),
+      ('remind_due_installments',    'public.remind_due_installments(uuid)',      '8be21b0e317d1c46ff3a0316e9dff40c', '0124', 'p_org uuid DEFAULT NULL::uuid'),
+      ('raise_lead_sla_tasks',       'public.raise_lead_sla_tasks(uuid, integer)', '292c1cd4e14cdfe5fcb4d29ecf33d895', '0124', 'p_org uuid DEFAULT NULL::uuid, p_minutes integer DEFAULT 60'),
+      ('expire_reservations',        'public.expire_reservations()',              'b7cdb54d68a76c5f2e1a3383391e85b4', '0090', '')
+    ) as t(name, sig, expect, src, args)
   loop
     select md5(replace(p.prosrc, E'\r', '')) into v_md5 from pg_proc p where p.oid = to_regprocedure(f.sig);
     if v_md5 is distinct from f.expect then
@@ -215,11 +236,13 @@ begin
     end if;
     if not exists (select 1 from pg_proc p
                     where p.oid = to_regprocedure(f.sig) and p.prosecdef
-                      and p.proconfig = array['search_path=public'] and p.provolatile = 'v')
+                      and p.proconfig = array['search_path=public'] and p.provolatile = 'v'
+                      and pg_get_function_arguments(p.oid) = f.args
+                      and not p.proisstrict and p.proparallel = 'u' and not p.proleakproof)
        or has_function_privilege('anon', to_regprocedure(f.sig), 'execute')
        or has_function_privilege('authenticated', to_regprocedure(f.sig), 'execute')
        or not has_function_privilege('service_role', to_regprocedure(f.sig), 'execute') then
-      raise exception '0125 aborted: %''s attributes (SECURITY DEFINER, search_path, volatility or EXECUTE grants) are not the ones 0125 expects on this database — nothing was changed. '
+      raise exception '0125 aborted: %''s attributes (SECURITY DEFINER, search_path, volatility, arguments, strictness, parallel safety, leakproof or EXECUTE grants) are not the ones 0125 expects on this database — nothing was changed. '
                       'This file would reset them; compare them with %''s and decide before applying',
                       f.name, f.src;
     end if;
@@ -673,12 +696,12 @@ begin
       select 1 from pg_constraint k
        where k.conrelid = 'public.tasks'::regclass and k.confrelid = c.ref and k.contype = 'f'
          and k.conname = c.name and k.convalidated
-         and k.confdeltype::text = c.del and k.confupdtype = 'a' and k.confmatchtype = 's'
+         and k.confdeltype::text = c.del and k.confupdtype = 'a' and k.confmatchtype = 's' and not k.condeferrable
          and (select array_agg(a.attname order by x.ord) from unnest(k.conkey) with ordinality x(attnum, ord)
                 join pg_attribute a on a.attrelid = k.conrelid and a.attnum = x.attnum) = c.cols
          and (select array_agg(a.attname order by x.ord) from unnest(k.confkey) with ordinality x(attnum, ord)
                 join pg_attribute a on a.attrelid = k.confrelid and a.attnum = x.attnum) = array['org_id','id']::name[]) then
-      raise exception '0125 aborted: % is not % -> % (org_id, id), validated, delete rule %, NO ACTION on update, MATCH SIMPLE', c.name, c.cols, c.ref, c.del;
+      raise exception '0125 aborted: % is not % -> % (org_id, id), validated, delete rule %, NO ACTION on update, MATCH SIMPLE, not deferrable', c.name, c.cols, c.ref, c.del;
     end if;
     if exists (select 1 from pg_constraint where conrelid = 'public.tasks'::regclass and conname = c.old) then
       raise exception '0125 aborted: the single-column % is still there (two relationships would make PostgREST embeds ambiguous)', c.old;
@@ -730,15 +753,17 @@ begin
     raise exception '0125 aborted: an earlier tenant-bound key (0119–0121, 0124) is missing, not validated, or changed';
   end if;
 
-  -- the four sweeps: one overload each; definer, search_path, return type and
-  -- volatility kept; nothing else moved relative to the old body; the ACLs
+  -- the four sweeps: one overload each; definer, search_path, return type,
+  -- volatility, arguments and flags kept; nothing else moved relative to the
+  -- old body — each body minus exactly ITS OWN added lines (another
+  -- function's line in it would not be removed, and would fail the md5); the ACLs
   for c in
     select * from (values
-      ('warn_expiring_reservations', 'public.warn_expiring_reservations(uuid)',    'void', 'ad1f48646a22f8b1bd9ae0acdd8de11a'),
-      ('remind_due_installments',    'public.remind_due_installments(uuid)',       'void', '8be21b0e317d1c46ff3a0316e9dff40c'),
-      ('raise_lead_sla_tasks',       'public.raise_lead_sla_tasks(uuid, integer)', 'int4', '292c1cd4e14cdfe5fcb4d29ecf33d895'),
-      ('expire_reservations',        'public.expire_reservations()',               'void', 'b7cdb54d68a76c5f2e1a3383391e85b4')
-    ) as t(name, sig, ret, old_md5)
+      ('warn_expiring_reservations', 'public.warn_expiring_reservations(uuid)',    'void', 'ad1f48646a22f8b1bd9ae0acdd8de11a', 'p_org uuid DEFAULT NULL::uuid',                                array[k_guard, k_warn]),
+      ('remind_due_installments',    'public.remind_due_installments(uuid)',       'void', '8be21b0e317d1c46ff3a0316e9dff40c', 'p_org uuid DEFAULT NULL::uuid',                                array[k_guard, k_remind]),
+      ('raise_lead_sla_tasks',       'public.raise_lead_sla_tasks(uuid, integer)', 'int4', '292c1cd4e14cdfe5fcb4d29ecf33d895', 'p_org uuid DEFAULT NULL::uuid, p_minutes integer DEFAULT 60', array[k_sla]),
+      ('expire_reservations',        'public.expire_reservations()',               'void', 'b7cdb54d68a76c5f2e1a3383391e85b4', '',                                                             array[k_expire])
+    ) as t(name, sig, ret, old_md5, args, lines)
   loop
     select count(*) into n from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
      where ns.nspname = 'public' and p.proname = c.name;
@@ -748,12 +773,20 @@ begin
     select p.prosrc into src from pg_proc p
      where p.oid = to_regprocedure(c.sig)
        and p.prosecdef and p.proconfig = array['search_path=public']
-       and p.prorettype::regtype::text = (c.ret)::regtype::text and p.provolatile = 'v';
+       and p.prorettype::regtype::text = (c.ret)::regtype::text and p.provolatile = 'v'
+       and pg_get_function_arguments(p.oid) = c.args
+       and not p.proisstrict and p.proparallel = 'u' and not p.proleakproof;
     if src is null then
-      raise exception '0125 aborted: % lost SECURITY DEFINER, its search_path, its return type or its volatility', c.name;
+      raise exception '0125 aborted: % lost SECURITY DEFINER, its search_path, its return type, its volatility, its arguments or its flags', c.name;
     end if;
     src := replace(src, E'\r', '');
-    if md5(replace(replace(replace(replace(replace(replace(src, k_guard, ''), k_warn, ''), k_remind, ''), k_sla, ''), k_expire, ''), k_sla_new, k_sla_old)) <> c.old_md5 then
+    for n in 1 .. cardinality(c.lines) loop
+      src := replace(src, c.lines[n], '');
+    end loop;
+    if c.name = 'raise_lead_sla_tasks' then
+      src := replace(src, k_sla_new, k_sla_old);
+    end if;
+    if md5(src) <> c.old_md5 then
       raise exception '0125 aborted: % is not its old body plus exactly 0125''s lines', c.name;
     end if;
     if has_function_privilege('anon', to_regprocedure(c.sig), 'execute')

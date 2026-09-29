@@ -36,12 +36,25 @@ export const K0125 = {
   slaGuardNew: "where t.lead_id = l.id and t.org_id = l.org_id and t.kind = 'lead_unanswered')",
 } as const;
 
-/** A body with 0125's lines taken out (and the SLA guard put back): must be the 0124 / 0090 one. */
-export function strip0125(body: string) {
-  return [K0125.guard, K0125.warnHeal, K0125.remindHeal, K0125.slaHeal, K0125.expireHeal]
-    .reduce((b, k) => b.split(k).join(""), body)
-    .split(K0125.slaGuardNew)
-    .join(K0125.slaGuardOld);
+/** Each function's own added lines — only these may come out of ITS body. */
+const LINES_0125: Record<keyof typeof SIG_0125, string[]> = {
+  warn: [K0125.guard, K0125.warnHeal],
+  remind: [K0125.guard, K0125.remindHeal],
+  sla: [K0125.slaHeal],
+  expire: [K0125.expireHeal],
+};
+
+/**
+ * A body with 0125's lines taken out (and the SLA guard put back): must be the
+ * 0124 / 0090 one. With `fn`, only THAT function's lines come out — another
+ * function's line in the body then survives and fails the caller's md5. Without
+ * it (0124's test file, which strips before comparing with 0052 / 0098), every
+ * 0125 line comes out.
+ */
+export function strip0125(body: string, fn?: keyof typeof SIG_0125) {
+  const lines = fn ? LINES_0125[fn] : [K0125.guard, K0125.warnHeal, K0125.remindHeal, K0125.slaHeal, K0125.expireHeal];
+  const out = lines.reduce((b, k) => b.split(k).join(""), body);
+  return !fn || fn === "sla" ? out.split(K0125.slaGuardNew).join(K0125.slaGuardOld) : out;
 }
 
 /**
