@@ -7,6 +7,7 @@ import { Client } from "pg";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createTestUser, ensureTestOrg, serviceClient, type TestUser } from "./helpers";
 import { REVERT_0125_SQL, strip0125 } from "./revert-0125";
+import { REVERT_0126_SQL, stripContactJoin0126 } from "./revert-0126";
 
 /**
  * 0124: a reservation holds a property of its own organisation, an instalment
@@ -221,21 +222,25 @@ async function bodyOf(sig: string) {
 
 /**
  * The body with 0124's lines taken out (and the SLA select swapped back): must
- * be the old one. 0125's task-side lines, which sit in three of these bodies
- * since then, come out first (revert-0125.ts; a no-op on a 0124 body).
+ * be the old one. 0126's contact join (revert-0126.ts) and 0125's task-side
+ * lines (revert-0125.ts), which sit in some of these bodies since then, come
+ * out first, newest first — each a no-op on a body without them.
  */
 function strip(body: string) {
-  return strip0125(body).split(K.pr).join("").split(K.ri).join("").split(K.lead).join("").split(K.prev).join("").split(K.slaNew).join(K.slaOld);
+  return strip0125(stripContactJoin0126(body))
+    .split(K.pr).join("").split(K.ri).join("").split(K.lead).join("").split(K.prev).join("").split(K.slaNew).join(K.slaOld);
 }
 
 const md5 = async (s: string) => (await o.query<{ m: string }>("select md5($1) as m", [s])).rows[0]!.m;
 
 /**
  * 0123's catalogue for this file's objects, inside the caller's transaction.
- * 0125 comes off first: its task keys depend on reservations_org_id_id_key,
- * and its lines sit in the bodies restored below (a no-op at 0124).
+ * 0126 and then 0125 come off first: 0125's task keys depend on
+ * reservations_org_id_id_key, and both files' lines sit in the bodies
+ * restored below (each a no-op on a database without it).
  */
 async function revertTo0123() {
+  await o.query(REVERT_0126_SQL);
   await o.query(REVERT_0125_SQL);
   await o.query(`
     alter table public.reservation_installments drop constraint reservation_installments_org_reservation_fkey;

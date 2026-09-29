@@ -7,6 +7,7 @@ import { Client } from "pg";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { VIEWING_EXPORT_SELECT } from "@/lib/services/viewing-export";
 import { createTestUser, ensureTestOrg, serviceClient, type TestUser } from "./helpers";
+import { REVERT_0126_SQL, strip0126 } from "./revert-0126";
 
 /**
  * 0123: a viewing belongs to the organisation of the property it shows and
@@ -213,8 +214,14 @@ async function sweepParents() {
   };
 }
 
-/** 0122's catalogue for this file's objects, inside the caller's transaction. */
+/**
+ * 0122's catalogue for this file's objects, inside the caller's transaction.
+ * 0126 comes off first: its two contact keys depend on contacts_org_id_id_key,
+ * and its two retention lines sit in the sweep body restored below (a no-op
+ * on a database without it).
+ */
 async function revertTo0122() {
+  await o.query(REVERT_0126_SQL);
   await o.query(`
     alter table public.viewings drop constraint viewings_org_property_fkey;
     alter table public.viewings drop constraint viewings_org_contact_fkey;
@@ -716,7 +723,8 @@ describe("the catalogue: two tenant-bound, validated relationships; the sweep's 
     expect(code).toMatch(/join properties p on p\.id = v\.property_id\s+and p\.org_id = v\.org_id\s+where v\.status = 'no_show'/);
     expect(code).not.toMatch(/current_org_id/);
     expect(r.src.split(ORG_LINE).length - 1, "the line is added exactly twice").toBe(2);
-    const { rows: m } = await o.query<{ m: string }>("select md5($1) as m", [r.src.split(ORG_LINE).join("")]);
+    // 0126's two retention lines (revert-0126.ts) come out first — a no-op on a 0123 body
+    const { rows: m } = await o.query<{ m: string }>("select md5($1) as m", [strip0126(r.src, "cfn").split(ORG_LINE).join("")]);
     expect(m[0]!.m, "without the two lines, the body is 0078's").toBe(MD5_0078);
   });
 });

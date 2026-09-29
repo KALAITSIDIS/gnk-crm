@@ -7,6 +7,7 @@ import { Client } from "pg";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createTestUser, ensureTestOrg, serviceClient, type TestUser } from "./helpers";
 import { K0125, MD5_0124, REVERT_0125_SQL, SIG_0125 as SIG, strip0125 } from "./revert-0125";
+import { REVERT_0126_SQL, stripContactJoin0126 } from "./revert-0126";
 
 /**
  * 0125: a task belongs to the organisation of the reservation, instalment line
@@ -244,8 +245,15 @@ const KEYS_0124 = [
   { conname: "tasks_reservation_id_fkey", def: "FOREIGN KEY (reservation_id) REFERENCES reservations(id) ON DELETE CASCADE", convalidated: true },
 ];
 
-/** 0124's catalogue for this file's objects, inside the caller's transaction. */
-const revertTo0124 = () => o.query(REVERT_0125_SQL);
+/**
+ * 0124's catalogue for this file's objects, inside the caller's transaction.
+ * 0126 comes off first: its contact join sits in two of the bodies restored
+ * (a no-op on a database without it).
+ */
+const revertTo0124 = async () => {
+  await o.query(REVERT_0126_SQL);
+  await o.query(REVERT_0125_SQL);
+};
 
 beforeAll(async () => {
   svc = serviceClient();
@@ -744,7 +752,8 @@ describe("the catalogue: three tenant-bound, validated relationships; the four s
     expect([occurrences(raw.sla, K0125.slaGuardNew), occurrences(raw.sla, K0125.slaHeal)]).toEqual([1, 1]);
     expect(occurrences(raw.expire, K0125.expireHeal)).toBe(1);
     for (const [k, sig] of Object.entries(SIG) as [keyof typeof SIG, string][]) {
-      expect(await md5(strip0125(await bodyOf(sig), k)), `${k}: 0124's / 0090's body plus exactly ITS 0125 lines`).toBe(MD5_0124[k]);
+      // 0126's contact join (warn, remind) comes out first — a no-op on the other two
+      expect(await md5(strip0125(stripContactJoin0126(await bodyOf(sig)), k)), `${k}: 0124's / 0090's body plus exactly ITS 0125 lines`).toBe(MD5_0124[k]);
       // every organisation in one run: row by row, never the session's
       expect(await bodyOf(sig), k).not.toMatch(/current_org_id\(\)/);
     }

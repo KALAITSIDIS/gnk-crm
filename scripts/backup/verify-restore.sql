@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 125::bigint as migrations,
+    2::bigint as auth_users, 126::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -468,6 +468,32 @@ misc as (
            where (t.reservation_id is not null and not exists (select 1 from reservations r where r.id = t.reservation_id))
               or (t.installment_id is not null and not exists (select 1 from reservation_installments i where i.id = t.installment_id))
               or (t.lead_id is not null and not exists (select 1 from leads l where l.id = t.lead_id)))
+  union all
+  -- 0126: a reservation's contact, and a task's contact and property, are of
+  -- its own organisation — same reason as the rows above; a mismatch is also
+  -- what the retention sweep's guard and self-heal (and, for a hold, the two
+  -- reservation sweeps' contact copy) would read across organisations if
+  -- their 0126 predicates were ever lost.
+  select 'INTEGRITY: no reservation names a contact of another organisation (0126)', '0',
+         (select count(*)::text from reservations r join contacts c on c.id = r.contact_id where r.org_id <> c.org_id)
+  union all
+  select 'INTEGRITY: no task names a contact of another organisation (0126)', '0',
+         (select count(*)::text from tasks t join contacts c on c.id = t.contact_id where t.org_id <> c.org_id)
+  union all
+  select 'INTEGRITY: no task names a property of another organisation (0126)', '0',
+         (select count(*)::text from tasks t join properties p on p.id = t.property_id where t.org_id <> p.org_id)
+  union all
+  -- 0126: and none names one that does not exist — 0125's reason: a row that
+  -- escaped the composite keys is neither cleared (SET NULL) nor refused by
+  -- its parent's delete, and a replica-mode restore loads a dangling id past
+  -- the key; the joins above cannot see either.
+  select 'INTEGRITY: no reservation or task names a contact or property that does not exist (0126)', '0',
+         (select count(*)::text from (
+             select 1 from reservations r where r.contact_id is not null and not exists (select 1 from contacts c where c.id = r.contact_id)
+           union all
+             select 1 from tasks t
+              where (t.contact_id is not null and not exists (select 1 from contacts c where c.id = t.contact_id))
+                 or (t.property_id is not null and not exists (select 1 from properties p where p.id = t.property_id))) x)
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.
