@@ -2757,9 +2757,8 @@ VERIFY, run before starting.
   `reservations.property_id` / `reservation_installments.reservation_id` / `leads.property_id` since 0124 ("The
   reservation, instalment and lead-SLA sweeps copy another organisation's property" below — FIXED and LANDED
   2026-09-29): hosted is at 0124, so every sweep writer of `tasks.property_id` reads through a tenant-bound parent and
-  that key can follow. ~~`reservation_id`, `installment_id` and `lead_id`~~ **FIXED on branch
-  `fix/task-reservation-lead-org-isolation` (2026-09-29, migration 0125) — NOT YET LANDED: hosted apply and merge each
-  wait for the operator's word.** DECISIONS `T-task-reservation-lead-org-isolation`: `tasks (org_id, reservation_id)` on
+  that key can follow. ~~`reservation_id`, `installment_id` and `lead_id`~~ **FIXED and LANDED
+  2026-09-29 (hosted 0125 first, then PR #78 → main `2bad473`, deployed).** DECISIONS `T-task-reservation-lead-org-isolation`: `tasks (org_id, reservation_id)` on
   0124's `reservations_org_id_id_key` and `(org_id, installment_id)` on a new `reservation_installments_org_id_id_key`
   (both ON DELETE CASCADE, kept), `(org_id, lead_id)` on 0101's `leads_org_id_id_key` (NO ACTION, kept), each replacing
   its single-column key; `t.org_id = <parent>.org_id` in `warn_expiring_reservations`', `remind_due_installments`' and
@@ -2868,7 +2867,7 @@ VERIFY, run before starting.
   hop), `raise_lead_sla_tasks` (which also copies the property it READ) and `preview_lead_escalation` (a fourth reader
   the mapping found: a B admin saw A's reference). MEASURED at 0123 first (20 behavioural and catalogue tests RED).
   Left open, recorded: the task-side links (the "Every other `tasks.*` link" entry above — reservation_id /
-  installment_id / lead_id since FIXED on their branch, migration 0125), `reservations.
+  installment_id / lead_id since FIXED and LANDED, migration 0125), `reservations.
   contact_id` / `deal_id` / `offer_id` / `payment_plan_id`, `leads.contact_id` (a pinned FK-name embed hint),
   `leads.converted_deal_id`, the profile links, and `createLead` (below). (original) Found by
   T-viewing-parent-org-isolation's review and confirmed by two independent read-only traces of the LATEST definitions
