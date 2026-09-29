@@ -172,6 +172,12 @@ function settled<T>(p: Promise<T>) {
   const tracked = p.finally(() => {
     done = true;
   });
+  // Handled at creation. A blocked close's refusal can land in the same
+  // event-loop turn as the COMMIT that releases it — before the caller
+  // reaches value() — and Node reports that rejection unhandled, which fails
+  // the whole vitest run with every test green (CI run 36474616830, main
+  // e45bd74). value() still returns `tracked`, so callers see the rejection.
+  tracked.catch(() => {});
   return { done: () => done, value: () => tracked };
 }
 

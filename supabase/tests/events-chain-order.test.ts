@@ -84,6 +84,11 @@ function settled<T>(p: Promise<T>): { done: () => boolean; value: () => Promise<
   const tracked = p.finally(() => {
     done = true;
   });
+  // Handled at creation (deal-close.test.ts's settled(), where the race was
+  // measured): a blocked insert that errors as its lock is released would
+  // otherwise be reported unhandled before the caller reaches value(), and
+  // fail the vitest run. value() still returns `tracked`.
+  tracked.catch(() => {});
   return { done: () => done, value: () => tracked };
 }
 
