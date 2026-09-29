@@ -2725,7 +2725,7 @@ VERIFY, run before starting.
 - **Every other `tasks.*` link is org-blind, and so is every sweep's parent join, S/M.** `mandate_id`,
   `reservation_id`, `installment_id`, `lead_id`, `contact_id` and `property_id` on `tasks` reference their parent by
   id alone (the parents' `(org_id, id)` keys: properties 0088, leads 0101, deals / viewings / mandates 0119–0121,
-  contacts 0123, reservations 0124 — reservation_installments still has none), and every supersede arm
+  contacts 0123, reservations 0124, reservation_installments 0125), and every supersede arm
   joins tasks to its parent without an org predicate: `create_followup_nudges` arm 4c (0078), `expire_mandates`
   (0053), `raise_key_recall_tasks` (0091), `expire_reservations` (0090), `warn_expiring_reservations` /
   `remind_due_installments` (0052), `raise_lead_sla_tasks` (0098). Same class as the two fixed above, one migration
@@ -2757,22 +2757,26 @@ VERIFY, run before starting.
   `reservations.property_id` / `reservation_installments.reservation_id` / `leads.property_id` since 0124 ("The
   reservation, instalment and lead-SLA sweeps copy another organisation's property" below — FIXED and LANDED
   2026-09-29): hosted is at 0124, so every sweep writer of `tasks.property_id` reads through a tenant-bound parent and
-  that key can follow. **NEXT, and measured by 0124's review (code-traced, not reproduced against a database):**
-  `reservation_id`, `installment_id` and `lead_id`, in 0121's shape, one file. A B task naming A's hold, line or lead
-  (201 — `tasks_insert` checks only org and role) is matched by `warn_expiring_reservations`' guard and self-heal,
-  `remind_due_installments`' guard and self-heal, `raise_lead_sla_tasks`' guard and self-heal (0124 restated all three
-  bodies and left these task-side joins as they were) and `expire_reservations`' superseded arm (0090): it suppresses
-  A's reminder — PERMANENTLY for the lead SLA, whose guard is "one task per lead, ever" — and is completed by A's state,
-  so B learns A's hold state and exact expiry date, A's line being paid or rescheduled, A's first response; the
-  instalment self-heal also writes A's typed line LABEL into B's chain. Fix: `tasks (org_id, reservation_id)` on 0124's
-  `reservations_org_id_id_key`, `(org_id, lead_id)` on 0101's `leads_org_id_id_key`, `(org_id, installment_id)` on a new
-  `reservation_installments (org_id, id)` key (tasks.reservation_id / installment_id are ON DELETE CASCADE — keep it),
-  and `t.org_id = <parent>.org_id` in every guard and self-heal named above; pin RED first. ORDER MATTERS for
-  `contact_id` too: both reservation sweeps copy `r.contact_id` into `tasks.contact_id`, and `reservations.contact_id`
+  that key can follow. ~~`reservation_id`, `installment_id` and `lead_id`~~ **FIXED on branch
+  `fix/task-reservation-lead-org-isolation` (2026-09-29, migration 0125) — NOT YET LANDED: hosted apply and merge each
+  wait for the operator's word.** DECISIONS `T-task-reservation-lead-org-isolation`: `tasks (org_id, reservation_id)` on
+  0124's `reservations_org_id_id_key` and `(org_id, installment_id)` on a new `reservation_installments_org_id_id_key`
+  (both ON DELETE CASCADE, kept), `(org_id, lead_id)` on 0101's `leads_org_id_id_key` (NO ACTION, kept), each replacing
+  its single-column key; `t.org_id = <parent>.org_id` in `warn_expiring_reservations`', `remind_due_installments`' and
+  `raise_lead_sla_tasks`' guards and self-heals and in `expire_reservations`' superseded arm. Measured at 0124 first
+  (15 of the new file's tests RED): B's task on A's hold, line or lead accepted (and an existence oracle); B's row
+  suppressed A's reservation and instalment reminders and A's lead-SLA reminder (the last for good); A's hold moving or
+  lapsing, A's line being paid, A's lead being answered each completed B's row into B's chain — the instalment one with
+  A's line LABEL. (original, measured by 0124's review, code-traced) A B task naming A's hold, line or lead (201 —
+  `tasks_insert` checks only org and role) was matched by those guards and self-heals and suppressed A's reminder or
+  was completed by A's state. What stays open on `tasks`: `contact_id` and `property_id`. ORDER MATTERS for
+  `contact_id`: both reservation sweeps copy `r.contact_id` into `tasks.contact_id`, and `reservations.contact_id`
   (ON DELETE SET NULL) still points by id alone — a `tasks (org_id, contact_id)` key must wait for a `reservations
   (org_id, contact_id)` key (`on delete set null (contact_id)`), or one B hold naming an A contact aborts both sweeps.
+  `property_id` can follow now (every sweep writer reads it through a tenant-bound parent since 0124); `create_followup_nudges`
+  arm 4c (0078) is the remaining sweep join named in this entry's first paragraph.
   **VERIFY:** `grep -hoE "add constraint tasks_org_[a-z]+_fkey" supabase/migrations/*.sql | sort -u | wc -l` — fewer
-  than 8 (deal, viewing, mandate, reservation, installment, lead, contact, property) means open; 3 today. (Counts only the adds; check that no later migration drops one.)
+  than 8 (deal, viewing, mandate, reservation, installment, lead, contact, property) means open; 6 at 0125. (Counts only the adds; check that no later migration drops one.)
 - ~~**A viewing's own parent links are organisation-blind, S.**~~ **FIXED and LANDED 2026-09-28 (hosted 0123 first,
   then PR #75 → main `e45bd74`, deployed).** DECISIONS
   `T-viewing-parent-org-isolation`: `viewings (org_id, property_id) → properties (org_id, id)` and `viewings (org_id,
@@ -2863,7 +2867,8 @@ VERIFY, run before starting.
   oracle); the org predicate in `warn_expiring_reservations`, `remind_due_installments` (mint, self-heal and property
   hop), `raise_lead_sla_tasks` (which also copies the property it READ) and `preview_lead_escalation` (a fourth reader
   the mapping found: a B admin saw A's reference). MEASURED at 0123 first (20 behavioural and catalogue tests RED).
-  Left open, recorded: the task-side links (the "Every other `tasks.*` link" entry above — NEXT), `reservations.
+  Left open, recorded: the task-side links (the "Every other `tasks.*` link" entry above — reservation_id /
+  installment_id / lead_id since FIXED on their branch, migration 0125), `reservations.
   contact_id` / `deal_id` / `offer_id` / `payment_plan_id`, `leads.contact_id` (a pinned FK-name embed hint),
   `leads.converted_deal_id`, the profile links, and `createLead` (below). (original) Found by
   T-viewing-parent-org-isolation's review and confirmed by two independent read-only traces of the LATEST definitions
@@ -2923,6 +2928,18 @@ VERIFY, run before starting.
   on the caller's client before the insert, "That deal is no longer available to you." on a miss. Found by
   T-task-deal-org-isolation's scouting. **VERIFY:** `grep -c "That deal is no longer available to you"
   lib/actions/reservations.ts` — 0 means open.
+- **A client-chosen primary key is an existence oracle on every table users insert into, S (reasoned, not
+  reproduced).** PostgREST lets an insert or upsert carry its own `id`, `authenticated` holds table-level INSERT (so
+  the `id` column too), and a primary key is checked across ALL organisations before any policy can hide the row: B
+  posting `{id: X, org_id: B, …}` to `leads` (or `reservations`, `reservation_installments`, `tasks`, …) gets 23505
+  `*_pkey` exactly when X exists in some organisation, and an upsert answers 42501 (a row it may not update) vs 201.
+  So after 0119–0125 closed the existence oracles THROUGH the foreign keys, B can still ask the primary key directly
+  whether A's lead, hold or line id exists — it learns existence only, never content, and needs the id first. Fix, per
+  table or once: column-level INSERT grants that omit `id` (the app never sends one — verify per table), or a BEFORE
+  INSERT trigger that overwrites `id` for `authenticated`. Found by T-task-reservation-lead-org-isolation's review.
+  **VERIFY:** `select count(*) from information_schema.column_privileges where grantee = 'authenticated' and
+  column_name = 'id' and privilege_type = 'INSERT' and table_schema = 'public'` — non-zero means open (measure it
+  first: the number today is not recorded here).
 - **NOTE — `create_followup_nudges` steps 1 and 3 still join tasks to deals by `deal_id` alone (0078), and arms 2 / 2b
   / 4 / 4b join tasks to viewings by `viewing_id` alone.** With `tasks_org_deal_fkey` (0119) and
   `tasks_org_viewing_fkey` (0120) VALIDATED they can meet no cross-organisation row, so neither migration touched the
