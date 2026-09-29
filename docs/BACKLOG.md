@@ -2755,8 +2755,8 @@ VERIFY, run before starting.
   and LANDED (0122), so `mandates.property_id` — the ORDER MATTERS case for a `tasks.property_id` key — is constrained.
   So is `viewings.property_id` since 0123 ("A viewing's own parent links" below, FIXED and LANDED 2026-09-28), and
   `reservations.property_id` / `reservation_installments.reservation_id` / `leads.property_id` since 0124 ("The
-  reservation, instalment and lead-SLA sweeps copy another organisation's property" below — FIXED on its branch, NOT
-  yet landed): once 0124 is on hosted, every sweep writer of `tasks.property_id` reads through a tenant-bound parent and
+  reservation, instalment and lead-SLA sweeps copy another organisation's property" below — FIXED and LANDED
+  2026-09-29): hosted is at 0124, so every sweep writer of `tasks.property_id` reads through a tenant-bound parent and
   that key can follow. **NEXT, and measured by 0124's review (code-traced, not reproduced against a database):**
   `reservation_id`, `installment_id` and `lead_id`, in 0121's shape, one file. A B task naming A's hold, line or lead
   (201 — `tasks_insert` checks only org and role) is matched by `warn_expiring_reservations`' guard and self-heal,
@@ -2848,15 +2848,14 @@ VERIFY, run before starting.
     `payment_plans.project_id`, `price_history.property_id`, `price_list_items.unit_id`, `price_lists.project_id`,
     `properties.parent_id`, `share_link_properties.property_id`, `tasks.property_id`, `unit_types.project_id`
     (`unit_types` already has an entry above; `viewings.property_id` was the thirteenth — 0123, landed 2026-09-28;
-    `reservations.property_id` and `leads.property_id` the twelfth and eleventh — 0124, on its branch, not yet
-    landed). Whether each is writable cross-organisation depends on its policies — not yet read.
+    `reservations.property_id` and `leads.property_id` the twelfth and eleventh — 0124, landed
+    2026-09-29). Whether each is writable cross-organisation depends on its policies — not yet read.
     `properties_org_id_id_key` (0088) is the referenced side for all of them.
   **VERIFY:** `grep -c "org_property_fkey\|org_owner_contact_fkey" supabase/migrations/*.sql` rising, and
   `select count(*) from pg_constraint where contype = 'f' and confrelid = 'public.properties'::regclass and
   array_length(conkey, 1) = 1` — 13 at 0122, 12 at 0123, 10 at 0124 (each measured on the local stack).
-- ~~**The reservation, instalment and lead-SLA sweeps copy another organisation's property, S/M.**~~ **FIXED on branch
-  `fix/reservation-lead-property-org-isolation` (2026-09-29, migration 0124) — NOT YET LANDED: hosted apply and merge
-  each wait for the operator's word.** DECISIONS `T-reservation-lead-property-org-isolation`: `reservations (org_id,
+- ~~**The reservation, instalment and lead-SLA sweeps copy another organisation's property, S/M.**~~ **FIXED and LANDED 2026-09-29 (hosted
+  0124 first, then PR #77 → main `f646a9b`, deployed).** DECISIONS `T-reservation-lead-property-org-isolation`: `reservations (org_id,
   property_id)` (ON DELETE RESTRICT), `reservation_installments (org_id, reservation_id)` (ON DELETE CASCADE) and `leads
   (org_id, property_id)` composite keys, each replacing its single-column key, on 0088's `properties_org_id_id_key` and
   a new `reservations_org_id_id_key`; `reservations_one_live_per_property` re-keyed `(org_id, property_id)` and the
