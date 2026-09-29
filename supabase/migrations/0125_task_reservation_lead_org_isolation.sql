@@ -7,7 +7,7 @@
 -- installment_id and lead_id, the NEXT that 0124's review named; reproduced
 -- 2026-09-29 against 8a9aef6 on the local stack at 0124, through PostgREST
 -- with aal2 sessions of two throwaway organisations, and pinned RED first by
--- supabase/tests/task-reservation-lead-org-isolation.test.ts — its 15
+-- supabase/tests/task-reservation-lead-org-isolation.test.ts — its 16
 -- behavioural and catalogue tests marked "RED at 0124" failed at 0124; its
 -- migration-file tests need this file itself):
 --
@@ -56,12 +56,12 @@
 --      indexes stay (they serve lookups by the parent id alone). tasks has no
 --      unique index but its primary key (measured; the assertion below refuses
 --      any unique index naming one of these columns without org_id), so no
---      23505 can answer before these keys' 23503. A cross-organisation id and a missing
---      id now read the same 23503 — no existence oracle through THESE THREE
---      task columns (tasks.contact_id / property_id stay single-column, and
---      each parent's own primary key still answers a client-chosen id with
---      23505 — BACKLOG). The constraints bind EVERY writer, service_role and
---      definer bodies included.
+--      23505 can answer before these keys' 23503. A cross-organisation id
+--      and a missing id now read the same 23503 — no existence oracle
+--      through THESE THREE task columns (tasks.contact_id / property_id stay
+--      single-column, and each parent's own primary key still answers a
+--      client-chosen id with 23505 — BACKLOG). The constraints bind EVERY
+--      writer, service_role and definer bodies included.
 --
 --   B. THE SWEEPS. warn_expiring_reservations and remind_due_installments
 --      gain `and t.org_id = d.org_id` in their duplicate guards and `and
@@ -95,12 +95,11 @@
 -- raise_lead_sla_tasks() on its p_minutes DEFAULT 60 — strictness, parallel
 -- safety, leakproof, EXECUTE grants), are not the ones this file restates
 -- them from — an unrecorded hand edit is not overwritten. Comments are
--- restated, not guarded. Hosted,
--- read-only, 2026-09-29 05:04Z: ledger 0124, 1
--- organisation, 2 profiles, 0 reservations, 0 instalment lines, 11 leads,
--- 0 tasks, 0 mismatches, the four bodies and attributes exactly as 0124 /
--- 0090 left them, the three single-column keys; this file validates
--- trivially there.
+-- restated, not guarded. Hosted, read-only, 2026-09-29 05:04Z and
+-- 18:44Z: ledger 0124, 1 organisation, 2 profiles, 0 reservations, 0
+-- instalment lines, 11 leads, 0 tasks, 0 mismatches, the four bodies,
+-- arguments and attributes exactly as 0124 / 0090 left them, the three
+-- single-column keys; this file validates trivially there.
 --
 -- A row that ever escaped the new keys (see B) is also not CASCADED: deleting
 -- A's reservation or line deletes the tasks whose (org_id, id) pair matches —
@@ -132,9 +131,8 @@
 -- 03:50 / 03:55) and not within a minute of a :x0 minute (raise_lead_sla_tasks
 -- runs every ten minutes), when the site is quiet: a collision costs that wait
 -- and a clean 55P03 or 40P01 rollback — then apply again, and do NOT write the
--- ledger row. Run twice by
--- mistake, the file aborts in its preflight (the bodies are no longer the old
--- ones) and changes nothing.
+-- ledger row. Run twice by mistake, the file aborts in its preflight (the
+-- bodies are no longer the old ones) and changes nothing.
 --
 -- DEPLOY ORDER: ADDITIVE — hosted before the merge. Every writer of the three
 -- columns takes org_id and the parent id from the same organisation: the
