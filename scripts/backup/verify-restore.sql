@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 124::bigint as migrations,
+    2::bigint as auth_users, 125::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -445,6 +445,29 @@ misc as (
   union all
   select 'INTEGRITY: no lead names a property of another organisation (0124)', '0',
          (select count(*)::text from leads l join properties p on p.id = l.property_id where l.org_id <> p.org_id)
+  union all
+  -- 0125: a task's reservation, instalment line and lead are of its own
+  -- organisation — same reason as the rows above; a mismatch is also what the
+  -- four sweeps' guards and self-heals would read across organisations if
+  -- their 0125 predicates were ever lost.
+  select 'INTEGRITY: no task names a reservation of another organisation (0125)', '0',
+         (select count(*)::text from tasks t join reservations r on r.id = t.reservation_id where t.org_id <> r.org_id)
+  union all
+  select 'INTEGRITY: no task names an instalment line of another organisation (0125)', '0',
+         (select count(*)::text from tasks t join reservation_installments i on i.id = t.installment_id where t.org_id <> i.org_id)
+  union all
+  select 'INTEGRITY: no task names a lead of another organisation (0125)', '0',
+         (select count(*)::text from tasks t join leads l on l.id = t.lead_id where t.org_id <> l.org_id)
+  union all
+  -- 0125: and none names one that does not exist. A row that escaped the
+  -- composite keys is not cascaded by its parent's delete (its (org_id, id)
+  -- pair matches no parent), and a replica-mode restore loads a dangling id
+  -- past the key as readily as a foreign one; the joins above cannot see either.
+  select 'INTEGRITY: no task names a reservation, instalment line or lead that does not exist (0125)', '0',
+         (select count(*)::text from tasks t
+           where (t.reservation_id is not null and not exists (select 1 from reservations r where r.id = t.reservation_id))
+              or (t.installment_id is not null and not exists (select 1 from reservation_installments i where i.id = t.installment_id))
+              or (t.lead_id is not null and not exists (select 1 from leads l where l.id = t.lead_id)))
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.
