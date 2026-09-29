@@ -994,11 +994,11 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "leads_property_id_fkey"
-            columns: ["property_id"]
+            foreignKeyName: "leads_org_property_fkey"
+            columns: ["org_id", "property_id"]
             isOneToOne: false
             referencedRelation: "properties"
-            referencedColumns: ["id"]
+            referencedColumns: ["org_id", "id"]
           },
         ]
       }
@@ -2202,11 +2202,11 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "reservation_installments_reservation_id_fkey"
-            columns: ["reservation_id"]
+            foreignKeyName: "reservation_installments_org_reservation_fkey"
+            columns: ["org_id", "reservation_id"]
             isOneToOne: false
             referencedRelation: "reservations"
-            referencedColumns: ["id"]
+            referencedColumns: ["org_id", "id"]
           },
         ]
       }
@@ -2308,17 +2308,17 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "reservations_org_property_fkey"
+            columns: ["org_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["org_id", "id"]
+          },
+          {
             foreignKeyName: "reservations_payment_plan_id_fkey"
             columns: ["payment_plan_id"]
             isOneToOne: false
             referencedRelation: "payment_plans"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "reservations_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "properties"
             referencedColumns: ["id"]
           },
         ]

@@ -2724,7 +2724,8 @@ VERIFY, run before starting.
   `grep -n "offers_org_deal_fkey" supabase/migrations/*.sql` — no hit means open.
 - **Every other `tasks.*` link is org-blind, and so is every sweep's parent join, S/M.** `mandate_id`,
   `reservation_id`, `installment_id`, `lead_id`, `contact_id` and `property_id` on `tasks` reference their parent by
-  id alone (properties and leads already carry an `(org_id, id)` key; the others do not), and every supersede arm
+  id alone (the parents' `(org_id, id)` keys: properties 0088, leads 0101, deals / viewings / mandates 0119–0121,
+  contacts 0123, reservations 0124 — reservation_installments still has none), and every supersede arm
   joins tasks to its parent without an org predicate: `create_followup_nudges` arm 4c (0078), `expire_mandates`
   (0053), `raise_key_recall_tasks` (0091), `expire_reservations` (0090), `warn_expiring_reservations` /
   `remind_due_installments` (0052), `raise_lead_sla_tasks` (0098). Same class as the two fixed above, one migration
@@ -2752,10 +2753,24 @@ VERIFY, run before starting.
   A's reminder, and the nightly self-heal completed every planted row dated on any day but A's expiry — an oracle on
   A's expiry date.** Its follow-on, "A mandate's and a key's own parent links are organisation-blind" below, is FIXED
   and LANDED (0122), so `mandates.property_id` — the ORDER MATTERS case for a `tasks.property_id` key — is constrained.
-  So is `viewings.property_id` since 0123 ("A viewing's own parent links" below, FIXED and LANDED 2026-09-28).
-  **That is NOT yet enough for a `tasks.property_id` key:** three more sweeps copy a property into it through links that
-  still point by id alone — see "The reservation, instalment and lead-SLA sweeps copy another organisation's property"
-  below, which must land first.
+  So is `viewings.property_id` since 0123 ("A viewing's own parent links" below, FIXED and LANDED 2026-09-28), and
+  `reservations.property_id` / `reservation_installments.reservation_id` / `leads.property_id` since 0124 ("The
+  reservation, instalment and lead-SLA sweeps copy another organisation's property" below — FIXED on its branch, NOT
+  yet landed): once 0124 is on hosted, every sweep writer of `tasks.property_id` reads through a tenant-bound parent and
+  that key can follow. **NEXT, and measured by 0124's review (code-traced, not reproduced against a database):**
+  `reservation_id`, `installment_id` and `lead_id`, in 0121's shape, one file. A B task naming A's hold, line or lead
+  (201 — `tasks_insert` checks only org and role) is matched by `warn_expiring_reservations`' guard and self-heal,
+  `remind_due_installments`' guard and self-heal, `raise_lead_sla_tasks`' guard and self-heal (0124 restated all three
+  bodies and left these task-side joins as they were) and `expire_reservations`' superseded arm (0090): it suppresses
+  A's reminder — PERMANENTLY for the lead SLA, whose guard is "one task per lead, ever" — and is completed by A's state,
+  so B learns A's hold state and exact expiry date, A's line being paid or rescheduled, A's first response; the
+  instalment self-heal also writes A's typed line LABEL into B's chain. Fix: `tasks (org_id, reservation_id)` on 0124's
+  `reservations_org_id_id_key`, `(org_id, lead_id)` on 0101's `leads_org_id_id_key`, `(org_id, installment_id)` on a new
+  `reservation_installments (org_id, id)` key (tasks.reservation_id / installment_id are ON DELETE CASCADE — keep it),
+  and `t.org_id = <parent>.org_id` in every guard and self-heal named above; pin RED first. ORDER MATTERS for
+  `contact_id` too: both reservation sweeps copy `r.contact_id` into `tasks.contact_id`, and `reservations.contact_id`
+  (ON DELETE SET NULL) still points by id alone — a `tasks (org_id, contact_id)` key must wait for a `reservations
+  (org_id, contact_id)` key (`on delete set null (contact_id)`), or one B hold naming an A contact aborts both sweeps.
   **VERIFY:** `grep -hoE "add constraint tasks_org_[a-z]+_fkey" supabase/migrations/*.sql | sort -u | wc -l` — fewer
   than 8 (deal, viewing, mandate, reservation, installment, lead, contact, property) means open; 3 today. (Counts only the adds; check that no later migration drops one.)
 - ~~**A viewing's own parent links are organisation-blind, S.**~~ **FIXED and LANDED 2026-09-28 (hosted 0123 first,
@@ -2829,17 +2844,29 @@ VERIFY, run before starting.
     deleting it (A's erasure / purge would remove the files, then fail on the row, 23503).
   * `key_movements.key_id` → property_keys(id): any B staff member can INSERT a movement naming A's key id (an
     oracle), and A deleting that key cascades B's append-only rows.
-  * Twelve more links onto `properties(id)` are single-column: `deals.property_id`, `leads.property_id`,
-    `offers.property_id`, `payment_plans.project_id`, `price_history.property_id`, `price_list_items.unit_id`,
-    `price_lists.project_id`, `properties.parent_id`, `reservations.property_id`, `share_link_properties.property_id`,
-    `tasks.property_id`, `unit_types.project_id` (`unit_types` already has an entry above; `viewings.property_id` was the
-    thirteenth — 0123, landed 2026-09-28). Whether each is writable cross-organisation depends on its
-    policies — not yet read, except `reservations.property_id` and `leads.property_id` (see "The reservation, instalment
-    and lead-SLA sweeps" below). `properties_org_id_id_key` (0088) is the referenced side for all of them.
+  * Ten more links onto `properties(id)` are single-column: `deals.property_id`, `offers.property_id`,
+    `payment_plans.project_id`, `price_history.property_id`, `price_list_items.unit_id`, `price_lists.project_id`,
+    `properties.parent_id`, `share_link_properties.property_id`, `tasks.property_id`, `unit_types.project_id`
+    (`unit_types` already has an entry above; `viewings.property_id` was the thirteenth — 0123, landed 2026-09-28;
+    `reservations.property_id` and `leads.property_id` the twelfth and eleventh — 0124, on its branch, not yet
+    landed). Whether each is writable cross-organisation depends on its policies — not yet read.
+    `properties_org_id_id_key` (0088) is the referenced side for all of them.
   **VERIFY:** `grep -c "org_property_fkey\|org_owner_contact_fkey" supabase/migrations/*.sql` rising, and
   `select count(*) from pg_constraint where contype = 'f' and confrelid = 'public.properties'::regclass and
-  array_length(conkey, 1) = 1` — 13 at 0122, 12 at 0123 (measured on the local stack).
-- **The reservation, instalment and lead-SLA sweeps copy another organisation's property, S/M.** Found by
+  array_length(conkey, 1) = 1` — 13 at 0122, 12 at 0123, 10 at 0124 (each measured on the local stack).
+- ~~**The reservation, instalment and lead-SLA sweeps copy another organisation's property, S/M.**~~ **FIXED on branch
+  `fix/reservation-lead-property-org-isolation` (2026-09-29, migration 0124) — NOT YET LANDED: hosted apply and merge
+  each wait for the operator's word.** DECISIONS `T-reservation-lead-property-org-isolation`: `reservations (org_id,
+  property_id)` (ON DELETE RESTRICT), `reservation_installments (org_id, reservation_id)` (ON DELETE CASCADE) and `leads
+  (org_id, property_id)` composite keys, each replacing its single-column key, on 0088's `properties_org_id_id_key` and
+  a new `reservations_org_id_id_key`; `reservations_one_live_per_property` re-keyed `(org_id, property_id)` and the
+  schedule's position rule `(org_id, reservation_id, sort_order)` (both answered 23505 first — a denial and an
+  oracle); the org predicate in `warn_expiring_reservations`, `remind_due_installments` (mint, self-heal and property
+  hop), `raise_lead_sla_tasks` (which also copies the property it READ) and `preview_lead_escalation` (a fourth reader
+  the mapping found: a B admin saw A's reference). MEASURED at 0123 first (20 behavioural and catalogue tests RED).
+  Left open, recorded: the task-side links (the "Every other `tasks.*` link" entry above — NEXT), `reservations.
+  contact_id` / `deal_id` / `offer_id` / `payment_plan_id`, `leads.contact_id` (a pinned FK-name embed hint),
+  `leads.converted_deal_id`, the profile links, and `createLead` (below). (original) Found by
   T-viewing-parent-org-isolation's review and confirmed by two independent read-only traces of the LATEST definitions
   (catalogue- and code-level; NOT reproduced against a database). Three nightly / periodic sweeps still copy a property
   into `tasks.property_id` and its reference into the title through org-blind joins:
@@ -2864,6 +2891,13 @@ VERIFY, run before starting.
   `(org_id, property_id)`, and `p.org_id = <parent>.org_id` (plus `r.org_id = i.org_id`) in the three sweeps; pin RED
   first. **VERIFY:** `grep -nE "reservations_org_property_fkey|leads_org_property_fkey" supabase/migrations/*.sql` — no
   hit means open.
+- **`createLead` creates the contact before the lead and never re-reads the property, XS.** `lib/actions/leads.ts`
+  inserts a new contact (when the form asks for one) and only then the lead, whose `property_id` is the form's value
+  with no RLS re-read. Since 0124 a crafted foreign or missing `property_id` is refused 23503 — but the contact is
+  already created, so the refused lead leaves an orphan contact, and the action shows the raw constraint message.
+  Needs a crafted request (the picker lists only the caller's properties). Fix: re-read the property under RLS first,
+  as `createReservation` does, and answer "That property is no longer available to you." Found by 0124's mapping.
+  **VERIFY:** `grep -n 'from("properties")' lib/actions/leads.ts` inside `createLead` — no hit means open.
 - **The contact merge repoints rows of OTHER organisations, S.** `mergeContacts` proves both contacts are in the
   caller's org (`lib/actions/merge-contacts.ts`), then repoints every referencing table on the ADMIN client with only
   `.eq("contact_id", duplicateId)` — viewings, tasks, leads, deals, reservations, offers and the rest. Because those
