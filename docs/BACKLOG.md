@@ -2723,9 +2723,8 @@ VERIFY, run before starting.
   Left out of 0119 on purpose (its scope was tasks and the reminder trigger). **VERIFY:**
   `grep -n "offers_org_deal_fkey" supabase/migrations/*.sql` — no hit means open.
 - ~~**Every other `tasks.*` link is org-blind, and so is every sweep's parent join, S/M.**~~ **ALL SIX LINKS FIXED —
-  the last two (`contact_id`, `property_id`, with `reservations.contact_id` before them and arms 2c / 4c) on branch
-  `fix/task-contact-property-org-isolation` (2026-09-29, migration 0126) — NOT YET LANDED: hosted apply and merge each
-  wait for the operator's word.** See the end of this entry. (original) `mandate_id`,
+  the last two (`contact_id`, `property_id`, with `reservations.contact_id` before them and arms 2c / 4c) — LANDED
+  2026-09-30 (hosted 0126 first, then PR #80 → main `a52b433`, deployed; migration 0126).** See the end of this entry. (original) `mandate_id`,
   `reservation_id`, `installment_id`, `lead_id`, `contact_id` and `property_id` on `tasks` reference their parent by
   id alone (the parents' `(org_id, id)` keys: properties 0088, leads 0101, deals / viewings / mandates 0119–0121,
   contacts 0123, reservations 0124, reservation_installments 0125), and every supersede arm
@@ -2771,8 +2770,8 @@ VERIFY, run before starting.
   lapsing, A's line being paid, A's lead being answered each completed B's row into B's chain — the instalment one with
   A's line LABEL. (original, measured by 0124's review, code-traced) A B task naming A's hold, line or lead (201 —
   `tasks_insert` checks only org and role) was matched by those guards and self-heals and suppressed A's reminder or
-  was completed by A's state. ~~What stays open on `tasks`: `contact_id` and `property_id`.~~ **FIXED on branch
-  `fix/task-contact-property-org-isolation` (2026-09-29, migration 0126) — NOT YET LANDED.** DECISIONS
+  was completed by A's state. ~~What stays open on `tasks`: `contact_id` and `property_id`.~~ **FIXED and LANDED
+  2026-09-30 (hosted 0126 first, then PR #80 → main `a52b433`, deployed).** DECISIONS
   `T-task-contact-property-org-isolation`: `reservations (org_id, contact_id) → contacts (org_id, id)` ON DELETE SET
   NULL (contact_id) FIRST, then `tasks (org_id, contact_id) → contacts (org_id, id)` and `tasks (org_id, property_id) →
   properties (org_id, id)` (NO ACTION, kept), on 0123's `contacts_org_id_id_key` / 0088's `properties_org_id_id_key`,
@@ -2866,7 +2865,7 @@ VERIFY, run before starting.
     `properties.parent_id`, `share_link_properties.property_id`, `unit_types.project_id`
     (`unit_types` already has an entry above; `viewings.property_id` was the thirteenth — 0123, landed 2026-09-28;
     `reservations.property_id` and `leads.property_id` the twelfth and eleventh — 0124, landed
-    2026-09-29; `tasks.property_id` the tenth — 0126, on its branch). Whether each is writable cross-organisation
+    2026-09-29; `tasks.property_id` the tenth — 0126, landed 2026-09-30). Whether each is writable cross-organisation
     depends on its policies — not yet read. `properties_org_id_id_key` (0088) is the referenced side for all of them.
   **VERIFY:** `grep -c "org_property_fkey\|org_owner_contact_fkey" supabase/migrations/*.sql` rising, and
   `select count(*) from pg_constraint where contype = 'f' and confrelid = 'public.properties'::regclass and
@@ -2883,7 +2882,7 @@ VERIFY, run before starting.
   the mapping found: a B admin saw A's reference). MEASURED at 0123 first (20 behavioural and catalogue tests RED).
   Left open, recorded: the task-side links (the "Every other `tasks.*` link" entry above — reservation_id /
   installment_id / lead_id since FIXED and LANDED, migration 0125), ~~`reservations.
-  contact_id`~~ (0126, on its branch) / `deal_id` / `offer_id` / `payment_plan_id`, `leads.contact_id` (a pinned FK-name embed hint),
+  contact_id`~~ (0126, landed) / `deal_id` / `offer_id` / `payment_plan_id`, `leads.contact_id` (a pinned FK-name embed hint),
   `leads.converted_deal_id`, the profile links, and `createLead` (below). (original) Found by
   T-viewing-parent-org-isolation's review and confirmed by two independent read-only traces of the LATEST definitions
   (catalogue- and code-level; NOT reproduced against a database). Three nightly / periodic sweeps still copy a property
@@ -2921,7 +2920,7 @@ VERIFY, run before starting.
   `.eq("contact_id", duplicateId)` — viewings, tasks, leads, deals, reservations, offers and the rest. Because those
   `contact_id` columns are organisation-blind, a row of B that names A's duplicate contact (plantable as above) is
   rewritten by A's merge. (Since 0123 — landed 2026-09-28 — `viewings.contact_id` is bound to the contact's
-  organisation, and since 0126 — on its branch — so are `reservations.contact_id` and `tasks.contact_id`, so those
+  organisation, and since 0126 — landed 2026-09-30 — so are `reservations.contact_id` and `tasks.contact_id`, so those
   three repoints can no longer meet a row of B; `leads.contact_id`, `deals.buyer_contact_id` / `seller_contact_id`,
   `offers.contact_id`, `share_links.contact_id`, `buyer_requirements.contact_id`, `mandates.owner_contact_id`,
   `properties.owner_contact_id` / `developer_contact_id` and `contacts.merged_into_id` still can — 10 single-column
@@ -2974,7 +2973,7 @@ VERIFY, run before starting.
   `and t.org_id = s.org_id` to step 1's `not exists` in the same migration — the nightly sweep runs as postgres for
   every organisation at once and would otherwise complete a mismatched row across organisations with a null actor
   (step 3), or let one suppress a legitimate reminder (step 1). The retention arms are NOT in this note: 2c's guard and
-  4c's self-heal carry `t.org_id` since 0126 (on its branch), because `tasks.contact_id` had no tenant key until then
+  4c's self-heal carry `t.org_id` since 0126 (landed 2026-09-30), because `tasks.contact_id` had no tenant key until then
   and the gap was measured (DECISIONS `T-task-contact-property-org-isolation`).
 - **Offers stay editable on a closed deal, S.** `updateOfferStatus` never checks the deal's status (only
   `saveOffer` does), so an offer still `submitted` / `countered` on a won or lost deal can be accepted,
