@@ -85,10 +85,15 @@ async function merge(dup: Record<string, unknown>) {
   logEvent.mockClear();
   state.admin = fakeClient({
     // the two reads (primary, then duplicate), the archive, the merged_into
-    // repoint, the backfill — the rest default to an empty, error-free page
+    // repoint, the backfill — the rest default to an empty, error-free page.
+    // The archive and the backfill must each report the row they wrote: a
+    // zero-row write is refused rather than reported as a merge.
     contacts: [
       { data: primary, error: null },
       { data: dup, error: null },
+      { data: [{ id: "dup-1" }], error: null },
+      { data: [], error: null },
+      { data: [{ id: "pri-1" }], error: null },
     ],
   }).client;
   state.caller = fakeClient({}).client;

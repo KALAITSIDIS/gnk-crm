@@ -2855,7 +2855,8 @@ VERIFY, run before starting.
     role, INFERRED from the policy text, not reproduced) would assign B's reminder to A's agent, who cannot see it.
   * `mandates.owner_contact_id` → contacts(id) (contacts has had an `(org_id, id)` key since 0123 — the text here
     predates it; `saveMandate` copies the form's
-    id): an oracle on contact ids, and A's contact merge then rewrites B's mandate (see the merge entry below).
+    id): an oracle on contact ids. Since T-contact-merge-org-isolation (2026-09-30) A's contact merge no longer
+    rewrites such a B mandate — it keeps pointing at A's archived duplicate (see the ten-links entry below).
   * `mandates.signed_document_id` → documents(id), NO ACTION: INFERRED — a B mandate naming A's document would stop A
     deleting it (A's erasure / purge would remove the files, then fail on the row, 23503).
   * `key_movements.key_id` → property_keys(id): any B staff member can INSERT a movement naming A's key id (an
@@ -2915,7 +2916,17 @@ VERIFY, run before starting.
   Needs a crafted request (the picker lists only the caller's properties). Fix: re-read the property under RLS first,
   as `createReservation` does, and answer "That property is no longer available to you." Found by 0124's mapping.
   **VERIFY:** `grep -n 'from("properties")' lib/actions/leads.ts` inside `createLead` — no hit means open.
-- **The contact merge repoints rows of OTHER organisations, S.** `mergeContacts` proves both contacts are in the
+- ~~**The contact merge repoints rows of OTHER organisations, S.**~~ **FIXED 2026-09-30 on branch
+  `fix/contact-merge-org-isolation` (built and tested locally; NOT merged, NOT deployed).** DECISIONS
+  `T-contact-merge-org-isolation`. Reproduced first through the real action on the local stack at 0126 (two
+  throwaway orgs, aal2 sessions): B's admin POSTed a lead naming A's duplicate (accepted), and A's merge rewrote
+  all eleven B references (the ten single-column links plus a B contact document) onto A's primary. Every
+  service-role query in `mergeContacts` (2 reads, the archive, 14 repoints, the backfill) now carries
+  `.eq("org_id", orgId)` with `orgId = profile.orgId`; a zero-row archive or backfill is refused instead of
+  reported as a merge. Foreign rows are left as they are. The ten single-column links themselves stay open —
+  a B row can still NAME A's contact (an existence oracle; the open entry "Ten links onto `contacts` are still
+  single-column" below). (original)
+  `mergeContacts` proves both contacts are in the
   caller's org (`lib/actions/merge-contacts.ts`), then repoints every referencing table on the ADMIN client with only
   `.eq("contact_id", duplicateId)` — viewings, tasks, leads, deals, reservations, offers and the rest. Because those
   `contact_id` columns are organisation-blind, a row of B that names A's duplicate contact (plantable as above) is
@@ -2928,6 +2939,40 @@ VERIFY, run before starting.
   `tests/unit/merge-repoints-every-fk.test.ts` to fail on a repoint without it. Found by
   T-task-viewing-org-isolation's review. **VERIFY:** `grep -c 'eq("org_id"' lib/actions/merge-contacts.ts` — fewer
   than the number of `.from(` repoints means open.
+- **Ten links onto `contacts` are still single-column, S/M.** `leads.contact_id`, `deals.buyer_contact_id` /
+  `seller_contact_id`, `offers.contact_id`, `share_links.contact_id`, `buyer_requirements.contact_id`,
+  `mandates.owner_contact_id`, `properties.owner_contact_id` / `developer_contact_id` and `contacts.merged_into_id`
+  reference `contacts(id)` alone (measured at 0126 from `pg_constraint`; `viewings`, `reservations` and `tasks` are
+  bound to the contact's organisation since 0123 / 0126). MEASURED for leads: B's admin `POST /leads` naming A's
+  contact is accepted (T-contact-merge-org-isolation's DB test) — an existence oracle on A's contact ids (accepted vs
+  23503), and the B row then shows a contact B cannot read. Since T-contact-merge-org-isolation an A merge no longer
+  rewrites such rows; they keep pointing at A's archived duplicate. Fix: `(org_id, <col>) → contacts (org_id, id)`
+  keys on `contacts_org_id_id_key`, each replacing its single-column key, with a preflight for existing mismatches —
+  one migration or several, as 0123–0126 did; `contacts.merged_into_id` needs `(org_id, merged_into_id)`.
+  **VERIFY:** `select count(*) from pg_constraint where contype = 'f' and confrelid = 'public.contacts'::regclass
+  and array_length(conkey, 1) = 1` — 10 at 0126; anything above 0 means open.
+- **Two concurrent merges of one duplicate both succeed and split its rows, S (pre-existing, not reproduced).**
+  `mergeContacts` guards "already archived" only with its earlier READ; the archive UPDATE has no
+  `is_archived = false` predicate, so two requests D→P1 and D→P2 inside one round trip both archive D (the later
+  wins `merged_into_id`), each of the fourteen repoints moves D's rows to whichever request reaches that table first,
+  and both primaries get a `merged` event. A→B and B→A at once leaves a `merged_into_id` cycle. Needs two admins (or
+  two dialogs) within milliseconds. Fix: `.eq("is_archived", false)` on the non-resuming archive, so the loser meets
+  the existing zero-row refusal. Found by T-contact-merge-org-isolation's review.
+  **VERIFY:** `grep -n 'eq("is_archived", false)' lib/actions/merge-contacts.ts` — no hit means open.
+- **Re-running a COMPLETED merge logs its `merged` / `archived` events again, S (pre-existing).** `resuming =
+  duplicate.is_archived && merged_into_id === primaryId` is just as true after a merge that finished, so a replayed
+  POST moves nothing, skips the empty backfill, reports success and appends a second pair of events to the
+  append-only chain (ids only — nothing leaks; the timeline shows the merge twice). Fix: log the events only when
+  something was archived or moved, or check for an existing `merged` event naming the pair. Found by
+  T-contact-merge-org-isolation's review. **VERIFY:** re-run a finished merge in
+  `supabase/tests/contact-merge-org-isolation.test.ts` and count the pair's events.
+- **A merge leaves contact-level `interaction_notes` on the duplicate, S/M (INFERRED; one of two reviewers
+  upheld it).** The repoint list moves `documents` (`entity_type = 'contact'`) but not `interaction_notes`
+  (`entity_type = 'contact'`, `entity_id` = the contact). The contact page still shows them (the timeline follows
+  `merged_into_id`), but erasing the PRIMARY redacts notes on the primary and its leads only — a conversation note
+  logged on the merged-away duplicate keeps its body until the duplicate is erased as well. Decide whether notes
+  move with a merge (like documents) or erasure follows `merged_into_id`. Found by T-contact-merge-org-isolation's
+  review. **VERIFY:** `grep -n 'from("interaction_notes")' lib/actions/merge-contacts.ts lib/actions/contact-erasure.ts`.
 - **A viewing slip can name another organisation's viewing, S (inferred, not reproduced).** `viewing_slips_insert`
   admits an ADMIN of the caller's org without checking that `viewing_id` belongs to that org (the agent arm does, by
   requiring the viewing's `agent_id`), and `viewing_slips.viewing_id` references `viewings(id)` alone with

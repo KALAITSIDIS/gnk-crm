@@ -75,10 +75,19 @@ export async function mergeContacts(
     return { error: "Only admins can merge contacts", mergedAt: null };
   }
 
+  // EVERY service-role query below carries `.eq("org_id", orgId)`, and orgId
+  // is the caller's PROFILE org — never anything from the form. The service
+  // role bypasses RLS, so proving the two contacts are ours constrains nothing
+  // else: ten links onto `contacts` are still single-column, a row of another
+  // organisation may name our duplicate, and an unscoped repoint rewrote it
+  // onto our primary — which that organisation could then read through its own
+  // row (T-contact-merge-org-isolation). Such foreign rows are left exactly as
+  // they are; repairing them is not this action's business.
+  const orgId = profile.orgId;
   const admin = createAdminClient();
   const [{ data: primary }, { data: duplicate }] = await Promise.all([
-    admin.from("contacts").select("*").eq("id", primaryId).maybeSingle(),
-    admin.from("contacts").select("*").eq("id", duplicateId).maybeSingle(),
+    admin.from("contacts").select("*").eq("id", primaryId).eq("org_id", orgId).maybeSingle(),
+    admin.from("contacts").select("*").eq("id", duplicateId).eq("org_id", orgId).maybeSingle(),
   ]);
   if (!primary || !duplicate) return { error: "Contact not found", mergedAt: null };
   if (primary.org_id !== profile.orgId || duplicate.org_id !== profile.orgId) {
@@ -97,11 +106,15 @@ export async function mergeContacts(
   // 1. archive duplicate first — frees the partial unique phone index so the
   //    primary can inherit the number when backfilling
   if (!resuming) {
-    const { error: archiveErr } = await admin
+    const { data: archived, error: archiveErr } = await admin
       .from("contacts")
       .update({ is_archived: true, merged_into_id: primaryId })
-      .eq("id", duplicateId);
+      .eq("id", duplicateId)
+      .eq("org_id", orgId)
+      .select("id");
     if (archiveErr) return { error: archiveErr.message, mergedAt: null };
+    // zero rows = the duplicate vanished since the read; nothing moved yet
+    if (!archived?.length) return { error: "Contact not found", mergedAt: null };
   }
 
   // 2. repoint operational references (all idempotent — filter by duplicateId)
@@ -116,42 +129,77 @@ export async function mergeContacts(
   // `tests/unit/merge-repoints-every-fk.test.ts` re-derives the list from the
   // migrations and fails if a new table is added and forgotten here.
   const repoints: Promise<{ error: { message: string } | null }>[] = [
-    admin.from("leads").update({ contact_id: primaryId }).eq("contact_id", duplicateId),
-    admin.from("deals").update({ buyer_contact_id: primaryId }).eq("buyer_contact_id", duplicateId),
+    admin
+      .from("leads")
+      .update({ contact_id: primaryId })
+      .eq("org_id", orgId)
+      .eq("contact_id", duplicateId),
+    admin
+      .from("deals")
+      .update({ buyer_contact_id: primaryId })
+      .eq("org_id", orgId)
+      .eq("buyer_contact_id", duplicateId),
     admin
       .from("deals")
       .update({ seller_contact_id: primaryId })
+      .eq("org_id", orgId)
       .eq("seller_contact_id", duplicateId),
-    admin.from("viewings").update({ contact_id: primaryId }).eq("contact_id", duplicateId),
+    admin
+      .from("viewings")
+      .update({ contact_id: primaryId })
+      .eq("org_id", orgId)
+      .eq("contact_id", duplicateId),
     admin
       .from("buyer_requirements")
       .update({ contact_id: primaryId })
+      .eq("org_id", orgId)
       .eq("contact_id", duplicateId),
-    admin.from("reservations").update({ contact_id: primaryId }).eq("contact_id", duplicateId),
-    admin.from("share_links").update({ contact_id: primaryId }).eq("contact_id", duplicateId),
-    admin.from("offers").update({ contact_id: primaryId }).eq("contact_id", duplicateId),
-    admin.from("tasks").update({ contact_id: primaryId }).eq("contact_id", duplicateId),
+    admin
+      .from("reservations")
+      .update({ contact_id: primaryId })
+      .eq("org_id", orgId)
+      .eq("contact_id", duplicateId),
+    admin
+      .from("share_links")
+      .update({ contact_id: primaryId })
+      .eq("org_id", orgId)
+      .eq("contact_id", duplicateId),
+    admin
+      .from("offers")
+      .update({ contact_id: primaryId })
+      .eq("org_id", orgId)
+      .eq("contact_id", duplicateId),
+    admin
+      .from("tasks")
+      .update({ contact_id: primaryId })
+      .eq("org_id", orgId)
+      .eq("contact_id", duplicateId),
     admin
       .from("mandates")
       .update({ owner_contact_id: primaryId })
+      .eq("org_id", orgId)
       .eq("owner_contact_id", duplicateId),
     admin
       .from("properties")
       .update({ owner_contact_id: primaryId })
+      .eq("org_id", orgId)
       .eq("owner_contact_id", duplicateId),
     admin
       .from("properties")
       .update({ developer_contact_id: primaryId })
+      .eq("org_id", orgId)
       .eq("developer_contact_id", duplicateId),
     admin
       .from("documents")
       .update({ entity_id: primaryId })
+      .eq("org_id", orgId)
       .eq("entity_type", "contact")
       .eq("entity_id", duplicateId),
     // contacts previously merged into the duplicate follow it to the primary
     admin
       .from("contacts")
       .update({ merged_into_id: primaryId })
+      .eq("org_id", orgId)
       .eq("merged_into_id", duplicateId)
       .neq("id", duplicateId),
   ] as unknown as Promise<{ error: { message: string } | null }>[];
@@ -167,13 +215,17 @@ export async function mergeContacts(
   // 3. backfill empty primary fields from the duplicate (pure + idempotent)
   const { updates: backfill, dropped } = buildMergeBackfill(primary, duplicate);
   if (Object.keys(backfill).length > 0) {
-    const { error: backfillErr } = await admin
+    const { data: filled, error: backfillErr } = await admin
       .from("contacts")
       .update(backfill)
-      .eq("id", primaryId);
-    if (backfillErr) {
+      .eq("id", primaryId)
+      .eq("org_id", orgId)
+      .select("id");
+    // zero rows = the primary vanished since the read: say so, never "merged"
+    if (backfillErr || !filled?.length) {
+      const why = backfillErr?.message ?? "The primary contact was not found";
       return {
-        error: `${backfillErr.message} — the duplicate is already archived; run the merge again to finish.`,
+        error: `${why} — the duplicate is already archived; run the merge again to finish.`,
         mergedAt: null,
       };
     }
