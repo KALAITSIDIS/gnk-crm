@@ -1134,7 +1134,13 @@ explicit direction.
   AND resolves a pasted Google Maps link, short links included, which is faster
   than dragging a pin.
 
-- **Leaked-password protection is disabled — ASSESSED 2026-08-28 AND IT IS NOT
+- **Leaked-password protection — RE-OPENED 2026-09-30: users now choose their own passwords, S.** The
+  2026-08-28 assessment below rested on "no change-password UI anywhere"; that UI exists now
+  (`app/(app)/security/page.tsx` → `ChangePasswordForm` → `lib/actions/account.ts` `updateUser({ password })`), which
+  is exactly the condition the entry named for re-opening. Fix, still free (no Pro): the HIBP Pwned Passwords range
+  API from `changePassword` — k-anonymity, first 5 chars of the SHA-1 only. Found by the 2026-09-30 triage.
+  **VERIFY:** `grep -n "pwnedpasswords" lib/actions/account.ts` — no hit means open. (original, 2026-08-28:)
+  **Leaked-password protection is disabled — ASSESSED 2026-08-28 AND IT IS NOT
   A REAL GAP HERE. Do not pay for Pro to close it.**
 
   Surfaced by `get_advisors` after applying 0034 on 2026-08-21. Supabase Auth
@@ -2272,7 +2278,10 @@ Every VERIFY line in this section was RUN on 2026-09-14 before it was written.
 - **Lead escalation — activation preview. BUILT 2026-09-22 (night), migration 0112 — ON HOSTED AND MERGED THE SAME NIGHT (PR #39 → main `0b687af`, deployed; DECISIONS `T-audit-2026-09-22-escalation-preview`).** The one finding of the fifth brief still standing: the settings page could not say which enquiries switching the policy on would sweep up, nor whether the people ticked could be e-mailed. `preview_lead_escalation` (admin, aal2, own org, STABLE) evaluates the form's UNSAVED values as if on, from `lead_escalation_candidates` — the sweep's own rule, moved into one function that `raise_lead_escalations` now mints from — and the card under the form shows the policy, every recipient with a reason, the sweep's jobs against the worker's e-mails, and a bounded list of enquiries (the one whose only eligible recipient is its assignee flagged). Nothing is written or sent by a preview; Save remains the activation. VERIFY: `grep -n "preview_lead_escalation" supabase/migrations/0112_lead_escalation_preview.sql` — a hit; on hosted `select proname from pg_proc where proname = 'preview_lead_escalation'` — a row once applied. **ACTIVATED 2026-09-22 17:08Z** through this very preview-then-Save: the placeholder wait, cutoff and hours confirmed as the values, both admins as recipients. Still a decision: the daily digest — and, found at activation, **the provider's recipient constraint**: no `ENQUIRY_ALERT_FROM` on Vercel and `send.kalaitsidis.com` absent from DNS mean Resend still delivers only to the account's own address, so an escalation naming both admins would be refused whole (403); verify the domain, or keep the deliverable admin as the only recipient until then (HANDOFF §0, 2026-09-22 night ACTIVATED).
 - ~~**Arm the desk-alert sweep at its designed cadence**~~ **SHIPPED 2026-09-21 — both steps done, the operator's `pg_net` decision taken; migration 0103 (`enquiry-alerts`, the eleventh cron job) on hosted, PR #27 → main `eb916f9`, deployed; DECISIONS `T-enquiry-alerts-cron`.** 0101 is ON HOSTED and MERGED (PR #22 → `ba54f18`, 2026-09-21; production READY). Since 0101 a website enquiry's desk e-mail is a `notification_jobs` row written with the lead, sent by the enquiry route's `after()` at once and by the sweep `/api/internal/enquiry-alerts` for whatever that missed. Two operator steps arm the sweep, in order: (1) DONE 2026-09-21 — `CRON_SECRET` set in Vercel Production and the deployment redeployed (`dpl_Haf3zYzjYqyikDD9SDnZsHaKq4fA`; measured: a wrong bearer answers 401, not 503), so the DAILY Vercel cron already in `vercel.json` (06:00 UTC ±59 min, the most Hobby allows) now sweeps and a missed alert is sent within a day; (2) DONE 2026-09-21 ~18:21Z — the operator decided `pg_net` ("enable pg_net and apply 0103"); `pg_net` 0.20.3 installed on hosted, Vault `crm_url` + `cron_secret` created (the secret pasted by the operator in the dashboard, verified equal to Vercel's by digest only), `supabase/activation/0103_enquiry_alerts_cron.sql` moved into `supabase/migrations/` as **0103** with the five count pins (it is the eleventh cron job), applied per HANDOFF §3 BEFORE the merge, and the first production run observed (18:22:00Z: `cron.job_run_details` succeeded, `net._http_response` status 200 `{"ok":true,"claimed":0,…}`) — a retry now lands within two minutes, the cadence the eight-attempt schedule was written for; the daily Vercel cron stays as the second caller. VERIFY: `grep -c enquiry-alerts supabase/migrations/*.sql` → 1; on hosted `select schedule, active from cron.job where jobname = 'enquiry-alerts'` → `*/2 * * * *`, true, and `select status_code, count(*) from net._http_response group by 1` reads 200s (pg_net keeps six hours). Standing rule: `CRON_SECRET` (Vercel) and Vault's `cron_secret` are ONE value in two places — rotate both together or the sweep answers 401 every two minutes.
 - **NOTE — a website lead's `criteria` is shape-only by construction.** 0098's allowlist admits select values, short numbers-as-text, a path and campaign names; a name, e-mail, phone or message has no key and cannot be smuggled under one (`supabase/tests/enquiry-meta.test.ts`). Keep it that way: `criteria` is never rewritten by erasure or the retention sweep.
-- **VERIFY — does a website enquiry retried after a refused attempt keep its idempotency key?** Observed ONCE on production 2026-09-15 (gnk-web `8cfe9b5` → gnk-crm `1737b4f`): a /contact fill whose first two presses the meter refused (429) landed with `leads.idempotency_key` NULL although the same form JS sent `source_page` and `utm_*`; a fresh-page fill landed with the key the hidden input held. `components/enquiry-form.tsx` keeps `state = "idle"` and the same `<form>` through an error, so the code does not explain it. Reproduce locally (the meter refuses the sixth post in a quarter-hour bucket), then fix or record as not reproducible. Worst case is the pre-0096 behaviour — a retry after a lost answer makes a second lead — not a regression. VERIFY: `grep -n "enquiry_key" components/enquiry-form.tsx` in gnk-web.
+- ~~**VERIFY — does a website enquiry retried after a refused attempt keep its idempotency key?**~~ **FIXED in
+  gnk-web `f7b527f` ("one key for the life of a form, so a retry is one lead", on its main): the key lives in a
+  `useRef` and the POST reads it from there (`components/enquiry-form.tsx` `enquiryKey`). Struck 2026-09-30 by the
+  backlog triage, re-read before striking.** (original) Observed ONCE on production 2026-09-15 (gnk-web `8cfe9b5` → gnk-crm `1737b4f`): a /contact fill whose first two presses the meter refused (429) landed with `leads.idempotency_key` NULL although the same form JS sent `source_page` and `utm_*`; a fresh-page fill landed with the key the hidden input held. `components/enquiry-form.tsx` keeps `state = "idle"` and the same `<form>` through an error, so the code does not explain it. Reproduce locally (the meter refuses the sixth post in a quarter-hour bucket), then fix or record as not reproducible. Worst case is the pre-0096 behaviour — a retry after a lost answer makes a second lead — not a regression. VERIFY: `grep -n "enquiry_key" components/enquiry-form.tsx` in gnk-web.
 ## Data integrity audit — 2026-09-15
 
 Twenty findings (LST-01…10 listings and feeds, REC-01…05 record hygiene,
@@ -2453,7 +2462,8 @@ VERIFY, run before starting.
   the contact's own tasks to a fixed phrase, or leave system-built ones), then add it to the erasure run.
   Found by T-task-created-title-shape's review; not built there. **VERIFY:**
   `grep -n "tasks" lib/services/erasure-run.ts` — no hit means still open.
-- **More event payloads carry typed text by value, S/M.** Found by T-event-typed-text-shape's sweep and
+- ~~**More event payloads carry typed text by value, S/M.**~~ **ALL SIX sub-items FIXED 2026-09-24/25 (struck below);
+  the parent was never struck — done 2026-09-30.** (original) Found by T-event-typed-text-shape's sweep and
   left out of its scope on purpose (a different writer each, and the same fix shape: ids in the event, the
   text on the row, a neutral line). Each is rendered from the payload today, except where said:
   - ~~a LEAD's `lost` / `spam` reason~~ **FIXED 2026-09-24 — DECISIONS `T-lead-lost-reason-shape`: `closeLead`
@@ -2526,13 +2536,17 @@ VERIFY, run before starting.
   moves) and lines that stop reading `holder`. **Hosted (read-only, counts only, 2026-09-25): 4 key events, 2
   with a non-blank `holder`.** **VERIFY:** `grep -ln "function public.record_key_movement" supabase/migrations/*.sql |
   tail -1 | xargs grep -n "'holder', v_holder_name" | grep -v -- "--"` — a hit means still open.
-- **`record_key_movement` has no second-factor check, S (SQL).** Since 0059 `mfa_satisfied()` passes only an
+- ~~**`record_key_movement` has no second-factor check, S (SQL).**~~ **FIXED 2026-09-30 — migration 0127, DECISIONS `T-aal1-definer-boundary`: `mfa_satisfied()` first, 42501 'Second factor required.'; RED at 0126 for an aal1 admin,
+  listing manager and agent (`supabase/tests/aal1-definer-boundary.test.ts`).** (original) Since 0059 `mfa_satisfied()` passes only an
   aal2 JWT, and every RPC since 0101 refuses without it; 0013 (and 0116, which changed only the event)
   does not — an aal1 session of an active admin, agent or listing manager can move keys through
   `/rpc/record_key_movement` (the tables themselves are aal2-gated since 0029). Found by T-key-holder-shape's
   scouts, by reading; not run. **VERIFY:** `grep -ln "record_key_movement" supabase/migrations/*.sql | tail -1 |
   xargs grep -n "mfa_satisfied"` — no hit means open.
-- **Password-only (aal1) sessions reach two more definer surfaces: `next_reference` and `mandates_safe`, S (SQL).**
+- ~~**Password-only (aal1) sessions reach two more definer surfaces: `next_reference` and `mandates_safe`, S (SQL).**~~
+  **FIXED 2026-09-30 — migration 0127, DECISIONS `T-aal1-definer-boundary`: both check the second factor, `next_reference` also binds `p_org` to the
+  caller's organisation (service role unchanged), `org_mfa_status` too; a catalogue test now fails on any definer
+  function or view `authenticated` reaches without the check.** (original)
   The same class as `record_key_movement` above, found by the 2026-09-30 backlog triage's challenge round; catalog
   confirmed at 0126 (prosecdef / grants / view options read), the aal1 read MEASURED by the reviewer only.
   (1) `next_reference(p_org uuid, p_district_code text)` is SECURITY DEFINER, `authenticated` holds EXECUTE (0007
@@ -2548,12 +2562,16 @@ VERIFY, run before starting.
   on any SECURITY DEFINER function or definer view executable by `authenticated` without an aal check or a reviewed
   exemption. **VERIFY:** `select pg_get_functiondef('public.next_reference'::regproc) ~ 'mfa_satisfied'` and
   `pg_get_viewdef('public.mandates_safe'::regclass) ~ 'mfa_satisfied'` — `f` means open.
-- **A staff id that matches no active profile silently discards a typed key holder, S (SQL).**
+- ~~**A staff id that matches no active profile silently discards a typed key holder, S (SQL).**~~
+  **FIXED 2026-09-30 — migration 0127, DECISIONS `T-aal1-definer-boundary`: resolved into separate locals; measured RED at 0126 — the name was dropped and
+  checkout refused "Pick a staff member".** (original)
   `record_key_movement` sets `v_holder_name` from `p_holder_name`, then `select … into v_holder_id,
   v_holder_name` from `profiles` when an id is given — a non-STRICT SELECT INTO with no row NULLs both, so
   the comment's "the typed name, if any, is used instead" does not hold. Found by T-key-holder-shape's
   scouts, by reading PL/pgSQL semantics; not run. Kept byte-for-byte in 0116.
-- **Key movements can bypass the RPC, S.** `key_movements` still admits a direct INSERT by any staff
+- ~~**Key movements can bypass the RPC, S.**~~ **FIXED 2026-09-30 — migration 0127, DECISIONS `T-aal1-definer-boundary`: `key_movements_insert` dropped; a
+  `property_keys` trigger refuses an API user's write of status / holder (and a key born out of the office);
+  RLS test 13 now asserts the refusal.** (original) `key_movements` still admits a direct INSERT by any staff
   member (0002, a policy from the retired T4.6 app-side writer; RLS test 13 asserts it on purpose) and
   `property_keys` a direct UPDATE of the holder cache by admins and listing managers — a movement row, or
   a holder that `return` / `mark_lost` then copy, with no event. Found by T-key-holder-shape's scouts.
@@ -3144,6 +3162,14 @@ VERIFY, run before starting.
   **VERIFY:** `grep -n -A40 "export async function redactLead" lib/actions/leads.ts | grep interaction_notes`
   — no hit means still open. **VERIFY:** `grep -n "lost_reason" lib/services/erasure-run.ts
   lib/actions/contact-erasure.ts` — no hit means still open.
+- **The media importer stores a quality score 10 points low for a property with an active mandate, XS
+  (pre-existing).** `scripts/import/media.mts:277` runs as the service role and calls `recomputeQualityScore(supabase,
+  property.id)` without `{ mandateSource: "base" }`, so it reads `mandates_safe` — which the service role cannot
+  evaluate (no EXECUTE on `current_role_gnk` / `current_org_id`; measured: "permission denied for function
+  current_role_gnk"); the error is dropped, the active mandate counts as missing, and `properties.quality_score` is
+  written low until the next UI save. `scripts/import/properties.mts` and `recompute-scores.mts` already pass "base".
+  0127 does not change it (one more function in the same refused read). Found by T-aal1-definer-boundary's review.
+  **VERIFY:** `grep -n 'mandateSource' scripts/import/media.mts` — no hit means open.
 - **Dev-only audit residue, XS.** PR #82 (T-audit-fix-2026-09-30) ran `npm audit fix --package-lock-only
   --omit=dev`, which fixed the PRODUCTION copies only; CI's gate is `--omit=dev`, so it is green, but a full
   `npm audit` at `4195bae` still reports 4: brace-expansion (high — 5.0.9 under `@typescript-eslint/typescript-estree`

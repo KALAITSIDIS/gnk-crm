@@ -614,16 +614,24 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(restored.data?.[0]?.ok, "chain verifies once the version is restored").toBe(true);
   });
 
-  it("13. key_movements: append-only — staff INSERT allowed, UPDATE/DELETE denied for every role", async () => {
-    // positive: an agent records a movement (doc 04 insert row)
-    const { error: insErr } = await agentA1.client.from("key_movements").insert({
-      org_id: ORG_A,
-      key_id: keyA1,
-      action: "return",
-      holder_name: "Fixture Holder",
-      created_by: agentA1.id,
-    });
-    expect(insErr, "agent INSERT movement must succeed").toBeNull();
+  it("13. key_movements: written only by record_key_movement — direct INSERT, UPDATE and DELETE denied for every role", async () => {
+    // 0127: key_movements_insert (0002, from the retired app-side writer) is
+    // gone — a direct INSERT wrote a movement with no event and a holder the
+    // RPC never resolved. The RPC, a definer, is the only writer now
+    // (aal1-definer-boundary.test.ts proves it still writes).
+    for (const user of [adminA, agentA1, lmA]) {
+      const ins = await user.client.from("key_movements").insert({
+        org_id: ORG_A,
+        key_id: keyA1,
+        action: "return",
+        holder_name: "Forged Holder",
+        created_by: user.id,
+      });
+      expect(ins.error?.code, `${user.email} direct INSERT movement must be refused`).toBe("42501");
+    }
+    expect(
+      (await svc.from("key_movements").select("id").eq("key_id", keyA1).eq("holder_name", "Forged Holder")).data,
+    ).toEqual([]);
 
     // append-only: no role may rewrite or erase history
     for (const user of [adminA, agentA1, lmA]) {

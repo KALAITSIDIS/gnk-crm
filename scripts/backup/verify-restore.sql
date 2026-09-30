@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 126::bigint as migrations,
+    2::bigint as auth_users, 127::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -286,7 +286,10 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   -- even service_role may not call (like the definer trigger bodies above)
   ('cancel_lead_notification_jobs', true, false, false, false),
   ('protect_document_columns',     true, false, false, false),
-  ('protect_profile_columns',      true, false, false, false)
+  ('protect_profile_columns',      true, false, false, false),
+  -- 0127: status / holder of a key change only through record_key_movement;
+  -- revoked from all four roles explicitly, as 0117's guard
+  ('property_keys_movement_fields_guard', false, false, false, false)
 ),
 grants_actual as (
   select distinct p.proname::text as fn, p.prosecdef as secdef,
@@ -494,6 +497,21 @@ misc as (
              select 1 from tasks t
               where (t.contact_id is not null and not exists (select 1 from contacts c where c.id = t.contact_id))
                  or (t.property_id is not null and not exists (select 1 from properties p where p.id = t.property_id))) x)
+  union all
+  -- 0127: the definer surfaces a signed-in session reaches check the second
+  -- factor, and the key tables are written only through record_key_movement.
+  -- A restore that brought back an older schema would read aal1 through them.
+  select 'SECURITY: the 0127 definer surfaces check the second factor (3 functions + mandates_safe)', '4',
+         ((select count(*) from pg_proc p
+            where p.pronamespace = 'public'::regnamespace
+              and p.proname in ('record_key_movement', 'next_reference', 'org_mfa_status')
+              and regexp_replace(regexp_replace(regexp_replace(p.prosrc, '/\*.*?\*/', '', 'g'), '--[^\n]*', '', 'g'), '''([^'']|'''')*''', '', 'g') ~ '\mmfa_satisfied\s*\(')
+          + (pg_get_viewdef('public.mandates_safe'::regclass) ~ 'mfa_satisfied\(')::int)::text
+  union all
+  select 'SECURITY: key movements only through the RPC — no INSERT policy, the guard trigger enabled (0127)', '0 1',
+         (select count(*) from pg_policy where polrelid = 'public.key_movements'::regclass and polcmd = 'a')::text || ' ' ||
+         (select count(*) from pg_trigger where tgrelid = 'public.property_keys'::regclass
+             and tgname = 'property_keys_movement_fields_guard' and tgenabled = 'O')::text
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.
