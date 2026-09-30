@@ -39,14 +39,16 @@
 --      holder resolved into separate locals so the typed name survives an id
 --      that matches no active same-organisation profile (an active one still
 --      wins, as before).
---   B. next_reference: a caller of the API must hold the second factor and
---      draw its OWN organisation's reference. The service role (the property
---      importer, scripts/import/properties.mts) and direct database sessions
---      are unchanged. Recognised by current_setting('role') — PostgREST's SET
---      ROLE, which a definer body still sees (current_user is the owner there)
---      and which does not depend on the key format (hosted uses sb_secret_
---      keys) — measured 2026-09-30: service_role → 'service_role', a user →
---      'authenticated', a direct session → 'none'.
+--   B. next_reference: an API USER (role authenticated / anon) must hold the
+--      second factor and draw its OWN organisation's reference. The service
+--      role (the property importer, scripts/import/properties.mts) and direct
+--      database sessions are unchanged. Recognised by current_setting('role')
+--      — PostgREST's SET ROLE, which a definer body still sees (current_user
+--      is the owner there) and which does not depend on the key format (hosted
+--      uses sb_secret_ keys) — measured 2026-09-30: service_role →
+--      'service_role', a user → 'authenticated', a direct session → 'none'.
+--      The API can set no other role, so naming the two user roles is exact,
+--      and it is the same rule as F's trigger.
 --   C. org_mfa_status and D. mandates_safe: `(select mfa_satisfied())` in the
 --      WHERE — an aal1 session gets no rows, exactly as from the tables.
 --   E. key_movements_insert dropped: record_key_movement (a definer) is the
@@ -67,9 +69,37 @@
 -- catalogue test in aal1-definer-boundary.test.ts lists each with its reason
 -- and fails on the NEXT definer function or view that skips the check.
 --
--- Rollback: a forward migration that restores 0116 / 0033 / 0028 / 0036's
--- text, re-creates key_movements_insert and drops the trigger. No data moves.
+-- LOCKS. CREATE OR REPLACE VIEW takes ACCESS EXCLUSIVE on mandates_safe
+-- (read by the property list, the dashboard and the property page), DROP
+-- POLICY on key_movements, CREATE TRIGGER SHARE ROW EXCLUSIVE on
+-- property_keys, and each CREATE OR REPLACE FUNCTION a lock on its pg_proc
+-- row. lock_timeout (5 s) bounds EACH wait; a collision is a clean 55P03
+-- rollback — then apply again, and do NOT write the ledger row. The file must
+-- run as ONE transaction (the CLI's wrapper, or one execute_sql call).
+--
+-- ROLLBACK, a forward migration, all of it: restore record_key_movement
+-- (0116's text), next_reference (0033's), org_mfa_status (0028's) and
+-- mandates_safe (0036's); re-create key_movements_insert (0002's text); drop
+-- the trigger property_keys_movement_fields_guard AND its function; then, in
+-- the same change, delete supabase/tests/aal1-definer-boundary.test.ts, flip
+-- RLS test 13 back, and remove verify-restore.sql's two 0127 invariant rows
+-- and the property_keys_movement_fields_guard pin (keep the migrations
+-- baseline counting forward). No data moves either way.
 -- =============================================================================
+
+-- Bounded lock waits (0113's lesson); see LOCKS above.
+set local lock_timeout = '5s';
+-- The session's search_path is part of pg_get_viewdef's output (it qualifies
+-- what is not on the path), so the view's hash below is taken under a FIXED
+-- path — the one it was measured under on both local and hosted.
+set local search_path = "$user", public, extensions;
+
+do $$
+begin
+  if current_setting('lock_timeout') <> '5s' then
+    raise exception '0127 aborted: this file must run as ONE transaction (SET LOCAL lock_timeout did not take effect) — nothing was changed';
+  end if;
+end $$;
 
 -- ---------------------------------------------------------------------------
 -- Preflight: this file restates four live definitions, so each must be the
@@ -93,6 +123,10 @@ begin
     ('next_reference',      '6b096cb7cac34d174dc48d4f9caab82d,55789a1a1f590c6e736df708f9b7c3e7'),   -- 0033 (file / hosted)
     ('org_mfa_status',      '6c45ca65b132dcc91bb5d3f5587a0f3d')                                     -- 0028
   loop
+    if (select count(*) from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname = v_fn) <> 1
+       or not (select p.prosecdef from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname = v_fn) then
+      raise exception '0127 aborted: public.% is not exactly one SECURITY DEFINER function — nothing was changed', v_fn;
+    end if;
     select md5(replace(p.prosrc, E'\r', '')) into v_md5
       from pg_proc p
      where p.pronamespace = 'public'::regnamespace and p.proname = v_fn;
@@ -105,7 +139,15 @@ begin
 
   select md5(pg_get_viewdef('public.mandates_safe'::regclass)) into v_md5;
   if v_md5 is distinct from '988cd61000a77e749c783ec529567008' then
-    raise exception '0127 aborted: mandates_safe is not 0036''s view (viewdef md5 %) — nothing was changed', coalesce(v_md5, 'missing');
+    raise exception '0127 aborted: mandates_safe''s definition hashes to % under search_path %, not 0036''s view as measured (988cd610…) — nothing was changed. '
+                    'Compare pg_get_viewdef(''public.mandates_safe'') with 0036 before applying',
+                    coalesce(v_md5, 'missing'), current_setting('search_path');
+  end if;
+  -- CREATE OR REPLACE VIEW below states no options; any the live view has
+  -- would be reset, so there must be none (0036 set none)
+  if (select c.reloptions from pg_class c where c.oid = 'public.mandates_safe'::regclass) is not null then
+    raise exception '0127 aborted: mandates_safe carries view options % that this file would reset — nothing was changed',
+                    (select c.reloptions from pg_class c where c.oid = 'public.mandates_safe'::regclass);
   end if;
 
   if not exists (select 1 from pg_policy where polrelid = 'public.key_movements'::regclass and polname = 'key_movements_insert') then
@@ -269,12 +311,12 @@ set search_path = public
 as $function$
 declare v int;
 begin
-  -- 0127: a caller of the API holds the second factor and draws its OWN
+  -- 0127: an API user holds the second factor and draws its OWN
   -- organisation's reference. The service role (the property importer) and
   -- a direct database session are trusted as before. current_setting('role')
   -- is PostgREST's SET ROLE — still visible in a definer body, where
-  -- current_user is the owner.
-  if coalesce(current_setting('role', true), 'none') not in ('service_role', 'none') then
+  -- current_user is the owner — and the API sets no role but these three.
+  if current_setting('role', true) in ('authenticated', 'anon') then
     if not (select public.mfa_satisfied()) then
       raise exception 'Second factor required.' using errcode = '42501';
     end if;
@@ -383,7 +425,9 @@ begin
   return new;
 end $function$;
 
-revoke execute on function public.property_keys_movement_fields_guard() from public, anon, authenticated;
+-- revoked from all four roles explicitly, so hosted (whose default privileges
+-- grant new functions to service_role) matches local — 0117's pattern
+revoke execute on function public.property_keys_movement_fields_guard() from public, anon, authenticated, service_role;
 
 create trigger property_keys_movement_fields_guard
   before insert or update on public.property_keys
@@ -405,7 +449,7 @@ begin
       select 1 from pg_proc p
        where p.pronamespace = 'public'::regnamespace and p.proname = v_fn
          and p.prosecdef
-         and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'mfa_satisfied\s*\('
+         and regexp_replace(regexp_replace(regexp_replace(p.prosrc, '/\*.*?\*/', '', 'g'), '--[^\n]*', '', 'g'), '''([^'']|'''')*''', '', 'g') ~ '\mmfa_satisfied\s*\('
          and has_function_privilege('authenticated', p.oid, 'execute')
          and not has_function_privilege('anon', p.oid, 'execute')
     ) then
@@ -421,6 +465,10 @@ begin
   end if;
   if exists (select 1 from pg_policy where polrelid = 'public.key_movements'::regclass and polcmd = 'a') then
     raise exception '0127 postflight: key_movements still has an INSERT policy';
+  end if;
+  if has_function_privilege('service_role', 'public.property_keys_movement_fields_guard()', 'execute')
+     or has_function_privilege('authenticated', 'public.property_keys_movement_fields_guard()', 'execute') then
+    raise exception '0127 postflight: the guard trigger function is executable by an API role';
   end if;
   if not exists (select 1 from pg_trigger where tgrelid = 'public.property_keys'::regclass
                   and tgname = 'property_keys_movement_fields_guard' and tgenabled = 'O') then

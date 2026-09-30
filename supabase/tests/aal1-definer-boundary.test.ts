@@ -115,18 +115,19 @@ beforeAll(async () => {
   await pg.connect();
   await ensureTestOrg(svc, ORG_A, `aal1 A ${RUN}`, `aal1-a-${RUN}`);
   await ensureTestOrg(svc, ORG_B, `aal1 B ${RUN}`, `aal1-b-${RUN}`);
-  [adminA, lmA, agentA, adminB] = await Promise.all([
-    createTestUser(svc, `aal-admin-a-${RUN}@test.local`, "admin", ORG_A),
-    createTestUser(svc, `aal-lm-a-${RUN}@test.local`, "listing_manager", ORG_A),
-    createTestUser(svc, `aal-agent-a-${RUN}@test.local`, "agent", ORG_A),
-    createTestUser(svc, `aal-admin-b-${RUN}@test.local`, "admin", ORG_B),
-  ]);
-  userIds.push(adminA.id, lmA.id, agentA.id, adminB.id);
-  [adminA1, lmA1, agentA1] = await Promise.all([
-    signInAal1(adminA.email),
-    signInAal1(lmA.email),
-    signInAal1(agentA.email),
-  ]);
+  // One at a time: parallel factor enrolments have drawn gateway 502/504s
+  // (`{}` errors) from GoTrue in CI.
+  adminA = await createTestUser(svc, `aal-admin-a-${RUN}@test.local`, "admin", ORG_A);
+  userIds.push(adminA.id);
+  lmA = await createTestUser(svc, `aal-lm-a-${RUN}@test.local`, "listing_manager", ORG_A);
+  userIds.push(lmA.id);
+  agentA = await createTestUser(svc, `aal-agent-a-${RUN}@test.local`, "agent", ORG_A);
+  userIds.push(agentA.id);
+  adminB = await createTestUser(svc, `aal-admin-b-${RUN}@test.local`, "admin", ORG_B);
+  userIds.push(adminB.id);
+  adminA1 = await signInAal1(adminA.email);
+  lmA1 = await signInAal1(lmA.email);
+  agentA1 = await signInAal1(agentA.email);
 });
 
 afterAll(async () => {
@@ -256,6 +257,7 @@ describe("the key tables cannot be written around the RPC (2540)", () => {
       { status: "checked_out", current_holder_name: "Forged" },
       { status: "lost" },
       { current_holder_name: "Forged" },
+      { current_holder_profile_id: agentA.id },
     ]) {
       const r = await adminA.client
         .from("property_keys")
@@ -292,6 +294,12 @@ describe("next_reference is bound to the caller's second factor and organisation
       expect(r.error?.code, JSON.stringify(r.error)).toBe("42501");
       expect(await count("select count(*)::int as c from reference_counters where org_id = $1", [org])).toBe(0);
     }
+  });
+
+  it("a direct database session (role 'none': psql, cron, the SQL editor) is trusted as before", async () => {
+    const before = await counter(ORG_B, "DIR");
+    const { rows } = await pg.query("select public.next_reference($1, 'DIR') as ref", [ORG_B]);
+    expect(rows[0].ref).toBe(`DIR${String((before ?? 0) + 1).padStart(4, "0")}`);
   });
 
   it("an aal2 session draws its own organisation's references in sequence; the service role (the importer) any organisation's", async () => {
@@ -380,7 +388,8 @@ describe("every definer surface a signed-in session reaches checks the second fa
   it("functions", async () => {
     const { rows } = await pg.query<{ sig: string; checks: boolean }>(
       `select p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' as sig,
-              regexp_replace(p.prosrc, '--[^\\n]*', '', 'g') ~ 'mfa_satisfied\\s*\\(' as checks
+              regexp_replace(regexp_replace(regexp_replace(p.prosrc, '/\\*.*?\\*/', '', 'g'), '--[^\\n]*', '', 'g'),
+                             '''([^'']|'''')*''', '', 'g') ~ '\\mmfa_satisfied\\s*\\(' as checks
          from pg_proc p
         where p.pronamespace = 'public'::regnamespace
           and p.prosecdef
@@ -396,12 +405,16 @@ describe("every definer surface a signed-in session reaches checks the second fa
 
   it("views", async () => {
     const { rows } = await pg.query<{ name: string; checks: boolean }>(
-      `select c.relname as name, pg_get_viewdef(c.oid) ~ 'mfa_satisfied\\(' as checks
+      // A materialized view's WHERE runs at REFRESH, not per reader, so its
+      // mfa_satisfied() guards nothing — it counts only with an exemption.
+      // has_any_column_privilege: a view granted column by column is readable too.
+      `select c.relname as name,
+              c.relkind = 'v' and pg_get_viewdef(c.oid) ~ '\\mmfa_satisfied\\s*\\(' as checks
          from pg_class c
         where c.relnamespace = 'public'::regnamespace
           and c.relkind in ('v', 'm')
           and not coalesce(array_to_string(c.reloptions, ',') ~ 'security_invoker=(true|on)', false)
-          and has_table_privilege('authenticated', c.oid, 'select')
+          and has_any_column_privilege('authenticated', c.oid, 'select')
         order by 1`,
     );
     const unguarded = rows.filter((r) => !r.checks && !(r.name in EXEMPT_VIEWS)).map((r) => r.name);

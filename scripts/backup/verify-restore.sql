@@ -286,7 +286,10 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   -- even service_role may not call (like the definer trigger bodies above)
   ('cancel_lead_notification_jobs', true, false, false, false),
   ('protect_document_columns',     true, false, false, false),
-  ('protect_profile_columns',      true, false, false, false)
+  ('protect_profile_columns',      true, false, false, false),
+  -- 0127: status / holder of a key change only through record_key_movement;
+  -- revoked from all four roles explicitly, as 0117's guard
+  ('property_keys_movement_fields_guard', false, false, false, false)
 ),
 grants_actual as (
   select distinct p.proname::text as fn, p.prosecdef as secdef,
@@ -502,7 +505,7 @@ misc as (
          ((select count(*) from pg_proc p
             where p.pronamespace = 'public'::regnamespace
               and p.proname in ('record_key_movement', 'next_reference', 'org_mfa_status')
-              and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'mfa_satisfied\s*\(')
+              and regexp_replace(regexp_replace(regexp_replace(p.prosrc, '/\*.*?\*/', '', 'g'), '--[^\n]*', '', 'g'), '''([^'']|'''')*''', '', 'g') ~ '\mmfa_satisfied\s*\(')
           + (pg_get_viewdef('public.mandates_safe'::regclass) ~ 'mfa_satisfied\(')::int)::text
   union all
   select 'SECURITY: key movements only through the RPC — no INSERT policy, the guard trigger enabled (0127)', '0 1',
