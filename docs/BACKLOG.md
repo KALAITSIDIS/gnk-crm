@@ -2532,6 +2532,22 @@ VERIFY, run before starting.
   `/rpc/record_key_movement` (the tables themselves are aal2-gated since 0029). Found by T-key-holder-shape's
   scouts, by reading; not run. **VERIFY:** `grep -ln "record_key_movement" supabase/migrations/*.sql | tail -1 |
   xargs grep -n "mfa_satisfied"` — no hit means open.
+- **Password-only (aal1) sessions reach two more definer surfaces: `next_reference` and `mandates_safe`, S (SQL).**
+  The same class as `record_key_movement` above, found by the 2026-09-30 backlog triage's challenge round; catalog
+  confirmed at 0126 (prosecdef / grants / view options read), the aal1 read MEASURED by the reviewer only.
+  (1) `next_reference(p_org uuid, p_district_code text)` is SECURITY DEFINER, `authenticated` holds EXECUTE (0007
+  revoked only `public` / `anon`), and the body checks nothing — no `auth.uid()`, no `p_org = current_org_id()`, no
+  `mfa_satisfied()`: any signed-in session, second factor or not, advances ANY organisation's counter (reference gaps)
+  or creates `reference_counters` rows for an arbitrary org uuid / district code. Its one caller is
+  `lib/services/reference.ts` on the user's client. (2) `mandates_safe` is a definer view on purpose (0100: the listing
+  manager's only read path, masking commission) and its WHERE "mirrors `mandates_select`" — but not the RESTRICTIVE
+  `require_aal2`, so an aal1 session reads its organisation's mandates through it (reviewer: 2 rows via the view, 0 via
+  the base table), commission columns included for an admin. Fix, one migration: `mfa_satisfied()` +
+  `p_org = current_org_id()` in `next_reference` (keeping service_role callers working — check the importer), `and
+  (select mfa_satisfied())` in the view's WHERE, and a catalogue test in the spirit of `rls_aal2_coverage()` that fails
+  on any SECURITY DEFINER function or definer view executable by `authenticated` without an aal check or a reviewed
+  exemption. **VERIFY:** `select pg_get_functiondef('public.next_reference'::regproc) ~ 'mfa_satisfied'` and
+  `pg_get_viewdef('public.mandates_safe'::regclass) ~ 'mfa_satisfied'` — `f` means open.
 - **A staff id that matches no active profile silently discards a typed key holder, S (SQL).**
   `record_key_movement` sets `v_holder_name` from `p_holder_name`, then `select … into v_holder_id,
   v_holder_name` from `profiles` when an id is given — a non-STRICT SELECT INTO with no row NULLs both, so
@@ -2958,7 +2974,9 @@ VERIFY, run before starting.
   and both primaries get a `merged` event. A→B and B→A at once leaves a `merged_into_id` cycle. Needs two admins (or
   two dialogs) within milliseconds. Fix: `.eq("is_archived", false)` on the non-resuming archive, so the loser meets
   the existing zero-row refusal. Found by T-contact-merge-org-isolation's review.
-  **VERIFY:** `grep -n 'eq("is_archived", false)' lib/actions/merge-contacts.ts` — no hit means open.
+  **VERIFY:** `grep -A5 'update({ is_archived: true' lib/actions/merge-contacts.ts | grep -c 'eq("is_archived", false)'`
+  — 0 means open. (A plain grep of the file is NOT a check: `searchContactsForMerge` carries an unrelated
+  `.eq("is_archived", false)` and made the first version of this line report fixed — caught by the 2026-09-30 triage.)
 - **Re-running a COMPLETED merge logs its `merged` / `archived` events again, S (pre-existing).** `resuming =
   duplicate.is_archived && merged_into_id === primaryId` is just as true after a merge that finished, so a replayed
   POST moves nothing, skips the empty backfill, reports success and appends a second pair of events to the
