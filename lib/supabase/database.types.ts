@@ -2273,13 +2273,6 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "reservations_contact_id_fkey"
-            columns: ["contact_id"]
-            isOneToOne: false
-            referencedRelation: "contacts"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "reservations_created_by_fkey"
             columns: ["created_by"]
             isOneToOne: false
@@ -2299,6 +2292,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "offers"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reservations_org_contact_fkey"
+            columns: ["org_id", "contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["org_id", "id"]
           },
           {
             foreignKeyName: "reservations_org_id_fkey"
@@ -2582,13 +2582,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "tasks_contact_id_fkey"
-            columns: ["contact_id"]
-            isOneToOne: false
-            referencedRelation: "contacts"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "tasks_created_by_fkey"
             columns: ["created_by"]
             isOneToOne: false
@@ -2601,6 +2594,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "task_kinds"
             referencedColumns: ["kind"]
+          },
+          {
+            foreignKeyName: "tasks_org_contact_fkey"
+            columns: ["org_id", "contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["org_id", "id"]
           },
           {
             foreignKeyName: "tasks_org_deal_fkey"
@@ -2645,6 +2645,13 @@ export type Database = {
             referencedColumns: ["org_id", "id"]
           },
           {
+            foreignKeyName: "tasks_org_property_fkey"
+            columns: ["org_id", "property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["org_id", "id"]
+          },
+          {
             foreignKeyName: "tasks_org_reservation_fkey"
             columns: ["org_id", "reservation_id"]
             isOneToOne: false
@@ -2657,13 +2664,6 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "viewings"
             referencedColumns: ["org_id", "id"]
-          },
-          {
-            foreignKeyName: "tasks_property_id_fkey"
-            columns: ["property_id"]
-            isOneToOne: false
-            referencedRelation: "properties"
-            referencedColumns: ["id"]
           },
         ]
       }
