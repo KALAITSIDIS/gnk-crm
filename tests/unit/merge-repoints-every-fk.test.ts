@@ -106,4 +106,36 @@ describe("mergeContacts repoints every reference to a contact", () => {
       ).toBe(true);
     },
   );
+
+  // The repoints run on the SERVICE-ROLE client, so RLS is not between them and
+  // another organisation's rows: a repoint bounded by the duplicate's id alone
+  // rewrote B's rows naming A's duplicate onto A's primary (T-contact-merge-
+  // org-isolation). So each derived column's OWN chain must carry the org
+  // filter — not "somewhere in the file". The behaviour is proven per query in
+  // lib/actions/merge-contacts-org-scope.test.ts and against the real stack in
+  // supabase/tests/contact-merge-org-isolation.test.ts; this keeps a NEW column
+  // from arriving without it.
+  it("binds orgId to the caller's profile, never to the form", () => {
+    expect(action).toMatch(/const orgId = profile\.orgId;/);
+    expect(action).not.toMatch(/formData\.get\(\s*"org_id"\s*\)/);
+  });
+
+  it.each([...fks.map((f) => [`${f.table}.${f.column}`, f] as const), [
+    "contacts.merged_into_id",
+    { table: "contacts", column: "merged_into_id" },
+  ] as const])("%s's repoint is bounded by the caller's organisation", (name, fk) => {
+    const chain = new RegExp(
+      `\\.from\\(\\s*"${fk.table}"\\s*\\)\\s*\\.update\\(\\{\\s*${fk.column}:\\s*primaryId\\s*\\}\\)` +
+        `((?:\\s*\\.n?eq\\([^)]*\\))+)`,
+    );
+    const m = chain.exec(action);
+    expect(m, `${name}: no repoint chain found`).not.toBeNull();
+    const filters = m![1];
+    expect(filters, `${name} is repointed without .eq("org_id", orgId)`).toMatch(
+      /\.eq\(\s*"org_id",\s*orgId\s*\)/,
+    );
+    expect(filters, `${name} lost its duplicate filter`).toMatch(
+      new RegExp(`\\.eq\\(\\s*"${fk.column}",\\s*duplicateId\\s*\\)`),
+    );
+  });
 });

@@ -2915,7 +2915,16 @@ VERIFY, run before starting.
   Needs a crafted request (the picker lists only the caller's properties). Fix: re-read the property under RLS first,
   as `createReservation` does, and answer "That property is no longer available to you." Found by 0124's mapping.
   **VERIFY:** `grep -n 'from("properties")' lib/actions/leads.ts` inside `createLead` — no hit means open.
-- **The contact merge repoints rows of OTHER organisations, S.** `mergeContacts` proves both contacts are in the
+- ~~**The contact merge repoints rows of OTHER organisations, S.**~~ **FIXED 2026-09-30 on branch
+  `fix/contact-merge-org-isolation` (built and tested locally; NOT merged, NOT deployed).** DECISIONS
+  `T-contact-merge-org-isolation`. Reproduced first through the real action on the local stack at 0126 (two
+  throwaway orgs, aal2 sessions): B's admin POSTed a lead naming A's duplicate (accepted), and A's merge rewrote
+  all eleven B references (the ten single-column links plus a B contact document) onto A's primary. Every
+  service-role query in `mergeContacts` (2 reads, the archive, 14 repoints, the backfill) now carries
+  `.eq("org_id", orgId)` with `orgId = profile.orgId`; a zero-row archive or backfill is refused instead of
+  reported as a merge. Foreign rows are left as they are. The ten single-column links themselves stay open —
+  a B row can still NAME A's contact (an existence oracle; see the catalogue entry above). (original)
+  `mergeContacts` proves both contacts are in the
   caller's org (`lib/actions/merge-contacts.ts`), then repoints every referencing table on the ADMIN client with only
   `.eq("contact_id", duplicateId)` — viewings, tasks, leads, deals, reservations, offers and the rest. Because those
   `contact_id` columns are organisation-blind, a row of B that names A's duplicate contact (plantable as above) is
