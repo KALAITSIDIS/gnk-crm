@@ -11,8 +11,9 @@ Implement in `supabase/migrations/0002_rls_policies.sql`. Every row below has an
 > **`require_aal2` — a RESTRICTIVE policy on all 29 RLS-enabled tables
 > (migration 0029).** Restrictive policies AND with the permissive ones, so this
 > can only narrow access. Its predicate is `public.mfa_satisfied()`: true when the
-> caller holds an **`aal2`** session, **or has no verified second factor at all**
-> (the Supabase opt-in template, so users who have not enrolled are unaffected).
+> caller holds an **`aal2`** session. (0029 shipped the Supabase opt-in template,
+> which also passed a user with no verified factor; since 0059 the second factor
+> is mandatory and that arm is gone.)
 >
 > **What that means for reading this matrix:** a signed-in user who has enrolled
 > TOTP but has only completed the password step sees **nothing on any table**,
@@ -27,6 +28,16 @@ Implement in `supabase/migrations/0002_rls_policies.sql`. Every row below has an
 >
 > Both migrations carry guard functions that fail CI if a future policy regresses:
 > `rls_aal2_coverage()` and `rls_bare_helper_calls()` / `rls_hoisted_policy_count()`.
+>
+> **Definer surfaces (migration 0127).** A SECURITY DEFINER function or a view
+> without `security_invoker` runs as its owner, so `require_aal2` is not between
+> it and the tables — each checks `mfa_satisfied()` itself: every RPC since 0101,
+> `close_deal`, and since 0127 `record_key_movement`, `next_reference` (which
+> also draws only the caller's OWN organisation's reference; the service role is
+> unchanged), `org_mfa_status` and the `mandates_safe` view. The catalogue test in
+> `supabase/tests/aal1-definer-boundary.test.ts` fails on any definer function or
+> view `authenticated` can reach without the check, bar a reviewed exemption list
+> (the identity helpers, `rls_bare_auth_calls`, the anon surface, PostGIS).
 
 Legend: ✅ full · 🔒 restricted (condition in Notes) · ❌ denied
 
@@ -42,7 +53,7 @@ Legend: ✅ full · 🔒 restricted (condition in Notes) · ❌ denied
 | price_history | A AG LM | ❌ direct | ❌ | ❌ | Written only by trigger |
 | price_lists / items / payment_plans | A AG LM | A LM | A LM | A LM 🔒 (not latest version) | |
 | mandates | A ✅ · AG 🔒 rows where `assigned_agent` on property = uid OR created_by = uid · LM 🔒 (row visible but **commission_pct, commission_notes** masked via view for LM) | A | A | ❌ (status terminated) | Commission figures = admin + property's assigned agent only. Implement mask with `mandates_safe` view; LM/others select from view. 0122: `mandates_org_property_fkey` — `(org_id, property_id) → properties (org_id, id)`, ON DELETE CASCADE — and `mandates_org_renewed_from_fkey` — `(org_id, renewed_from_id) → mandates (org_id, id)` — replace the single-column keys: a mandate names a property, and renews a mandate, of its OWN organisation (the policies check only the caller's org; the keys bind every writer). `mandates_one_active_per_property` can therefore no longer be held by another organisation's mandate. |
-| property_keys / key_movements | A AG LM | A AG LM (movements) · A LM (keys) | A LM (keys meta) · movements ❌ | ❌ | Movements are append-only like events. 0122: `property_keys_org_property_fkey` — `(org_id, property_id) → properties (org_id, id)`, ON DELETE CASCADE, replaces the single-column key: a key opens a property of its OWN organisation, so the key-recall sweep can never count another organisation's key. |
+| property_keys / key_movements | A AG LM | movements ❌ direct — only `record_key_movement` (A AG LM) · A LM (keys, born `in_office` with no holder) | A LM (keys meta: code, description, property — never status / holder, 0127 trigger) · movements ❌ | ❌ | Movements are append-only like events. 0127: `key_movements_insert` dropped and `property_keys_movement_fields_guard` added — status and holder change only through the RPC, which writes the movement, the cache and the event together. 0122: `property_keys_org_property_fkey` — `(org_id, property_id) → properties (org_id, id)`, ON DELETE CASCADE, replaces the single-column key: a key opens a property of its OWN organisation, so the key-recall sweep can never count another organisation's key. |
 | leads | A AG LM | A AG LM (+ service role for website later) | A ✅ · AG 🔒 (`assigned_agent_id = uid` or unassigned→claim) | ❌ (status spam/lost) | 0124: `leads_org_property_fkey` — `(org_id, property_id) → properties (org_id, id)`, NO ACTION, replaces the single-column key: a lead names a property of its OWN organisation or none (the policies check only the caller's org; the key binds every writer). `raise_lead_sla_tasks` and `preview_lead_escalation` read only the lead's own organisation's property. |
 | reservations / reservation_installments | A AG LM | A AG LM | A AG LM | A LM (status `released` is the ordinary undo) | 0044 / 0050: every policy checks only the caller's org. 0124: `reservations_org_property_fkey` — `(org_id, property_id) → properties (org_id, id)`, ON DELETE RESTRICT — and `reservation_installments_org_reservation_fkey` — `(org_id, reservation_id) → reservations (org_id, id)`, ON DELETE CASCADE — replace the single-column keys; `reservations_one_live_per_property` is keyed `(org_id, property_id)` and the schedule's position rule `(org_id, reservation_id, sort_order)`, so another organisation's row can neither occupy a property's live slot nor a schedule position. The expiry-warning and instalment sweeps read only their own organisation's reservations and properties when they MINT; since 0125 their task guards and self-heals match only their own organisation's tasks (`tasks_org_reservation_fkey` / `tasks_org_installment_fkey`, see tasks). 0126: `reservations_org_contact_fkey` — `(org_id, contact_id) → contacts (org_id, id)`, ON DELETE SET NULL (contact_id): deleting a contact clears only the hold's contact, never its organisation — replaces the single-column key, so a hold names a contact of its OWN organisation or none; both sweeps copy the hold's contact into the reminder only through `contacts … and ct.org_id = r.org_id` (a hold without one is still reminded). |
 | interaction_notes | A AG LM | A AG LM (`created_by = uid`, through `log_conversation`) | ❌ session — service role only (contact erasure, the retention sweep) | ❌ | 0094 (audit SEC-03): a logged conversation's text. The `conversation_logged` event carries the row's id + SHA-256, never the text. Immutable except to be blanked (trigger); the AFTER INSERT trigger writes the event, so no note exists the chain does not know about. |
@@ -146,6 +157,6 @@ grant select on mandates_safe to authenticated;
 10. Non-admin INSERT/UPDATE on `cyprus_config` → denied.
 11. Unassigned lead claimed by agent (update sets `assigned_agent_id = uid`) → allowed; unassigned lead updated by agent without claiming (status only) → allowed; reassigning someone else's lead as agent → denied; agent handing their **own** lead to another agent → denied (WITH CHECK — migration 0009; permissive policies OR their WITH CHECKs independently of USING, so the admin policy must repeat its role check there).
 12. `verify_events_chain(org)` true after seeded activity; false after service-role manual tamper (test-only).
-13. `key_movements` append-only: staff INSERT allowed; UPDATE/DELETE denied for every role.
+13. `key_movements` written only by `record_key_movement`: direct INSERT (0127), UPDATE and DELETE denied for every role.
 14. Deals: agent setting both `agent_id` and `created_by` away from themselves → denied (WITH CHECK, 0009); creator changing the working agent while staying `created_by` → allowed (own = `agent_id` OR `created_by`).
 15. `property_keys`: agent INSERT (register) → denied, LM → allowed; agent UPDATE (keys meta) → 0 rows, LM → allowed; org B blind. Movements only via `record_key_movement` RPC (0013): cross-org → not found; status transitions guarded (no double checkout, lost blocks checkout until return); movement + cache + event land atomically or not at all.
