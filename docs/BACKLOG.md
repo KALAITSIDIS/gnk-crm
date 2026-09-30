@@ -2916,8 +2916,8 @@ VERIFY, run before starting.
   Needs a crafted request (the picker lists only the caller's properties). Fix: re-read the property under RLS first,
   as `createReservation` does, and answer "That property is no longer available to you." Found by 0124's mapping.
   **VERIFY:** `grep -n 'from("properties")' lib/actions/leads.ts` inside `createLead` — no hit means open.
-- ~~**The contact merge repoints rows of OTHER organisations, S.**~~ **FIXED 2026-09-30 on branch
-  `fix/contact-merge-org-isolation` (built and tested locally; NOT merged, NOT deployed).** DECISIONS
+- ~~**The contact merge repoints rows of OTHER organisations, S.**~~ **LANDED 2026-09-30 — PR #81 → main
+  `4195bae`, deployed (`dpl_29uAYzUvmNQfU6y7H6Zr17bfmhdz`); no migration.** DECISIONS
   `T-contact-merge-org-isolation`. Reproduced first through the real action on the local stack at 0126 (two
   throwaway orgs, aal2 sessions): B's admin POSTed a lead naming A's duplicate (accepted), and A's merge rewrote
   all eleven B references (the ten single-column links plus a B contact document) onto A's primary. Every
@@ -3126,6 +3126,15 @@ VERIFY, run before starting.
   **VERIFY:** `grep -n -A40 "export async function redactLead" lib/actions/leads.ts | grep interaction_notes`
   — no hit means still open. **VERIFY:** `grep -n "lost_reason" lib/services/erasure-run.ts
   lib/actions/contact-erasure.ts` — no hit means still open.
+- **Dev-only audit residue, XS.** PR #82 (T-audit-fix-2026-09-30) ran `npm audit fix --package-lock-only
+  --omit=dev`, which fixed the PRODUCTION copies only; CI's gate is `--omit=dev`, so it is green, but a full
+  `npm audit` at `4195bae` still reports 4: brace-expansion (high — 5.0.9 under `@typescript-eslint/typescript-estree`
+  and `@ts-morph/common`, 1.1.18 under eslint's minimatch), undici 7.29.0 (high), ip-address 10.5.0 (moderate) —
+  all three fixable by a plain lockfile-only `npm audit fix` without a semver-major bump — and fast-xml-parser
+  (moderate; the fix is SEMVER-MAJOR 5.11.2 — leave it, Dependabot 2026-09-18 dismissed it as not used). Dev tooling
+  only: nothing ships to Vercel. Fix: `npm audit fix --package-lock-only` (no `--omit`, never `--force`) in its own PR,
+  confirm fast-xml-parser unchanged, CI green. **VERIFY:** `npm audit --json | node -e "…"` lists brace-expansion,
+  undici or ip-address — any of them means open.
 - **Clock-dependent tests found by the 2026-09-24 sweep, S/M.** A read-only sweep at `ed6166c` (DECISIONS
   `T-rls-stage-tenure-one-clock`, Landing; two refuters per candidate) found 21 more tests that can fail while
   the code is right. Line numbers are at `9d79157`. Grouped, most urgent first:
