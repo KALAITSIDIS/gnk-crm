@@ -504,7 +504,8 @@ describe("A's merge stays inside A", () => {
     expect(await snapshot(w.b)).toEqual(all(w.b, w.duplicate));
     expect(await contactRow(w.duplicate)).toMatchObject({ is_archived: true, merged_into_id: w.primary });
 
-    // and running it a third time is a no-op for both organisations
+    // and a third run moves no row in either organisation (it does log the
+    // merged / archived pair again — pre-existing, filed in BACKLOG)
     const again = await merge(adminA, w.primary, w.duplicate);
     expect(again.error).toBeNull();
     expect(await snapshot(w.a)).toEqual(all(w.a, w.primary));
