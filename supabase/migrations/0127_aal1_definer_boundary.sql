@@ -82,15 +82,21 @@ declare
   v_fn  text;
   v_exp text;
 begin
+  -- Each entry lists every text the target may legitimately hold. HOSTED's
+  -- next_reference is 0033's body WITHOUT its one comment line ("-- was:
+  -- format('GNK-%s-%s', …)") — measured 2026-09-30 in the read-only preflight:
+  -- md5 55789a1a… on hosted = md5 of 0033's file body with that line removed,
+  -- byte for byte; the 2026-08-20 apply went through a path that dropped the
+  -- comment. Same statements, so both are accepted; anything else refuses.
   for v_fn, v_exp in values
-    ('record_key_movement', '8d9dc7bae614e5808a26feb9e094abc7'),  -- 0116
-    ('next_reference',      '6b096cb7cac34d174dc48d4f9caab82d'),  -- 0033
-    ('org_mfa_status',      '6c45ca65b132dcc91bb5d3f5587a0f3d')   -- 0028
+    ('record_key_movement', '8d9dc7bae614e5808a26feb9e094abc7'),                                    -- 0116
+    ('next_reference',      '6b096cb7cac34d174dc48d4f9caab82d,55789a1a1f590c6e736df708f9b7c3e7'),   -- 0033 (file / hosted)
+    ('org_mfa_status',      '6c45ca65b132dcc91bb5d3f5587a0f3d')                                     -- 0028
   loop
     select md5(replace(p.prosrc, E'\r', '')) into v_md5
       from pg_proc p
      where p.pronamespace = 'public'::regnamespace and p.proname = v_fn;
-    if v_md5 is distinct from v_exp then
+    if v_md5 is null or not (v_md5 = any (string_to_array(v_exp, ','))) then
       raise exception '0127 aborted: % is not the body this file was written against (md5 %, expected %) — nothing was changed. '
                       'Diff the live body against its last migration and decide before applying',
                       v_fn, coalesce(v_md5, 'missing'), v_exp;
