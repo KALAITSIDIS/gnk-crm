@@ -329,6 +329,23 @@ describe("createContactFromEnquiry — around the suggestions", () => {
     const r = await createContactFromEnquiry(LEAD);
     expect(r.duplicate).toEqual({ id: OTHER, display_name: "Maria", matched_on: "phone", erased: false });
   });
+
+  it("does not link a lead a redaction reached after the read: the link write refuses the marker (T-redact-lead-notes)", async () => {
+    const fake = setup(
+      [
+        { data: websiteLead(), error: null }, // getLead: not yet redacted
+        { data: [], error: null }, // the guarded link UPDATE: zero rows — redacted meanwhile
+      ],
+      [
+        { data: [], error: null }, // no duplicate by phone
+        { data: [], error: null }, // none by e-mail
+        { data: { id: CONTACT }, error: null }, // the contact insert
+      ],
+    );
+    const r = await createContactFromEnquiry(LEAD);
+    expect(r.error).toMatch(/could not be linked/i);
+    expect(fake.argsOf("leads", "or")).toContainEqual([`message.is.null,message.neq."[erased at the contact's request]"`]);
+  });
 });
 
 describe("redactLead — the other order of the same race", () => {
@@ -338,14 +355,14 @@ describe("redactLead — the other order of the same race", () => {
       { data: [], error: null }, // the conditional UPDATE: zero rows
       { data: { contact_id: CONTACT, message: HEADER }, error: null }, // the re-read: linked meanwhile
     ]);
-    await expect(redactLead(LEAD)).rejects.toThrow(/linked to a contact meanwhile/i);
+    expect((await redactLead(LEAD)).error).toMatch(/linked to a contact meanwhile/i);
     expect(fake.argsOf("leads", "is")).toContainEqual(["contact_id", null]);
     expect(logEvent).not.toHaveBeenCalled();
   });
 
   it("redacts an unlinked lead and writes its event", async () => {
     setup([{ data: lead({ org_id: "org-1" }), error: null }, { data: [{ id: LEAD }], error: null }]);
-    await redactLead(LEAD);
+    expect(await redactLead(LEAD)).toEqual({ error: null });
     expect(logEvent).toHaveBeenCalledTimes(1);
     expect(logEvent.mock.calls[0]![1]).toMatchObject({ eventType: "redacted", payload: {} });
   });

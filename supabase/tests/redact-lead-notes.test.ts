@@ -63,14 +63,10 @@ async function session(user: TestUser): Promise<SupabaseClient> {
   return c;
 }
 
+/** The action's answer: null on success, else its sentence for the admin. */
 async function redact(user: TestUser, leadId: string): Promise<string | null> {
   state.queue.push(await session(user));
-  try {
-    await redactLead(leadId);
-    return null;
-  } catch (e) {
-    return e instanceof Error ? e.message : String(e);
-  }
+  return (await redactLead(leadId)).error;
 }
 
 async function newLead(org: string): Promise<string> {
@@ -165,7 +161,10 @@ describe("redactLead takes the enquiry's notes with its message", () => {
     }
     expect((await noteRow(kept)).body).toBe(`Another enquiry ${RUN}`);
     expect((await noteRow(foreign)).body).toBe(`B's own words ${RUN}`);
-    expect(await events(lead, "conversation_logged")).toBe(loggedBefore); // the chain is not rewritten
+    expect(await events(lead, "conversation_logged")).toBe(loggedBefore);
+    // the chain still verifies end to end: the note events hold the note's id
+    // and digest, and blanking the row must not be mistaken for rewriting them
+    expect((await pg.query("select public.verify_events_chain($1) as ok", [ORG_A])).rows[0].ok).toBe(true);
     expect(await events(lead, "redacted")).toBe(1);
 
     // a second press changes nothing and says so
@@ -184,7 +183,8 @@ describe("redactLead takes the enquiry's notes with its message", () => {
 
     expect(await redact(adminA, lead)).toBeNull();
     expect((await noteRow(n)).body).toBeNull();
-    expect(await events(lead, "redacted")).toBe(1);
+    // the event belongs to the message write, which this run did not make
+    expect(await events(lead, "redacted")).toBe(0);
     expect(await loadLeadsWithUnredactedNotes(page, [lead])).toEqual(new Set());
   });
 });

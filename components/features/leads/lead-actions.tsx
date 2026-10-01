@@ -148,7 +148,12 @@ export function LeadRowActions({
             )
           )
             return;
-          act(() => redactLead(leadId), "Enquiry redacted");
+          // the action returns its refusal (a thrown Server Action message is
+          // replaced in production); thrown here, on the client, it reaches the toast
+          act(async () => {
+            const { error } = await redactLead(leadId);
+            if (error) throw new Error(error);
+          }, "Enquiry redacted");
         }}
       >
         <Eraser className="size-3.5" /> {finishing ? "Finish redaction" : "Redact"}
