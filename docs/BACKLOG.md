@@ -2669,7 +2669,9 @@ VERIFY, run before starting.
   `org_id` immutable) and the partial unique index. Found by T-deal-close-db-boundary's critic. **VERIFY:**
   `MSYS_NO_PATHCONV=1 docker exec supabase_db_gnk-crm psql -U postgres -d postgres -Atc "select count(*) from pg_trigger where tgrelid='public.offers'::regclass and not tgisinternal"`
   — 0 means open.
-- **A user session can hand-write a deal's terminal events, S.** `events_insert` checks only the organisation and
+- ~~**A user session can hand-write a deal's terminal events, S.**~~ **FIXED 2026-10-01 — migration 0128, DECISIONS `T-session-written-events`: `events_insert` refuses
+  `won` / `lost` / `won_override` on `entity_type = 'deal'` (42501); `close_deal`, a definer, still writes them.
+  RED first: an admin's and the deal agent's direct posts were accepted at 0127.** (original) `events_insert` checks only the organisation and
   the actor, so the session that may close a deal may also POST `won` / `lost` / `won_override` events for it (or
   for any deal of its organisation) without closing it; the chain keeps them for good. Measured at 0117 by
   T-deal-close-db-boundary's reproduction (a hand-written `won` beside a PATCH-closed deal). 0118 makes the DEAL
@@ -2691,7 +2693,10 @@ VERIFY, run before starting.
   admin may also flip a stage's `is_won` / `is_lost` with open deals in it. None makes a deal won or lost without
   `close_deal`. Found by T-deal-close-db-boundary's review. **VERIFY:**
   `grep -rn "new.deal_type is distinct from old.deal_type" supabase/migrations/` — no hit means open.
-- **The restore pack does not pin `forbid_srs_api_writes` (0099), S.** `scripts/backup/verify-restore.sql` fails
+- ~~**The restore pack does not pin `forbid_srs_api_writes` (0099), S.**~~ **FIXED 2026-10-01 — pinned as measured on
+  local and hosted (secdef false; anon / authenticated / service_role EXECUTE true — inert on a trigger body), and
+  `enquiry_alerts_sweep`'s pin corrected to secdef false (invoker since 0103 / 0105; it read red on every correct
+  restore). DECISIONS `T-session-written-events`.** (original) `scripts/backup/verify-restore.sql` fails
   closed on it on a migration-built database: `grants: UNPINNED forbid_srs_api_writes … secdef=false anon=true`
   (measured on the local stack at 0118, 2026-09-26; the function is 0099's statement trigger guarding the PostGIS
   catalogue). Pin its row (regenerate the list). **VERIFY:** `grep -c "forbid_srs_api_writes" scripts/backup/verify-restore.sql`
@@ -3108,7 +3113,11 @@ VERIFY, run before starting.
   line in `describeEvent`, since every renderer trusts its payload's types. **VERIFY:**
   `grep -n -A8 "rescheduled: (p, t)" lib/services/events.ts | grep -E "isNaN|Date.parse|valid"` — no hit
   means still open.
-- **A crafted event's `occurred_at` is bounded only in the renderer, S (migration).** Found by
+- ~~**A crafted event's `occurred_at` is bounded only in the renderer, S (migration).**~~ **FIXED 2026-10-01 — migration 0128, DECISIONS `T-session-written-events`: `events_insert` adds
+  `occurred_at = now()` — the column's default, so every session write passes and a SUPPLIED value is refused
+  (42501); RLS binds only sessions. The BEFORE-trigger option this entry offered is impossible here: events is
+  partitioned by occurred_at and a BEFORE row trigger may not move a row to another partition (0A000, measured).
+  The VERIFY below no longer applies; the new one is verify-restore.sql's 0128 SECURITY row.** (original) Found by
   T-rescheduled-line-crash's review. `events_insert` (0071) lets a member set `occurred_at`; a far-future
   timestamptz (Postgres goes to 294276 AD) comes back from PostgREST as text JavaScript cannot parse, and
   `formatDateTime` threw on it — the timeline, the admin feed ("latest 10" orders by it, so a year-200000 row
@@ -3116,7 +3125,32 @@ VERIFY, run before starting.
   skews `occurred_at_inversion`. Decide: a BEFORE INSERT that stamps `now()` for session writers (the restore
   path runs with triggers off), or a CHECK bounding it near `now()`. **VERIFY:** `grep -ln "occurred_at"
   supabase/migrations/*.sql | xargs grep -ln "events_occurred_at_bound\|occurred_at := now()"` — no hit means open.
-- **One crafted `note_id` blanks every note on a timeline, S.** `attachNotes` (`lib/services/entity-timeline.ts`)
+- **A session may write ANY event type, so a terminal deal event can still be forged in the form people read,
+  S/M — a design decision first.** 0128 refuses the three exact strings `won` / `lost` / `won_override` on
+  `entity_type = 'deal'`; `events` has no CHECK on either column, and `describeEvent` renders a type it does not own
+  word for word (`event_type.replace(/_/g, " ")`). MEASURED by T-session-written-events' review (rolled-back aal2
+  probes at 0128): a deal-entity `Marked_won`, `Marked won`, `won ` (trailing space), and `entity_type 'Deal'` with
+  `won` are all accepted, and `Marked_won` prints "Marked won" — the line `close_deal`'s real `won` produces — on a
+  deal that is still open, for every viewer, for good (the actor is recorded). One reviewer of two also upheld an
+  OFFER-entity `won` with `override: true` rendering "Offer: Marked won — admin override" on the deal's timeline.
+  Machine readers (`report_stage_conversion`, `close_deal`) match the exact strings and are unaffected. Fix options:
+  an allow-list of (entity_type, event_type) pairs a session may write — every new app event type then needs a
+  migration — or a renderer that marks an unregistered type instead of printing it. **VERIFY:** a rolled-back aal2
+  insert of a deal-entity `Marked_won` — accepted means open.
+- **One crafted `stage_changed` empties the stage-conversion report, S (pre-existing).** `report_stage_conversion`
+  (0076) casts `payload->>'from_stage_id'` / `'to_stage_id'` to uuid; any session can POST a `stage_changed` with
+  `to_stage_id: "x"` (events_insert never checked payloads), and from then on every report window containing it shows
+  an empty C4 section and the stage-conversion CSV export 500s — permanently, the chain is append-only. The same class
+  as T-session-written-events' `attachNotes` fix, in SQL: guard the cast (`~ uuid pattern`) or skip malformed rows.
+  Found by T-session-written-events' review (both refuters upheld). **VERIFY:** the function body casts only after a
+  uuid test — `grep -n "to_stage_id" ` the latest migration defining `report_stage_conversion`.
+- **A session-written `stage_changed` into a won / lost stage counts as a conversion, S (pre-existing, one reviewer
+  of two).** `report_stage_conversion` counts a deal entering the pipeline's `is_won` / `is_lost` stage from
+  `stage_changed` events, which a session may POST for any deal of its org without moving it; the deal row stays
+  open. Same family as the allow-list entry above. Found by T-session-written-events' review.
+- ~~**One crafted `note_id` blanks every note on a timeline, S.**~~ **FIXED 2026-10-01 — DECISIONS
+  `T-session-written-events`: `attachNotes` sends only uuid-shaped, lowercased note ids (`noteIdOf`, the rule of
+  event-context.ts's `payloadId`); RED first in `entity-timeline-notes.test.ts`.** (original) `attachNotes` (`lib/services/entity-timeline.ts`)
   sends every `conversation_logged` payload's `note_id` to `.in("id", …)` without a uuid check, so one
   malformed id fails the whole read and every note body on that timeline disappears while the event is in
   the latest 50. Filter with the uuid test and lowercasing `event-context.ts`'s `payloadId` uses. Found by
