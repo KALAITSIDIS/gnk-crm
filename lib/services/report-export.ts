@@ -78,10 +78,47 @@ export interface StageRow {
 export interface StageConversion {
   derived_from: string;
   stage_key: string;
+  /** movements the figures are computed from (0067) */
+  moves_total?: number;
+  moves_with_ids?: number;
+  /**
+   * 0130: `stage_changed` events left out of every figure because a recorded
+   * stage id is present but not a uuid. Optional so these readers also run
+   * against a database still at 0076's body (a rollback), where it is absent.
+   */
+  moves_malformed?: number;
   stages: StageRow[];
-  transitions: Array<{ from: string | null; to: string; deals: number }>;
+  transitions: Array<{ from: string | null; to: string | null; deals: number }>;
   outcomes: { won: number; lost: number };
   note: string;
+}
+
+/**
+ * What the stage-conversion section may honestly say (T-stage-conversion-malformed).
+ *
+ * Before 0130 one malformed event made the RPC fail, and the page read
+ * `data ?? null` without looking at `error` — a failure painted as "Nothing in
+ * this window." Four states now, each rendered and exported differently:
+ *
+ *   error         the RPC failed, or answered something that is not a report
+ *   empty         a real report with no stage rows and nothing excluded
+ *   data          stage rows; `excluded` (possibly 0) were left out
+ *   excluded_only no stage rows, but `excluded` > 0 movements were left out —
+ *                 NOT the same as an empty window, and never shown as one
+ */
+export type StageConversionView =
+  | { status: "error" }
+  | { status: "empty"; conv: StageConversion; excluded: 0 }
+  | { status: "data"; conv: StageConversion; excluded: number }
+  | { status: "excluded_only"; conv: StageConversion; excluded: number };
+
+export function stageConversionView(res: { data: unknown; error: unknown }): StageConversionView {
+  if (res.error) return { status: "error" };
+  const conv = res.data as StageConversion | null;
+  if (!conv || typeof conv !== "object" || !Array.isArray(conv.stages)) return { status: "error" };
+  const excluded = Math.max(0, num(conv.moves_malformed) ?? 0);
+  if (conv.stages.length > 0) return { status: "data", conv, excluded };
+  return excluded > 0 ? { status: "excluded_only", conv, excluded } : { status: "empty", conv, excluded: 0 };
 }
 
 export interface RepeatCut {
@@ -171,6 +208,18 @@ export const stageConversionCsv = (note = ""): CsvColumn<StageRow>[] => [
   { header: "Advance rate", value: (r) => pct(num(r.advance_rate)) },
   { header: "Note", value: () => note },
 ];
+
+/**
+ * 0130: how many malformed stage changes the figures leave out, on every row.
+ * APPENDED after From / To (the withWindow rule — never inserted), and present
+ * on every stage-conversion export, 0 included, so the column set does not
+ * depend on the data. An export with no stage rows but exclusions is refused
+ * by the route instead (422): a header-only file would read as a complete,
+ * empty report.
+ */
+export function withExcluded<T>(cols: CsvColumn<T>[], excluded: number): CsvColumn<T>[] {
+  return [...cols, { header: "Malformed moves excluded", value: () => String(excluded) }];
+}
 
 export const priceReductionsCsv = (
   propertyRef: Map<string, string>,

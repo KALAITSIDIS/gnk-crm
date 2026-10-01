@@ -8,8 +8,11 @@ import {
   priceReductionsCsv,
   sourceRoiCsv,
   stageConversionCsv,
+  stageConversionView,
   timeToCloseCsv,
   timeToCloseRows,
+  withExcluded,
+  withWindow,
   type AgentPerformanceRow,
   type RepeatCut,
   type SourceRoiRow,
@@ -158,6 +161,75 @@ describe("report-export", () => {
     ];
     const csv = toCsv(priceReductionsCsv(new Map([["p-1", "PAF0001"]])), rows);
     expect(csv).toContain("PAF0001,2,95000.00,2024-03-02T12:00:00Z,2024-03-10T12:00:00Z");
+  });
+
+  describe("stageConversionView — the section's four honest states (0130)", () => {
+    const report = (over: Record<string, unknown> = {}) => ({
+      derived_from: "events",
+      stage_key: "name",
+      moves_total: 0,
+      moves_with_ids: 0,
+      moves_malformed: 0,
+      stages: [],
+      transitions: [],
+      outcomes: { won: 0, lost: 0 },
+      note: "n",
+      ...over,
+    });
+    const row = { stage: "Qualified", entered: 2, advanced: 1, advance_rate: 0.5 };
+
+    it("an RPC error is an error — never an empty window", () => {
+      expect(stageConversionView({ data: null, error: { code: "22P02", message: "x" } })).toEqual({ status: "error" });
+      // even if a body came back alongside it
+      expect(stageConversionView({ data: report({ stages: [row] }), error: { message: "x" } }).status).toBe("error");
+    });
+
+    it("a missing or shapeless body is an error too", () => {
+      for (const data of [null, undefined, "x", 1, [], {}, { stages: "nope" }]) {
+        expect(stageConversionView({ data, error: null }).status, JSON.stringify(data)).toBe("error");
+      }
+    });
+
+    it("no rows and nothing excluded is a genuine empty window", () => {
+      expect(stageConversionView({ data: report(), error: null })).toMatchObject({ status: "empty", excluded: 0 });
+    });
+
+    it("rows with nothing excluded, and rows with exclusions, both keep their data", () => {
+      expect(stageConversionView({ data: report({ stages: [row] }), error: null })).toMatchObject({
+        status: "data",
+        excluded: 0,
+      });
+      const mixed = stageConversionView({ data: report({ stages: [row], moves_malformed: 3 }), error: null });
+      expect(mixed).toMatchObject({ status: "data", excluded: 3 });
+      expect(mixed.status === "data" && mixed.conv.stages).toEqual([row]);
+    });
+
+    it("no rows but exclusions is its own state, not 'empty'", () => {
+      expect(stageConversionView({ data: report({ moves_malformed: 2 }), error: null })).toMatchObject({
+        status: "excluded_only",
+        excluded: 2,
+      });
+    });
+
+    it("a body from before 0130 (no moves_malformed) reads as nothing excluded; a string count is a count", () => {
+      const legacy = report({ stages: [row] }) as Record<string, unknown>;
+      delete legacy.moves_malformed;
+      expect(stageConversionView({ data: legacy, error: null })).toMatchObject({ status: "data", excluded: 0 });
+      expect(stageConversionView({ data: report({ moves_malformed: "4" }), error: null })).toMatchObject({
+        status: "excluded_only",
+        excluded: 4,
+      });
+    });
+  });
+
+  it("the exclusion count is APPENDED after From/To on every row, 0 included", () => {
+    const rows: StageRow[] = [{ stage: "Qualified", entered: 3, advanced: 2, advance_rate: 2 / 3 }];
+    const csv = toCsv(withExcluded(withWindow(stageConversionCsv("n"), "2026-01-01", "2026-01-31"), 5), rows);
+    const [header, line] = csv.replace(/^﻿/, "").split("\r\n");
+    expect(header).toBe("Stage,Entered,Advanced,Advance rate,Note,From,To,Malformed moves excluded");
+    expect(line).toBe("Qualified,3,2,66.7%,n,2026-01-01,2026-01-31,5");
+    const zero = toCsv(withExcluded(withWindow(stageConversionCsv("n"), "a", "b"), 0), rows);
+    expect(zero.replace(/^﻿/, "").split("\r\n")[1]).toBe("Qualified,3,2,66.7%,n,a,b,0");
   });
 
   it("a stage name that looks like a formula is neutralised, as on every other export", () => {

@@ -231,7 +231,10 @@
         "advanceRate": "Advance rate",
         "derivedFrom": "Computed from the hash-chained event log.",
         "nameKeyed": "Stages are matched by name, so renaming one splits its history.",
-        "outcomes": "Closed in this window: {won} won, {lost} lost — counted separately, because those events do not record the stage they left."
+        "outcomes": "Closed in this window: {won} won, {lost} lost — counted separately, because those events do not record the stage they left.",
+        "loadError": "The stage conversion report could not be loaded. The other reports on this page are unaffected — reload the page to try again.",
+        "excluded": "{count, plural, one {# stage change in this window has an unreadable stage reference and is left out of these figures.} other {# stage changes in this window have an unreadable stage reference and are left out of these figures.}}",
+        "allExcluded": "{count, plural, one {The only stage change in this window has an unreadable stage reference, so there is nothing to report. This window is not empty — the record was left out.} other {All # stage changes in this window have an unreadable stage reference, so there is nothing to report. This window is not empty — the records were left out.}}"
       },
       "prices": {
         "heading": "Price reductions",
