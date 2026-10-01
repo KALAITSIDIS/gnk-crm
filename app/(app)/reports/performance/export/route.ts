@@ -91,15 +91,17 @@ export async function GET(request: NextRequest) {
     case "stage_conversion": {
       const view = stageConversionView(await supabase.rpc("report_stage_conversion", win));
       if (view.status === "error") return NextResponse.json({ error: "Export failed." }, { status: 500 });
-      // 0130: every stage change in the window was malformed and excluded. A
-      // header-only file would read as a complete, empty report, so refuse —
-      // the page shows the same window's warning.
-      if (view.status === "excluded_only") {
+      // 0130: no stage row, but malformed stage changes were excluded. A
+      // header-only file has no row to carry the count and would read as a
+      // complete, empty report, so refuse — the page shows the same window's
+      // warning. (A genuinely empty window still exports its header, as every
+      // export does.)
+      if (view.status !== "data" && view.excluded > 0) {
         return NextResponse.json(
           {
             error:
-              `Nothing to export: all ${view.excluded} stage change(s) in this window have an ` +
-              "unreadable stage reference and were excluded from the report.",
+              "Nothing to export: this window has no stage figures, and " +
+              `${view.excluded} stage change(s) with an unreadable stage reference were excluded from the report.`,
           },
           { status: 422 },
         );

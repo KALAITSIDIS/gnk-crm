@@ -101,14 +101,20 @@ export interface StageConversion {
  * this window." Four states now, each rendered and exported differently:
  *
  *   error         the RPC failed, or answered something that is not a report
- *   empty         a real report with no stage rows and nothing excluded
+ *   empty         a real report with no stage rows; `excluded` (possibly 0)
+ *                 malformed movements were left out beside valid ones that
+ *                 produced no row
  *   data          stage rows; `excluded` (possibly 0) were left out
- *   excluded_only no stage rows, but `excluded` > 0 movements were left out —
+ *   excluded_only no valid movement at all, and `excluded` > 0 were left out —
  *                 NOT the same as an empty window, and never shown as one
+ *
+ * `excluded_only` needs `moves_total` = 0: a window whose valid movements
+ * produce no stage row (a legacy event with no destination name) is not one
+ * where "all" stage changes were unreadable.
  */
 export type StageConversionView =
   | { status: "error" }
-  | { status: "empty"; conv: StageConversion; excluded: 0 }
+  | { status: "empty"; conv: StageConversion; excluded: number }
   | { status: "data"; conv: StageConversion; excluded: number }
   | { status: "excluded_only"; conv: StageConversion; excluded: number };
 
@@ -118,7 +124,8 @@ export function stageConversionView(res: { data: unknown; error: unknown }): Sta
   if (!conv || typeof conv !== "object" || !Array.isArray(conv.stages)) return { status: "error" };
   const excluded = Math.max(0, num(conv.moves_malformed) ?? 0);
   if (conv.stages.length > 0) return { status: "data", conv, excluded };
-  return excluded > 0 ? { status: "excluded_only", conv, excluded } : { status: "empty", conv, excluded: 0 };
+  if (excluded > 0 && (num(conv.moves_total) ?? 0) === 0) return { status: "excluded_only", conv, excluded };
+  return { status: "empty", conv, excluded };
 }
 
 export interface RepeatCut {
@@ -214,8 +221,8 @@ export const stageConversionCsv = (note = ""): CsvColumn<StageRow>[] => [
  * APPENDED after From / To (the withWindow rule — never inserted), and present
  * on every stage-conversion export, 0 included, so the column set does not
  * depend on the data. An export with no stage rows but exclusions is refused
- * by the route instead (422): a header-only file would read as a complete,
- * empty report.
+ * by the route instead (422): a header-only file has no row to carry the
+ * count, and would read as a complete, empty report.
  */
 export function withExcluded<T>(cols: CsvColumn<T>[], excluded: number): CsvColumn<T>[] {
   return [...cols, { header: "Malformed moves excluded", value: () => String(excluded) }];

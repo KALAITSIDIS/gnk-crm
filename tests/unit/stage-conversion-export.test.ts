@@ -101,8 +101,19 @@ describe("stage-conversion CSV export", () => {
     expect(res.status).toBe(422);
     expect(res.headers.get("content-type")).toContain("application/json");
     const json = JSON.parse(body) as { error: string };
-    expect(json.error).toMatch(/all 3 stage change/);
+    expect(json.error).toMatch(/no stage figures, and 3 stage change\(s\) with an unreadable stage reference were excluded/);
     expect(logEvent, "nothing was exported, so nothing is audited as exported").not.toHaveBeenCalled();
+  });
+
+  it("no stage rows beside a valid movement AND exclusions is refused too — the count has no row to ride on", async () => {
+    const { res, body } = await exportWith({
+      data: report({ stages: [], transitions: [], moves_total: 1, moves_with_ids: 0, moves_malformed: 2 }),
+      error: null,
+    });
+    expect(res.status).toBe(422);
+    expect((JSON.parse(body) as { error: string }).error).toMatch(/2 stage change\(s\)/);
+    expect((JSON.parse(body) as { error: string }).error, "and it does not claim ALL were unreadable").not.toMatch(/\ball\b/i);
+    expect(logEvent).not.toHaveBeenCalled();
   });
 
   it("a genuine RPC failure is still an explicit 500, and the database's error text does not leak", async () => {

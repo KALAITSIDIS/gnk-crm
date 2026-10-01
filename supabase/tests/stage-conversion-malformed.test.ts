@@ -24,9 +24,12 @@ import {
  * uuid makes the whole movement MALFORMED: it is left out of every figure
  * (never rescued by its recorded name) and counted in `moves_malformed`.
  *
- * The invariant this file pins: every event the 0076 body reported, it still
- * reports identically; only the events that made it raise are now excluded
- * and counted.
+ * What this file pins: every shape a writer of this repository produces
+ * (uuid strings; pre-0067, no ids) reports exactly as the 0076 body did — the
+ * valid and legacy cases below passed on their figures at 0129 too — and the
+ * events that made it raise are now excluded and counted. One shape changes on
+ * purpose: a JSON NUMBER that spells a uuid, which 0076 cast and then rescued
+ * by its recorded names (see the last matrix test).
  *
  * Fixtures: two throwaway organisations, aal2 sessions through PostgREST,
  * deleted at the end as postgres.
@@ -395,6 +398,25 @@ describe("every shape a stage-id field can take", () => {
     }
   });
 
+  it("both fields malformed in ONE event is one malformed movement, not two", async () => {
+    const c = await one({ ...names, from_stage_id: "x", to_stage_id: 7 });
+    expect([c.moves_total, c.moves_with_ids, c.moves_malformed]).toEqual([0, 0, 1]);
+    expect(c.transitions).toEqual([]);
+  });
+
+  it("a JSON number that spells a uuid is malformed — 0076 cast it and counted the move under its recorded names", async () => {
+    // 32 decimal digits are 32 hex digits, and jsonb renders 1e31 as a 1 and
+    // 31 zeros: both pass the uuid input function as TEXT. No stage has such
+    // an id, so 0076 fell back to the recorded names and fabricated a move.
+    for (const value of [12345678901234567890123456789012, 1e31]) {
+      for (const field of ["from_stage_id", "to_stage_id"] as const) {
+        const c = await one({ ...valid(), [field]: value });
+        expect(c.stages, `${field} ${value}`).toEqual([]);
+        expect([c.moves_total, c.moves_with_ids, c.moves_malformed], `${field} ${value}`).toEqual([0, 0, 1]);
+      }
+    }
+  });
+
   it("a uuid wrapped in an object or array is malformed, not unwrapped", async () => {
     for (const value of [{ id: sQualified.id }, [sQualified.id]]) {
       const c = await one({ ...valid(), to_stage_id: value });
@@ -431,6 +453,26 @@ describe("a mixed window keeps its counters consistent", () => {
     expect(c.stages.every((s) => s.advanced <= s.entered)).toBe(true);
     expect(c.transitions.reduce((n, t) => n + t.deals, 0)).toBeLessThanOrEqual(c.moves_total);
     expect(c.note).toMatch(/moves_malformed/);
+  });
+});
+
+describe("a window can hold valid moves that produce no stage row", () => {
+  it("a legacy departure-only move beside a malformed one: moves_total 1, no stage row, 1 malformed", async () => {
+    // The page must not call this window "all unreadable": moves_total says a
+    // valid move exists even though `stages` is empty (it reads moves_total
+    // to choose between its empty and all-excluded states).
+    const base = Date.UTC(2024, 7, 1);
+    const deal = await newDeal(ORG, sNew.id, agent.id);
+    const { error } = await svc.from("events").insert(
+      [
+        { payload: { from: "REC-from" }, occurred_at: new Date(base + 60_000).toISOString() },
+        { payload: { from: "New", to: "Qualified", to_stage_id: "x" }, occurred_at: new Date(base + 120_000).toISOString() },
+      ].map((r) => ({ ...r, org_id: ORG, actor_id: agent.id, entity_type: "deal", entity_id: deal, event_type: "stage_changed" })),
+    );
+    expect(error, JSON.stringify(error)).toBeNull();
+    const c = await ok(admin.client, { p_from: new Date(base).toISOString(), p_to: new Date(base + 3_600_000).toISOString() }, "departure-only");
+    expect([c.moves_total, c.moves_with_ids, c.moves_malformed]).toEqual([1, 0, 1]);
+    expect(c.stages).toEqual([]);
   });
 });
 

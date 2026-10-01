@@ -21,8 +21,9 @@
 --     (measured). The chain is append-only, so the break was permanent for
 --     those windows.
 --   * Every non-uuid shape raised the same way: a non-uuid string, whitespace,
---     a space-padded uuid, a JSON number / boolean / object / array (->> of a
---     non-string renders its JSON text, which then fails the cast).
+--     a space-padded uuid, a JSON boolean / object / array, and a JSON number
+--     such as 123 (->> of a non-string renders its JSON text, which then fails
+--     the cast — except a number whose digits spell a uuid; see below).
 --   * The page (app/(app)/reports/performance/page.tsx) ignored the RPC's
 --     error and painted "Nothing in this window."; the CSV route answered 500.
 --     Those consumers are fixed in the same change, against the field below.
@@ -49,11 +50,18 @@
 --   valid-looking move). It is counted, per event, in the new field
 --   `moves_malformed`, and the `note` says so.
 --
--- THE INVARIANT: every event 0076 reported, 0130 reports identically (0076
--- either cast a field successfully or raised; the three "no id" cases are the
--- ones its nullif let through). Only the events that made 0076 raise change —
--- from "the whole report fails" to "excluded and counted". Pinned by the test
--- file: each valid / legacy case's figures at 0129 equal its figures at 0130.
+-- WHAT CHANGES FOR AN EXISTING EVENT. Every event a writer of this repository
+-- produces (move_deal_to_stage: uuid strings; pre-0067: no ids) reports
+-- exactly as under 0076 — measured: each valid / legacy case's figures at
+-- 0129 equal its figures at 0130. The events that made 0076 raise now are
+-- excluded and counted. ONE further shape changes on purpose: a stage id
+-- written as a JSON NUMBER whose digits happen to spell a uuid
+-- (12345678901234567890123456789012, or 1e31, which jsonb normalises to 32
+-- digits — measured: both pass the uuid input function as text). 0076's ->>
+-- rendered it as text, the cast succeeded, no stage has that id, so the move
+-- was counted under its RECORDED NAMES — a forged movement rescued by name,
+-- exactly what this file refuses. 0130 requires a JSON string, so it is
+-- malformed. No writer records a number.
 --
 -- CONTRACT — additive. Same signature, return type (jsonb), SECURITY INVOKER,
 -- STABLE, search_path = public, owner and grants (create or replace keeps

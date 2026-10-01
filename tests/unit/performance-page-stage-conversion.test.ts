@@ -126,6 +126,14 @@ describe("the stage-conversion section", () => {
     expect(stage).not.toContain("stages.excluded");
   });
 
+  it("no stage rows, a valid move AND exclusions: empty plus the exclusion count — never 'all unreadable'", async () => {
+    const { stage } = await render({ data: conv({ stages: [], moves_total: 1, moves_with_ids: 0, moves_malformed: 2 }), error: null });
+    expect(stage).toContain("[empty]");
+    expect(stage).toContain("[stages.excluded count=2]");
+    expect(stage).not.toContain("stages.allExcluded");
+    expect(stage, "the route would refuse it (422), so no link").not.toContain(EXPORT_LINK);
+  });
+
   it("an all-malformed window says so instead of 'nothing in this window', and offers no export", async () => {
     const { stage } = await render({ data: conv({ ...NONE, moves_malformed: 3 }), error: null });
     expect(stage).toContain('[stages.allExcluded count=3]');

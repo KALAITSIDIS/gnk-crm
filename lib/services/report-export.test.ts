@@ -204,9 +204,16 @@ describe("report-export", () => {
       expect(mixed.status === "data" && mixed.conv.stages).toEqual([row]);
     });
 
-    it("no rows but exclusions is its own state, not 'empty'", () => {
+    it("no valid movement but exclusions is its own state, not 'empty'", () => {
       expect(stageConversionView({ data: report({ moves_malformed: 2 }), error: null })).toMatchObject({
         status: "excluded_only",
+        excluded: 2,
+      });
+    });
+
+    it("no rows, but a valid movement beside the exclusions, is empty-with-exclusions — not 'all unreadable'", () => {
+      expect(stageConversionView({ data: report({ moves_total: 1, moves_malformed: 2 }), error: null })).toMatchObject({
+        status: "empty",
         excluded: 2,
       });
     });

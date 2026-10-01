@@ -264,10 +264,10 @@ export default async function PerformanceReportsPage({
       {/* stage conversion --------------------------------------------------- */}
       <Section
         title={t("stages.heading")}
-        // a failed section has nothing to export; an all-excluded window's
-        // export is refused by the route, so neither offers the link
+        // a failed section has nothing to export, and the route refuses a
+        // window with no stage rows but exclusions (422) — neither offers it
         exportHref={
-          stages.status === "error" || stages.status === "excluded_only"
+          stages.status === "error" || (stages.status !== "data" && stages.excluded > 0)
             ? undefined
             : exportHref("stage_conversion")
         }
@@ -282,7 +282,7 @@ export default async function PerformanceReportsPage({
             {t("stages.loadError")}
           </p>
         ) : null}
-        {stages.status === "data" && stages.excluded > 0 ? (
+        {(stages.status === "data" || stages.status === "empty") && stages.excluded > 0 ? (
           <Warning testId="stage-conversion-excluded" text={t("stages.excluded", { count: stages.excluded })} />
         ) : null}
         {stages.status === "excluded_only" ? (
