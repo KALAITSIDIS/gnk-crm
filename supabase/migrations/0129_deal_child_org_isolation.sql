@@ -69,9 +69,10 @@
 --   viewing_slips_viewing_id_key UNIQUE (viewing_id) is RE-KEYED to
 --   viewing_slips_org_viewing_key UNIQUE (org_id, viewing_id) — 0122's
 --   lesson: a unique index answers at insert, a key at the end of the
---   statement, so on the old index B's slip on a signed A viewing answered
---   23505 and on an unsigned one 23503. With the key above every slip of a
---   viewing carries the viewing's organisation, so for valid rows the rule is
+--   statement, so with the new key but the OLD index B's slip on a signed A
+--   viewing would still answer 23505 and on an unsigned one 23503 — the
+--   oracle again. With the key above every slip of a viewing carries the
+--   viewing's organisation, so for valid rows the rule is
 --   unchanged (a second slip on the same viewing still answers 23505, which
 --   signViewingSlip turns into "This viewing already has a signed slip"),
 --   B's row never collides with A's, and every cross-organisation attempt
@@ -120,31 +121,28 @@
 -- end of its statement, or ANY session read of offers or viewing_slips,
 -- whose select policy reads the deal / the viewing — which ends in a 40P01
 -- deadlock with one of the two rolled back whole, cleanly: a page load, or
--- this file. lock_timeout bounds
--- EACH table's wait, not the statement's: the LOCK can wait up to 5 s on each
--- of its six tables while holding the ones before it — up to about 30 s
--- during which deals and leads are unreadable. Every job that reads these
--- tables runs as a short statement (raise_lead_escalations every five minutes
--- and raise_lead_sla_tasks every ten read leads, as does the enquiry-alerts
--- route that enquiry_alerts_sweep calls every two minutes and Vercel's cron
--- at 06:00; redact_stale_enquiries at 03:10 writes leads;
--- create_followup_nudges at 03:15 reads deals and viewings;
--- expire_reservations at 03:45 and the reservation sweeps at 03:50 / 03:55
--- read holds): apply outside 02:55–04:05 UTC and away from 06:00, at the
--- middle of an odd minute that is not a multiple of five, when the site is
--- quiet. A collision costs
--- that wait and a clean 55P03 or 40P01 rollback — then apply again, and do NOT
--- write the ledger row. Run twice by mistake, the file aborts in its
--- preflight (the replaced keys are no longer the old ones) and changes
--- nothing.
+-- this file. lock_timeout bounds EACH table's wait, not the statement's: the
+-- LOCK can wait up to 5 s on each of its six tables while holding the ones
+-- before it — up to about 30 s during which deals and leads are unreadable.
+-- Every job that reads these tables runs as a short statement
+-- (raise_lead_escalations every five minutes and raise_lead_sla_tasks every
+-- ten read leads, as does the enquiry-alerts route that enquiry_alerts_sweep
+-- calls every two minutes and Vercel's cron at 06:00; redact_stale_enquiries
+-- at 03:10 writes leads; create_followup_nudges at 03:15 reads deals and
+-- viewings; expire_reservations at 03:45 and the reservation sweeps at
+-- 03:50 / 03:55 read holds): apply outside 02:55–04:05 UTC and away from
+-- 06:00, at the middle of an odd minute that is not a multiple of five, when
+-- the site is quiet. A collision costs that wait and a clean 55P03 or 40P01
+-- rollback — then apply again, and do NOT write the ledger row. Run twice by
+-- mistake, the file aborts in its preflight (the replaced keys are no longer
+-- the old ones) and changes nothing.
 --
 -- DEPLOY ORDER: ADDITIVE — hosted before the merge. Every application writer
 -- of the six columns takes org_id and the parent from the same organisation:
 -- saveOffer's insert from the deal re-read under RLS (org_id = deal.org_id;
 -- its edit path and updateOfferStatus write neither column); signViewingSlip
--- from the viewing re-read under RLS (org_id =
--- v.org_id); convertLead from the deal it has just created in the caller's
--- organisation; createReservation's and createViewing's forms send only ids
+-- from the viewing re-read under RLS (org_id = v.org_id); convertLead from
+-- the deal it has just created in the caller's organisation; createReservation's and createViewing's forms send only ids
 -- offered from the caller's own lists (the reservation form sends no deal or
 -- offer at all) — a crafted id is refused 23503 by the keys until this
 -- branch's re-reads deploy, after which it is refused with a sentence first.
