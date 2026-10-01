@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 130::bigint as migrations,
+    2::bigint as auth_users, 131::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -284,6 +284,9 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   ('trg_supersede_viewing_nudges', true, false, false, false),
   -- 0117: revoked from all four roles explicitly, so hosted matches local
   ('trg_deals_closed_guard',       false, false, false, false),
+  -- 0131: the one writer of a session-time deal stage_changed — a definer
+  -- trigger body, revoked from all four roles explicitly like the guard above
+  ('trg_deals_stage_changed_event', true, false, false, false),
   -- 0101: erasure cancels a lead's pending desk alert — a trigger body that
   -- even service_role may not call (like the definer trigger bodies above)
   ('cancel_lead_notification_jobs', true, false, false, false),
@@ -573,6 +576,24 @@ misc as (
                            and p.prosrc !~ 'nullif\(e\.payload')::text
                      from pg_proc p
                     where p.oid = to_regprocedure('public.report_stage_conversion(timestamptz, timestamptz)')), 'false')
+  union all
+  -- 0131: a deal's stage_changed is written from the row change by the
+  -- deals_stage_changed_event trigger, never by a session: events_insert
+  -- refuses a session's, the trigger is enabled, and move_deal_to_stage no
+  -- longer inserts its own (with the trigger, that would be two per move). A
+  -- restore that brought back 0128's policy, lost the trigger or 0067's RPC
+  -- body reads false here.
+  select 'SECURITY: a deal''s stage_changed comes only from its stage change — events_insert refuses a session''s, the trigger writes it (0131)', 'true',
+         (coalesce((select pg_get_expr(p.polwithcheck, p.polrelid) ~ '\(event_type <> ''stage_changed''::text\)'
+                      from pg_policy p
+                     where p.polrelid = 'public.events'::regclass and p.polname = 'events_insert'), false)
+          and exists (select 1 from pg_trigger t
+                       where t.tgrelid = 'public.deals'::regclass and t.tgname = 'deals_stage_changed_event'
+                         and t.tgenabled = 'O'
+                         and t.tgfoid = to_regprocedure('public.trg_deals_stage_changed_event()'))
+          and coalesce((select regexp_replace(p.prosrc, '--[^\n]*', '', 'g') !~* 'insert\s+into\s+(public\.)?events'
+                          from pg_proc p
+                         where p.oid = to_regprocedure('public.move_deal_to_stage(uuid, uuid)')), false))::text
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.

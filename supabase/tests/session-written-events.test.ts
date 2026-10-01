@@ -89,7 +89,9 @@ afterAll(async () => {
 });
 
 describe("a session cannot hand-write a deal's terminal events", () => {
-  it.each(["won", "lost", "won_override"])("an admin's or the deal agent's direct '%s' is refused, and nothing is kept", async (type) => {
+  // 0131: nor its stage movement — deals_stage_changed_event writes that from
+  // the row change (supabase/tests/stage-movement-authentic.test.ts)
+  it.each(["won", "lost", "won_override", "stage_changed"])("an admin's or the deal agent's direct '%s' is refused, and nothing is kept", async (type) => {
     const deal = await newDeal();
     for (const u of [admin, agent]) {
       const r = await post(u, { entity_type: "deal", entity_id: deal, event_type: type });
