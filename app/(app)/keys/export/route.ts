@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/services/auth";
-import { logListExport } from "@/lib/services/export-audit";
+import { auditFilters, logListExport, vet } from "@/lib/services/export-audit";
+import { KEY_SCOPES } from "@/lib/validators/keys";
 import { toCsv, csvFilename } from "@/lib/services/csv";
 import { KEY_EXPORT_SELECT, keyCsvColumns, type KeyExportRow } from "@/lib/services/key-export";
 import {
@@ -36,7 +37,8 @@ export async function GET(request: NextRequest) {
     actorId: profile.id,
     list: "keys",
     count: rows.length,
-    filters: sp,
+    // q searches the holder's name: recorded as used, never as typed
+    filters: auditFilters(filters, { status: vet.oneOf(KEY_SCOPES) }),
   });
 
   const csv = toCsv(keyCsvColumns(), rows);

@@ -465,6 +465,13 @@ export async function correctLead(
  * erasure writes, the shape-only `criteria` stays, and the event says only
  * that it happened. Admin-only, irreversible. A linked lead is refused here
  * and pointed at contact erasure, which is the one that knows about AML.
+ *
+ * The desk's notes about the enquiry go too (T-redact-lead-notes): 0094 made
+ * `interaction_notes` erasable so they could go with the message, and contact
+ * erasure and `redact_stale_enquiries` already blank them. Two writes, so the
+ * action RESUMES: a lead whose message is redacted but whose notes are not is
+ * finished by the same button (the leads page offers it while notes remain),
+ * and the one `redacted` event is logged when the redaction completes.
  */
 export async function redactLead(leadId: string): Promise<void> {
   const { supabase, profile, lead } = await getLead(leadId);
@@ -474,27 +481,52 @@ export async function redactLead(leadId: string): Promise<void> {
       "This enquiry is linked to a contact — erase the contact instead; that redacts every lead it holds.",
     );
   }
-  if (lead.message === LEAD_MESSAGE_REDACTED) throw new Error("Already redacted.");
 
-  // `contact_id is null` at the database too: a Review and link that commits
-  // between the read above and this write must not end as a lead that is both
-  // linked and redacted — the state this action exists to refuse. The link
-  // guards the other order (lib/services/lead-contact-link.ts).
-  const { data, error } = await supabase
-    .from("leads")
-    .update({ message: LEAD_MESSAGE_REDACTED })
-    .eq("id", leadId)
-    .is("contact_id", null)
-    .select("id");
-  if (error) throw new Error(error.message);
-  if (!data?.length) {
-    const { data: now } = await supabase.from("leads").select("contact_id, message").eq("id", leadId).maybeSingle();
-    if (now?.contact_id) {
-      throw new Error("This enquiry was linked to a contact meanwhile — erase the contact instead.");
+  // A redacted lead cannot be linked afterwards (lead-contact-link refuses
+  // the marker), so finishing one needs no second look at contact_id.
+  let messageRedacted = false;
+  if (lead.message !== LEAD_MESSAGE_REDACTED) {
+    // `contact_id is null` at the database too: a Review and link that commits
+    // between the read above and this write must not end as a lead that is
+    // both linked and redacted — the state this action exists to refuse. The
+    // link guards the other order (lib/services/lead-contact-link.ts).
+    const { data, error } = await supabase
+      .from("leads")
+      .update({ message: LEAD_MESSAGE_REDACTED })
+      .eq("id", leadId)
+      .is("contact_id", null)
+      .select("id");
+    if (error) throw new Error(error.message);
+    if (!data?.length) {
+      const { data: now } = await supabase.from("leads").select("contact_id, message").eq("id", leadId).maybeSingle();
+      if (now?.contact_id) {
+        throw new Error("This enquiry was linked to a contact meanwhile — erase the contact instead.");
+      }
+      if (now?.message === LEAD_MESSAGE_REDACTED) throw new Error("Already redacted.");
+      throw new Error("Redaction blocked");
     }
-    if (now?.message === LEAD_MESSAGE_REDACTED) throw new Error("Already redacted.");
-    throw new Error("Redaction blocked");
+    messageRedacted = true;
   }
+
+  // The desk's own words about this enquiry. A session cannot update a note
+  // (0094: only a redaction, only by the system), so this runs as the service
+  // role — bounded by the caller's organisation and by THIS lead, which the
+  // admin check and the RLS read above cover. Only notes not yet redacted, so
+  // a resumed run counts what it did.
+  const notes = await createAdminClient()
+    .from("interaction_notes")
+    .update({ body: null, redacted_at: new Date().toISOString() })
+    .eq("org_id", profile.orgId)
+    .eq("entity_type", "lead")
+    .eq("entity_id", leadId)
+    .is("redacted_at", null)
+    .select("id");
+  if (notes.error) {
+    throw new Error(
+      "The message is redacted, but the notes on this enquiry are not — press Redact again to finish.",
+    );
+  }
+  if (!messageRedacted && !notes.data?.length) throw new Error("Already redacted.");
 
   await logEvent(supabase, {
     orgId: profile.orgId,

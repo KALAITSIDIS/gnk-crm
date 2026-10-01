@@ -26,6 +26,10 @@ const logEvent = vi.hoisted(() =>
 const revalidatePath = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => state.client }));
+// redactLead blanks the lead's notes through the service role
+// (T-redact-lead-notes; redact-lead-notes.test.ts pins that half) — here an
+// empty, error-free page: no notes to blank.
+vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => fakeClient({}).client }));
 vi.mock("@/lib/services/auth", () => ({
   getCurrentProfile: async () => {
     if (state.profileError) throw state.profileError;

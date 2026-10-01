@@ -2575,7 +2575,12 @@ VERIFY, run before starting.
   member (0002, a policy from the retired T4.6 app-side writer; RLS test 13 asserts it on purpose) and
   `property_keys` a direct UPDATE of the holder cache by admins and listing managers — a movement row, or
   a holder that `return` / `mark_lost` then copy, with no event. Found by T-key-holder-shape's scouts.
-- **Four list exports write the raw URL query string into the chain, S.** `logListExport`
+- ~~**Four list exports write the raw URL query string into the chain, S.**~~ **FIXED 2026-10-01 — DECISIONS
+  `T-export-filter-shape`: the contacts, keys, leads and properties routes record `auditFilters(parsed, vetting)` —
+  a vetted value (vocabulary member, id, number, flag) or `true` for a filter that was used; the search box and
+  contacts' free-text nationality are always `true`. RED first: a searched name reached all four payloads
+  (`tests/unit/export-routes-audit.test.ts`). Production held 0 `exported` events, so nothing to clean.** (original)
+  `logListExport`
   (`lib/services/export-audit.ts`) is handed `filters: sp` by the keys, contacts, leads and properties export
   routes — every search param, the search box included (it matches a contact's name, phone and e-mail, and a
   key's holder), so a name typed into search and exported is in an `exported` event for good. Pipeline,
@@ -3152,7 +3157,12 @@ VERIFY, run before starting.
   `property_keys.current_holder_name`; neither is linked to a contact, so contact erasure cannot find them.
   Backups (`scripts/backup/export.mjs`, the nightly pg_dump) hold every copy already written, whatever the
   decision — their retention is the real horizon.
-- **`redactLead` leaves the enquiry's conversation notes, S.** Article 17 on an UNLINKED enquiry
+- ~~**`redactLead` leaves the enquiry's conversation notes, S.**~~ **FIXED 2026-10-01 — DECISIONS
+  `T-redact-lead-notes`: the action blanks the lead's unredacted notes through the service role (bounded by the
+  caller's org and the lead), RESUMES a redaction whose notes were left, and the leads page offers "Finish
+  redaction" for such a row. RED first on the real stack (`supabase/tests/redact-lead-notes.test.ts`). Production
+  held 0 redacted leads and 0 lead notes, so no backfill. The `lost_reason` VERIFY below stays open under
+  "Erasure leaves a lost deal's or lead's typed reason…" (an operator decision).** (original) Article 17 on an UNLINKED enquiry
   (`redactLead`, `lib/actions/leads.ts`) rewrites `leads.message` and logs `redacted`, but never blanks the
   lead's `interaction_notes` — the desk's own words about the enquiry, which 0094 made erasable exactly so
   they could go with the message. Contact erasure and `redact_stale_enquiries` (0094) both blank them.

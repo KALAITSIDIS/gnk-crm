@@ -1,7 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/services/auth";
-import { logListExport } from "@/lib/services/export-audit";
+import { auditFilters, logListExport, vet } from "@/lib/services/export-audit";
+import {
+  CONTACT_LANGUAGES,
+  CONTACT_TYPES,
+  LEAD_SOURCES,
+  TEMPERATURES,
+} from "@/lib/validators/contacts";
 import { toCsv, csvFilename } from "@/lib/services/csv";
 import {
   CONTACT_EXPORT_SELECT,
@@ -23,8 +29,9 @@ export async function GET(request: NextRequest) {
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
   // URLSearchParams.entries() yields string pairs, so this is Record<string,string>
-  // — assignable to ContactSearchParams for parsing, and the exact shape the audit
-  // record wants.
+  // — assignable to ContactSearchParams for parsing. It is NOT what the audit
+  // record holds: the search box (`q`) matches names, phones and e-mails, so
+  // the record gets the parsed filters' shape (auditFilters).
   const sp: Record<string, string> = Object.fromEntries(request.nextUrl.searchParams.entries());
   const filters = parseContactListFilters(sp);
 
@@ -56,7 +63,16 @@ export async function GET(request: NextRequest) {
     actorId: profile.id,
     list: "contacts",
     count: rows.length,
-    filters: sp,
+    // nationality is a free-text input and q the search box: recorded as used,
+    // never as typed (T-export-filter-shape)
+    filters: auditFilters(filters, {
+      type: vet.oneOf(CONTACT_TYPES),
+      temperature: vet.oneOf(TEMPERATURES),
+      source: vet.oneOf(LEAD_SOURCES),
+      agent: vet.uuid,
+      language: vet.oneOf(CONTACT_LANGUAGES),
+      archived: vet.flag,
+    }),
   });
 
   const csv = toCsv(contactCsvColumns(agentName), rows);

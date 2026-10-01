@@ -68,6 +68,7 @@ export function LeadRowActions({
   isAdmin,
   status,
   isRedacted,
+  notesRemain = false,
   source,
   mayLink,
   suggestion = null,
@@ -81,6 +82,12 @@ export function LeadRowActions({
   isAdmin: boolean;
   status: string;
   isRedacted: boolean;
+  /**
+   * The message is redacted but notes on the lead are not — a redaction
+   * interrupted between its two writes (T-redact-lead-notes). The same action
+   * finishes it, so Redact is offered again, as "Finish redaction".
+   */
+  notesRemain?: boolean;
   /** `website` leads carry the person in their message — one click makes the contact (0098) */
   source: string;
   /**
@@ -117,26 +124,34 @@ export function LeadRowActions({
 
   // Article 17 for an enquiry nobody has linked: a linked lead is erased
   // through its contact. Offered on closed leads too — a spam or lost
-  // enquiry still holds the person's details.
+  // enquiry still holds the person's details. Offered again, as "Finish
+  // redaction", when the message is gone but notes on the lead are not.
+  const finishing = isRedacted && notesRemain;
   const redact =
-    isAdmin && !hasContact && !isRedacted ? (
+    isAdmin && !hasContact && (!isRedacted || notesRemain) ? (
       <Button
         variant="outline"
         size="sm"
         className="h-7 text-xs"
         disabled={isPending}
-        title="Replaces the person's message and contact details. Cannot be undone."
+        title={
+          finishing
+            ? "Blanks the notes left on this redacted enquiry. Cannot be undone."
+            : "Replaces the person's message and contact details, and blanks the notes on this enquiry. Cannot be undone."
+        }
         onClick={() => {
           if (
             !confirm(
-              "Redact this enquiry? The person's message and contact details are replaced and cannot be recovered.",
+              finishing
+                ? "Finish redacting this enquiry? The notes left on it are blanked and cannot be recovered."
+                : "Redact this enquiry? The person's message and contact details are replaced, the notes on it are blanked, and none of it can be recovered.",
             )
           )
             return;
           act(() => redactLead(leadId), "Enquiry redacted");
         }}
       >
-        <Eraser className="size-3.5" /> Redact
+        <Eraser className="size-3.5" /> {finishing ? "Finish redaction" : "Redact"}
       </Button>
     ) : null;
 

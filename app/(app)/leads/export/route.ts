@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/services/auth";
-import { logListExport } from "@/lib/services/export-audit";
+import { auditFilters, logListExport, vet } from "@/lib/services/export-audit";
+import { LEAD_STATUS_FILTERS } from "@/lib/validators/contacts";
 import { toCsv, csvFilename } from "@/lib/services/csv";
 import { LEAD_EXPORT_SELECT, leadCsvColumns, type LeadExportRow } from "@/lib/services/lead-export";
 import { applyLeadListFilters, parseLeadFilters } from "@/lib/queries/leads-list";
@@ -38,7 +39,8 @@ export async function GET(request: NextRequest) {
     actorId: profile.id,
     list: "leads",
     count: rows.length,
-    filters: sp,
+    // the parsed scope only — a parameter this list does not read is not recorded
+    filters: auditFilters(filters, { status: vet.oneOf(LEAD_STATUS_FILTERS) }),
   });
 
   const csv = toCsv(leadCsvColumns(agentName), rows);
