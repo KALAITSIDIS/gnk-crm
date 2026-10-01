@@ -2755,7 +2755,7 @@ VERIFY, run before starting.
     experiment). Pre-dates 0117; the close transaction now carries it. Fix: `and t.org_id = new.org_id` in the
     trigger; composite tenant FKs `(deal_id, org_id)` on `tasks` and `offers`. Found by T-atomic-deal-close's
     design critique.
-- **`offers.deal_id` carries no tenant tie, S.** The offers half of the entry above: `offers (deal_id) → deals (id)`
+- ~~**`offers.deal_id` carries no tenant tie, S.**~~ **FIXED 2026-10-01 — migration 0129, DECISIONS `T-deal-child-org-isolation`: `offers`, `reservations` (deal and offer), `viewings` and `leads.converted_deal_id` keyed `(org_id, x)` on `deals_org_id_id_key` / the new `offers_org_id_id_key`, each keeping its delete rule (SET NULL with a column list on the hold's two); `deal-close.test.ts`'s fixture planted under replica role. RED first: 11 tests at 0128.** (original) The offers half of the entry above: `offers (deal_id) → deals (id)`
   (0001, ON DELETE CASCADE) and `offers_insert` checks only the inserter's org, so a member of org B can still POST an
   offer of B naming an org-A deal id. `close_deal` reads offers in the DEAL's own organisation (0117), so such a row
   cannot satisfy the Won rule — `deal-close.test.ts` ("an 'accepted' offer planted on the deal from ANOTHER
@@ -2927,8 +2927,8 @@ VERIFY, run before starting.
   the mapping found: a B admin saw A's reference). MEASURED at 0123 first (20 behavioural and catalogue tests RED).
   Left open, recorded: the task-side links (the "Every other `tasks.*` link" entry above — reservation_id /
   installment_id / lead_id since FIXED and LANDED, migration 0125), ~~`reservations.
-  contact_id`~~ (0126, landed) / `deal_id` / `offer_id` / `payment_plan_id`, `leads.contact_id` (a pinned FK-name embed hint),
-  `leads.converted_deal_id`, the profile links, and `createLead` (below). (original) Found by
+  contact_id`~~ (0126, landed) / ~~`deal_id` / `offer_id`~~ (0129) / `payment_plan_id`, `leads.contact_id` (a pinned FK-name embed hint),
+  ~~`leads.converted_deal_id`~~ (0129), the profile links, and `createLead` (below). (original) Found by
   T-viewing-parent-org-isolation's review and confirmed by two independent read-only traces of the LATEST definitions
   (catalogue- and code-level; NOT reproduced against a database). Three nightly / periodic sweeps still copy a property
   into `tasks.property_id` and its reference into the title through org-blind joins:
@@ -3019,7 +3019,7 @@ VERIFY, run before starting.
   logged on the merged-away duplicate keeps its body until the duplicate is erased as well. Decide whether notes
   move with a merge (like documents) or erasure follows `merged_into_id`. Found by T-contact-merge-org-isolation's
   review. **VERIFY:** `grep -n 'from("interaction_notes")' lib/actions/merge-contacts.ts lib/actions/contact-erasure.ts`.
-- **A viewing slip can name another organisation's viewing, S (inferred, not reproduced).** `viewing_slips_insert`
+- ~~**A viewing slip can name another organisation's viewing, S (inferred, not reproduced).**~~ **FIXED 2026-10-01 — migration 0129, DECISIONS `T-deal-child-org-isolation`: REPRODUCED first at 0128 (B's admin signed A's viewing; a signed A viewing answered 23505, an unsigned one 23503); `viewing_slips (org_id, viewing_id) → viewings (org_id, id)` ON DELETE CASCADE, the unique key re-keyed `(org_id, viewing_id)` as a constraint (the one-to-one embed needs it).** (original) `viewing_slips_insert`
   admits an ADMIN of the caller's org without checking that `viewing_id` belongs to that org (the agent arm does, by
   requiring the viewing's `agent_id`), and `viewing_slips.viewing_id` references `viewings(id)` alone with
   `unique (viewing_id)`. So B's admin who knows an A viewing id could POST a slip for it: an existence oracle (accepted
@@ -3027,7 +3027,17 @@ VERIFY, run before starting.
   T-task-viewing-org-isolation's scouting; not reproduced. Fix: `viewing_slips (org_id, viewing_id) → viewings (org_id,
   id) on delete cascade` on 0120's `viewings_org_id_id_key`. **VERIFY:** `grep -n viewing_slips_org_viewing_fkey
   supabase/migrations/*.sql` — no hit means open.
-- **`createReservation` accepts a form `deal_id` without an RLS re-read, S.** `lib/actions/reservations.ts` re-reads
+- **A slip row's stored file paths are free text, S (defence in depth).** `authenticated` may INSERT
+  `viewing_slips.signature_path` / `pdf_path` (column grant) and `viewing_slips_insert` checks only the row's organisation and
+  the viewing's agent, so a B row can NAME `<A org>/<A viewing>.pdf`. Since T-deal-child-org-isolation (2026-10-01) neither
+  service-role reader trusts the column — `getSlipDownloadUrl` and the evidence pack derive the object name from the row's ids
+  (`lib/services/slip-paths.ts`; before that, B was served A's signed slip — reproduced) — but the stored text can still lie to
+  a future reader, and the restore pack's slip-file rows pass on such a row. Fix: a CHECK that `signature_path = org_id || '/' ||
+  viewing_id || '.png'` and `pdf_path` is null or the `.pdf` twin, after checking hosted (0 slips on 2026-10-01). The same class:
+  `documents.storage_path` (`documents_insert` checks only org and role; `getDocumentUrl` / `getViewingConfirmationUrl` sign
+  the stored path; the names carry a timestamp or random part, so they are harder to guess). Found by T-deal-child-org-isolation's
+  review. **VERIFY:** `grep -n "signature_path" supabase/migrations/*.sql | grep -i check` — no hit means open.
+- ~~**`createReservation` accepts a form `deal_id` without an RLS re-read, S.**~~ **FIXED 2026-10-01 — DECISIONS `T-deal-child-org-isolation`: re-reads the contact, deal and offer under RLS (and `createViewing` the deal); the keys refuse a foreign id since 0129.** (original) `lib/actions/reservations.ts` re-reads
   the property under RLS but copies `d.deal_id` from the form straight onto the hold, and `reservations.deal_id`
   references `deals(id)` alone (0044). A posted foreign deal id therefore lands on the reservation; when that hold is
   converted, `transitionReservation` copies it onto the `listing_status_check` task — which 0119's key now refuses
@@ -3074,7 +3084,8 @@ VERIFY, run before starting.
   `offers` has no status trigger or CHECK, and `offers_update` limits rows, not transitions. And "one accepted
   offer per deal" (T3.2) is a check-then-act in the action with no unique index. `close_deal` now records the justifying `offer_id` in the `won` event and holds
   the offer FOR SHARE during the close. Fix: refuse offer transitions on a non-open deal; a partial unique index
-  `offers(deal_id) where status = 'accepted'` after checking hosted. Found by T-atomic-deal-close. **VERIFY:**
+  `offers(org_id, deal_id) where status = 'accepted'` after checking hosted (keyed by organisation too — 0122's / 0129's
+  lesson: a unique index answers before `offers_org_deal_fkey`, so `(deal_id)` alone would be an oracle on A's accepted offers). Found by T-atomic-deal-close. **VERIFY:**
   `grep -n -A30 "export async function updateOfferStatus" lib/actions/deals.ts | grep 'status !== "open"'` — no hit means open.
 - **The dashboard's "won this month" lost `final_value` again, S.** 0093 rebuilt `admin_dashboard_stats` from
   0057's body and silently undid 0076's `coalesce(final_value, expected_value)`: the tile sums `expected_value`

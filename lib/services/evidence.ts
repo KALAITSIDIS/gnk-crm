@@ -4,6 +4,7 @@ import type { Database, Json } from "@/lib/supabase/database.types";
 import en from "@/messages/en.json";
 import { describeEvent, type EventTranslator } from "@/lib/services/events";
 import { sha256Hex } from "@/lib/services/hash";
+import { slipObjectPath } from "@/lib/services/slip-paths";
 import { zonedDateRangeToUtc } from "@/lib/utils/tz";
 
 /**
@@ -309,7 +310,7 @@ export async function assembleEvidence(
   const { data: slipRows } = viewingIds.length
     ? await supabase
         .from("viewing_slips")
-        .select("viewing_id, signer_name, signed_at, signature_sha256, signature_path")
+        .select("org_id, viewing_id, signer_name, signed_at, signature_sha256")
         .in("viewing_id", viewingIds)
     : { data: [] };
   const fromMs = bounds.gte ? Date.parse(bounds.gte) : -Infinity;
@@ -323,7 +324,12 @@ export async function assembleEvidence(
   for (const s of slipRowsInScope) {
     let pngDataUri: string | null = null;
     if (opts.withSlipImages) {
-      const { data: file } = await admin.storage.from("signatures").download(s.signature_path);
+      // the object named by the row's ids, not its stored signature_path —
+      // free text a session can point at another organisation's file
+      // (slipObjectPath); the service role below is not limited by storage policy
+      const { data: file } = await admin.storage
+        .from("signatures")
+        .download(slipObjectPath(s.org_id, s.viewing_id, "png"));
       if (file) {
         const buf = Buffer.from(await file.arrayBuffer());
         pngDataUri = `data:image/png;base64,${buf.toString("base64")}`;

@@ -75,6 +75,20 @@ export async function createReservation(
     return fail(`A ${property.kind} cannot be reserved — reserve one of its units instead.`);
   }
 
+  // The form's other links, re-read under RLS the same way. The form offers
+  // only the caller's own contacts and sends no deal or offer, so only a
+  // crafted post names one this user cannot see; since 0126 / 0129 the
+  // database refuses another organisation's id anyway (23503), and this turns
+  // that — and an own-organisation row RLS hides — into a sentence.
+  const [contact, deal, offer] = await Promise.all([
+    d.contact_id ? supabase.from("contacts").select("id").eq("id", d.contact_id).maybeSingle() : null,
+    d.deal_id ? supabase.from("deals").select("id").eq("id", d.deal_id).maybeSingle() : null,
+    d.offer_id ? supabase.from("offers").select("id").eq("id", d.offer_id).maybeSingle() : null,
+  ]);
+  if (contact && !contact.data) return fail("That contact is no longer available to you.");
+  if (deal && !deal.data) return fail("That deal is no longer available to you.");
+  if (offer && !offer.data) return fail("That offer is no longer available to you.");
+
   // Cyprus end-of-day, not midnight UTC: a hold agreed "until Friday" must last
   // through Friday (see cyprusEndOfDay).
   const expiresAt = cyprusEndOfDay(d.expires_on);

@@ -5,6 +5,7 @@ import { getCurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
 import { sha256Hex } from "@/lib/services/hash";
 import { renderSlipPdf } from "@/lib/services/slip-pdf";
+import { slipObjectPath } from "@/lib/services/slip-paths";
 import { SLIP_GDPR_LINE } from "@/lib/services/viewings";
 import { binaryBody } from "@/lib/services/storage-upload";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -109,8 +110,8 @@ export async function signViewingSlip(
   const pdfSha256 = sha256Hex(pdf);
 
   const bucket = createAdminClient().storage.from("signatures");
-  const sigPath = `${v.org_id}/${d.viewing_id}.png`;
-  const pdfPath = `${v.org_id}/${d.viewing_id}.pdf`;
+  const sigPath = slipObjectPath(v.org_id, d.viewing_id, "png");
+  const pdfPath = slipObjectPath(v.org_id, d.viewing_id, "pdf");
 
   // There is no row for this viewing (checked above), so anything already at
   // these two paths is what an earlier attempt stranded. Taken out first;
@@ -197,7 +198,10 @@ export async function signViewingSlip(
 /**
  * Short-lived signed URL for a slip PDF. The RLS-checked read of the slip
  * gates access (admin or the viewing's agent); the service role then signs the
- * private-bucket URL (doc 04: signatures served via server action only).
+ * private-bucket URL (doc 04: signatures served via server action only) — for
+ * the object named by the ROW's ids, never the stored `pdf_path` text, which a
+ * session can set to another organisation's file (see slipObjectPath). The
+ * stored path still says whether a PDF was written at all.
  */
 export async function getSlipDownloadUrl(
   viewingId: string,
@@ -205,7 +209,7 @@ export async function getSlipDownloadUrl(
   const supabase = await createClient();
   const { data: slip } = await supabase
     .from("viewing_slips")
-    .select("pdf_path")
+    .select("org_id, viewing_id, pdf_path")
     .eq("viewing_id", viewingId)
     .maybeSingle();
   if (!slip?.pdf_path) return { url: null, error: "No slip found" };
@@ -213,7 +217,7 @@ export async function getSlipDownloadUrl(
   const admin = createAdminClient();
   const { data, error } = await admin.storage
     .from("signatures")
-    .createSignedUrl(slip.pdf_path, 120);
+    .createSignedUrl(slipObjectPath(slip.org_id, slip.viewing_id, "pdf"), 120);
   if (error) return { url: null, error: error.message };
   return { url: data.signedUrl, error: null };
 }

@@ -21,7 +21,13 @@ export interface ViewingExportRow {
   properties: { reference: string | null } | null;
   contacts: { display_name: string | null } | null;
   agent: { full_name: string | null } | null;
-  viewing_slips: { signer_name: string | null; signed_at: string | null }[] | null;
+  /**
+   * ONE object, not an array: viewing_slips is unique on its viewing (0001's
+   * key, (org_id, viewing_id) since 0129), so PostgREST embeds a viewing's
+   * slip as a one-to-one. Typed as an array until 2026-10-01, and read with
+   * `[0]`, so "Signed by" and "Signed at" were blank on every export.
+   */
+  viewing_slips: { signer_name: string | null; signed_at: string | null } | null;
 }
 
 export function viewingCsvColumns(): CsvColumn<ViewingExportRow>[] {
@@ -32,10 +38,10 @@ export function viewingCsvColumns(): CsvColumn<ViewingExportRow>[] {
     { header: "Property", value: (v) => v.properties?.reference ?? "" },
     { header: "Attendee", value: (v) => v.contacts?.display_name ?? "" },
     { header: "Agent", value: (v) => v.agent?.full_name ?? "" },
-    { header: "Signed by", value: (v) => v.viewing_slips?.[0]?.signer_name ?? "" },
+    { header: "Signed by", value: (v) => v.viewing_slips?.signer_name ?? "" },
     {
       header: "Signed at",
-      value: (v) => (v.viewing_slips?.[0]?.signed_at ? formatDateTime(v.viewing_slips[0].signed_at) : ""),
+      value: (v) => (v.viewing_slips?.signed_at ? formatDateTime(v.viewing_slips.signed_at) : ""),
     },
     { header: "Route date", value: (v) => v.route_date },
   ];

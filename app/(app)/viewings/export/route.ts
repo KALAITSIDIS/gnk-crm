@@ -27,7 +27,9 @@ export async function GET() {
     return NextResponse.json({ error: "Export failed." }, { status: 500 });
   }
 
-  const rows = (data ?? []) as unknown as ViewingExportRow[];
+  // No cast: the generated types carry the slip as ONE object (a one-to-one),
+  // and ViewingExportRow must agree — it said array until 2026-10-01.
+  const rows: ViewingExportRow[] = data ?? [];
 
   await logListExport(supabase, {
     orgId: profile.orgId,
