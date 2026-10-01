@@ -8,13 +8,14 @@
 -- deal_id without an RLS re-read"; reproduced 2026-10-01 on the local stack
 -- at 0128, through PostgREST with aal2 sessions of two throwaway
 -- organisations, and pinned RED first by
--- supabase/tests/deal-child-org-isolation.test.ts — its 8 tests marked "RED
--- at 0128" failed at 0128, each for the reason it names):
+-- supabase/tests/deal-child-org-isolation.test.ts — its 11 tests marked "RED
+-- at 0128" failed at 0128, each for the reason it names, every refusal
+-- asserted by the constraint's name):
 --
 --   * offers.deal_id (0001, ON DELETE CASCADE), reservations.deal_id and
 --     reservations.offer_id (0044, ON DELETE SET NULL), viewings.deal_id
---     (0001, NO ACTION), leads.converted_deal_id (leads_converted_fk, NO
---     ACTION) and viewing_slips.viewing_id (0001, ON DELETE CASCADE)
+--     (0001, NO ACTION), leads.converted_deal_id (0001's leads_converted_fk,
+--     NO ACTION) and viewing_slips.viewing_id (0001, ON DELETE CASCADE)
 --     referenced their parent by id ALONE, and the insert / update policies
 --     check only the CALLER's organisation. A member of organisation B who
 --     learned an organisation-A deal, offer or viewing id — B can read none of
@@ -27,14 +28,16 @@
 --     checks only org_id). The slip held viewing_slips_viewing_id_key
 --     (UNIQUE (viewing_id)), so A's own signing then failed 23505 — "This
 --     viewing already has a signed slip" — a denial of service on A's
---     commission evidence. And on an A viewing that WAS signed, B's insert
---     answered 23505 (the unique index, at insert) where an unsigned one
---     answered 23503 (the key, at the end of the statement): an oracle on
---     whether A's viewing had been signed.
+--     commission evidence. And B's slip on an A viewing that WAS signed
+--     answered 23505 (the unique index), on an unsigned one it was accepted,
+--     on a missing id 23503: an oracle on whether A's viewing had been signed.
 --   * Where a policy refuses first: offers_insert's and viewing_slips_insert's
---     AGENT arms read the deal / viewing under RLS, so a B agent met 42501
---     before any key — before this file and after it. Every UPDATE, and the
---     admin arms, reached the key.
+--     AGENT arms read the deal / viewing under RLS, and an agent's filtered
+--     UPDATE of an offer is also checked against offers_select (whose agent
+--     arm reads the deal), so a B agent met 42501 there before any key —
+--     before this file and after it, a real id and a missing one alike. The
+--     admin arms, and every UPDATE of a hold, a viewing or a lead, reached the
+--     key; viewing_slips has no UPDATE policy at all.
 --
 -- THE FIX — 0119–0126's layer A; no function reads these links across
 -- organisations (none of the sweeps copies them), so there is no layer B:
@@ -80,43 +83,56 @@
 --   action, the viewing page, the evidence pack) on an index.
 --   Each other referencing side gets an (org_id, x) index — partial where the
 --   column is nullable (the advisors' unindexed-foreign-key rule reads an
---   index's leading columns); 0001's / 0044's single-column indexes stay —
---   they serve the lookups by the parent id alone (the deal page).
+--   index's leading columns); the single-column deal_id indexes on offers
+--   (0077) and on viewings and reservations (0092) stay — they serve the
+--   lookups by the parent id alone (the deal page); reservations.offer_id and
+--   leads.converted_deal_id had none.
 --   A cross-organisation id and a missing id now read the same 23503 — no
 --   existence oracle through THESE SIX columns. The constraints bind EVERY
 --   writer, service_role and definer bodies included.
 --
 -- NOT CHANGED HERE (BACKLOG): the contact links (leads.contact_id, deals' and
 -- offers' contact and property links, mandates' and properties' contact
--- links), reservations.payment_plan_id, the profile links; viewing_slips'
--- signature_path / pdf_path are not tied to the row's organisation (the
--- service role signs whatever path a row names — filed in BACKLOG).
+-- links), reservations.payment_plan_id, the profile links. viewing_slips'
+-- signature_path / pdf_path are free text the database does not tie to the
+-- row, and the two service-role readers used to fetch whatever path a row
+-- named — a B slip naming A's files was served A's signed slip (found by this
+-- file's review, reproduced locally). The application change that ships with
+-- this file makes both readers derive the object name from the row's
+-- (org_id, viewing_id) instead (lib/services/slip-paths.ts); a CHECK tying the
+-- two columns to the row is filed in BACKLOG, with documents.storage_path's
+-- twin.
 --
 -- EXISTING DATA. The preflight below counts, for each of the six links, the
 -- rows whose organisation differs from their parent's, and ABORTS THE WHOLE
 -- FILE before any DDL if there are any: nothing is deleted, reassigned or
 -- repaired here, and no constraint is ever added NOT VALID by this file. It
 -- also refuses if the six keys it replaces, or the unique key it re-keys, are
--- not the ones 0001 / 0044 / the lead conversion left (their rules are what
--- it preserves), or if offers already has a unique key other than its
--- primary key.
+-- not the ones 0001 / 0044 left (their rules are what it preserves), or if
+-- offers already has a unique key other than its primary key, or if a name
+-- it creates is taken.
 --
 -- LOCKS. Every lock the DDL needs is taken at its strongest, in ONE
 -- statement, BEFORE the counts: deals, offers, viewings — the parents — then
 -- leads, reservations, viewing_slips. close_deal takes the same order (the
--- deal row, then its offers). What can still collide is a writer that holds a
--- child and then checks its parent — every insert naming a deal, offer or
--- viewing checks its key at the end of its statement — which ends in a 40P01
--- deadlock with one of the two rolled back whole, cleanly. lock_timeout bounds
+-- deal row, then its offers). What can still collide is a statement that
+-- holds a child and then reaches its parent — an insert's key check at the
+-- end of its statement, or ANY session read of offers or viewing_slips,
+-- whose select policy reads the deal / the viewing — which ends in a 40P01
+-- deadlock with one of the two rolled back whole, cleanly: a page load, or
+-- this file. lock_timeout bounds
 -- EACH table's wait, not the statement's: the LOCK can wait up to 5 s on each
 -- of its six tables while holding the ones before it — up to about 30 s
--- during which deals and leads are unreadable. Every sweep that reads these
--- tables runs as a short statement (enquiry_alerts_sweep every two minutes,
--- raise_lead_escalations every five and raise_lead_sla_tasks every ten all
--- read leads; create_followup_nudges at 03:15 reads deals and viewings;
+-- during which deals and leads are unreadable. Every job that reads these
+-- tables runs as a short statement (raise_lead_escalations every five minutes
+-- and raise_lead_sla_tasks every ten read leads, as does the enquiry-alerts
+-- route that enquiry_alerts_sweep calls every two minutes and Vercel's cron
+-- at 06:00; redact_stale_enquiries at 03:10 writes leads;
+-- create_followup_nudges at 03:15 reads deals and viewings;
 -- expire_reservations at 03:45 and the reservation sweeps at 03:50 / 03:55
--- read holds): apply outside 02:55–04:05 UTC, at the middle of an odd minute
--- that is not a multiple of five, when the site is quiet. A collision costs
+-- read holds): apply outside 02:55–04:05 UTC and away from 06:00, at the
+-- middle of an odd minute that is not a multiple of five, when the site is
+-- quiet. A collision costs
 -- that wait and a clean 55P03 or 40P01 rollback — then apply again, and do NOT
 -- write the ledger row. Run twice by mistake, the file aborts in its
 -- preflight (the replaced keys are no longer the old ones) and changes
@@ -124,8 +140,9 @@
 --
 -- DEPLOY ORDER: ADDITIVE — hosted before the merge. Every application writer
 -- of the six columns takes org_id and the parent from the same organisation:
--- createOffer / updateOffer from the deal re-read under RLS (org_id =
--- deal.org_id); signViewingSlip from the viewing re-read under RLS (org_id =
+-- saveOffer's insert from the deal re-read under RLS (org_id = deal.org_id;
+-- its edit path and updateOfferStatus write neither column); signViewingSlip
+-- from the viewing re-read under RLS (org_id =
 -- v.org_id); convertLead from the deal it has just created in the caller's
 -- organisation; createReservation's and createViewing's forms send only ids
 -- offered from the caller's own lists (the reservation form sends no deal or
@@ -154,8 +171,11 @@
 -- reservations_org_offer_fkey, which depends on it); regenerate the types,
 -- move the verify-restore migrations pin FORWARD (one more ledger row),
 -- remove its 0129 rows, remove the new test file (its tests marked RED at
--- 0128 fail on the rolled-back catalogue), revert the docs. No data moves
--- either way: every row valid at 0129 is valid at 0128.
+-- 0128 fail on the rolled-back catalogue), revert the docs. Keep the
+-- application changes: the re-reads, the CSV fix and the slip readers'
+-- derived object names hold at 0128 too (the derived name is always in the
+-- row's — the caller's — organisation's folder). No data moves either way:
+-- every row valid at 0129 is valid at 0128.
 --
 -- Pins that move with this file: the migrations count (128 -> 129) and two
 -- 0129 invariant rows in scripts/backup/verify-restore.sql (the six mismatch
@@ -210,7 +230,7 @@ begin
       ('public.reservations'::regclass,  'public.deals'::regclass,    'reservations_deal_id_fkey',     'FOREIGN KEY (deal_id) REFERENCES deals(id) ON DELETE SET NULL',      '0044'),
       ('public.reservations'::regclass,  'public.offers'::regclass,   'reservations_offer_id_fkey',    'FOREIGN KEY (offer_id) REFERENCES offers(id) ON DELETE SET NULL',    '0044'),
       ('public.viewings'::regclass,      'public.deals'::regclass,    'viewings_deal_id_fkey',         'FOREIGN KEY (deal_id) REFERENCES deals(id)',                         '0001'),
-      ('public.leads'::regclass,         'public.deals'::regclass,    'leads_converted_fk',            'FOREIGN KEY (converted_deal_id) REFERENCES deals(id)',               'the lead conversion'),
+      ('public.leads'::regclass,         'public.deals'::regclass,    'leads_converted_fk',            'FOREIGN KEY (converted_deal_id) REFERENCES deals(id)',               '0001'),
       ('public.viewing_slips'::regclass, 'public.viewings'::regclass, 'viewing_slips_viewing_id_fkey', 'FOREIGN KEY (viewing_id) REFERENCES viewings(id) ON DELETE CASCADE', '0001')
     ) as t(rel, ref, name, def, src)
   loop
