@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 129::bigint as migrations,
+    2::bigint as auth_users, 130::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -563,6 +563,16 @@ misc as (
              select 1 from leads l where l.converted_deal_id is not null and not exists (select 1 from deals d where d.id = l.converted_deal_id)
            union all
              select 1 from viewing_slips s where not exists (select 1 from viewings v where v.id = s.viewing_id)) x)
+  union all
+  -- 0130: report_stage_conversion classifies each stage id before casting it,
+  -- so one malformed stage_changed payload is excluded and counted instead of
+  -- failing every report window that contains it. A restore that brought back
+  -- 0076's body would read false here (its two casts are unguarded nullif ones).
+  select 'HONESTY: report_stage_conversion guards its uuid casts and counts malformed moves (0130)', 'true',
+         coalesce((select (p.prosrc ~ 'pg_input_is_valid\(' and p.prosrc ~ 'moves_malformed'
+                           and p.prosrc !~ 'nullif\(e\.payload')::text
+                     from pg_proc p
+                    where p.oid = to_regprocedure('public.report_stage_conversion(timestamptz, timestamptz)')), 'false')
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.

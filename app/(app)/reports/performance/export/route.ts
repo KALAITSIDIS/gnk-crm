@@ -10,13 +10,14 @@ import {
   priceReductionsCsv,
   sourceRoiCsv,
   stageConversionCsv,
+  stageConversionView,
   timeToCloseCsv,
   timeToCloseRows,
+  withExcluded,
   withWindow,
   type AgentPerformanceRow,
   type PriceReductions,
   type SourceRoiRow,
-  type StageConversion,
   type TimeToClose,
 } from "@/lib/services/report-export";
 
@@ -88,11 +89,28 @@ export async function GET(request: NextRequest) {
       break;
     }
     case "stage_conversion": {
-      const { data, error } = await supabase.rpc("report_stage_conversion", win);
-      if (error) return NextResponse.json({ error: "Export failed." }, { status: 500 });
-      const conv = data as unknown as StageConversion | null;
-      const rows = conv?.stages ?? [];
-      csv = toCsv(withWindow(stageConversionCsv(conv?.note ?? ""), from, to), rows);
+      const view = stageConversionView(await supabase.rpc("report_stage_conversion", win));
+      if (view.status === "error") return NextResponse.json({ error: "Export failed." }, { status: 500 });
+      // 0130: no stage row, but malformed stage changes were excluded. A
+      // header-only file has no row to carry the count and would read as a
+      // complete, empty report, so refuse — the page shows the same window's
+      // warning. (A genuinely empty window still exports its header, as every
+      // export does.)
+      if (view.status !== "data" && view.excluded > 0) {
+        return NextResponse.json(
+          {
+            error:
+              "Nothing to export: this window has no stage figures, and " +
+              `${view.excluded} stage change(s) with an unreadable stage reference were excluded from the report.`,
+          },
+          { status: 422 },
+        );
+      }
+      const rows = view.conv.stages;
+      csv = toCsv(
+        withExcluded(withWindow(stageConversionCsv(view.conv.note ?? ""), from, to), view.excluded),
+        rows,
+      );
       rowCount = rows.length;
       break;
     }

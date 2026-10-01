@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
-import { Download, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Download, ShieldCheck } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { addDayKey } from "@/lib/services/calendar-window";
 import { formatDateTime } from "@/lib/utils/format";
@@ -8,11 +8,11 @@ import { zonedDateRangeToUtc, zonedParts } from "@/lib/utils/tz";
 import {
   num,
   pct,
+  stageConversionView,
   type AgentPerformanceRow,
   type PriceReductions,
   type ReportCitation,
   type SourceRoiRow,
-  type StageConversion,
   type TimeToClose,
 } from "@/lib/services/report-export";
 
@@ -66,7 +66,11 @@ export default async function PerformanceReportsPage({
   const perf = (perfRes.data ?? []) as unknown as AgentPerformanceRow[];
   const roi = (roiRes.data ?? []) as unknown as SourceRoiRow[];
   const ttc = ttcRes.data as unknown as TimeToClose | null;
-  const conv = convRes.data as unknown as StageConversion | null;
+  // T-stage-conversion-malformed: the RPC's error is READ, not dropped — a
+  // failure used to render as "Nothing in this window." Only this section
+  // changes; the other reports above and below render from their own results.
+  const stages = stageConversionView(convRes);
+  const conv = stages.status === "error" ? null : stages.conv;
   const price = priceRes.data as unknown as PriceReductions | null;
   const cite = citeRes.data as unknown as ReportCitation | null;
 
@@ -260,16 +264,32 @@ export default async function PerformanceReportsPage({
       {/* stage conversion --------------------------------------------------- */}
       <Section
         title={t("stages.heading")}
-        exportHref={exportHref("stage_conversion")}
+        // a failed section has nothing to export, and the route refuses a
+        // window with no stage rows but exclusions (422) — neither offers it
+        exportHref={
+          stages.status === "error" || (stages.status !== "data" && stages.excluded > 0)
+            ? undefined
+            : exportHref("stage_conversion")
+        }
         exportLabel={t("export")}
       >
         <p className="border-b border-border/60 px-4 py-2 text-xs text-text-3">
           {t("stages.derivedFrom")}
           {conv?.stage_key === "name" ? ` ${t("stages.nameKeyed")}` : ""}
         </p>
-        {(conv?.stages ?? []).length === 0 ? (
-          <Empty text={t("empty")} />
-        ) : (
+        {stages.status === "error" ? (
+          <p role="alert" data-testid="stage-conversion-error" className="px-4 py-6 text-sm text-danger">
+            {t("stages.loadError")}
+          </p>
+        ) : null}
+        {(stages.status === "data" || stages.status === "empty") && stages.excluded > 0 ? (
+          <Warning testId="stage-conversion-excluded" text={t("stages.excluded", { count: stages.excluded })} />
+        ) : null}
+        {stages.status === "excluded_only" ? (
+          <Warning testId="stage-conversion-all-excluded" text={t("stages.allExcluded", { count: stages.excluded })} />
+        ) : null}
+        {stages.status === "empty" ? <Empty text={t("empty")} /> : null}
+        {stages.status !== "data" ? null : (
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-text-3">
@@ -280,7 +300,7 @@ export default async function PerformanceReportsPage({
               </tr>
             </thead>
             <tbody>
-              {(conv?.stages ?? []).map((s) => (
+              {stages.conv.stages.map((s) => (
                 <tr key={s.stage} className="border-b border-border/60">
                   <td className="px-4 py-2 text-text-1">{s.stage}</td>
                   <td className="px-4 py-2 text-right tabular-nums text-text-2">{s.entered}</td>
@@ -359,7 +379,8 @@ function Section({
   children,
 }: {
   title: string;
-  exportHref: string;
+  /** omitted when the section has nothing honest to export */
+  exportHref?: string;
   exportLabel: string;
   children: React.ReactNode;
 }) {
@@ -367,13 +388,15 @@ function Section({
     <section className="max-w-4xl overflow-x-auto rounded-[10px] border border-border bg-surface">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <h2 className="text-sm font-semibold text-text-1">{title}</h2>
-        <a
-          href={exportHref}
-          className="flex items-center gap-1.5 text-sm text-text-2 hover:text-text-1"
-        >
-          <Download className="size-4" />
-          {exportLabel}
-        </a>
+        {exportHref ? (
+          <a
+            href={exportHref}
+            className="flex items-center gap-1.5 text-sm text-text-2 hover:text-text-1"
+          >
+            <Download className="size-4" />
+            {exportLabel}
+          </a>
+        ) : null}
       </div>
       {children}
     </section>
@@ -382,6 +405,19 @@ function Section({
 
 function Empty({ text }: { text: string }) {
   return <p className="px-4 py-6 text-sm text-text-2">{text}</p>;
+}
+
+function Warning({ text, testId }: { text: string; testId: string }) {
+  return (
+    <p
+      role="status"
+      data-testid={testId}
+      className="flex items-start gap-2 border-b border-warning/40 bg-warning/5 px-4 py-3 text-sm text-text-2"
+    >
+      <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
+      <span>{text}</span>
+    </p>
+  );
 }
 
 function Stat({ label, value }: { label: string; value: string }) {

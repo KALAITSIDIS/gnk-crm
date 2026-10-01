@@ -3148,7 +3148,12 @@ VERIFY, run before starting.
   an allow-list of (entity_type, event_type) pairs a session may write — every new app event type then needs a
   migration — or a renderer that marks an unregistered type instead of printing it. **VERIFY:** a rolled-back aal2
   insert of a deal-entity `Marked_won` — accepted means open.
-- **One crafted `stage_changed` empties the stage-conversion report, S (pre-existing).** `report_stage_conversion`
+- ~~**One crafted `stage_changed` empties the stage-conversion report, S (pre-existing).**~~ **FIXED 2026-10-01 on
+  branch `fix/stage-conversion-malformed` (lands with migration 0130) — DECISIONS `T-stage-conversion-malformed`:
+  each stage id is classified before any cast (`pg_input_is_valid`, inside a guarding CASE); a movement with a
+  malformed id is left out of every figure and counted in the new `moves_malformed`; the page tells an RPC failure,
+  an empty window, data with exclusions and an all-excluded window apart; the CSV carries an appended exclusion
+  count and refuses (422) a zero-row export that has exclusions.** (original) `report_stage_conversion`
   (0076) casts `payload->>'from_stage_id'` / `'to_stage_id'` to uuid; any session can POST a `stage_changed` with
   `to_stage_id: "x"` (events_insert never checked payloads), and from then on every report window containing it shows
   an empty C4 section and the stage-conversion CSV export 500s — permanently, the chain is append-only. The same class
@@ -3159,6 +3164,20 @@ VERIFY, run before starting.
   of two).** `report_stage_conversion` counts a deal entering the pipeline's `is_won` / `is_lost` stage from
   `stage_changed` events, which a session may POST for any deal of its org without moving it; the deal row stays
   open. Same family as the allow-list entry above. Found by T-session-written-events' review.
+- **The performance page paints four other reports' failures as "Nothing in this window.", S (pre-existing).**
+  `app/(app)/reports/performance/page.tsx` reads `perfRes` / `roiRes` / `ttcRes` / `priceRes` / `citeRes` as
+  `data ?? []` / `data` without looking at `error` — the defect T-stage-conversion-malformed fixed for the
+  stage-conversion section only (its brief scoped that section). A failed agent-performance or source-ROI RPC renders
+  the empty state; a failed citation silently drops the audit anchor. Fix shape: the same per-section
+  error state (`role="alert"`, export link hidden). Found by T-stage-conversion-malformed's review (completeness
+  critic). **VERIFY:** `grep -n "Res.error" "app/(app)/reports/performance/page.tsx"` — one hit (convRes via
+  `stageConversionView`) means open.
+- **"Stages are matched by name, so renaming one splits its history." is false since 0067, XS (copy).** The
+  stage-conversion section prints `reports.performance.stages.nameKeyed` whenever `stage_key = 'name'` — always —
+  but 0067 resolves a recorded stage id to the stage's CURRENT name, so a rename no longer splits history (RLS test
+  45 pins it); only pre-0067 name-only events still split. Rewrite the three locales' line (e.g. "Stages are matched
+  by their current name; changes recorded before stage ids were kept use the name at the time."). Seen in
+  T-stage-conversion-malformed's screenshots. **VERIFY:** `grep -n "nameKeyed" messages/en.json`.
 - ~~**One crafted `note_id` blanks every note on a timeline, S.**~~ **FIXED 2026-10-01 — DECISIONS
   `T-session-written-events`: `attachNotes` sends only uuid-shaped, lowercased note ids (`noteIdOf`, the rule of
   event-context.ts's `payloadId`); RED first in `entity-timeline-notes.test.ts`.** (original) `attachNotes` (`lib/services/entity-timeline.ts`)
