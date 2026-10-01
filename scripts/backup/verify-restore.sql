@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 128::bigint as migrations,
+    2::bigint as auth_users, 129::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -530,6 +530,39 @@ misc as (
                            and pg_get_expr(p.polwithcheck, p.polrelid) ~ 'occurred_at = now\(\)')::text
                      from pg_policy p
                     where p.polrelid = 'public.events'::regclass and p.polname = 'events_insert'), 'false')
+  union all
+  -- 0129: a deal's offers, holds, viewings and converted lead are of the
+  -- deal's organisation, a hold's offer of the hold's, a viewing's signed
+  -- slip of the viewing's — same reason as the rows above (a replica-mode
+  -- restore loads a foreign link past the keys as readily as a valid one).
+  -- One row for the six links: each count is named, so a red row says which.
+  select 'INTEGRITY: no offer, hold, viewing, converted lead or slip names a deal / offer / viewing of another organisation (0129)',
+         'offers 0, holds-deal 0, holds-offer 0, viewings 0, leads 0, slips 0',
+         format('offers %s, holds-deal %s, holds-offer %s, viewings %s, leads %s, slips %s',
+           (select count(*) from offers o        join deals d    on d.id = o.deal_id           where o.org_id <> d.org_id),
+           (select count(*) from reservations r  join deals d    on d.id = r.deal_id           where r.org_id <> d.org_id),
+           (select count(*) from reservations r  join offers x   on x.id = r.offer_id          where r.org_id <> x.org_id),
+           (select count(*) from viewings v      join deals d    on d.id = v.deal_id           where v.org_id <> d.org_id),
+           (select count(*) from leads l         join deals d    on d.id = l.converted_deal_id where l.org_id <> d.org_id),
+           (select count(*) from viewing_slips s join viewings v on v.id = s.viewing_id        where s.org_id <> v.org_id))
+  union all
+  -- 0129: and none names one that does not exist — 0125's reason: a row that
+  -- escaped the composite keys is neither cascaded nor cleared by its
+  -- parent's delete, and a replica-mode restore loads a dangling id past the
+  -- key; the joins above cannot see either.
+  select 'INTEGRITY: no offer, hold, viewing, converted lead or slip names a deal / offer / viewing that does not exist (0129)', '0',
+         (select count(*)::text from (
+             select 1 from offers o where not exists (select 1 from deals d where d.id = o.deal_id)
+           union all
+             select 1 from reservations r
+              where (r.deal_id is not null and not exists (select 1 from deals d where d.id = r.deal_id))
+                 or (r.offer_id is not null and not exists (select 1 from offers x where x.id = r.offer_id))
+           union all
+             select 1 from viewings v where v.deal_id is not null and not exists (select 1 from deals d where d.id = v.deal_id)
+           union all
+             select 1 from leads l where l.converted_deal_id is not null and not exists (select 1 from deals d where d.id = l.converted_deal_id)
+           union all
+             select 1 from viewing_slips s where not exists (select 1 from viewings v where v.id = s.viewing_id)) x)
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.

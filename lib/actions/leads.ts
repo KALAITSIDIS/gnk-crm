@@ -1104,7 +1104,8 @@ const convertSchema = z.object({
 /**
  * Convert a lead into a deal at the first stage of the chosen type (T2.5).
  * Two-phase so a failure never strands an orphan deal: the deal is inserted
- * first under a pre-generated id (leads_converted_fk needs it to exist), then
+ * first under a pre-generated id (leads_org_converted_deal_fkey needs it to
+ * exist, in the lead's organisation — 0129), then
  * a conditional lead update claims the conversion — a concurrent convert
  * loses with 0 rows there, and the loser's deal is removed again via the
  * admin client (authenticated has no DELETE on deals by design). Converting

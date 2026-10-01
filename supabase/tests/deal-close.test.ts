@@ -580,16 +580,36 @@ describe("the guarded rules hold for a direct RPC call", () => {
   });
 
   it("an 'accepted' offer planted on the deal from ANOTHER organisation does not satisfy it either", async () => {
-    // offers.deal_id carries no tenant FK, and offers_insert checks only the
-    // inserter's org — so this row is possible; close_deal reads the deal's own org
+    // Since 0129 offers_org_deal_fkey refuses this row for every writer.
+    // close_deal reading only the deal's own organisation's offers stays as
+    // defence in depth for a row the key could not stop — one loaded by a
+    // replica-mode restore — so the row is planted that way, and removed here:
+    // its (org_id, deal_id) matches no deal, so no deal delete cascades it.
     const deal = await newDeal();
-    await o.query(
-      `insert into offers (org_id, deal_id, amount, status, decided_at) values ($1, $2, 999, 'accepted', now() + interval '1 day')`,
-      [OTHER_ORG, deal],
+    const plant = `insert into offers (org_id, deal_id, amount, status, decided_at)
+                   values ($1, $2, 999, 'accepted', now() + interval '1 day') returning id`;
+    const refused = await o.query(plant, [OTHER_ORG, deal]).then(
+      () => "accepted",
+      (e: { code?: string }) => e.code,
     );
-    const r = await rpc(admin.client, deal, "won");
-    expect(r.error?.message).toBe('No accepted offer on this deal. Tick "Admin override" to mark it won anyway.');
-    expect((await row(deal)).status).toBe("open");
+    expect(refused, "the key refuses the row outright").toBe("23503");
+    await o.query("begin");
+    let planted: string;
+    try {
+      await o.query("set local session_replication_role = replica");
+      planted = (await o.query<{ id: string }>(plant, [OTHER_ORG, deal])).rows[0]!.id;
+      await o.query("commit");
+    } catch (e) {
+      await o.query("rollback");
+      throw e;
+    }
+    try {
+      const r = await rpc(admin.client, deal, "won");
+      expect(r.error?.message).toBe('No accepted offer on this deal. Tick "Admin override" to mark it won anyway.');
+      expect((await row(deal)).status).toBe("open");
+    } finally {
+      await o.query("delete from offers where id = $1", [planted]);
+    }
   });
 
   it("an accepted offer whose amount is NaN is refused as a price, not stored", async () => {

@@ -10,7 +10,11 @@ const base: ViewingExportRow = {
   properties: { reference: "PAF0001" },
   contacts: { display_name: "Δημήτρης Σαββίδης" },
   agent: { full_name: "Nino Charalambous" },
-  viewing_slips: [{ signer_name: "Δημήτρης Σαββίδης", signed_at: "2026-07-23T14:22:00Z" }],
+  // the slip's shape as PostgREST embeds it — ONE object (a one-to-one, see
+  // ViewingExportRow); supabase/tests/deal-child-org-isolation.test.ts reads
+  // the real embed through these columns. A signer other than the attendee,
+  // so the "Signed by" cell is told apart from the Attendee one.
+  viewing_slips: { signer_name: "Ελένη Γεωργίου", signed_at: "2026-07-23T14:22:00Z" },
 };
 
 const line = (csv: string, i = 1) => csv.replace(/^﻿/, "").split("\r\n")[i];
@@ -27,11 +31,14 @@ describe("viewingCsvColumns", () => {
     expect(csv).toContain("PAF0001");
     expect(csv).toContain("Nino Charalambous");
     expect(csv).toContain("Δημήτρης Σαββίδης");
+    const row = line(csv);
+    expect(row, "Signed by, right after Agent").toContain("Nino Charalambous,Ελένη Γεωργίου,");
+    expect(row, "and Signed at is not blank").not.toContain("Ελένη Γεωργίου,,");
   });
 
   it("leaves the slip columns blank for an unsigned viewing", () => {
     const csv = toCsv(viewingCsvColumns(), [
-      { ...base, status: "scheduled", viewing_slips: [] },
+      { ...base, status: "scheduled", viewing_slips: null },
     ]);
     const row = line(csv);
     // Agent then two empty slip cells (Signed by, Signed at) before Route date

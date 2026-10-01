@@ -980,11 +980,11 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "leads_converted_fk"
-            columns: ["converted_deal_id"]
+            foreignKeyName: "leads_org_converted_deal_fkey"
+            columns: ["org_id", "converted_deal_id"]
             isOneToOne: false
             referencedRelation: "deals"
-            referencedColumns: ["id"]
+            referencedColumns: ["org_id", "id"]
           },
           {
             foreignKeyName: "leads_org_id_fkey"
@@ -1268,11 +1268,11 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "offers_deal_id_fkey"
-            columns: ["deal_id"]
+            foreignKeyName: "offers_org_deal_fkey"
+            columns: ["org_id", "deal_id"]
             isOneToOne: false
             referencedRelation: "deals"
-            referencedColumns: ["id"]
+            referencedColumns: ["org_id", "id"]
           },
           {
             foreignKeyName: "offers_org_id_fkey"
@@ -2280,24 +2280,17 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "reservations_deal_id_fkey"
-            columns: ["deal_id"]
-            isOneToOne: false
-            referencedRelation: "deals"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "reservations_offer_id_fkey"
-            columns: ["offer_id"]
-            isOneToOne: false
-            referencedRelation: "offers"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "reservations_org_contact_fkey"
             columns: ["org_id", "contact_id"]
             isOneToOne: false
             referencedRelation: "contacts"
+            referencedColumns: ["org_id", "id"]
+          },
+          {
+            foreignKeyName: "reservations_org_deal_fkey"
+            columns: ["org_id", "deal_id"]
+            isOneToOne: false
+            referencedRelation: "deals"
             referencedColumns: ["org_id", "id"]
           },
           {
@@ -2306,6 +2299,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "organizations"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reservations_org_offer_fkey"
+            columns: ["org_id", "offer_id"]
+            isOneToOne: false
+            referencedRelation: "offers"
+            referencedColumns: ["org_id", "id"]
           },
           {
             foreignKeyName: "reservations_org_property_fkey"
@@ -2793,11 +2793,11 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "viewing_slips_viewing_id_fkey"
-            columns: ["viewing_id"]
+            foreignKeyName: "viewing_slips_org_viewing_fkey"
+            columns: ["org_id", "viewing_id"]
             isOneToOne: true
             referencedRelation: "viewings"
-            referencedColumns: ["id"]
+            referencedColumns: ["org_id", "id"]
           },
         ]
       }
@@ -2872,17 +2872,17 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "viewings_deal_id_fkey"
-            columns: ["deal_id"]
-            isOneToOne: false
-            referencedRelation: "deals"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "viewings_org_contact_fkey"
             columns: ["org_id", "contact_id"]
             isOneToOne: false
             referencedRelation: "contacts"
+            referencedColumns: ["org_id", "id"]
+          },
+          {
+            foreignKeyName: "viewings_org_deal_fkey"
+            columns: ["org_id", "deal_id"]
+            isOneToOne: false
+            referencedRelation: "deals"
             referencedColumns: ["org_id", "id"]
           },
           {

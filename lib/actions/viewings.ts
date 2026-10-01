@@ -115,6 +115,15 @@ export async function createViewing(
     return { error: "Invalid date and time", savedAt: null, viewingId: null };
   }
 
+  // The deal, re-read under RLS: the dialog sends only the deal page's own
+  // deal, so only a crafted post names one this user cannot see; since 0129
+  // the database refuses another organisation's id anyway (23503), and this
+  // turns that into a sentence.
+  if (d.deal_id) {
+    const { data: deal } = await supabase.from("deals").select("id").eq("id", d.deal_id).maybeSingle();
+    if (!deal) return { error: "That deal is no longer available to you.", savedAt: null, viewingId: null };
+  }
+
   const { data: created, error } = await supabase
     .from("viewings")
     .insert({
