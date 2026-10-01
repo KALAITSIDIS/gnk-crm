@@ -141,12 +141,26 @@ export async function readEntityTimeline(opts: {
  * event written before 0094 still carries its note inline and renders as it
  * did. No lookup at all when nothing on the page references a note.
  */
+const NOTE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The payload's `note_id` as a LOWERCASED uuid, or null — event-context.ts's
+ * `payloadId` rule. A session may write any payload (events_insert checks only
+ * the organisation and the actor), and Postgres refuses a whole `.in()` read
+ * for ONE malformed uuid (22P02): every note body on the timeline vanished
+ * while that event was in the latest 50. Lowercased, because Postgres returns
+ * a row's id in lower case and the lookup below matches on it.
+ */
+function noteIdOf(p: Record<string, unknown>): string | null {
+  return typeof p.note_id === "string" && NOTE_UUID.test(p.note_id) ? p.note_id.toLowerCase() : null;
+}
+
 async function attachNotes(rows: TimelineRow[], orgId: string): Promise<TimelineRow[]> {
   const ids = new Set<string>();
   for (const r of rows) {
     if (r.event_type !== "conversation_logged") continue;
-    const p = (r.payload ?? {}) as Record<string, unknown>;
-    if (typeof p.note_id === "string") ids.add(p.note_id);
+    const id = noteIdOf((r.payload ?? {}) as Record<string, unknown>);
+    if (id) ids.add(id);
   }
   const bodies = new Map<string, string | null>();
   if (ids.size > 0) {
@@ -166,9 +180,13 @@ async function attachNotes(rows: TimelineRow[], orgId: string): Promise<Timeline
   return rows.map((r) => {
     if (r.event_type !== "conversation_logged") return r;
     const p = (r.payload ?? {}) as Record<string, unknown>;
+    const noteId = noteIdOf(p);
+    // a note_id that is not a uuid shows no note — and costs no other line its own
     const note =
       typeof p.note_id === "string"
-        ? (bodies.get(p.note_id) ?? null)
+        ? noteId
+          ? (bodies.get(noteId) ?? null)
+          : null
         : typeof p.note === "string"
           ? p.note
           : null;

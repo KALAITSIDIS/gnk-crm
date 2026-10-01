@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 127::bigint as migrations,
+    2::bigint as auth_users, 128::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -225,8 +225,10 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   ('raise_lead_sla_tasks',    true, false, false, true),
   -- the two-minute desk-alert sweep (0103): an INVOKER body that reads Vault
   -- and posts through pg_net; cron runs it as postgres, service_role may
-  -- rehearse it, nobody else may call it
-  ('enquiry_alerts_sweep',    true, false, false, true),
+  -- rehearse it, nobody else may call it. secdef FALSE: this row said true
+  -- until 2026-10-01 and read red on every correct restore (0103 / 0105
+  -- define it security invoker; measured false on local and hosted).
+  ('enquiry_alerts_sweep',    false, false, false, true),
   -- the sweep's outcome record (0105): the reconciler reads pg_net as postgres,
   -- the health read feeds the dashboard, the classifier is pure; all
   -- service_role-only like cron_health
@@ -289,7 +291,12 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   ('protect_profile_columns',      true, false, false, false),
   -- 0127: status / holder of a key change only through record_key_movement;
   -- revoked from all four roles explicitly, as 0117's guard
-  ('property_keys_movement_fields_guard', false, false, false, false)
+  ('property_keys_movement_fields_guard', false, false, false, false),
+  -- 0099's statement trigger guarding PostGIS's spatial_ref_sys from the API
+  -- roles. A trigger body cannot be called through /rpc, so the default
+  -- EXECUTE grants it carries are inert; pinned as measured on local AND
+  -- hosted 2026-10-01 (it was UNPINNED, which failed this pack closed)
+  ('forbid_srs_api_writes',       false, true, true, true)
 ),
 grants_actual as (
   select distinct p.proname::text as fn, p.prosecdef as secdef,
@@ -512,6 +519,15 @@ misc as (
          (select count(*) from pg_policy where polrelid = 'public.key_movements'::regclass and polcmd = 'a')::text || ' ' ||
          (select count(*) from pg_trigger where tgrelid = 'public.property_keys'::regclass
              and tgname = 'property_keys_movement_fields_guard' and tgenabled = 'O')::text
+  union all
+  -- 0128: a session may not write a deal's terminal event (only close_deal, a
+  -- definer, does) nor choose an event's occurred_at. A restore that brought
+  -- back an older events_insert would read false here.
+  select 'SECURITY: events_insert refuses a session''s terminal deal event and a chosen occurred_at (0128)', 'true',
+         (select (pg_get_expr(p.polwithcheck, p.polrelid) ~ 'won_override'
+                  and pg_get_expr(p.polwithcheck, p.polrelid) ~ 'occurred_at = now\(\)')::text
+            from pg_policy p
+           where p.polrelid = 'public.events'::regclass and p.polname = 'events_insert')
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.
