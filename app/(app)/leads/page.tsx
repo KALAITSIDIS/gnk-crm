@@ -20,6 +20,7 @@ import { createClient } from "@/lib/supabase/server";
 import { formatDateTime } from "@/lib/utils/format";
 import { LEAD_OPEN_STATUSES } from "@/lib/validators/contacts";
 import { loadEnquiryContactSuggestions } from "@/lib/queries/enquiry-contact-suggestions";
+import { loadLeadsWithUnredactedNotes } from "@/lib/queries/lead-unredacted-notes";
 import { applyLeadListFilters, parseLeadFilters } from "@/lib/queries/leads-list";
 import {
   isRangeBeyondEnd,
@@ -114,6 +115,19 @@ export default async function LeadsPage({
       .map((l) => ({ id: l.id, message: l.message })),
   );
   const agentLabels = Object.fromEntries(agentName);
+
+  // A redaction interrupted between the message and the notes
+  // (T-redact-lead-notes): the admin is offered "Finish redaction" for those
+  // rows. Only an admin can act on it, so only an admin's page asks.
+  const unfinishedRedactions =
+    profile.role === "admin"
+      ? await loadLeadsWithUnredactedNotes(
+          supabase,
+          rows
+            .filter((l) => l.contact_id === null && l.message === LEAD_MESSAGE_REDACTED)
+            .map((l) => l.id),
+        )
+      : new Set<string>();
 
   // Export carries the active status scope but not pagination; RLS-scoped.
   const exportHref = (() => {
@@ -296,6 +310,7 @@ export default async function LeadsPage({
                     isAdmin={profile.role === "admin"}
                     status={lead.status}
                     isRedacted={lead.message === LEAD_MESSAGE_REDACTED}
+                    notesRemain={unfinishedRedactions.has(lead.id)}
                     source={lead.source}
                     mayLink={mayLinkLeadContact(profile, lead.assigned_agent_id)}
                     suggestion={suggestion?.status ?? null}

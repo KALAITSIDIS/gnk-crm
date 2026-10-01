@@ -465,47 +465,88 @@ export async function correctLead(
  * erasure writes, the shape-only `criteria` stays, and the event says only
  * that it happened. Admin-only, irreversible. A linked lead is refused here
  * and pointed at contact erasure, which is the one that knows about AML.
+ *
+ * The desk's notes about the enquiry go too (T-redact-lead-notes): 0094 made
+ * `interaction_notes` erasable so they could go with the message, and contact
+ * erasure and `redact_stale_enquiries` already blank them. Two writes, so the
+ * action RESUMES: a lead whose message is redacted but whose notes are not is
+ * finished by the same action (the leads page offers it as "Finish
+ * redaction" while notes remain). The one `redacted` event belongs to the
+ * message write, exactly once — a resume logs nothing.
+ *
+ * Returns its refusal as `{ error }` rather than throwing: a production build
+ * replaces a thrown Server Action message with a generic one, and these
+ * sentences are written for the admin.
  */
-export async function redactLead(leadId: string): Promise<void> {
+export async function redactLead(leadId: string): Promise<{ error: string | null }> {
   const { supabase, profile, lead } = await getLead(leadId);
-  if (profile.role !== "admin") throw new Error("Admins only.");
+  if (profile.role !== "admin") return { error: "Admins only." };
   if (lead.contact_id) {
-    throw new Error(
-      "This enquiry is linked to a contact — erase the contact instead; that redacts every lead it holds.",
-    );
+    return {
+      error: "This enquiry is linked to a contact — erase the contact instead; that redacts every lead it holds.",
+    };
   }
-  if (lead.message === LEAD_MESSAGE_REDACTED) throw new Error("Already redacted.");
 
-  // `contact_id is null` at the database too: a Review and link that commits
-  // between the read above and this write must not end as a lead that is both
-  // linked and redacted — the state this action exists to refuse. The link
-  // guards the other order (lib/services/lead-contact-link.ts).
-  const { data, error } = await supabase
-    .from("leads")
-    .update({ message: LEAD_MESSAGE_REDACTED })
-    .eq("id", leadId)
-    .is("contact_id", null)
-    .select("id");
-  if (error) throw new Error(error.message);
-  if (!data?.length) {
-    const { data: now } = await supabase.from("leads").select("contact_id, message").eq("id", leadId).maybeSingle();
-    if (now?.contact_id) {
-      throw new Error("This enquiry was linked to a contact meanwhile — erase the contact instead.");
+  let messageRedacted = false;
+  if (lead.message !== LEAD_MESSAGE_REDACTED) {
+    // `contact_id is null` at the database too: a Review and link that commits
+    // between the read above and this write must not end as a lead that is
+    // both linked and redacted — the state this action exists to refuse. Both
+    // link writes refuse the marker for the other order (lead-contact-link and
+    // createContactFromEnquiry). And not already the marker: two presses (or
+    // the retention sweep) racing each other redact — and log — once.
+    const { data, error } = await supabase
+      .from("leads")
+      .update({ message: LEAD_MESSAGE_REDACTED })
+      .eq("id", leadId)
+      .is("contact_id", null)
+      // `neq` alone would skip a lead whose message is null
+      .or(`message.is.null,message.neq."${LEAD_MESSAGE_REDACTED}"`)
+      .select("id");
+    if (error) return { error: error.message };
+    if (!data?.length) {
+      const { data: now } = await supabase.from("leads").select("contact_id, message").eq("id", leadId).maybeSingle();
+      if (now?.contact_id) {
+        return { error: "This enquiry was linked to a contact meanwhile — erase the contact instead." };
+      }
+      if (now?.message !== LEAD_MESSAGE_REDACTED) return { error: "Redaction blocked" };
+      // redacted meanwhile by someone else: their run logged the event; the
+      // notes below are still ours to finish
+    } else {
+      messageRedacted = true;
+      await logEvent(supabase, {
+        orgId: profile.orgId,
+        actorId: profile.id,
+        entityType: "lead",
+        entityId: leadId,
+        eventType: "redacted",
+        // nothing of what was redacted — an event cannot be erased
+        payload: {},
+      });
     }
-    if (now?.message === LEAD_MESSAGE_REDACTED) throw new Error("Already redacted.");
-    throw new Error("Redaction blocked");
   }
 
-  await logEvent(supabase, {
-    orgId: profile.orgId,
-    actorId: profile.id,
-    entityType: "lead",
-    entityId: leadId,
-    eventType: "redacted",
-    // nothing of what was redacted — an event cannot be erased
-    payload: {},
-  });
+  // The desk's own words about this enquiry. A session cannot update a note
+  // (0094: only a redaction, only by the system), so this runs as the service
+  // role — bounded by the caller's organisation and by THIS lead, which the
+  // admin check and the RLS read above cover. Only notes not yet redacted, so
+  // a resumed run counts what it did.
+  const notes = await createAdminClient()
+    .from("interaction_notes")
+    .update({ body: null, redacted_at: new Date().toISOString() })
+    .eq("org_id", profile.orgId)
+    .eq("entity_type", "lead")
+    .eq("entity_id", leadId)
+    .is("redacted_at", null)
+    .select("id");
   revalidatePath("/leads");
+  if (notes.error) {
+    return {
+      error: "The message is redacted, but the notes on this enquiry are not — use Finish redaction on its row.",
+    };
+  }
+  if (!messageRedacted && !notes.data?.length) return { error: "Already redacted." };
+  return { error: null };
 }
 
 /**
@@ -985,11 +1026,15 @@ export async function createContactFromEnquiry(leadId: string): Promise<LeadActi
 
   // `.is("contact_id", null)`: a colleague who linked meanwhile wins, and the
   // returned row is the proof the write happened (RLS refuses with zero rows).
+  // Not a redacted lead either — a redaction committing after the read above
+  // must not end as a lead both redacted and linked (T-redact-lead-notes;
+  // lead-contact-link's write carries the same clause).
   const { data: linked, error: linkErr } = await supabase
     .from("leads")
     .update({ contact_id: contact.id })
     .eq("id", lead.id)
     .is("contact_id", null)
+    .or(`message.is.null,message.neq."${LEAD_MESSAGE_REDACTED}"`)
     .select("id");
   if (linkErr || !linked?.length) {
     return {

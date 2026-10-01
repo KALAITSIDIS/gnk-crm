@@ -1,7 +1,16 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/services/auth";
-import { logListExport } from "@/lib/services/export-audit";
+import { auditFilters, logListExport, vet } from "@/lib/services/export-audit";
+import {
+  MANDATE_FILTERS,
+  PROPERTY_KINDS,
+  PROPERTY_SCOPES,
+  PROPERTY_STATUSES,
+  PROPERTY_TYPES,
+  TRANSACTION_TYPES,
+  VISIBILITY_LEVELS,
+} from "@/lib/validators/properties";
 import { toCsv, csvFilename } from "@/lib/services/csv";
 import {
   PROPERTY_EXPORT_BASE_SELECT,
@@ -47,7 +56,25 @@ export async function GET(request: NextRequest) {
     actorId: profile.id,
     list: "properties",
     count: rows.length,
-    filters: sp,
+    // q (reference, title, owner) recorded as used, never as typed; view and
+    // page are how the list was shown, not which rows it held
+    filters: auditFilters(
+      { ...filters, view: undefined, page: undefined },
+      {
+        district: vet.uuid,
+        area: vet.uuid,
+        type: vet.oneOf(PROPERTY_TYPES),
+        transaction: vet.oneOf(TRANSACTION_TYPES),
+        status: vet.oneOf(PROPERTY_STATUSES),
+        visibility: vet.oneOf(VISIBILITY_LEVELS),
+        beds: vet.number,
+        price_min: vet.number,
+        price_max: vet.number,
+        mandate: vet.oneOf(MANDATE_FILTERS),
+        kind: vet.oneOf(PROPERTY_KINDS),
+        scope: vet.oneOf(PROPERTY_SCOPES),
+      },
+    ),
   });
 
   const csv = toCsv(propertyCsvColumns(), rows);

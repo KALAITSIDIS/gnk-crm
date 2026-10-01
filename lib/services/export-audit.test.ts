@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { logListExport } from "./export-audit";
+import { auditFilters, logListExport, vet } from "./export-audit";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 
@@ -50,5 +50,29 @@ describe("logListExport", () => {
     await expect(
       logListExport(client, { orgId: "o", actorId: "u", list: "contacts", count: 1 }),
     ).rejects.toThrow(/logEvent failed/);
+  });
+});
+
+describe("auditFilters — what an export's filters may put into the chain", () => {
+  it("keeps a value only when its vetting passes, and records every other set filter as used", () => {
+    expect(
+      auditFilters(
+        { q: "Maria Georgiou", status: "checked_out", agent: "not-a-uuid", beds: 2, archived: true },
+        { status: vet.oneOf(["checked_out"]), agent: vet.uuid, beds: vet.number, archived: vet.flag },
+      ),
+    ).toEqual({ q: true, status: "checked_out", agent: true, beds: 2, archived: true });
+  });
+
+  it("leaves out an unset filter — undefined, null, empty, or a false flag", () => {
+    expect(auditFilters({ a: undefined, b: null, c: "", d: false }, {})).toEqual({});
+  });
+
+  it("never keeps a non-finite number or a non-primitive, whatever the vetting says", () => {
+    const always = () => true;
+    expect(auditFilters({ n: Number.NaN, list: ["Maria"], obj: { name: "Maria" } }, { n: vet.number, list: always, obj: always })).toEqual({
+      n: true,
+      list: true,
+      obj: true,
+    });
   });
 });
