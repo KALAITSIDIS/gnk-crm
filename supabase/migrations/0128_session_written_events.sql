@@ -6,9 +6,12 @@
 -- "A crafted event's `occurred_at` is bounded only in the renderer";
 -- reproduced 2026-10-01 against 85639ad on the local stack at 0127 through
 -- PostgREST with aal2 sessions of a throwaway organisation, pinned RED first by
--- supabase/tests/session-written-events.test.ts — 5 of its 9 tests failed at
--- 0127, each for the reason it names; the 4 that passed are the paths this
--- file must keep):
+-- supabase/tests/session-written-events.test.ts — 5 of its 10 tests failed at
+-- 0127's policy, each for the reason it names; the 5 that passed are the paths
+-- this file must keep: a deal's `updated` and a lead's `lost` on a session,
+-- close_deal's own terminal event, a session event left to the default
+-- occurred_at, the service role's explicit occurred_at — and the chain
+-- verifying):
 --
 --   * events_insert (0071) checks only `org_id = current_org_id()` and
 --     `actor_id = auth.uid()`. The session that may close a deal could also

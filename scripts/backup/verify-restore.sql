@@ -523,11 +523,13 @@ misc as (
   -- 0128: a session may not write a deal's terminal event (only close_deal, a
   -- definer, does) nor choose an event's occurred_at. A restore that brought
   -- back an older events_insert would read false here.
+  -- coalesce: a restore with NO events_insert must read false, not NULL (a
+  -- NULL pass sorts below the passing rows)
   select 'SECURITY: events_insert refuses a session''s terminal deal event and a chosen occurred_at (0128)', 'true',
-         (select (pg_get_expr(p.polwithcheck, p.polrelid) ~ 'won_override'
-                  and pg_get_expr(p.polwithcheck, p.polrelid) ~ 'occurred_at = now\(\)')::text
-            from pg_policy p
-           where p.polrelid = 'public.events'::regclass and p.polname = 'events_insert')
+         coalesce((select (pg_get_expr(p.polwithcheck, p.polrelid) ~ 'won_override'
+                           and pg_get_expr(p.polwithcheck, p.polrelid) ~ 'occurred_at = now\(\)')::text
+                     from pg_policy p
+                    where p.polrelid = 'public.events'::regclass and p.polname = 'events_insert'), 'false')
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.

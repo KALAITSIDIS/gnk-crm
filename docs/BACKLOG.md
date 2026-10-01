@@ -3125,6 +3125,29 @@ VERIFY, run before starting.
   skews `occurred_at_inversion`. Decide: a BEFORE INSERT that stamps `now()` for session writers (the restore
   path runs with triggers off), or a CHECK bounding it near `now()`. **VERIFY:** `grep -ln "occurred_at"
   supabase/migrations/*.sql | xargs grep -ln "events_occurred_at_bound\|occurred_at := now()"` — no hit means open.
+- **A session may write ANY event type, so a terminal deal event can still be forged in the form people read,
+  S/M — a design decision first.** 0128 refuses the three exact strings `won` / `lost` / `won_override` on
+  `entity_type = 'deal'`; `events` has no CHECK on either column, and `describeEvent` renders a type it does not own
+  word for word (`event_type.replace(/_/g, " ")`). MEASURED by T-session-written-events' review (rolled-back aal2
+  probes at 0128): a deal-entity `Marked_won`, `Marked won`, `won ` (trailing space), and `entity_type 'Deal'` with
+  `won` are all accepted, and `Marked_won` prints "Marked won" — the line `close_deal`'s real `won` produces — on a
+  deal that is still open, for every viewer, for good (the actor is recorded). One reviewer of two also upheld an
+  OFFER-entity `won` with `override: true` rendering "Offer: Marked won — admin override" on the deal's timeline.
+  Machine readers (`report_stage_conversion`, `close_deal`) match the exact strings and are unaffected. Fix options:
+  an allow-list of (entity_type, event_type) pairs a session may write — every new app event type then needs a
+  migration — or a renderer that marks an unregistered type instead of printing it. **VERIFY:** a rolled-back aal2
+  insert of a deal-entity `Marked_won` — accepted means open.
+- **One crafted `stage_changed` empties the stage-conversion report, S (pre-existing).** `report_stage_conversion`
+  (0076) casts `payload->>'from_stage_id'` / `'to_stage_id'` to uuid; any session can POST a `stage_changed` with
+  `to_stage_id: "x"` (events_insert never checked payloads), and from then on every report window containing it shows
+  an empty C4 section and the stage-conversion CSV export 500s — permanently, the chain is append-only. The same class
+  as T-session-written-events' `attachNotes` fix, in SQL: guard the cast (`~ uuid pattern`) or skip malformed rows.
+  Found by T-session-written-events' review (both refuters upheld). **VERIFY:** the function body casts only after a
+  uuid test — `grep -n "to_stage_id" ` the latest migration defining `report_stage_conversion`.
+- **A session-written `stage_changed` into a won / lost stage counts as a conversion, S (pre-existing, one reviewer
+  of two).** `report_stage_conversion` counts a deal entering the pipeline's `is_won` / `is_lost` stage from
+  `stage_changed` events, which a session may POST for any deal of its org without moving it; the deal row stays
+  open. Same family as the allow-list entry above. Found by T-session-written-events' review.
 - ~~**One crafted `note_id` blanks every note on a timeline, S.**~~ **FIXED 2026-10-01 — DECISIONS
   `T-session-written-events`: `attachNotes` sends only uuid-shaped, lowercased note ids (`noteIdOf`, the rule of
   event-context.ts's `payloadId`); RED first in `entity-timeline-notes.test.ts`.** (original) `attachNotes` (`lib/services/entity-timeline.ts`)
