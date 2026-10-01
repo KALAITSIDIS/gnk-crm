@@ -82,10 +82,13 @@
 -- ONE transaction (otherwise SET LOCAL is a no-op).
 --
 -- ROLLBACK, a forward migration: restate 0076's body (section 6 of 0076,
--- md5 4fd70bfa… CR-stripped) and its comment; in the same change revert the
--- page / route / report-export.ts consumers (they read `moves_malformed` as
--- optional, so they also run against 0076) and delete the 0130 rows in
--- scripts/backup/verify-restore.sql. No data moves.
+-- md5 4fd70bfa… CR-stripped) and its comment (md5 bb0dc3fd…). KEEP the page /
+-- route / report-export.ts consumers: they read `moves_malformed` as optional
+-- and run against 0076, and reverting them would bring back the swallowed RPC
+-- error. In the same change delete supabase/tests/stage-conversion-malformed.test.ts
+-- (it fails against 0076's body), remove scripts/backup/verify-restore.sql's
+-- 0130 HONESTY row and move its migrations pin FORWARD to count the rollback
+-- migration. No data moves.
 -- =============================================================================
 
 set local lock_timeout = '5s';
