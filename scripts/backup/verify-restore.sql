@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 132::bigint as migrations,
+    2::bigint as auth_users, 133::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -290,6 +290,10 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   -- 0132: a session may not change a primary-key value — an invoker trigger
   -- body on 25 tables, revoked from all four roles explicitly like the guard above
   ('trg_primary_key_immutable',    false, false, false, false),
+  -- 0133: a session may not create a row at an id with history — a DEFINER
+  -- trigger body (it must see history the session cannot), revoked from all four
+  -- roles explicitly like trg_deals_stage_changed_event
+  ('trg_insert_id_without_history', true, false, false, false),
   -- 0101: erasure cancels a lead's pending desk alert — a trigger body that
   -- even service_role may not call (like the definer trigger bodies above)
   ('cancel_lead_notification_jobs', true, false, false, false),
@@ -641,6 +645,32 @@ misc as (
                           and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'errcode = ''42501'''
                      from pg_proc p
                     where p.oid = to_regprocedure('public.trg_primary_key_immutable()')), false)::text
+  union all
+  -- 0133: a session may not create a record at an id that already has
+  -- history. The 11 history subjects carry an enabled AFTER INSERT row trigger
+  -- of trg_insert_id_without_history with their entity_type as its argument,
+  -- and the function is a definer that binds sessions by the role GUC and
+  -- refuses with 42501. A restore that lost a trigger, its argument or the
+  -- function's session binding reads something else here.
+  select 'SECURITY: no session can create a record at an id that already has history — guards, session binding (0133)', '11 true',
+         (select count(*)
+            from (values ('profiles', 'user'), ('contacts', 'contact'), ('properties', 'property'), ('property_keys', 'key'),
+                         ('mandates', 'mandate'), ('leads', 'lead'), ('deals', 'deal'), ('viewings', 'viewing'),
+                         ('offers', 'offer'), ('share_links', 'share_link'), ('tasks', 'task')) x(tbl, entity_type)
+           where exists (select 1 from pg_trigger t
+                          where t.tgrelid = to_regclass('public.' || x.tbl)
+                            and t.tgfoid = to_regprocedure('public.trg_insert_id_without_history()')
+                            and t.tgname = x.tbl || '_id_without_history'
+                            and not t.tgisinternal and t.tgenabled = 'O' and t.tgqual is null
+                            and (t.tgtype & (2 | 64)) = 0 and (t.tgtype & 1) = 1 and (t.tgtype & 4) = 4
+                            and (t.tgtype & (8 | 16 | 32)) = 0 and t.tgnargs = 1
+                            and (string_to_array(encode(t.tgargs, 'escape'), '\000'))[1] = x.entity_type))::text || ' ' ||
+         coalesce((select p.prosecdef
+                          and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'current_setting\(''role'', true\)'
+                          and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') !~ 'current_user'
+                          and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'errcode = ''42501'''
+                     from pg_proc p
+                    where p.oid = to_regprocedure('public.trg_insert_id_without_history()')), false)::text
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.

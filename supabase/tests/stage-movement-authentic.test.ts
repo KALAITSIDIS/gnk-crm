@@ -4,6 +4,7 @@ import { Client } from "pg";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { TEST_PASSWORD, anonClient, createTestUser, ensureTestOrg, serviceClient, type TestUser } from "./helpers";
 import { CODE_MD5_SQL, GUARD_0118, REVERT_0131_SQL, RPC_0067, readMigration0131 } from "./revert-0131";
+import { REVERT_0133_SQL } from "./revert-0133";
 
 /**
  * A deal's canonical `stage_changed` event records a movement that happened
@@ -957,6 +958,8 @@ describe("9. the migration: it replays over 0130, refuses what it was not writte
 
   it("over the rollback's 0130 state, the preflight's hashes match, and the file's preflight and postflight pass", async () => {
     await rolledBack(async (notices) => {
+      // 0133 put a trigger on deals; 0131's preflight requires exactly its three
+      await o.query(REVERT_0133_SQL);
       await o.query(REVERT_0131_SQL);
       expect(await codeMd5("public.move_deal_to_stage(uuid,uuid)"), "0067's code, as the preflight expects").toBe(
         "bcadfb1a175518e069a4fdc5ff6a237a",
@@ -1006,6 +1009,8 @@ describe("9. the migration: it replays over 0130, refuses what it was not writte
 
   it("a comment-only difference in the replaced RPC body is accepted (hosted bodies have differed by comments)", async () => {
     await rolledBack(async (notices) => {
+      // 0133 put a trigger on deals; 0131's preflight requires exactly its three
+      await o.query(REVERT_0133_SQL);
       await o.query(REVERT_0131_SQL);
       const commented = RPC_0067.replace("begin\n", "begin\n  -- a comment hosted might carry\n");
       expect(commented, "the comment really went in").not.toBe(RPC_0067);
@@ -1046,6 +1051,8 @@ describe("9. the migration: it replays over 0130, refuses what it was not writte
   for (const [label, drift, refusal] of refusals) {
     it(`the preflight refuses ${label}`, async () => {
       await rolledBack(async () => {
+        // 0133 put a trigger on deals; 0131's preflight requires exactly its three
+        await o.query(REVERT_0133_SQL);
         await o.query(REVERT_0131_SQL);
         const sql =
           drift === "__RPC__"
@@ -1063,6 +1070,8 @@ describe("9. the migration: it replays over 0130, refuses what it was not writte
   it("the rollback recipe restores 0130's behaviour: one event per move, written by the RPC, and a session may write one again", async () => {
     const id = await newDeal();
     await rolledBack(async () => {
+      // 0133 put a trigger on deals; 0131's preflight requires exactly its three
+      await o.query(REVERT_0133_SQL);
       await o.query(REVERT_0131_SQL);
       await o.query("set local role authenticated");
       await o.query("select set_config('request.jwt.claims', $1, true)", [

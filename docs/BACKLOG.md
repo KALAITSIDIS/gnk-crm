@@ -3073,13 +3073,18 @@ VERIFY, run before starting.
   table or once: column-level INSERT grants that omit `id` (two session writers DO send one — the lead convert's deal
   and the user invite's profile, see below — so per table, not blanket), or a BEFORE
   INSERT trigger that overwrites `id` for `authenticated`. Found by T-task-reservation-lead-org-isolation's review.
-  **Since 0132 it is also the one way left to ADOPT a history** (T-primary-key-immutable's review, measured in
+  **The adoption half — FIXED 2026-10-02 on branch `fix/insert-id-adoption` (lands with migration 0133) — DECISIONS
+  `T-insert-id-without-history`: `trg_insert_id_without_history()` (SECURITY DEFINER, AFTER INSERT) on the 11 history
+  subjects a session may insert refuses a session's row at an id with an event / note / document of its entity_type
+  in its own organisation (profiles: also an event it is the actor of), 42501; history keyed by an event PAYLOAD is a
+  separate entry below. The existence oracle (a 23505 on another organisation's id) stays open — this entry.**
+  (original adoption text) **Since 0132 it is also the one way left to ADOPT a history** (T-primary-key-immutable's review, measured in
   rolled-back aal2 probes at 0132): events, interaction notes and documents are keyed by `entity_id` with no foreign
   key, so an INSERT at an id whose history outlived its row — a row deleted by a trusted path; production held 50 such
   ids on 2026-10-02 (2 contacts, 25 leads, 22 properties, 1 deal) — gives the new row that history (an admin's
   `insert into contacts (id = <orphan>)` and `insert into properties (id = <orphan>)` → INSERT 0 1 and the timeline
-  read showed the orphan's events; an admin reads every orphaned event, an agent can adopt only an id it already
-  knows). On the 13 tables a session may DELETE from (areas, buyer_requirements, deal_stages, districts, documents,
+  read showed the orphan's events; an admin reads every orphaned event, and — corrected by 0133's map — an agent can
+  LIST orphaned ids too: interaction_notes_select is organisation-wide and so are internal documents). On the 13 tables a session may DELETE from (areas, buyer_requirements, deal_stages, districts, documents,
   payment_plans, price_list_items, price_lists, property_media, reservation_installments, reservations, tasks,
   unit_types) a session can also delete a row and insert a new one at its id. 0132 ended the other route (re-keying a
   holder away and another record onto its id). A blanket column grant that omits the key is not available: two
@@ -3090,7 +3095,8 @@ VERIFY, run before starting.
   organisation fits all of them — the decision. **VERIFY (adoption):** as postgres in a rolled-back transaction,
   insert one `contact` event for a fresh uuid X in a throwaway organisation, then as an aal2 admin of it `insert into
   contacts (id, org_id, first_name) values (X, …) returning id = X` — `true` means open (an overwrite fix returns
-  `false`, a refusal errors).
+  `false`, a refusal errors); since 0133 it errors 42501 "A record cannot be created at an id that already has history
+  (contacts.id)".
   **VERIFY:** `select count(*) from information_schema.column_privileges where grantee = 'authenticated' and
   column_name = 'id' and privilege_type = 'INSERT' and table_schema = 'public'` — non-zero means open (27 on the local
   stack at 0125 and at 0126) — for a column-grant fix only: a trigger fix leaves this count unchanged, so read the
@@ -3260,6 +3266,44 @@ VERIFY, run before starting.
   T-primary-key-immutable's critic. Fix: delete it through the service role bounded by org and id, or insert link and
   properties in one RPC. **VERIFY:** `select has_table_privilege('authenticated', 'public.share_links', 'DELETE')` —
   false while `grep -c 'from("share_links").delete()' lib/actions/share-links.ts` is non-zero means open.
+- **History keyed by an event PAYLOAD can still be adopted by delete-then-insert, S (pre-existing; 0133 covers
+  `entity_id` only).** Payload ids that a reader resolves to the CURRENT row have no index and no guard: a document
+  re-inserted at a deleted document's id takes over its `document_uploaded` lines (the timeline prints the current
+  title; `lib/services/event-context.ts`) — and the delete-and-re-insert gets round `protect_document_columns`' freeze
+  (entity, visibility); a deal stage re-inserted at a deleted stage's id inherits `stage_changed` movements in
+  `report_stage_conversion` (0130 resolves stage ids to current names); a viewing's `viewing_feedback` lines resolve
+  by payload `viewing_id`; `buyer_requirements.area_ids` / `district_ids` (uuid[], no FK) and party-default jsonb ids.
+  documents, deal_stages, areas and districts are deleted only by an admin, who can already rename the last three in
+  place — the document freeze is the sharpest. Fix shapes: a column grant without `id` on documents (no writer sends
+  one), or readers that check the resolved row still belongs to the event's record (viewing feedback already does).
+  Found by T-insert-id-without-history's map. **VERIFY:** as an aal2 admin in a rolled-back transaction, delete an
+  admin_only contact document D and `insert into documents (id = D, …, visibility = 'internal')` — INSERT 1 means
+  open (measured 2026-10-02 at 0133).
+- **`redact_stale_enquiries` matches interaction notes by `entity_id` with no organisation predicate, S
+  (pre-existing).** Its notes CTE (0094) is `n.entity_type = 'lead' and n.entity_id = done.id`. Another organisation
+  may insert a lead at an id whose orphaned notes are ours (0133 accepts it: the history is not theirs) with a
+  back-dated `received_at` and source `website`, and the nightly sweep (`10 3 * * *`) then blanks OUR notes for that
+  id — an irreversible cross-tenant write. Fix: `and n.org_id = done.org_id`, the replaced body guarded by its md5;
+  cron-only, so no release-compat entry. Found by T-insert-id-without-history's map (the predicate measured).
+  **VERIFY:** `select regexp_replace(prosrc, '--[^\n]*', '', 'g') ~ 'n\.org_id\s*=' from pg_proc where proname =
+  'redact_stale_enquiries'` — false means open.
+- **Natural keys an id guard cannot see: a deleted property's `reference` and a deleted link's `token_sha256` can be
+  taken again, S (pre-existing).** `properties.reference` is unique only among live rows (`UNIQUE (org_id,
+  reference)`), sessions choose it at INSERT, and `properties_reference_immutable` fires on UPDATE only — so a deleted
+  listing's reference can be re-inserted, and the Kyero feed's `<id>` and the site's `?reference=` lookup (0088), which
+  are keyed by reference, would adopt the old listing's URLs and portal identity (inferred; the re-insert measured).
+  `share_links.token_sha256` likewise (org members can read it; a client's saved URL would open the new link — low).
+  Found by T-insert-id-without-history's map. **VERIFY:** in a rolled-back transaction delete a throwaway property
+  with reference R as postgres, then as an aal2 admin `insert into properties (org_id, reference = R, …)` — INSERT 1
+  means open (measured 2026-10-02 at 0133).
+- **`contacts.merged_into_id` may be set by UPDATE, showing one contact's whole history on another's page, S
+  (pre-existing).** `authenticated` holds UPDATE on `merged_into_id` (FK `contacts(id)`), and the contact page reads
+  `[id, …rows where merged_into_id = id]` through the service role (`app/(app)/contacts/[id]/page.tsx`). An agent who
+  created or is assigned contact Z may point it at any contact C of the organisation, and Z's timeline appears on C's
+  page as a merged duplicate's — the merge is the only legitimate writer (service role). Found by
+  T-insert-id-without-history's map. **VERIFY:** as an aal2 agent in a rolled-back transaction, `update contacts set
+  merged_into_id = <another contact> where id = <a contact it created>` — UPDATE 1 means open (measured 2026-10-02 at
+  0133).
 - **`report_stage_conversion` counts a `stage_changed` whose payload is `{}` (or not an object) as a legacy
   movement, XS (pre-existing, historical rows only since 0131).** 0130 classifies a missing id as a pre-0067 side,
   so an event with neither ids nor names counts in `moves_total` with a `null → null` transition. No writer of
