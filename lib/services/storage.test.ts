@@ -7,7 +7,12 @@ import { removeObjectsBestEffort, removeObjectsOrFail, type StorageLike } from "
 /**
  * A fake bucket: `removed` is what remove() will claim; `present` is what
  * exists() will answer for anything not claimed; a path in `existsErrors`
- * makes exists() fail for it.
+ * makes exists() fail for it. exists() answers as the REAL client does
+ * (storage-js 2.110.2, measured against the local stack 2026-10-03): an
+ * absent object is `{ data: false, error: <its 400> }`, a present one
+ * `{ data: true, error: null }`, and anything else THROWS. The fake used to
+ * answer an absent object with `error: null`, which the real client never
+ * does — so the re-run case below passed while every real re-run failed.
  */
 function fake(opts: {
   removed?: string[];
@@ -24,10 +29,10 @@ function fake(opts: {
     },
     exists: async (path: string) => {
       calls.push(`exists:${path}`);
-      if ((opts.existsErrors ?? []).includes(path)) {
-        return { data: false, error: { message: "boom" } };
-      }
-      return { data: (opts.present ?? []).includes(path), error: null };
+      if ((opts.existsErrors ?? []).includes(path)) throw new Error("boom");
+      return (opts.present ?? []).includes(path)
+        ? { data: true, error: null }
+        : { data: false, error: { name: "StorageApiError", status: 400, message: "Bad Request" } };
     },
   });
   return { storage: { from } as unknown as StorageLike, calls };
@@ -40,7 +45,7 @@ describe("removeObjectsOrFail proves absence", () => {
     expect(calls).toEqual(["remove:a,b"]);
   });
 
-  it("treats an unclaimed path as done only once exists() says it is gone — the re-run case", async () => {
+  it("treats an unclaimed path as done only once exists() says it is gone — the re-run case, answered with the 400 the real client attaches", async () => {
     // supabase-js reports a missing object as data, not an error: a path that
     // was already removed by a half-finished first run simply does not appear.
     const { storage, calls } = fake({ removed: ["a"], present: [] });
@@ -62,7 +67,7 @@ describe("removeObjectsOrFail proves absence", () => {
     );
   });
 
-  it("throws when absence cannot be confirmed", async () => {
+  it("throws when absence cannot be confirmed (the real client throws on anything but present / absent)", async () => {
     const { storage } = fake({ removed: [], existsErrors: ["a"] });
     await expect(removeObjectsOrFail(storage, "documents", ["a"])).rejects.toThrow(
       "could not confirm removal of documents/a",

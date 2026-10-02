@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 132::bigint as migrations,
+    2::bigint as auth_users, 133::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -290,6 +290,11 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   -- 0132: a session may not change a primary-key value — an invoker trigger
   -- body on 25 tables, revoked from all four roles explicitly like the guard above
   ('trg_primary_key_immutable',    false, false, false, false),
+  -- 0134: a session may not write a contact's erasure record, change an
+  -- erased contact or delete its retained documents — invoker trigger
+  -- bodies, revoked from all four roles explicitly like the guards above
+  ('trg_contacts_erasure_lifecycle',   false, false, false, false),
+  ('trg_documents_kept_for_retention', false, false, false, false),
   -- 0101: erasure cancels a lead's pending desk alert — a trigger body that
   -- even service_role may not call (like the definer trigger bodies above)
   ('cancel_lead_notification_jobs', true, false, false, false),
@@ -641,6 +646,45 @@ misc as (
                           and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'errcode = ''42501'''
                      from pg_proc p
                     where p.oid = to_regprocedure('public.trg_primary_key_immutable()')), false)::text
+  union all
+  -- 0134: an erased contact stays erased. A session (authenticated / anon)
+  -- may not insert or change a contact's erased_at / erased_by /
+  -- retention_until, nor change an erased contact other than archiving it —
+  -- contacts_retain_erasure, an enabled BEFORE INSERT OR UPDATE row trigger
+  -- calling the invoker guard — nor delete an erased contact's documents
+  -- (documents_kept_for_retention, BEFORE DELETE), and events_insert refuses
+  -- a session's `erased` / `retention_purged`, the records the erasure and
+  -- the purge write as the system. A restore that brought back 0131's
+  -- policy, lost or disabled a trigger, or a guard that binds no session
+  -- reads false here.
+  select 'SECURITY: an erased contact stays erased — the contacts and documents guards bind sessions, events_insert refuses their erased / retention_purged (0134)', 'true',
+         (coalesce((select pg_get_expr(p.polwithcheck, p.polrelid) ~ '\(event_type <> ALL \(ARRAY\[''erased''::text, ''retention_purged''::text\]\)\)'
+                      from pg_policy p
+                     where p.polrelid = 'public.events'::regclass and p.polname = 'events_insert'), false)
+          and exists (select 1 from pg_trigger t
+                       where t.tgrelid = 'public.contacts'::regclass and t.tgname = 'contacts_retain_erasure'
+                         and t.tgfoid = to_regprocedure('public.trg_contacts_erasure_lifecycle()')
+                         and not t.tgisinternal and t.tgenabled = 'O' and t.tgqual is null
+                         and (t.tgtype & 2) = 2 and (t.tgtype & 1) = 1 and (t.tgtype & 4) = 4 and (t.tgtype & 16) = 16
+                         and (t.tgtype & (8 | 32)) = 0 and cardinality(t.tgattr::int2[]) = 0)
+          and coalesce((select not p.prosecdef
+                               and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'current_user not in \(''authenticated'', ''anon''\)'
+                               and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'old\.erased_at is not null'
+                               and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'errcode = ''42501'''
+                          from pg_proc p
+                         where p.oid = to_regprocedure('public.trg_contacts_erasure_lifecycle()')), false)
+          and exists (select 1 from pg_trigger t
+                       where t.tgrelid = 'public.documents'::regclass and t.tgname = 'documents_kept_for_retention'
+                         and t.tgfoid = to_regprocedure('public.trg_documents_kept_for_retention()')
+                         and not t.tgisinternal and t.tgenabled = 'O' and t.tgqual is null
+                         and (t.tgtype & 2) = 2 and (t.tgtype & 1) = 1 and (t.tgtype & 8) = 8
+                         and (t.tgtype & (4 | 16 | 32)) = 0)
+          and coalesce((select not p.prosecdef
+                               and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'current_user not in \(''authenticated'', ''anon''\)'
+                               and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'c\.erased_at is not null'
+                               and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'errcode = ''42501'''
+                          from pg_proc p
+                         where p.oid = to_regprocedure('public.trg_documents_kept_for_retention()')), false))::text
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.
