@@ -2921,7 +2921,10 @@ VERIFY, run before starting.
     (`unit_types` already has an entry above; `viewings.property_id` was the thirteenth — 0123, landed 2026-09-28;
     `reservations.property_id` and `leads.property_id` the twelfth and eleventh — 0124, landed
     2026-09-29; `tasks.property_id` the tenth — 0126, landed 2026-09-30). Whether each is writable cross-organisation
-    depends on its policies — not yet read. `properties_org_id_id_key` (0088) is the referenced side for all of them.
+    depends on its policies — not yet read, EXCEPT `price_list_items.unit_id`, measured by T-primary-key-immutable's
+    trace (2026-10-02, rolled back): an admin's insert of a line naming another organisation's property → INSERT 1
+    (`price_list_items_insert` / `_update` check only the LIST's organisation; 0132 now refuses moving an existing
+    line's `unit_id`, but not inserting one). `properties_org_id_id_key` (0088) is the referenced side for all of them.
   **VERIFY:** `grep -c "org_property_fkey\|org_owner_contact_fkey" supabase/migrations/*.sql` rising, and
   `select count(*) from pg_constraint where contype = 'f' and confrelid = 'public.properties'::regclass and
   array_length(conkey, 1) = 1` — 13 at 0122, 12 at 0123, 10 at 0124 and 0125, 9 at 0126 (each measured on the local
@@ -3067,11 +3070,31 @@ VERIFY, run before starting.
   So after 0119–0126 closed the existence oracles THROUGH those foreign keys (10 single-column links onto contacts and
   9 onto properties remain — the entries above), B can still ask the primary key directly whether A's lead, hold,
   line, contact or property id exists — it learns existence only, never content, and needs the id first. Fix, per
-  table or once: column-level INSERT grants that omit `id` (the app never sends one — verify per table), or a BEFORE
+  table or once: column-level INSERT grants that omit `id` (two session writers DO send one — the lead convert's deal
+  and the user invite's profile, see below — so per table, not blanket), or a BEFORE
   INSERT trigger that overwrites `id` for `authenticated`. Found by T-task-reservation-lead-org-isolation's review.
+  **Since 0132 it is also the one way left to ADOPT a history** (T-primary-key-immutable's review, measured in
+  rolled-back aal2 probes at 0132): events, interaction notes and documents are keyed by `entity_id` with no foreign
+  key, so an INSERT at an id whose history outlived its row — a row deleted by a trusted path; production held 50 such
+  ids on 2026-10-02 (2 contacts, 25 leads, 22 properties, 1 deal) — gives the new row that history (an admin's
+  `insert into contacts (id = <orphan>)` and `insert into properties (id = <orphan>)` → INSERT 0 1 and the timeline
+  read showed the orphan's events; an admin reads every orphaned event, an agent can adopt only an id it already
+  knows). On the 13 tables a session may DELETE from (areas, buyer_requirements, deal_stages, districts, documents,
+  payment_plans, price_list_items, price_lists, property_media, reservation_installments, reservations, tasks,
+  unit_types) a session can also delete a row and insert a new one at its id. 0132 ended the other route (re-keying a
+  holder away and another record onto its id). A blanket column grant that omits the key is not available: two
+  session writers choose one — the lead convert's deal (`lib/actions/leads.ts`) and the user invite's profile
+  (`lib/actions/settings.ts`, the auth user's id); `price_list_items` and `cyprus_config` have natural keys, and
+  `organizations` has no session INSERT — so such a grant remains available per table for the other 21 guarded
+  tables. An overwrite trigger would break the two writers; refusing an id that already has history in the
+  organisation fits all of them — the decision. **VERIFY (adoption):** as postgres in a rolled-back transaction,
+  insert one `contact` event for a fresh uuid X in a throwaway organisation, then as an aal2 admin of it `insert into
+  contacts (id, org_id, first_name) values (X, …) returning id = X` — `true` means open (an overwrite fix returns
+  `false`, a refusal errors).
   **VERIFY:** `select count(*) from information_schema.column_privileges where grantee = 'authenticated' and
   column_name = 'id' and privilege_type = 'INSERT' and table_schema = 'public'` — non-zero means open (27 on the local
-  stack at 0125 and at 0126).
+  stack at 0125 and at 0126) — for a column-grant fix only: a trigger fix leaves this count unchanged, so read the
+  adoption VERIFY above instead.
 - **NOTE — `create_followup_nudges` steps 1 and 3 still join tasks to deals by `deal_id` alone (0078), and arms 2 / 2b
   / 4 / 4b join tasks to viewings by `viewing_id` alone.** With `tasks_org_deal_fkey` (0119) and
   `tasks_org_viewing_fkey` (0120) VALIDATED they can meet no cross-organisation row, so neither migration touched the
@@ -3199,13 +3222,44 @@ VERIFY, run before starting.
   mark or exclude events whose `id` is at or below it. **VERIFY:** `select obj_description(t.oid, 'pg_trigger') from
   pg_trigger t where t.tgname = 'deals_stage_changed_event'` — "… at or below it, 0 deal stage_changed event(s) …"
   means nothing to decide.
-- **A session can re-key a contact, a lead (and other records) by PATCHing its `id`, S (pre-existing).** Events,
+- ~~**A session can re-key a contact, a lead (and other records) by PATCHing its `id`, S (pre-existing).**~~
+  **FIXED 2026-10-02 on branch `fix/primary-key-immutable` (lands with migration 0132) — DECISIONS
+  `T-primary-key-immutable`: re-verified through PostgREST with real aal2 sessions (an admin, the assigned agent, the
+  creating agent, ANY agent on an unassigned lead) and, in rolled-back transactions, on all 26 tables whose key an API
+  role may update (24 accepted a re-key, by PATCH or by an upsert on a non-key unique key; a second record re-keyed
+  onto a former id adopted the first's events, note and document). `trg_primary_key_immutable()` (invoker, callable
+  by no role) runs `BEFORE UPDATE OF <key>` on the 25 tables other than deals and refuses a session's change of a key
+  value with 42501; restating the key passes; deals keep 0131's refusal.** (original) Events,
   timelines and notes are keyed by `entity_id`, so a re-key detaches the record's history (and, for a childless
   record, nothing refuses it — the foreign keys only stop it once children exist). 0131 refused it for DEALS (their
   movement history depends on it); measured by the 0131 review at 0131 for the others, in rolled-back aal2 probes:
   `update contacts set id = …` and `update leads set id = …` → UPDATE 1. Fix shape: a guard (or column privileges)
   refusing a session's change of a primary key, table by table. Found by T-authentic-stage-movement's review.
-  **VERIFY:** the same rolled-back probe on contacts — UPDATE 1 means open.
+  **VERIFY:** the same rolled-back probe on contacts — UPDATE 1 means open; since 0132 it answers 42501 "A record's
+  primary key cannot be changed (contacts.id)", and `select count(*) from pg_trigger where tgfoid =
+  to_regprocedure('public.trg_primary_key_immutable()') and tgenabled = 'O'` reads 25.
+- **`cyprus_config` is one table for every organisation, and the admin of ANY organisation may update it, M
+  (pre-existing).** It has no `org_id`; `cyprus_config_update` admits `current_role_gnk() = 'admin'` alone, so an
+  admin of one organisation rewrites the fee bands, the nudge thresholds, `lead_routing.agents` and
+  `lead_escalation.recipients` (profile uuids) that every organisation reads (measured by T-primary-key-immutable's
+  trace in a rolled-back transaction: the admin of a throwaway organisation updated the shared `nudge_thresholds`
+  row; 0132 now refuses renaming a key, not changing a value). Harmless while production has one organisation; a
+  second tenant needs per-organisation config or a platform-admin role — a design decision. **VERIFY:** `select
+  pg_get_expr(polqual, polrelid) from pg_policy where polname = 'cyprus_config_update'` — no `org_id` / organisation
+  predicate means open.
+- **An erased contact's erasure flags are refused by the application only, S (pre-existing, not probed).**
+  `unarchiveContact` refuses an erased contact (T-refuse-unarchive-erased), but a session's direct PATCH of
+  `contacts.erased_at` / `is_archived` meets only `contacts_updated` (set_updated_at; 0132's `contacts_pk_immutable`
+  fires on `id` alone) — no trigger binds the erased state. Found by T-primary-key-immutable's critic from the catalogue. **VERIFY:** `select string_agg(tgname, ',')
+  from pg_trigger where tgrelid = 'public.contacts'::regclass and not tgisinternal` — no erasure guard among them
+  means open; confirm with a rolled-back aal2 PATCH of `erased_at = null` on an erased contact.
+- **`createShareLink` / `createAvailabilityLink`'s cleanup of a link left with no properties is a silent no-op, S
+  (pre-existing).** On a failed `share_link_properties` insert, `lib/actions/share-links.ts` deletes the new link
+  through the SESSION client ("don't leave the husk"), but `authenticated` holds no DELETE on `share_links` and no
+  delete policy exists, so the error is ignored and the propertyless link stays (it resolves to nothing). Found by
+  T-primary-key-immutable's critic. Fix: delete it through the service role bounded by org and id, or insert link and
+  properties in one RPC. **VERIFY:** `select has_table_privilege('authenticated', 'public.share_links', 'DELETE')` —
+  false while `grep -c 'from("share_links").delete()' lib/actions/share-links.ts` is non-zero means open.
 - **`report_stage_conversion` counts a `stage_changed` whose payload is `{}` (or not an object) as a legacy
   movement, XS (pre-existing, historical rows only since 0131).** 0130 classifies a missing id as a pre-0067 side,
   so an event with neither ids nor names counts in `moves_total` with a `null → null` transition. No writer of
