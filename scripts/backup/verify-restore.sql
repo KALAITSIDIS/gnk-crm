@@ -669,6 +669,10 @@ misc as (
                           and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'current_setting\(''role'', true\)'
                           and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') !~ 'current_user'
                           and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'errcode = ''42501'''
+                          and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'public\.events e'
+                          and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'public\.interaction_notes n'
+                          and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'public\.documents d'
+                          and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'e\.actor_id = new\.id'
                      from pg_proc p
                     where p.oid = to_regprocedure('public.trg_insert_id_without_history()')), false)::text
   union all

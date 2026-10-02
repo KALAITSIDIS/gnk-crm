@@ -3062,8 +3062,9 @@ VERIFY, run before starting.
   user sees the driver's message rather than a sentence; the same idiom fixes both (found by
   T-task-contact-property-org-isolation's mapping). **VERIFY:** `grep -c "That deal is no longer available to you"
   lib/actions/reservations.ts` — 0 means open.
-- **A client-chosen primary key is an existence oracle on every table users insert into, S (reasoned, not
-  reproduced).** PostgREST lets an insert or upsert carry its own `id`, `authenticated` holds table-level INSERT (so
+- **A client-chosen primary key is an existence oracle on every table users insert into, S (the 23505 half
+  reproduced 2026-10-02 by T-insert-id-without-history's map — another organisation's live contact id answered 409 /
+  23505 `contacts_pkey`, a fresh id 201; the upsert half reasoned).** PostgREST lets an insert or upsert carry its own `id`, `authenticated` holds table-level INSERT (so
   the `id` column too), and a primary key is checked across ALL organisations before any policy can hide the row: B
   posting `{id: X, org_id: B, …}` to `leads` (or `reservations`, `reservation_installments`, `tasks`, …) gets 23505
   `*_pkey` exactly when X exists in some organisation, and an upsert answers 42501 (a row it may not update) vs 201.
@@ -3083,8 +3084,9 @@ VERIFY, run before starting.
   key, so an INSERT at an id whose history outlived its row — a row deleted by a trusted path; production held 50 such
   ids on 2026-10-02 (2 contacts, 25 leads, 22 properties, 1 deal) — gives the new row that history (an admin's
   `insert into contacts (id = <orphan>)` and `insert into properties (id = <orphan>)` → INSERT 0 1 and the timeline
-  read showed the orphan's events; an admin reads every orphaned event, and — corrected by 0133's map — an agent can
-  LIST orphaned ids too: interaction_notes_select is organisation-wide and so are internal documents). On the 13 tables a session may DELETE from (areas, buyer_requirements, deal_stages, districts, documents,
+  read showed the orphan's events; an admin reads every orphaned event, ~~an agent can adopt only an id it already
+  knows~~ **wrong, corrected by 0133's map: an agent can LIST orphaned ids too — interaction_notes_select is
+  organisation-wide and so are internal documents**). On the 13 tables a session may DELETE from (areas, buyer_requirements, deal_stages, districts, documents,
   payment_plans, price_list_items, price_lists, property_media, reservation_installments, reservations, tasks,
   unit_types) a session can also delete a row and insert a new one at its id. 0132 ended the other route (re-keying a
   holder away and another record onto its id). A blanket column grant that omits the key is not available: two
@@ -3095,8 +3097,8 @@ VERIFY, run before starting.
   organisation fits all of them — the decision. **VERIFY (adoption):** as postgres in a rolled-back transaction,
   insert one `contact` event for a fresh uuid X in a throwaway organisation, then as an aal2 admin of it `insert into
   contacts (id, org_id, first_name) values (X, …) returning id = X` — `true` means open (an overwrite fix returns
-  `false`, a refusal errors); since 0133 it errors 42501 "A record cannot be created at an id that already has history
-  (contacts.id)".
+  `false`, a refusal errors). **Since 0133 it errors 42501 "A record cannot be created at an id that already has
+  history (contacts.id)".**
   **VERIFY:** `select count(*) from information_schema.column_privileges where grantee = 'authenticated' and
   column_name = 'id' and privilege_type = 'INSERT' and table_schema = 'public'` — non-zero means open (27 on the local
   stack at 0125 and at 0126) — for a column-grant fix only: a trigger fix leaves this count unchanged, so read the
@@ -3271,8 +3273,12 @@ VERIFY, run before starting.
   re-inserted at a deleted document's id takes over its `document_uploaded` lines (the timeline prints the current
   title; `lib/services/event-context.ts`) — and the delete-and-re-insert gets round `protect_document_columns`' freeze
   (entity, visibility); a deal stage re-inserted at a deleted stage's id inherits `stage_changed` movements in
-  `report_stage_conversion` (0130 resolves stage ids to current names); a viewing's `viewing_feedback` lines resolve
-  by payload `viewing_id`; `buyer_requirements.area_ids` / `district_ids` (uuid[], no FK) and party-default jsonb ids.
+  `report_stage_conversion` (0130 resolves stage ids to current names); a note re-inserted at a deleted note's id
+  takes over its `conversation_logged` line (`attachNotes` matches by organisation and id only; no product path
+  deletes a note — fix shape: attach only when the payload's `note_sha256` equals `body_sha256`); a viewing's
+  `viewing_feedback` lines resolve by payload `viewing_id`, but only for a viewing with no viewing-typed event (an
+  imported one — the app writes one for every viewing it creates, so 0133 refuses those);
+  `buyer_requirements.area_ids` / `district_ids` (uuid[], no FK) and party-default jsonb ids.
   documents, deal_stages, areas and districts are deleted only by an admin, who can already rename the last three in
   place — the document freeze is the sharpest. Fix shapes: a column grant without `id` on documents (no writer sends
   one), or readers that check the resolved row still belongs to the event's record (viewing feedback already does).
@@ -3284,9 +3290,11 @@ VERIFY, run before starting.
   may insert a lead at an id whose orphaned notes are ours (0133 accepts it: the history is not theirs) with a
   back-dated `received_at` and source `website`, and the nightly sweep (`10 3 * * *`) then blanks OUR notes for that
   id — an irreversible cross-tenant write. Fix: `and n.org_id = done.org_id`, the replaced body guarded by its md5;
-  cron-only, so no release-compat entry. Found by T-insert-id-without-history's map (the predicate measured).
-  **VERIFY:** `select regexp_replace(prosrc, '--[^\n]*', '', 'g') ~ 'n\.org_id\s*=' from pg_proc where proname =
-  'redact_stale_enquiries'` — false means open.
+  cron-only, so no release-compat entry. `resolve_share_link`'s once-a-day `opened` throttle is likewise not bounded
+  by organisation (`and org_id = v_link.org_id`; it can only harm the organisation that inserted at the id — trivial).
+  Found by T-insert-id-without-history's map and review (the predicate measured, the blanking probed rolled back).
+  **VERIFY:** `select regexp_replace(prosrc, '--[^\n]*', '', 'g') ~ '\mn\.org_id\M' from pg_proc where proname =
+  'redact_stale_enquiries'` — false means open (it names the notes' organisation in any form of the fix).
 - **Natural keys an id guard cannot see: a deleted property's `reference` and a deleted link's `token_sha256` can be
   taken again, S (pre-existing).** `properties.reference` is unique only among live rows (`UNIQUE (org_id,
   reference)`), sessions choose it at INSERT, and `properties_reference_immutable` fires on UPDATE only — so a deleted

@@ -14,11 +14,11 @@ import { HISTORY_SUBJECTS, REVERT_0133_SQL, readMigration0133 } from "./revert-0
  * THE GAP (reproduced at 0d43711 / 0132 by this file): events,
  * interaction_notes and documents are keyed by (entity_type, entity_id) with
  * no foreign key, so a row a trusted path deleted leaves its history behind
- * (production held 50 such ids). `authenticated` holds INSERT on the id of
- * every history subject, so a session INSERTed a new row at such an id and the
- * app's reads — the timeline through the service role, bounded by organisation
- * only — gave it the old row's history, including events the inserting agent
- * could not read itself. A session that may DELETE (tasks) could delete a row
+ * (production held at least 50 such ids). `authenticated` holds INSERT on the
+ * id of every history subject but organizations, so a session INSERTed a new
+ * row at such an id and the timeline's own query — the service role, bounded
+ * by organisation only — returned the old row's history for it, including
+ * events the inserting agent could not read itself. A session that may DELETE (tasks) could delete a row
  * and insert a new one at its id. 0132 closed the re-key (UPDATE) route.
  *
  * THE DESIGN PINNED HERE: trg_insert_id_without_history(), a SECURITY DEFINER
@@ -111,11 +111,21 @@ async function plant(entityType: string, id: string, what: Plant = { event: true
     );
   }
   if (what.note) {
+    // the note ALONE: a session's note always brings a conversation_logged
+    // event (0094's AFTER trigger), which the events check would catch first —
+    // so it is written as a restore writes it (replica mode, no trigger), and
+    // the notes check is the only one that can refuse. Only ever called outside
+    // a transaction: SET LOCAL is scoped to this one implicit transaction.
     await o.query(
-      `insert into interaction_notes (org_id, entity_type, entity_id, channel, body, body_sha256, created_by)
-       values ($1, $2, $3, 'phone', 'ZZTEST orphaned note', repeat('0', 64), $4)`,
-      [org, entityType, id, admin.id],
+      `set local session_replication_role = replica;
+       insert into interaction_notes (org_id, entity_type, entity_id, channel, body, body_sha256, created_by)
+       values ('${org}', '${entityType}', '${id}', 'phone', 'ZZTEST orphaned note', repeat('0', 64), '${admin.id}');
+       set local session_replication_role = origin;`,
     );
+    if (!what.event) {
+      const ev = await o.query("select count(*)::int as n from events where org_id = $1 and entity_id = $2", [org, id]);
+      if (ev.rows[0].n !== 0) throw new Error("plant: the note brought an event — it is not alone");
+    }
   }
   if (what.document) {
     await o.query(
@@ -163,7 +173,7 @@ async function authUser(tag: string) {
   userIds.push(data.user.id);
   return { id: data.user.id, email };
 }
-const profileRow = (u: { id: string; email: string }) => ({ id: u.id, org_id: ORG, role: "agent", full_name: "ZZTEST adopter", email: u.email });
+const profileRow = (u: { id: string; email: string }, org = ORG) => ({ id: u.id, org_id: org, role: "agent", full_name: "ZZTEST adopter", email: u.email });
 
 /** Run `body` in a transaction on `o` that is always rolled back; collect NOTICEs. */
 async function rolledBack(body: (notices: string[]) => Promise<void>) {
@@ -286,10 +296,16 @@ describe("1. a session cannot create a record at an id whose history outlived it
   });
 
   it("the guard sees history the session cannot: an agent who reads none of the orphan's lines is still refused", async () => {
+    // only what an agent cannot read: an admin-authored event and an
+    // admin_only document — no note (interaction_notes_select is
+    // organisation-wide, so a note would let an INVOKER guard refuse too)
     const x = randomUUID();
-    await plant("contact", x, { event: true, note: true, document: true });
-    const seen = await agent.client.from("events").select("id").eq("entity_id", x);
-    expect(seen.data ?? [], "events_select shows an agent only its own lines").toEqual([]);
+    await plant("contact", x, { event: true, document: true });
+    for (const table of ["events", "documents", "interaction_notes"]) {
+      const seen = await agent.client.from(table).select("id").eq("entity_id", x);
+      expect(seen.error, `${table}: ${JSON.stringify(seen.error)}`).toBeNull();
+      expect(seen.data, `the agent reads none of the orphan's ${table}`).toEqual([]);
+    }
     expectRefused(await agent.client.from("contacts").insert({ id: x, org_id: ORG, first_name: "ZZTEST" }).select("id"), "contacts");
   });
 
@@ -357,6 +373,15 @@ describe("3. what keeps working", () => {
     expect(seen.data).toEqual([]);
     const docs = await otherAdmin.client.from("documents").select("id").eq("entity_id", x);
     expect(docs.data).toEqual([]);
+  });
+
+  it("…and the same for a profile: a user whose 'user' and ACTOR lines are only ORG's may be invited by another organisation (no oracle)", async () => {
+    const u = await authUser("cross-org-actor");
+    await plant("user", u.id, { event: true, actorOnly: true });
+    expectAccepted(await otherAdmin.client.from("profiles").insert(profileRow(u, OTHER_ORG)).select("id"));
+    const seen = await otherAdmin.client.from("events").select("id").or(`entity_id.eq.${u.id},actor_id.eq.${u.id}`);
+    expect(seen.error, JSON.stringify(seen.error)).toBeNull();
+    expect(seen.data, "OTHER_ORG reads none of ORG's lines about or by that user").toEqual([]);
   });
 
   it("…and a row naming ANOTHER organisation gets RLS's refusal, never this guard's (nothing said about that organisation's history)", async () => {
@@ -521,6 +546,16 @@ describe("5. the migration: it replays over 0132, refuses what it was not writte
       /0133 aborted: a trigger named \*_id_without_history already exists/,
     ],
     ["a missing history index", "drop index public.documents_entity_idx;", /0133 aborted: the history index documents_entity_idx is missing/],
+    [
+      "a subject without an org_id",
+      "alter table public.share_links rename column org_id to org_id_zz;",
+      /0133 aborted: share_links lack a uuid id primary key or an org_id/,
+    ],
+    [
+      "a subject whose key is not a uuid id",
+      "alter table public.share_links rename column id to id_zz;",
+      /0133 aborted: share_links lack a uuid id primary key or an org_id/,
+    ],
   ];
   for (const [label, drift, refused] of refusals) {
     it(`the preflight refuses ${label}`, async () => {
@@ -531,6 +566,25 @@ describe("5. the migration: it replays over 0132, refuses what it was not writte
       });
     });
   }
+
+  it("outside one transaction it refuses before anything else (SET LOCAL did not take: the one-transaction guard)", async () => {
+    // only the file's opening statements, on a fresh connection with no BEGIN:
+    // each query is then its own transaction, as a tool that splits a file
+    // into statements would run it — never the whole file this way
+    const sql = readMigration0133();
+    const from = sql.indexOf("set local lock_timeout = '5s';");
+    const doStart = sql.indexOf("do $$", from);
+    const doEnd = sql.indexOf("end $$;", doStart) + "end $$;".length;
+    expect(sql.slice(doStart, doEnd)).toMatch(/must run as ONE transaction/);
+    const c = new Client({ connectionString: DB_URL });
+    await c.connect();
+    try {
+      await c.query("set local lock_timeout = '5s'");
+      await expect(c.query(sql.slice(doStart, doEnd))).rejects.toThrow(/0133 aborted: this file must run as ONE transaction/);
+    } finally {
+      await c.end();
+    }
+  });
 
   it("the rollback recipe restores 0132's behaviour: a session may insert at an id with history again (it adopts it)", async () => {
     await rolledBack(async () => {

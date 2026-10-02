@@ -11,16 +11,20 @@
 --
 --   * events, interaction_notes and documents are keyed by (entity_type,
 --     entity_id) with no foreign key, so history outlives its row: a row a
---     trusted path deleted leaves its history behind (production held 50 such
---     ids on 2026-10-02 — 2 contacts, 25 leads, 22 properties, 1 deal; the
---     local stack thousands, from test clean-ups). `authenticated` holds
---     INSERT on the id of every history subject, so a session INSERTed a NEW
---     row at such an id and the app's own reads gave the new row the old
---     one's history (measured on contacts, leads, properties, deals,
---     viewings, offers, mandates, property_keys, tasks and share_links: the
---     timeline, the notes, the internal documents). An AGENT adopted an
---     admin's and a colleague's events it could not read itself — the
---     timeline reads through the service role, bounded by organisation only.
+--     trusted path deleted leaves its history behind (production held at
+--     least 50 such ids on 2026-10-02 — 0132's census counted events only,
+--     for contacts, leads, properties and deals: 2, 25, 22, 1; the local
+--     stack thousands, from test clean-ups). `authenticated` holds INSERT on
+--     the id of every history subject but organizations, so a session
+--     INSERTed a NEW row at such an id and the timeline's own query (the
+--     service role, bounded by organisation only) returned the old row's
+--     events for the new one — measured on contacts, leads, properties,
+--     deals, viewings, offers, mandates, property_keys, tasks and
+--     share_links. The app shows that on the contact, property and deal
+--     pages (an offer's history on its deal's, a key's on its property's),
+--     in the notes and documents a record type has, in the evidence report
+--     and in the admin dashboard's latest events. An AGENT adopted an
+--     admin's and a colleague's events it could not read itself.
 --   * And on the tables a session may DELETE from: a task's creator deleted
 --     it and inserted a new task at its id — the old `created` / `completed`
 --     lines became the new task's, labelled with the new title.
@@ -48,8 +52,10 @@
 --      profiles (user), contacts (contact), properties (property),
 --      property_keys (key), mandates (mandate), leads (lead), deals (deal),
 --      viewings (viewing), offers (offer), share_links (share_link), tasks
---      (task). organizations is a history subject but no API role may insert
---      one; documents' history is in event PAYLOADS only (NOT DONE).
+--      (task). organizations is a history subject, but no session role
+--      (authenticated / anon) may insert one — the service role and postgres
+--      can, and the guard does not bind them; documents' history is in event
+--      PAYLOADS only (NOT DONE).
 --
 -- WHY AFTER INSERT, not BEFORE: an AFTER row trigger runs only for a row that
 -- was actually inserted — past RLS's WITH CHECK (the organisation, the role,
@@ -67,13 +73,19 @@
 --     anon): the service role, postgres, imports, restores (which run with
 --     session_replication_role = replica, where an ENABLE ORIGIN trigger does
 --     not fire at all). Inside a SECURITY DEFINER body current_user is the
---     owner; the role GUC still names the API role, so an insert a
---     session-called definer RPC makes is checked too — measured: every such
---     insert takes a fresh default id and passes.
+--     owner; the role GUC still names the API role, so a session-called
+--     definer's insert would be checked too — at 0133 no session-callable
+--     function or session-fired trigger inserts into these 11 tables (a
+--     pg_proc scan, 2026-10-02: the eight that do run as cron or behind the
+--     service role).
 --   * A row of the caller's organisation at an id whose history belongs
---     only to ANOTHER organisation: every reader is bounded by organisation,
---     so nothing is adopted, and a refusal would be an oracle on that
---     organisation's history.
+--     only to ANOTHER organisation: a refusal would be an oracle on that
+--     organisation's history, and the app's readers are bounded by
+--     organisation, so nothing shows — except two definer readers that match
+--     by id alone (BACKLOG): redact_stale_enquiries would blank the OTHER
+--     organisation's orphaned notes for that id, and resolve_share_link's
+--     once-a-day `opened` throttle counts the other organisation's event
+--     (harming only the inserting organisation).
 --   * A fresh id with no history — what both session writers that choose an
 --     id send: the lead convert's deal (crypto.randomUUID) and the user
 --     invite's profile (the new auth user's id).
@@ -99,9 +111,9 @@
 -- LOCKS. CREATE TRIGGER takes SHARE ROW EXCLUSIVE on each of the 11 tables:
 -- their writes wait until this commits; reads and FK checks do not. All 11
 -- are taken FIRST, in ONE statement, parents before children (profiles,
--- contacts, properties, property_keys, mandates, leads, deals, viewings,
+-- contacts, properties, property_keys, mandates, deals, leads, viewings,
 -- offers, share_links, tasks LAST — the order the multi-table writers take
--- them). lock_timeout 5 s per table; a 55P03 / 40P01 keeps nothing — apply
+-- them; a lead names the deal it converted to). lock_timeout 5 s per table; a 55P03 / 40P01 keeps nothing — apply
 -- again, no ledger row. ONE transaction (checked below). Apply in 0132's
 -- window: outside 02:55–04:05 UTC, away from 06:00, mid odd minute, not a
 -- multiple of five.
@@ -121,9 +133,13 @@
 --   * History keyed by an event PAYLOAD (no index): a document re-inserted at
 --     a deleted document's id inherits `document_uploaded` lines (the timeline
 --     shows its title); a deal stage re-inserted at a deleted stage's id
---     inherits `stage_changed` movements in report_stage_conversion; a
---     viewing's `viewing_feedback` lines; uuid[] / jsonb ids
---     (buyer_requirements.area_ids / district_ids, party defaults). Each
+--     inherits `stage_changed` movements in report_stage_conversion; a note
+--     re-inserted at a deleted note's id takes over its `conversation_logged`
+--     line (attachNotes matches by organisation and id; no product path
+--     deletes a note); a viewing's `viewing_feedback` lines only for a viewing
+--     with no viewing-typed event (an imported one — the app writes one for
+--     every viewing it creates, so this file refuses those); uuid[] / jsonb
+--     ids (buyer_requirements.area_ids / district_ids, party defaults). Each
 --     needs its own reader-side or payload-side decision.
 --     documents, deal_stages, areas and districts are deleted only by an
 --     admin, who can already rename them in place — except a document, whose
@@ -135,7 +151,8 @@
 --     organisation predicate (0094): another organisation may insert a
 --     back-dated website lead at an id whose orphaned notes are ours, and
 --     the nightly sweep blanks them — a separate entry (a function body to
---     replace, guarded by its md5).
+--     replace, guarded by its md5); resolve_share_link's `opened` throttle
+--     is likewise not bounded by organisation (trivial).
 --   * Natural keys an id guard cannot see: a deleted property's `reference`
 --     can be inserted again (portals and the site key by it); a deleted
 --     link's token_sha256 likewise; and `contacts.merged_into_id` may be set
@@ -147,8 +164,9 @@
 -- the 11 `<table>_id_without_history` triggers, then the function
 -- (supabase/tests/revert-0133.ts builds exactly that text, and the test file
 -- replays it). In the same change: delete
--- supabase/tests/insert-id-history.test.ts and revert-0133.ts and the
--- REVERT_0133_SQL call in stage-movement-authentic.test.ts; remove the
+-- supabase/tests/insert-id-history.test.ts and revert-0133.ts, and in
+-- stage-movement-authentic.test.ts the `./revert-0133` import and the four
+-- REVERT_0133_SQL calls; remove the
 -- restore pack's 0133 row and grants row and move its migrations pin
 -- FORWARD; restore BACKLOG and docs/04's Grant model paragraph. No data
 -- moves.
@@ -179,13 +197,13 @@ begin
   -- every lock the DDL below needs, at its strongest, in one statement,
   -- parents before children (header, LOCKS)
   lock table public.profiles, public.contacts, public.properties, public.property_keys,
-             public.mandates, public.leads, public.deals, public.viewings, public.offers,
+             public.mandates, public.deals, public.leads, public.viewings, public.offers,
              public.share_links, public.tasks
     in share row exclusive mode;
 
   -- 1. each guarded table has a uuid `id` primary key and an `org_id`
   select string_agg(t, ', ' order by t) into v_bad
-    from unnest(array['profiles', 'contacts', 'properties', 'property_keys', 'mandates', 'leads', 'deals',
+    from unnest(array['profiles', 'contacts', 'properties', 'property_keys', 'mandates', 'deals', 'leads',
                       'viewings', 'offers', 'share_links', 'tasks']) t
    where not exists (
            select 1 from pg_constraint con
@@ -287,10 +305,10 @@ create trigger property_keys_id_without_history after insert on public.property_
   for each row execute function public.trg_insert_id_without_history('key');
 create trigger mandates_id_without_history after insert on public.mandates
   for each row execute function public.trg_insert_id_without_history('mandate');
-create trigger leads_id_without_history after insert on public.leads
-  for each row execute function public.trg_insert_id_without_history('lead');
 create trigger deals_id_without_history after insert on public.deals
   for each row execute function public.trg_insert_id_without_history('deal');
+create trigger leads_id_without_history after insert on public.leads
+  for each row execute function public.trg_insert_id_without_history('lead');
 create trigger viewings_id_without_history after insert on public.viewings
   for each row execute function public.trg_insert_id_without_history('viewing');
 create trigger offers_id_without_history after insert on public.offers
@@ -323,8 +341,10 @@ begin
     raise exception '0133 postflight: trg_insert_id_without_history is not the definer trigger function owned by postgres with search_path public, pg_temp';
   end if;
   if v_src !~ 'current_setting\(''role'', true\)' or v_src ~ 'current_user'
-     or v_src !~ 'errcode = ''42501''' or v_src ~* '(update|insert\s+into|delete\s+from)\s' then
-    raise exception '0133 postflight: trg_insert_id_without_history does not bind sessions by the role GUC, refuse with 42501 and only read';
+     or v_src !~ 'errcode = ''42501''' or v_src ~* '(update|insert\s+into|delete\s+from)\s'
+     or v_src !~ 'public\.events e' or v_src !~ 'public\.interaction_notes n' or v_src !~ 'public\.documents d'
+     or v_src !~ 'e\.actor_id = new\.id' then
+    raise exception '0133 postflight: trg_insert_id_without_history does not bind sessions by the role GUC, read events / notes / documents / the actor, refuse with 42501 and only read';
   end if;
   if has_function_privilege('public', sig_fn, 'execute') or has_function_privilege('anon', sig_fn, 'execute')
      or has_function_privilege('authenticated', sig_fn, 'execute') or has_function_privilege('service_role', sig_fn, 'execute') then

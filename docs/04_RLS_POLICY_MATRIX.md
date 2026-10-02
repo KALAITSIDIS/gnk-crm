@@ -122,7 +122,7 @@ INSERT a new row at that id and adopt it. `trg_insert_id_without_history()`
 (SECURITY DEFINER — it must see history an agent's `events_select` hides; callable
 by no role) runs AFTER INSERT as `<table>_id_without_history` on the 11 history
 subjects a session may insert — profiles (`user`, and any event it is the actor
-of), contacts, properties, property_keys (`key`), mandates, leads, deals,
+of), contacts, properties, property_keys (`key`), mandates, deals, leads,
 viewings, offers, share_links, tasks — and refuses a session's (role GUC
 authenticated / anon) row whose id has history of that entity_type in its own
 organisation, 42501 "A record cannot be created at an id that already has history
@@ -130,7 +130,8 @@ organisation, 42501 "A record cannot be created at an id that already has histor
 aal1 session, a refused role or another organisation); an upsert that conflicts
 never reaches it. A fresh id (the lead convert's deal, the invite's profile) and
 the service role / postgres (imports, restores) pass. History keyed by an event
-PAYLOAD (documents, deal stages, viewing feedback) is a BACKLOG entry.
+PAYLOAD (documents, deal stages, a note's text, an imported viewing's feedback) is
+a BACKLOG entry.
 
 ## Policy SQL patterns (use these shapes)
 
