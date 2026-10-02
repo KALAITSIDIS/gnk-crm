@@ -3223,7 +3223,7 @@ VERIFY, run before starting.
   pg_trigger t where t.tgname = 'deals_stage_changed_event'` — "… at or below it, 0 deal stage_changed event(s) …"
   means nothing to decide.
 - ~~**A session can re-key a contact, a lead (and other records) by PATCHing its `id`, S (pre-existing).**~~
-  **FIXED 2026-10-02 on branch `fix/primary-key-immutable` (lands with migration 0132) — DECISIONS
+  **FIXED — LANDED 2026-10-02 (hosted 0132, PR #92, main `a4e0472`) — DECISIONS
   `T-primary-key-immutable`: re-verified through PostgREST with real aal2 sessions (an admin, the assigned agent, the
   creating agent, ANY agent on an unassigned lead) and, in rolled-back transactions, on all 26 tables whose key an API
   role may update (24 accepted a re-key, by PATCH or by an upsert on a non-key unique key; a second record re-keyed
