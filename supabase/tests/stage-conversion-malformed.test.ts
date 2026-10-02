@@ -33,6 +33,14 @@ import {
  *
  * Fixtures: two throwaway organisations, aal2 sessions through PostgREST,
  * deleted at the end as postgres.
+ *
+ * SINCE 0131 a session cannot write a deal `stage_changed` at all (the
+ * deals_stage_changed_event trigger writes it from the row change), so a
+ * malformed one can only be HISTORY — written before 0131 by a session, or by
+ * an import. This file now plants them the way such history exists: the
+ * service role writing the row a pre-0131 session wrote (same organisation,
+ * same actor, the default occurred_at), and asserts that the session's own
+ * POST is refused. The reader's behaviour pinned here is unchanged.
  */
 const DB_URL = process.env.DB_URL ?? "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
 const ORG = randomUUID();
@@ -106,9 +114,22 @@ async function newDeal(org: string, stage: string, agentId: string): Promise<str
   return data.id as string;
 }
 
-/** A session's direct POST — the write path events_insert permits for any payload. */
+/** A session's direct POST — refused since 0131 for any payload. */
 function post(user: TestUser, dealId: string, payload: Record<string, unknown>) {
   return user.client
+    .from("events")
+    .insert({ org_id: ORG, actor_id: user.id, entity_type: "deal", entity_id: dealId, event_type: "stage_changed", payload })
+    .select("id")
+    .single();
+}
+
+/**
+ * The row a pre-0131 session's POST left behind: the same organisation, actor
+ * and payload, occurred_at left to the default — written by the service role,
+ * the only API writer of a historical stage_changed since 0131.
+ */
+function historical(user: TestUser, dealId: string, payload: Record<string, unknown>) {
+  return svc
     .from("events")
     .insert({ org_id: ORG, actor_id: user.id, entity_type: "deal", entity_id: dealId, event_type: "stage_changed", payload })
     .select("id")
@@ -162,7 +183,7 @@ afterAll(async () => {
   await pg.end();
 });
 
-describe("a malformed stage_changed written by a session, through the real write paths", () => {
+describe("a malformed stage_changed already in the chain (pre-0131 or imported): refused to sessions, survived by the reader", () => {
   let t0: Date;
   let tMid: Date;
   let live: Win;
@@ -217,13 +238,11 @@ describe("a malformed stage_changed written by a session, through the real write
     expect(baseline.otherAdmin.moves_total, "the other organisation sees only its own").toBe(1);
   });
 
-  it("events_insert still accepts a session's malformed payload — the reader is what must cope", async () => {
-    const bad = await post(agent, dealC, {
-      from: "New",
-      to: "Qualified",
-      from_stage_id: sNew.id,
-      to_stage_id: "x",
-    });
+  it("a session's malformed POST is refused since 0131; the reader must still cope with one already in the chain", async () => {
+    const payload = { from: "New", to: "Qualified", from_stage_id: sNew.id, to_stage_id: "x" };
+    const refused = await post(agent, dealC, payload);
+    expect(refused.error?.code, JSON.stringify(refused.error)).toBe("42501");
+    const bad = await historical(agent, dealC, payload);
     expect(bad.error, JSON.stringify(bad.error)).toBeNull();
   });
 
@@ -239,7 +258,7 @@ describe("a malformed stage_changed written by a session, through the real write
   });
 
   it("a malformed from_stage_id is excluded the same way, and counted per record", async () => {
-    const bad = await post(agent, dealC, {
+    const bad = await historical(agent, dealC, {
       from: "Qualified",
       to: "Viewing",
       from_stage_id: "not-a-uuid",

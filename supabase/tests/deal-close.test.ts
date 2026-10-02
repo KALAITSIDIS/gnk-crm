@@ -1257,7 +1257,15 @@ describe("0118: no user-session path but close_deal makes a deal won or lost", (
       const kanban = await agent.client.rpc("move_deal_to_stage", { p_deal_id: deal, p_stage_id: s3[0]!.id });
       expect(kanban.error).toBeNull();
       expect(await row(deal)).toMatchObject({ status: "open", stage_id: s3[0]!.id, won_at: null, lost_at: null });
-      expect((await events(deal)).map((e) => e.event_type)).toEqual(["stage_changed"]);
+      // 0131: both are movements, and each is recorded from the row change
+      // (deals_stage_changed_event) — the direct PATCH no longer moves the
+      // deal silently
+      const evs = await events(deal);
+      expect(evs.map((e) => e.event_type)).toEqual(["stage_changed", "stage_changed"]);
+      expect(evs.map((e) => [e.payload.from_stage_id, e.payload.to_stage_id])).toEqual([
+        [openStage.id, s[0]!.id],
+        [s[0]!.id, s3[0]!.id],
+      ]);
     });
 
     it("a deal reopened by maintenance keeps its previous lifecycle's values through an ordinary edit", async () => {

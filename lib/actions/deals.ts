@@ -29,7 +29,10 @@ export type MoveDealResult = { error: string | null };
  * Drag-and-drop stage change (T3.1). Delegates to the move_deal_to_stage RPC
  * (migration 0011) so the deal UPDATE and its stage_changed event commit in
  * one transaction — a move can never land without its event, and an
- * RLS-filtered 0-row update aborts instead of logging a phantom event.
+ * RLS-filtered 0-row update aborts instead of logging a phantom event. Since
+ * 0131 the event is written by the database from the row change (the
+ * deals_stage_changed_event trigger), not by the RPC, and a session may not
+ * write one itself.
  * Returns a result object, never throws: Next.js strips thrown Server Action
  * messages in production, which would hide the guard texts from the toast.
  */

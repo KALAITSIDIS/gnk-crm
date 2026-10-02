@@ -13,7 +13,9 @@ import { ENTITY_TYPES, describeEvent, type EventTranslator } from "./events";
  * (T-rescheduled-line-crash).
  *
  * Any active org member may insert any event with any payload (events_insert,
- * 0071), and `describeEvent` renders the property Activity tab, the admin
+ * 0071 — since 0128 / 0131 except a deal's won / lost / won_override, and
+ * stage_changed under any entity_type, which the database writes; rows written
+ * before, or by the service role, still reach the renderer), and `describeEvent` renders the property Activity tab, the admin
  * dashboard feed and the commission evidence report. A line that throws takes
  * the whole page down for everyone: `"★".repeat(1e9)` did it for
  * viewing_feedback (T-viewing-feedback-shape), `formatDateTime("x")` for

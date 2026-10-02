@@ -2685,14 +2685,22 @@ VERIFY, run before starting.
   is legitimately another agent (lead assignment). **VERIFY:**
   `MSYS_NO_PATHCONV=1 docker exec supabase_db_gnk-crm psql -U postgres -d postgres -Atc "select with_check ~ 'created_by' from pg_policies where tablename='deals' and policyname='deals_insert'"`
   — `f` means open.
-- **Deal fields around a close that nothing freezes, S — a product decision first.** A direct PATCH may change
+- **Deal fields around a close that nothing freezes, S — a product decision first. PARTLY ADDRESSED by 0131
+  (T-authentic-stage-movement): on a new or OPEN deal a session's `deal_type` and stage must now agree — a
+  `deal_type` change alone that would leave the deal in another pipeline's stage is refused ("Stage belongs to
+  another deal type") — a stage CHANGE stamps `stage_entered_at` / `last_activity_at` from the database clock, and a
+  session may not change a deal's `id`. Still open: `deal_type` stays writable together with a matching stage
+  (recorded as a movement); a WON / LOST deal's `deal_type` stays PATCHable alone (0118's closed-row branch does not
+  compare it — measured by the 0131 review); `created_at` / `stage_entered_at` stay PATCHable without a stage
+  change.** (original) A direct PATCH may change
   `deal_type` (an open deal then sits in another pipeline's stage; `close_deal` picks the new type's terminal
   stage), `created_at` and `stage_entered_at` (reports compute time-to-close and time-in-stage from them), and on a
   CLOSED deal `expected_value` and `agent_id` stay editable through the app itself (`updateDealSection` does not
   check status; reports read both — a won deal's `coalesce(final_value, expected_value)`, agent performance). An
   admin may also flip a stage's `is_won` / `is_lost` with open deals in it. None makes a deal won or lost without
-  `close_deal`. Found by T-deal-close-db-boundary's review. **VERIFY:**
-  `grep -rn "new.deal_type is distinct from old.deal_type" supabase/migrations/` — no hit means open.
+  `close_deal`. Found by T-deal-close-db-boundary's review. **VERIFY** (re-pointed by 0131, whose guard carries the
+  old recipe's phrase for the type rule alone): `grep -rn "new.created_at is distinct from old.created_at"
+  supabase/migrations/` — no hit means open.
 - ~~**The restore pack does not pin `forbid_srs_api_writes` (0099), S.**~~ **FIXED 2026-10-01 — pinned as measured on
   local and hosted (secdef false; anon / authenticated / service_role EXECUTE true — inert on a trigger body), and
   `enquiry_alerts_sweep`'s pin corrected to secdef false (invoker since 0103 / 0105; it read red on every correct
@@ -2728,7 +2736,9 @@ VERIFY, run before starting.
   foreign-key check on a task / offer / viewing / reservation takes on its deal, so a move blocks those inserts
   and can deadlock against the nightly `create_followup_nudges` (it holds an org's chain lock, then its tasks
   insert checks `deal_id`). 0117's `close_deal` uses FOR NO KEY UPDATE for exactly this. Fix: the same in 0067's
-  function (re-create with that one word changed). Found by T-atomic-deal-close's design critique. **VERIFY:**
+  function (re-create with that one word changed). 0131 re-created the function (it no longer inserts its own
+  event) and KEPT FOR UPDATE on purpose — a lock change is its own verification — so the VERIFY below now reads
+  0131. Found by T-atomic-deal-close's design critique. **VERIFY:**
   `grep -ilE "create or replace function (public\.)?move_deal_to_stage" supabase/migrations/*.sql | tail -1 | xargs grep -n -i "for no key update"` — no hit means open (it reads the newest migration that defines the function, whatever its name).
 - **NOTE — a close and the nightly nudge sweep can still deadlock through the nudge tasks (rare, fails safe).**
   Pre-dates 0117 (the old PATCH fired the same trigger). A close's `deals_supersede_nudges` locks the deal's open
@@ -3146,7 +3156,11 @@ VERIFY, run before starting.
   OFFER-entity `won` with `override: true` rendering "Offer: Marked won — admin override" on the deal's timeline.
   Machine readers (`report_stage_conversion`, `close_deal`) match the exact strings and are unaffected. Fix options:
   an allow-list of (entity_type, event_type) pairs a session may write — every new app event type then needs a
-  migration — or a renderer that marks an unregistered type instead of printing it. **VERIFY:** a rolled-back aal2
+  migration — or a renderer that marks an unregistered type instead of printing it. Since 0131 the exact string
+  `stage_changed` is refused too, under EVERY entity_type (the database writes a deal's; under `Deal` or `offer` it
+  printed "Stage New → Completed" in the admin feed — measured by the 0131 review), but a look-alike
+  (`Stage_changed`, `stage changed`) is still accepted and prints as a type it does not own; reports match the exact
+  string and ignore it. The terminal types are still refused for `entity_type = 'deal'` only. **VERIFY:** a rolled-back aal2
   insert of a deal-entity `Marked_won` — accepted means open.
 - ~~**One crafted `stage_changed` empties the stage-conversion report, S (pre-existing).**~~ **FIXED 2026-10-01 on
   branch `fix/stage-conversion-malformed` (lands with migration 0130) — DECISIONS `T-stage-conversion-malformed`:
@@ -3160,10 +3174,46 @@ VERIFY, run before starting.
   as T-session-written-events' `attachNotes` fix, in SQL: guard the cast (`~ uuid pattern`) or skip malformed rows.
   Found by T-session-written-events' review (both refuters upheld). **VERIFY:** the function body casts only after a
   uuid test — `grep -n "to_stage_id" ` the latest migration defining `report_stage_conversion`.
-- **A session-written `stage_changed` into a won / lost stage counts as a conversion, S (pre-existing, one reviewer
-  of two).** `report_stage_conversion` counts a deal entering the pipeline's `is_won` / `is_lost` stage from
-  `stage_changed` events, which a session may POST for any deal of its org without moving it; the deal row stays
-  open. Same family as the allow-list entry above. Found by T-session-written-events' review.
+- ~~**A session-written `stage_changed` into a won / lost stage counts as a conversion, S (pre-existing, one reviewer
+  of two).**~~ **FIXED 2026-10-01 on branch `fix/authentic-stage-movement` (lands with migration 0131) — DECISIONS
+  `T-authentic-stage-movement`: a deal's `stage_changed` is written by the database from the row change (the
+  `deals_stage_changed_event` trigger: OLD / NEW, names read in the deal's organisation, actor `auth.uid()`);
+  `events_insert` refuses a session's own; `move_deal_to_stage` no longer inserts it; a session's direct PATCH /
+  UPSERT of the stage is recorded and stamped the same way and keeps the RPC's deal-type rule. Events written
+  before 0131 are untouched and uncertified (see the entry below).** (original) `report_stage_conversion` counts a
+  deal entering the pipeline's `is_won` / `is_lost` stage from `stage_changed` events, which a session may POST for
+  any deal of its org without moving it; the deal row stays open. Same family as the allow-list entry above. Found
+  by T-session-written-events' review. **VERIFY:** a rolled-back aal2 insert of a deal `stage_changed` — refused
+  (42501) means fixed; verify-restore.sql's 0131 SECURITY row reads true.
+- **Deal `stage_changed` events written before 0131 are not proven to describe a movement, S — a decision, not a
+  fix.** Until 0131 any aal2 member of an organisation could POST one (measured at 0130: an agent's "New →
+  Completed" for a deal that stayed in New was counted by `report_stage_conversion` as an entry into Completed; a
+  peer agent, a listing manager and another organisation's admin — into its own chain — could too). The chain is
+  append-only and 0131 deliberately rewrites, deletes and certifies nothing; at its apply it reads the highest event
+  id under the events lock its policy change holds (an exact boundary: every id at or below it was written under
+  0128's policy) and keeps it, with the count, as the COMMENT on the `deals_stage_changed_event` trigger. The mirror
+  side is uncertified too: before the boundary a session's direct PATCH could move a deal with NO event, choose its
+  `stage_entered_at`, or park an open deal in another pipeline's stage — 0131 repairs no row (its header carries the
+  read-only count of open deals in such a stage, to record before the apply; 0 on the local stack). Production
+  held 0 deal `stage_changed` events at the 0130 apply. If a window before that boundary ever matters, a reader could
+  mark or exclude events whose `id` is at or below it. **VERIFY:** `select obj_description(t.oid, 'pg_trigger') from
+  pg_trigger t where t.tgname = 'deals_stage_changed_event'` — "… at or below it, 0 deal stage_changed event(s) …"
+  means nothing to decide.
+- **A session can re-key a contact, a lead (and other records) by PATCHing its `id`, S (pre-existing).** Events,
+  timelines and notes are keyed by `entity_id`, so a re-key detaches the record's history (and, for a childless
+  record, nothing refuses it — the foreign keys only stop it once children exist). 0131 refused it for DEALS (their
+  movement history depends on it); measured by the 0131 review at 0131 for the others, in rolled-back aal2 probes:
+  `update contacts set id = …` and `update leads set id = …` → UPDATE 1. Fix shape: a guard (or column privileges)
+  refusing a session's change of a primary key, table by table. Found by T-authentic-stage-movement's review.
+  **VERIFY:** the same rolled-back probe on contacts — UPDATE 1 means open.
+- **`report_stage_conversion` counts a `stage_changed` whose payload is `{}` (or not an object) as a legacy
+  movement, XS (pre-existing, historical rows only since 0131).** 0130 classifies a missing id as a pre-0067 side,
+  so an event with neither ids nor names counts in `moves_total` with a `null → null` transition. No writer of
+  this repository produces one and sessions can no longer write the type at all; the service role (an import) still
+  could. Fix shape: a movement with no id AND no name on either side is malformed. Found by
+  T-authentic-stage-movement's trace. **VERIFY:** in a rolled-back transaction as postgres, insert into a throwaway
+  organisation one deal `stage_changed` with payload `'{}'` and read `report_stage_conversion` for a window holding
+  only it, as that organisation's aal2 admin — `moves_total` 1 / `moves_malformed` 0 means open.
 - **The performance page paints four other reports' failures as "Nothing in this window.", S (pre-existing).**
   `app/(app)/reports/performance/page.tsx` reads `perfRes` / `roiRes` / `ttcRes` / `priceRes` / `citeRes` as
   `data ?? []` / `data` without looking at `error` — the defect T-stage-conversion-malformed fixed for the

@@ -20,6 +20,7 @@ tests/
     security.spec.ts               anonymous access, bundle hygiene, headers
     calculators.spec.ts            on-screen figures vs the statutory scale
     happy-path.spec.ts             lead -> pipeline -> property -> task -> dashboard
+    pipeline-move.spec.ts          a kanban move by keyboard -> one stage_changed -> Activity
     performance.spec.ts            Web Vitals + scale safeguards
   screenshots/                     <module>-{desktop,mobile}.png, written by modules.spec.ts;
                                    git-ignored since 2026-09-15 (report output, not a baseline)
@@ -103,8 +104,13 @@ run — that is a bug in the test, not a quirk.
 
 ## Known limitations
 
-- **Drag-and-drop is not covered.** dnd-kit sensors ignore synthetic pointer
-  input; the pipeline kanban needs a manual pass or a dedicated harness.
+- **Pointer drag-and-drop is not covered; the keyboard path is.** dnd-kit
+  sensors ignore synthetic pointer input, so a mouse drag of the kanban still
+  needs a manual pass. `pipeline-move.spec.ts` (T-authentic-stage-movement)
+  drives the KeyboardSensor every user also has — Space, →, Space — waiting on
+  the board's own screen-reader announcements between keys: the sensor
+  attaches its keydown listener in a `setTimeout` after the pick-up, so a key
+  pressed at once is lost.
 - **Radix renders a 1×1 `aria-hidden` native `<select>`** alongside each
   Select so forms submit a value. It is not in the accessibility tree —
   `accessibility.spec.ts` skips `aria-hidden` and out-of-tab-order elements
