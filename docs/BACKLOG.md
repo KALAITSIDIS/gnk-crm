@@ -3175,7 +3175,7 @@ VERIFY, run before starting.
   Found by T-session-written-events' review (both refuters upheld). **VERIFY:** the function body casts only after a
   uuid test — `grep -n "to_stage_id" ` the latest migration defining `report_stage_conversion`.
 - ~~**A session-written `stage_changed` into a won / lost stage counts as a conversion, S (pre-existing, one reviewer
-  of two).**~~ **FIXED 2026-10-01 on branch `fix/authentic-stage-movement` (lands with migration 0131) — DECISIONS
+  of two).**~~ **FIXED — LANDED 2026-10-02 (hosted 0131, PR #91, main `8851307`; production boundary event id 364, 0 earlier deal `stage_changed`) — DECISIONS
   `T-authentic-stage-movement`: a deal's `stage_changed` is written by the database from the row change (the
   `deals_stage_changed_event` trigger: OLD / NEW, names read in the deal's organisation, actor `auth.uid()`);
   `events_insert` refuses a session's own; `move_deal_to_stage` no longer inserts it; a session's direct PATCH /
