@@ -91,6 +91,30 @@ zero grants. Column-level rules (profiles: role changes admin-only; documents:
 title/type-only updates) are enforced with triggers, since all app users share
 the `authenticated` DB role.
 
+**A primary key is never a session's to change (0132).** Every UPDATE policy
+above restricts rows, not columns, and `authenticated` holds UPDATE on each
+table's key — so before 0132 an admin, an owning agent or listing manager could
+PATCH a record's `id` and detach its events, notes and documents (keyed by
+`entity_id`, no foreign key), or re-key another record onto a former id and
+adopt them. `trg_primary_key_immutable()` (invoker, callable by no role) runs
+`BEFORE UPDATE OF <key>` as `<table>_pk_immutable` on the 25 tables other than
+deals whose key an API role may update (26 with deals) — areas, buyer_requirements, contacts, cyprus_config
+(`key`), deal_stages, districts, documents, leads, mandates, offers,
+organizations, payment_plans, portal_connections, price_list_items
+(`price_list_id`, `unit_id`), price_lists, profiles, properties, property_keys,
+property_media, reservation_installments, reservations, share_links, tasks,
+unit_types, viewings — and refuses a session's change of a key VALUE with 42501
+"A record's primary key cannot be changed (<table>.<column>)". Restating the key
+(an upsert on it, a PATCH carrying the row's own id) passes; service_role,
+postgres and definer bodies are the maintenance path. deals: 0131's
+`deals_closed_guard`. A table that later gains an UPDATE grant on its key must
+get the guard too — `supabase/tests/primary-key-immutable.test.ts`' catalogue
+test fails until it does. Caveat: hosted's default privileges give anon and
+authenticated full DML on every new public table (0040's REVOKE-before-GRANT
+rule), while CI's pinned CLI revokes them — so a new table that skips the REVOKE
+is session-updatable on hosted only, and only the restore pack's 0132 row, run
+against hosted, reads it (`1 25 true` instead of `0 25 true`).
+
 ## Policy SQL patterns (use these shapes)
 
 ```sql

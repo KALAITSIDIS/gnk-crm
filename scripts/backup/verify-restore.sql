@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 131::bigint as migrations,
+    2::bigint as auth_users, 132::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -287,6 +287,9 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   -- 0131: the one writer of a session-time deal stage_changed — a definer
   -- trigger body, revoked from all four roles explicitly like the guard above
   ('trg_deals_stage_changed_event', true, false, false, false),
+  -- 0132: a session may not change a primary-key value — an invoker trigger
+  -- body on 25 tables, revoked from all four roles explicitly like the guard above
+  ('trg_primary_key_immutable',    false, false, false, false),
   -- 0101: erasure cancels a lead's pending desk alert — a trigger body that
   -- even service_role may not call (like the definer trigger bodies above)
   ('cancel_lead_notification_jobs', true, false, false, false),
@@ -594,6 +597,50 @@ misc as (
           and coalesce((select regexp_replace(p.prosrc, '--[^\n]*', '', 'g') !~* 'insert\s+into\s+(public\.)?events'
                           from pg_proc p
                          where p.oid = to_regprocedure('public.move_deal_to_stage(uuid, uuid)')), false))::text
+  union all
+  -- 0132: a session may not change a record's primary key. Every public table
+  -- (not extension-owned) where an API role may UPDATE a key column carries a
+  -- trg_primary_key_immutable trigger of the guard's exact shape (enabled, no
+  -- WHEN, BEFORE / ROW / UPDATE OF exactly the key, the key as its arguments) —
+  -- deals excepted: its 0131 guard refuses — 25 enabled guards exist, and the
+  -- function still binds sessions with 42501. Default privileges differ by
+  -- environment (hosted grants anon / authenticated arwdDxtm on every new
+  -- public table, the pinned CLI does not), so run against HOSTED this row is
+  -- the one check that reads a new table left session-updatable. A restore
+  -- that brought back an older schema, a disabled or misshapen guard, or a
+  -- re-opened table reads something else here.
+  select 'SECURITY: no session can change a record''s primary key — unguarded tables, guards, session binding (0132)', '0 25 true',
+         (select count(*)
+            from pg_class c
+            join pg_constraint con on con.conrelid = c.oid and con.contype = 'p'
+           where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p') and not c.relispartition
+             and c.relname <> 'deals'
+             and not exists (select 1 from pg_depend d
+                              where d.classid = 'pg_class'::regclass and d.objid = c.oid
+                                and d.refclassid = 'pg_extension'::regclass and d.deptype = 'e')
+             and exists (select 1 from unnest(con.conkey) k(attnum)
+                          where has_column_privilege('authenticated', c.oid, k.attnum, 'UPDATE')
+                             or has_column_privilege('anon', c.oid, k.attnum, 'UPDATE'))
+             and not exists (
+               select 1 from pg_trigger t
+                where t.tgrelid = c.oid
+                  and t.tgfoid = to_regprocedure('public.trg_primary_key_immutable()')
+                  and not t.tgisinternal and t.tgenabled = 'O' and t.tgqual is null
+                  and (t.tgtype & 2) = 2 and (t.tgtype & 1) = 1 and (t.tgtype & 16) = 16 and (t.tgtype & (4 | 8 | 32)) = 0
+                  and coalesce((select array_agg(x order by x) from unnest(t.tgattr::int2[]) x), '{}')
+                      = (select array_agg(x order by x) from unnest(con.conkey) x)
+                  and t.tgnargs = cardinality(con.conkey)
+                  and (string_to_array(encode(t.tgargs, 'escape'), '\000'))[1:t.tgnargs]
+                      = array(select a.attname::text from unnest(con.conkey) with ordinality k(attnum, ord)
+                               join pg_attribute a on a.attrelid = t.tgrelid and a.attnum = k.attnum order by k.ord)))::text || ' ' ||
+         (select count(*) from pg_trigger t
+           where t.tgfoid = to_regprocedure('public.trg_primary_key_immutable()') and t.tgenabled = 'O'
+             and not t.tgisinternal)::text || ' ' ||
+         coalesce((select not p.prosecdef
+                          and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'current_user not in \(''authenticated'', ''anon''\)'
+                          and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'errcode = ''42501'''
+                     from pg_proc p
+                    where p.oid = to_regprocedure('public.trg_primary_key_immutable()')), false)::text
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.
