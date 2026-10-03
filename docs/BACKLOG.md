@@ -3185,16 +3185,23 @@ VERIFY, run before starting.
   `won` are all accepted, and `Marked_won` prints "Marked won" — the line `close_deal`'s real `won` produces — on a
   deal that is still open, for every viewer, for good (the actor is recorded). One reviewer of two also upheld an
   OFFER-entity `won` with `override: true` rendering "Offer: Marked won — admin override" on the deal's timeline.
-  Machine readers (`report_stage_conversion`, `close_deal`) match the exact strings and are unaffected — but two
-  machine readers DO trust an exact-string type a session may write (found by T-routing-own-org's review, code-read
-  2026-10-03): `claim_notification_jobs` (0111) closes a pending desk alert as already sent when it finds an
-  `enquiry_alert` event with `outcome = 'sent'` for the lead in its organisation — any member may write one, and the
-  desk is never told; and `submit_public_enquiry`'s round-robin (0136) counts an own-organisation `assigned` event as
-  the agent's last assignment. Fix shape for both: require `actor_id is null` (the system writes them), or refuse a
-  session's `enquiry_alert` / `lead_escalation` / `assigned` in events_insert. A session may also write an `opened`
-  share_link event (0137 stops it suppressing the system line, but it still renders as "Proposal link opened — N
-  properties", like a buyer's view, with a payload of the writer's choosing): reserve `(share_link, opened)` in
-  events_insert as 0128 / 0131 / 0134 reserve system events (the app writes only created / revoked). Fix options:
+  Machine readers (`report_stage_conversion`, `close_deal`) match the exact strings and are unaffected. **Since 0138
+  (DECISIONS `T-system-event-types`) `enquiry_alert`, `lead_escalation` and `opened` are refused too, under every
+  entity_type** — the alert worker, the escalation sweep and the public share page write them as the system, and
+  machines read them as the system's word: `claim_notification_jobs` (0111) closed a pending desk alert as already
+  sent when it found an `enquiry_alert` event with `outcome = 'sent'` for the lead (any member could write one, and
+  the desk was never told — found by T-routing-own-org's review, reproduced end to end by 0138's tests), and a
+  session's `opened` share_link line rendered as "Proposal link opened — N properties", like a buyer's view, with a
+  payload of the writer's choosing. Still open in this family: (a) `assigned` is NOT reserved — the app writes it
+  through the session (`reassignLead`, the task assignee) — and `submit_public_enquiry`'s round-robin (0136) counts
+  an own-organisation `assigned` event as the agent's last assignment, so a member can still steer which of their
+  organisation's agents gets the next website enquiry (fix: have the round-robin count only the system's
+  assignment — `actor_id is null`, or the lead rows themselves); (b) `claim_notification_jobs`' closure has no actor
+  predicate, so an `enquiry_alert` 'sent' line written BEFORE 0138 would still close its lead's desk alert — hosted
+  held none on 2026-10-03 (read-only; 0138's diagnostic, first column), and none can be written after it; adding
+  `actor_id is null` to the closure is belt and braces (S); (c) two staff-called definers sign their lines with the
+  caller — `request_enquiry_alert_retry` ('retry_requested') and `request_lead_escalation_recovery`
+  ('recovery_requested') — legitimately; 0138's diagnostic counts that shape in its own column. Fix options:
   an allow-list of (entity_type, event_type) pairs a session may write — every new app event type then needs a
   migration — or a renderer that marks an unregistered type instead of printing it. Since 0131 the exact string
   `stage_changed` is refused too, under EVERY entity_type (the database writes a deal's; under `Deal` or `offer` it
@@ -3202,7 +3209,9 @@ VERIFY, run before starting.
   (`Stage_changed`, `stage changed`) is still accepted and prints as a type it does not own; reports match the exact
   string and ignore it. Since 0134 `erased` and `retention_purged` are refused too, under every entity_type (the
   erasure and the purge write them as the system; the erasure's re-run reads its own as "already complete" and
-  matches the exact string), but `Erased` / `retention purged` still print as written. The terminal types are still refused for `entity_type = 'deal'` only. **VERIFY:** a rolled-back aal2
+  matches the exact string), but `Erased` / `retention purged` still print as written; since 0138 the same holds for
+  `enquiry_alert` / `lead_escalation` / `opened` (a look-alike — `Enquiry_alert`, `opened ` — is accepted and prints
+  as written; no machine reader matches it). The terminal types are still refused for `entity_type = 'deal'` only. **VERIFY:** a rolled-back aal2
   insert of a deal-entity `Marked_won` — accepted means open.
 - ~~**One crafted `stage_changed` empties the stage-conversion report, S (pre-existing).**~~ **FIXED 2026-10-01 on
   branch `fix/stage-conversion-malformed` (lands with migration 0130) — DECISIONS `T-stage-conversion-malformed`:
