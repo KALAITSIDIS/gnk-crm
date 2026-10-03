@@ -116,10 +116,15 @@ export async function savePartyDefaults(
 
   const { data: current } = await supabase
     .from("contacts")
-    .select("party_defaults")
+    .select("party_defaults, erased_at")
     .eq("id", contactId)
     .maybeSingle();
   if (!current) return { error: "Contact not found", savedAt: null };
+  // an erased contact is frozen for everyone (T-erasure-lifecycle-guard; the
+  // database refuses the write too once 0134 is applied)
+  if (current.erased_at) {
+    return { error: "This contact's personal data was erased under GDPR Article 17 — it cannot be edited.", savedAt: null };
+  }
 
   // strip undefined so "no opinion" is genuinely absent from the stored object
   const next = Object.fromEntries(

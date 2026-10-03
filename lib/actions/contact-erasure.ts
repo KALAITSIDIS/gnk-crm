@@ -29,6 +29,19 @@ function fail(r: { error: { message: string } | null }): void {
  * assigned/creating agent, so hiding the button would not be a control.
  * Irreversible by design.
  *
+ * THE ERASURE RECORD IS THE SYSTEM'S (0134, T-erasure-lifecycle-guard). A
+ * session can no longer write `erased_at` / `erased_by` / `retention_until`,
+ * change an erased contact other than archiving it, or write a contact's
+ * `erased` event, or delete an erased contact's retained documents — so the
+ * document-row delete, the contact patch and the event run as the service
+ * role (as the notes' redaction and the storage removal already did), after
+ * the checks below (an aal2, active admin — `getCurrentProfile` reads the
+ * profile through RLS — whose RLS-scoped read found the contact in their own
+ * organisation, and the typed name), and bounded by that organisation and
+ * this contact. The patch stays conditional on `erased_at is null`. The basis
+ * reads, the lead redaction, the saved-search delete, the document listing
+ * and the record check still run on the admin's session.
+ *
  * THE ORDER AND THE FAILURE SEMANTICS LIVE IN lib/services/erasure-run.ts,
  * where they are tested without a database. This file only says how each step
  * touches Supabase. Until 2026-09-06 the contact patch went first and was the
@@ -49,12 +62,12 @@ export async function eraseContactPersonalData(
   const profile = await getCurrentProfile(supabase);
   if (profile.role !== "admin") return { error: "Admins only.", erasedAt: null };
 
-  const { data: contact } = await supabase
-    .from("contacts")
-    .select("id, org_id, display_name, erased_at")
-    .eq("id", contactId)
-    .maybeSingle();
-  if (!contact) return { error: "Contact not found", erasedAt: null };
+  // the whole row: a re-run checks it shows what the patch writes (erasure-run)
+  const { data: contact } = await supabase.from("contacts").select("*").eq("id", contactId).maybeSingle();
+  // RLS already scopes the read to the caller's organisation; the writes
+  // below run as the service role, which has no boundary but the one they
+  // name — so the organisation they name is checked to be this one
+  if (!contact || contact.org_id !== profile.orgId) return { error: "Contact not found", erasedAt: null };
   // last stop before an irreversible write
   if (confirmName.trim() !== (contact.display_name ?? "").trim()) {
     return { error: "The typed name does not match this contact.", erasedAt: null };
@@ -102,6 +115,8 @@ export async function eraseContactPersonalData(
       };
     },
 
+    // The record a re-run trusts: since 0134 only the system writes a
+    // contact's `erased` event, so a session cannot forge "already done".
     async hasErasedEvent() {
       const r = await supabase
         .from("events")
@@ -194,22 +209,33 @@ export async function eraseContactPersonalData(
       await removeObjectsOrFail(admin.storage, "documents", paths);
     },
 
-    async deleteDocumentRows() {
-      const r = await supabase
+    // As the system, bounded like the patch below: 0134 refuses a session's
+    // delete of an erased contact's documents (only the system destroys them),
+    // and a re-run may reach here with the marker already set.
+    // …exactly the rows listed (whose files were just removed): a document
+    // uploaded meanwhile keeps its row, for the next run to find with its file.
+    async deleteDocumentRows(ids) {
+      if (ids.length === 0) return 0;
+      const r = await admin
         .from("documents")
         .delete()
+        .eq("org_id", profile.orgId)
         .eq("entity_type", "contact")
         .eq("entity_id", contactId)
+        .in("id", ids)
         .select("id");
       fail(r);
       return r.data?.length ?? 0;
     },
 
-    // Row-count guarded: an RLS-filtered no-op must not be reported as done.
+    // As the system (0134 — header), bounded by the caller's organisation
+    // and this contact, and only while it is not erased: row-count guarded,
+    // so an erasure that landed meanwhile is never reported as this one.
     async patchContact(patch) {
-      const r = await supabase
+      const r = await admin
         .from("contacts")
         .update(patch)
+        .eq("org_id", profile.orgId)
         .eq("id", contactId)
         .is("erased_at", null)
         .select("id");
@@ -217,9 +243,10 @@ export async function eraseContactPersonalData(
       return (r.data ?? []).length > 0;
     },
 
+    // As the system too (0134): attributed to the admin, in their organisation.
     async writeEvent(payload) {
-      await logEvent(supabase, {
-        orgId: contact.org_id,
+      await logEvent(admin, {
+        orgId: profile.orgId,
         actorId: profile.id,
         entityType: "contact",
         entityId: contactId,
@@ -231,6 +258,7 @@ export async function eraseContactPersonalData(
 
   const result = await runContactErasure({
     alreadyErasedAt: contact.erased_at,
+    stored: contact,
     actorId: profile.id,
     now: new Date().toISOString(),
     steps,
@@ -261,6 +289,14 @@ export type RetentionPurgeState = { error: string | null; purgedAt: string | nul
  * Admin-only, enforced here: the contacts UPDATE policy also admits the
  * assigned/creating agent. Irreversible.
  *
+ * The marker and the `retention_purged` event are the system's (0134, as in
+ * eraseContactPersonalData): a session can no longer clear or move
+ * `retention_until`, so the date this purge trusts is the one the erasure
+ * wrote. They run as the service role after the checks below, bounded by the
+ * caller's organisation, this contact, the date the eligibility was decided
+ * on, and the contact being erased — a date on a contact that was never
+ * erased is no retention duty this purge discharges.
+ *
  * Objects BEFORE rows, and proven (2026-09-06): a storage failure leaves the
  * rows, which are what a retry uses to find the objects again. The old order
  * deleted rows first and ignored the storage result, so a failed removal left
@@ -280,9 +316,13 @@ export async function purgeExpiredRetention(contactId: string): Promise<Retentio
     .select("id, org_id, display_name, erased_at, retention_until")
     .eq("id", contactId)
     .maybeSingle();
-  if (!contact) return { error: "Contact not found", purgedAt: null };
+  // as in the erasure: the service-role writes below name this organisation
+  if (!contact || contact.org_id !== profile.orgId) return { error: "Contact not found", purgedAt: null };
   if (!contact.retention_until) {
     return { error: "Nothing is retained for this contact.", purgedAt: null };
+  }
+  if (!contact.erased_at) {
+    return { error: "This contact was not erased — there is no retention duty to purge.", purgedAt: null };
   }
 
   const { classifyRetention } = await import("@/lib/services/retention");
@@ -303,19 +343,27 @@ export async function purgeExpiredRetention(contactId: string): Promise<Retentio
     .eq("entity_id", contactId);
   if (listErr) return { error: listErr.message, purgedAt: null };
   const paths = (docs ?? []).map((d) => d.storage_path).filter((p): p is string => Boolean(p));
+  const admin = createAdminClient();
   try {
-    await removeObjectsOrFail(createAdminClient().storage, "documents", paths);
+    await removeObjectsOrFail(admin.storage, "documents", paths);
   } catch (e) {
     const why = e instanceof Error ? e.message : String(e);
     return { error: `The retained files were NOT destroyed: ${why}. Nothing was changed — try again.`, purgedAt: null };
   }
 
-  const { data: deletedRows, error: deleteErr } = await supabase
-    .from("documents")
-    .delete()
-    .eq("entity_type", "contact")
-    .eq("entity_id", contactId)
-    .select("id");
+  // As the system (0134 refuses a session's delete of an erased contact's
+  // documents): exactly the rows listed above, whose files are now gone.
+  const listedIds = (docs ?? []).map((d) => d.id);
+  const { data: deletedRows, error: deleteErr } = listedIds.length
+    ? await admin
+        .from("documents")
+        .delete()
+        .eq("org_id", profile.orgId)
+        .eq("entity_type", "contact")
+        .eq("entity_id", contactId)
+        .in("id", listedIds)
+        .select("id")
+    : { data: [], error: null };
   if (deleteErr) {
     return {
       error: `The files are gone but their records were not deleted: ${deleteErr.message}. Run it again to finish.`,
@@ -324,33 +372,49 @@ export async function purgeExpiredRetention(contactId: string): Promise<Retentio
   }
   const documentsDestroyed = deletedRows?.length ?? 0;
 
-  // Clear the marker so the row leaves the retention surface. Row-count guarded
-  // and re-checked against retention_until so two concurrent purges cannot both
-  // claim success.
-  const { data: updated, error: updateErr } = await supabase
+  // Clear the marker so the row leaves the retention surface — as the system
+  // (header), bounded as it says. Row-count guarded and re-checked against the
+  // date read above, so two concurrent purges cannot both claim success: the
+  // service role is not filtered by RLS, so zero rows means exactly that.
+  const { data: updated, error: updateErr } = await admin
     .from("contacts")
     .update({ retention_until: null, kyc: {} })
+    .eq("org_id", profile.orgId)
     .eq("id", contactId)
-    .not("retention_until", "is", null)
+    .eq("retention_until", contact.retention_until)
+    .not("erased_at", "is", null)
     .select("id");
   if (updateErr) return { error: updateErr.message, purgedAt: null };
   if (!updated || updated.length === 0) {
-    return { error: "You don't have permission to purge this contact.", purgedAt: null };
+    return { error: "This contact's retained records were purged meanwhile — reload the page.", purgedAt: null };
   }
 
   const purgedAt = new Date().toISOString();
-  await logEvent(supabase, {
-    orgId: contact.org_id,
-    actorId: profile.id,
-    entityType: "contact",
-    entityId: contactId,
-    eventType: "retention_purged",
-    // counts and dates only — never the destroyed values
-    payload: {
-      documents_destroyed: documentsDestroyed,
-      retention_until: contact.retention_until,
-    },
-  });
+  try {
+    await logEvent(admin, {
+      orgId: profile.orgId,
+      actorId: profile.id,
+      entityType: "contact",
+      entityId: contactId,
+      eventType: "retention_purged",
+      // counts and dates only — never the destroyed values
+      payload: {
+        documents_destroyed: documentsDestroyed,
+        retention_until: contact.retention_until,
+      },
+    });
+  } catch (e) {
+    // Everything irreversible is done and the marker is gone, so a retry
+    // answers "nothing is retained": say exactly what is missing instead of
+    // throwing (a production build hides a thrown action's words).
+    const why = e instanceof Error ? e.message : String(e);
+    revalidatePath("/settings/retention");
+    revalidatePath(`/contacts/${contactId}`);
+    return {
+      error: `Purged — ${documentsDestroyed} retained file(s) and the retention date are gone — but the record of it failed to write: ${why}. The record (retention_purged, ${documentsDestroyed} documents, retention until ${contact.retention_until}) must be written by an administrator.`,
+      purgedAt,
+    };
+  }
 
   revalidatePath("/settings/retention");
   revalidatePath(`/contacts/${contactId}`);

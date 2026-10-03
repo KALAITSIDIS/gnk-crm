@@ -23,6 +23,9 @@ export default async function RetentionSettingsPage() {
     .from("contacts")
     .select("id, display_name, retention_until")
     .not("retention_until", "is", null)
+    // the duty is an erased contact's: purgeExpiredRetention refuses any other
+    // (and create_followup_nudges raises none), so this list offers none
+    .not("erased_at", "is", null)
     .order("retention_until", { ascending: true })
     .limit(500);
   if (error) throw new Error(`Retention query failed: ${error.message}`);

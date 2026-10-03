@@ -3191,7 +3191,9 @@ VERIFY, run before starting.
   `stage_changed` is refused too, under EVERY entity_type (the database writes a deal's; under `Deal` or `offer` it
   printed "Stage New → Completed" in the admin feed — measured by the 0131 review), but a look-alike
   (`Stage_changed`, `stage changed`) is still accepted and prints as a type it does not own; reports match the exact
-  string and ignore it. The terminal types are still refused for `entity_type = 'deal'` only. **VERIFY:** a rolled-back aal2
+  string and ignore it. Since 0134 `erased` and `retention_purged` are refused too, under every entity_type (the
+  erasure and the purge write them as the system; the erasure's re-run reads its own as "already complete" and
+  matches the exact string), but `Erased` / `retention purged` still print as written. The terminal types are still refused for `entity_type = 'deal'` only. **VERIFY:** a rolled-back aal2
   insert of a deal-entity `Marked_won` — accepted means open.
 - ~~**One crafted `stage_changed` empties the stage-conversion report, S (pre-existing).**~~ **FIXED 2026-10-01 on
   branch `fix/stage-conversion-malformed` (lands with migration 0130) — DECISIONS `T-stage-conversion-malformed`:
@@ -3255,12 +3257,73 @@ VERIFY, run before starting.
   second tenant needs per-organisation config or a platform-admin role — a design decision. **VERIFY:** `select
   pg_get_expr(polqual, polrelid) from pg_policy where polname = 'cyprus_config_update'` — no `org_id` / organisation
   predicate means open.
-- **An erased contact's erasure flags are refused by the application only, S (pre-existing, not probed).**
-  `unarchiveContact` refuses an erased contact (T-refuse-unarchive-erased), but a session's direct PATCH of
-  `contacts.erased_at` / `is_archived` meets only `contacts_updated` (set_updated_at; 0132's `contacts_pk_immutable`
-  fires on `id` alone) — no trigger binds the erased state. Found by T-primary-key-immutable's critic from the catalogue. **VERIFY:** `select string_agg(tgname, ',')
-  from pg_trigger where tgrelid = 'public.contacts'::regclass and not tgisinternal` — no erasure guard among them
-  means open; confirm with a rolled-back aal2 PATCH of `erased_at = null` on an erased contact.
+- ~~**An erased contact's erasure flags are refused by the application only, S (pre-existing, not probed).**~~
+  **FIXED — LANDED 2026-10-03 (migration 0134 + the erasure, purge, merge and document-delete actions; PR #93, main
+  `408c7c2`, deployed FIRST, then hosted 0134 — the inverted order) — DECISIONS `T-erasure-lifecycle-guard`.** Reproduced first (external audit brief): an aal2
+  admin and the assigned agent could clear an erased contact's marker and unarchive it (then hot-buyer card, phone
+  slot), re-date or null `retention_until` (an early purge destroyed a 2031 KYC file the same day), insert a contact
+  born erased, forge the marker on a live contact (the real erasure then reported success without its contact patch)
+  and forge the contact's `erased` event; any admin could Delete an erased contact's retained KYC documents through the
+  Documents tab. Now `contacts_retain_erasure` and `documents_kept_for_retention` (an erased contact's RETAINED documents)
+  bind sessions, `events_insert` refuses a session's `erased` / `retention_purged`, and the two actions write those as
+  the service role; the erasure's re-run refuses a marker without its redaction or a basis that reads otherwise than its
+  stored decision; `removeObjectsOrFail` reads storage's answer for an absent object as absent (it read it as "could
+  not confirm", so every purge or erasure re-run after files were already removed failed for good).
+  **VERIFY (fixed):** `select string_agg(tgname, ',' order by tgname) from pg_trigger where tgname in
+  ('contacts_retain_erasure', 'documents_kept_for_retention')` — both names means fixed; the restore pack's 0134 row
+  reads `true`.
+  - **An erased contact's erasure flags are refused by the application only (original).** `unarchiveContact` refuses
+    an erased contact (T-refuse-unarchive-erased), but a session's direct PATCH of `contacts.erased_at` / `is_archived`
+    meets only `contacts_updated` (set_updated_at; 0132's `contacts_pk_immutable` fires on `id` alone) — no trigger
+    binds the erased state. Found by T-primary-key-immutable's critic from the catalogue.
+- **Sessions can still attach records to an erased contact, and change the links its AML basis is read from, M
+  (pre-existing; found by T-erasure-lifecycle-guard's review, code-traced, not probed).** 0134 freezes the contact
+  ROW; the child tables still accept a session's link to an erased contact — documents INSERT, `buyer_requirements`
+  (`saveBuyerRequirement` has no lifecycle check and re-creates the saved searches erasure deleted), notes through the
+  invoker `log_conversation` (the app wrapper refuses, the RPC does not), deals' buyer / seller, viewings, tasks,
+  reservations, offers, share links, mandates and properties' owner. An archived contact appears on no matching or
+  picker surface, but deals, viewings and notes on the erased person do. And before an erasure runs, an agent can
+  re-point their own deal's party ids (even on a won deal — `deals_closed_guard` freezes the outcome, not the parties)
+  or viewing's contact, and an admin can back-date a mandate's expiry: the erasure's AML basis then reads "none" (the
+  files are destroyed) or an early anchor (the purge opens at once). Fix shape: one BEFORE INSERT / UPDATE OF
+  <contact column> trigger refusing a session's link to an erased contact; freeze party links on closed deals and on
+  viewings with a signed slip. **VERIFY:** a rolled-back aal2 insert of a `buyer_requirements` row naming an erased
+  contact — accepted means open.
+- **Service-role storage removals trust a session-written path, S (pre-existing; found by T-erasure-lifecycle-guard's
+  review, code-traced, not probed).** The erasure, the retention purge, `deleteContactDocument`,
+  `deletePropertyDocument` and `deleteMediaBulk` (originals and non-photo renditions in `documents`) remove the path a
+  row holds as the service role, and the row is session-written: `documents_insert` admits admins, agents and listing
+  managers (org and role only), `property_media` admits admins, listing managers and the assigned agent, and both
+  paths are free text. So a session can plant a row naming another object — another contact's RETAINED KYC file
+  included — and have the system delete it (through the purge or erasure of the contact it names, or by deleting its
+  own planted property document / media row), years before that file's retention date; the KYC row then points at a
+  removed object. (Since T-erasure-lifecycle-guard a planted path that names nothing no longer blocks the erasure or the
+  purge: storage's answer for an absent object is read as absent.) A per-contact bound needs its own design: the merge
+  re-points `documents.entity_id` without moving the object, so a merged document's path names the duplicate.
+  Candidates: a CHECK / trigger that `storage_path` starts with `org_id || '/<entity>s/'` plus a refusal of a path
+  another row names. The same class as the slip-path entry above. **VERIFY:** `grep -rn "removeObjects" lib/actions`
+  — any call passing a row's `storage_path` / `storage_path_original` without a derived prefix means open.
+- **Two concurrent re-runs of a half-finished erasure can each write an `erased` event, S (pre-existing; found by
+  T-erasure-lifecycle-guard's review, code-traced).** A re-run (marker set, no record) checks `hasErasedEvent` with a
+  read and then writes the record unconditionally — the contact patch, the only row-count-guarded write that
+  serialises first runs, is skipped on a re-run. Two operators (or a double submit) re-running the same half-finished
+  erasure both read "no record" and append two hash-chained `erased` events. Rare (an event write must have failed
+  first, and the page offers no re-run control). Fix shape: serialise the record — an advisory lock on the contact id
+  around check-and-write in a definer RPC, or a partial unique index if the partitioned table allows one. **VERIFY:**
+  `grep -n "hasErasedEvent" lib/services/erasure-run.ts` — a plain read before an unconditional `writeEvent` means
+  open.
+- **No "Finish erasure" control for a run whose record failed to write, S (pre-existing).** When the erasure's
+  `erased` event fails to write, the action says "Run it again — … only the record will be written", but the page
+  hides Erase once `erased_at` is set, so only an operator calling the action can finish it (the re-run itself works
+  and is tested — `erasure-lifecycle.test.ts`). `redactLead`'s "Finish redaction" is the precedent: offer it when
+  `erased_at` is set and no `erased` event exists. **VERIFY:** `grep -n "Finish erasure" components app` — no hit
+  means open.
+- **`rls.test.ts` #54 leaves an erased-but-active contact behind on every run, S (test hygiene).** It inserts an
+  `Erased-<run>` contact with `erased_at` and `retention_until` but `is_archived` false and no `erased_by` or event,
+  as the service role, and never deletes it — the shared local stack held 56 on 2026-10-02, and they fill 0134's
+  diagnostic (`erased_but_active`, `erased_unredacted`, `erased_without_eraser`, `erased_without_record`). Delete it
+  in the test's cleanup, or write it in the erased shape. **VERIFY:** `select count(*) from contacts where first_name
+  like 'Erased-%' and not is_archived` on the shared stack after a run — growing means open.
 - **`createShareLink` / `createAvailabilityLink`'s cleanup of a link left with no properties is a silent no-op, S
   (pre-existing).** On a failed `share_link_properties` insert, `lib/actions/share-links.ts` deletes the new link
   through the SESSION client ("don't leave the husk"), but `authenticated` holds no DELETE on `share_links` and no

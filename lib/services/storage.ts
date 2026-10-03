@@ -37,11 +37,24 @@ export async function removeObjectsOrFail(
   for (const path of paths) {
     if (removed.has(path)) continue;
     // Not in the answer: either never there (a re-run) or not removed. Ask.
-    const { data: stillThere, error: existsErr } = await storage.from(bucket).exists(path);
-    if (existsErr) {
-      throw new Error(`storage could not confirm removal of ${bucket}/${path}: ${existsErr.message}`);
+    // storage-js (2.110.2) answers an ABSENT object `{ data: false, error:
+    // <its 400 / 404> }` and THROWS on anything else — measured against the
+    // local stack 2026-10-03 (T-erasure-lifecycle-guard). Until then this read
+    // the attached error as "could not confirm", so every re-run after a
+    // half-finished removal failed for good, and so did a row naming an object
+    // that was never there.
+    let answer: { data: boolean | null; error: { message: string } | null };
+    try {
+      answer = await storage.from(bucket).exists(path);
+    } catch (e) {
+      const why = e instanceof Error ? e.message : String(e);
+      throw new Error(`storage could not confirm removal of ${bucket}/${path}: ${why}`);
     }
-    if (stillThere) throw new Error(`storage object survived removal: ${bucket}/${path}`);
+    if (answer.data === false) continue;
+    if (answer.error) {
+      throw new Error(`storage could not confirm removal of ${bucket}/${path}: ${answer.error.message}`);
+    }
+    if (answer.data) throw new Error(`storage object survived removal: ${bucket}/${path}`);
   }
 }
 

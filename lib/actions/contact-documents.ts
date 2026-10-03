@@ -44,10 +44,15 @@ export async function uploadContactDocument(
   // RLS-checked read proves the caller may see this contact
   const { data: contact } = await supabase
     .from("contacts")
-    .select("id, org_id, is_archived")
+    .select("id, org_id, is_archived, erased_at")
     .eq("id", contactId)
     .maybeSingle();
   if (!contact) return { error: "Contact not found", savedAt: null };
+  // erased first: an erased contact left active (written before
+  // T-refuse-unarchive-erased) is not archived, and is frozen all the same
+  if (contact.erased_at) {
+    return { error: "This contact's personal data was erased — no new documents may be added.", savedAt: null };
+  }
   if (contact.is_archived) {
     return { error: "This contact is archived — unarchive it first.", savedAt: null };
   }
@@ -122,6 +127,23 @@ export async function deleteContactDocument(
   if (!doc) return { error: "Document not found" };
   if (doc.entity_type !== "contact") {
     return { error: "Not a contact document" };
+  }
+  // An erased contact's retained documents are the records Cyprus AML makes
+  // the firm keep: only the retention purge destroys them, once their date has
+  // run (T-erasure-lifecycle-guard). The database refuses a session's delete
+  // too (0134); this says why in a sentence, before anything is touched — and
+  // a failed read is not "not erased".
+  const { data: owner, error: ownerErr } = await supabase
+    .from("contacts")
+    .select("erased_at, retention_until")
+    .eq("id", doc.entity_id)
+    .maybeSingle();
+  if (ownerErr) return { error: "Could not check this document's contact — try again." };
+  if (owner?.erased_at && owner.retention_until) {
+    return {
+      error:
+        "This contact's personal data was erased — its retained documents are destroyed only by the retention purge (Settings → Retention), once the AML retention period has run.",
+    };
   }
 
   // RLS silently filters a forbidden delete to 0 rows — the returned rows are
