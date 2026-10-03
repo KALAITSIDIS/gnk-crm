@@ -3191,7 +3191,10 @@ VERIFY, run before starting.
   `enquiry_alert` event with `outcome = 'sent'` for the lead in its organisation — any member may write one, and the
   desk is never told; and `submit_public_enquiry`'s round-robin (0136) counts an own-organisation `assigned` event as
   the agent's last assignment. Fix shape for both: require `actor_id is null` (the system writes them), or refuse a
-  session's `enquiry_alert` / `lead_escalation` / `assigned` in events_insert. Fix options:
+  session's `enquiry_alert` / `lead_escalation` / `assigned` in events_insert. A session may also write an `opened`
+  share_link event (0137 stops it suppressing the system line, but it still renders as "Proposal link opened — N
+  properties", like a buyer's view, with a payload of the writer's choosing): reserve `(share_link, opened)` in
+  events_insert as 0128 / 0131 / 0134 reserve system events (the app writes only created / revoked). Fix options:
   an allow-list of (entity_type, event_type) pairs a session may write — every new app event type then needs a
   migration — or a renderer that marks an unregistered type instead of printing it. Since 0131 the exact string
   `stage_changed` is refused too, under EVERY entity_type (the database writes a deal's; under `Deal` or `offer` it
@@ -3372,47 +3375,68 @@ VERIFY, run before starting.
     Found by T-insert-id-without-history's map and review (the predicate measured, the blanking probed rolled back).
     **VERIFY (kept):** `select regexp_replace(prosrc, '--[^\n]*', '', 'g') ~ '\mn\.org_id\M' from pg_proc where
     proname = 'redact_stale_enquiries'` — false means open (it names the notes' organisation in any form of the fix).
-- **`resolve_share_link`'s once-a-day `opened` throttle counts an `opened` event of any organisation and any actor
-  for the link id, S (pre-existing; split from the entry above, 2026-10-03; corrected by T-redact-notes-own-org's
-  review).** Both throttle blocks (0041 — the availability branch ~275–287 and the proposal branch ~336–347) look for
-  an `opened` event with `entity_type = 'share_link' and entity_id = v_link.id` on today's Cyprus date, with no
-  `org_id` and no `actor_id` predicate. So a link's system `opened` line (null actor) is not recorded on a day on
-  which such an event already exists — and `events_insert` lets any aal2 session write an `opened` share_link event
-  in its OWN organisation at an arbitrary entity_id: another organisation that knows one of our live link ids (the
-  public flow is keyed by token; whether an id leaks is unmeasured) suppresses our line for that day, and a staff
-  session of our own organisation can pre-empt it with a payload of its choosing; a link inserted at an id whose
-  `opened` history is another organisation's (0133 lets that id through) loses it too. No row of another
-  organisation is written — a missing analytics line. Not folded into 0135: the function is 12.9k characters and
-  anon-callable (every public share page). Fix shape: `and org_id = v_link.org_id and actor_id is null` in BOTH
-  blocks, the replaced body guarded by its md5 (hosted `529134eb…`, 2026-10-03), pinned RED first. **VERIFY:** as
-  postgres in a rolled-back transaction, write an `opened` event for a live link L's id, today, in ANOTHER
-  organisation with a session actor, then call `resolve_share_link` with L's token — no new `opened` event for L in
-  L's organisation means open.
-- ~~**`submit_public_enquiry`'s round-robin routing counts another organisation's leads and `assigned` events, S
-  (pre-existing).**~~ **FIXED — LANDED 2026-10-03 (hosted 0136, applied before the merge; PR #96, main `56252d8`) —
-  DECISIONS `T-routing-own-org`.** Reproduced first (each half on its own, through a session of
-  the other organisation — both writes admitted by RLS: the lead naming our agent, the `assigned` event naming them)
-  and on production in a rolled-back transaction (20 foreign leads flipped the pick). The leads half is CONFIRMED —
-  `leads.assigned_agent_id` takes another organisation's profile (the profiles `(org_id, id)` decision above). 0136
-  bounds the two COUNTS only: the mode and the agent list are still the global `lead_routing` row any organisation's
-  admin may rewrite (the `cyprus_config` entry — lead_routing must become per organisation before a second tenant),
-  and a member of our own organisation may still steer the counts (the ANY-event-type entry). **VERIFY (fixed):**
-  `select regexp_replace(prosrc, '--[^\n]*', '', 'g') ~ 'l\.org_id = v_org_id' and regexp_replace(prosrc, '--[^\n]*',
-  '', 'g') ~ 'e\.org_id = v_org_id' from pg_proc where proname = 'submit_public_enquiry'` — true means fixed.
-  - **`submit_public_enquiry`'s round-robin routing counts another organisation's leads and `assigned` events, S
-    (original; found by T-redact-notes-own-org's review, code-read 2026-10-03, not probed).** Its latest definition
-    (0114, ~273–296; a SECURITY DEFINER called for every website enquiry) picks the candidate among THIS organisation's
-    active routed agents, but orders them by `(select count(*) from leads l where l.assigned_agent_id = p.id and
-    l.status in (...))` and by the latest `assigned` event `where e.payload ->> 'to' = p.id::text` — neither bounded
-    by `org_id`. `events_insert` admits a session's `assigned` lead event with any payload in its own organisation, and
-    agent ids are readable (`cyprus_config.lead_routing.agents`, readable by any signed-in user — 0100), so another
-    organisation's agent can starve or flood one of our agents of website enquiries by writing `assigned` events
-    naming them (and possibly open leads assigned to them, if `leads.assigned_agent_id` takes another organisation's
-    profile — VERIFY that half before relying on it). It writes into our organisation (the lead's assignee and an
-    `assigned` event), destroys nothing, and needs a second tenant (production is single-tenant). Fix shape: `and
-    l.org_id = v_org_id` and `and e.org_id = v_org_id`, the replaced body guarded by its hosted md5, pinned RED first;
-    not deploy-coupled. **VERIFY:** `select regexp_replace(prosrc, '--[^\n]*', '', 'g') ~ 'e\.org_id = v_org_id' from
-    pg_proc where proname = 'submit_public_enquiry'` — false means open.
+- ~~**`resolve_share_link`'s once-a-day `opened` throttle counts an `opened` event of any organisation and any actor
+  for the link id, S (pre-existing).**~~ **FIXED 2026-10-03 on branch `fix/share-link-opened-own-org` (migration
+  0137; hosted first, then merge — not deploy-coupled) — DECISIONS `T-share-link-opened-own-org`.** Reproduced first
+  (three routes × both link kinds: another organisation's session event, another organisation's system line at a
+  re-taken id, our own staff session's event) and on production in a rolled-back transaction (our line suppressed
+  by a foreign system line and by a staff session's event). Both throttles now require `org_id = v_link.org_id and
+  actor_id is null`. **VERIFY (fixed):** `select regexp_count(regexp_replace(prosrc, '--[^\n]*', '', 'g'),
+  'event_type\s+=\s+''opened''\s+and org_id\s+=\s+v_link\.org_id\s+and actor_id\s+is null') = 2 from pg_proc
+  where proname = 'resolve_share_link'` — true means fixed.
+  - **`resolve_share_link`'s once-a-day `opened` throttle counts an `opened` event of any organisation and any actor
+    for the link id, S (original; split from the entry above, 2026-10-03; corrected by T-redact-notes-own-org's
+    review).** Both throttle blocks (0041 — the availability branch ~275–287 and the proposal branch ~336–347) look for
+    an `opened` event with `entity_type = 'share_link' and entity_id = v_link.id` on today's Cyprus date, with no
+    `org_id` and no `actor_id` predicate. So a link's system `opened` line (null actor) is not recorded on a day on
+    which such an event already exists — and `events_insert` lets any aal2 session write an `opened` share_link event
+    in its OWN organisation at an arbitrary entity_id: another organisation that knows one of our live link ids (the
+    public flow is keyed by token; whether an id leaks is unmeasured) suppresses our line for that day, and a staff
+    session of our own organisation can pre-empt it with a payload of its choosing; a link inserted at an id whose
+    `opened` history is another organisation's (0133 lets that id through) loses it too. No row of another
+    organisation is written — a missing analytics line. Not folded into 0135: the function is 12.9k characters and
+    anon-callable (every public share page). Fix shape: `and org_id = v_link.org_id and actor_id is null` in BOTH
+    blocks, the replaced body guarded by its md5 (hosted `529134eb…`, 2026-10-03), pinned RED first. **VERIFY:** as
+    postgres in a rolled-back transaction, write an `opened` event for a live link L's id, today, in ANOTHER
+    organisation with a session actor, then call `resolve_share_link` with L's token — no new `opened` event for L in
+    L's organisation means open.
+  - ~~**`submit_public_enquiry`'s round-robin routing counts another organisation's leads and `assigned` events, S
+    (pre-existing).**~~ **FIXED — LANDED 2026-10-03 (hosted 0136, applied before the merge; PR #96, main `56252d8`) —
+    DECISIONS `T-routing-own-org`.** Reproduced first (each half on its own, through a session of
+    the other organisation — both writes admitted by RLS: the lead naming our agent, the `assigned` event naming them)
+    and on production in a rolled-back transaction (20 foreign leads flipped the pick). The leads half is CONFIRMED —
+    `leads.assigned_agent_id` takes another organisation's profile (the profiles `(org_id, id)` decision above). 0136
+    bounds the two COUNTS only: the mode and the agent list are still the global `lead_routing` row any organisation's
+    admin may rewrite (the `cyprus_config` entry — lead_routing must become per organisation before a second tenant),
+    and a member of our own organisation may still steer the counts (the ANY-event-type entry). **VERIFY (fixed):**
+    `select regexp_replace(prosrc, '--[^\n]*', '', 'g') ~ 'l\.org_id = v_org_id' and regexp_replace(prosrc, '--[^\n]*',
+    '', 'g') ~ 'e\.org_id = v_org_id' from pg_proc where proname = 'submit_public_enquiry'` — true means fixed.
+    - **`submit_public_enquiry`'s round-robin routing counts another organisation's leads and `assigned` events, S
+      (original; found by T-redact-notes-own-org's review, code-read 2026-10-03, not probed).** Its latest definition
+      (0114, ~273–296; a SECURITY DEFINER called for every website enquiry) picks the candidate among THIS organisation's
+      active routed agents, but orders them by `(select count(*) from leads l where l.assigned_agent_id = p.id and
+      l.status in (...))` and by the latest `assigned` event `where e.payload ->> 'to' = p.id::text` — neither bounded
+      by `org_id`. `events_insert` admits a session's `assigned` lead event with any payload in its own organisation, and
+      agent ids are readable (`cyprus_config.lead_routing.agents`, readable by any signed-in user — 0100), so another
+      organisation's agent can starve or flood one of our agents of website enquiries by writing `assigned` events
+      naming them (and possibly open leads assigned to them, if `leads.assigned_agent_id` takes another organisation's
+      profile — VERIFY that half before relying on it). It writes into our organisation (the lead's assignee and an
+      `assigned` event), destroys nothing, and needs a second tenant (production is single-tenant). Fix shape: `and
+      l.org_id = v_org_id` and `and e.org_id = v_org_id`, the replaced body guarded by its hosted md5, pinned RED first;
+      not deploy-coupled. **VERIFY:** `select regexp_replace(prosrc, '--[^\n]*', '', 'g') ~ 'e\.org_id = v_org_id' from
+      pg_proc where proname = 'submit_public_enquiry'` — false means open.
+- **A staff session can write a share link's day `opened` line itself — unattributed — by calling
+  `resolve_share_link` with the token hash it can read, S (pre-existing; found by T-share-link-opened-own-org's
+  review, code-read 2026-10-03).** `share_links_select` lets every member read their organisation's links,
+  `token_sha256` included (the app never reads that column), and `authenticated` holds EXECUTE on the function,
+  which takes the HASH: a call writes exactly the system line 0137 honours (the link's organisation, a null actor),
+  at a moment of the caller's choosing — pre-empting the buyer's line for that Cyprus day, recording what existed at
+  the call, inflating `view_count` / `first_opened_at`, and able to fabricate an `opened` line on a day the buyer
+  never opened the link. Fix options: revoke column SELECT on `share_links.token_sha256` from authenticated
+  (re-grant the others), or have the definer write `actor_id = auth.uid()` when a session calls it (the public page
+  uses the anon client, so buyers' lines stay null-actor and a session's call becomes attributed and ignored by the
+  throttle). **VERIFY:** in a rolled-back transaction, as an aal2 session of the link's organisation, select the
+  hash and call the RPC; a new null-actor `opened` row means open.
 - **Desk alerts for every organisation go to ONE deployment-wide address, S (pre-existing; found by
   T-routing-own-org's review, code-read 2026-10-03).** The enquiry-alert worker and the acknowledgement mail read
   `ENQUIRY_ALERT_TO` from the environment (`lib/services/enquiry-alert.ts`, `enquiry-ack.ts` — the reply-to), so a
