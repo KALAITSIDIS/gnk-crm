@@ -172,27 +172,12 @@ beforeAll(async () => {
     });
   }
   await insertLead("hQ", { contact_id: ids.mariaQ, received_at: "2099-09-10T09:00:00Z", message: `other agency ${run}` }, ORG_Q);
-  // another agency's lead pointing at P's contact. Since 0139
-  // (leads_contact_id_fkey is (org_id, contact_id)) no path that runs the key
-  // can store it, so it is planted PAST the key in replica mode — the state a
-  // replica-mode restore could still load — and committed, because the lookup
-  // reads through a PostgREST session (afterAll removes it). NEWER than h5: if
-  // leads_select ever stopped scoping the embedded history, Maria's list
-  // would change.
-  await pg.query("begin");
-  try {
-    await pg.query("set local session_replication_role = replica");
-    const { rows } = await pg.query<{ id: string }>(
-      `insert into leads (org_id, source, status, contact_id, received_at, message)
-       values ($1, 'website', 'new', $2, '2099-09-15T09:00:00Z', $3) returning id`,
-      [ORG_Q, ids.maria, `foreign ${run}`],
-    );
-    await pg.query("commit");
-    ids.foreignOnMaria = rows[0]!.id;
-  } catch (e) {
-    await pg.query("rollback");
-    throw e;
-  }
+  // (Until 0139 an "other agency's lead pointing at P's contact" was planted
+  // here, to catch leads_select ever ceasing to scope the embedded history.
+  // Since 0139 the embed `leads!leads_contact_id_fkey` joins on (org_id,
+  // contact_id), so such a row can never join to P's contact whatever
+  // leads_select says — the plant guarded nothing. leads_select's own scoping
+  // is the hQ assertion below: Q's lead never reaches P.)
   await insertLead("hArchived", { contact_id: ids.archived, received_at: "2099-04-01T09:00:00Z", message: `archived ${run}` });
 
   // the unlinked website enquiries on P's inbox
@@ -284,8 +269,6 @@ describe("what the lookup returns under RLS", () => {
     const seenByP = JSON.stringify([...asP.values()]);
     expect(seenByP).not.toContain(ids.mariaQ!);
     expect(seenByP).not.toContain(ids.hQ!);
-    // another agency's lead that points at P's OWN contact stays out of its history
-    expect(seenByP).not.toContain(ids.foreignOnMaria!);
     expect(matches(asP.get(ids.eBoth!)).candidates[0]!.history.map((h) => h.id)).toEqual([ids.h5, ids.h4, ids.h3]);
 
     // organisation Q reading the same enquiry text finds ITS contact and ITS history — none of P's

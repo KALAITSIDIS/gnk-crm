@@ -123,6 +123,19 @@ async function plantPastKeys(table: string, row: Record<string, unknown>): Promi
 
 const phone = () => `+3579${String(Math.floor(Math.random() * 1e7)).padStart(7, "0")}`;
 
+/** The rows of a stale run's throwaway organisations that can name ANOTHER organisation's contact. */
+async function sweepCrossOrgRows(db: Client, namePatterns: string[]) {
+  const { rows } = await db.query<{ id: string }>("select id from organizations where name like any($1::text[])", [namePatterns]);
+  if (!rows.length) return;
+  const ids = rows.map((r) => r.id);
+  for (const t of ["leads", "offers", "share_links", "buyer_requirements", "mandates"]) {
+    await db.query(`delete from ${t} where org_id = any($1::uuid[])`, [ids]);
+  }
+  await db.query("update deals set buyer_contact_id = null, seller_contact_id = null where org_id = any($1::uuid[])", [ids]);
+  await db.query("update properties set owner_contact_id = null, developer_contact_id = null where org_id = any($1::uuid[])", [ids]);
+  await db.query("update contacts set merged_into_id = null where org_id = any($1::uuid[])", [ids]);
+}
+
 async function contact(org: string, label: string, extra: Record<string, unknown> = {}) {
   n += 1;
   return ins("contacts", {
@@ -362,6 +375,11 @@ beforeAll(async () => {
   svc = serviceClient();
   pg = new Client({ connectionString: DB_URL });
   await pg.connect();
+  // a killed earlier run leaves its replica-mode B plants (rows naming A's
+  // contacts PAST the keys) committed: they would stop 0139's replays and the
+  // next local apply in the preflight, and read red in the restore pack —
+  // clear this file's own throwaway organisations' links first
+  await sweepCrossOrgRows(pg, ["Merge A %", "Merge B %"]);
   await ensureTestOrg(svc, ORG_A, `Merge A ${RUN}`, `merge-a-${RUN}`);
   await ensureTestOrg(svc, ORG_B, `Merge B ${RUN}`, `merge-b-${RUN}`);
   adminA = await createTestUser(svc, `cm-admin-a-${RUN}@test.local`, "admin", ORG_A);

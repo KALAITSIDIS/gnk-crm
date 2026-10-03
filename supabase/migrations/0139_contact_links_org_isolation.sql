@@ -10,7 +10,8 @@
 --   * leads.contact_id, deals.buyer_contact_id / seller_contact_id,
 --     offers.contact_id, share_links.contact_id, buyer_requirements.contact_id,
 --     mandates.owner_contact_id, properties.owner_contact_id /
---     developer_contact_id (0001) and contacts.merged_into_id (0001) referenced
+--     developer_contact_id and contacts.merged_into_id (0001's keys;
+--     share_links' from 0023, buyer_requirements' from 0043) referenced
 --     contacts by id ALONE, and every insert / update policy checks only the
 --     CALLER's organisation. A member of organisation B who learned an
 --     organisation-A contact id — B can read none of A's contacts, but an id
@@ -77,7 +78,8 @@
 -- before any DDL if there are any: nothing is deleted, reassigned or repaired
 -- here, and no key is added NOT VALID. Hosted held 0 on every link on
 -- 2026-10-03 (read-only). It also refuses if a key it replaces is not exactly
--- 0001's (their rules are what it preserves), if any table has a second key
+-- its original (0001's; 0023's for share_links, 0043's for
+-- buyer_requirements — their rules are what it preserves), if any table has a second key
 -- onto contacts on the same column, if a unique index covers a link column (a
 -- unique index answers 23505 before a key answers 23503 — 0122's lesson), or
 -- if an index name it creates is taken.
@@ -91,14 +93,16 @@
 -- key check at the end of its statement — which ends in a clean 40P01 with one
 -- side rolled back whole: a page load, or this file. lock_timeout bounds EACH
 -- table's wait: the LOCK can wait up to 5 s on each of its eight tables while
--- holding the ones before it — up to about 40 s during which contacts,
--- properties and deals are unreadable (longer than gnk-web's 8 s enquiry
--- timeout; the enquiry door writes leads). Apply outside 02:55–04:05 UTC and
+-- holding the ones before it — up to about 40 s during which EVERY table
+-- locked so far, and the one it waits on (new readers queue behind the
+-- request), is unavailable: by the end all eight, so the CRM pages, the
+-- public proposal pages (resolve_share_link updates share_links) and the
+-- enquiry door (it writes leads; gnk-web gives up after 8 s). Apply outside 02:55–04:05 UTC and
 -- away from 06:00, at the middle of an odd minute that is not a multiple of
 -- five, when the site is quiet. A collision costs that wait and a clean 55P03
 -- or 40P01 rollback — apply again, and do NOT write the ledger row. Run twice
--- by mistake, the file aborts in its preflight (the keys are no longer
--- 0001's) and changes nothing.
+-- by mistake, the file aborts in its preflight (the keys are no longer the
+-- originals) and changes nothing.
 --
 -- DEPLOY ORDER — APPLICATION FIRST (release 1 of this work):
 --   1. the release-1 application (constraint-name embed hints; contact
@@ -113,26 +117,34 @@
 --   PGRST200). ROLLBACK FLOOR: with hosted at or past 0139, never roll the
 --   application back past the release-1 merge commit. No function signature,
 --   return shape or grant changes — no release-compat contract entry.
---   database.types.ts is regenerated: ten Relationships entries keep their
+--   database.types.ts is regenerated: eleven Relationships entries (the ten
+--   keys, and mandates_safe's view of the mandate owner's) keep their
 --   foreignKeyName and gain org_id in `columns` / `referencedColumns`.
 --
 -- ROLLBACK (DECISIONS T-contact-links-org-isolation): a FORWARD migration
 -- that drops the ten keys and their ten (org_id, <col>) indexes and re-adds
--- each key under the same name as 0001 left it — `FOREIGN KEY (<col>)
--- REFERENCES contacts(id)`, buyer_requirements' with ON DELETE CASCADE — in
--- one transaction (supabase/tests/revert-0139.ts holds the statement, and
--- must run before 0126's and 0123's reverts, which drop
--- contacts_org_id_id_key); regenerate the types, move the verify-restore
--- migrations pin FORWARD (one more ledger row), remove its 0139 rows and the
--- new test file, restore the BACKLOG entry and the two fixture tests' B-side
--- plants. Keep the application (release 1 holds at 0138 too). No data moves
--- either way: every row valid at 0139 is valid at 0138.
+-- each key under the same name as it was before this file — `FOREIGN KEY
+-- (<col>) REFERENCES contacts(id)`, buyer_requirements' with ON DELETE
+-- CASCADE — in ONE transaction and under THIS file's lock discipline: SET
+-- LOCAL lock_timeout = '5s', the one-transaction guard, and one LOCK on the
+-- eight tables, contacts first, BEFORE the ALTERs (the statement in
+-- supabase/tests/revert-0139.ts has neither, for the tests' rolled-back use:
+-- unbounded, its first ALTER would hold contacts and leads while waiting on
+-- the next table). It must come off before 0123's revert, the only one that
+-- drops contacts_org_id_id_key, which its keys depend on (0126's revert is
+-- independent of it). Then regenerate the types, move the verify-restore
+-- migrations pin FORWARD (one more ledger row), remove its three 0139 rows
+-- and the new test file, restore the BACKLOG entry and the contact-merge
+-- test's B-side plants. Keep the application (release 1 holds at 0138 too).
+-- No data moves either way: every row valid at 0139 is valid at 0138.
 --
--- Pins that move with this file: the migrations count (138 -> 139) and two
--- 0139 invariant rows in scripts/backup/verify-restore.sql (the ten mismatch
--- counts, and dangling ids); docs/04's contacts cell and the ten tables'
--- cells. NO EXPLICIT begin/commit — the CLI wraps the file (HANDOFF §3), as
--- does one execute_sql call. The file's LAST result is a read-only summary.
+-- Pins that move with this file: the migrations count (138 -> 139) and three
+-- 0139 rows in scripts/backup/verify-restore.sql (INTEGRITY: the ten mismatch
+-- counts; INTEGRITY: dangling ids; SECURITY: no single-column key onto
+-- contacts); lib/supabase/database.types.ts (eleven entries); docs/04's
+-- contacts, properties, mandates, leads, deals, offers and share_links rows.
+-- NO EXPLICIT begin/commit — the CLI wraps the file (HANDOFF §3), as does
+-- one execute_sql call. The file's LAST result is a read-only summary.
 -- =============================================================================
 
 -- Bounded lock waits (0113's lesson); see LOCKS above.
@@ -185,22 +197,23 @@ begin
     raise exception '0139 aborted: contacts_org_id_id_key UNIQUE (org_id, id) (0123) is missing or changed — nothing was changed';
   end if;
 
-  -- the keys this file replaces must be exactly 0001's — their rules are what
-  -- it preserves, and their names are what it keeps — and each the only key
-  -- from its table onto contacts on that column
+  -- the keys this file replaces must be exactly their originals (0001's;
+  -- 0023's and 0043's for share_links and buyer_requirements) — their rules
+  -- are what it preserves, and their names are what it keeps — and each the
+  -- only key from its table onto contacts on that column
   for k in
     select * from (values
-      ('public.leads'::regclass,              'contact_id'::name,           'leads_contact_id_fkey',                'FOREIGN KEY (contact_id) REFERENCES contacts(id)'),
-      ('public.deals'::regclass,              'buyer_contact_id'::name,     'deals_buyer_contact_id_fkey',          'FOREIGN KEY (buyer_contact_id) REFERENCES contacts(id)'),
-      ('public.deals'::regclass,              'seller_contact_id'::name,    'deals_seller_contact_id_fkey',         'FOREIGN KEY (seller_contact_id) REFERENCES contacts(id)'),
-      ('public.offers'::regclass,             'contact_id'::name,           'offers_contact_id_fkey',               'FOREIGN KEY (contact_id) REFERENCES contacts(id)'),
-      ('public.share_links'::regclass,        'contact_id'::name,           'share_links_contact_id_fkey',          'FOREIGN KEY (contact_id) REFERENCES contacts(id)'),
-      ('public.buyer_requirements'::regclass, 'contact_id'::name,           'buyer_requirements_contact_id_fkey',   'FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE'),
-      ('public.mandates'::regclass,           'owner_contact_id'::name,     'mandates_owner_contact_id_fkey',       'FOREIGN KEY (owner_contact_id) REFERENCES contacts(id)'),
-      ('public.properties'::regclass,         'owner_contact_id'::name,     'properties_owner_contact_id_fkey',     'FOREIGN KEY (owner_contact_id) REFERENCES contacts(id)'),
-      ('public.properties'::regclass,         'developer_contact_id'::name, 'properties_developer_contact_id_fkey', 'FOREIGN KEY (developer_contact_id) REFERENCES contacts(id)'),
-      ('public.contacts'::regclass,           'merged_into_id'::name,       'contacts_merged_into_id_fkey',         'FOREIGN KEY (merged_into_id) REFERENCES contacts(id)')
-    ) as t(rel, col, name, def)
+      ('public.leads'::regclass,              'contact_id'::name,           'leads_contact_id_fkey',                'FOREIGN KEY (contact_id) REFERENCES contacts(id)', '0001'),
+      ('public.deals'::regclass,              'buyer_contact_id'::name,     'deals_buyer_contact_id_fkey',          'FOREIGN KEY (buyer_contact_id) REFERENCES contacts(id)', '0001'),
+      ('public.deals'::regclass,              'seller_contact_id'::name,    'deals_seller_contact_id_fkey',         'FOREIGN KEY (seller_contact_id) REFERENCES contacts(id)', '0001'),
+      ('public.offers'::regclass,             'contact_id'::name,           'offers_contact_id_fkey',               'FOREIGN KEY (contact_id) REFERENCES contacts(id)', '0001'),
+      ('public.share_links'::regclass,        'contact_id'::name,           'share_links_contact_id_fkey',          'FOREIGN KEY (contact_id) REFERENCES contacts(id)', '0023'),
+      ('public.buyer_requirements'::regclass, 'contact_id'::name,           'buyer_requirements_contact_id_fkey',   'FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE', '0043'),
+      ('public.mandates'::regclass,           'owner_contact_id'::name,     'mandates_owner_contact_id_fkey',       'FOREIGN KEY (owner_contact_id) REFERENCES contacts(id)', '0001'),
+      ('public.properties'::regclass,         'owner_contact_id'::name,     'properties_owner_contact_id_fkey',     'FOREIGN KEY (owner_contact_id) REFERENCES contacts(id)', '0001'),
+      ('public.properties'::regclass,         'developer_contact_id'::name, 'properties_developer_contact_id_fkey', 'FOREIGN KEY (developer_contact_id) REFERENCES contacts(id)', '0001'),
+      ('public.contacts'::regclass,           'merged_into_id'::name,       'contacts_merged_into_id_fkey',         'FOREIGN KEY (merged_into_id) REFERENCES contacts(id)', '0001')
+    ) as t(rel, col, name, def, src)
   loop
     if (select count(*) from pg_constraint f
          where f.conrelid = k.rel and f.confrelid = 'public.contacts'::regclass and f.contype = 'f'
@@ -208,9 +221,9 @@ begin
        or not exists (select 1 from pg_constraint
                        where conrelid = k.rel and confrelid = 'public.contacts'::regclass and contype = 'f' and conname = k.name
                          and convalidated and not condeferrable and pg_get_constraintdef(oid) = k.def) then
-      raise exception '0139 aborted: the foreign key from %.% onto contacts is not 0001''s % (%, validated, not deferrable, the only one on that column) — nothing was changed. '
-                      'This file replaces it under the same name and keeps its rules; compare it with 0001 and decide before applying',
-                      k.rel, k.col, k.name, k.def;
+      raise exception '0139 aborted: the foreign key from %.% onto contacts is not %''s % (%, validated, not deferrable, the only one on that column) — nothing was changed. '
+                      'This file replaces it under the same name and keeps its rules; compare it with % and decide before applying',
+                      k.rel, k.col, k.src, k.name, k.def, k.src;
     end if;
     -- a unique index on the link column would answer 23505 before the key's
     -- 23503 — an oracle the key would not close (0122)
@@ -235,7 +248,7 @@ begin
                'properties_org_owner_contact_idx', 'properties_org_developer_contact_idx', 'contacts_org_merged_into_idx')) then
     raise exception '0139 aborted: an index name this file creates is taken — nothing was changed';
   end if;
-  raise notice '0139: preflight passed — no row names a contact of another organisation; the ten keys are 0001''s';
+  raise notice '0139: preflight passed — no row names a contact of another organisation; the ten keys are the originals';
 end $$;
 
 -- ---------------------------------------------------------------------------

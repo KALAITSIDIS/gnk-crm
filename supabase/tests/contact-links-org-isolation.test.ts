@@ -29,7 +29,11 @@ import { LINKS_0139, REVERT_0139_SQL, readMigration0139 } from "./revert-0139";
  *
  * Plants that cross organisations are made only inside rolled-back
  * transactions or through the RED paths themselves (whose rows afterAll
- * removes); the B-side organisations are throwaway.
+ * removes, and beforeAll sweeps after a killed run); the B-side organisations
+ * are throwaway. MEASURE RED PER SECTION at 0138: section 1's accepted RED
+ * writes commit cross-organisation rows, and section 4's replays count
+ * mismatches across the whole database — run in one go at 0138, they fail
+ * for that reason, not their own.
  */
 
 const DB_URL = process.env.DB_URL ?? "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
@@ -46,6 +50,19 @@ const ids = { cA: "", cA2: "", cB: "", cB2: "", dealA: "", dealB: "", propA: "",
 
 const inADay = () => new Date(Date.now() + 86_400_000).toISOString();
 const hex64 = () => randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, "");
+
+/** The rows of a stale run's throwaway organisations that can name ANOTHER organisation's contact. */
+async function sweepCrossOrgRows(db: Client, namePatterns: string[]) {
+  const { rows } = await db.query<{ id: string }>("select id from organizations where name like any($1::text[])", [namePatterns]);
+  if (!rows.length) return;
+  const ids = rows.map((r) => r.id);
+  for (const t of ["leads", "offers", "share_links", "buyer_requirements", "mandates"]) {
+    await db.query(`delete from ${t} where org_id = any($1::uuid[])`, [ids]);
+  }
+  await db.query("update deals set buyer_contact_id = null, seller_contact_id = null where org_id = any($1::uuid[])", [ids]);
+  await db.query("update properties set owner_contact_id = null, developer_contact_id = null where org_id = any($1::uuid[])", [ids]);
+  await db.query("update contacts set merged_into_id = null where org_id = any($1::uuid[])", [ids]);
+}
 
 async function rolledBack(fn: () => Promise<void>) {
   await o.query("begin");
@@ -114,6 +131,12 @@ beforeAll(async () => {
   svc = serviceClient();
   o = new Client({ connectionString: DB_URL });
   await o.connect();
+  // a killed earlier run of THIS file leaves its rows behind (afterAll never
+  // ran) — and a run at 0138 commits cross-organisation ones, which would stop
+  // the replays below (and the next local apply of 0139) in the preflight:
+  // clear this file's own throwaway organisations' links only, never every
+  // cross-organisation row in the database (the restore pack reports those)
+  await sweepCrossOrgRows(o, ["contact links A %", "contact links B %"]);
   await ensureTestOrg(svc, ORG_A, `contact links A ${RUN}`, `contact-links-a-${RUN}`);
   await ensureTestOrg(svc, ORG_B, `contact links B ${RUN}`, `contact-links-b-${RUN}`);
   adminA = await createTestUser(svc, `cl-a-${RUN}@test.local`, "admin", ORG_A);
@@ -364,7 +387,7 @@ describe("4. the migration file (every replay rolled back)", () => {
   });
 
   for (const d of [
-    { what: "a key with a different rule", sql: "alter table public.buyer_requirements drop constraint buyer_requirements_contact_id_fkey, add constraint buyer_requirements_contact_id_fkey foreign key (contact_id) references public.contacts(id)", re: /^0139 aborted: the foreign key from buyer_requirements\.contact_id onto contacts is not 0001's buyer_requirements_contact_id_fkey / },
+    { what: "a key with a different rule", sql: "alter table public.buyer_requirements drop constraint buyer_requirements_contact_id_fkey, add constraint buyer_requirements_contact_id_fkey foreign key (contact_id) references public.contacts(id)", re: /^0139 aborted: the foreign key from buyer_requirements\.contact_id onto contacts is not 0043's buyer_requirements_contact_id_fkey / },
     { what: "a second key on a link column", sql: "alter table public.leads add constraint zz_leads_contact_again foreign key (contact_id) references public.contacts(id)", re: /^0139 aborted: the foreign key from leads\.contact_id onto contacts is not 0001's leads_contact_id_fkey / },
     { what: "a unique index on a link column", sql: "create unique index zz_share_links_contact_uq on public.share_links (contact_id)", re: /^0139 aborted: a unique index on share_links\.contact_id would answer before the key — nothing was changed/ },
     { what: "a taken index name", sql: "create index offers_org_contact_idx on public.offers (org_id)", re: /^0139 aborted: an index name this file creates is taken — nothing was changed/ },
@@ -380,7 +403,7 @@ describe("4. the migration file (every replay rolled back)", () => {
     });
   }
 
-  it("run a second time, it stops in its preflight (the keys are no longer 0001's)", async () => {
+  it("RED at 0138: run a second time, it stops in its preflight (the keys are no longer the originals)", async () => {
     await rolledBack(async () => {
       await expect(o.query(file())).rejects.toThrow(/^0139 aborted: the foreign key from leads\.contact_id onto contacts is not 0001's leads_contact_id_fkey/);
     });
@@ -475,7 +498,7 @@ describe("5. the restore pack's 0139 rows", () => {
   const DANGLING = "INTEGRITY: no lead, deal, offer, share link, requirement, mandate, listing or merge pointer names a contact that does not exist (0139)";
   const SECURITY = "SECURITY: every foreign key onto contacts is bound to the contact''s organisation (0139)";
 
-  it("each reads as expected now", async () => {
+  it("RED at 0138 (the SECURITY row): each reads as expected now", async () => {
     for (const r of [INTEGRITY, DANGLING, SECURITY]) {
       const { rows } = await o.query<{ expected: string; actual: string }>(rowSql(r));
       expect(rows[0]!.actual, r).toBe(rows[0]!.expected);
