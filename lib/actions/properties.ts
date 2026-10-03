@@ -19,6 +19,7 @@ import { changesForChain, isNoteField } from "@/lib/services/event-changes";
 import { changedValue } from "@/lib/utils/diff";
 import { createPropertySchema } from "@/lib/validators/properties";
 import type { PropertyDuplicateMatch } from "@/lib/services/property-duplicate";
+import { contactLinkError } from "@/lib/services/contact-reread";
 
 export type PropertyActionState = { error: string | null };
 
@@ -202,6 +203,11 @@ export async function createProperty(
   const ownerId = input.source === "owner" ? (input.owner_contact_id ?? null) : null;
   const developerId = input.source === "developer" ? (input.developer_contact_id ?? null) : null;
   const partyId = ownerId ?? developerId;
+  // The party, re-read under RLS before its defaults are resolved and before
+  // the reference is drawn — a refused owner must not burn a sequence number
+  // (0139 binds both links to the organisation; this is the sentence).
+  const partyErr = await contactLinkError(supabase, [partyId]);
+  if (partyErr) return { error: partyErr };
 
   // typed from the generated Insert, not as loose strings: partyDefaultsSchema
   // already validates these against the same enums, and widening to `string`
@@ -574,7 +580,17 @@ export async function updatePropertySection(
         return { error: "That agent is not an active member of this office.", savedAt: null };
       }
     }
-    updates = resolvePartyUpdates(parsed.data, { kind: current.kind });
+    const parties = resolvePartyUpdates(parsed.data, { kind: current.kind });
+    // an owner or developer the property does not already carry is re-read
+    // under RLS (0139 binds both links to the organisation)
+    const partiesErr = await contactLinkError(supabase, [
+      parties.owner_contact_id !== current.owner_contact_id ? parties.owner_contact_id : null,
+      parties.developer_contact_id !== current.developer_contact_id
+        ? parties.developer_contact_id
+        : null,
+    ]);
+    if (partiesErr) return { error: partiesErr, savedAt: null };
+    updates = parties;
   } else {
     return { error: `Unknown section: ${section}`, savedAt: null };
   }

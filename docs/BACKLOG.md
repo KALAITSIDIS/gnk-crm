@@ -2966,8 +2966,13 @@ VERIFY, run before starting.
   `(org_id, property_id)`, and `p.org_id = <parent>.org_id` (plus `r.org_id = i.org_id`) in the three sweeps; pin RED
   first. **VERIFY:** `grep -nE "reservations_org_property_fkey|leads_org_property_fkey" supabase/migrations/*.sql` — no
   hit means open.
-- **`createLead` creates the contact before the lead and never re-reads the property, XS.** `lib/actions/leads.ts`
-  inserts a new contact (when the form asks for one) and only then the lead, whose `property_id` is the form's value
+- ~~**`createLead` creates the contact before the lead and never re-reads the property, XS.**~~ **FIXED 2026-10-03
+  on branch `fix/contact-links-release1` (release 1 of T-contact-links-org-isolation; no migration) — DECISIONS
+  `T-contact-links-org-isolation`: createLead re-reads its property and its picked contact under RLS BEFORE the
+  duplicate check, the typed enquirer's contact insert, its event and the lead insert; a refused property answers
+  "That property is no longer available to you." and writes nothing; a failed read answers "Could not check that
+  property just now — please try again." Pinned by `lib/actions/contact-link-reread.test.ts`.** (original)
+  `lib/actions/leads.ts` inserts a new contact (when the form asks for one) and only then the lead, whose `property_id` is the form's value
   with no RLS re-read. Since 0124 a crafted foreign or missing `property_id` is refused 23503 — but the contact is
   already created, so the refused lead leaves an orphan contact, and the action shows the raw constraint message.
   Needs a crafted request (the picker lists only the caller's properties). Fix: re-read the property under RLS first,
@@ -2996,7 +3001,12 @@ VERIFY, run before starting.
   `tests/unit/merge-repoints-every-fk.test.ts` to fail on a repoint without it. Found by
   T-task-viewing-org-isolation's review. **VERIFY:** `grep -c 'eq("org_id"' lib/actions/merge-contacts.ts` — fewer
   than the number of `.from(` repoints means open.
-- **Ten links onto `contacts` are still single-column, S/M.** `leads.contact_id`, `deals.buyer_contact_id` /
+- **Ten links onto `contacts` are still single-column, S/M — IN PROGRESS (T-contact-links-org-isolation, two
+  releases).** Release 1 (branch `fix/contact-links-release1`, no migration): the deals and properties exports hint
+  their party embeds by CONSTRAINT NAME (a column hint answers PGRST200 on a composite key — rehearsed locally), and
+  eight actions re-read a posted contact under RLS before writing. Release 2: migration 0139 re-keys all ten
+  `(org_id, <col>) → contacts (org_id, id)` KEEPING each constraint's name, applied only after release 1 is deployed.
+  (original) `leads.contact_id`, `deals.buyer_contact_id` /
   `seller_contact_id`, `offers.contact_id`, `share_links.contact_id`, `buyer_requirements.contact_id`,
   `mandates.owner_contact_id`, `properties.owner_contact_id` / `developer_contact_id` and `contacts.merged_into_id`
   reference `contacts(id)` alone (measured at 0126 from `pg_constraint`; `viewings`, `reservations` and `tasks` are

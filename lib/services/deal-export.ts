@@ -5,10 +5,15 @@ import { formatDateTime } from "@/lib/utils/format";
  * Column mapping for the deals CSV export (IMPROVEMENTS B10). Pure and
  * unit-testable; the route wires it to an RLS-scoped query. Money is a raw number
  * so a spreadsheet can sum it. Buyer/seller are aliased contact embeds.
+ *
+ * The two embeds are hinted by CONSTRAINT NAME, not by column: a column hint
+ * stops resolving (PGRST200) once its key is composite, and 0139 makes both
+ * keys `(org_id, <col>) → contacts (org_id, id)` while KEEPING their names —
+ * so these hints resolve before and after it (T-contact-links-org-isolation).
  */
 
 export const DEAL_EXPORT_SELECT =
-  "title, deal_type, status, expected_value, commission_split_notes, won_at, lost_at, lost_reason, created_at, agent_id, deal_stages(name), properties(reference), buyer:contacts!buyer_contact_id(display_name), seller:contacts!seller_contact_id(display_name)";
+  "title, deal_type, status, expected_value, commission_split_notes, won_at, lost_at, lost_reason, created_at, agent_id, deal_stages(name), properties(reference), buyer:contacts!deals_buyer_contact_id_fkey(display_name), seller:contacts!deals_seller_contact_id_fkey(display_name)";
 
 export interface DealExportRow {
   title: string | null;

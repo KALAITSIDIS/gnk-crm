@@ -35,6 +35,7 @@ import { normalizePhone } from "@/lib/services/phone";
 import { zonedWallClockToUtc } from "@/lib/utils/tz";
 import { COMM_CHANNELS, LEAD_OPEN_STATUSES } from "@/lib/validators/contacts";
 import { createLeadSchema } from "@/lib/validators/leads";
+import { contactLinkError } from "@/lib/services/contact-reread";
 
 // `duplicate` is set when creating a NEW contact from the lead hits an existing
 // one (doc 02 §C4 dedup): the form surfaces it and offers to link instead.
@@ -75,6 +76,27 @@ export async function createLead(
 
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
+
+  // The form's links, re-read under RLS BEFORE anything is written. The lead
+  // insert used to be the first thing to meet them, so a property the caller
+  // cannot see (another organisation's — refused 23503 since 0124) failed it
+  // only after a typed enquirer's contact had been created and its event
+  // chained: an orphan contact and the driver's message. A picked contact is
+  // read the same way; 0139 binds that link to the organisation too.
+  const [property, contactErr] = await Promise.all([
+    d.property_id
+      ? supabase.from("properties").select("id").eq("id", d.property_id).maybeSingle()
+      : null,
+    contactLinkError(supabase, [d.contact_id]),
+  ]);
+  // a failed read is not an absent property (postgrest-js returns the failure)
+  if (property?.error) {
+    return { error: "Could not check that property just now — please try again.", savedAt: null };
+  }
+  if (property && !property.data) {
+    return { error: "That property is no longer available to you.", savedAt: null };
+  }
+  if (contactErr) return { error: contactErr, savedAt: null };
 
   // Resolve which contact (if any) the lead links to. A picked existing contact
   // wins; otherwise a typed enquirer name means "create a contact", with the
