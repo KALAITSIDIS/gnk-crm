@@ -3349,8 +3349,8 @@ VERIFY, run before starting.
   admin_only contact document D and `insert into documents (id = D, …, visibility = 'internal')` — INSERT 1 means
   open (measured 2026-10-02 at 0133).
 - ~~**`redact_stale_enquiries` matches interaction notes by `entity_id` with no organisation predicate, S
-  (pre-existing).**~~ **FIXED 2026-10-03 on branch `fix/redact-notes-own-org` (migration 0135; lands hosted first,
-  then merge — not deploy-coupled) — DECISIONS `T-redact-notes-own-org`.** Reproduced first through PostgREST and the
+  (pre-existing).**~~ **FIXED — LANDED 2026-10-03 (hosted 0135, applied before the merge; PR #95, main `3a5a451`) —
+  DECISIONS `T-redact-notes-own-org`.** Reproduced first through PostgREST and the
   real sweep on the local stack at 0134 (another organisation's agent inserted a back-dated unlinked website lead at
   the id of our deleted lead; the sweep blanked our note); hosted read 2026-10-03: the body is 0094's (md5
   `044c146a…`), the VERIFY below false, the cron job active. 0135 replaces the body with the one predicate
