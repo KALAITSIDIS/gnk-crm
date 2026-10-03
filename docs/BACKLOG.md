@@ -3074,7 +3074,7 @@ VERIFY, run before starting.
   table or once: column-level INSERT grants that omit `id` (two session writers DO send one — the lead convert's deal
   and the user invite's profile, see below — so per table, not blanket), or a BEFORE
   INSERT trigger that overwrites `id` for `authenticated`. Found by T-task-reservation-lead-org-isolation's review.
-  **The adoption half — FIXED 2026-10-02 on branch `fix/insert-id-adoption` (lands with migration 0133) — DECISIONS
+  **The adoption half — FIXED — LANDED 2026-10-03 (hosted 0133, applied after 0134; PR #94, main `477dcbf`) — DECISIONS
   `T-insert-id-without-history`: `trg_insert_id_without_history()` (SECURITY DEFINER, AFTER INSERT) on the 11 history
   subjects a session may insert refuses a session's row at an id with an event / note / document of its entity_type
   in its own organisation (profiles: also an event it is the actor of), 42501; history keyed by an event PAYLOAD is a
