@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 139::bigint as migrations,
+    2::bigint as auth_users, 140::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -809,6 +809,14 @@ misc as (
   select 'SECURITY: every foreign key onto contacts is bound to the contact''s organisation (0139)', '0',
          (select count(*)::text from pg_constraint
            where contype = 'f' and confrelid = 'public.contacts'::regclass and array_length(conkey, 1) = 1)
+  union all
+  -- 0140: the dashboard's "won this month" counts a won deal at its confirmed
+  -- final value (0076's rule, which 0093 undid). A restore that brought back
+  -- 0093's body reads false here. Comments are stripped before matching.
+  select 'INTEGRITY: the dashboard''s won this month reads the confirmed final value (0140)', 'true',
+         coalesce((select regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'coalesce\(final_value, expected_value, 0\) as won_value'
+                     from pg_proc p
+                    where p.oid = to_regprocedure('public.admin_dashboard_stats(timestamp with time zone,timestamp with time zone,timestamp with time zone)')), false)::text
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.

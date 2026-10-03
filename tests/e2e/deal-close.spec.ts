@@ -173,6 +173,15 @@ test("Mark won confirms the accepted price, stamps it, and prompts the listing f
     expect(wonEvents).toHaveLength(1);
     expect(Number((wonEvents![0].payload as { final_value?: number }).final_value)).toBe(250000);
 
+    // ---------- the board agrees: a won card shows the CONFIRMED price ----------
+    // (0140's rule — the dashboard, the reports and the pipeline read
+    // coalesce(final_value, expected_value) for a won deal; the estimate here is
+    // a deliberately stale 999,999)
+    await page.goto("/pipeline", { waitUntil: "networkidle" });
+    const card = page.getByRole("listitem").filter({ hasText: DEAL_TITLE });
+    await expect(card).toContainText("€250.000");
+    await expect(card).not.toContainText("€999.999");
+
     // DB-01: the listing still reads available → the prompt task, never a flip
     const { data: still } = await svc
       .from("properties")

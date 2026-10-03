@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
 import { DEAL_TYPES, parseDealType } from "@/lib/queries/deals-list";
+import { dealValue } from "@/lib/services/deal-value";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,7 @@ export const dynamic = "force-dynamic";
 const CLOSED_WINDOW_DAYS = 30;
 
 const DEAL_COLUMNS =
-  "id, title, stage_id, expected_value, health_score, health, agent_id, status, stage_entered_at, won_at, lost_at, created_at, properties(reference)";
+  "id, title, stage_id, expected_value, final_value, health_score, health, agent_id, status, stage_entered_at, won_at, lost_at, created_at, properties(reference)";
 
 type SearchParams = { [key: string]: string | string[] | undefined };
 
@@ -82,7 +83,9 @@ export default async function PipelinePage({
     id: d.id,
     title: d.title,
     stage_id: d.stage_id,
-    expected_value: d.expected_value === null ? null : Number(d.expected_value),
+    // a won card shows (and its column sums) the confirmed final value — the
+    // dashboard's and the reports' rule (0076 / 0140)
+    expected_value: dealValue(d),
     health_score: d.health_score,
     healthFactors: Array.isArray((d.health as { factors?: unknown } | null)?.factors)
       ? ((d.health as { factors: KanbanDeal["healthFactors"] }).factors ?? null)
