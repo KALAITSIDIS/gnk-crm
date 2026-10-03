@@ -23,7 +23,16 @@
 --     choosing; a link inserted at an id whose `opened` history is another
 --     organisation's (0133 lets that id through) loses it too. No row of
 --     another organisation is written — a missing evidence line. Hosted on
---     2026-10-03 (read-only): one organisation — nothing was reached.
+--     2026-10-03 (read-only): one organisation, so the two cross-organisation
+--     routes could not be reached, and the diagnostic below read zero
+--     session-written `opened` events, so the staff route was not used.
+--
+-- NOT CLOSED HERE (BACKLOG): a staff session of the link's own organisation
+-- can read the link's token hash (share_links_select) and call this function
+-- itself (authenticated holds EXECUTE): that writes exactly the system line
+-- 0137 honours — unattributed, at a moment of its choosing. And a session may
+-- still WRITE an `opened` share_link event (events_insert does not reserve it):
+-- it no longer suppresses anything, but it renders like a buyer's view.
 --
 -- THE FIX: the same function — 0041's text byte for byte, but
 -- `and org_id = v_link.org_id and actor_id is null` (with a comment line) in
@@ -34,9 +43,10 @@
 -- are 0041's grants (revoke from public; execute to anon, authenticated and
 -- the service role — the deliberate exception to 0007's lockdown).
 --
--- CONTRACT. Signature, return (the payload), the view counter, every write
--- and the payloads unchanged; types identical; no release-compat entry. NOT
--- deploy-coupled: hosted 0137 first, then merge.
+-- CONTRACT. Signature, return (the payload), the view counter and the
+-- payloads unchanged — the `opened` insert now also runs on a day when only a
+-- foreign or a session-written `opened` event existed; types identical; no
+-- release-compat entry. NOT deploy-coupled: hosted 0137 first, then merge.
 --
 -- LOCKS: CREATE OR REPLACE FUNCTION takes no table lock (a call already
 -- running keeps the old body to its end); the closing diagnostic reads events
@@ -47,18 +57,20 @@
 -- function of that name, its body exactly 0041's (md5, carriage returns
 -- ignored — hosted's read 2026-10-03 is identical), SECURITY DEFINER, owned by
 -- postgres, `search_path=public`, executable by anon, authenticated and the
--- service role.
+-- service role and NOT by PUBLIC (0041's grants exactly).
 --
 -- POSTFLIGHT re-runs 0041's EXPOSURE GUARD on the new body (none of the
 -- forbidden column names may appear in it — the list is in 0041's header,
 -- deliberately NOT repeated inside the function), checks both throttles carry
--- both predicates, and the grants.
+-- both predicates, and the grants (anon, authenticated and the service role
+-- hold EXECUTE; PUBLIC does not — 0041's assertion, restated).
 --
 -- EXISTING ROWS — READ-ONLY DIAGNOSTIC, NO REPAIR (the file's last row):
---   opened_events_across_orgs   `opened` share_link events whose organisation
---                               is not the link's;
---   opened_events_by_a_session  `opened` share_link events with an actor (the
---                               system writes them with none).
+--   opened_events_across_orgs   `opened` share_link events at a CURRENT
+--                               link's id whose organisation is not the link's;
+--   opened_events_by_a_session  `opened` share_link events at a current link's
+--                               id with an actor (the system writes them with
+--                               none).
 -- Either is a line the throttle will no longer honour; an operator decision.
 --
 -- NOT CHANGED: who may call it; what it returns; the view counter; anything
@@ -104,8 +116,9 @@ begin
     raise exception '0137 aborted: resolve_share_link is not 0041''s definer body (md5 %) — nothing was changed', coalesce(v_md5, 'missing or not the definer it was');
   end if;
   if not (has_function_privilege('anon', v_sig, 'execute') and has_function_privilege('authenticated', v_sig, 'execute')
-          and has_function_privilege('service_role', v_sig, 'execute')) then
-    raise exception '0137 aborted: resolve_share_link''s grants are not 0041''s (anon, authenticated, service_role) — nothing was changed';
+          and has_function_privilege('service_role', v_sig, 'execute'))
+     or has_function_privilege('public', v_sig, 'execute') then
+    raise exception '0137 aborted: resolve_share_link''s grants are not 0041''s (anon, authenticated, service_role; not PUBLIC) — nothing was changed';
   end if;
   raise notice '0137: preflight passed — resolve_share_link is 0041''s definer body with 0041''s grants';
 end $$;
@@ -440,7 +453,8 @@ begin
     end if;
   end loop;
   if not (has_function_privilege('anon', v_sig, 'execute') and has_function_privilege('authenticated', v_sig, 'execute')
-          and has_function_privilege('service_role', v_sig, 'execute')) then
+          and has_function_privilege('service_role', v_sig, 'execute'))
+     or has_function_privilege('public', v_sig, 'execute') then
     raise exception '0137 postflight: resolve_share_link''s grants changed';
   end if;
   raise notice '0137: postflight passed — only the link''s own organisation''s system line throttles today''s `opened` write';
