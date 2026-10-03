@@ -22,7 +22,7 @@ import {
 } from "@/lib/validators/deals";
 import { cyprusEndOfToday } from "@/lib/validators/reservations";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { CONTACT_UNAVAILABLE, contactsVisible } from "@/lib/services/contact-reread";
+import { contactLinkError } from "@/lib/services/contact-reread";
 
 export type MoveDealResult = { error: string | null };
 
@@ -125,11 +125,11 @@ export async function updateDealSection(
     const d = parsed.data;
     // A party the deal does not already carry is re-read under RLS: 0139
     // binds both links to the deal's organisation, and this is the sentence.
-    const partiesSeen = await contactsVisible(supabase, [
+    const partiesErr = await contactLinkError(supabase, [
       d.buyer_contact_id !== current.buyer_contact_id ? d.buyer_contact_id : null,
       d.seller_contact_id !== current.seller_contact_id ? d.seller_contact_id : null,
     ]);
-    if (!partiesSeen) return { error: CONTACT_UNAVAILABLE, savedAt: null };
+    if (partiesErr) return { error: partiesErr, savedAt: null };
     updates = {
       title: d.title,
       property_id: d.property_id ?? null,
@@ -240,13 +240,10 @@ export async function saveOffer(
       return { error: `A ${offer.status} offer can no longer be edited`, savedAt: null };
     }
     // a contact the offer does not already carry is re-read (0139 binds it)
-    if (
-      !(await contactsVisible(supabase, [
-        input.contact_id !== offer.contact_id ? input.contact_id : null,
-      ]))
-    ) {
-      return { error: CONTACT_UNAVAILABLE, savedAt: null };
-    }
+    const contactErr = await contactLinkError(supabase, [
+      input.contact_id !== offer.contact_id ? input.contact_id : null,
+    ]);
+    if (contactErr) return { error: contactErr, savedAt: null };
 
     const updates = {
       amount: input.amount,
@@ -285,13 +282,10 @@ export async function saveOffer(
   } else {
     // the deal's own buyer is the default and already the deal's; any other
     // posted contact is re-read (0139 binds it)
-    if (
-      !(await contactsVisible(supabase, [
-        input.contact_id !== deal.buyer_contact_id ? input.contact_id : null,
-      ]))
-    ) {
-      return { error: CONTACT_UNAVAILABLE, savedAt: null };
-    }
+    const contactErr = await contactLinkError(supabase, [
+      input.contact_id !== deal.buyer_contact_id ? input.contact_id : null,
+    ]);
+    if (contactErr) return { error: contactErr, savedAt: null };
     const { data: created, error: insertErr } = await supabase
       .from("offers")
       .insert({

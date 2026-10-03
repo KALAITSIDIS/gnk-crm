@@ -3,6 +3,8 @@ import type { Database } from "@/lib/supabase/database.types";
 
 /** What a form answers when it posted a contact the caller cannot see. */
 export const CONTACT_UNAVAILABLE = "That contact is no longer available to you.";
+/** What it answers when the re-read itself failed — the contact may well be fine. */
+export const CONTACT_CHECK_FAILED = "Could not check that contact just now — please try again.";
 
 /**
  * Re-read, under RLS, the contact ids a form posted before a write links them
@@ -19,18 +21,22 @@ export const CONTACT_UNAVAILABLE = "That contact is no longer available to you."
  *
  * Pass only ids the write would newly link — an id the row already carries is
  * already its own, and reading it again would only add a way to refuse a save
- * that changed nothing. Empty ids are skipped.
+ * that changed nothing. Empty ids are skipped, repeats read once.
  *
- * True when every id is visible.
+ * Null when every id is visible; otherwise the sentence to return.
+ * postgrest-js answers a network or server failure as `{ data: null, error }`
+ * — it does not throw — so a failed read is told apart from an empty one: a
+ * contact that may be fine is never reported as gone.
  */
-export async function contactsVisible(
+export async function contactLinkError(
   supabase: SupabaseClient<Database>,
   ids: readonly (string | null | undefined)[],
-): Promise<boolean> {
+): Promise<string | null> {
   const wanted = [...new Set(ids.filter((id): id is string => Boolean(id)))];
-  if (wanted.length === 0) return true;
+  if (wanted.length === 0) return null;
   const reads = await Promise.all(
     wanted.map((id) => supabase.from("contacts").select("id").eq("id", id).maybeSingle()),
   );
-  return reads.every((r) => Boolean(r.data));
+  if (reads.some((r) => r.error)) return CONTACT_CHECK_FAILED;
+  return reads.every((r) => Boolean(r.data)) ? null : CONTACT_UNAVAILABLE;
 }

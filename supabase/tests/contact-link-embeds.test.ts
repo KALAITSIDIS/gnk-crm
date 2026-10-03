@@ -4,6 +4,7 @@ import { Client } from "pg";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { DEAL_EXPORT_SELECT } from "@/lib/services/deal-export";
 import { PROPERTY_EXPORT_BASE_SELECT } from "@/lib/services/property-export";
+import { mandateEmbed, parsePropertyFilters } from "@/lib/queries/properties-list";
 import { createTestUser, ensureTestOrg, serviceClient, type TestUser } from "./helpers";
 
 /**
@@ -106,9 +107,15 @@ beforeAll(async () => {
     .single();
   if (propErr) throw new Error(`property: ${propErr.message}`);
   ids.property = property.id as string;
+  // a mandate, so the export's inner-joined mandate embed returns the row too
+  const { error: mandateErr } = await svc
+    .from("mandates")
+    .insert({ org_id: ORG, property_id: ids.property, type: "exclusive", owner_contact_id: ids.owner });
+  if (mandateErr) throw new Error(`mandate: ${mandateErr.message}`);
 });
 
 afterAll(async () => {
+  await o.query("delete from mandates where org_id = $1", [ORG]);
   await o.query("delete from deals where org_id = $1", [ORG]);
   await o.query("delete from properties where org_id = $1", [ORG]);
   await o.query("delete from contacts where org_id = $1", [ORG]);
@@ -138,22 +145,27 @@ describe("the exports' party embeds resolve, through PostgREST, as an aal2 sessi
     expect(row.seller?.display_name).toBe(`Sam Seller ${RUN}`);
   });
 
-  it("lib/services/property-export.ts: owner, developer and agent", async () => {
-    const r = await admin.client
-      .from("properties")
-      .select(PROPERTY_EXPORT_BASE_SELECT)
-      .eq("id", ids.property)
-      .single();
-    expect(r.error, JSON.stringify(r.error)).toBeNull();
-    const row = r.data as unknown as {
-      owner: { display_name: string } | null;
-      developer: { display_name: string } | null;
-      agent: { full_name: string } | null;
-    };
-    expect(row.owner?.display_name).toBe(`Olga Owner ${RUN}`);
-    expect(row.developer?.display_name).toBe(`Dimitris Developer ${RUN}`);
-    expect(row.agent?.full_name).toBe(`Test admin ce-admin-${RUN}@test.local`);
-  });
+  // exactly as app/(app)/properties/export/route.ts builds it: the base
+  // select plus the mandate embed, plain or inner-joined by the filter
+  for (const sp of [{}, { mandate: "active" }]) {
+    const embed = mandateEmbed(parsePropertyFilters(sp));
+    it(`lib/services/property-export.ts as the route builds it (${embed}): owner, developer and agent`, async () => {
+      const r = await admin.client
+        .from("properties")
+        .select(`${PROPERTY_EXPORT_BASE_SELECT}, ${embed}`)
+        .eq("id", ids.property)
+        .single();
+      expect(r.error, JSON.stringify(r.error)).toBeNull();
+      const row = r.data as unknown as {
+        owner: { display_name: string } | null;
+        developer: { display_name: string } | null;
+        agent: { full_name: string } | null;
+      };
+      expect(row.owner?.display_name).toBe(`Olga Owner ${RUN}`);
+      expect(row.developer?.display_name).toBe(`Dimitris Developer ${RUN}`);
+      expect(row.agent?.full_name).toBe(`Test admin ce-admin-${RUN}@test.local`);
+    });
+  }
 });
 
 describe("every constraint a hint names exists, on the column it is named for", () => {

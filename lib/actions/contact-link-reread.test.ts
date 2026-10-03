@@ -83,9 +83,13 @@ const DEAL = "d0d0d0d0-4444-4444-8444-444444444444";
 const OFFER = "e0e0e0e0-5555-4555-8555-555555555555";
 const MANDATE = "f0f0f0f0-6666-4666-8666-666666666666";
 const DISTRICT = "b0b0b0b0-7777-4777-8777-777777777777";
+const AGENT = "a9a9a9a9-8888-4888-8888-888888888888";
 const T1 = "2026-10-03T08:00:00.000000+00:00";
 
 const UNAVAILABLE = "That contact is no longer available to you.";
+const CHECK_FAILED = "Could not check that contact just now — please try again.";
+/** a read that failed (postgrest-js answers a network or server failure as data:null + error) */
+const failed: FakePage = { data: null, error: { message: "upstream request timeout" } };
 const seen = (id: string): FakePage => ({ data: { id }, error: null });
 const unseen: FakePage = { data: null, error: null };
 /** the write the action attempts after its reads — failed on purpose, so the test stops there */
@@ -134,6 +138,17 @@ describe("createLead re-reads its property and its picked contact before anythin
     expect(logEvent).not.toHaveBeenCalled();
   });
 
+  it("a failed property read is reported as a failure — not as a property that is gone — and nothing is written", async () => {
+    const fake = use({ properties: [failed] });
+    const res = await createLead(
+      { error: null, savedAt: null },
+      form({ source: "phone", property_id: PROPERTY, new_contact_name: "Zed Test" }),
+    );
+    expect(res.error).toBe("Could not check that property just now — please try again.");
+    expect(fake.argsOf("contacts", "insert")).toHaveLength(0);
+    expect(fake.argsOf("leads", "insert")).toHaveLength(0);
+  });
+
   it("writes the lead with both links when it can see them", async () => {
     const fake = use({ properties: [seen(PROPERTY)], contacts: [seen(CONTACT)], leads: [stop] });
     const res = await createLead(
@@ -174,6 +189,28 @@ describe("updateDealSection (details) re-reads a buyer or seller the deal does n
       expect(logEvent).not.toHaveBeenCalled();
     });
   }
+
+  it("refuses when ONE of two new parties is unseen — a visible buyer does not carry an unseen seller", async () => {
+    const fake = use({ deals: [dealRow()], contacts: [seen(CONTACT), unseen] });
+    const res = await updateDealSection(
+      { error: null, savedAt: null },
+      form({ deal_id: DEAL, section: "details", title: "A deal", buyer_contact_id: CONTACT, seller_contact_id: OTHER }),
+    );
+    expect(res.error).toBe(UNAVAILABLE);
+    expect(fake.argsOf("contacts", "eq")).toEqual([["id", CONTACT], ["id", OTHER]]);
+    expect(fake.argsOf("deals", "update")).toHaveLength(0);
+  });
+
+  it("does not read a seller the deal already carries", async () => {
+    const fake = use({ deals: [dealRow({ seller: OTHER }), { data: { id: DEAL }, error: null }] });
+    const res = await updateDealSection(
+      { error: null, savedAt: null },
+      form({ deal_id: DEAL, section: "details", title: "Retitled", seller_contact_id: OTHER }),
+    );
+    expect(res.error).toBeNull();
+    expect(fake.argsOf("contacts", "eq")).toEqual([]);
+    expect(fake.argsOf("deals", "update")).toHaveLength(1);
+  });
 
   it("does not read a buyer the deal already carries — a retitle with the same buyer saves", async () => {
     const fake = use({ deals: [dealRow({ buyer: CONTACT }), { data: { id: DEAL }, error: null }] });
@@ -273,6 +310,13 @@ describe("createShareLink and createAvailabilityLink re-read the link's contact"
     const res = await createAvailabilityLink({ project_id: PROPERTY, contact_id: CONTACT });
     expect(res).toEqual({ error: UNAVAILABLE, path: null, savedAt: null });
     expect(fake.argsOf("contacts", "eq")).toEqual([["id", CONTACT]]);
+    expect(fake.argsOf("share_links", "insert")).toHaveLength(0);
+  });
+
+  it("a failed contact read is reported as a failure, and nothing is minted", async () => {
+    const fake = use({ properties: [{ data: [{ id: PROPERTY }], error: null }], contacts: [failed] });
+    const res = await createShareLink({ property_ids: [PROPERTY], contact_id: CONTACT });
+    expect(res).toEqual({ error: CHECK_FAILED, path: null, savedAt: null });
     expect(fake.argsOf("share_links", "insert")).toHaveLength(0);
   });
 
@@ -424,13 +468,48 @@ describe("updatePropertySection (parties) re-reads an owner or developer the pro
     expect(fake.argsOf("properties", "update")).toHaveLength(0);
   });
 
-  it("does not read an owner the property already carries", async () => {
-    const fake = use({ properties: [propertyRow("standalone", { owner: CONTACT }), stop] });
+  it("refuses when ONE of a project's two new parties is unseen — a visible owner does not carry an unseen developer", async () => {
+    const fake = use({ properties: [propertyRow("project")], contacts: [seen(CONTACT), unseen] });
     const res = await updatePropertySection(
       { error: null, savedAt: null },
-      form({ property_id: PROPERTY, section: "parties", expected_updated_at: T1, owner_contact_id: CONTACT, assigned_agent_id: "" }),
+      form({
+        property_id: PROPERTY,
+        section: "parties",
+        expected_updated_at: T1,
+        owner_contact_id: CONTACT,
+        developer_contact_id: OTHER,
+      }),
     );
+    expect(res.error).toBe(UNAVAILABLE);
+    expect(fake.argsOf("contacts", "eq")).toEqual([["id", CONTACT], ["id", OTHER]]);
+    expect(fake.argsOf("properties", "update")).toHaveLength(0);
+  });
+
+  // A real save (the agent changes), so the write is reached: the scripted
+  // update answer is what comes back — proof the parties branch ran past the
+  // re-read without reading the owner and developer the property already has.
+  it("does not read an owner or developer the property already carries, and the save goes through", async () => {
+    const fake = use({
+      properties: [propertyRow("project", { owner: CONTACT, developer: OTHER }), stop],
+      profiles: [{ data: { id: AGENT }, error: null }],
+    });
+    const res = await updatePropertySection(
+      { error: null, savedAt: null },
+      form({
+        property_id: PROPERTY,
+        section: "parties",
+        expected_updated_at: T1,
+        owner_contact_id: CONTACT,
+        developer_contact_id: OTHER,
+        assigned_agent_id: AGENT,
+      }),
+    );
+    expect(res.error, "the write was reached").toBe("stop here");
     expect(fake.argsOf("contacts", "eq"), "no read of an unchanged party").toEqual([]);
-    expect(res.error).not.toBe(UNAVAILABLE);
+    expect(fake.argsOf("properties", "update")[0]?.[0]).toMatchObject({
+      owner_contact_id: CONTACT,
+      developer_contact_id: OTHER,
+      assigned_agent_id: AGENT,
+    });
   });
 });

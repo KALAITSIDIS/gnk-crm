@@ -19,7 +19,7 @@ import { changesForChain, isNoteField } from "@/lib/services/event-changes";
 import { changedValue } from "@/lib/utils/diff";
 import { createPropertySchema } from "@/lib/validators/properties";
 import type { PropertyDuplicateMatch } from "@/lib/services/property-duplicate";
-import { CONTACT_UNAVAILABLE, contactsVisible } from "@/lib/services/contact-reread";
+import { contactLinkError } from "@/lib/services/contact-reread";
 
 export type PropertyActionState = { error: string | null };
 
@@ -206,7 +206,8 @@ export async function createProperty(
   // The party, re-read under RLS before its defaults are resolved and before
   // the reference is drawn — a refused owner must not burn a sequence number
   // (0139 binds both links to the organisation; this is the sentence).
-  if (!(await contactsVisible(supabase, [partyId]))) return { error: CONTACT_UNAVAILABLE };
+  const partyErr = await contactLinkError(supabase, [partyId]);
+  if (partyErr) return { error: partyErr };
 
   // typed from the generated Insert, not as loose strings: partyDefaultsSchema
   // already validates these against the same enums, and widening to `string`
@@ -582,13 +583,13 @@ export async function updatePropertySection(
     const parties = resolvePartyUpdates(parsed.data, { kind: current.kind });
     // an owner or developer the property does not already carry is re-read
     // under RLS (0139 binds both links to the organisation)
-    const partiesSeen = await contactsVisible(supabase, [
+    const partiesErr = await contactLinkError(supabase, [
       parties.owner_contact_id !== current.owner_contact_id ? parties.owner_contact_id : null,
       parties.developer_contact_id !== current.developer_contact_id
         ? parties.developer_contact_id
         : null,
     ]);
-    if (!partiesSeen) return { error: CONTACT_UNAVAILABLE, savedAt: null };
+    if (partiesErr) return { error: partiesErr, savedAt: null };
     updates = parties;
   } else {
     return { error: `Unknown section: ${section}`, savedAt: null };
