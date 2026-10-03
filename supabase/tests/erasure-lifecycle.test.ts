@@ -1161,8 +1161,9 @@ describe("0134 itself: replay over 0132, refusals, rollback, restore pack, trust
     });
   }
 
-  // 0133 (origin/fix/insert-id-adoption) adds an AFTER INSERT trigger on contacts and may land before or
-  // after this file: the preflight accepts exactly those two sets. CI has no 0133; the shared stack has it.
+  // 0133 adds an AFTER INSERT trigger on contacts: a fresh database applies it before this file, hosted
+  // took it after (0134 landed first, 2026-10-03). The preflight accepts exactly those two sets; the
+  // stand-in below only runs on a database without 0133.
   for (const with0133 of [false, true]) {
     it(`replays over 0132 ${with0133 ? "WITH" : "WITHOUT"} 0133's contacts_id_without_history`, async () => {
       await rolledBack(async (notices) => {
