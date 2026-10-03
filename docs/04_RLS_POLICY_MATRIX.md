@@ -115,6 +115,24 @@ rule), while CI's pinned CLI revokes them — so a new table that skips the REVO
 is session-updatable on hosted only, and only the restore pack's 0132 row, run
 against hosted, reads it (`1 25 true` instead of `0 25 true`).
 
+**Nor is an id that already has history (0133).** events, interaction notes and
+documents are keyed by `(entity_type, entity_id)` with no foreign key, so a row a
+trusted path deleted leaves its history behind, and before 0133 a session could
+INSERT a new row at that id and adopt it. `trg_insert_id_without_history()`
+(SECURITY DEFINER — it must see history an agent's `events_select` hides; callable
+by no role) runs AFTER INSERT as `<table>_id_without_history` on the 11 history
+subjects a session may insert — profiles (`user`, and any event it is the actor
+of), contacts, properties, property_keys (`key`), mandates, deals, leads,
+viewings, offers, share_links, tasks — and refuses a session's (role GUC
+authenticated / anon) row whose id has history of that entity_type in its own
+organisation, 42501 "A record cannot be created at an id that already has history
+(<table>.id)". AFTER, so it answers only for a row RLS admitted (no oracle for an
+aal1 session, a refused role or another organisation); an upsert that conflicts
+never reaches it. A fresh id (the lead convert's deal, the invite's profile) and
+the service role / postgres (imports, restores) pass. History keyed by an event
+PAYLOAD (documents, deal stages, a note's text, an imported viewing's feedback) is
+a BACKLOG entry.
+
 **A contact's erasure is not a session's to undo (0134).** `contacts_update`
 restricts rows, not columns, so before 0134 an admin or the contact's owning
 agent could PATCH an erased contact's `erased_at`, `erased_by`,
