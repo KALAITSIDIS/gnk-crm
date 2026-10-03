@@ -3185,7 +3185,13 @@ VERIFY, run before starting.
   `won` are all accepted, and `Marked_won` prints "Marked won" — the line `close_deal`'s real `won` produces — on a
   deal that is still open, for every viewer, for good (the actor is recorded). One reviewer of two also upheld an
   OFFER-entity `won` with `override: true` rendering "Offer: Marked won — admin override" on the deal's timeline.
-  Machine readers (`report_stage_conversion`, `close_deal`) match the exact strings and are unaffected. Fix options:
+  Machine readers (`report_stage_conversion`, `close_deal`) match the exact strings and are unaffected — but two
+  machine readers DO trust an exact-string type a session may write (found by T-routing-own-org's review, code-read
+  2026-10-03): `claim_notification_jobs` (0111) closes a pending desk alert as already sent when it finds an
+  `enquiry_alert` event with `outcome = 'sent'` for the lead in its organisation — any member may write one, and the
+  desk is never told; and `submit_public_enquiry`'s round-robin (0136) counts an own-organisation `assigned` event as
+  the agent's last assignment. Fix shape for both: require `actor_id is null` (the system writes them), or refuse a
+  session's `enquiry_alert` / `lead_escalation` / `assigned` in events_insert. Fix options:
   an allow-list of (entity_type, event_type) pairs a session may write — every new app event type then needs a
   migration — or a renderer that marks an unregistered type instead of printing it. Since 0131 the exact string
   `stage_changed` is refused too, under EVERY entity_type (the database writes a deal's; under `Deal` or `offer` it
@@ -3382,20 +3388,39 @@ VERIFY, run before starting.
   postgres in a rolled-back transaction, write an `opened` event for a live link L's id, today, in ANOTHER
   organisation with a session actor, then call `resolve_share_link` with L's token — no new `opened` event for L in
   L's organisation means open.
-- **`submit_public_enquiry`'s round-robin routing counts another organisation's leads and `assigned` events, S
-  (pre-existing; found by T-redact-notes-own-org's review, code-read 2026-10-03, not probed).** Its latest definition
-  (0114, ~273–296; a SECURITY DEFINER called for every website enquiry) picks the candidate among THIS organisation's
-  active routed agents, but orders them by `(select count(*) from leads l where l.assigned_agent_id = p.id and
-  l.status in (...))` and by the latest `assigned` event `where e.payload ->> 'to' = p.id::text` — neither bounded
-  by `org_id`. `events_insert` admits a session's `assigned` lead event with any payload in its own organisation, and
-  agent ids are readable (`cyprus_config.lead_routing.agents`, readable by any signed-in user — 0100), so another
-  organisation's agent can starve or flood one of our agents of website enquiries by writing `assigned` events
-  naming them (and possibly open leads assigned to them, if `leads.assigned_agent_id` takes another organisation's
-  profile — VERIFY that half before relying on it). It writes into our organisation (the lead's assignee and an
-  `assigned` event), destroys nothing, and needs a second tenant (production is single-tenant). Fix shape: `and
-  l.org_id = v_org_id` and `and e.org_id = v_org_id`, the replaced body guarded by its hosted md5, pinned RED first;
-  not deploy-coupled. **VERIFY:** `select regexp_replace(prosrc, '--[^\n]*', '', 'g') ~ 'e\.org_id = v_org_id' from
-  pg_proc where proname = 'submit_public_enquiry'` — false means open.
+- ~~**`submit_public_enquiry`'s round-robin routing counts another organisation's leads and `assigned` events, S
+  (pre-existing).**~~ **FIXED 2026-10-03 on branch `fix/routing-own-org` (migration 0136; hosted first, then merge —
+  not deploy-coupled) — DECISIONS `T-routing-own-org`.** Reproduced first (each half on its own, through a session of
+  the other organisation — both writes admitted by RLS: the lead naming our agent, the `assigned` event naming them)
+  and on production in a rolled-back transaction (20 foreign leads flipped the pick). The leads half is CONFIRMED —
+  `leads.assigned_agent_id` takes another organisation's profile (the profiles `(org_id, id)` decision above). 0136
+  bounds the two COUNTS only: the mode and the agent list are still the global `lead_routing` row any organisation's
+  admin may rewrite (the `cyprus_config` entry — lead_routing must become per organisation before a second tenant),
+  and a member of our own organisation may still steer the counts (the ANY-event-type entry). **VERIFY (fixed):**
+  `select regexp_replace(prosrc, '--[^\n]*', '', 'g') ~ 'l\.org_id = v_org_id' and regexp_replace(prosrc, '--[^\n]*',
+  '', 'g') ~ 'e\.org_id = v_org_id' from pg_proc where proname = 'submit_public_enquiry'` — true means fixed.
+  - **`submit_public_enquiry`'s round-robin routing counts another organisation's leads and `assigned` events, S
+    (original; found by T-redact-notes-own-org's review, code-read 2026-10-03, not probed).** Its latest definition
+    (0114, ~273–296; a SECURITY DEFINER called for every website enquiry) picks the candidate among THIS organisation's
+    active routed agents, but orders them by `(select count(*) from leads l where l.assigned_agent_id = p.id and
+    l.status in (...))` and by the latest `assigned` event `where e.payload ->> 'to' = p.id::text` — neither bounded
+    by `org_id`. `events_insert` admits a session's `assigned` lead event with any payload in its own organisation, and
+    agent ids are readable (`cyprus_config.lead_routing.agents`, readable by any signed-in user — 0100), so another
+    organisation's agent can starve or flood one of our agents of website enquiries by writing `assigned` events
+    naming them (and possibly open leads assigned to them, if `leads.assigned_agent_id` takes another organisation's
+    profile — VERIFY that half before relying on it). It writes into our organisation (the lead's assignee and an
+    `assigned` event), destroys nothing, and needs a second tenant (production is single-tenant). Fix shape: `and
+    l.org_id = v_org_id` and `and e.org_id = v_org_id`, the replaced body guarded by its hosted md5, pinned RED first;
+    not deploy-coupled. **VERIFY:** `select regexp_replace(prosrc, '--[^\n]*', '', 'g') ~ 'e\.org_id = v_org_id' from
+    pg_proc where proname = 'submit_public_enquiry'` — false means open.
+- **Desk alerts for every organisation go to ONE deployment-wide address, S (pre-existing; found by
+  T-routing-own-org's review, code-read 2026-10-03).** The enquiry-alert worker and the acknowledgement mail read
+  `ENQUIRY_ALERT_TO` from the environment (`lib/services/enquiry-alert.ts`, `enquiry-ack.ts` — the reply-to), so a
+  second organisation's website enquiries — the enquirer's name, e-mail, phone and message — would be mailed to the
+  first organisation's desk, and its enquirers' replies would go there too. Single-tenant today, so nothing leaks;
+  it must become per organisation (an organisation setting, or the profiles holding a desk role) before a second
+  tenant, or the worker must refuse to send for any organisation but a configured one. **VERIFY:** `grep -n
+  "ENQUIRY_ALERT_TO" lib/services/enquiry-alert.ts` — a process-wide recipient means open.
 - **Natural keys an id guard cannot see: a deleted property's `reference` and a deleted link's `token_sha256` can be
   taken again, S (pre-existing).** `properties.reference` is unique only among live rows (`UNIQUE (org_id,
   reference)`), sessions choose it at INSERT, and `properties_reference_immutable` fires on UPDATE only — so a deleted
