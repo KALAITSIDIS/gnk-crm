@@ -46,23 +46,24 @@
 -- organisations, so the sweep is what changes.
 --
 -- CONTRACT. Cron-only (no app code calls it; tests call it as the service
--- role or as postgres): no release-compat entry; the signature, the default (24), the return
--- (int, the number of leads redacted) and the event shape are unchanged;
--- database.types.ts regenerates identically. NOT deploy-coupled: hosted 0135
--- first, then merge.
+-- role or as postgres): no release-compat entry; the signature, the default
+-- (24), the return (int, the number of leads redacted) and the event shape are
+-- unchanged; database.types.ts regenerates identically. NOT deploy-coupled:
+-- hosted 0135 first, then merge.
 --
 -- LOCKS: CREATE OR REPLACE FUNCTION takes no table lock (it locks the
 -- function's catalogue row; a sweep already running keeps the old body to its
 -- end); the closing diagnostic reads leads and interaction_notes (ACCESS SHARE
--- — it waits only behind DDL). ONE transaction (checked below). Apply outside 03:05–03:20 UTC (the sweep) and
--- the usual 02:55–04:05 / 06:00 windows.
+-- — it waits only behind DDL). ONE transaction (checked below). Apply
+-- outside 03:05–03:20 UTC (the sweep) and the usual 02:55–04:05 / 06:00
+-- windows.
 --
 -- PREFLIGHT refuses, changing nothing, unless redact_stale_enquiries(integer)
 -- is the only function of that name, exactly 0094's body (its md5, carriage
 -- returns ignored as 0127 / 0130 do — hosted's read 2026-10-03 is identical),
 -- SECURITY DEFINER, owned by postgres, `search_path=public`, executable by the
--- service role and by no session role. A body that differs (a hand edit, a later migration) must be
--- read before anything replaces it.
+-- service role and by no session role. A body that differs (a hand edit, a
+-- later migration) must be read before anything replaces it.
 --
 -- EXISTING ROWS — READ-ONLY DIAGNOSTIC, NO REPAIR (the file's last row):
 --   lead_notes_under_other_orgs_lead   notes whose lead id is held by ANOTHER
@@ -80,9 +81,12 @@
 -- it writes; notes of the lead's own organisation; every other function.
 --
 -- NOT DONE HERE (BACKLOG): resolve_share_link's once-a-day `opened` throttle
--- counts an event of any organisation for the link id (it can only suppress
--- the inserting organisation's own `opened` line — split out as its own
--- entry: a 12.9k-character function anon calls, for a self-harm-only effect).
+-- counts an `opened` event of any organisation and any actor for the link id,
+-- so another organisation (or a session of ours) can suppress a link's system
+-- line for a day — no row of another organisation is written; split out as its
+-- own entry (a 12.9k-character function anon calls). submit_public_enquiry's
+-- round-robin routing counts another organisation's leads and `assigned`
+-- events (found by this change's review).
 --
 -- ROLLBACK, a forward migration in one transaction: restore 0094's function
 -- text and comment (supabase/tests/revert-0135.ts builds exactly that from
