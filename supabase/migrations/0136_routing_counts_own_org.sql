@@ -17,11 +17,12 @@
 --     `events e where … e.payload ->> 'to' = p.id::text`. Another
 --     organisation's session may write both — `events_insert` admits a
 --     session's `assigned` lead event with any payload in its own
---     organisation, and `leads.assigned_agent_id` references profiles(id)
---     alone — and the agent ids are readable (cyprus_config.lead_routing.agents,
---     readable by any signed-in user). So organisation B could starve or flood
---     one of our agents of new website enquiries: a write steered into our
---     organisation (the new lead's assignee and its `assigned` event).
+--     organisation (stamped with its own actor and now()), and
+--     `leads.assigned_agent_id` references profiles(id) alone — and the agent
+--     ids are readable (cyprus_config.lead_routing.agents, readable by any aal2
+--     session of any organisation). So organisation B's agent could starve or
+--     flood one of our agents of new website enquiries: a write steered into
+--     our organisation (the new lead's assignee and its `assigned` event).
 --     Destroys nothing; needs a second tenant. Hosted on 2026-10-03
 --     (read-only): one organisation, routing `off` — nothing was or can yet be
 --     reached.
@@ -32,12 +33,23 @@
 -- REPLACE keeps the oid, the owner (postgres) and the EXECUTE grants; SECURITY
 -- DEFINER and `search_path = public` are restated as 0114 wrote them, and so
 -- is 0087's lockdown (revoke from public / anon / authenticated, grant to the
--- service role). `e.org_id` also lets the events lookup lead with the
--- organisation (events_entity_idx).
+-- service role). `e.org_id` also bounds the events lookup to the
+-- organisation's own events (an org-leading index can serve it; none covers
+-- event_type or the payload's `to`).
 --
--- NOT the wider issue: `leads.assigned_agent_id` (and every other agent /
--- `*_by` column) may name another organisation's profile — BACKLOG's profiles
--- `(org_id, id)` decision. This file only stops such rows from counting here.
+-- NOT the wider issues — this file bounds the two COUNTS, nothing more:
+--   * the mode and the agent list are themselves ONE global row
+--     (cyprus_config.lead_routing) that the admin of ANY organisation may
+--     rewrite — and the app's own Settings save replaces it with the saver's
+--     agents — so another organisation can still empty, flip or narrow our
+--     rotation (BACKLOG "`cyprus_config` is one table for every
+--     organisation…"; lead_routing must become per organisation before a
+--     second tenant exists);
+--   * `leads.assigned_agent_id` (and every other agent / `*_by` column) may
+--     name another organisation's profile — BACKLOG's profiles `(org_id, id)`
+--     decision; this file only stops such rows from counting here;
+--   * a member of our own organisation may still steer the rotation with a
+--     session-written `assigned` event or a lead naming an agent (BACKLOG).
 --
 -- CONTRACT. Signature, defaults, return (lead_id, lead_org_id, replayed) and
 -- every write unchanged; database.types.ts regenerates identically; no
@@ -95,7 +107,7 @@ declare
 begin
   if (select count(*) from pg_proc p
        where p.pronamespace = 'public'::regnamespace and p.proname = 'submit_public_enquiry') <> 1 then
-    raise exception '0136 aborted: submit_public_enquiry is overloaded — nothing was changed';
+    raise exception '0136 aborted: submit_public_enquiry is missing or overloaded — nothing was changed';
   end if;
   select md5(replace(p.prosrc, E'\r', '')) into v_md5
     from pg_proc p

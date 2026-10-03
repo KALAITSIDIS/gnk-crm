@@ -21,13 +21,15 @@ import { BODY_0114_MD5, REVERT_0136_SQL, SIG_0136 as SIG, readMigration0136 } fr
  * next enquiry.
  *
  * THE FIX PINNED HERE: `l.org_id = v_org_id` and `e.org_id = v_org_id`; the
- * function is otherwise 0114's.
+ * function is otherwise 0114's. NOT pinned (BACKLOG): the mode and agent list
+ * are one GLOBAL row any organisation's admin may rewrite; a member of our own
+ * organisation may still steer the counts.
  *
- * Routing config is ONE global row (cyprus_config.lead_routing, `off` on the
- * shared stack and on hosted): every test that turns round-robin on does it
- * inside a transaction that is always rolled back, and calls the door there as
- * postgres — the plants that must be another organisation's own writes go
- * through PostgREST as its agent, committed, and are deleted at the end.
+ * Every test runs in a transaction that is always rolled back. The routing row
+ * (cyprus_config.lead_routing, `off` on the shared stack and on hosted) is set
+ * there; the other organisation's writes are made there AS ITS AGENT'S SESSION
+ * (role authenticated, its JWT claims at aal2 — leads_insert / events_insert
+ * apply), and the door is called as postgres. Nothing persists between tests.
  *
  * Requires the local Supabase stack. Run: npm run test:rls
  */
@@ -70,34 +72,71 @@ async function routing(mode: "round_robin" | "off", agents: string[]) {
     [JSON.stringify({ mode, agents })],
   );
 }
-/** Inside a transaction: one website enquiry through the door; the agent it was routed to (or null). */
-async function route(): Promise<string | null> {
+/** Inside a transaction: one website enquiry through the door; the lead and the agent it was routed to (or null). */
+async function route(): Promise<{ lead: string; agent: string | null }> {
   const { rows } = await o.query<{ lead_id: string }>(
     "select lead_id from submit_public_enquiry($1, 'ZZTEST Visitor', $2, null, 'ZZTEST routing probe')",
     [SLUG, `rr-${RUN}-${++n}@example.invalid`],
   );
   expect(rows, "the door accepted the enquiry").toHaveLength(1);
   const a = await o.query<{ assigned_agent_id: string | null }>("select assigned_agent_id from leads where id = $1", [rows[0]!.lead_id]);
-  return a.rows[0]!.assigned_agent_id;
+  return { lead: rows[0]!.lead_id, agent: a.rows[0]!.assigned_agent_id };
 }
 
-// the other organisation's own writes, through PostgREST as its agent
-async function theirLeadNaming(agentId: string) {
-  const r = await theirAgent.client
-    .from("leads")
-    .insert({ org_id: OTHER_ORG, source: "other", channel: "phone", status: "new", message: "ZZTEST their lead", assigned_agent_id: agentId })
-    .select("id");
-  expect(r.error, `a session may name another organisation's agent as assignee: ${JSON.stringify(r.error)}`).toBeNull();
-  return (r.data as Array<{ id: string }>)[0]!.id;
+/** Inside a transaction: `body` runs as the other organisation's agent's session (RLS applies), then postgres again. */
+async function asTheirSession(body: () => Promise<void>) {
+  await o.query("set local role authenticated");
+  await o.query("select set_config('request.jwt.claims', $1, true)", [
+    JSON.stringify({ sub: theirAgent.id, role: "authenticated", aal: "aal2" }),
+  ]);
+  try {
+    await body();
+  } finally {
+    await o.query("reset role");
+    await o.query("select set_config('request.jwt.claims', '', true)");
+  }
 }
+/** Their open leads naming one of our agents — a session write leads_insert admits (no RETURNING: the row is not theirs to read). */
+async function theirLeadsNaming(agentId: string, count = 1) {
+  await asTheirSession(async () => {
+    for (let i = 0; i < count; i++) {
+      await o.query(
+        "insert into leads (id, org_id, source, channel, status, message, assigned_agent_id) values ($1, $2, 'other', 'phone', 'new', 'ZZTEST their lead', $3)",
+        [randomUUID(), OTHER_ORG, agentId],
+      );
+    }
+  });
+}
+/** Their `assigned` lead event naming one of our agents — a session write events_insert admits. */
 async function theirAssignedEventNaming(agentId: string) {
-  const r = await theirAgent.client
-    .from("events")
-    .insert({ org_id: OTHER_ORG, actor_id: theirAgent.id, entity_type: "lead", entity_id: randomUUID(), event_type: "assigned", payload: { to: agentId } })
-    .select("id");
-  expect(r.error, `a session may write an assigned event naming another organisation's agent: ${JSON.stringify(r.error)}`).toBeNull();
-  return (r.data as Array<{ id: string }>)[0]!.id;
+  await asTheirSession(async () => {
+    await o.query(
+      `insert into events (org_id, actor_id, entity_type, entity_id, event_type, payload)
+       values ($1, $2, 'lead', $3, 'assigned', jsonb_build_object('to', $4::text))`,
+      [OTHER_ORG, theirAgent.id, randomUUID(), agentId],
+    );
+  });
 }
+/** The diagnostic's two counts, as 0136's last row reports them, after replaying it over 0114's body. */
+async function diagnostic() {
+  await o.query(REVERT_0136_SQL);
+  const res = await o.query(readMigration0136());
+  const results = Array.isArray(res) ? res : [res];
+  const m = /^leads_assigned_across_orgs=(\d+) assigned_events_across_orgs=(\d+)$/.exec(results[results.length - 1]!.rows[0].existing_rows);
+  expect(m, "the last row's shape").not.toBeNull();
+  return { leads: Number(m![1]), events: Number(m![2]) };
+}
+/** 0136's function statement, optionally edited — for the single-predicate checks. */
+function fn0136(edit: (s: string) => string = (s) => s) {
+  const sql = readMigration0136();
+  const a = sql.indexOf("create or replace function public.submit_public_enquiry(");
+  const b = sql.indexOf("end $fn$;", a) + "end $fn$;".length;
+  const text = sql.slice(a, b);
+  const edited = edit(text);
+  return { text: edited, changed: edited !== text };
+}
+const LEADS_PRED = ["where l.org_id = v_org_id\n                  and l.assigned_agent_id", "where l.assigned_agent_id"] as const;
+const EVENTS_PRED = ["where e.org_id = v_org_id\n                  and e.entity_type", "where e.entity_type"] as const;
 
 // ---------------------------------------------------------------------------
 beforeAll(async () => {
@@ -148,20 +187,20 @@ afterAll(async () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("1. another organisation cannot steer which of our agents gets the next website enquiry", () => {
-  it("their open leads naming our agent do not count against it", async () => {
-    for (let i = 0; i < 3; i++) await theirLeadNaming(a1.id);
+describe("1. another organisation's leads and `assigned` events no longer steer which of our agents gets the next enquiry", () => {
+  it("their `assigned` event naming a1 does not count as a1's last assignment", async () => {
     await rolledBack(async () => {
+      await theirAssignedEventNaming(a1.id);
       await routing("round_robin", [a1.id, a2.id]);
-      expect(await route(), "neither of ours has an open lead: the older profile, a1").toBe(a1.id);
+      expect((await route()).agent, "neither of ours was ever assigned here: the older profile, a1").toBe(a1.id);
     });
   });
 
-  it("their `assigned` events naming our agent do not count as its last assignment", async () => {
-    await theirAssignedEventNaming(a1.id);
+  it("their open leads naming a1 do not count against a1", async () => {
     await rolledBack(async () => {
+      await theirLeadsNaming(a1.id, 3);
       await routing("round_robin", [a1.id, a2.id]);
-      expect(await route(), "neither of ours was ever assigned here: the older profile, a1").toBe(a1.id);
+      expect((await route()).agent, "neither of ours has an open lead: the older profile, a1").toBe(a1.id);
     });
   });
 });
@@ -171,7 +210,7 @@ describe("2. our own counts still steer the rotation", () => {
     await rolledBack(async () => {
       await o.query("insert into leads (org_id, source, channel, status, assigned_agent_id) values ($1, 'other', 'phone', 'new', $2)", [ORG, a1.id]);
       await routing("round_robin", [a1.id, a2.id]);
-      expect(await route()).toBe(a2.id);
+      expect((await route()).agent).toBe(a2.id);
     });
   });
 
@@ -183,31 +222,36 @@ describe("2. our own counts still steer the rotation", () => {
         [ORG, randomUUID(), a1.id],
       );
       await routing("round_robin", [a1.id, a2.id]);
-      const first = await route();
-      expect(first).toBe(a2.id);
+      expect((await route()).agent).toBe(a2.id);
       // a2 now holds one open enquiry, a1 none: the next goes to a1
-      expect(await route()).toBe(a1.id);
+      expect((await route()).agent).toBe(a1.id);
     });
   });
 
-  it("`off` assigns nobody and writes no `assigned` event", async () => {
+  it("`off` assigns nobody and writes no `assigned` event for the lead", async () => {
     await rolledBack(async () => {
       await routing("off", [a1.id, a2.id]);
-      expect(await route()).toBeNull();
-      const ev = await o.query("select count(*)::int as n from events where org_id = $1 and event_type = 'assigned' and occurred_at = now()", [ORG]);
+      const { lead, agent } = await route();
+      expect(agent).toBeNull();
+      const ev = await o.query("select count(*)::int as n from events where entity_type = 'lead' and entity_id = $1 and event_type = 'assigned'", [lead]);
       expect(ev.rows[0].n).toBe(0);
     });
   });
 });
 
 describe("3. the function keeps its shape and its callers", () => {
-  it("a definer owned by postgres, search_path public, its comment stating the rule", async () => {
+  it("a definer owned by postgres, search_path public, its comment 0114's plus one sentence", async () => {
     const { rows } = await o.query(
       `select p.prosecdef, pg_get_userbyid(p.proowner) as owner, p.proconfig, obj_description(p.oid, 'pg_proc') as comment
          from pg_proc p where p.oid = '${SIG}'::regprocedure`,
     );
     expect(rows[0]).toMatchObject({ prosecdef: true, owner: "postgres", proconfig: ["search_path=public"] });
-    expect(rows[0].comment).toContain("0136: round-robin counts only this organisation's open leads and `assigned` events.");
+    let before = "";
+    await rolledBack(async () => {
+      await o.query(REVERT_0136_SQL);
+      before = (await o.query(`select obj_description('${SIG}'::regprocedure, 'pg_proc') as c`)).rows[0].c;
+    });
+    expect(rows[0].comment).toBe(`${before} 0136: round-robin counts only this organisation's open leads and \`assigned\` events.`);
   });
 
   it("the body is 0114's but the two predicates and their comment", async () => {
@@ -222,8 +266,8 @@ describe("3. the function keeps its shape and its callers", () => {
         "     -- 0136: both counts are THIS organisation's — another organisation's\n     -- sessions may write leads naming our agents and `assigned` events about\n     -- them, and must not steer which of our agents is next.\n",
         "",
       )
-      .replace("where l.org_id = v_org_id\n                  and l.assigned_agent_id", "where l.assigned_agent_id")
-      .replace("where e.org_id = v_org_id\n                  and e.entity_type", "where e.entity_type");
+      .replace(...LEADS_PRED)
+      .replace(...EVENTS_PRED);
     expect(stripped).toBe(before);
     expect(now).not.toBe(before);
   });
@@ -258,45 +302,41 @@ describe("4. the migration itself (rolled back)", () => {
     });
   });
 
-  it("the diagnostic counts a planted cross-organisation lead and event — and repairs nothing", async () => {
-    const lead = await theirLeadNaming(a2.id);
-    const ev = await theirAssignedEventNaming(a2.id);
+  it("the diagnostic counts exactly one more of each for one planted lead and one planted event — and repairs nothing", async () => {
     await rolledBack(async () => {
-      const lc = await o.query(
-        "select 1 from leads l join profiles p on p.id = l.assigned_agent_id where p.org_id <> l.org_id and l.id = $1",
-        [lead],
-      );
-      const ec = await o.query(
-        `select 1 from events e join profiles p on p.id::text = e.payload ->> 'to'
-          where e.entity_type = 'lead' and e.event_type = 'assigned' and p.org_id <> e.org_id and e.id = $1`,
-        [ev],
-      );
-      expect(lc.rowCount, "the planted lead is among the counted").toBe(1);
-      expect(ec.rowCount, "the planted event is among the counted").toBe(1);
-      await o.query(REVERT_0136_SQL);
-      const res = await o.query(readMigration0136());
-      const results = Array.isArray(res) ? res : [res];
-      const m = /^leads_assigned_across_orgs=(\d+) assigned_events_across_orgs=(\d+)$/.exec(results[results.length - 1]!.rows[0].existing_rows);
-      expect(Number(m![1])).toBeGreaterThanOrEqual(1);
-      expect(Number(m![2])).toBeGreaterThanOrEqual(1);
+      const before = await diagnostic();
+      const lead = randomUUID();
+      await asTheirSession(async () => {
+        await o.query(
+          "insert into leads (id, org_id, source, channel, status, message, assigned_agent_id) values ($1, $2, 'other', 'phone', 'new', 'ZZTEST their lead', $3)",
+          [lead, OTHER_ORG, a2.id],
+        );
+      });
+      await theirAssignedEventNaming(a2.id);
+      const after = await diagnostic();
+      expect(after).toEqual({ leads: before.leads + 1, events: before.events + 1 });
       const still = await o.query("select assigned_agent_id from leads where id = $1", [lead]);
       expect(still.rows[0].assigned_agent_id, "nothing repaired").toBe(a2.id);
     });
   });
 
-  it("the postflight refuses the file's own text without the predicates — the replaced body goes with the refusal", async () => {
-    const bad = readMigration0136()
-      .replace("where l.org_id = v_org_id\n                  and l.assigned_agent_id", "where l.assigned_agent_id")
-      .replace("where e.org_id = v_org_id\n                  and e.entity_type", "where e.entity_type");
-    expect(bad, "the edit really went in").not.toBe(readMigration0136());
-    await rolledBack(async () => {
-      await o.query(REVERT_0136_SQL);
-      await o.query("savepoint s");
-      await expect(o.query(bad)).rejects.toThrow(/0136 postflight: the round-robin counts are not bounded by the enquiry's organisation/);
-      await o.query("rollback to savepoint s");
-      expect(await bodyMd5()).toBe(BODY_0114_MD5);
+  for (const [what, edit] of [
+    ["both predicates missing", (s: string) => s.replace(...LEADS_PRED).replace(...EVENTS_PRED)],
+    ["the leads predicate missing", (s: string) => s.replace(...LEADS_PRED)],
+    ["the events predicate missing", (s: string) => s.replace(...EVENTS_PRED)],
+  ] as const) {
+    it(`the postflight refuses the file's own text with ${what} — the replaced body goes with the refusal`, async () => {
+      const bad = edit(readMigration0136());
+      expect(bad, "the edit really went in").not.toBe(readMigration0136());
+      await rolledBack(async () => {
+        await o.query(REVERT_0136_SQL);
+        await o.query("savepoint s");
+        await expect(o.query(bad)).rejects.toThrow(/0136 postflight: the round-robin counts are not bounded by the enquiry's organisation/);
+        await o.query("rollback to savepoint s");
+        expect(await bodyMd5()).toBe(BODY_0114_MD5);
+      });
     });
-  });
+  }
 
   for (const [what, drift, refusal] of [
     ["applied twice (the body is already 0136's)", "", /0136 aborted: submit_public_enquiry is not 0114's definer body/],
@@ -307,7 +347,7 @@ describe("4. the migration itself (rolled back)", () => {
     [
       "an overload beside it",
       "create function public.submit_public_enquiry(p text) returns int language sql as $f$ select 0 $f$",
-      /0136 aborted: submit_public_enquiry is overloaded/,
+      /0136 aborted: submit_public_enquiry is missing or overloaded/,
     ],
   ] as const) {
     it(`the preflight refuses: ${what}`, async () => {
@@ -351,27 +391,46 @@ describe("4. the migration itself (rolled back)", () => {
     }
   });
 
-  it("the rollback recipe restores 0114's body — and with it another organisation's steering", async () => {
-    await theirLeadNaming(a1.id);
-    await rolledBack(async () => {
-      await o.query(REVERT_0136_SQL);
-      expect(await bodyMd5()).toBe(BODY_0114_MD5);
-      await routing("round_robin", [a1.id, a2.id]);
-      expect(await route(), "at 0114 their leads count against a1").toBe(a2.id);
+  for (const [half, plant] of [
+    ["their open leads", () => theirLeadsNaming(a1.id, 3)],
+    ["their `assigned` event", () => theirAssignedEventNaming(a1.id)],
+  ] as const) {
+    it(`the rollback recipe restores 0114's body — and with it the steering by ${half}`, async () => {
+      await rolledBack(async () => {
+        await plant();
+        await o.query(REVERT_0136_SQL);
+        expect(await bodyMd5()).toBe(BODY_0114_MD5);
+        await routing("round_robin", [a1.id, a2.id]);
+        expect((await route()).agent, `at 0114 ${half} count against a1`).toBe(a2.id);
+      });
     });
-  });
+  }
 
-  it("the restore pack's 0136 row reads true now and false on 0114's body", async () => {
+  it("the restore pack's 0136 row reads true now, false on 0114's body and false with either predicate missing", async () => {
     const pack = readFileSync(join(import.meta.dirname, "..", "..", "scripts", "backup", "verify-restore.sql"), "utf-8").replace(/\r\n/g, "\n");
-    const from = pack.indexOf("  select 'SECURITY: the website enquiry's round-robin counts only its own organisation (0136)'".replace("enquiry's", "enquiry''s"));
+    const from = pack.indexOf("  select 'SECURITY: the website enquiry''s round-robin counts only its own organisation (0136)'");
     expect(from, "the pack carries the 0136 row").toBeGreaterThan(0);
     const to = pack.indexOf("\n  union all\n", from);
     const row = `select * from (${pack.slice(from, to)}) r(check_name, expected, actual)`;
     const now = (await o.query<{ expected: string; actual: string }>(row)).rows[0]!;
     expect(now).toMatchObject({ expected: "true", actual: "true" });
-    await rolledBack(async () => {
-      await o.query(REVERT_0136_SQL);
-      expect((await o.query<{ actual: string }>(row)).rows[0]!.actual).toBe("false");
-    });
+    for (const install of [
+      () => REVERT_0136_SQL,
+      () => {
+        const f = fn0136((s) => s.replace(...LEADS_PRED));
+        expect(f.changed).toBe(true);
+        return f.text;
+      },
+      () => {
+        const f = fn0136((s) => s.replace(...EVENTS_PRED));
+        expect(f.changed).toBe(true);
+        return f.text;
+      },
+    ]) {
+      await rolledBack(async () => {
+        await o.query(install());
+        expect((await o.query<{ actual: string }>(row)).rows[0]!.actual).toBe("false");
+      });
+    }
   });
 });
