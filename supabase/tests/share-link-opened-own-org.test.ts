@@ -26,11 +26,13 @@ import { BODY_0041_MD5, FORBIDDEN_0041, REVERT_0137_SQL, SIG_0137 as SIG, readMi
  * 0041's, and 0041's exposure guard still holds.
  *
  * Every behavioural test runs in a transaction that is always rolled back:
- * the link is made there as postgres; a session's event is written there as
- * that session (role authenticated, its JWT claims at aal2 — events_insert
- * applies), the other organisation's system line as postgres with a null
- * actor; and the page is resolved there as postgres (the function is a
- * definer; who calls it does not change what it writes).
+ * the link is made there as postgres; a session's line is planted there as
+ * postgres with the session's actor — the shape a session could write before
+ * 0138, which now refuses a session's `opened` (rows written before it still
+ * exist, and the throttle must still ignore them); the other organisation's
+ * system line as postgres with a null actor; and the page is resolved there
+ * as postgres (the function is a definer; who calls it does not change what it
+ * writes).
  *
  * Requires the local Supabase stack. Run: npm run test:rls
  */
@@ -99,20 +101,17 @@ async function systemLinesToday(linkId: string) {
   );
   return rows[0]!.n;
 }
-/** Inside a transaction: an `opened` share_link event at the link's id, written by a session of `who` in `org`. */
+/**
+ * Inside a transaction: an `opened` share_link event at the link's id with `who` as its actor in `org` — the line a
+ * session could write before 0138 (since 0138 events_insert refuses a session's `opened`, so it is planted as
+ * postgres: rows written before 0138 still exist, and the throttle must still ignore them).
+ */
 async function sessionOpened(who: TestUser, org: string, linkId: string) {
-  await o.query("set local role authenticated");
-  await o.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: who.id, role: "authenticated", aal: "aal2" })]);
-  try {
-    await o.query(
-      `insert into events (org_id, actor_id, entity_type, entity_id, event_type, payload)
-       values ($1, $2, 'share_link', $3, 'opened', '{}'::jsonb)`,
-      [org, who.id, linkId],
-    );
-  } finally {
-    await o.query("reset role");
-    await o.query("select set_config('request.jwt.claims', '', true)");
-  }
+  await o.query(
+    `insert into events (org_id, actor_id, entity_type, entity_id, event_type, payload)
+     values ($1, $2, 'share_link', $3, 'opened', '{}'::jsonb)`,
+    [org, who.id, linkId],
+  );
 }
 /** Inside a transaction: another organisation's SYSTEM `opened` line at the link's id (as a deleted link of theirs leaves it). */
 async function theirSystemLine(linkId: string) {
