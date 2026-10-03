@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { toCsv } from "./csv";
-import { propertyCsvColumns, type PropertyExportRow } from "./property-export";
+import { PROPERTY_EXPORT_BASE_SELECT, propertyCsvColumns, type PropertyExportRow } from "./property-export";
 
 const base: PropertyExportRow = {
   reference: "PAF0001",
@@ -103,5 +103,20 @@ describe("propertyCsvColumns — relationships (audit finding 14)", () => {
     // an empty cell is "unknown"; a 0 would be a place in the Gulf of Guinea
     expect(value("Latitude")).toBe("");
     expect(value("Longitude")).toBe("");
+  });
+});
+
+describe("PROPERTY_EXPORT_BASE_SELECT's party embeds", () => {
+  // A column hint answers PGRST200 once its key is composite (0139 re-keys the
+  // owner and developer links, keeping their names); the constraint-name hints
+  // resolve on both sides of it — supabase/tests/contact-link-embeds.test.ts
+  // runs them live.
+  it("hints owner, developer and agent by constraint name, never by column", () => {
+    expect(PROPERTY_EXPORT_BASE_SELECT).toContain("owner:contacts!properties_owner_contact_id_fkey(display_name)");
+    expect(PROPERTY_EXPORT_BASE_SELECT).toContain(
+      "developer:contacts!properties_developer_contact_id_fkey(display_name)",
+    );
+    expect(PROPERTY_EXPORT_BASE_SELECT).toContain("agent:profiles!properties_assigned_agent_id_fkey(full_name)");
+    expect(PROPERTY_EXPORT_BASE_SELECT).not.toMatch(/![a-z_]+_id\(/);
   });
 });

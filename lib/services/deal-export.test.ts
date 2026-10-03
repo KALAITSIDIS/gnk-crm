@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { toCsv } from "./csv";
-import { dealCsvColumns, type DealExportRow } from "./deal-export";
+import { DEAL_EXPORT_SELECT, dealCsvColumns, type DealExportRow } from "./deal-export";
 
 const AGENTS = new Map([["a1", "Nino Charalambous"]]);
 
@@ -52,5 +52,17 @@ describe("dealCsvColumns", () => {
     const row = line(csv);
     // Won and Lost are consecutive empty cells before Lost reason (also empty)
     expect(row).not.toContain("ghost");
+  });
+});
+
+describe("DEAL_EXPORT_SELECT's contact embeds", () => {
+  // A column hint (`contacts!buyer_contact_id`) answers PGRST200 once its key
+  // is composite (0139 re-keys both, keeping their names), and the export then
+  // 500s — no type check sees it. The constraint-name hints resolve on both
+  // sides of 0139; supabase/tests/contact-link-embeds.test.ts runs them live.
+  it("hints buyer and seller by constraint name, never by column", () => {
+    expect(DEAL_EXPORT_SELECT).toContain("buyer:contacts!deals_buyer_contact_id_fkey(display_name)");
+    expect(DEAL_EXPORT_SELECT).toContain("seller:contacts!deals_seller_contact_id_fkey(display_name)");
+    expect(DEAL_EXPORT_SELECT).not.toMatch(/![a-z_]+_id\(/);
   });
 });

@@ -11,9 +11,18 @@ import { parseLocationPoint } from "@/lib/utils/geo";
  * spreadsheet can sum them. A missing value is an empty cell, never "0".
  */
 
-/** SELECT columns excluding the dynamic mandate embed the route appends. */
+/**
+ * SELECT columns excluding the dynamic mandate embed the route appends.
+ *
+ * The owner, developer and agent embeds are hinted by CONSTRAINT NAME, not by
+ * column: a column hint stops resolving (PGRST200) once its key is composite,
+ * and 0139 makes the two contact keys `(org_id, <col>) → contacts (org_id, id)`
+ * while KEEPING their names, so these hints resolve before and after it
+ * (T-contact-links-org-isolation; the agent key follows the same rule ahead of
+ * its own re-key).
+ */
 export const PROPERTY_EXPORT_BASE_SELECT =
-  "reference, kind, property_type, transaction_type, status, visibility, title, address, bedrooms, bathrooms, covered_area_sqm, plot_area_sqm, asking_price, rent_price_month, quality_score, title_deed_status, permit_status, location, districts(name), areas(name), owner:contacts!owner_contact_id(display_name), developer:contacts!developer_contact_id(display_name), agent:profiles!assigned_agent_id(full_name)";
+  "reference, kind, property_type, transaction_type, status, visibility, title, address, bedrooms, bathrooms, covered_area_sqm, plot_area_sqm, asking_price, rent_price_month, quality_score, title_deed_status, permit_status, location, districts(name), areas(name), owner:contacts!properties_owner_contact_id_fkey(display_name), developer:contacts!properties_developer_contact_id_fkey(display_name), agent:profiles!properties_assigned_agent_id_fkey(full_name)";
 
 type Multilang = { en?: string } | null;
 type MandateEmbedRow = { type: string; status: string };

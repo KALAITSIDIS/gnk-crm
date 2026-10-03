@@ -16,6 +16,7 @@ import {
   type MandateStatus,
 } from "@/lib/validators/mandates";
 import { canRenew, resolveRenewalDates, toIsoDate } from "@/lib/services/mandate-renewal";
+import { CONTACT_UNAVAILABLE, contactsVisible } from "@/lib/services/contact-reread";
 
 export type MandateActionState = { error: string | null; savedAt: number | null };
 
@@ -147,6 +148,14 @@ export async function saveMandate(
       .eq("id", d.mandate_id)
       .maybeSingle();
     if (!current) return { error: "Mandate not found", savedAt: null };
+    // an owner the mandate does not already carry is re-read (0139 binds it)
+    if (
+      !(await contactsVisible(supabase, [
+        d.owner_contact_id !== current.owner_contact_id ? d.owner_contact_id : null,
+      ]))
+    ) {
+      return { error: CONTACT_UNAVAILABLE, savedAt: null };
+    }
 
     // the schema's refine only sees form-supplied pairs — cross-check against
     // the kept start date when the form leaves it unchanged
@@ -202,6 +211,10 @@ export async function saveMandate(
     return { error: null, savedAt: Date.now() };
   }
 
+  // the owner, re-read under RLS before the mandate names it (0139 binds it)
+  if (!(await contactsVisible(supabase, [d.owner_contact_id]))) {
+    return { error: CONTACT_UNAVAILABLE, savedAt: null };
+  }
   const { data: created, error } = await supabase
     .from("mandates")
     .insert({

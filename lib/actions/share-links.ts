@@ -14,6 +14,7 @@ import {
 } from "@/lib/services/share-links";
 import { generateShareToken, hashShareToken } from "@/lib/services/share-links-token";
 import { createClient } from "@/lib/supabase/server";
+import { CONTACT_UNAVAILABLE, contactsVisible } from "@/lib/services/contact-reread";
 
 export type ShareLinkActionState = {
   error: string | null;
@@ -72,6 +73,10 @@ export async function createShareLink(
       path: null,
       savedAt: null,
     };
+  }
+  // the recipient, read the same way (0139 binds the link to the organisation)
+  if (!(await contactsVisible(supabase, [d.contact_id]))) {
+    return { error: CONTACT_UNAVAILABLE, path: null, savedAt: null };
   }
 
   const token = generateShareToken();
@@ -208,6 +213,10 @@ export async function createAvailabilityLink(
         savedAt: null,
       };
     }
+  }
+  // the recipient, read the same way (0139 binds the link to the organisation)
+  if (!(await contactsVisible(supabase, [d.contact_id]))) {
+    return { error: CONTACT_UNAVAILABLE, path: null, savedAt: null };
   }
 
   const token = generateShareToken();
