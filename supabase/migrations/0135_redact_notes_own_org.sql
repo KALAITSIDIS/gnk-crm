@@ -21,18 +21,23 @@
 --     contact and a `received_at` 25 months back, and the next night's sweep
 --     blanked OUR notes for that id: `body` null, `redacted_at` set — an
 --     irreversible cross-tenant write (measured locally through PostgREST).
---     Hosted held 25 orphaned lead ids on 2026-10-03; production was not
---     written (read-only checks and rolled-back probes only).
+--     Hosted on 2026-10-03 (read-only): one organisation, no lead notes, no
+--     lead due for the sweep — nothing there was or can yet be reached; the
+--     hole opens with a second tenant. Production was not written (read-only
+--     checks and rolled-back probes only).
 --   * The function's own two halves already disagreed: the leads half is
 --     bounded by the row it redacts (`due` → `done` carry the lead's org_id);
 --     only the notes half ignored it.
 --
 -- THE FIX: the same function, body unchanged but one predicate —
 -- `and n.org_id = done.org_id` — so the sweep blanks the notes of the lead it
--- redacted, in that lead's organisation, and nothing else. CREATE OR REPLACE
--- keeps the oid, owner (postgres), SECURITY DEFINER, `search_path = public`,
--- its EXECUTE grants (postgres, service_role — no session role) and the cron
--- job, which calls it by name. The comment is restated with this rule.
+-- redacted, in that lead's organisation, and nothing else (and, the other way
+-- round, a note another organisation planted on OUR lead's id is no longer
+-- blanked by our sweep). CREATE OR REPLACE keeps the oid, the owner (postgres)
+-- and the EXECUTE grants (postgres, service_role — no session role), and the
+-- cron job calls it by name; SECURITY DEFINER and `search_path = public` are
+-- restated in the text below, as 0094 wrote them. The comment is restated with
+-- this rule.
 --
 -- WHY NOT a reader-side fix (refuse the colliding lead at INSERT): 0133
 -- deliberately lets a row of one organisation take an id whose history is
@@ -41,20 +46,22 @@
 -- organisations, so the sweep is what changes.
 --
 -- CONTRACT. Cron-only (no app code calls it; tests call it as the service
--- role): no release-compat entry; the signature, the default (24), the return
+-- role or as postgres): no release-compat entry; the signature, the default (24), the return
 -- (int, the number of leads redacted) and the event shape are unchanged;
 -- database.types.ts regenerates identically. NOT deploy-coupled: hosted 0135
 -- first, then merge.
 --
--- LOCKS: none on any table (CREATE OR REPLACE FUNCTION locks the function's
--- catalogue row; a sweep already running keeps the old body to its end). ONE
--- transaction (checked below). Apply outside 03:05–03:20 UTC (the sweep) and
+-- LOCKS: CREATE OR REPLACE FUNCTION takes no table lock (it locks the
+-- function's catalogue row; a sweep already running keeps the old body to its
+-- end); the closing diagnostic reads leads and interaction_notes (ACCESS SHARE
+-- — it waits only behind DDL). ONE transaction (checked below). Apply outside 03:05–03:20 UTC (the sweep) and
 -- the usual 02:55–04:05 / 06:00 windows.
 --
 -- PREFLIGHT refuses, changing nothing, unless redact_stale_enquiries(integer)
--- is exactly 0094's body (its md5 — hosted's read 2026-10-03 is identical),
--- SECURITY DEFINER, owned by postgres, `search_path=public`, and executable by
--- no session role. A body that differs (a hand edit, a later migration) must be
+-- is the only function of that name, exactly 0094's body (its md5, carriage
+-- returns ignored as 0127 / 0130 do — hosted's read 2026-10-03 is identical),
+-- SECURITY DEFINER, owned by postgres, `search_path=public`, executable by the
+-- service role and by no session role. A body that differs (a hand edit, a later migration) must be
 -- read before anything replaces it.
 --
 -- EXISTING ROWS — READ-ONLY DIAGNOSTIC, NO REPAIR (the file's last row):
@@ -104,7 +111,11 @@ declare
   v_sig constant text := 'public.redact_stale_enquiries(integer)';
   v_md5 text;
 begin
-  select md5(p.prosrc) into v_md5
+  if (select count(*) from pg_proc p
+       where p.pronamespace = 'public'::regnamespace and p.proname = 'redact_stale_enquiries') <> 1 then
+    raise exception '0135 aborted: redact_stale_enquiries is overloaded (the cron calls it by name) — nothing was changed';
+  end if;
+  select md5(replace(p.prosrc, E'\r', '')) into v_md5
     from pg_proc p
    where p.oid = to_regprocedure(v_sig) and p.prosecdef
      and pg_get_userbyid(p.proowner) = 'postgres'
@@ -115,7 +126,10 @@ begin
   if has_function_privilege('anon', v_sig, 'execute') or has_function_privilege('authenticated', v_sig, 'execute') then
     raise exception '0135 aborted: a session role may execute redact_stale_enquiries — nothing was changed';
   end if;
-  raise notice '0135: preflight passed — redact_stale_enquiries is 0094''s definer body, executable by no session role';
+  if not has_function_privilege('service_role', v_sig, 'execute') then
+    raise exception '0135 aborted: the service role may not execute redact_stale_enquiries (its grants are not 0092''s) — nothing was changed';
+  end if;
+  raise notice '0135: preflight passed — redact_stale_enquiries is 0094''s definer body, executable by the service role and no session role';
 end $$;
 
 -- ---------------------------------------------------------------------------

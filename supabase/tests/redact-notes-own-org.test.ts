@@ -73,7 +73,7 @@ async function noteState(id: string) {
   return rows[0];
 }
 async function bodyMd5() {
-  const { rows } = await o.query<{ md5: string }>(`select md5(prosrc) as md5 from pg_proc where oid = '${SIG}'::regprocedure`);
+  const { rows } = await o.query<{ md5: string }>(`select md5(replace(prosrc, E'\\r', '')) as md5 from pg_proc where oid = '${SIG}'::regprocedure`);
   return rows[0]!.md5;
 }
 
@@ -140,6 +140,7 @@ afterAll(async () => {
   for (const org of [ORG, OTHER_ORG]) {
     await o.query("delete from interaction_notes where org_id = $1", [org]);
     await o.query("delete from leads where org_id = $1", [org]);
+    await o.query("delete from contacts where org_id = $1", [org]);
   }
   for (const id of userIds) {
     const { error } = await svc.auth.admin.deleteUser(id);
@@ -189,14 +190,19 @@ describe("1. another organisation's lead at our deleted lead's id does not get o
 });
 
 describe("2. what the sweep still does in its own organisation", () => {
-  it("a stale unlinked website lead: its message redacted, its own notes blanked, one shape-only event", async () => {
+  it("a stale unlinked website lead: its message redacted, its own notes blanked, one shape-only event — another organisation's note at its id is not ours to blank", async () => {
     const y = await lead(ORG);
     const a = await note(ORG, y, `ZZTEST own note a ${RUN}`, admin.id);
     const b = await note(ORG, y, `ZZTEST own note b ${RUN}`, admin.id);
+    const planted = await note(OTHER_ORG, y, `ZZTEST their note on our id ${RUN}`, otherAgent.id);
     await rolledBack(async () => {
       await sweep();
       expect(await noteState(a)).toEqual({ body: null, redacted: true });
       expect(await noteState(b)).toEqual({ body: null, redacted: true });
+      expect(await noteState(planted), "0094 blanked it too; 0135 leaves another organisation's note alone").toEqual({
+        body: `ZZTEST their note on our id ${RUN}`,
+        redacted: false,
+      });
       const { rows } = await o.query("select message from leads where id = $1", [y]);
       expect(rows[0].message).toBe(REDACTED);
       const ev = await o.query("select actor_id, payload from events where entity_id = $1 and event_type = 'redacted'", [y]);
@@ -204,24 +210,30 @@ describe("2. what the sweep still does in its own organisation", () => {
     });
   });
 
-  it("leads the sweep does not redact keep their notes: young, linked, converted, not from the website", async () => {
-    const c = (await o.query<{ id: string }>("insert into contacts (org_id, first_name) values ($1, 'ZZTEST') returning id", [ORG])).rows[0]!.id;
-    const young = await lead(ORG, { months: 23 });
-    const converted = await lead(ORG, { status: "converted" });
-    const desk = await lead(ORG, { source: "phone" });
-    const linked = await lead(ORG);
-    await o.query("update leads set contact_id = $1 where id = $2", [c, linked]);
-    const kept: string[] = [];
-    for (const id of [young, converted, desk, linked]) kept.push(await note(ORG, id, `ZZTEST kept ${id}`, admin.id));
+  it("leads the sweep does not redact keep their notes — young, linked, converted, not from the website — in a sweep that redacts a lead of ours", async () => {
+    const made: string[] = [];
+    let c: string | undefined;
     try {
+      c = (await o.query<{ id: string }>("insert into contacts (org_id, first_name) values ($1, 'ZZTEST') returning id", [ORG])).rows[0]!.id;
+      const due = await lead(ORG);
+      const young = await lead(ORG, { months: 23 });
+      const converted = await lead(ORG, { status: "converted" });
+      const desk = await lead(ORG, { source: "phone" });
+      const linked = await lead(ORG);
+      made.push(due, young, converted, desk, linked);
+      await o.query("update leads set contact_id = $1 where id = $2", [c, linked]);
+      const blanked = await note(ORG, due, `ZZTEST due ${due}`, admin.id);
+      const kept: string[] = [];
+      for (const id of [young, converted, desk, linked]) kept.push(await note(ORG, id, `ZZTEST kept ${id}`, admin.id));
       await rolledBack(async () => {
         await sweep();
+        expect(await noteState(blanked), "the due lead's note goes in the same sweep").toEqual({ body: null, redacted: true });
         for (const n of kept) expect((await noteState(n))?.redacted, n).toBe(false);
       });
     } finally {
-      await o.query("delete from interaction_notes where entity_id = any($1)", [[young, converted, desk, linked]]);
-      await o.query("delete from leads where id = any($1)", [[young, converted, desk, linked]]);
-      await o.query("delete from contacts where id = $1", [c]);
+      await o.query("delete from interaction_notes where entity_id = any($1)", [made]);
+      await o.query("delete from leads where id = any($1)", [made]);
+      if (c) await o.query("delete from contacts where id = $1", [c]);
     }
   });
 });
@@ -289,22 +301,78 @@ describe("4. the migration itself (rolled back)", () => {
     });
   });
 
-  it("the diagnostic counts a live collision and whether the note was blanked", async () => {
+  it("the diagnostic counts a live collision, and counts it again as redacted once 0094's sweep has blanked it", async () => {
     const { ours } = await collision();
-    await rolledBack(async () => {
-      await o.query(REVERT_0135_SQL);
-      const before = await o.query<{ n: number; r: number }>(
-        `select count(*)::int as n, count(*) filter (where n.redacted_at is not null)::int as r
-           from interaction_notes n join leads l on l.id = n.entity_id where n.entity_type = 'lead' and l.org_id <> n.org_id`,
-      );
-      expect(before.rows[0]!.n).toBeGreaterThanOrEqual(1);
+    const diag = async () => {
       const res = await o.query(readMigration0135());
       const results = Array.isArray(res) ? res : [res];
-      expect(results[results.length - 1]!.rows[0].existing_rows).toBe(
-        `lead_notes_under_other_orgs_lead=${before.rows[0]!.n} of_them_redacted=${before.rows[0]!.r}`,
-      );
-      expect((await noteState(ours))?.redacted, "the diagnostic repairs and writes nothing").toBe(false);
+      const m = /^lead_notes_under_other_orgs_lead=(\d+) of_them_redacted=(\d+)$/.exec(results[results.length - 1]!.rows[0].existing_rows);
+      expect(m, "the last row's shape").not.toBeNull();
+      return { n: Number(m![1]), r: Number(m![2]) };
+    };
+    // the diagnostic's own predicate, for this one note: counted, and counted as redacted
+    const counted = async (redacted: boolean) =>
+      (await o.query(
+        `select 1 from interaction_notes n join leads l on l.id = n.entity_id
+          where n.entity_type = 'lead' and l.org_id <> n.org_id and n.id = $1
+            and (n.redacted_at is not null) = $2`,
+        [ours, redacted],
+      )).rowCount;
+    await rolledBack(async () => {
+      await o.query(REVERT_0135_SQL);
+      const first = await diag();
+      expect(await counted(false), "our colliding note is among the counted rows, not redacted").toBe(1);
+      expect(await noteState(ours), "the diagnostic repairs and writes nothing").toEqual({ body: `ZZTEST our note ${RUN}`, redacted: false });
+      // at 0094 the sweep blanks it — the shape the diagnostic reports as redacted.
+      // (It also blanks the earlier tests' committed collisions: hence "more", not "+1".)
+      await o.query(REVERT_0135_SQL);
+      await sweep();
+      expect((await noteState(ours))?.redacted).toBe(true);
+      await o.query(REVERT_0135_SQL);
+      const second = await diag();
+      expect(second.n, "the same collisions").toBe(first.n);
+      expect(await counted(true), "our note is now counted as redacted").toBe(1);
+      expect(second.r, "more of them redacted").toBeGreaterThan(first.r);
     });
+  });
+
+  it("the postflight refuses the file's own text if the notes predicate is missing — changing nothing", async () => {
+    const bad = readMigration0135().replace("\n       and n.org_id = done.org_id", "");
+    expect(bad, "the edit really went in").not.toBe(readMigration0135());
+    await rolledBack(async () => {
+      await o.query(REVERT_0135_SQL);
+      await o.query("savepoint s");
+      await expect(o.query(bad)).rejects.toThrow(/0135 postflight: the notes half does not bound the notes by the redacted lead's organisation/);
+      await o.query("rollback to savepoint s");
+      expect(await bodyMd5(), "the replaced body went with the refusal").toBe(BODY_0094_MD5);
+    });
+  });
+
+  it("the file refuses before it changes anything", () => {
+    const sql = readMigration0135().replace(/--[^\n]*/g, "");
+    const firstChange = sql.search(/^\s*(create|alter|drop|revoke|grant|comment)\b/im);
+    expect(firstChange).toBeGreaterThan(0);
+    expect(sql.lastIndexOf("0135 aborted")).toBeLessThan(firstChange);
+    expect(sql.indexOf("0135 postflight")).toBeGreaterThan(firstChange);
+  });
+
+  it("outside one transaction it refuses before anything else (SET LOCAL did not take: the one-transaction guard)", async () => {
+    // only the file's opening statements, on a fresh connection with no BEGIN:
+    // each query is then its own transaction, as a tool that splits a file
+    // into statements would run it — never the whole file this way
+    const sql = readMigration0135();
+    const from = sql.indexOf("set local lock_timeout = '5s';");
+    const doStart = sql.indexOf("do $$", from);
+    const doEnd = sql.indexOf("end $$;", doStart) + "end $$;".length;
+    expect(sql.slice(doStart, doEnd)).toMatch(/must run as ONE transaction/);
+    const c = new Client({ connectionString: DB_URL });
+    await c.connect();
+    try {
+      await c.query("set local lock_timeout = '5s'");
+      await expect(c.query(sql.slice(doStart, doEnd))).rejects.toThrow(/0135 aborted: this file must run as ONE transaction/);
+    } finally {
+      await c.end();
+    }
   });
 
   for (const [what, drift, refusal] of [
@@ -312,6 +380,12 @@ describe("4. the migration itself (rolled back)", () => {
     ["a body that differs from 0094's", "__REVERT_EDITED__", /0135 aborted: redact_stale_enquiries is not 0094's definer body/],
     ["not a definer", `alter function ${SIG} security invoker`, /0135 aborted: redact_stale_enquiries is not 0094's definer body \(md5 missing/],
     ["a session role may execute it", `grant execute on function ${SIG} to authenticated`, /0135 aborted: a session role may execute redact_stale_enquiries/],
+    ["the service role may not execute it", `revoke execute on function ${SIG} from service_role`, /0135 aborted: the service role may not execute redact_stale_enquiries/],
+    [
+      "an overload beside it (the cron calls it by name)",
+      "create function public.redact_stale_enquiries(p text) returns int language sql as $f$ select 0 $f$",
+      /0135 aborted: redact_stale_enquiries is overloaded/,
+    ],
   ] as const) {
     it(`the preflight refuses, changing nothing: ${what}`, async () => {
       await rolledBack(async () => {
