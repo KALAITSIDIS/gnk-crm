@@ -13,9 +13,9 @@ export const CONTACT_CHECK_FAILED = "Could not check that contact just now — p
  * `contacts_select` is organisation-wide for every role, so "visible" here
  * means exactly "a contact of the caller's own organisation" — what migration
  * 0139's composite keys enforce on leads, deals, offers, share_links, mandates
- * and properties. Before 0139 those links are single-column and accept another
- * organisation's contact id; after it they refuse one with 23503 and the
- * driver's message. This read turns both into a sentence and stops the write
+ * and properties. Before 0139 those links were single-column and accepted
+ * another organisation's contact id; since it they refuse one with 23503 and
+ * the driver's message. This read turns both into a sentence and stops the write
  * before anything lands. It is the MESSAGE, not the boundary: the key is the
  * boundary (createReservation's re-reads, 0126 / 0129, are the same idiom).
  *

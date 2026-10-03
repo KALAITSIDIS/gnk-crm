@@ -5,11 +5,11 @@ import { fakeClient, type FakePage } from "@/lib/testing/fake-client";
  * Every server action that links a contact a form posted re-reads it under
  * RLS before it writes (T-contact-links-org-isolation, release 1 of 2).
  *
- * Ten links onto `contacts` are still single-column: leads, deals (buyer,
- * seller), offers, share links, mandates and properties (owner, developer)
- * accept another organisation's contact id today, and migration 0139 binds
- * each to the row's organisation — from then on a crafted foreign id is
- * refused 23503 and the user would see the driver's message. These actions
+ * Until migration 0139 the links onto `contacts` were single-column: leads,
+ * deals (buyer, seller), offers, share links, mandates and properties (owner,
+ * developer) accepted another organisation's contact id. 0139 binds each to
+ * the row's organisation — a crafted foreign id is refused 23503, and without
+ * these re-reads the user would see the driver's message. These actions
  * wrote the form's id straight through; now each reads it first and answers a
  * sentence, writing nothing. `contacts_select` is organisation-wide for every
  * role, so the read refuses exactly what the key will refuse: never a

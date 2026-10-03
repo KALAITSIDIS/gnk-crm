@@ -3001,12 +3001,10 @@ VERIFY, run before starting.
   `tests/unit/merge-repoints-every-fk.test.ts` to fail on a repoint without it. Found by
   T-task-viewing-org-isolation's review. **VERIFY:** `grep -c 'eq("org_id"' lib/actions/merge-contacts.ts` — fewer
   than the number of `.from(` repoints means open.
-- **Ten links onto `contacts` are still single-column, S/M — IN PROGRESS (T-contact-links-org-isolation, two
-  releases).** Release 1 (branch `fix/contact-links-release1`, no migration): the deals and properties exports hint
-  their party embeds by CONSTRAINT NAME (a column hint answers PGRST200 on a composite key — rehearsed locally), and
-  eight actions re-read a posted contact under RLS before writing. Release 2: migration 0139 re-keys all ten
-  `(org_id, <col>) → contacts (org_id, id)` KEEPING each constraint's name, applied only after release 1 is deployed.
-  (original) `leads.contact_id`, `deals.buyer_contact_id` /
+- ~~**Ten links onto `contacts` are still single-column, S/M.**~~ **FIXED in two releases (T-contact-links-org-isolation):
+  release 1 LANDED 2026-10-03 (PR #99, main `8c9f329`, deployed — constraint-name embed hints, eight re-reads);
+  release 2 = migration 0139 (branch `fix/contact-links-keys`): all ten keys `(org_id, <col>) → contacts (org_id, id)`
+  under their original names, hosted first (after release 1's deploy), then merge.** (original) `leads.contact_id`, `deals.buyer_contact_id` /
   `seller_contact_id`, `offers.contact_id`, `share_links.contact_id`, `buyer_requirements.contact_id`,
   `mandates.owner_contact_id`, `properties.owner_contact_id` / `developer_contact_id` and `contacts.merged_into_id`
   reference `contacts(id)` alone (measured at 0126 from `pg_constraint`; `viewings`, `reservations` and `tasks` are

@@ -8,6 +8,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { VIEWING_EXPORT_SELECT } from "@/lib/services/viewing-export";
 import { createTestUser, ensureTestOrg, serviceClient, type TestUser } from "./helpers";
 import { REVERT_0126_SQL, strip0126 } from "./revert-0126";
+import { REVERT_0139_SQL } from "./revert-0139";
 
 /**
  * 0123: a viewing belongs to the organisation of the property it shows and
@@ -216,11 +217,12 @@ async function sweepParents() {
 
 /**
  * 0122's catalogue for this file's objects, inside the caller's transaction.
- * 0126 comes off first: its two contact keys depend on contacts_org_id_id_key,
- * and its two retention lines sit in the sweep body restored below (a no-op
- * on a database without it).
+ * 0139 and 0126 come off first: 0139's ten contact keys and 0126's two depend
+ * on contacts_org_id_id_key, and 0126's two retention lines sit in the sweep
+ * body restored below (each revert is a no-op on a database without it).
  */
 async function revertTo0122() {
+  await o.query(REVERT_0139_SQL);
   await o.query(REVERT_0126_SQL);
   await o.query(`
     alter table public.viewings drop constraint viewings_org_property_fkey;
