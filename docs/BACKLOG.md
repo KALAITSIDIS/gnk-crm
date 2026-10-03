@@ -3376,8 +3376,8 @@ VERIFY, run before starting.
     **VERIFY (kept):** `select regexp_replace(prosrc, '--[^\n]*', '', 'g') ~ '\mn\.org_id\M' from pg_proc where
     proname = 'redact_stale_enquiries'` — false means open (it names the notes' organisation in any form of the fix).
 - ~~**`resolve_share_link`'s once-a-day `opened` throttle counts an `opened` event of any organisation and any actor
-  for the link id, S (pre-existing).**~~ **FIXED 2026-10-03 on branch `fix/share-link-opened-own-org` (migration
-  0137; hosted first, then merge — not deploy-coupled) — DECISIONS `T-share-link-opened-own-org`.** Reproduced first
+  for the link id, S (pre-existing).**~~ **FIXED — LANDED 2026-10-03 (hosted 0137, applied before the merge; PR #97, main `80d169d`) —
+  DECISIONS `T-share-link-opened-own-org`.** Reproduced first
   (three routes × both link kinds: another organisation's session event, another organisation's system line at a
   re-taken id, our own staff session's event) and on production in a rolled-back transaction (our line suppressed
   by a foreign system line and by a staff session's event). Both throttles now require `org_id = v_link.org_id and
