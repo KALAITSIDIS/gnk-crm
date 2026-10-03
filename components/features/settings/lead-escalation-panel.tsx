@@ -203,7 +203,7 @@ export function LeadEscalationPanel({ value, members }: { value: LeadEscalationC
 
         <fieldset className={cn("flex flex-col gap-3 rounded-[10px] border border-border p-3", !enabled && "opacity-70")}>
           <legend className="px-1 text-sm font-medium text-text-1">The wait</legend>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1">
               <Label htmlFor="after_minutes">Minutes without a first response</Label>
               <Input
@@ -308,7 +308,7 @@ export function LeadEscalationPanel({ value, members }: { value: LeadEscalationC
                 </label>
               ))}
             </div>
-            <div className="grid max-w-sm gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 max-w-sm gap-3 sm:grid-cols-2">
               <div className="flex flex-col gap-1">
                 <Label htmlFor="hours_start">From</Label>
                 <Input id="hours_start" name="start" type="time" defaultValue={hours.start} disabled={!hoursOn} required={hoursOn} />

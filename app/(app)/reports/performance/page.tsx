@@ -243,7 +243,7 @@ export default async function PerformanceReportsPage({
 
       {/* time to close ------------------------------------------------------ */}
       <Section title={t("ttc.heading")} exportHref={exportHref("time_to_close")} exportLabel={t("export")}>
-        <div className="grid gap-4 px-4 py-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 px-4 py-4 sm:grid-cols-2">
           {(["won", "lost"] as const).map((k) => (
             <div key={k} className="rounded-[8px] border border-border/60 p-3">
               <p className="text-xs uppercase tracking-wide text-text-3">{t(`ttc.${k}`)}</p>
@@ -335,7 +335,7 @@ export default async function PerformanceReportsPage({
         exportHref={exportHref("price_reductions")}
         exportLabel={t("export")}
       >
-        <div className="grid gap-4 px-4 py-4 sm:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 px-4 py-4 sm:grid-cols-4">
           <Stat label={t("prices.reductions")} value={String(price?.reductions ?? 0)} />
           <Stat label={t("prices.properties")} value={String(price?.properties_affected ?? 0)} />
           <Stat label={t("prices.avgCut")} value={pct(num(price?.avg_cut_fraction)) || "—"} />

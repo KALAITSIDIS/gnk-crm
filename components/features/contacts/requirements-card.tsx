@@ -106,7 +106,7 @@ function RequirementFields({
   const id = (n: string) => `${n}-${uid}`;
 
   return (
-    <div className="grid gap-4 sm:grid-cols-3">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
       <div className="flex flex-col gap-2 sm:col-span-2">
         <Label htmlFor={id("label")}>Name this search</Label>
         <Input

@@ -34,7 +34,7 @@ export function DealDetailsForm({ deal }: { deal: DealDetailsValues }) {
         <Input id="deal-title" name="title" defaultValue={deal.title} required />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <EntityPicker
           name="property_id"
           kind="property"

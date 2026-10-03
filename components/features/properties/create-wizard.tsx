@@ -770,7 +770,7 @@ export function CreatePropertyWizard({
 
       {step === 1 ? (
         <div className="flex flex-col gap-4 rounded-[10px] border border-border bg-surface p-6">
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-2">
               <Label htmlFor="source">Where is it from?</Label>
               <Select value={source} onValueChange={(v) => changeSource(v as ListingSource)}>
@@ -908,7 +908,7 @@ export function CreatePropertyWizard({
         </div>
       ) : (
         <div className="flex flex-col gap-4 rounded-[10px] border border-border bg-surface p-6">
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-2 sm:col-span-2">
               <Label htmlFor="title_en">Title (EN)</Label>
               <Input
@@ -1076,7 +1076,7 @@ export function CreatePropertyWizard({
                 </div>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 {/* KEYED fragments, so the toggle REMOUNTS the branch. Unkeyed,
                     React matched the two branches by position and reused the
                     third input across them: a typed "Floors to" surfaced as

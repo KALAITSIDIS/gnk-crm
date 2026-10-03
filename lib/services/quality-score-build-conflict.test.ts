@@ -5,7 +5,14 @@ import { buildQualityInput, computeQualityScore, type QualityScoreSource } from 
  * A contradictory build declaration reaches the score's warnings — the list
  * the property page's ring and the worklist already render — without
  * costing points (audit CRM-05: warn, never block).
+ *
+ * The delivery date must stay in the FUTURE: once it passes, buildProgress
+ * answers "the delivery date has passed" first and the year-built warning
+ * under test never shows. A fixed "2026-11-29" expired that day (BACKLOG
+ * "Clock-dependent tests"), so it is next year's.
  */
+const nextYearDelivery = `${new Date().getUTCFullYear() + 1}-11-29`;
+
 const source = {
   kind: "standalone",
   property_type: "villa",
@@ -28,7 +35,7 @@ const source = {
   developer_contact_id: null,
   year_built: 2007,
   construction_status: "finishing",
-  delivery_date: "2026-11-29",
+  delivery_date: nextYearDelivery,
 } as unknown as QualityScoreSource;
 
 const extras = {

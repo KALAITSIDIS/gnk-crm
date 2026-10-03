@@ -50,7 +50,7 @@ export function PartiesForm({
       updatedAt={updatedAt}
       readOnlyNote="Read-only — only admins and listing managers can change who a property belongs to."
     >
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <EntityPicker
           name="owner_contact_id"
           kind="contact"

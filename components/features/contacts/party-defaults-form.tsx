@@ -119,7 +119,7 @@ export function PartyDefaultsForm({
           <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-text-3">
             Mandate terms
           </h4>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="pd-commission">Commission %</Label>
               <Input
@@ -172,7 +172,7 @@ export function PartyDefaultsForm({
           <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-text-3">
             Property terms
           </h4>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <TermSelect
               name="vat_status"
               label="VAT status"

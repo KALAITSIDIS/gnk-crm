@@ -57,7 +57,7 @@ export function EvidenceBuilder({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid gap-3 rounded-[10px] border border-border bg-surface p-5 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 rounded-[10px] border border-border bg-surface p-5 sm:grid-cols-2">
         <EntityPicker
           name="contact_picker"
           kind="contact"

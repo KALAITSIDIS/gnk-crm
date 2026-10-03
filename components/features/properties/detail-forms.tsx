@@ -183,7 +183,7 @@ export function DetailsForm({
       readOnly={readOnly}
       updatedAt={property.updated_at}
     >
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <SelectField
           name="status"
           label="Status"
@@ -214,7 +214,7 @@ export function DetailsForm({
       </div>
 
       <SectionTitle>Location</SectionTitle>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <SelectField
           name="area_id"
           label="Area"
@@ -265,7 +265,7 @@ export function DetailsForm({
         minAcceptablePrice={property.min_acceptable_price}
         ownerNetPrice={property.owner_net_price}
       >
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {/* "From price" on a container, exactly as the create wizard and the
             overview already call it: the units carry the prices and this figure
             is only what the listing leads with. This form was the one place
@@ -309,7 +309,7 @@ export function DetailsForm({
       </PricingBreakdown>
 
       <SectionTitle>Areas & rooms</SectionTitle>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <NumberField name="covered_area_sqm" label="Covered (m²)" defaultValue={property.covered_area_sqm} step="0.01" />
         <NumberField name="plot_area_sqm" label={isContainer ? "Site plot (m²)" : "Plot (m²)"} defaultValue={property.plot_area_sqm} step="0.01" />
         <NumberField name="veranda_sqm" label="Veranda (m²)" defaultValue={property.veranda_sqm} step="0.01" />
@@ -343,7 +343,7 @@ export function DetailsForm({
           wrote them. Delivery date is the most-asked question about an off-plan
           unit, and both are inherited by a project's units. */}
       <SectionTitle>Build &amp; handover</SectionTitle>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <SelectField
           name="construction_status"
           label="Construction status"
@@ -378,7 +378,7 @@ export function DetailsForm({
       {isLand ? (
         <>
           <SectionTitle>Land / planning</SectionTitle>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <TextField
               name="planning_zone_code"
               label="Planning zone (e.g. Κα6)"
@@ -463,7 +463,7 @@ export function LegalForm({
       readOnly={readOnly}
       updatedAt={property.updated_at}
     >
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <SelectField
           name="title_deed_status"
           label="Title deed status"

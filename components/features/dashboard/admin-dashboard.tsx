@@ -256,7 +256,7 @@ export async function AdminDashboard({ orgId }: { orgId: string }) {
       {/* Three columns, not four: the three response figures then land on one
           row together, which is the only way a mean 3x its own median is
           visible at a glance rather than something you have to go looking for. */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <Kpi
           label={t("kpi.openPipeline")}
           value={formatMoney(openPipeline)}

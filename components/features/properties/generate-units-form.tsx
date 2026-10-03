@@ -156,7 +156,7 @@ export function GenerateUnitsForm({
           : "Floors repeat and layouts repeat — describe the pattern once. Every unit inherits the project exactly as a single added unit does."}
       </p>
 
-      <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {isVillas ? (
           <>
             <div className="flex flex-col gap-1.5">

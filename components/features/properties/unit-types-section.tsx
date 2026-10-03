@@ -111,7 +111,7 @@ export function UnitTypesSection({
           <input type="hidden" name="project_id" value={projectId} />
           <input type="hidden" name="unit_type_id" value={typeId} />
           <input type="hidden" name="block" value={block === ALL_BLOCKS ? "" : block} />
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="ut-apply">Apply a type</Label>
               <Select value={typeId} onValueChange={setTypeId}>
@@ -168,7 +168,7 @@ export function UnitTypesSection({
       {canManage ? (
         <form action={createAction} className="flex flex-col gap-3 border-t border-border/60 pt-3">
           <input type="hidden" name="project_id" value={projectId} />
-          <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:grid-cols-6">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="ut-code">Code *</Label>
               <Input id="ut-code" name="code" placeholder="A1" maxLength={10} required />

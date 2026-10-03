@@ -86,7 +86,7 @@ export function PriceUpliftForm({
         </p>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="uplift-scope">Apply to</Label>
           <Select value={block} onValueChange={setBlock}>

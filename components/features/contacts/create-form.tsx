@@ -78,7 +78,7 @@ export function CreateContactForm() {
 
       {duplicate ? <DuplicateBanner match={duplicate} /> : null}
 
-      <div className="grid gap-4 rounded-[10px] border border-border bg-surface p-6 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 rounded-[10px] border border-border bg-surface p-6 sm:grid-cols-2">
         <div className="flex flex-col gap-2">
           <Label htmlFor="contact_kind">Kind</Label>
           <Select value={kind} onValueChange={setKind}>

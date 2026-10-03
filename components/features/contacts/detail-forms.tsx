@@ -68,7 +68,7 @@ export function ProfileForm({
       readOnlyHint={readOnlyHint}
     >
       <input type="hidden" name="contact_kind" value={kind} />
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="flex flex-col gap-2">
           <Label htmlFor="contact_kind">Kind</Label>
           <Select value={kind} onValueChange={setKind}>
@@ -362,7 +362,7 @@ export function ChecklistsForm({
       </div>
 
       <h3 className="mt-2 text-base font-semibold text-text-1">Banking readiness (non-EU buyers)</h3>
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="flex flex-col gap-2">
           <Label htmlFor="nationality_risk_note">Nationality risk note</Label>
           <Input

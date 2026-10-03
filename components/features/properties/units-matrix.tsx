@@ -165,7 +165,7 @@ export function AddUnitForm({ projectId }: { projectId: string }) {
     >
       <input type="hidden" name="project_id" value={projectId} />
       <h3 className="text-base font-semibold text-text-1">Add unit</h3>
-      <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-7">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:grid-cols-7">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="block">Block</Label>
           <Input id="block" name="block" placeholder="B" />

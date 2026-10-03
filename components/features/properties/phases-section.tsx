@@ -98,7 +98,7 @@ export function PhasesSection({
       {canManage ? (
         <form action={formAction} className="flex flex-col gap-3 border-t border-border/60 pt-3">
           <input type="hidden" name="project_id" value={projectId} />
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="phase-code">Phase code *</Label>
               <Input id="phase-code" name="code" placeholder="P1" maxLength={6} required />
