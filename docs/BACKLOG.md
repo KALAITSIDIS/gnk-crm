@@ -3348,16 +3348,54 @@ VERIFY, run before starting.
   Found by T-insert-id-without-history's map. **VERIFY:** as an aal2 admin in a rolled-back transaction, delete an
   admin_only contact document D and `insert into documents (id = D, …, visibility = 'internal')` — INSERT 1 means
   open (measured 2026-10-02 at 0133).
-- **`redact_stale_enquiries` matches interaction notes by `entity_id` with no organisation predicate, S
-  (pre-existing).** Its notes CTE (0094) is `n.entity_type = 'lead' and n.entity_id = done.id`. Another organisation
-  may insert a lead at an id whose orphaned notes are ours (0133 accepts it: the history is not theirs) with a
-  back-dated `received_at` and source `website`, and the nightly sweep (`10 3 * * *`) then blanks OUR notes for that
-  id — an irreversible cross-tenant write. Fix: `and n.org_id = done.org_id`, the replaced body guarded by its md5;
-  cron-only, so no release-compat entry. `resolve_share_link`'s once-a-day `opened` throttle is likewise not bounded
-  by organisation (`and org_id = v_link.org_id`; it can only harm the organisation that inserted at the id — trivial).
-  Found by T-insert-id-without-history's map and review (the predicate measured, the blanking probed rolled back).
-  **VERIFY:** `select regexp_replace(prosrc, '--[^\n]*', '', 'g') ~ '\mn\.org_id\M' from pg_proc where proname =
-  'redact_stale_enquiries'` — false means open (it names the notes' organisation in any form of the fix).
+- ~~**`redact_stale_enquiries` matches interaction notes by `entity_id` with no organisation predicate, S
+  (pre-existing).**~~ **FIXED 2026-10-03 on branch `fix/redact-notes-own-org` (migration 0135; lands hosted first,
+  then merge — not deploy-coupled) — DECISIONS `T-redact-notes-own-org`.** Reproduced first through PostgREST and the
+  real sweep on the local stack at 0134 (another organisation's agent inserted a back-dated unlinked website lead at
+  the id of our deleted lead; the sweep blanked our note); hosted read 2026-10-03: the body is 0094's (md5
+  `044c146a…`), the VERIFY below false, the cron job active. 0135 replaces the body with the one predicate
+  `and n.org_id = done.org_id`, guarded by that md5; a read-only diagnostic counts existing collisions.
+  `resolve_share_link`'s throttle is split out below.
+  - **`redact_stale_enquiries` matches interaction notes by `entity_id` with no organisation predicate, S
+    (original).** Its notes CTE (0094) is `n.entity_type = 'lead' and n.entity_id = done.id`. Another organisation
+    may insert a lead at an id whose orphaned notes are ours (0133 accepts it: the history is not theirs) with a
+    back-dated `received_at` and source `website`, and the nightly sweep (`10 3 * * *`) then blanks OUR notes for that
+    id — an irreversible cross-tenant write. Fix: `and n.org_id = done.org_id`, the replaced body guarded by its md5;
+    cron-only, so no release-compat entry. `resolve_share_link`'s once-a-day `opened` throttle is likewise not bounded
+    by organisation (`and org_id = v_link.org_id`; it can only harm the organisation that inserted at the id — trivial).
+    Found by T-insert-id-without-history's map and review (the predicate measured, the blanking probed rolled back).
+    **VERIFY (kept):** `select regexp_replace(prosrc, '--[^\n]*', '', 'g') ~ '\mn\.org_id\M' from pg_proc where
+    proname = 'redact_stale_enquiries'` — false means open (it names the notes' organisation in any form of the fix).
+- **`resolve_share_link`'s once-a-day `opened` throttle counts an `opened` event of any organisation and any actor
+  for the link id, S (pre-existing; split from the entry above, 2026-10-03; corrected by T-redact-notes-own-org's
+  review).** Both throttle blocks (0041 — the availability branch ~275–287 and the proposal branch ~336–347) look for
+  an `opened` event with `entity_type = 'share_link' and entity_id = v_link.id` on today's Cyprus date, with no
+  `org_id` and no `actor_id` predicate. So a link's system `opened` line (null actor) is not recorded on a day on
+  which such an event already exists — and `events_insert` lets any aal2 session write an `opened` share_link event
+  in its OWN organisation at an arbitrary entity_id: another organisation that knows one of our live link ids (the
+  public flow is keyed by token; whether an id leaks is unmeasured) suppresses our line for that day, and a staff
+  session of our own organisation can pre-empt it with a payload of its choosing; a link inserted at an id whose
+  `opened` history is another organisation's (0133 lets that id through) loses it too. No row of another
+  organisation is written — a missing analytics line. Not folded into 0135: the function is 12.9k characters and
+  anon-callable (every public share page). Fix shape: `and org_id = v_link.org_id and actor_id is null` in BOTH
+  blocks, the replaced body guarded by its md5 (hosted `529134eb…`, 2026-10-03), pinned RED first. **VERIFY:** as
+  postgres in a rolled-back transaction, write an `opened` event for a live link L's id, today, in ANOTHER
+  organisation with a session actor, then call `resolve_share_link` with L's token — no new `opened` event for L in
+  L's organisation means open.
+- **`submit_public_enquiry`'s round-robin routing counts another organisation's leads and `assigned` events, S
+  (pre-existing; found by T-redact-notes-own-org's review, code-read 2026-10-03, not probed).** Its latest definition
+  (0114, ~273–296; a SECURITY DEFINER called for every website enquiry) picks the candidate among THIS organisation's
+  active routed agents, but orders them by `(select count(*) from leads l where l.assigned_agent_id = p.id and
+  l.status in (...))` and by the latest `assigned` event `where e.payload ->> 'to' = p.id::text` — neither bounded
+  by `org_id`. `events_insert` admits a session's `assigned` lead event with any payload in its own organisation, and
+  agent ids are readable (`cyprus_config.lead_routing.agents`, readable by any signed-in user — 0100), so another
+  organisation's agent can starve or flood one of our agents of website enquiries by writing `assigned` events
+  naming them (and possibly open leads assigned to them, if `leads.assigned_agent_id` takes another organisation's
+  profile — VERIFY that half before relying on it). It writes into our organisation (the lead's assignee and an
+  `assigned` event), destroys nothing, and needs a second tenant (production is single-tenant). Fix shape: `and
+  l.org_id = v_org_id` and `and e.org_id = v_org_id`, the replaced body guarded by its hosted md5, pinned RED first;
+  not deploy-coupled. **VERIFY:** `select regexp_replace(prosrc, '--[^\n]*', '', 'g') ~ 'e\.org_id = v_org_id' from
+  pg_proc where proname = 'submit_public_enquiry'` — false means open.
 - **Natural keys an id guard cannot see: a deleted property's `reference` and a deleted link's `token_sha256` can be
   taken again, S (pre-existing).** `properties.reference` is unique only among live rows (`UNIQUE (org_id,
   reference)`), sessions choose it at INSERT, and `properties_reference_immutable` fires on UPDATE only — so a deleted

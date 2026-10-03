@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 134::bigint as migrations,
+    2::bigint as auth_users, 135::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -719,6 +719,17 @@ misc as (
                                and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'errcode = ''42501'''
                           from pg_proc p
                          where p.oid = to_regprocedure('public.trg_documents_kept_for_retention()')), false))::text
+  union all
+  -- 0135: the nightly enquiry sweep (redact_stale_enquiries, cron) blanks only
+  -- the notes of the lead it redacted, in that lead's own organisation — notes
+  -- outlive their lead and another organisation may hold a lead at its id. A
+  -- restore that brought back 0094's body (notes matched by id alone) reads
+  -- false here.
+  select 'SECURITY: the enquiry sweep blanks only the redacted lead''s own organisation''s notes (0135)', 'true',
+         coalesce((select p.prosecdef
+                          and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'n\.entity_id = done\.id\s+and n\.org_id = done\.org_id'
+                     from pg_proc p
+                    where p.oid = to_regprocedure('public.redact_stale_enquiries(integer)')), false)::text
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.
