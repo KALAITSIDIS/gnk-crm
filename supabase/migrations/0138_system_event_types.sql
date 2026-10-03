@@ -9,11 +9,13 @@
 -- T-system-event-types has the count):
 --
 --   * `events_insert` (latest 0134) lets an aal2 session write any event
---     type in its own organisation but the five 0128 / 0131 / 0134 reserve.
---     Three more are written ONLY by the system (definers and the service
---     role — the app writes none of them through a session: every literal and
---     every computed `eventType` in lib/ and app/ was read 2026-10-03), and
---     machines read them as the system's word:
+--     type in its own organisation but six strings 0128 / 0131 / 0134 reserve
+--     (won / lost / won_override on deals only; stage_changed, erased and
+--     retention_purged under any entity_type). Three more are written ONLY by
+--     the system (definers and the service role — the app writes none of them
+--     through a session: every literal and every computed `eventType` in lib/
+--     and app/ was read 2026-10-03), and machines read them as the system's
+--     word:
 --       - `enquiry_alert` — claim_notification_jobs (0111) closes a pending
 --         desk alert as already sent when it finds an `enquiry_alert` event
 --         with `outcome = 'sent'` for the lead: any member could write one,
@@ -33,11 +35,28 @@
 -- functions, the escalation sweep, resolve_share_link) and the service role
 -- (the alert worker, the tests' fixtures) are unchanged.
 --
+-- WHO STILL WRITES THEM (RLS binds sessions only): the definers — the claim
+-- and finish functions, the escalation sweep, resolve_share_link — with a
+-- null actor, and TWO definers a staff member calls, which sign the line with
+-- the caller: request_enquiry_alert_retry (`enquiry_alert`, outcome
+-- 'retry_requested') and request_lead_escalation_recovery (`lead_escalation`,
+-- outcome 'recovery_requested'); and the service role (the alert worker, the
+-- tests' fixtures). An actor on one of these lines is therefore NOT by itself
+-- a forgery — the diagnostic below separates the shapes.
+--
 -- WHY NOT a reader-side fix (`actor_id is null` in each reader): every new
 -- reader would have to remember it; the policy closes the write once (0128 /
--- 0131 / 0134's precedent). `assigned` is NOT reserved: the app writes it
--- through the session (reassignLead, the task assignee) — a member steering
--- the round-robin with one stays on BACKLOG.
+-- 0131 / 0134's precedent).
+--
+-- NOT DONE HERE (BACKLOG): `assigned` is NOT reserved — the app writes it
+-- through the session (reassignLead, the task assignee); a member steering the
+-- round-robin with one stays open. claim_notification_jobs' closure has no
+-- actor predicate, so a forged 'sent' line written BEFORE 0138 would still
+-- close its lead's desk alert — hosted held none on 2026-10-03 (the first
+-- column below), and none can be written after it. A staff session can still
+-- produce a null-actor `opened` line by calling resolve_share_link with the
+-- hash it can read (0137's entry). Look-alike types (`Enquiry_alert`) are still
+-- accepted and render as written (the ANY-event-type entry).
 --
 -- CONTRACT. No function changes; types identical; no release-compat entry.
 -- The deployed app writes none of the three through a session, so this is
@@ -46,19 +65,27 @@
 -- LOCKS: ALTER POLICY takes ACCESS EXCLUSIVE on events for the milliseconds
 -- to commit — reads of events wait too; the diagnostic and the boundary are
 -- read under it (exact). lock_timeout 5 s; a 55P03 keeps nothing — apply
--- again, no ledger row. ONE transaction (checked below). Apply in the usual
--- window (outside 02:55–04:05 UTC, away from 06:00, not on a minute the
--- enquiry-alert cron runs — every even minute).
+-- again, no ledger row. ONE transaction (checked below). Apply as 0131 / 0134
+-- did: outside 02:55–04:05 UTC, away from 06:00, at the middle of an odd
+-- minute that is not a multiple of five (the desk-alert sweep runs every two
+-- minutes and the escalation every five, and both write events).
 --
 -- PREFLIGHT refuses, changing nothing, unless events_insert's check is
 -- exactly 0134's (read under the fixed search_path).
 --
--- EXISTING ROWS — READ-ONLY DIAGNOSTIC, NO REPAIR (the file's last row):
---   session_written_system_events  events of the three types with an actor
---                                  (the system writes them with none) — lines
---                                  a session forged before 0138;
---   boundary                       the largest event id when sessions lost the
---                                  right to write them.
+-- EXISTING ROWS — READ-ONLY DIAGNOSTIC, NO REPAIR (the file's last row; the
+-- boundary is also kept as the policy's comment, as 0131 / 0134 kept theirs):
+--   forged_sent_alerts   `enquiry_alert` lines with outcome 'sent' and an
+--                        actor — the shape the claim's closure honours, which
+--                        no system writer signs: a session forged it;
+--   actor_request_lines  `enquiry_alert` 'retry_requested' / `lead_escalation`
+--                        'recovery_requested' lines with an actor — the shape
+--                        the two staff-called definers write (a session could
+--                        have copied it before 0138);
+--   actor_other_lines    every other line of the three types with an actor —
+--                        no system writer signs one: a session wrote it;
+--   boundary             the largest event id when sessions lost the right to
+--                        write them.
 -- RESOLUTION: an operator decision per counted row, recorded in DECISIONS.
 --
 -- NOT CHANGED: who may read events; every other event type; the definers;
@@ -71,7 +98,7 @@
 -- migrations pin FORWARD; restore the BACKLOG text. No data moves.
 --
 -- Pins that move with this file: scripts/backup/verify-restore.sql (the
--- migrations count, the 0138 SECURITY row).
+-- migrations count, the 0138 SECURITY row); docs/04's events INSERT cell.
 -- =============================================================================
 
 set local lock_timeout = '5s';
@@ -141,7 +168,7 @@ do $$
 declare
   v_check text;
   v_max   bigint;
-  v_forged bigint;
+  v_diag  text;
 begin
   select pg_get_expr(p.polwithcheck, p.polrelid) into v_check
     from pg_policy p where p.polrelid = 'public.events'::regclass and p.polname = 'events_insert';
@@ -159,11 +186,22 @@ begin
   end if;
 
   select coalesce(max(e.id), 0) into v_max from public.events e;
-  select count(*) into v_forged from public.events e
+  select format('forged_sent_alerts=%s actor_request_lines=%s actor_other_lines=%s boundary=%s',
+           count(*) filter (where e.event_type = 'enquiry_alert' and e.payload ->> 'outcome' = 'sent'),
+           count(*) filter (where (e.event_type = 'enquiry_alert' and e.payload ->> 'outcome' = 'retry_requested')
+                               or (e.event_type = 'lead_escalation' and e.payload ->> 'outcome' = 'recovery_requested')),
+           -- coalesce: a line with no outcome is still a line (NULL would drop it from every column)
+           count(*) filter (where not ((e.event_type = 'enquiry_alert' and coalesce(e.payload ->> 'outcome', '') in ('sent', 'retry_requested'))
+                                    or (e.event_type = 'lead_escalation' and coalesce(e.payload ->> 'outcome', '') = 'recovery_requested'))),
+           v_max)
+    into v_diag
+    from public.events e
    where e.event_type in ('enquiry_alert', 'lead_escalation', 'opened') and e.actor_id is not null;
-  perform set_config('gnk.m0138_existing',
-    format('session_written_system_events=%s boundary=%s', v_forged, v_max), true);
+  perform set_config('gnk.m0138_existing', v_diag, true);
+  execute format('comment on policy events_insert on public.events is %L',
+    format('0138 enforcement boundary: from event id > %s no session may write an enquiry_alert / lead_escalation / opened event.', v_max));
   raise notice '0138: postflight passed — events_insert refuses a session''s enquiry_alert / lead_escalation / opened';
+  raise notice '0138: existing rows (read-only, nothing repaired) — %', v_diag;
 end $$;
 
 -- EXISTING ROWS (header) — read-only, nothing repaired; the file's LAST result
