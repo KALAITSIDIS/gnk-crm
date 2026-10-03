@@ -3186,7 +3186,8 @@ VERIFY, run before starting.
   deal that is still open, for every viewer, for good (the actor is recorded). One reviewer of two also upheld an
   OFFER-entity `won` with `override: true` rendering "Offer: Marked won — admin override" on the deal's timeline.
   Machine readers (`report_stage_conversion`, `close_deal`) match the exact strings and are unaffected. **Since 0138
-  (DECISIONS `T-system-event-types`) `enquiry_alert`, `lead_escalation` and `opened` are refused too, under every
+  (LANDED 2026-10-03, hosted before the merge; PR #98, main `2a37d66`; production boundary event id 364 — DECISIONS
+  `T-system-event-types`) `enquiry_alert`, `lead_escalation` and `opened` are refused too, under every
   entity_type** — the alert worker, the escalation sweep and the public share page write them as the system, and
   machines read them as the system's word: `claim_notification_jobs` (0111) closed a pending desk alert as already
   sent when it found an `enquiry_alert` event with `outcome = 'sent'` for the lead (any member could write one, and
@@ -3198,7 +3199,7 @@ VERIFY, run before starting.
   organisation's agents gets the next website enquiry (fix: have the round-robin count only the system's
   assignment — `actor_id is null`, or the lead rows themselves); (b) `claim_notification_jobs`' closure has no actor
   predicate, so an `enquiry_alert` 'sent' line written BEFORE 0138 would still close its lead's desk alert — hosted
-  held none on 2026-10-03 (read-only; 0138's diagnostic, first column), and none can be written after it; adding
+  held none at the apply (0138's diagnostic: `forged_sent_alerts=0`, boundary event id 364), and none can be written after it; adding
   `actor_id is null` to the closure is belt and braces (S); (c) two staff-called definers sign their lines with the
   caller — `request_enquiry_alert_retry` ('retry_requested') and `request_lead_escalation_recovery`
   ('recovery_requested') — legitimately; 0138's diagnostic counts that shape in its own column. Fix options:
