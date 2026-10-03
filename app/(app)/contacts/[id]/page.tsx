@@ -446,8 +446,10 @@ export default async function ContactDetailPage({
                 stored={storedDefaults}
                 office={officeDefaults}
                 // admin only — `contacts` has no listing-manager UPDATE policy (0002), so
-                // anyone else would get a form that looks editable and always fails
-                readOnly={profile.role !== "admin"}
+                // anyone else would get a form that looks editable and always fails; and
+                // never on an erased contact, which the database keeps as the erasure
+                // left it (0134) — frozen for everyone, like the rest of this page
+                readOnly={profile.role !== "admin" || isErased}
               />
             </div>
           </TabsContent>
@@ -547,8 +549,10 @@ export default async function ContactDetailPage({
             <ContactDocumentsTab
               contactId={c.id}
               items={documents}
-              isAdmin={profile.role === "admin"}
-              canUpload={!c.is_archived}
+              // gates only Delete in this tab: an erased contact's retained
+              // documents are kept until the retention purge destroys them (0134)
+              isAdmin={profile.role === "admin" && !(isErased && c.retention_until)}
+              canUpload={!c.is_archived && !isErased}
             />
           </div>
         </TabsContent>

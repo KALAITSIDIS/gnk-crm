@@ -45,7 +45,7 @@ function harness(failAt?: keyof ErasureSteps) {
 describe("runContactErasure and notes", () => {
   it("redacts notes right after the lead messages and records how many", async () => {
     const h = harness();
-    const result = await runContactErasure({ alreadyErasedAt: null, actorId: ACTOR, now: NOW, steps: h.steps });
+    const result = await runContactErasure({ alreadyErasedAt: null, stored: null, actorId: ACTOR, now: NOW, steps: h.steps });
     expect(result.error).toBeNull();
     expect(h.calls.indexOf("redactNotes")).toBe(h.calls.indexOf("redactLeads") + 1);
     expect(h.payloads[0]).toMatchObject({ leads_redacted: 2, notes_redacted: 3 });
@@ -53,7 +53,7 @@ describe("runContactErasure and notes", () => {
 
   it("names the step when note redaction fails, and writes no erased event", async () => {
     const h = harness("redactNotes");
-    const result = await runContactErasure({ alreadyErasedAt: null, actorId: ACTOR, now: NOW, steps: h.steps });
+    const result = await runContactErasure({ alreadyErasedAt: null, stored: null, actorId: ACTOR, now: NOW, steps: h.steps });
     expect(result.error).toMatch(/redacting notes/);
     expect(h.calls).not.toContain("writeEvent");
   });

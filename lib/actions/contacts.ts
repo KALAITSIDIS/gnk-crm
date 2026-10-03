@@ -215,6 +215,12 @@ export async function updateContactSection(
     .eq("id", contactId)
     .maybeSingle();
   if (!current) return { error: "Contact not found", savedAt: null };
+  // erased first: an erased contact left active (written before
+  // T-refuse-unarchive-erased) is not archived, and the database refuses its
+  // edit anyway (0134) — say why in a sentence instead
+  if (current.erased_at) {
+    return { error: "This contact's personal data was erased under GDPR Article 17 — it cannot be edited.", savedAt: null };
+  }
   if (current.is_archived) {
     return { error: "This contact is archived — unarchive it before editing.", savedAt: null };
   }

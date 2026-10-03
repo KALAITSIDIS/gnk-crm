@@ -93,6 +93,18 @@ export async function mergeContacts(
   if (primary.org_id !== profile.orgId || duplicate.org_id !== profile.orgId) {
     return { error: "Cross-org merge refused", mergedAt: null };
   }
+  // An erased contact is merged on neither side, a resumed merge included
+  // (T-erasure-lifecycle-guard). As the primary, the backfill below would write
+  // the duplicate's data back onto the record the erasure cleared; as the
+  // duplicate, the erased person's retained identity and KYC would flow into
+  // an active contact. This runs as the service role, which 0134's database
+  // guard does not bind, so the refusal lives here.
+  if (primary.erased_at || duplicate.erased_at) {
+    return {
+      error: "An erased contact cannot be merged — its personal data was erased under GDPR Article 17.",
+      mergedAt: null,
+    };
+  }
   if (primary.is_archived) {
     return { error: "The primary contact is archived — unarchive it first", mergedAt: null };
   }
@@ -111,10 +123,13 @@ export async function mergeContacts(
       .update({ is_archived: true, merged_into_id: primaryId })
       .eq("id", duplicateId)
       .eq("org_id", orgId)
+      // the erased refusal above, held at the write: an erasure landing since
+      // the read is not undone by this service-role write (0134 binds sessions)
+      .is("erased_at", null)
       .select("id");
     if (archiveErr) return { error: archiveErr.message, mergedAt: null };
-    // zero rows = the duplicate vanished since the read; nothing moved yet
-    if (!archived?.length) return { error: "Contact not found", mergedAt: null };
+    // zero rows = the duplicate vanished or was erased since the read; nothing moved yet
+    if (!archived?.length) return { error: "Contact not found — or it was erased meanwhile. Nothing was merged.", mergedAt: null };
   }
 
   // 2. repoint operational references (all idempotent — filter by duplicateId)
@@ -220,10 +235,12 @@ export async function mergeContacts(
       .update(backfill)
       .eq("id", primaryId)
       .eq("org_id", orgId)
+      // never write the duplicate's data onto a primary erased since the read
+      .is("erased_at", null)
       .select("id");
-    // zero rows = the primary vanished since the read: say so, never "merged"
+    // zero rows = the primary vanished or was erased since the read: say so, never "merged"
     if (backfillErr || !filled?.length) {
-      const why = backfillErr?.message ?? "The primary contact was not found";
+      const why = backfillErr?.message ?? "The primary contact was not found, or was erased meanwhile";
       return {
         error: `${why} — the duplicate is already archived; run the merge again to finish.`,
         mergedAt: null,

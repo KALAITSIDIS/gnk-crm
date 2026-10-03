@@ -100,16 +100,24 @@ const updateOf = (c: Chain) => c.ops.find((o) => o.method === "update")?.args[0]
 const isRead = (c: Chain) => !updateOf(c) && c.ops.some((o) => o.method === "select");
 
 /** A world where both contacts are the caller's and every write reports its row. */
-function script(opts: { archiveRows?: number; backfillRows?: number; readable?: boolean } = {}) {
+function script(
+  opts: {
+    archiveRows?: number;
+    backfillRows?: number;
+    readable?: boolean;
+    primary?: Record<string, unknown>;
+    duplicate?: Record<string, unknown>;
+  } = {},
+) {
   const { archiveRows = 1, backfillRows = 1, readable = true } = opts;
   rec.respond = (c) => {
     if (c.table !== "contacts") return { data: [], error: null };
     const upd = updateOf(c);
     if (!upd) {
       if (!readable) return { data: null, error: null };
-      if (has(c, "eq", "id", "pri-1")) return { data: contact("pri-1"), error: null };
+      if (has(c, "eq", "id", "pri-1")) return { data: contact("pri-1", opts.primary), error: null };
       if (has(c, "eq", "id", "dup-1"))
-        return { data: contact("dup-1", { email: "d@example.test", notes: "n" }), error: null };
+        return { data: contact("dup-1", { email: "d@example.test", notes: "n", ...opts.duplicate }), error: null };
     }
     if (upd && "is_archived" in upd)
       return { data: Array.from({ length: archiveRows }, () => ({ id: "dup-1" })), error: null };
@@ -211,7 +219,7 @@ describe("a write that touched nothing is not a merge", () => {
 
   it("an archive that matched no row stops before any repoint", async () => {
     script({ archiveRows: 0 });
-    expect((await run()).error).toBe("Contact not found");
+    expect((await run()).error).toBe("Contact not found — or it was erased meanwhile. Nothing was merged.");
     expect(rec.chains.filter((c) => updateOf(c) && !("is_archived" in updateOf(c)!))).toEqual([]);
     expect(logEvent).not.toHaveBeenCalled();
   });
@@ -222,5 +230,33 @@ describe("a write that touched nothing is not a merge", () => {
     expect(res.mergedAt).toBeNull();
     expect(res.error).toMatch(/primary contact was not found.*run the merge again/);
     expect(logEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("an erased contact is merged on neither side (T-erasure-lifecycle-guard)", () => {
+  const ERASED = "An erased contact cannot be merged — its personal data was erased under GDPR Article 17.";
+  const writes = () => rec.chains.filter((c) => updateOf(c) || c.ops.some((o) => o.method === "delete"));
+
+  it.each([
+    ["an erased primary", { primary: { erased_at: "2026-09-01T00:00:00Z" } }],
+    ["an erased duplicate", { duplicate: { erased_at: "2026-09-01T00:00:00Z" } }],
+    [
+      "an erased duplicate parked by a half-finished merge (a resume)",
+      { duplicate: { erased_at: "2026-09-01T00:00:00Z", is_archived: true, merged_into_id: "pri-1" } },
+    ],
+  ])("%s is refused before any write, and nothing is logged", async (_label, opts) => {
+    script(opts);
+    expect(await run()).toEqual({ error: ERASED, mergedAt: null });
+    expect(writes()).toEqual([]);
+    expect(logEvent).not.toHaveBeenCalled();
+  });
+
+  it("the archive and the backfill hold the refusal at the write: each is conditional on the contact not being erased", async () => {
+    script();
+    await run();
+    const archive = rec.chains.find((c) => c.table === "contacts" && updateOf(c) && "is_archived" in updateOf(c)!);
+    const backfill = rec.chains.find((c) => c.table === "contacts" && updateOf(c) && has(c, "eq", "id", "pri-1"));
+    expect(archive && has(archive, "is", "erased_at", null)).toBe(true);
+    expect(backfill && has(backfill, "is", "erased_at", null)).toBe(true);
   });
 });

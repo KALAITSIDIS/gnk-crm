@@ -47,7 +47,7 @@ Legend: ✅ full · 🔒 restricted (condition in Notes) · ❌ denied
 | profiles | A AG LM (all in org) | A | A ✅ · AG/LM 🔒 own row (name, locale, phone only) | ❌ (deactivate via `is_active`) | User creation via admin invite (service role) |
 | districts / areas | A AG LM | A | A | A 🔒 (only if unused) | |
 | reference_counters | ❌ direct | ❌ | ❌ | ❌ | Accessed only via `next_reference()` (security definer) |
-| contacts | A AG LM | A AG LM | A ✅ · AG 🔒 (`assigned_agent_id = uid` OR `created_by = uid`) · LM ❌ | ❌ (archive flag instead; archive = UPDATE rule) | Merge runs server-side (service role) and logs events. 0123: `contacts_org_id_id_key` — `UNIQUE (org_id, id)` — is the referenced side of organisation-bound links onto contacts (`viewings_org_contact_fkey` first; 0126 `reservations_org_contact_fkey` and `tasks_org_contact_fkey`). A contact named by a hold, task or viewing cannot move to another organisation (the keys' ON UPDATE NO ACTION). |
+| contacts | A AG LM | A AG LM | A ✅ · AG 🔒 (`assigned_agent_id = uid` OR `created_by = uid`) · LM ❌ | ❌ (archive flag instead; archive = UPDATE rule) | Merge runs server-side (service role) and logs events. 0123: `contacts_org_id_id_key` — `UNIQUE (org_id, id)` — is the referenced side of organisation-bound links onto contacts (`viewings_org_contact_fkey` first; 0126 `reservations_org_contact_fkey` and `tasks_org_contact_fkey`). A contact named by a hold, task or viewing cannot move to another organisation (the keys' ON UPDATE NO ACTION). 0134: the erasure lifecycle is not a session's — `contacts_retain_erasure` (see below the table). |
 | properties | A AG LM (all, incl. off_market — internal team) | A LM · AG 🔒 (auto-assigned to self) | A LM ✅ · AG 🔒 (`assigned_agent_id = uid`) | ❌ (status `withdrawn` + visibility `archived`) | |
 | property_media | A AG LM | A LM · AG 🔒 (own properties) | A LM | A LM | |
 | price_history | A AG LM | ❌ direct | ❌ | ❌ | Written only by trigger |
@@ -66,13 +66,13 @@ Legend: ✅ full · 🔒 restricted (condition in Notes) · ❌ denied
 | offers | follows parent deal visibility | A AG (own deals) | A ✅ · AG 🔒 own deals | ❌ (status withdrawn) | |
 | viewings | A AG LM | A AG | A ✅ · AG 🔒 (`agent_id = uid`) | ❌ (status cancelled) | 0123: `viewings_org_property_fkey` — `(org_id, property_id) → properties (org_id, id)` — and `viewings_org_contact_fkey` — `(org_id, contact_id) → contacts (org_id, id)` — both NO ACTION, replace the single-column keys: a viewing shows a property, and is for a contact, of its OWN organisation (the policies check only the caller's org; the keys bind every writer, service_role included). The nightly sweep's feedback and no-show reminders read only the viewing's own organisation's property. |
 | viewing_slips | A AG (agent of viewing) | A AG 🔒 (agent of the viewing) | ❌ | ❌ | Immutable once created |
-| documents | A ✅ · AG LM 🔒 (`visibility = 'internal'`; `admin_only` hidden) | A AG LM | A 🔒 (title/type only) | A | File bodies via signed URLs only. **Contact KYC docs (id_document / proof_of_address / source_of_funds) are `admin_only` — set at upload, backfilled and CHECK-enforced by 0072 against every path incl. service_role. Test 48** |
+| documents | A ✅ · AG LM 🔒 (`visibility = 'internal'`; `admin_only` hidden) | A AG LM | A 🔒 (title/type only) | A 🔒 (never an erased contact's retained document — 0134 `documents_kept_for_retention`; the retention purge destroys those, as the service role) | File bodies via signed URLs only. **Contact KYC docs (id_document / proof_of_address / source_of_funds) are `admin_only` — set at upload, backfilled and CHECK-enforced by 0072 against every path incl. service_role. Test 48** |
 | share_links | A AG LM (own org) | A AG LM (`created_by = uid`) | creator or A | ❌ **no policy** | anon: **no grant at all** — buyers reach data only via `resolve_share_link` |
 | share_link_properties | A AG LM (via parent link) | A AG LM (via parent link) | ❌ | creator or A | |
 | share_link_attempts | ❌ no policy, no grant | ❌ | ❌ | ❌ | written only by security-definer functions |
 | tasks | A ✅ · AG LM 🔒 (`assignee_id = uid` OR created_by = uid) | A AG LM | assignee or A | creator or A | 0119: `tasks_org_deal_fkey` — `(org_id, deal_id) → deals (org_id, id)`, NO ACTION, replaces the single-column key: a task names a deal of its OWN organisation or none (the policies check only the caller's org; the key binds every writer, service_role included). `deals_supersede_nudges` (0025) completes only the deal's organisation's `deal_no_contact` reminders and writes their `superseded` events into that organisation's chain. 0120: `tasks_org_viewing_fkey` — `(org_id, viewing_id) → viewings (org_id, id)`, the same shape, and `viewings_supersede_nudges` (0020) completes only the viewing's organisation's `viewing_feedback` reminders. 0121: `tasks_org_mandate_fkey` — `(org_id, mandate_id) → mandates (org_id, id)`, the same shape; `raise_key_recall_tasks` (service_role only) and `expire_mandates` (cron) raise and complete only the mandate's own organisation's `key_recall` / `mandate_renewal` reminders — neither guard can be blocked by, nor either self-heal complete, a row of another organisation. 0125: `tasks_org_reservation_fkey` / `tasks_org_installment_fkey` (ON DELETE CASCADE, kept) and `tasks_org_lead_fkey` (NO ACTION) — `(org_id, x) → reservations / reservation_installments / leads (org_id, id)`, the same shape; `warn_expiring_reservations`, `remind_due_installments`, `raise_lead_sla_tasks` and `expire_reservations` (service_role / cron) look for and complete only the parent's own organisation's reminders. 0126: `tasks_org_contact_fkey` / `tasks_org_property_fkey` — `(org_id, contact_id / property_id) → contacts / properties (org_id, id)`, NO ACTION (kept) — complete the set: every record a task can name (deal, viewing, mandate, hold, instalment line, lead, contact, property) is of its own organisation, and a cross-organisation id and a missing one read the same 23503 (the profile links — `assignee_id`, `created_by` — are not keyed by organisation; BACKLOG); `create_followup_nudges`' retention guard (arm 2c) and self-heal (arm 4c) look for and complete only the contact's own organisation's `retention_expired` reminders. |
 | cyprus_config | A AG LM (read) | A | A | ❌ | Edits write `config` events |
-| events | A ✅ · AG LM 🔒 (`actor_id = uid` OR entity is a record they can read — implement pragmatically: A + AG/LM where actor_id = uid; timeline pages assemble via server actions with service role for cross-entity reads, still org-scoped) | A AG LM 🔒 (`org_id = current_org_id()` **AND `actor_id = auth.uid()`** since 0071 — a staff session cannot append rows naming another user or "system"; null-actor rows come only from crons/service_role, which bypass RLS. Test 47. Since 0128 **not** a deal's `won` / `lost` / `won_override` (`close_deal` writes them) and `occurred_at = now()`; since 0131 **not** a `stage_changed` either, under any entity_type (the `deals_stage_changed_event` trigger writes a deal's from the row change) — `session-written-events.test.ts`, `stage-movement-authentic.test.ts`) | ❌ **no policy + revoked** | ❌ **no policy + revoked** | The spine. An event names its author, enforced at the DB |
+| events | A ✅ · AG LM 🔒 (`actor_id = uid` OR entity is a record they can read — implement pragmatically: A + AG/LM where actor_id = uid; timeline pages assemble via server actions with service role for cross-entity reads, still org-scoped) | A AG LM 🔒 (`org_id = current_org_id()` **AND `actor_id = auth.uid()`** since 0071 — a staff session cannot append rows naming another user or "system"; null-actor rows come only from crons/service_role, which bypass RLS. Test 47. Since 0128 **not** a deal's `won` / `lost` / `won_override` (`close_deal` writes them) and `occurred_at = now()`; since 0131 **not** a `stage_changed` either, under any entity_type (the `deals_stage_changed_event` trigger writes a deal's from the row change); since 0134 **not** an `erased` or `retention_purged` either, under any entity_type (the erasure and the retention purge write them as the service role) — `session-written-events.test.ts`, `stage-movement-authentic.test.ts`, `erasure-lifecycle.test.ts`) | ❌ **no policy + revoked** | ❌ **no policy + revoked** | The spine. An event names its author, enforced at the DB |
 
 ## Storage policies
 
@@ -115,6 +115,34 @@ rule), while CI's pinned CLI revokes them — so a new table that skips the REVO
 is session-updatable on hosted only, and only the restore pack's 0132 row, run
 against hosted, reads it (`1 25 true` instead of `0 25 true`).
 
+**A contact's erasure is not a session's to undo (0134).** `contacts_update`
+restricts rows, not columns, so before 0134 an admin or the contact's owning
+agent could PATCH an erased contact's `erased_at`, `erased_by`,
+`retention_until`, `is_archived`, `temperature` or `consent_marketing` — clear the
+marker and unarchive it, put it back on the hot-buyer card and into its phone's
+uniqueness slot, or move the retention date so the purge destroyed AML records
+early — and `contacts_insert` admitted a contact born "erased".
+`trg_contacts_erasure_lifecycle()` (invoker, callable by no role) runs `BEFORE
+INSERT OR UPDATE` on contacts as `contacts_retain_erasure` and refuses, for a
+session (authenticated / anon), with 42501: an INSERT carrying any of
+`erased_at` / `erased_by` / `retention_until`; an UPDATE changing any of them
+(restating passes); and any change to an erased contact but archiving it (the
+whole row less `updated_at` and the generated `display_name`). Its documents
+are the retention's: `trg_documents_kept_for_retention()` runs `BEFORE DELETE`
+on documents as `documents_kept_for_retention` and refuses a session's delete
+of an erased contact's document while its retention date is set — only the
+retention purge destroys those (a document under no duty stays deletable,
+and an evidence report may still be added for an erased contact). The
+erasure's document-row delete, contact patch and `erased` event, and the
+purge's document-row delete, marker update and `retention_purged` event, run as
+the service role from `lib/actions/contact-erasure.ts`, after its admin /
+organisation / typed-name / expiry checks and bounded by the organisation and
+the contact; `events_insert` refuses a session's `erased` / `retention_purged`,
+so the record the erasure trusts cannot be forged. `mergeContacts` (service
+role) refuses an erased contact itself, at its read and at its writes. The
+restore pack's 0134 row reads both triggers, the guards' session binding and
+the policy clause. Deploy-coupled: the application first, then 0134.
+
 ## Policy SQL patterns (use these shapes)
 
 ```sql
@@ -130,12 +158,14 @@ for update using (
 
 -- events: insert-only, and the insert names its author (0071); a deal's
 -- terminal events (0128) and its stage movement (0131) are written by the
--- database, never by a session; a session's event occurs at its insert (0128)
+-- database, and a contact's erasure and retention purge (0134) by the service
+-- role, never by a session; a session's event occurs at its insert (0128)
 create policy events_insert on events
 for insert with check (org_id = current_org_id()
   and actor_id = auth.uid()
   and not (entity_type = 'deal' and event_type in ('won', 'lost', 'won_override'))
   and event_type <> 'stage_changed'   -- any entity_type: only the trigger writes it
+  and event_type not in ('erased', 'retention_purged')   -- 0134: the erasure's and the purge's, as the system
   and occurred_at = now());
 create policy events_select_admin on events
 for select using (org_id = current_org_id()
@@ -189,3 +219,4 @@ grant select on mandates_safe to authenticated;
 13. `key_movements` written only by `record_key_movement`: direct INSERT (0127), UPDATE and DELETE denied for every role.
 14. Deals: agent setting both `agent_id` and `created_by` away from themselves → denied (WITH CHECK, 0009); creator changing the working agent while staying `created_by` → allowed (own = `agent_id` OR `created_by`).
 15. `property_keys`: agent INSERT (register) → denied, LM → allowed; agent UPDATE (keys meta) → 0 rows, LM → allowed; org B blind. Movements only via `record_key_movement` RPC (0013): cross-org → not found; status transitions guarded (no double checkout, lost blocks checkout until return); movement + cache + event land atomically or not at all.
+16. Contacts' erasure lifecycle (0134): an admin's and an owning agent's PATCH / bulk PATCH / upsert of `erased_at`, `erased_by` or `retention_until`, and any change to an erased contact but archiving it → 42501, nothing moves; an INSERT carrying them (admin, agent, LM) → 42501; an admin's DELETE of an erased contact's retained document → 42501; a session's `erased` / `retention_purged` event → 42501; the real erasure and purge (service role) still work — `erasure-lifecycle.test.ts`.
