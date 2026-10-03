@@ -3389,8 +3389,8 @@ VERIFY, run before starting.
   organisation with a session actor, then call `resolve_share_link` with L's token — no new `opened` event for L in
   L's organisation means open.
 - ~~**`submit_public_enquiry`'s round-robin routing counts another organisation's leads and `assigned` events, S
-  (pre-existing).**~~ **FIXED 2026-10-03 on branch `fix/routing-own-org` (migration 0136; hosted first, then merge —
-  not deploy-coupled) — DECISIONS `T-routing-own-org`.** Reproduced first (each half on its own, through a session of
+  (pre-existing).**~~ **FIXED — LANDED 2026-10-03 (hosted 0136, applied before the merge; PR #96, main `56252d8`) —
+  DECISIONS `T-routing-own-org`.** Reproduced first (each half on its own, through a session of
   the other organisation — both writes admitted by RLS: the lead naming our agent, the `assigned` event naming them)
   and on production in a rolled-back transaction (20 foreign leads flipped the pick). The leads half is CONFIRMED —
   `leads.assigned_agent_id` takes another organisation's profile (the profiles `(org_id, id)` decision above). 0136
