@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 137::bigint as migrations,
+    2::bigint as auth_users, 138::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -752,6 +752,15 @@ misc as (
                                 'event_type\s+=\s+''opened''\s+and org_id\s+=\s+v_link\.org_id\s+and actor_id\s+is null') = 2
                      from pg_proc p
                     where p.oid = to_regprocedure('public.resolve_share_link(text)')), false)::text
+  union all
+  -- 0138: a session may not write the system's enquiry_alert / lead_escalation
+  -- / opened events under any entity_type (the claim closes a desk alert on an
+  -- enquiry_alert 'sent'; an opened line reads as a buyer's view). A restore
+  -- that brought back 0134's events_insert reads false here.
+  select 'SECURITY: a session cannot write the system''s enquiry_alert / lead_escalation / opened (0138)', 'true',
+         coalesce((select pg_get_expr(p.polwithcheck, p.polrelid) ~ '\(event_type <> ALL \(ARRAY\[''enquiry_alert''::text, ''lead_escalation''::text, ''opened''::text\]\)\)'
+                     from pg_policy p
+                    where p.polrelid = 'public.events'::regclass and p.polname = 'events_insert'), false)::text
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.

@@ -99,20 +99,17 @@ async function systemLinesToday(linkId: string) {
   );
   return rows[0]!.n;
 }
-/** Inside a transaction: an `opened` share_link event at the link's id, written by a session of `who` in `org`. */
+/**
+ * Inside a transaction: an `opened` share_link event at the link's id with `who` as its actor in `org` — the line a
+ * session could write before 0138 (since 0138 events_insert refuses a session's `opened`, so it is planted as
+ * postgres: rows written before 0138 still exist, and the throttle must still ignore them).
+ */
 async function sessionOpened(who: TestUser, org: string, linkId: string) {
-  await o.query("set local role authenticated");
-  await o.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: who.id, role: "authenticated", aal: "aal2" })]);
-  try {
-    await o.query(
-      `insert into events (org_id, actor_id, entity_type, entity_id, event_type, payload)
-       values ($1, $2, 'share_link', $3, 'opened', '{}'::jsonb)`,
-      [org, who.id, linkId],
-    );
-  } finally {
-    await o.query("reset role");
-    await o.query("select set_config('request.jwt.claims', '', true)");
-  }
+  await o.query(
+    `insert into events (org_id, actor_id, entity_type, entity_id, event_type, payload)
+     values ($1, $2, 'share_link', $3, 'opened', '{}'::jsonb)`,
+    [org, who.id, linkId],
+  );
 }
 /** Inside a transaction: another organisation's SYSTEM `opened` line at the link's id (as a deleted link of theirs leaves it). */
 async function theirSystemLine(linkId: string) {
