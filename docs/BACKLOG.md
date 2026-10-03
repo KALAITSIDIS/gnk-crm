@@ -3250,9 +3250,8 @@ VERIFY, run before starting.
   pg_get_expr(polqual, polrelid) from pg_policy where polname = 'cyprus_config_update'` — no `org_id` / organisation
   predicate means open.
 - ~~**An erased contact's erasure flags are refused by the application only, S (pre-existing, not probed).**~~
-  **FIXED — BUILT 2026-10-02 on branch `fix/erasure-lifecycle-guard` (migration 0134 + the erasure, purge, merge and
-  document-delete actions); NOT applied to hosted, NOT merged — DEPLOY-COUPLED, APP FIRST (merge, deploy, confirm the
-  SHA, then apply 0134) — DECISIONS `T-erasure-lifecycle-guard`.** Reproduced first (external audit brief): an aal2
+  **FIXED — LANDED 2026-10-03 (migration 0134 + the erasure, purge, merge and document-delete actions; PR #93, main
+  `408c7c2`, deployed FIRST, then hosted 0134 — the inverted order) — DECISIONS `T-erasure-lifecycle-guard`.** Reproduced first (external audit brief): an aal2
   admin and the assigned agent could clear an erased contact's marker and unarchive it (then hot-buyer card, phone
   slot), re-date or null `retention_until` (an early purge destroyed a 2031 KYC file the same day), insert a contact
   born erased, forge the marker on a live contact (the real erasure then reported success without its contact patch)
