@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 135::bigint as migrations,
+    2::bigint as auth_users, 136::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -730,6 +730,17 @@ misc as (
                           and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'n\.entity_id = done\.id\s+and n\.org_id = done\.org_id'
                      from pg_proc p
                     where p.oid = to_regprocedure('public.redact_stale_enquiries(integer)')), false)::text
+  union all
+  -- 0136: the website enquiry door's round-robin (submit_public_enquiry) counts
+  -- only its own organisation's open leads and `assigned` events — another
+  -- organisation's writes naming our agents must not steer it. A restore that
+  -- brought back 0114's body reads false here.
+  select 'SECURITY: the website enquiry''s round-robin counts only its own organisation (0136)', 'true',
+         coalesce((select p.prosecdef
+                          and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'from leads l\s+where l\.org_id = v_org_id\s+and l\.assigned_agent_id = p\.id'
+                          and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'from events e\s+where e\.org_id = v_org_id\s+and e\.entity_type = ''lead'''
+                     from pg_proc p
+                    where p.oid = to_regprocedure('public.submit_public_enquiry(text, text, text, text, text, text, text, jsonb)')), false)::text
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.
