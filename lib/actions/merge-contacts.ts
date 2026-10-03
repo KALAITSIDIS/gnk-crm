@@ -78,11 +78,13 @@ export async function mergeContacts(
   // EVERY service-role query below carries `.eq("org_id", orgId)`, and orgId
   // is the caller's PROFILE org — never anything from the form. The service
   // role bypasses RLS, so proving the two contacts are ours constrains nothing
-  // else: ten links onto `contacts` are still single-column, a row of another
-  // organisation may name our duplicate, and an unscoped repoint rewrote it
-  // onto our primary — which that organisation could then read through its own
-  // row (T-contact-merge-org-isolation). Such foreign rows are left exactly as
-  // they are; repairing them is not this action's business.
+  // else: until 0139 ten links onto `contacts` were single-column, a row of
+  // another organisation could name our duplicate, and an unscoped repoint
+  // rewrote it onto our primary — which that organisation could then read
+  // through its own row (T-contact-merge-org-isolation). Since 0139 the keys
+  // refuse such a row, but a replica-mode restore can still load one, so the
+  // predicate stays. Such foreign rows are left exactly as they are; repairing
+  // them is not this action's business.
   const orgId = profile.orgId;
   const admin = createAdminClient();
   const [{ data: primary }, { data: duplicate }] = await Promise.all([

@@ -17,23 +17,26 @@ import {
  *
  * The merge runs its repoints on the SERVICE-ROLE client, so RLS is not
  * between it and anybody's rows: the only thing that keeps A's merge inside A
- * is the query itself. Ten links onto `contacts` are still single-column (the
- * live list is read from `pg_constraint` below, not trusted), so a row of B can
- * legitimately be stored naming A's contact — B's admin can POST such a lead
- * through PostgREST today. Until this change, A's admin merging two of A's own
- * contacts rewrote those B rows onto A's primary, and B could then read A's
- * surviving contact id through its own lead.
+ * is the query itself. Until T-contact-merge-org-isolation, A's admin merging
+ * two of A's own contacts rewrote B rows naming A's duplicate onto A's
+ * primary, and B could then read A's surviving contact id through its own
+ * lead. Since 0139 (T-contact-links-org-isolation) every link onto `contacts`
+ * is bound to the contact's organisation (the live list is read from
+ * `pg_constraint` below, not trusted): B's admin's POST naming A's contact is
+ * refused, and no path that runs the keys can store such a row. The B side of
+ * `world()` is therefore planted PAST the keys, in replica mode — the state a
+ * replica-mode restore could still load — so the merge's own organisation
+ * predicate stays pinned by behaviour, not only by the keys.
  *
  * Nothing below the action is stubbed except the Next.js request plumbing:
  * `createClient` hands the action a supabase-js client signed in (at aal2) as
  * a fixture user, `createAdminClient` is the real service client, and
  * `logEvent` writes into the real hash chain. Only `revalidatePath` is a stub.
  *
- * Foreign rows are PLANTED with the service role where B's own session cannot
- * write the column (a mandate owner, a document) — that is the state the
- * schema admits, whichever path wrote it. The three links bound to the
- * contact's organisation since 0123 / 0126 (viewings, reservations, tasks) are
- * proven to refuse such a row, and then only A's side is exercised for them.
+ * B's plants are COMMITTED (the action reads through the service-role
+ * PostgREST client, which cannot see an open transaction) and removed by
+ * afterAll; the suite runs its files strictly one at a time. All thirteen
+ * links onto contacts are proven to refuse such a row through the keys.
  */
 const DB_URL = process.env.DB_URL ?? "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
 const ORG_A = randomUUID();
@@ -94,6 +97,28 @@ async function ins(table: string, row: Record<string, unknown>): Promise<string>
   const { data, error } = await svc.from(table).insert(row).select("id").single();
   if (error) throw new Error(`${table} fixture: ${error.message}`);
   return (data as { id: string }).id;
+}
+
+/**
+ * A B row naming A's contact, written PAST the keys: replica mode skips the
+ * foreign-key triggers (since 0139 nothing else can store it). Committed —
+ * see the header — and removed by afterAll.
+ */
+async function plantPastKeys(table: string, row: Record<string, unknown>): Promise<string> {
+  const cols = Object.keys(row);
+  await pg.query("begin");
+  try {
+    await pg.query("set local session_replication_role = replica");
+    const { rows } = await pg.query<{ id: string }>(
+      `insert into public.${table} (${cols.join(", ")}) values (${cols.map((_, i) => `$${i + 1}`).join(", ")}) returning id`,
+      Object.values(row),
+    );
+    await pg.query("commit");
+    return rows[0]!.id;
+  } catch (e) {
+    await pg.query("rollback");
+    throw e;
+  }
 }
 
 const phone = () => `+3579${String(Math.floor(Math.random() * 1e7)).padStart(7, "0")}`;
@@ -217,22 +242,31 @@ async function world() {
     storage_path: `zz/${RUN}/${randomUUID()}.pdf`,
   });
 
-  // --- B: every single-column link the schema lets a B row point at A ---------
-  // The lead goes through B's OWN admin session, as a crafted request would.
+  // --- B: every link a B row could name A through, planted PAST the keys ----
+  // B's OWN admin session tries the lead first, as a crafted request would:
+  // since 0139 the key refuses it (recorded for the precondition test).
   const bClient = await sessionClient(adminB);
   const planted = await bClient
     .from("leads")
     .insert({ org_id: ORG_B, contact_id: duplicate })
     .select("id")
     .single();
-  const bLead = planted.data?.id as string | undefined;
+  if (planted.data) throw new Error("world(): B's admin stored a lead naming A's contact — the 0139 key is not there");
   add(b, "leads.contact_id", "leads", "contact_id",
-    bLead ?? (await ins("leads", { org_id: ORG_B, contact_id: duplicate })));
+    await plantPastKeys("leads", { org_id: ORG_B, contact_id: duplicate }));
 
-  const propB = await property(ORG_B, { owner_contact_id: duplicate, developer_contact_id: duplicate });
+  n += 1;
+  const propB = await plantPastKeys("properties", {
+    org_id: ORG_B,
+    reference: `ZZCM${RUN.slice(-4).toUpperCase()}${n}`,
+    property_type: "apartment",
+    status: "available",
+    owner_contact_id: duplicate,
+    developer_contact_id: duplicate,
+  });
   add(b, "properties.owner_contact_id", "properties", "owner_contact_id", propB);
   add(b, "properties.developer_contact_id", "properties", "developer_contact_id", propB);
-  const dealB = await ins("deals", {
+  const dealB = await plantPastKeys("deals", {
     org_id: ORG_B,
     deal_type: "sale",
     stage_id: stageOf[ORG_B],
@@ -243,18 +277,18 @@ async function world() {
   add(b, "deals.buyer_contact_id", "deals", "buyer_contact_id", dealB);
   add(b, "deals.seller_contact_id", "deals", "seller_contact_id", dealB);
   add(b, "offers.contact_id", "offers", "contact_id",
-    await ins("offers", { org_id: ORG_B, deal_id: dealB, amount: 1000, contact_id: duplicate }));
+    await plantPastKeys("offers", { org_id: ORG_B, deal_id: dealB, amount: 1000, contact_id: duplicate }));
   add(b, "buyer_requirements.contact_id", "buyer_requirements", "contact_id",
-    await ins("buyer_requirements", { org_id: ORG_B, contact_id: duplicate }));
+    await plantPastKeys("buyer_requirements", { org_id: ORG_B, contact_id: duplicate }));
   add(b, "share_links.contact_id", "share_links", "contact_id",
-    await ins("share_links", {
+    await plantPastKeys("share_links", {
       org_id: ORG_B,
       contact_id: duplicate,
       token_sha256: createHash("sha256").update(randomBytes(16)).digest("hex"),
       expires_at: new Date(Date.now() + 86_400_000).toISOString(),
     }));
   add(b, "mandates.owner_contact_id", "mandates", "owner_contact_id",
-    await ins("mandates", { org_id: ORG_B, property_id: propB, type: "open", owner_contact_id: duplicate }));
+    await plantPastKeys("mandates", { org_id: ORG_B, property_id: propB, type: "open", owner_contact_id: duplicate }));
   add(b, "documents.entity_id", "documents", "entity_id",
     await ins("documents", {
       org_id: ORG_B,
@@ -263,8 +297,15 @@ async function world() {
       title: "ZZCM doc B",
       storage_path: `zz/${RUN}/${randomUUID()}.pdf`,
     }));
+  n += 1;
   add(b, "contacts.merged_into_id", "contacts", "merged_into_id",
-    await contact(ORG_B, "Foreign", { phone_e164: null, is_archived: true, merged_into_id: duplicate }));
+    await plantPastKeys("contacts", {
+      org_id: ORG_B,
+      first_name: "ZZMergeForeign",
+      last_name: `${RUN}${n}`,
+      is_archived: true,
+      merged_into_id: duplicate,
+    }));
 
   return {
     primary,
@@ -397,19 +438,37 @@ describe("preconditions: what the schema and policies admit today", () => {
     ]);
   });
 
-  it("B cannot read A's contacts, but B's admin CAN store a lead naming one", async () => {
+  it("B cannot read A's contacts, and since 0139 B's admin cannot store a lead naming one either", async () => {
     const w = await world();
     const bClient = await sessionClient(adminB);
     const { data: seen } = await bClient.from("contacts").select("id").in("id", [w.primary, w.duplicate]);
     expect(seen ?? []).toEqual([]);
-    console.log(`[evidence] B admin POST /leads naming A's duplicate: ${w.plantedThroughB}`);
-    expect(w.plantedThroughB).toBe("accepted");
+    expect(w.plantedThroughB).toBe(
+      'refused: 23503 insert or update on table "leads" violates foreign key constraint "leads_contact_id_fkey"',
+    );
   });
 
-  it("viewings, reservations and tasks refuse a B row naming A's contact (0123 / 0126)", async () => {
+  it("every link onto contacts refuses a B row naming A's contact (0123 / 0126 / 0139)", async () => {
     const dup = await contact(ORG_A, "Probe");
     const propB = await property(ORG_B);
+    const dealB = await ins("deals", { org_id: ORG_B, deal_type: "sale", stage_id: stageOf[ORG_B], title: `ZZCM ${RUN} probe` });
+    const bOwn = await contact(ORG_B, "ProbeOwn");
     const tries = await Promise.all([
+      svc.from("leads").insert({ org_id: ORG_B, contact_id: dup }),
+      svc.from("deals").update({ buyer_contact_id: dup }).eq("id", dealB),
+      svc.from("deals").update({ seller_contact_id: dup }).eq("id", dealB),
+      svc.from("offers").insert({ org_id: ORG_B, deal_id: dealB, amount: 1, contact_id: dup }),
+      svc.from("share_links").insert({
+        org_id: ORG_B,
+        contact_id: dup,
+        token_sha256: createHash("sha256").update(randomBytes(16)).digest("hex"),
+        expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+      }),
+      svc.from("buyer_requirements").insert({ org_id: ORG_B, contact_id: dup }),
+      svc.from("mandates").insert({ org_id: ORG_B, property_id: propB, type: "open", owner_contact_id: dup }),
+      svc.from("properties").update({ owner_contact_id: dup }).eq("id", propB),
+      svc.from("properties").update({ developer_contact_id: dup }).eq("id", propB),
+      svc.from("contacts").update({ merged_into_id: dup }).eq("id", bOwn),
       svc.from("viewings").insert({
         org_id: ORG_B,
         contact_id: dup,
@@ -425,7 +484,7 @@ describe("preconditions: what the schema and policies admit today", () => {
       }),
       svc.from("tasks").insert({ org_id: ORG_B, title: "ZZCM probe", contact_id: dup }),
     ]);
-    expect(tries.map((t) => t.error?.code)).toEqual(["23503", "23503", "23503"]);
+    expect(tries.map((t) => t.error?.code)).toEqual(Array(13).fill("23503"));
   });
 });
 

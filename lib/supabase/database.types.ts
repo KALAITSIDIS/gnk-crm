@@ -161,10 +161,10 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "buyer_requirements_contact_id_fkey"
-            columns: ["contact_id"]
+            columns: ["org_id", "contact_id"]
             isOneToOne: false
             referencedRelation: "contacts"
-            referencedColumns: ["id"]
+            referencedColumns: ["org_id", "id"]
           },
           {
             foreignKeyName: "buyer_requirements_created_by_fkey"
@@ -350,10 +350,10 @@ export type Database = {
           },
           {
             foreignKeyName: "contacts_merged_into_id_fkey"
-            columns: ["merged_into_id"]
+            columns: ["org_id", "merged_into_id"]
             isOneToOne: false
             referencedRelation: "contacts"
-            referencedColumns: ["id"]
+            referencedColumns: ["org_id", "id"]
           },
           {
             foreignKeyName: "contacts_org_id_fkey"
@@ -521,10 +521,10 @@ export type Database = {
           },
           {
             foreignKeyName: "deals_buyer_contact_id_fkey"
-            columns: ["buyer_contact_id"]
+            columns: ["org_id", "buyer_contact_id"]
             isOneToOne: false
             referencedRelation: "contacts"
-            referencedColumns: ["id"]
+            referencedColumns: ["org_id", "id"]
           },
           {
             foreignKeyName: "deals_created_by_fkey"
@@ -549,10 +549,10 @@ export type Database = {
           },
           {
             foreignKeyName: "deals_seller_contact_id_fkey"
-            columns: ["seller_contact_id"]
+            columns: ["org_id", "seller_contact_id"]
             isOneToOne: false
             referencedRelation: "contacts"
-            referencedColumns: ["id"]
+            referencedColumns: ["org_id", "id"]
           },
           {
             foreignKeyName: "deals_stage_id_fkey"
@@ -974,10 +974,10 @@ export type Database = {
           },
           {
             foreignKeyName: "leads_contact_id_fkey"
-            columns: ["contact_id"]
+            columns: ["org_id", "contact_id"]
             isOneToOne: false
             referencedRelation: "contacts"
-            referencedColumns: ["id"]
+            referencedColumns: ["org_id", "id"]
           },
           {
             foreignKeyName: "leads_org_converted_deal_fkey"
@@ -1098,10 +1098,10 @@ export type Database = {
           },
           {
             foreignKeyName: "mandates_owner_contact_id_fkey"
-            columns: ["owner_contact_id"]
+            columns: ["org_id", "owner_contact_id"]
             isOneToOne: false
             referencedRelation: "contacts"
-            referencedColumns: ["id"]
+            referencedColumns: ["org_id", "id"]
           },
           {
             foreignKeyName: "mandates_signed_doc_fk"
@@ -1255,10 +1255,10 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "offers_contact_id_fkey"
-            columns: ["contact_id"]
+            columns: ["org_id", "contact_id"]
             isOneToOne: false
             referencedRelation: "contacts"
-            referencedColumns: ["id"]
+            referencedColumns: ["org_id", "id"]
           },
           {
             foreignKeyName: "offers_created_by_fkey"
@@ -1888,10 +1888,10 @@ export type Database = {
           },
           {
             foreignKeyName: "properties_developer_contact_id_fkey"
-            columns: ["developer_contact_id"]
+            columns: ["org_id", "developer_contact_id"]
             isOneToOne: false
             referencedRelation: "contacts"
-            referencedColumns: ["id"]
+            referencedColumns: ["org_id", "id"]
           },
           {
             foreignKeyName: "properties_district_id_fkey"
@@ -1909,10 +1909,10 @@ export type Database = {
           },
           {
             foreignKeyName: "properties_owner_contact_id_fkey"
-            columns: ["owner_contact_id"]
+            columns: ["org_id", "owner_contact_id"]
             isOneToOne: false
             referencedRelation: "contacts"
-            referencedColumns: ["id"]
+            referencedColumns: ["org_id", "id"]
           },
           {
             foreignKeyName: "properties_parent_id_fkey"
@@ -2435,10 +2435,10 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "share_links_contact_id_fkey"
-            columns: ["contact_id"]
+            columns: ["org_id", "contact_id"]
             isOneToOne: false
             referencedRelation: "contacts"
-            referencedColumns: ["id"]
+            referencedColumns: ["org_id", "id"]
           },
           {
             foreignKeyName: "share_links_created_by_fkey"
@@ -3041,10 +3041,10 @@ export type Database = {
           },
           {
             foreignKeyName: "mandates_owner_contact_id_fkey"
-            columns: ["owner_contact_id"]
+            columns: ["org_id", "owner_contact_id"]
             isOneToOne: false
             referencedRelation: "contacts"
-            referencedColumns: ["id"]
+            referencedColumns: ["org_id", "id"]
           },
           {
             foreignKeyName: "mandates_signed_doc_fk"

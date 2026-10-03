@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 138::bigint as migrations,
+    2::bigint as auth_users, 139::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -761,6 +761,54 @@ misc as (
          coalesce((select pg_get_expr(p.polwithcheck, p.polrelid) ~ '\(event_type <> ALL \(ARRAY\[''enquiry_alert''::text, ''lead_escalation''::text, ''opened''::text\]\)\)'
                      from pg_policy p
                     where p.polrelid = 'public.events'::regclass and p.polname = 'events_insert'), false)::text
+  union all
+  -- 0139: every link onto a contact is of the contact's organisation — the
+  -- same reason as 0129's rows (a replica-mode restore loads a foreign link
+  -- past the keys as readily as a valid one). One row for the ten links; each
+  -- count is named, so a red row says which.
+  select 'INTEGRITY: no lead, deal, offer, share link, requirement, mandate, listing or merge pointer names a contact of another organisation (0139)',
+         'leads 0, deal-buyers 0, deal-sellers 0, offers 0, share-links 0, requirements 0, mandates 0, owners 0, developers 0, merges 0',
+         format('leads %s, deal-buyers %s, deal-sellers %s, offers %s, share-links %s, requirements %s, mandates %s, owners %s, developers %s, merges %s',
+           (select count(*) from leads x              join contacts c on c.id = x.contact_id           where x.org_id <> c.org_id),
+           (select count(*) from deals x              join contacts c on c.id = x.buyer_contact_id     where x.org_id <> c.org_id),
+           (select count(*) from deals x              join contacts c on c.id = x.seller_contact_id    where x.org_id <> c.org_id),
+           (select count(*) from offers x             join contacts c on c.id = x.contact_id           where x.org_id <> c.org_id),
+           (select count(*) from share_links x        join contacts c on c.id = x.contact_id           where x.org_id <> c.org_id),
+           (select count(*) from buyer_requirements x join contacts c on c.id = x.contact_id           where x.org_id <> c.org_id),
+           (select count(*) from mandates x           join contacts c on c.id = x.owner_contact_id     where x.org_id <> c.org_id),
+           (select count(*) from properties x         join contacts c on c.id = x.owner_contact_id     where x.org_id <> c.org_id),
+           (select count(*) from properties x         join contacts c on c.id = x.developer_contact_id where x.org_id <> c.org_id),
+           (select count(*) from contacts x           join contacts c on c.id = x.merged_into_id       where x.org_id <> c.org_id))
+  union all
+  -- 0139: and none names a contact that does not exist (0125 / 0129's reason:
+  -- the joins above cannot see a dangling id a replica-mode restore loaded).
+  select 'INTEGRITY: no lead, deal, offer, share link, requirement, mandate, listing or merge pointer names a contact that does not exist (0139)', '0',
+         (select count(*)::text from (
+             select 1 from leads x where x.contact_id is not null and not exists (select 1 from contacts c where c.id = x.contact_id)
+           union all
+             select 1 from deals x
+              where (x.buyer_contact_id is not null and not exists (select 1 from contacts c where c.id = x.buyer_contact_id))
+                 or (x.seller_contact_id is not null and not exists (select 1 from contacts c where c.id = x.seller_contact_id))
+           union all
+             select 1 from offers x where x.contact_id is not null and not exists (select 1 from contacts c where c.id = x.contact_id)
+           union all
+             select 1 from share_links x where x.contact_id is not null and not exists (select 1 from contacts c where c.id = x.contact_id)
+           union all
+             select 1 from buyer_requirements x where not exists (select 1 from contacts c where c.id = x.contact_id)
+           union all
+             select 1 from mandates x where x.owner_contact_id is not null and not exists (select 1 from contacts c where c.id = x.owner_contact_id)
+           union all
+             select 1 from properties x
+              where (x.owner_contact_id is not null and not exists (select 1 from contacts c where c.id = x.owner_contact_id))
+                 or (x.developer_contact_id is not null and not exists (select 1 from contacts c where c.id = x.developer_contact_id))
+           union all
+             select 1 from contacts x where x.merged_into_id is not null and not exists (select 1 from contacts c where c.id = x.merged_into_id)) d)
+  union all
+  -- 0139: and the schema itself — a restore that brought back a single-column
+  -- key onto contacts reads above 0 here even while the data is clean.
+  select 'SECURITY: every foreign key onto contacts is bound to the contact''s organisation (0139)', '0',
+         (select count(*)::text from pg_constraint
+           where contype = 'f' and confrelid = 'public.contacts'::regclass and array_length(conkey, 1) = 1)
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.
