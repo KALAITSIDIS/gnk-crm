@@ -3348,16 +3348,32 @@ VERIFY, run before starting.
   Found by T-insert-id-without-history's map. **VERIFY:** as an aal2 admin in a rolled-back transaction, delete an
   admin_only contact document D and `insert into documents (id = D, …, visibility = 'internal')` — INSERT 1 means
   open (measured 2026-10-02 at 0133).
-- **`redact_stale_enquiries` matches interaction notes by `entity_id` with no organisation predicate, S
-  (pre-existing).** Its notes CTE (0094) is `n.entity_type = 'lead' and n.entity_id = done.id`. Another organisation
-  may insert a lead at an id whose orphaned notes are ours (0133 accepts it: the history is not theirs) with a
-  back-dated `received_at` and source `website`, and the nightly sweep (`10 3 * * *`) then blanks OUR notes for that
-  id — an irreversible cross-tenant write. Fix: `and n.org_id = done.org_id`, the replaced body guarded by its md5;
-  cron-only, so no release-compat entry. `resolve_share_link`'s once-a-day `opened` throttle is likewise not bounded
-  by organisation (`and org_id = v_link.org_id`; it can only harm the organisation that inserted at the id — trivial).
-  Found by T-insert-id-without-history's map and review (the predicate measured, the blanking probed rolled back).
-  **VERIFY:** `select regexp_replace(prosrc, '--[^\n]*', '', 'g') ~ '\mn\.org_id\M' from pg_proc where proname =
-  'redact_stale_enquiries'` — false means open (it names the notes' organisation in any form of the fix).
+- ~~**`redact_stale_enquiries` matches interaction notes by `entity_id` with no organisation predicate, S
+  (pre-existing).**~~ **FIXED 2026-10-03 on branch `fix/redact-notes-own-org` (migration 0135; lands hosted first,
+  then merge — not deploy-coupled) — DECISIONS `T-redact-notes-own-org`.** Reproduced first through PostgREST and the
+  real sweep on the local stack at 0134 (another organisation's agent inserted a back-dated unlinked website lead at
+  the id of our deleted lead; the sweep blanked our note); hosted read 2026-10-03: the body is 0094's (md5
+  `044c146a…`), the VERIFY below false, the cron job active. 0135 replaces the body with the one predicate
+  `and n.org_id = done.org_id`, guarded by that md5; a read-only diagnostic counts existing collisions.
+  `resolve_share_link`'s throttle is split out below.
+  - **`redact_stale_enquiries` matches interaction notes by `entity_id` with no organisation predicate, S
+    (original).** Its notes CTE (0094) is `n.entity_type = 'lead' and n.entity_id = done.id`. Another organisation
+    may insert a lead at an id whose orphaned notes are ours (0133 accepts it: the history is not theirs) with a
+    back-dated `received_at` and source `website`, and the nightly sweep (`10 3 * * *`) then blanks OUR notes for that
+    id — an irreversible cross-tenant write. Fix: `and n.org_id = done.org_id`, the replaced body guarded by its md5;
+    cron-only, so no release-compat entry. `resolve_share_link`'s once-a-day `opened` throttle is likewise not bounded
+    by organisation (`and org_id = v_link.org_id`; it can only harm the organisation that inserted at the id — trivial).
+    Found by T-insert-id-without-history's map and review (the predicate measured, the blanking probed rolled back).
+    **VERIFY (kept):** `select regexp_replace(prosrc, '--[^\n]*', '', 'g') ~ '\mn\.org_id\M' from pg_proc where
+    proname = 'redact_stale_enquiries'` — false means open (it names the notes' organisation in any form of the fix).
+- **`resolve_share_link`'s once-a-day `opened` throttle counts an event of any organisation for the link id, S
+  (pre-existing; split from the entry above, 2026-10-03).** Its throttle looks for an `opened` event of the link's id
+  without `org_id = v_link.org_id`, so a link inserted at an id whose `opened` history belongs to ANOTHER organisation
+  (0133 lets that id through) records no `opened` line on its first view of the day. It can only suppress the
+  inserting organisation's own line — no cross-tenant write. Not folded into 0135: the function is 12.9k characters
+  and anon-callable (every public share page), for a self-harm-only effect. Fix shape: add the predicate, the
+  replaced body guarded by its md5 (hosted `529134eb…`, 2026-10-03). **VERIFY:** `select prosrc ~ 'org_id = v_link\.org_id'
+  from pg_proc where proname = 'resolve_share_link'` — false means open.
 - **Natural keys an id guard cannot see: a deleted property's `reference` and a deleted link's `token_sha256` can be
   taken again, S (pre-existing).** `properties.reference` is unique only among live rows (`UNIQUE (org_id,
   reference)`), sessions choose it at INSERT, and `properties_reference_immutable` fires on UPDATE only — so a deleted
