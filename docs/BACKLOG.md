@@ -3003,8 +3003,9 @@ VERIFY, run before starting.
   than the number of `.from(` repoints means open.
 - ~~**Ten links onto `contacts` are still single-column, S/M.**~~ **FIXED in two releases (T-contact-links-org-isolation):
   release 1 LANDED 2026-10-03 (PR #99, main `8c9f329`, deployed — constraint-name embed hints, eight re-reads);
-  release 2 = migration 0139 (branch `fix/contact-links-keys`): all ten keys `(org_id, <col>) → contacts (org_id, id)`
-  under their original names, hosted first (after release 1's deploy), then merge.** (original) `leads.contact_id`, `deals.buyer_contact_id` /
+  release 2 LANDED 2026-10-03 (hosted 0139 ~21:17:30Z, then PR #100, main `ef98a9e`, deployed): all ten keys
+  `(org_id, <col>) → contacts (org_id, id)` under their original names. Rollback floor: never roll the application back
+  past `8c9f329` while hosted is at 0139.** (original) `leads.contact_id`, `deals.buyer_contact_id` /
   `seller_contact_id`, `offers.contact_id`, `share_links.contact_id`, `buyer_requirements.contact_id`,
   `mandates.owner_contact_id`, `properties.owner_contact_id` / `developer_contact_id` and `contacts.merged_into_id`
   reference `contacts(id)` alone (measured at 0126 from `pg_constraint`; `viewings`, `reservations` and `tasks` are
