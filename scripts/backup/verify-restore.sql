@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 136::bigint as migrations,
+    2::bigint as auth_users, 137::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -741,6 +741,17 @@ misc as (
                           and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'from events e\s+where e\.org_id = v_org_id\s+and e\.entity_type = ''lead'''
                      from pg_proc p
                     where p.oid = to_regprocedure('public.submit_public_enquiry(text, text, text, text, text, text, text, jsonb)')), false)::text
+  union all
+  -- 0137: the public share page (resolve_share_link) writes its once-a-day
+  -- `opened` line unless THIS organisation's own system line (a null actor)
+  -- already exists today — another organisation's or a session's event no
+  -- longer suppresses it. A restore that brought back 0041's body reads false.
+  select 'SECURITY: a share link''s `opened` throttle counts only its own organisation''s system line (0137)', 'true',
+         coalesce((select p.prosecdef
+                          and regexp_count(regexp_replace(p.prosrc, '--[^\n]*', '', 'g'),
+                                'event_type\s+=\s+''opened''\s+and org_id\s+=\s+v_link\.org_id\s+and actor_id\s+is null') = 2
+                     from pg_proc p
+                    where p.oid = to_regprocedure('public.resolve_share_link(text)')), false)::text
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.
