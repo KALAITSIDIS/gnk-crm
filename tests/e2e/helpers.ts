@@ -97,6 +97,14 @@ export function assertNoProblems(problems: PageProblems, context: string) {
  * Guards against the classic broken-layout symptom: content wider than the
  * viewport, i.e. the page scrolls sideways. Allows 1px for sub-pixel rounding.
  */
+/**
+ * An instant `days` from now, as ISO — for a fixture that must stay in the
+ * future. A fixed date expires: `Date.UTC(2027, 0, 11)` broke
+ * `reservation_window_ordered` the day it passed (BACKLOG "Clock-dependent
+ * tests").
+ */
+export const daysFromNow = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString();
+
 export async function assertNoHorizontalOverflow(page: Page, context: string) {
   const overflow = await page.evaluate(() => ({
     scrollWidth: document.documentElement.scrollWidth,

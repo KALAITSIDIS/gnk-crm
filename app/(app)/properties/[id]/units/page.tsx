@@ -343,7 +343,7 @@ export default async function ProjectUnitsPage({
         />
       ) : null}
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <PriceListsSection projectId={id} priceLists={priceLists} canManage={canManage} />
         <PaymentPlansSection projectId={id} plans={plans} canManage={canManage} />
       </div>

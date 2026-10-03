@@ -3142,7 +3142,10 @@ VERIFY, run before starting.
   only, while every report reads the confirmed price. No test pins it. Fix: restore the coalesce in a new
   migration and pin `won_month.total` against a deal whose final value differs from its estimate. Found by
   T-atomic-deal-close's scouting. **VERIFY:** `grep -il "create or replace function \(public\.\)\?admin_dashboard_stats" supabase/migrations/*.sql | tail -1 | xargs grep -n "final_value"` — no hit means open (today it reads 0093).
-- **On a phone, a deal with an offer cannot be closed from its page, S.** Once the deal page lists an offer it
+- ~~**On a phone, a deal with an offer cannot be closed from its page, S.**~~ **FIXED 2026-10-04 on branch
+  `fix/phone-width-grids` — DECISIONS `T-phone-width-grids`: the deal page's grid (and six more with `lg:grid-cols-N`
+  and no base template) gets `grid-cols-1`; `tests/e2e/phone-width-grids.spec.ts` forces 390 × 844 in the DESKTOP
+  project CI runs. Measured RED first: the deal page was 724 px wide in a 390 px screen.** (original) Once the deal page lists an offer it
   overflows the 390 px viewport, the page renders wider than the screen, and the Won / Lost dialog opens partly
   off it: in Playwright's mobile project (Pixel 5) the dialog's submit button stays covered by the overlay and
   never becomes clickable. Measured on untouched `6366ef8` (`tests/e2e/deal-close.spec.ts` fails on mobile
@@ -3592,7 +3595,11 @@ VERIFY, run before starting.
     exist; a DST fixture repeats the risk from 2026-10-26. Fix: move the fixed dates to a far-future year with
     the same weekdays and DST switches (the 2099 precedent of `enquiry-contact-suggestions`), or pause the job
     for the ON stretch (`cron.alter_job(active := false)` through the pg client).
-  - **Fixed dates in e2e that expire.** `tests/e2e/mandate-lifecycle.spec.ts:138` (from 2026-12-02 the renewal
+  - ~~**Fixed dates in e2e that expire.**~~ **FIXED 2026-10-04 on branch `fix/phone-width-grids` — DECISIONS
+    `T-dated-fixtures-relative`: the four fixtures are relative to today (`daysFromNow` in tests/e2e/helpers.ts; the
+    mandate window 120 days back / 63 ahead), and the unit-test bomb the 2026-10-04 triage found
+    (`lib/actions/reservation-extend.test.ts`, from 2027-06-02) too — proved by running the old and new file under a
+    clock faked to 2027-06-15 (old 1 failed, new 5/5).** (original) `tests/e2e/mandate-lifecycle.spec.ts:138` (from 2026-12-02 the renewal
     starts today instead of at the fixture's expiry); `contact-merge.spec.ts:163` and
     `payment-schedule-totals.spec.ts:87` (from 2027-01-11 the fixed `expires_at` breaks
     `reservation_window_ordered`); `deal-close.spec.ts:137` (from 2027-06-30). Fix: dates relative to today.

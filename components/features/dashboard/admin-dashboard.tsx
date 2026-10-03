@@ -285,7 +285,7 @@ export async function AdminDashboard({ orgId }: { orgId: string }) {
         />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card title={t("cards.pipelineByStage")}>
           <BarList
             rows={stageRows}
@@ -324,7 +324,7 @@ export async function AdminDashboard({ orgId }: { orgId: string }) {
         </Card>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card title={t("cards.mandatesExpiring")}>
           {expiring.length === 0 ? (
             <CardEmpty text={t("empty.noMandates")} />

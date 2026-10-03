@@ -137,7 +137,7 @@ function AddStage({ dealType }: { dealType: string }) {
 
 export function StagesEditor({ groups }: { groups: { dealType: string; stages: StageRow[] }[] }) {
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       {groups.map((g) => {
         const movable = g.stages.filter((s) => !s.is_won && !s.is_lost);
         return (

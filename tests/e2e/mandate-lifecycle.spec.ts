@@ -22,6 +22,13 @@ import { fixtureProfile, isLocal, serviceClient } from "./helpers";
 
 const svc = (): SupabaseClient => serviceClient();
 
+const DAY_MS = 86_400_000;
+/** A UTC calendar day, `days` after `iso` — renewMandate's own arithmetic (toIsoDate, whole days). */
+const addDays = (iso: string, days: number) => new Date(Date.parse(iso) + days * DAY_MS).toISOString().slice(0, 10);
+/** An open 183-day window around today: began 120 days ago, ends 63 days ahead. */
+const WINDOW_START = addDays(new Date().toISOString().slice(0, 10), -120);
+const WINDOW_END = addDays(WINDOW_START, 183);
+
 test.beforeEach(() => {
   test.skip(!isLocal(), "needs the local stack service key");
 });
@@ -109,9 +116,13 @@ test.describe("mandate lifecycle", () => {
         commission_pct: 3.5,
         owner_contact_id: ownerId,
         // a window still OPEN, so this exercises the realistic case: renewing
-        // an active mandate early, where the successor starts as the old one ends
-        start_date: "2026-06-01",
-        expiry_date: "2026-12-01",
+        // an active mandate early, where the successor starts as the old one
+        // ends. Relative to TODAY (the server's UTC day, as renewMandate reads
+        // it) and expiring weeks ahead: the fixed 2026-12-01 expiry turned the
+        // renewal into a start-today one from 2026-12-02 (BACKLOG
+        // "Clock-dependent tests").
+        start_date: WINDOW_START,
+        expiry_date: WINDOW_END,
       })
       .select("id")
       .single();
@@ -135,8 +146,8 @@ test.describe("mandate lifecycle", () => {
     expect(successor.renewed_from_id).toBe(original!.id);
     // the same 183-day window, starting exactly when the old one ends — so an
     // early renewal never produces two live windows over one property
-    expect(successor.start_date).toBe("2026-12-01");
-    expect(successor.expiry_date).toBe("2027-06-02");
+    expect(successor.start_date).toBe(WINDOW_END);
+    expect(successor.expiry_date).toBe(addDays(WINDOW_END, 183));
     // a renewal is a new agreement and needs its own signature
     expect(successor.signed_document_id).toBeNull();
 

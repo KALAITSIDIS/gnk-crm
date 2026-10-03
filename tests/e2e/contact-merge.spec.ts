@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { createHash } from "node:crypto";
 import { type SupabaseClient } from "@supabase/supabase-js";
-import { fixtureProfile, isLocal, opTimeout, serviceClient } from "./helpers";
+import { daysFromNow, fixtureProfile, isLocal, opTimeout, serviceClient } from "./helpers";
 
 /**
  * Merging a duplicate contact — irreversible, admin-only, and until now with
@@ -126,7 +126,7 @@ test("merging a duplicate moves every record that pointed at it", async ({ page 
       property_id: propertyId,
       contact_id: duplicateId,
       agent_id: profileId,
-      scheduled_at: new Date(Date.UTC(2027, 0, 4, 10, 0)).toISOString(),
+      scheduled_at: daysFromNow(30),
     }),
     tasks: await ins("tasks", {
       org_id: orgId,
@@ -160,14 +160,14 @@ test("merging a duplicate moves every record that pointed at it", async ({ page 
       property_id: propertyId,
       contact_id: duplicateId,
       status: "held",
-      expires_at: new Date(Date.UTC(2027, 0, 11)).toISOString(),
+      expires_at: daysFromNow(60),
     }),
     share_links: await ins("share_links", {
       org_id: orgId,
       token_sha256: createHash("sha256").update(`e2e-merge-${REF}`).digest("hex"),
       locale: "en",
       title: "E2E merge proposal",
-      expires_at: new Date(Date.UTC(2027, 0, 11)).toISOString(),
+      expires_at: daysFromNow(60),
       created_by: profileId,
       contact_id: duplicateId,
     }),

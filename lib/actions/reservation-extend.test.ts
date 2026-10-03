@@ -30,13 +30,26 @@ vi.mock("@/lib/services/events", () => ({ logEvent }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 const { extendReservation } = await import("@/lib/actions/reservations");
+const { cyprusEndOfDay } = await import("@/lib/validators/reservations");
 
-/** A live hold that runs to the end of 2027. */
+/**
+ * Dates RELATIVE to today. The fixed ones were a time bomb: the action refuses
+ * a date already passed BEFORE it compares with the current expiry, so from
+ * 2027-06-02 "2027-06-01" stopped meaning "earlier than the expiry" and the
+ * first test would have read the other refusal (found by the 2026-10-04
+ * triage). Offsets of months keep every case clear of the Cyprus / UTC
+ * midnight edge.
+ */
+const day = (fromToday: number) => new Date(Date.now() + fromToday * 86_400_000).toISOString().slice(0, 10);
+/** the hold's current expiry: the end of the Cyprus day, ~400 days ahead */
+const HELD_UNTIL = day(400);
+
+/** A live hold that runs to HELD_UNTIL. */
 const held = (over: Record<string, unknown> = {}) => ({
   id: "11111111-1111-4111-8111-111111111111",
   property_id: "prop-1",
   status: "held",
-  expires_at: new Date(Date.UTC(2027, 11, 31, 21, 59, 59)).toISOString(),
+  expires_at: cyprusEndOfDay(HELD_UNTIL).toISOString(),
   ...over,
 });
 
@@ -57,7 +70,7 @@ function setup(pages: FakePage[]) {
 describe("extendReservation", () => {
   it("refuses a date that is in the future but EARLIER than the current expiry", async () => {
     const fake = setup([{ data: held(), error: null }]);
-    const res = await extendReservation({ error: null, savedAt: null }, form("2027-06-01"));
+    const res = await extendReservation({ error: null, savedAt: null }, form(day(200)));
     expect(res.error).toMatch(/not later than the current expiry/i);
     expect(fake.argsOf("reservations", "update"), "and nothing was written").toHaveLength(0);
     expect(
@@ -68,7 +81,7 @@ describe("extendReservation", () => {
 
   it("refuses the SAME date too — an extension of nothing is not an extension", async () => {
     setup([{ data: held(), error: null }]);
-    const res = await extendReservation({ error: null, savedAt: null }, form("2027-12-31"));
+    const res = await extendReservation({ error: null, savedAt: null }, form(HELD_UNTIL));
     expect(res.error).toMatch(/not later than the current expiry/i);
     expect(logEvent).not.toHaveBeenCalled();
   });
@@ -85,7 +98,7 @@ describe("extendReservation", () => {
       { data: held(), error: null },
       { data: [{ id: "res-1" }], error: null },
     ]);
-    const res = await extendReservation({ error: null, savedAt: null }, form("2028-03-31"));
+    const res = await extendReservation({ error: null, savedAt: null }, form(day(490)));
     expect(res.error).toBeNull();
     expect(logEvent).toHaveBeenCalledTimes(1);
 
@@ -103,7 +116,7 @@ describe("extendReservation", () => {
       { data: held({ expires_at: null }), error: null },
       { data: [{ id: "res-1" }], error: null },
     ]);
-    const res = await extendReservation({ error: null, savedAt: null }, form("2028-03-31"));
+    const res = await extendReservation({ error: null, savedAt: null }, form(day(490)));
     expect(res.error).toBeNull();
     expect(logEvent).toHaveBeenCalledTimes(1);
   });

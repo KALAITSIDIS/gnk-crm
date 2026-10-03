@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { type SupabaseClient } from "@supabase/supabase-js";
-import { fixtureProfile, isLocal, opTimeout, serviceClient } from "./helpers";
+import { daysFromNow, fixtureProfile, isLocal, opTimeout, serviceClient } from "./helpers";
 
 /**
  * The three money figures on a reservation's payment schedule, read off a real
@@ -84,7 +84,7 @@ test("a payment schedule adds up on screen — three lines, three money totals",
       contact_id: buyer!.id,
       status: "held",
       amount: 350000,
-      expires_at: new Date(Date.UTC(2027, 0, 11)).toISOString(),
+      expires_at: daysFromNow(60),
     })
     .select("id")
     .single();

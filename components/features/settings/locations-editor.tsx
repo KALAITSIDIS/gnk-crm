@@ -92,7 +92,7 @@ function AddArea({ districtId }: { districtId: string }) {
 
 export function LocationsEditor({ districts }: { districts: DistrictGroup[] }) {
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       {districts.map((d) => (
         <section key={d.id} className="rounded-[10px] border border-border bg-surface p-5">
           <h2 className="mb-2 text-sm font-semibold text-text-1">{d.name}</h2>

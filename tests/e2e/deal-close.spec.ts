@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { type SupabaseClient } from "@supabase/supabase-js";
-import { fixtureProfile, isLocal, opTimeout, serviceClient } from "./helpers";
+import { daysFromNow, fixtureProfile, isLocal, opTimeout, serviceClient } from "./helpers";
 
 /**
  * The guarded Won flow, end to end (T3.4 + audit WF-2/DB-03 + DB-01).
@@ -134,7 +134,7 @@ test("Mark won confirms the accepted price, stamps it, and prompts the listing f
       property_id: prop!.id,
       contact_id: buyer!.id,
       status: "held",
-      expires_at: new Date(Date.UTC(2027, 5, 30)).toISOString(),
+      expires_at: daysFromNow(60),
     })
     .select("id")
     .single();

@@ -275,7 +275,7 @@ export default async function DealDetailPage({
         </div>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="flex flex-col gap-4 lg:col-span-2">
           <section className="rounded-[10px] border border-border bg-surface p-6">
             <h2 className="mb-4 text-sm font-semibold text-text-1">Details</h2>

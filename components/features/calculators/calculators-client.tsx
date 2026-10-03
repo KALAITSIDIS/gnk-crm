@@ -211,7 +211,7 @@ export function CalculatorsClient({
         </div>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <section className="flex flex-col gap-3 rounded-[10px] border border-border bg-surface p-5">
           <h2 className="text-sm font-semibold text-text-1">Transfer fees (DLS)</h2>
           {!transferConfig ? (
