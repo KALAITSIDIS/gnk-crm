@@ -1,5 +1,17 @@
 # HANDOFF — 2026-08-08
 
+**2026-10-05, latest (an external audit's priority 1, scoped brief — push, merge and deploy need the operator's separate approval): the service worker keeps nothing a session or a share link can see — IMPLEMENTED AND TESTED LOCALLY, committed on branch `fix/sw-private-cache`; NOT pushed, NOT merged, NOT deployed. No migration; hosted untouched.**
+- **What.** The v1 worker stored every page loaded by a full navigation in `gnk-pages-v1` and replayed it offline after the session ended, to the next account on the device, and for withdrawn proposals. v2 caches only the anonymous `/offline` page and `/_next/static/` build output, and every navigation is network-only. Activation deletes the older `gnk-` caches; sign-out keeps only the offline page. DECISIONS `T-sw-no-private-cache`.
+- **Verified.** Reproduced first: a node:vm probe, then a real browser against a production build of `4dc234d`.
+  - Unit: 72 tests, RED 53/72 on v1 (19 pass: pass-throughs v1 already had right, plus the v1 control); 23 mutants killed.
+  - E2e: 5 tests, RED 4/5 on the v1 build (the no-worker control passes), GREEN 5/5.
+  - A cross-build upgrade in one browser profile, and an 8-agent review (no privacy defect; its findings folded in).
+  - typecheck, lint and static-routes clean; unit 3089/3089 (220 files); full desktop e2e 302 passed, 0 failed, 0 flaky (15.1 min).
+- **ROLLBACK FLOOR (once merged):** never roll the application back past this merge. That re-serves the v1 worker, every device re-installs it, and page caching resumes. Roll forward.
+- **Rollout limit.** A device is cleaned only when it is next online and fetches `/sw.js`; one that stays offline keeps replaying its v1 copy.
+- **Left open (BACKLOG "Offline privacy — 2026-10-05"):** image-suffix paths skip the gate and the CSP; two sign-out paths skip the purge; rendered data stays in memory after sign-out (other tabs, the signing-out tab's DOM); a Back-paint measurement; static-cache growth; two specs delete events.
+- **NEXT:** the operator's go for push → CI → merge → deploy check.
+
 **2026-10-03, latest (the operator's "go next … fix all", standing authorization): every link onto a contact belongs to the contact's organisation — LANDED in TWO releases: release 1 (PR #99, main `8c9f329`, deployed 20:31:00Z), then hosted 0139 FIRST (~21:17:30Z), then PR #100 (main `ef98a9e`, deployed 21:22:07Z). HOSTED IS AT 0139 — 139 ledger rows.**
 - **What.** Ten foreign keys onto `contacts` are single-column, so organisation B could hang rows on A's contact (and learn it exists). 0139 re-keys all ten `(org_id, <col>) → contacts (org_id, id)` KEEPING each constraint's name; release 1 first moves the exports' column-hint embeds (PGRST200 on a composite key) to those names, and re-reads a posted contact under RLS in eight actions so a refused link is a sentence, not a driver error; createLead re-reads its property before creating the enquirer's contact. DECISIONS `T-contact-links-org-isolation`.
 - **Verified (release 1).** Rehearsed locally: with the keys composite under their old names the old hints answer PGRST200 and the new ones 200; hosted PostgREST behaves the same on an already-composite key. 27 + 5 unit tests (RED 14/22 first), 5 mutants killed, 3017/3017 unit; the live embed test 9/9; CI green on `4f1dfa7` (checks, rls, e2e). An 18-agent review: no correctness defect; follow-ups folded in.

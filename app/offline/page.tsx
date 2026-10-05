@@ -1,11 +1,15 @@
 export const dynamic = "force-dynamic";
 
 /**
- * Offline fallback (IMPROVEMENTS B8). Served by the service worker when a
- * navigation fails and nothing for that URL is cached.
+ * Offline fallback (IMPROVEMENTS B8). Served by the service worker in place of
+ * ANY page whose navigation fails — since T-sw-no-private-cache (2026-10-05) no
+ * page is kept for offline replay, so this is the only offline screen there is.
  *
  * Dependency-free by design: it renders with no session and no data, and must
- * not touch Supabase or any dynamic API. That has not changed.
+ * not touch Supabase or any dynamic API. The worker stores ONE copy, fetched
+ * without credentials, and shows it to whoever holds the device — so nothing
+ * here may ever depend on who is asking. No names, no links into records, no
+ * tokens.
  *
  * `force-dynamic` REPLACED `force-static` on 2026-08-11, reversing a decision
  * that this file and `scripts/check-static-routes.mjs` both stated outright. The
@@ -44,8 +48,8 @@ export default function OfflinePage() {
     <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-3 px-6 text-center">
       <h1 className="text-xl font-semibold text-text-1">You are offline</h1>
       <p className="text-sm text-text-2">
-        This screen has not been opened on this device yet, so there is nothing saved to show.
-        Screens you have already visited still work without signal.
+        Pages are not saved on this device for offline use, so this screen needs a connection to
+        show anything.
       </p>
       <p className="text-sm text-text-2">
         Anything you were saving has <strong>not</strong> been sent. Reconnect and try again —

@@ -58,9 +58,10 @@ export default async function proxy(request: NextRequest) {
    *  - `/p/*`     buyer proposal pages (B3). Doc 01 §4 forbids buyer logins
    *               ever, so these must be reachable with no session.
    *  - `/offline` the PWA fallback (B8). The service worker precaches it at
-   *               install; behind the gate that fetch stores a redirect to
-   *               /login, so the one screen for "you have no network" would
-   *               itself need the network.
+   *               install, without credentials and refusing redirects; behind
+   *               the gate that precache would fail and store nothing, so the
+   *               one screen for "you have no network" would itself need the
+   *               network.
    *
    * These used to `return NextResponse.next()` ABOVE the nonce, which skipped
    * the policy as well as the gate — so the only unauthenticated HTML this app
