@@ -1,5 +1,6 @@
 "use server";
 
+import * as Sentry from "@sentry/nextjs";
 import { revalidatePath } from "next/cache";
 import { NOT_RECORDED_NOTICE } from "@/lib/services/optimistic-save";
 import { z } from "zod";
@@ -32,7 +33,15 @@ import {
   MAX_GENERATED_UNITS,
   MAX_PER_FLOOR,
 } from "@/lib/services/unit-generator";
-import { inScope, previewUplift, type UpliftMode } from "@/lib/services/price-uplift";
+import type { UpliftRow } from "@/lib/services/price-uplift";
+import { certainlyRolledBack } from "@/lib/services/rpc-outcome";
+import {
+  PRICES_BUSY,
+  PRICES_NOTHING_CHANGED,
+  PRICES_OUT_OF_DATE,
+  PRICES_STALE,
+  PRICES_UNCONFIRMED,
+} from "@/lib/validators/price-lists";
 import { stampOf, type UnitType } from "@/lib/services/unit-type";
 
 export type UnitActionState = {
@@ -40,6 +49,12 @@ export type UnitActionState = {
   savedAt: number | null;
   /** a save that happened but could not be recorded in the timeline (OPS-01) */
   notice?: string | null;
+  /** price-list actions (0141): the version this submission recorded */
+  version?: number | null;
+  /** price-list actions (0141): this answer repeats an earlier commit of the same submission */
+  replayed?: boolean;
+  /** price-list actions (0141): the outcome is unknown — the request may have committed */
+  unconfirmed?: boolean;
 };
 
 const createUnitSchema = z.object({
@@ -489,83 +504,237 @@ export async function createPhase(
   return { error: null, savedAt: Date.now() };
 }
 
+/* ------------------------------------------------------------------ */
+/* Price-list versions and bulk repricing — ONE database transaction   */
+/* (T-price-uplift-atomic, migration 0141).                            */
+/*                                                                     */
+/* Both actions call `record_price_list_version`, which locks the      */
+/* project or phase, checks the caller, writes the units, the version, */
+/* its items and its event, and either commits all of it or none. The */
+/* per-unit trail (price_history + one `price_changed` event per unit) */
+/* is written by trg_price_history (0005) inside that transaction —    */
+/* the actions no longer write a second copy of it.                    */
+/*                                                                     */
+/* An operation id, minted by the form once per submission, makes a    */
+/* retry answer what the first request committed ("replayed") instead */
+/* of applying again. NEVER throws: Next strips a thrown Server Action */
+/* message in production.                                              */
+/* ------------------------------------------------------------------ */
+
+const PRICE_LIST_RPC = "record_price_list_version";
+
+/** What `record_price_list_version` answers when it did not raise (0141). */
+type PriceListAnswer = {
+  result: "applied" | "replayed" | "stale";
+  kind: "snapshot" | "reprice";
+  project_id: string;
+  org_id?: string;
+  actor_id?: string;
+  version?: number;
+  price_list_id?: string;
+  units?: number;
+  changed?: number;
+  changes?: UpliftRow[];
+};
+
+function readPriceListAnswer(data: unknown): PriceListAnswer | null {
+  if (!data || typeof data !== "object") return null;
+  const d = data as Record<string, unknown>;
+  if (d.result !== "applied" && d.result !== "replayed" && d.result !== "stale") return null;
+  if (d.kind !== "snapshot" && d.kind !== "reprice") return null;
+  if (typeof d.project_id !== "string") return null;
+  if (d.result !== "stale" && typeof d.version !== "number") return null;
+  return d as PriceListAnswer;
+}
+
+/** The answer's changes, only if every row has the shape the alert reads. */
+function changesOf(answer: PriceListAnswer): UpliftRow[] | null {
+  const rows = answer.changes;
+  if (!Array.isArray(rows)) return null;
+  const ok = rows.every(
+    (r) =>
+      r &&
+      typeof r.id === "string" &&
+      typeof r.reference === "string" &&
+      typeof r.from === "number" &&
+      typeof r.to === "number",
+  );
+  return ok ? rows : null;
+}
+
+/** The sentence for a request that did not commit — or might have (`unknown`). */
+function priceListRefusal(error: { code?: string; message?: string }): { text: string; unknown: boolean } {
+  // P0001 is `raise exception` — the function's own sentence, meant to be read
+  if (error.code === "P0001" && error.message) return { text: error.message, unknown: false };
+  // lock_timeout, or a deadlock with a writer that took the same units in
+  // another order (0141's LOCKS): this side was rolled back, nothing written
+  if (error.code === "55P03" || error.code === "40P01") return { text: PRICES_BUSY, unknown: false };
+  return certainlyRolledBack(error.code)
+    ? { text: PRICES_NOTHING_CHANGED, unknown: false }
+    : { text: PRICES_UNCONFIRMED, unknown: true };
+}
+
+/**
+ * The console line is for the runtime log; Sentry is where a human is paged.
+ * SHAPE ONLY — the step and the error code or name, never a database message.
+ */
+function reportPriceList(message: string, tags: Record<string, string>, projectId: string): void {
+  console.error(`${message} (${Object.values(tags).join(", ")}) for project ${projectId}`);
+  try {
+    Sentry.captureMessage(message, { level: "error", tags, extra: { projectId } });
+  } catch {
+    // Sentry is best-effort; the console line stands
+  }
+}
+
+/**
+ * After every DEFINITE answer, so the screen matches the rows; a failed
+ * refresh never turns a commit into an error. NOT after an unconfirmed one:
+ * the form keeps what it showed, so pressing again sends the same submission
+ * and is answered with what was committed — a redraw would put the committed
+ * prices in front of the same amount (review of T-price-uplift-atomic).
+ */
+function refreshPricePages(projectId: string): void {
+  for (const path of [`/properties/${projectId}/units`, "/properties"]) {
+    try {
+      revalidatePath(path);
+    } catch (e) {
+      console.error(`[units] revalidatePath(${path}) failed:`, e instanceof Error ? e.message : e);
+    }
+  }
+}
+
+type PriceListCall = {
+  p_project_id: string;
+  p_operation_id: string;
+  p_notes?: string;
+  p_mode?: "percent" | "fixed";
+  p_amount?: number;
+  p_block?: string;
+  p_expected?: { id: string; price: number | null }[];
+};
+
+/** One call of the function; every way it can end, classified. */
+async function recordPriceList(
+  call: PriceListCall,
+): Promise<{ answer: PriceListAnswer; supabase: Awaited<ReturnType<typeof createClient>> } | { error: string; unknown: boolean }> {
+  const step = call.p_mode ? "reprice" : "snapshot";
+  let supabase: Awaited<ReturnType<typeof createClient>>;
+  try {
+    supabase = await createClient();
+  } catch (e) {
+    reportPriceList("price list: no client", { step, error: e instanceof Error ? e.name : "threw" }, call.p_project_id);
+    return { error: PRICES_NOTHING_CHANGED, unknown: false };
+  }
+  let res: Awaited<ReturnType<typeof supabase.rpc<typeof PRICE_LIST_RPC>>>;
+  try {
+    res = await supabase.rpc(PRICE_LIST_RPC, call);
+  } catch (e) {
+    reportPriceList("price list: request threw", { step, error: e instanceof Error ? e.name : "threw" }, call.p_project_id);
+    return { error: PRICES_UNCONFIRMED, unknown: true };
+  }
+  if (res.error) {
+    const refusal = priceListRefusal(res.error);
+    if (res.error.code !== "P0001") {
+      reportPriceList("price list: not recorded", { step, code: res.error.code || "none" }, call.p_project_id);
+    }
+    return { error: refusal.text, unknown: refusal.unknown };
+  }
+  const answer = readPriceListAnswer(res.data);
+  if (!answer) {
+    reportPriceList("price list: unreadable answer", { step, code: "unreadable_answer" }, call.p_project_id);
+    return { error: PRICES_UNCONFIRMED, unknown: true };
+  }
+  return { answer, supabase };
+}
+
+const operationId = z.guid(PRICES_OUT_OF_DATE);
+const trimmedNote = (max: number) =>
+  z.preprocess(
+    (v) => (typeof v === "string" ? v.trim() || undefined : emptyToUndefined(v)),
+    z.string().max(max, `Keep the version note under ${max} characters`).optional(),
+  );
+
+const snapshotSchema = z.object({
+  project_id: z.guid("Missing project"),
+  notes: trimmedNote(2000),
+  operation_id: operationId,
+});
+
+/**
+ * "New version": snapshot every priced unit of the project or phase as the
+ * next price-list version — header, items and event in ONE transaction, the
+ * version number taken under the project's lock (0141).
+ */
 export async function createPriceListVersion(
   _prev: UnitActionState,
   formData: FormData,
 ): Promise<UnitActionState> {
-  const projectId = formData.get("project_id");
-  const notes = formData.get("notes");
-  if (typeof projectId !== "string") return { error: "Missing project", savedAt: null };
-
-  const supabase = await createClient();
-  const profile = await getCurrentProfile(supabase);
-
-  const { data: project } = await supabase
-    .from("properties")
-    .select("id, org_id, reference")
-    .eq("id", projectId)
-    .maybeSingle();
-  if (!project) return { error: "Project not found", savedAt: null };
-
-  const { data: units } = await supabase
-    .from("properties")
-    .select("id, asking_price")
-    .eq("parent_id", projectId)
-    .eq("kind", "unit")
-    .not("asking_price", "is", null);
-  if (!units || units.length === 0) {
-    return { error: "No units with prices to snapshot", savedAt: null };
+  const parsed = snapshotSchema.safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input", savedAt: null };
   }
+  const input = parsed.data;
 
-  const { data: latest } = await supabase
-    .from("price_lists")
-    .select("version")
-    .eq("project_id", projectId)
-    .order("version", { ascending: false })
-    .limit(1);
-  const version = (latest?.[0]?.version ?? 0) + 1;
-
-  const { data: list, error: listErr } = await supabase
-    .from("price_lists")
-    .insert({
-      org_id: project.org_id,
-      project_id: projectId,
-      version,
-      notes: typeof notes === "string" && notes.trim() ? notes.trim() : null,
-      created_by: profile.id,
-    })
-    .select("id")
-    .single();
-  if (listErr) return { error: listErr.message, savedAt: null };
-
-  const { error: itemsErr } = await supabase.from("price_list_items").insert(
-    units.map((u) => ({
-      price_list_id: list.id,
-      unit_id: u.id,
-      list_price: u.asking_price!,
-    })),
-  );
-  if (itemsErr) return { error: itemsErr.message, savedAt: null };
-
-  await logEvent(supabase, {
-    orgId: project.org_id,
-    actorId: profile.id,
-    entityType: "property",
-    entityId: projectId,
-    eventType: "price_list_created",
-    payload: { version, units: units.length },
+  const outcome = await recordPriceList({
+    p_project_id: input.project_id,
+    p_operation_id: input.operation_id,
+    p_notes: input.notes,
   });
-
-  revalidatePath(`/properties/${projectId}/units`);
-  return { error: null, savedAt: Date.now() };
+  if ("error" in outcome) {
+    // unconfirmed: no refresh — the form re-sends this same submission (header)
+    return outcome.unknown
+      ? { error: outcome.error, savedAt: null, unconfirmed: true }
+      : { error: outcome.error, savedAt: null };
+  }
+  const { answer } = outcome;
+  refreshPricePages(input.project_id);
+  if (answer.result === "stale") {
+    // a plain snapshot reviews nothing — unreachable, but never reported as saved
+    return { error: PRICES_NOTHING_CHANGED, savedAt: null };
+  }
+  return {
+    error: null,
+    savedAt: Date.now(),
+    version: answer.version ?? null,
+    replayed: answer.result === "replayed",
+  };
 }
+
+/** The scope the form previewed, as it sent it: every unit, with the price it showed. */
+const reviewedField = z
+  .string(PRICES_OUT_OF_DATE)
+  .transform((s, ctx) => {
+    try {
+      return JSON.parse(s) as unknown;
+    } catch {
+      ctx.addIssue({ code: "custom", message: PRICES_OUT_OF_DATE });
+      return z.NEVER;
+    }
+  })
+  .pipe(
+    z
+      .array(
+        z.object(
+          {
+            id: z.guid(PRICES_OUT_OF_DATE),
+            price: z.number(PRICES_OUT_OF_DATE).nonnegative(PRICES_OUT_OF_DATE).nullable(),
+          },
+          PRICES_OUT_OF_DATE,
+        ),
+        PRICES_OUT_OF_DATE,
+      )
+      .max(10000, PRICES_OUT_OF_DATE),
+  );
 
 const upliftSchema = z.object({
   project_id: z.guid("Missing project"),
   block: z.preprocess(emptyToUndefined, z.string().max(20).optional()),
   mode: z.enum(["percent", "fixed"]),
   amount: z.coerce.number().refine((n) => n !== 0, "Enter a change other than zero"),
-  notes: z.preprocess(emptyToUndefined, z.string().max(200).optional()),
+  notes: trimmedNote(200),
+  operation_id: operationId,
+  expected: reviewedField,
 });
 
 /**
@@ -573,20 +742,18 @@ const upliftSchema = z.object({
  * (BACKLOG audit finding 4, the other half).
  *
  * Reading a version shipped earlier; minting the next one still meant editing
- * sixty unit prices by hand and then snapshotting. "Raise the C block by 3% from
- * 1 September" is one sentence and is now one action.
+ * sixty unit prices by hand and then snapshotting. "Raise the C block by 3%
+ * from 1 September" is one sentence and is one action.
  *
- * IT CHANGES THE UNITS AND THEN SNAPSHOTS, in that order and in one go. The
- * asking price IS the current price, so a version that recorded new numbers
- * while the units still held the old ones would be a lie in the record — and
- * the snapshot exists precisely to be quoted from later.
- *
- * Each unit keeps its own trail: the 0005 trigger writes a `price_history` row
- * per unit automatically, and a `price_changed` event per unit is written here.
- * A single project-level "repriced 60 units" row would leave sixty timelines
- * with an unexplained number.
- *
- * Unpriced units are skipped, never treated as zero — see `upliftPrice`.
+ * ONE TRANSACTION (0141). The units change and the version that records them
+ * commits with them, or nothing does — the asking price IS the current price,
+ * and a version is quoted from later. The database applies the change only to
+ * the prices the form showed: if any unit in the scope has moved, been added,
+ * archived or removed since the preview was drawn, it answers `stale` and
+ * changes nothing. Each unit keeps its own trail: trg_price_history writes one
+ * price_history row and one `price_changed` event per unit that actually moves;
+ * the version's `price_list_created` event carries the operation (mode, amount,
+ * scope, how many changed). Unpriced units are skipped, never treated as zero.
  */
 export async function applyPriceUplift(
   _prev: UnitActionState,
@@ -598,136 +765,71 @@ export async function applyPriceUplift(
   }
   const input = parsed.data;
 
-  const supabase = await createClient();
-  const profile = await getCurrentProfile(supabase);
-
-  const { data: project } = await supabase
-    .from("properties")
-    .select("id, org_id, kind, reference")
-    .eq("id", input.project_id)
-    .maybeSingle();
-  if (!project) return { error: "Project not found", savedAt: null };
-  if (project.kind !== "project" && project.kind !== "phase") {
-    return { error: "Prices are managed on a project", savedAt: null };
-  }
-
-  const { data: units } = await supabase
-    .from("properties")
-    .select("id, reference, block, asking_price")
-    .eq("parent_id", input.project_id)
-    .eq("kind", "unit");
-
-  const targets = inScope(
-    (units ?? []).map((u) => ({
-      id: u.id,
-      reference: u.reference,
-      block: u.block,
-      asking_price: u.asking_price,
-    })),
-    input.block ?? null,
-  );
-  if (targets.length === 0) {
-    return { error: "No units in that scope", savedAt: null };
-  }
-
-  const preview = previewUplift(targets, {
-    mode: input.mode as UpliftMode,
-    amount: input.amount,
+  const outcome = await recordPriceList({
+    p_project_id: input.project_id,
+    p_operation_id: input.operation_id,
+    p_notes: input.notes,
+    p_mode: input.mode,
+    p_amount: input.amount,
+    p_block: input.block,
+    p_expected: input.expected,
   });
-  if (preview.rows.length === 0) {
-    return {
-      error:
-        preview.skipped === targets.length
-          ? "None of those units has a price to change."
-          : "That change rounds to nothing — no price would move.",
-      savedAt: null,
-    };
+  if ("error" in outcome) {
+    // unconfirmed: no refresh — the form re-sends this same submission (header)
+    return outcome.unknown
+      ? { error: outcome.error, savedAt: null, unconfirmed: true }
+      : { error: outcome.error, savedAt: null };
+  }
+  const { answer, supabase } = outcome;
+
+  if (answer.result === "stale") {
+    // nothing was written; the refresh redraws the preview from the current prices
+    refreshPricePages(input.project_id);
+    return { error: PRICES_STALE, savedAt: null };
   }
 
-  // One update per unit: the prices differ per row, and the 0005 trigger has to
-  // see each old→new pair to write its price_history entry.
-  for (const row of preview.rows) {
-    const { error } = await supabase
-      .from("properties")
-      .update({ asking_price: row.to })
-      .eq("id", row.id);
-    if (error) return { error: error.message, savedAt: null };
-  }
-
-  await logEvents(
-    supabase,
-    preview.rows.map((row) => ({
-      orgId: project.org_id,
-      actorId: profile.id,
-      entityType: "property" as const,
-      entityId: row.id,
-      eventType: "price_changed",
-      payload: {
-        source: "bulk_uplift",
-        from: row.from,
-        to: row.to,
-        mode: input.mode,
-        amount: input.amount,
-        scope: input.block ?? "all units",
-        project: project.reference,
-      },
-    })),
-  );
-
-  // …then record it as a version, so the change is quotable later
-  const label =
-    input.mode === "percent"
-      ? `${input.amount > 0 ? "+" : ""}${input.amount}%`
-      : `${input.amount > 0 ? "+" : ""}${input.amount}`;
-  const scope = input.block ? `block ${input.block}` : "all units";
-  const snapshot = new FormData();
-  snapshot.set("project_id", input.project_id);
-  snapshot.set(
-    "notes",
-    input.notes ?? `${label} on ${scope} (${preview.rows.length} units)`,
-  );
-  const versioned = await createPriceListVersion(
-    { error: null, savedAt: null },
-    snapshot,
-  );
-  if (versioned.error) {
-    // the prices ARE changed at this point; say so rather than implying a
-    // rollback that did not happen
-    return {
-      error: `Prices updated, but the version was not created: ${versioned.error}`,
-      savedAt: null,
-    };
-  }
-
-  // A block reprice can bring buyers into range across several units. ONE task
-  // against the project, not one per unit: it was one act and it is one phone
-  // call. Best effort — the prices ARE changed and versioned by this point, so
-  // an alert failure must never be reported as a failed reprice.
-  try {
-    const { raiseBulkPriceDropAlert } = await import("@/lib/services/match-alerts");
-    const { data: projectRow } = await supabase
-      .from("properties")
-      .select("id, reference, assigned_agent_id")
-      .eq("id", input.project_id)
-      .single();
-    if (projectRow) {
-      await raiseBulkPriceDropAlert(supabase, {
-        orgId: project.org_id,
-        actorId: profile.id,
-        project: projectRow,
-        changes: preview.rows,
-      });
+  {
+    // A block reprice can bring buyers into range across several units. ONE
+    // task against the project, not one per unit: it was one act and it is one
+    // phone call. Best effort — the prices ARE changed and versioned here, so
+    // an alert failure is never reported as a failed reprice. A REPLAY raises
+    // it too, from the changes the database read back out of price_history:
+    // the request that committed may have lost its answer before it got this
+    // far, and the alert's own guard (one open task per project) keeps a
+    // repeat from raising a second task.
+    try {
+      const changes = changesOf(answer);
+      if (!changes) throw new Error("the answer carried no readable changes");
+      const { raiseBulkPriceDropAlert } = await import("@/lib/services/match-alerts");
+      const { data: projectRow, error: projectErr } = await supabase
+        .from("properties")
+        .select("id, reference, assigned_agent_id")
+        .eq("id", input.project_id)
+        .single();
+      if (projectErr) throw new Error(`project read: ${projectErr.code || projectErr.message}`);
+      if (projectRow && answer.org_id && answer.actor_id) {
+        await raiseBulkPriceDropAlert(supabase, {
+          orgId: answer.org_id,
+          actorId: answer.actor_id,
+          project: projectRow,
+          changes,
+        });
+      }
+    } catch (err) {
+      // logged, never swallowed — an earlier alert bug was invisible precisely
+      // because a discarded error left nothing anywhere to say the feature had
+      // stopped working
+      console.error("bulk price-drop alert failed", { projectId: input.project_id, err });
     }
-  } catch (err) {
-    // logged, never swallowed — an earlier alert bug was invisible precisely
-    // because a discarded error left nothing anywhere to say the feature had
-    // stopped working
-    console.error("bulk price-drop alert failed", { projectId: input.project_id, err });
   }
 
-  revalidatePath(`/properties/${input.project_id}/units`);
-  revalidatePath("/properties");
-  return { error: null, savedAt: Date.now() };
+  refreshPricePages(input.project_id);
+  return {
+    error: null,
+    savedAt: Date.now(),
+    version: answer.version ?? null,
+    replayed: answer.result === "replayed",
+  };
 }
 
 const unitTypeSchema = z.object({

@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 139::bigint as migrations,
+    2::bigint as auth_users, 140::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -187,6 +187,10 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   -- deal won or lost (deals_closed_guard refuses every other); it restates
   -- deals_update and require_aal2 itself, and service_role still may not call it
   ('close_deal',           true,  false, true, false),
+  -- 0141: authenticated ONLY — a price-list version needs an accountable
+  -- actor; SECURITY INVOKER, so every policy on the rows it writes still
+  -- binds the caller (pinned although invokers are out of grant_unpinned's scope)
+  ('record_price_list_version', false, false, true, false),
   ('add_deal_stage',       false, false, true, true),
   ('reorder_stage',        false, false, true, true),
   ('admin_dashboard_stats',false, false, true, true),
@@ -809,6 +813,31 @@ misc as (
   select 'SECURITY: every foreign key onto contacts is bound to the contact''s organisation (0139)', '0',
          (select count(*)::text from pg_constraint
            where contype = 'f' and confrelid = 'public.contacts'::regclass and array_length(conkey, 1) = 1)
+  union all
+  -- 0141: a price-list version and the bulk reprice it records commit as ONE
+  -- transaction (record_price_list_version, SECURITY INVOKER): the container
+  -- and its units locked FOR NO KEY UPDATE (units in id order), the UPDATE's
+  -- row count checked, the per-unit trail counted, and the per-unit line left
+  -- to trg_price_history. Read as code — block and line comments stripped. A
+  -- restore that brought back a body without them reads false.
+  select 'INTEGRITY: a price-list version and the reprice it records commit together, one per-unit line each (0141)', 'true',
+         coalesce((select not p.prosecdef
+                          and c.code ~ 'p\.kind in \(''project'', ''phase''\)\s+for no key update;'
+                          and c.code ~ 'order by u\.id\s+for no key update;'
+                          and c.code ~ 'get diagnostics v_rows = row_count;\s+if v_rows <> v_changed then'
+                          and c.code ~ 'e\.event_type = ''price_changed''\s+and e\.occurred_at = now\(\)'
+                          and c.code !~* 'insert\s+into\s+(public\.)?events[^;]*price_changed'
+                     from pg_proc p
+                     cross join lateral (select regexp_replace(regexp_replace(p.prosrc, '/\*.*?\*/', '', 'g'), '--[^\n]*', '', 'g') as code) c
+                    where p.oid = to_regprocedure('public.record_price_list_version(uuid, uuid, text, text, numeric, text, jsonb)')), false)::text
+  union all
+  -- 0141: and one version answers one submission — a retry is answered, not
+  -- applied twice, only while the operation id is unique per organisation
+  select 'INTEGRITY: a price-list operation id is unique per organisation (0141)', 'true',
+         coalesce((select i.indisunique and i.indisvalid
+                          and pg_get_indexdef(i.indexrelid) ~ '\(org_id, operation_id\)$'
+                     from pg_index i
+                    where i.indexrelid = to_regclass('public.price_lists_org_operation_key')), false)::text
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.
