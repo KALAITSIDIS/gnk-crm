@@ -3,14 +3,16 @@ import { test, expect } from "@playwright/test";
 /**
  * Installable PWA (IMPROVEMENTS B8).
  *
- * Scope is installable + resilient reads: the shell and already-visited screens
- * survive a dead signal; writes still need the network and fail honestly.
- * Offline slip signing is deliberately NOT in scope (see public/sw.js).
+ * Scope is installable + an honest offline screen: no page is kept for offline
+ * replay (T-sw-no-private-cache), so a dead signal shows the generic /offline
+ * page; writes still need the network and fail honestly. Offline slip signing
+ * is deliberately NOT in scope (see public/sw.js).
  *
- * The worker itself only registers in production builds, so these tests assert
- * the things that must be true of the deployed artefacts — the manifest, the
- * icons, the worker script and the offline page — rather than driving a worker
- * the dev server never installs.
+ * These tests assert what must be true of the deployed artefacts — the
+ * manifest, the icons, the worker script and the offline page. What the worker
+ * DOES — what it stores, what it serves offline, how it upgrades from v1 — is
+ * driven in a real browser by pwa-offline-privacy.spec.ts, and in a simulated
+ * worker scope by tests/unit/service-worker.test.ts.
  */
 
 test.describe("PWA", () => {
@@ -71,18 +73,17 @@ test.describe("PWA", () => {
     // Served from a nested path, a worker cannot control "/" — the scope is the
     // whole point.
     expect(res.headers()["content-type"]).toContain("javascript");
-
-    const body = await res.text();
-    // The privacy guarantee this feature rests on: caches are purged on
-    // sign-out, and API responses are never cached.
-    expect(body, "the worker must handle the sign-out purge").toContain("PURGE");
-    expect(body, "the worker must never cache /api/").toContain("/api/");
+    // What the worker does with what it fetches is NOT asserted here. Until
+    // 2026-10-05 this test grepped the body for "PURGE" and "/api/" — words a
+    // comment also contained, so it passed with the purge and the /api/ guard
+    // deleted (T-sw-no-private-cache). pwa-offline-privacy.spec.ts reads Cache
+    // Storage in a real browser instead.
   });
 
   test("the offline fallback renders without a session", async ({ browser }) => {
     // The fallback exists for the case where there is no network, and the
-    // worker precaches it at install time. Behind the auth gate it would cache
-    // a redirect to /login instead.
+    // worker precaches it at install time, anonymously and refusing redirects.
+    // Behind the auth gate that precache would fail and store nothing.
     const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
     const page = await context.newPage();
     try {
