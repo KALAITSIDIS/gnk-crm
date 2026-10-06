@@ -108,6 +108,8 @@ export function MediaTab({
       fd.set("kind", uploadKind);
       fd.append("files", file);
       const res = await uploadPropertyMedia(initialState, fd);
+      // saved, with a follow-up that did not complete — said, not hidden
+      if (res.warning) toast.warning(res.warning);
       if (res.error) {
         failed = res.error;
         break;
