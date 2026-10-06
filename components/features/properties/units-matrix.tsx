@@ -34,6 +34,8 @@ import { formatArea, formatMoney } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { PROPERTY_STATUSES, PROPERTY_TYPES } from "@/lib/validators/properties";
 import type { PriceListComparison } from "@/lib/services/price-list";
+import { settleOperation, stampOperationId, type OperationRef } from "@/lib/utils/operation-id";
+import { PRICES_UNCONFIRMED, replayedText } from "@/lib/validators/price-lists";
 
 const initialState: UnitActionState = { error: null, savedAt: null };
 
@@ -342,8 +344,36 @@ export function PriceListsSection({
   priceLists: PriceListRow[];
   canManage?: boolean;
 }) {
-  const [state, formAction, pending] = useActionState(createPriceListVersion, initialState);
-  useSavedToast(state);
+  // One operation id per submission (0141): a retry after an error or a lost
+  // answer is the same submission and is answered, not recorded twice. The
+  // latest version is part of what is submitted, so once a version lands (and
+  // the page redraws) the next press is a new submission.
+  const operation: OperationRef = useRef<{ key: string; id: string; unresolved?: boolean } | null>(null);
+  const [notes, setNotes] = useState("");
+  const [state, formAction, pending] = useActionState(
+    async (prev: UnitActionState, fd: FormData): Promise<UnitActionState> => {
+      stampOperationId(operation, fd);
+      let result: UnitActionState;
+      try {
+        result = await createPriceListVersion(prev, fd);
+      } catch {
+        result = { error: PRICES_UNCONFIRMED, savedAt: null, unconfirmed: true };
+      }
+      // an unknown outcome keeps this submission's id for the next press
+      settleOperation(operation, result.unconfirmed === true);
+      if (result.savedAt) setNotes("");
+      return result;
+    },
+    initialState,
+  );
+  const lastToasted = useRef<number | null>(null);
+  useEffect(() => {
+    if (state.savedAt && state.savedAt !== lastToasted.current) {
+      lastToasted.current = state.savedAt;
+      if (state.replayed) toast.info(replayedText(state.version));
+      else toast.success("Saved");
+    }
+  }, [state]);
 
   return (
     <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-surface p-4">
@@ -363,9 +393,16 @@ export function PriceListsSection({
         <>
           <form action={formAction} className="flex items-end gap-2">
             <input type="hidden" name="project_id" value={projectId} />
+            <input type="hidden" name="latest_version" value={priceLists[0]?.version ?? 0} />
             <div className="flex flex-1 flex-col gap-1.5">
               <Label htmlFor="notes">Notes for new version</Label>
-              <Input id="notes" name="notes" placeholder="e.g. +3% from 1 Aug" />
+              <Input
+                id="notes"
+                name="notes"
+                placeholder="e.g. +3% from 1 Aug"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+              />
             </div>
             <Button type="submit" size="sm" disabled={pending}>
               {pending ? "Snapshotting…" : "New version"}

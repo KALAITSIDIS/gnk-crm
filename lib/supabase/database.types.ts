@@ -1543,6 +1543,8 @@ export type Database = {
           effective_date: string
           id: string
           notes: string | null
+          operation: Json | null
+          operation_id: string | null
           org_id: string
           project_id: string
           version: number
@@ -1553,6 +1555,8 @@ export type Database = {
           effective_date?: string
           id?: string
           notes?: string | null
+          operation?: Json | null
+          operation_id?: string | null
           org_id: string
           project_id: string
           version: number
@@ -1563,6 +1567,8 @@ export type Database = {
           effective_date?: string
           id?: string
           notes?: string | null
+          operation?: Json | null
+          operation_id?: string | null
           org_id?: string
           project_id?: string
           version?: number
@@ -3683,6 +3689,18 @@ export type Database = {
           p_note?: string
         }
         Returns: undefined
+      }
+      record_price_list_version: {
+        Args: {
+          p_amount?: number
+          p_block?: string
+          p_expected?: Json
+          p_mode?: string
+          p_notes?: string
+          p_operation_id: string
+          p_project_id: string
+        }
+        Returns: Json
       }
       redact_stale_enquiries: { Args: { p_months?: number }; Returns: number }
       remind_due_installments: { Args: { p_org?: string }; Returns: undefined }
