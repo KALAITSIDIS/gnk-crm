@@ -61,10 +61,11 @@ const NOT_ALLOWED = "Upload not allowed — this property isn't assigned to you.
  *    word — a reassignment or deactivation since step 1 is refused there.
  * 4. An attempt that does not commit is compensated: every object it may have
  *    written is removed once every upload has settled, and a removal that
- *    cannot be verified is reported, not claimed. An insert whose answer was
- *    LOST is read back; unless the row is found, the files are kept and the
- *    outcome is reported as unknown — a committed row is never left pointing
- *    at deleted files.
+ *    cannot be verified is reported, not claimed. Only an insert DEFINITELY
+ *    refused (`insertDefinitelyRefused`) is compensated; any other answer is
+ *    read back by the attempt id, and unless THAT row is found the files are
+ *    kept and the outcome is reported as unknown — a committed row is never
+ *    left pointing at deleted files.
  * 5. After a commit, nothing turns the upload into a failure: the event, the
  *    score and the site knock are follow-ups.
  *
@@ -234,29 +235,33 @@ export async function uploadPropertyMedia(
 
     let mediaId = row?.id ?? null;
     if (insertErr && insertDefinitelyRefused(insertErr)) {
-      // the database ran the insert and refused it (RLS, a constraint): no
-      // row can reference these objects
+      // refused before any commit (RLS, a constraint, a PostgREST request or
+      // JWT refusal): no row can reference these objects
       const removed = await discardAttemptObjects(admin.storage, objects, put.foreign, {
         ...context,
         why: "row refused",
       });
       const why =
-        insertErr.code === "42501" || insertErr.message.includes("row-level security")
+        insertErr.code === "42501" || insertErr.message?.includes("row-level security")
           ? NOT_ALLOWED
-          : insertErr.message;
+          : (insertErr.message ?? "the row was refused");
       failure =
         `${file.name}: ${why}` +
         (removed ? "" : " Some of its files could not be removed and have been reported.");
       break;
     }
-    if (insertErr) {
-      // The answer was lost: the row may have committed. Ask the database.
+    if (insertErr || !mediaId) {
+      // No definite answer — a lost response, a code that can follow a
+      // COMMIT, or a success that names no row: it may have committed. Ask
+      // the database, by the attempt id the row would carry.
       const { data: found, error: readErr } = await supabase
         .from("property_media")
         .select("id")
         .eq("id", attemptId)
         .maybeSingle();
-      if (readErr || !found) {
+      // only THIS attempt's row counts: a gateway's `{}`, or postgrest-js's
+      // `[]` for a 404 with an array body, is not a row (and not "saved")
+      if (readErr || found?.id !== attemptId) {
         // Not found is not proof either — the insert may still be landing.
         // Keep the files (a committed row must never point at deleted ones)
         // and say so; the attempt id finds them if they turn out orphaned.
@@ -268,7 +273,7 @@ export async function uploadPropertyMedia(
         failure = `${file.name}: could not confirm whether it was saved — refresh the page before uploading it again.`;
         break;
       }
-      mediaId = found.id;
+      mediaId = attemptId;
     }
 
     // ---- committed: from here on, nothing un-saves this file ----
