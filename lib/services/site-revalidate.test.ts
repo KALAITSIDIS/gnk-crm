@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Database } from "@/lib/supabase/database.types";
 import { fakeClient, type FakePage } from "@/lib/testing/fake-client";
 import {
+  EVERY_LISTING,
   notifySite,
   notifySiteAfter,
   notifySiteIfPublic,
@@ -71,6 +72,39 @@ describe("notifySite", () => {
       .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     expect(await notifySite(null)).toBe("sent");
     expect(JSON.parse(String((fetchSpy.mock.calls[0]![1] as RequestInit).body))).toEqual({});
+  });
+
+  it("EVERY_LISTING asks for every listing page in one body that names nothing (T-unit-site-revalidate)", async () => {
+    process.env.SITE_REVALIDATE_URL = URL_;
+    process.env.SITE_REVALIDATE_KEY = "k-secret";
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    expect(await notifySite(EVERY_LISTING)).toBe("sent");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String((fetchSpy.mock.calls[0]![1] as RequestInit).body))).toEqual({ scope: "listings" });
+  });
+
+  it("a reference the site would refuse as a path is widened to every listing page, never sent to a 400", async () => {
+    // The site's door (gnk-web lib/revalidate.ts REFERENCE) refuses such a
+    // reference WHOLE — not even the home page and the list are rebuilt. A
+    // unit's reference ends in a label the desk typed, so these exist.
+    process.env.SITE_REVALIDATE_URL = URL_;
+    process.env.SITE_REVALIDATE_KEY = "k-secret";
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    for (const odd of ["PAF0007-b203", "PAF0007-B 2", "PAF0007-B2/03", "PAF0007-" + String.fromCharCode(0x386) + "1", `PAF0007-${"9".repeat(40)}`]) {
+      await notifySite(odd);
+    }
+    await notifySite("PAF0002-V03");
+    await notifySite("");
+    const bodies = fetchSpy.mock.calls.map((c) => JSON.parse(String((c[1] as RequestInit).body)));
+    expect(bodies).toEqual([
+      ...Array.from({ length: 5 }, () => ({ scope: "listings" })),
+      { reference: "PAF0002-V03" },
+      {},
+    ]);
   });
 
   it("reports a refusal as failed, logs the status and never the key, and does not throw", async () => {

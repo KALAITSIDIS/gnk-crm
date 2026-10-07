@@ -31,8 +31,13 @@ import type { Database } from "@/lib/supabase/database.types";
  */
 export const REVALIDATE_KEY_HEADER = "x-gnk-revalidate-key";
 
-/** Long enough for a cold site function; short enough to never be noticed. */
-const TIMEOUT_MS = 5000;
+/**
+ * Long enough for a cold site function that first reads the feed before it
+ * answers (gnk-web's door waits up to eight seconds for that read, then
+ * rebuilds; T-unit-site-revalidate) — so a knock the site carried out is not
+ * logged here as failed. Never noticed: the knock runs after the response.
+ */
+const TIMEOUT_MS = 10_000;
 
 let warnedUnset = false;
 
@@ -44,10 +49,51 @@ export function resetSiteRevalidateLatch(): void {
 export type SiteRevalidateOutcome = "sent" | "skipped" | "failed";
 
 /**
- * One knock. `reference` names the listing whose page moved; null means only
- * the home page and the list can have changed.
+ * A bulk change — many units' prices or layouts at once (applyPriceUplift,
+ * applyUnitType). The site rebuilds the home page, the list and EVERY listing
+ * page, each on its own next visit, from ONE request (gnk-web
+ * lib/revalidate.ts readKnock; T-unit-site-revalidate). Chosen over sending
+ * the affected references in batches: no read of which units are public, no
+ * page of references to drop at a batch boundary, no unit the site does not
+ * show ever named to it, and the "Other properties" cards every listing page
+ * carries are refreshed with the rest. The cost is that unaffected pages are
+ * rebuilt too, lazily, from the same public feed — the work the site's
+ * sixty-second timer already does under traffic, after an act the desk does
+ * a few times a month.
  */
-export async function notifySite(reference: string | null): Promise<SiteRevalidateOutcome> {
+export const EVERY_LISTING = { scope: "listings" } as const;
+
+/**
+ * What a knock names: one listing by reference, EVERY_LISTING, or null for
+ * only the home page and the list.
+ */
+export type SiteTarget = string | null | typeof EVERY_LISTING;
+
+/**
+ * The reference shape the site will take as a path (gnk-web lib/revalidate.ts
+ * REFERENCE) — it refuses anything else with a 400 and rebuilds NOTHING. A
+ * unit's reference ends in a label the desk typed (a block, a unit number), so
+ * one can fall outside it ("PAF0007-b 2"); that knock is widened to every
+ * listing page, which reaches the same page by route, rather than lost.
+ */
+const SITE_REFERENCE = /^[A-Z0-9][A-Z0-9-]{0,39}$/;
+
+function bodyOf(target: SiteTarget): Record<string, string> {
+  if (!target) return {};
+  if (typeof target !== "string") return { scope: target.scope };
+  return SITE_REFERENCE.test(target) ? { reference: target } : { scope: EVERY_LISTING.scope };
+}
+
+function described(target: SiteTarget): string {
+  if (!target) return "the list";
+  return typeof target === "string" ? target : "every listing";
+}
+
+/**
+ * One knock. `target` names the listing whose page moved, EVERY_LISTING for a
+ * bulk change, or null when only the home page and the list can have changed.
+ */
+export async function notifySite(target: SiteTarget): Promise<SiteRevalidateOutcome> {
   const url = process.env.SITE_REVALIDATE_URL;
   const key = process.env.SITE_REVALIDATE_KEY;
   if (!url || !key) {
@@ -64,13 +110,13 @@ export async function notifySite(reference: string | null): Promise<SiteRevalida
     const res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json", [REVALIDATE_KEY_HEADER]: key },
-      body: JSON.stringify(reference ? { reference } : {}),
+      body: JSON.stringify(bodyOf(target)),
       signal: AbortSignal.timeout(TIMEOUT_MS),
       cache: "no-store",
     });
     if (!res.ok) {
       console.error(
-        `[site-revalidate] the site answered ${res.status} for ${reference ?? "the list"} — it will refresh on its timers`,
+        `[site-revalidate] the site answered ${res.status} for ${described(target)} — it will refresh on its timers`,
       );
       return "failed";
     }
@@ -87,10 +133,15 @@ export async function notifySite(reference: string | null): Promise<SiteRevalida
 /**
  * Knock after the response has gone out. Never throws, never awaited by the
  * caller — the write is already committed and the desk is already answered.
+ *
+ * Call it STRAIGHT AFTER the commit is confirmed, before any follow-up step
+ * (a timeline line, a task, an alert, a page refresh): Next runs an `after()`
+ * callback even when the action throws later, so a follow-up that fails
+ * cannot swallow the knock — but only if the knock was scheduled first.
  */
-export function notifySiteAfter(reference: string | null): void {
+export function notifySiteAfter(target: SiteTarget): void {
   const knock = () =>
-    notifySite(reference).then(
+    notifySite(target).then(
       () => undefined,
       () => undefined,
     );
