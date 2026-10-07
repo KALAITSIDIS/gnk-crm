@@ -9150,7 +9150,7 @@ Sentry's `media_upload.cleanup` / `media_upload.insert_unknown` messages carry t
 
 **Not done here** — BACKLOG "Media uploads — 2026-10-06 (T-media-upload-authz)".
 
-## T-media-insert-outcome — a code on the media insert's error is not proof the row was refused; only an understood refusal deletes an attempt's files (2026-10-07; no migration)
+## T-media-insert-outcome — a code on the media insert's error is not proof the row was refused; only an understood refusal deletes an attempt's files (2026-10-07; no migration; LANDED 2026-10-07 — PR #112, main `9d606c3`, deployed)
 
 **The brief.** An operator-supplied finding against `372ff5b` (= `origin/main` when this started): `insertDefinitelyRefused()` returned `Boolean(error?.code)`, so `uploadPropertyMedia` deleted an attempt's objects on ANY coded insert error, a committed row included. Taken as a hypothesis. Branch `fix/media-insert-outcome` in its own worktree; the main checkout's uncommitted HANDOFF / BACKLOG / DECISIONS edits were left alone. gnk-web untouched (no contract depends on this).
 
@@ -9172,3 +9172,5 @@ Sentry's `media_upload.cleanup` / `media_upload.insert_unknown` messages carry t
 **Limits (stated, not solved).** (1) Hosted PostgREST's version and the gateway / pooler path in front of it were not re-measured; nothing measured here shows a hosted POST replay. (2) 42501 stays definite although a file-permission PANIC inside the commit can carry it (needs a storage fault and a crash) — accepted. (3) Class 55 is definite because `property_media` has no deferred constraint, constraint trigger or NOTIFY; adding one would need it re-examined. (4) An unknown outcome that DID commit still has no `media_uploaded` line and no score refresh (BACKLOG, unchanged); a kept attempt that never committed is an orphan found by `T-media-upload-authz`'s query.
 
 **Deploy order.** None: no migration, no hosted change; a revert restores the old behaviour exactly.
+
+**Landing (2026-10-07, on the operator's "push it and land it").** Branch CI green on `17c524b` (run 37640212634: checks; rls 1337/1337 on CI's fresh PostgREST 16.1 stack — `media-upload-authz` 28/28 with the real-23505 replay, `price-uplift-actions` 27/27, `deal-close-actions` 13/13; e2e). PR [#112](https://github.com/KALAITSIDIS/gnk-crm/pull/112) merged 17:18:01Z as main `9d606c3`, pinned to `17c524b` (main unmoved at `372ff5b`). Vercel production `dpl_3FzoriGGEHJMEjFXSDGKcAmXdUFT READY 17:19:06Z, aliased to gnk-crm.vercel.app (fra1); no runtime errors; /login 200, /properties /dashboard /deals 307 signed out`; merge CI green — checks, rls, e2e (run 37657991188). No production upload was made and no production object was listed or removed.
