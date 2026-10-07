@@ -59,7 +59,18 @@ const RUN = Date.now().toString(36);
 // ---------------------------------------------------------------------------
 // Harness: which session an action gets, and the steerable fetches.
 // ---------------------------------------------------------------------------
-type Step = "pass" | "fail500" | "throw" | "drop" | { delayMs: number };
+type Step =
+  | "pass"
+  | "fail500"
+  | "throw"
+  | "drop"
+  // the request is sent TWICE (a replay by something in the path): the first
+  // commits, and the caller receives the database's REAL answer to the second
+  | "replay"
+  | { delayMs: number }
+  // the request REALLY runs (the row commits), then this answer replaces the
+  // server's: a coded error a connection fault could produce after the COMMIT
+  | { coded: { status: number; code: string; message: string } };
 type Rule = (method: string, url: string) => Step | "hold";
 
 const h = await vi.hoisted(async () => {
@@ -105,7 +116,19 @@ vi.mock("@/lib/supabase/admin", async () => {
   };
 });
 
+/** "<status> <code>" of every replayed request's second answer, as the server sent it */
+const replayAnswers: string[] = [];
+
 async function steer(step: Step, input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) {
+  if (typeof step === "object" && "coded" in step) {
+    const res = await fetch(input, init);
+    await res.text(); // the server has done it; what arrives is a coded error
+    const { status, code, message } = step.coded;
+    return new Response(JSON.stringify({ code, message, details: null, hint: null }), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+  }
   if (typeof step === "object") {
     await new Promise((r) => setTimeout(r, step.delayMs));
     return fetch(input, init);
@@ -118,6 +141,13 @@ async function steer(step: Step, input: Parameters<typeof fetch>[0], init?: Para
       });
     case "throw":
       throw new TypeError("fetch failed (test: the request never left)");
+    case "replay": {
+      await (await fetch(input, init)).text();
+      const second = await fetch(input, init);
+      const body = (await second.clone().json()) as { code?: string };
+      replayAnswers.push(`${second.status} ${body.code ?? ""}`);
+      return second;
+    }
     case "drop": {
       const res = await fetch(input, init);
       await res.text(); // the server has done it; the answer never arrives
@@ -518,6 +548,72 @@ describe("4–7. the media row", () => {
       expect(added.some((k) => k.endsWith(p!)), `committed row lost ${p}`).toBe(true);
     }
     expect(h.sentry.some((m) => /outcome unknown/.test(m))).toBe(true);
+  });
+
+  // T-media-insert-outcome: a CODE is not proof of refusal. In 5b / 5c the
+  // insert really commits in the local database and only the answer is
+  // replaced by a coded error — a real commit with a SIMULATED response, not
+  // a reproduced network fault. 5d is not simulated at all: the POST is sent
+  // twice and the 23505 is the database's own answer to the second.
+  const PGRST001 = { status: 503, code: "PGRST001", message: "Database client error. Retrying the connection." };
+  const CONN_08006 = { status: 503, code: "08006", message: "connection failure" };
+
+  it("5b. the row committed but the answer is PGRST001: reconciled by the attempt id, every object kept, saved", async () => {
+    const before = await objectsOf(P1);
+    const rowsBefore = await rowsOf(P1);
+    const eventsBefore = await uploadEventsOf(P1);
+    const readBacks: string[] = [];
+    sessionRule = (m, u) => {
+      if (isMediaReadBack(m, u)) readBacks.push(u);
+      return isMediaInsert(m, u) ? { coded: PGRST001 } : "pass";
+    };
+    const out = await act(admin, P1);
+    const added = newSince(before, await objectsOf(P1));
+    const committed = (await rowsOf(P1)).filter((r) => !rowsBefore.some((b) => b.id === r.id));
+    evidence("PGRST001 after commit", { out, added: added.length, committed: committed.map((r) => r.id), readBacks });
+    expect(committed, "the insert did commit in the database").toHaveLength(1);
+    expect(readBacks.some((u) => u.includes(`id=eq.${committed[0]!.id}`)), "no read-back by the attempt id").toBe(true);
+    expect(out.result?.error).toBeNull();
+    expect(out.result?.saved).toBe(1);
+    expect(added).toHaveLength(5);
+    expect(added.every((k) => k.includes(committed[0]!.id))).toBe(true);
+    expect(await uploadEventsOf(P1)).toBe(eventsBefore + 1);
+  });
+
+  it("5c. the row committed, the answer is 08006 and the read-back fails: files kept, 'could not confirm'", async () => {
+    const before = await objectsOf(P1);
+    const rowsBefore = await rowsOf(P1);
+    h.sentry.length = 0;
+    sessionRule = (m, u) =>
+      isMediaInsert(m, u) ? { coded: CONN_08006 } : isMediaReadBack(m, u) ? { coded: PGRST001 } : "pass";
+    const out = await act(admin, P1);
+    const added = newSince(before, await objectsOf(P1));
+    const committed = (await rowsOf(P1)).filter((r) => !rowsBefore.some((b) => b.id === r.id));
+    evidence("08006 after commit, read-back failed", { error: out.result?.error, added: added.length, committed: committed.length });
+    expect(committed).toHaveLength(1);
+    expect(out.result?.error).toMatch(/could not confirm/i);
+    const row = committed[0]!;
+    for (const p of [row.storage_path_original, row.path_thumb, row.path_card, row.path_full, row.path_jpeg]) {
+      expect(added.some((k) => k.endsWith(p!)), `committed row lost ${p}`).toBe(true);
+    }
+    expect(h.sentry.some((m) => /outcome unknown/.test(m))).toBe(true);
+  });
+
+  it("5d. a REPLAYED insert: the database's real 23505 names THIS attempt's row — read back, kept, saved", async () => {
+    const before = await objectsOf(P1);
+    const rowsBefore = await rowsOf(P1);
+    replayAnswers.length = 0;
+    sessionRule = (m, u) => (isMediaInsert(m, u) ? "replay" : "pass");
+    const out = await act(admin, P1);
+    const added = newSince(before, await objectsOf(P1));
+    const committed = (await rowsOf(P1)).filter((r) => !rowsBefore.some((b) => b.id === r.id));
+    evidence("replayed insert, real 23505", { out, added: added.length, committed: committed.map((r) => r.id), replayAnswers });
+    expect(replayAnswers, "the second POST was not answered 23505 by the database").toEqual(["409 23505"]);
+    expect(committed).toHaveLength(1);
+    expect(out.result?.error).toBeNull();
+    expect(out.result?.saved).toBe(1);
+    expect(added).toHaveLength(5);
+    expect(added.every((k) => k.includes(committed[0]!.id))).toBe(true);
   });
 
   it("7. the event write fails AFTER the commit: row and files stay, the upload is not a failure", async () => {

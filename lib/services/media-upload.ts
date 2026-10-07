@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import type { CurrentProfile } from "@/lib/services/auth";
+import { certainlyRolledBack } from "@/lib/services/rpc-outcome";
 import { removeObjectsOrFail, type StorageLike } from "@/lib/services/storage";
 
 /**
@@ -136,19 +137,28 @@ export async function discardAttemptObjects(
 }
 
 /**
- * Did a refused `property_media` insert DEFINITELY not commit?
+ * Did a refused `property_media` insert DEFINITELY not commit? Only then may
+ * the attempt's objects be removed; every other answer is reconciled by
+ * reading the row back by the attempt id (DECISIONS T-media-insert-outcome).
  *
- * PostgREST answers a statement it ran and refused with a code: a SQLSTATE
- * (42501 RLS, 23xxx constraints, 57014 timeout) or a PGRST code for a request
- * it never executed. postgrest-js resolves a network failure — the request
- * may or may not have reached the database — as an error with `code: ""`
- * (measured, 2.110.2; see site-revalidate.ts), and a gateway page arrives with
- * no code at all. Only a coded error is a definite rejection; anything else
- * may sit in front of a committed row. POSTs are never retried by
- * postgrest-js, so a duplicate-key answer cannot be our own retry.
+ * The codes are rpc-outcome's allowlist: a refusal the database or PostgREST
+ * made before the commit — 42501 (RLS), 23xxx constraints, a PGRST request /
+ * schema / JWT refusal. A code alone is not proof. PostgREST builds PGRST111 /
+ * 112 AFTER the commit (measured: HTTP 500, row committed); a cancel, an
+ * out-of-memory or a PANIC (57 / 53 / 58 / XX) can be reported for a COMMIT
+ * that went through; a lost COMMIT reply arrives as `code: ""` (measured on
+ * PostgREST 14.5 and 16.1); class 08 comes from whatever sits in front of
+ * Postgres; and PGRST000 / 001 and every unclassified code are unknown by
+ * policy. Until 2026-10-07 ANY non-empty code counted as a refusal, and the
+ * files of a committed row were deleted.
+ *
+ * One exception to the allowlist: 23505. The id is the attempt's fresh uuid
+ * and the primary key the table's only unique constraint, so a duplicate key
+ * means a row with THIS id exists — one that names these very files (a
+ * replayed POST; postgrest-js never resends one, a gateway might). Read it.
  */
-export function insertDefinitelyRefused(error: { code?: string | null } | null): boolean {
-  return Boolean(error?.code);
+export function insertDefinitelyRefused(error: { code?: unknown } | null): boolean {
+  return certainlyRolledBack(error?.code) && error?.code !== "23505";
 }
 
 /**
