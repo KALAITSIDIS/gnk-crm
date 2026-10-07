@@ -62,3 +62,54 @@ export function stampOperationId(ref: OperationRef, fd: FormData, idField = "ope
 export function settleOperation(ref: OperationRef, unconfirmed: boolean): void {
   if (ref.current) ref.current.unresolved = unconfirmed;
 }
+
+/** What `sendPinned` needs to read from an action's answer. */
+export type PinnedAnswer = {
+  error: string | null;
+  savedAt: number | null;
+  unconfirmed?: boolean;
+  busy?: boolean;
+};
+
+/**
+ * One press of a form whose submission the person may REPEAT ON PURPOSE once
+ * it committed — a unit-type stamp (T-unit-type-apply-atomic, 0142). Unlike a
+ * reviewed reprice, nothing a stamp sends changes when it commits (project,
+ * type, block), so the key alone cannot tell "press again to check" from
+ * "stamp it again":
+ *
+ * - a COMMITTED answer spends the id — the next press is a new submission
+ *   (otherwise a deliberate re-stamp on the same page would be "replayed" and
+ *   never applied);
+ * - an UNKNOWN answer — or a throw, or a lock wait on a press that was itself
+ *   re-sending an unknown submission (its original may still be running and
+ *   commit) — keeps the id pinned and says `unknown`;
+ * - a definite refusal releases the pin (the same fields keep the id; nothing
+ *   was committed under it).
+ *
+ * The button is disabled while a press is pending, so a double click cannot
+ * mint two ids for one submission.
+ */
+export async function sendPinned<S extends PinnedAnswer>(
+  ref: OperationRef,
+  fd: FormData,
+  send: (fd: FormData) => Promise<S>,
+  unknown: S,
+): Promise<S> {
+  const retrying = ref.current?.unresolved === true;
+  stampOperationId(ref, fd);
+  let result: S;
+  try {
+    result = await send(fd);
+  } catch {
+    // the request never came back: it may have committed
+    result = unknown;
+  }
+  if (retrying && result.busy) result = unknown;
+  if (result.savedAt !== null && !result.error) {
+    ref.current = null;
+  } else {
+    settleOperation(ref, result.unconfirmed === true);
+  }
+  return result;
+}

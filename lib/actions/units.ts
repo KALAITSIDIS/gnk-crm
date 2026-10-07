@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { NOT_RECORDED_NOTICE } from "@/lib/services/optimistic-save";
 import { z } from "zod";
 import { getCurrentProfile } from "@/lib/services/auth";
-import { logEvent, logEvents } from "@/lib/services/events";
+import { logEvent } from "@/lib/services/events";
 import { createClient } from "@/lib/supabase/server";
 import {
   emptyToUndefined,
@@ -15,7 +15,7 @@ import {
   PROPERTY_STATUSES,
   PROPERTY_TYPES,
 } from "@/lib/validators/properties";
-import { AREA_LABELS, areaProblem } from "@/lib/validators/property-measurements";
+import { AREA_LABELS } from "@/lib/validators/property-measurements";
 import {
   INHERITED_UNIT_FIELDS,
   inheritedFieldsWithValues,
@@ -42,7 +42,12 @@ import {
   PRICES_STALE,
   PRICES_UNCONFIRMED,
 } from "@/lib/validators/price-lists";
-import { stampOf, type UnitType } from "@/lib/services/unit-type";
+import {
+  UNIT_TYPE_BUSY,
+  UNIT_TYPE_NOTHING_CHANGED,
+  UNIT_TYPE_OUT_OF_DATE,
+  UNIT_TYPE_UNCONFIRMED,
+} from "@/lib/validators/unit-types";
 
 export type UnitActionState = {
   error: string | null;
@@ -55,6 +60,13 @@ export type UnitActionState = {
   replayed?: boolean;
   /** price-list actions (0141): the outcome is unknown — the request may have committed */
   unconfirmed?: boolean;
+  /**
+   * applyUnitType (0142): THIS request met a lock (55P03) or lost a deadlock
+   * (40P01) and wrote nothing — but an earlier request of the same submission
+   * may still be running, so a form re-sending an unconfirmed submission
+   * keeps treating it as unknown
+   */
+  busy?: boolean;
 };
 
 const createUnitSchema = z.object({
@@ -917,105 +929,135 @@ export async function createUnitType(
   return { error: null, savedAt: Date.now() };
 }
 
+/* ------------------------------------------------------------------ */
+/* Applying a unit type — ONE database transaction                     */
+/* (T-unit-type-apply-atomic, migration 0142).                         */
+/* ------------------------------------------------------------------ */
+
+const UNIT_TYPE_RPC = "apply_unit_type";
+
+/** What `apply_unit_type` answers when it did not raise (0142). */
+type UnitTypeAnswer = {
+  result: "applied" | "replayed";
+  project_id: string;
+  units: number;
+  price_changed: number;
+};
+
+function readUnitTypeAnswer(data: unknown): UnitTypeAnswer | null {
+  if (!data || typeof data !== "object") return null;
+  const d = data as Record<string, unknown>;
+  if (d.result !== "applied" && d.result !== "replayed") return null;
+  if (typeof d.project_id !== "string" || typeof d.units !== "number") return null;
+  return d as UnitTypeAnswer;
+}
+
+/** The sentence for a request that did not commit — or might have (`unknown`). */
+function unitTypeRefusal(error: { code?: string; message?: string }): { text: string; unknown: boolean; busy?: true } {
+  // P0001 is `raise exception` — the function's own sentence, meant to be read
+  if (error.code === "P0001" && error.message) return { text: error.message, unknown: false };
+  // lock_timeout (the function's own 3 s), or a deadlock with a writer that
+  // took the same units in another order (0142's LOCKS): THIS request wrote
+  // nothing (flagged: an earlier request of the same submission may still be
+  // in flight — the form decides)
+  if (error.code === "55P03" || error.code === "40P01") return { text: UNIT_TYPE_BUSY, unknown: false, busy: true };
+  return certainlyRolledBack(error.code)
+    ? { text: UNIT_TYPE_NOTHING_CHANGED, unknown: false }
+    : { text: UNIT_TYPE_UNCONFIRMED, unknown: true };
+}
+
+/** Shape only — the step and the error code or name, never a database message. */
+function reportUnitType(message: string, tags: Record<string, string>, projectId: string): void {
+  console.error(`${message} (${Object.values(tags).join(", ")}) for project ${projectId}`);
+  try {
+    Sentry.captureMessage(message, { level: "error", tags, extra: { projectId } });
+  } catch {
+    // Sentry is best-effort; the console line stands
+  }
+}
+
+const applyUnitTypeSchema = z.object({
+  project_id: z.guid("Missing project or type"),
+  unit_type_id: z.guid("Missing project or type"),
+  block: z.preprocess(emptyToUndefined, z.string().max(20, "No units in that scope").optional()),
+  operation_id: z.guid(UNIT_TYPE_OUT_OF_DATE),
+});
+
 /**
- * Stamp a layout onto the units in a scope (migration 0039).
+ * Stamp a layout onto the units in a scope (migrations 0039, 0142).
  *
  * A STAMP, NOT A LINK. It copies the type's values now; the unit is not bound
  * to the type afterwards, so a later edit to either one does not chase the
  * other. That is deliberate — two units of one layout legitimately diverge, and
  * beds/area/price are in DELIBERATELY_NOT_INHERITED for exactly that reason.
  *
- * One update per unit, because a price change has to pass the 0005 trigger
- * old→new pair by pair for its price_history row.
+ * ONE TRANSACTION (0142). `apply_unit_type` checks the caller (admin or
+ * listing manager, aal2, active), locks the project, the type and every unit
+ * in scope, stamps them in one statement and writes one `updated` line per
+ * unit — or nothing at all. A type with no rate leaves each price as the
+ * database holds it; nothing this action read is written back. Each unit whose
+ * price moves keeps its own trail (trg_price_history, 0005).
+ *
+ * An operation id, minted by the form once per submission, makes a retry
+ * answer what the first request committed ("replayed") instead of applying
+ * again. NEVER throws: Next strips a thrown Server Action message in
+ * production, and an unknown outcome must say so rather than "nothing changed".
  */
 export async function applyUnitType(
   _prev: UnitActionState,
   formData: FormData,
 ): Promise<UnitActionState> {
-  const projectId = formData.get("project_id");
-  const typeId = formData.get("unit_type_id");
-  const blockRaw = formData.get("block");
-  if (typeof projectId !== "string" || typeof typeId !== "string") {
-    return { error: "Missing project or type", savedAt: null };
+  const parsed = applyUnitTypeSchema.safeParse(Object.fromEntries(formData.entries()));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input", savedAt: null };
   }
-  const block = typeof blockRaw === "string" && blockRaw !== "" ? blockRaw : null;
+  const input = parsed.data;
 
-  const supabase = await createClient();
-  const profile = await getCurrentProfile(supabase);
-
-  const { data: type } = await supabase
-    .from("unit_types")
-    .select("id, code, name, bedrooms, bathrooms, covered_area_sqm, veranda_sqm, price_per_sqm")
-    .eq("id", typeId)
-    .eq("project_id", projectId)
-    .maybeSingle();
-  if (!type) return { error: "Type not found on this project", savedAt: null };
-
-  // The stamp's one measurement column, checked ONCE before the first unit
-  // is touched (LST-07). The loop below is not atomic — a refusal on unit N
-  // would leave units 1..N-1 stamped with no events — and a type row can only
-  // hold a bad area by a write that skipped createUnitType (0113 now refuses
-  // those too). The stamp touches no floor, so this is the whole check on
-  // the row it leaves.
-  const stampRefusal = areaProblem(AREA_LABELS.covered_area_sqm, type.covered_area_sqm);
-  if (stampRefusal) return { error: `Type ${type.code}: ${stampRefusal}`, savedAt: null };
-
-  let query = supabase
-    .from("properties")
-    .select("id, reference, asking_price")
-    .eq("parent_id", projectId)
-    .eq("kind", "unit");
-  if (block) query = query.eq("block", block);
-  const { data: units } = await query;
-
-  if (!units || units.length === 0) return { error: "No units in that scope", savedAt: null };
-
-  const { data: project } = await supabase
-    .from("properties")
-    .select("org_id, reference")
-    .eq("id", projectId)
-    .single();
-
-  const applied: { id: string; reference: string }[] = [];
-  for (const u of units) {
-    const stamp = stampOf(type as UnitType, u.asking_price);
-    const { data: rows, error } = await supabase
-      .from("properties")
-      .update(stamp)
-      .eq("id", u.id)
-      .select("id");
-    if (error) return { error: error.message, savedAt: null };
-    if (rows && rows.length > 0) applied.push({ id: u.id, reference: u.reference });
+  let supabase: Awaited<ReturnType<typeof createClient>>;
+  try {
+    supabase = await createClient();
+  } catch (e) {
+    reportUnitType("unit type: no client", { error: e instanceof Error ? e.name : "threw" }, input.project_id);
+    return { error: UNIT_TYPE_NOTHING_CHANGED, savedAt: null };
   }
 
-  if (applied.length === 0) {
-    return {
-      error: "Nothing was changed — only admins and listing managers manage units.",
-      savedAt: null,
-    };
+  let res: Awaited<ReturnType<typeof supabase.rpc<typeof UNIT_TYPE_RPC>>>;
+  try {
+    res = await supabase.rpc(UNIT_TYPE_RPC, {
+      p_project_id: input.project_id,
+      p_unit_type_id: input.unit_type_id,
+      p_operation_id: input.operation_id,
+      p_block: input.block,
+    });
+  } catch (e) {
+    // the request may have reached the database and committed; no refresh —
+    // the form re-sends this same submission (lib/utils/operation-id.ts)
+    reportUnitType("unit type: request threw", { error: e instanceof Error ? e.name : "threw" }, input.project_id);
+    return { error: UNIT_TYPE_UNCONFIRMED, savedAt: null, unconfirmed: true };
+  }
+  if (res.error) {
+    const refusal = unitTypeRefusal(res.error);
+    if (res.error.code !== "P0001") {
+      reportUnitType("unit type: not applied", { code: res.error.code || "none" }, input.project_id);
+    }
+    if (refusal.unknown) return { error: refusal.text, savedAt: null, unconfirmed: true };
+    return refusal.busy ? { error: refusal.text, savedAt: null, busy: true } : { error: refusal.text, savedAt: null };
+  }
+  const answer = readUnitTypeAnswer(res.data);
+  if (!answer) {
+    reportUnitType("unit type: unreadable answer", { code: "unreadable_answer" }, input.project_id);
+    return { error: UNIT_TYPE_UNCONFIRMED, savedAt: null, unconfirmed: true };
   }
 
-  await logEvents(
-    supabase,
-    applied.map((u) => ({
-      orgId: project!.org_id,
-      actorId: profile.id,
-      entityType: "property" as const,
-      entityId: u.id,
-      eventType: "updated",
-      payload: {
-        section: "unit_type",
-        source: "type_applied",
-        unit_type: type.code,
-        scope: block ?? "all units",
-        project: project!.reference,
-      },
-    })),
-  );
-
-  revalidatePath(`/properties/${projectId}/units`);
-  revalidatePath("/properties");
-  return { error: null, savedAt: Date.now() };
+  // committed: a failed refresh never turns the commit into an error
+  for (const path of [`/properties/${input.project_id}/units`, "/properties"]) {
+    try {
+      revalidatePath(path);
+    } catch (e) {
+      console.error(`[units] revalidatePath(${path}) failed:`, e instanceof Error ? e.message : e);
+    }
+  }
+  return { error: null, savedAt: Date.now(), replayed: answer.result === "replayed" };
 }
 
 const paymentPlanSchema = z.object({

@@ -28,7 +28,7 @@ vi.mock("@/lib/services/quality-score", () => ({
 }));
 
 const { updatePropertySection } = await import("@/lib/actions/properties");
-const { createUnit, generateProjectUnits, createUnitType, applyUnitType } = await import(
+const { createUnit, generateProjectUnits, createUnitType } = await import(
   "@/lib/actions/units"
 );
 
@@ -250,37 +250,9 @@ describe("unit write paths refuse a zero area before touching anything", () => {
   });
 });
 
-describe("applyUnitType checks the stamp BEFORE the first unit is written", () => {
-  it("a type whose stored area is 0 stamps nothing and records nothing", async () => {
-    // unit_types can only hold 0 through a direct write (createUnitType
-    // refuses it, and 0113 adds a CHECK); the loop below the check is not
-    // atomic, so a refusal on unit N would have left units 1..N-1 stamped
-    // with no events. Refused up front instead.
-    const fake = fakeClient({
-      unit_types: [
-        {
-          data: {
-            id: "type-1",
-            code: "A1",
-            name: null,
-            bedrooms: 2,
-            bathrooms: 1,
-            covered_area_sqm: 0,
-            veranda_sqm: null,
-            price_per_sqm: null,
-          },
-          error: null,
-        },
-      ],
-      properties: [{ data: [{ id: "u1", reference: "PAF0002-101", asking_price: null }], error: null }],
-    });
-    state.client = fake.client;
-    const res = await applyUnitType(
-      { error: null, savedAt: null },
-      unitForm({ project_id: PROJECT, unit_type_id: "type-1" }),
-    );
-    expect(res.error).toMatch(/^Type A1: Covered area must be greater than 0/);
-    expect(fake.argsOf("properties", "update"), "no unit was stamped").toHaveLength(0);
-    expect(logEvents).not.toHaveBeenCalled();
-  });
-});
+// applyUnitType no longer reads or writes here: the stamp is ONE database
+// transaction (apply_unit_type, 0142) and the covered-area rule binds it there —
+// unit_types_covered_area_positive and properties_covered_area_positive (0113)
+// plus the function's own check. supabase/tests/unit-type-apply-actions.test.ts
+// drives the action against a real stack; lib/actions/unit-type-actions.test.ts
+// pins what it does with each answer.

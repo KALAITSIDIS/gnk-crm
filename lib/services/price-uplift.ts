@@ -82,6 +82,20 @@ function divRound(n: bigint, d: bigint): bigint {
 }
 
 /**
+ * `a × b` to the nearest €100, a half up — exact, the digits PostgreSQL's
+ * `round(a * b, -2)` computes on (0142's unit-type price). Null when either is
+ * not a finite decimal or the product is not positive.
+ */
+export function roundedProduct(a: number | string, b: number | string): number | null {
+  const x = exact(a);
+  const y = exact(b);
+  if (!x || !y) return null;
+  const product = x.v * y.v;
+  if (product <= ZERO) return null;
+  return Number(divRound(product, pow10(x.s + y.s + 2)) * BigInt(ROUND_TO));
+}
+
+/**
  * The new price for one unit, or null when there is nothing to uplift.
  *
  * A unit with no price is SKIPPED rather than treated as 0 — applying +3% to

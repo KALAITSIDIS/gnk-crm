@@ -9,9 +9,16 @@
  * bound to them afterwards, and there is deliberately no drift panel for types.
  * Bedrooms, area and price are in `DELIBERATELY_NOT_INHERITED` for the same
  * reason: two units of one layout can legitimately diverge.
+ *
+ * The stamp itself is written by the database (`apply_unit_type`, migration
+ * 0142) in one transaction: beds, baths, covered area and veranda copied — a
+ * field the type leaves blank is written as null, a stamp and not a merge —
+ * and the price set only when the type has a rate. A type with no rate leaves
+ * each unit's price as the database holds it: a layout template is a
+ * statement about the flat, not about what it is worth today.
  */
 
-import { ROUND_TO } from "@/lib/services/price-uplift";
+import { roundedProduct } from "@/lib/services/price-uplift";
 
 export interface UnitType {
   id: string;
@@ -39,45 +46,16 @@ const num = (v: number | string | null): number | null => {
  * on the type and shown on the unit; it just does not drive the price.
  *
  * Rounded to the same €100 the bulk uplift uses, and for the same reason: a
- * price is quoted at a round number, and 85 × 2941 is not one.
+ * price is quoted at a round number, and 85 × 2941 is not one. EXACT — a half
+ * rounds up, as `round(covered × rate, −2)` does in 0142 — so the figure the
+ * picker shows is the figure the stamp writes (in floating point, 64.35 × 1000
+ * came out €64.300 instead of €64.400).
  */
 export function priceFromType(type: Pick<UnitType, "covered_area_sqm" | "price_per_sqm">): number | null {
   const area = num(type.covered_area_sqm);
   const rate = num(type.price_per_sqm);
   if (area === null || rate === null || area <= 0 || rate <= 0) return null;
-  return Math.round((area * rate) / ROUND_TO) * ROUND_TO;
-}
-
-export interface UnitTypeStamp {
-  bedrooms: number | null;
-  bathrooms: number | null;
-  covered_area_sqm: number | null;
-  veranda_sqm: number | null;
-  asking_price: number | null;
-}
-
-/**
- * The columns applying a type writes onto a unit.
- *
- * A field the type leaves blank is written as null rather than skipped —
- * stamping "A1" onto a unit should make it an A1, not an A1 with whatever the
- * previous layout's bathroom count happened to be. That is the difference
- * between a stamp and a merge, and the surprising version is the merge.
- *
- * The price is the exception: a type with no rate leaves the unit's existing
- * price ALONE rather than clearing it. A layout template is a statement about
- * the flat, not about what it is worth today, and wiping a price nobody asked
- * to change would be destructive.
- */
-export function stampOf(type: UnitType, currentPrice: number | string | null): UnitTypeStamp {
-  const computed = priceFromType(type);
-  return {
-    bedrooms: type.bedrooms ?? null,
-    bathrooms: type.bathrooms ?? null,
-    covered_area_sqm: num(type.covered_area_sqm),
-    veranda_sqm: num(type.veranda_sqm),
-    asking_price: computed ?? num(currentPrice),
-  };
+  return roundedProduct(type.covered_area_sqm!, type.price_per_sqm!);
 }
 
 /** A one-line description for the picker: "A1 · 2 bed · 85 m² · €250.000". */
