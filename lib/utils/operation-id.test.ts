@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { newOperationId, settleOperation, stampOperationId, submissionKey, type OperationRef } from "./operation-id";
+import {
+  newOperationId,
+  sendPinned,
+  settleOperation,
+  stampOperationId,
+  submissionKey,
+  type OperationRef,
+  type PinnedAnswer,
+} from "./operation-id";
 
 /**
  * One id per logical submission (T-price-uplift-atomic, 0141): the same
@@ -68,5 +76,79 @@ describe("stampOperationId", () => {
     // a definite answer releases it: the next changed submission is a new one
     settleOperation(ref, false);
     expect(stampOperationId(ref, form({ project_id: "p", amount: "3", expected: '[{"id":"u","price":3}]' }))).not.toBe(id);
+  });
+});
+
+describe("sendPinned — a submission the person may repeat once it committed (a unit-type stamp, 0142)", () => {
+  const STAMP = { project_id: "p", unit_type_id: "t", block: "A" };
+  const UNKNOWN: PinnedAnswer = { error: "could not confirm", savedAt: null, unconfirmed: true };
+  const applied: PinnedAnswer = { error: null, savedAt: 1 };
+  const busy: PinnedAnswer = { error: "busy — nothing was changed", savedAt: null, busy: true };
+  /** Records the operation id each press sent, answering with the scripted outcomes in turn. */
+  function server(...answers: Array<PinnedAnswer | "throw">) {
+    const sent: string[] = [];
+    const send = async (fd: FormData) => {
+      sent.push(String(fd.get("operation_id")));
+      const a = answers.shift();
+      if (a === undefined) throw new Error("no answer scripted");
+      if (a === "throw") throw new TypeError("fetch failed");
+      return a;
+    };
+    return { sent, send };
+  }
+
+  it("two confirmed stamps of the same selection are two submissions — the second applies, it is not replayed", async () => {
+    const ref: OperationRef = { current: null };
+    const s = server(applied, applied);
+    await sendPinned(ref, form(STAMP), s.send, UNKNOWN);
+    await sendPinned(ref, form(STAMP), s.send, UNKNOWN);
+    expect(s.sent[0]).not.toBe(s.sent[1]);
+  });
+
+  it("an unknown answer (or a throw) pins the id: the press to check sends the SAME id, even if the selection changed", async () => {
+    const ref: OperationRef = { current: null };
+    const s = server(UNKNOWN, "throw", applied);
+    await sendPinned(ref, form(STAMP), s.send, UNKNOWN);
+    expect(await sendPinned(ref, form(STAMP), s.send, UNKNOWN)).toEqual(UNKNOWN);
+    await sendPinned(ref, form({ ...STAMP, block: "B" }), s.send, UNKNOWN);
+    expect(new Set(s.sent).size, "one id across all three presses").toBe(1);
+  });
+
+  it("a replayed (committed) answer spends the id too", async () => {
+    const ref: OperationRef = { current: null };
+    const s = server(UNKNOWN, { error: null, savedAt: 2 }, applied);
+    await sendPinned(ref, form(STAMP), s.send, UNKNOWN);
+    await sendPinned(ref, form(STAMP), s.send, UNKNOWN); // the check: replayed
+    await sendPinned(ref, form(STAMP), s.send, UNKNOWN); // a deliberate new stamp
+    expect(s.sent[0]).toBe(s.sent[1]);
+    expect(s.sent[2]).not.toBe(s.sent[1]);
+  });
+
+  it("a lock wait on a press CHECKING an unknown outcome stays unknown and pinned — its original may still commit", async () => {
+    const ref: OperationRef = { current: null };
+    const s = server(UNKNOWN, busy, applied);
+    await sendPinned(ref, form(STAMP), s.send, UNKNOWN);
+    expect(await sendPinned(ref, form(STAMP), s.send, UNKNOWN), "never 'nothing was changed' here").toEqual(UNKNOWN);
+    await sendPinned(ref, form(STAMP), s.send, UNKNOWN);
+    expect(new Set(s.sent).size).toBe(1);
+  });
+
+  it("a lock wait on a FIRST press is definite: shown as it is, and the same fields keep the same id", async () => {
+    const ref: OperationRef = { current: null };
+    const s = server(busy, applied);
+    expect(await sendPinned(ref, form(STAMP), s.send, UNKNOWN)).toEqual(busy);
+    await sendPinned(ref, form(STAMP), s.send, UNKNOWN);
+    expect(s.sent[0]).toBe(s.sent[1]);
+  });
+
+  it("a definite refusal releases the pin: a changed selection after it is a new submission", async () => {
+    const ref: OperationRef = { current: null };
+    const refused: PinnedAnswer = { error: "Only admins and listing managers manage units.", savedAt: null };
+    const s = server(UNKNOWN, refused, applied);
+    await sendPinned(ref, form(STAMP), s.send, UNKNOWN);
+    await sendPinned(ref, form(STAMP), s.send, UNKNOWN);
+    await sendPinned(ref, form({ ...STAMP, block: "B" }), s.send, UNKNOWN);
+    expect(s.sent[1]).toBe(s.sent[0]);
+    expect(s.sent[2]).not.toBe(s.sent[1]);
   });
 });

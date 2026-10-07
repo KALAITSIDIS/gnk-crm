@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 140::bigint as migrations,
+    2::bigint as auth_users, 141::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -191,6 +191,9 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   -- actor; SECURITY INVOKER, so every policy on the rows it writes still
   -- binds the caller (pinned although invokers are out of grant_unpinned's scope)
   ('record_price_list_version', false, false, true, false),
+  -- 0142: authenticated ONLY — a unit-type stamp needs an accountable actor;
+  -- SECURITY INVOKER like 0141 (pinned although invokers are out of grant_unpinned's scope)
+  ('apply_unit_type',           false, false, true, false),
   ('add_deal_stage',       false, false, true, true),
   ('reorder_stage',        false, false, true, true),
   ('admin_dashboard_stats',false, false, true, true),
@@ -838,6 +841,36 @@ misc as (
                           and pg_get_indexdef(i.indexrelid) ~ '\(org_id, operation_id\)$'
                      from pg_index i
                     where i.indexrelid = to_regclass('public.price_lists_org_operation_key')), false)::text
+  union all
+  -- 0142: applying a unit type commits as ONE transaction (apply_unit_type,
+  -- SECURITY INVOKER): the container and its units locked FOR NO KEY UPDATE
+  -- (units in id order), the stamp's and the audit lines' row counts checked,
+  -- a price the type cannot say left as the locked row holds it, the per-unit
+  -- price line left to trg_price_history, waits bounded. Read as code — block
+  -- and line comments stripped.
+  select 'INTEGRITY: a unit-type stamp commits whole, never writes back a price it read (0142)', 'true',
+         coalesce((select not p.prosecdef
+                          and p.proconfig @> array['lock_timeout=3s']
+                          and c.code ~ 'p\.kind in \(''project'', ''phase''\)\s+for no key update;'
+                          and c.code ~ 'order by u\.id\s+for no key update\) s;'
+                          and c.code ~ 'get diagnostics v_rows = row_count;\s+if v_rows <> v_scope then'
+                          and c.code ~ 'get diagnostics v_lines = row_count;\s+if v_lines <> v_scope then'
+                          and c.code ~ 'asking_price\s+= coalesce\(v_price, u\.asking_price\)'
+                          and c.code !~* 'insert\s+into\s+(public\.)?events[^;]*price_changed'
+                     from pg_proc p
+                     cross join lateral (select regexp_replace(regexp_replace(p.prosrc, '/\*.*?\*/', '', 'g'), '--[^\n]*', '', 'g') as code) c
+                    where p.oid = to_regprocedure('public.apply_unit_type(uuid, uuid, uuid, text)')), false)::text
+  union all
+  -- 0142: and one application answers one submission — only while the
+  -- operation record keeps (org, operation id) as its key and sessions can
+  -- neither rewrite nor remove it
+  select 'INTEGRITY: a unit-type operation id is unique per organisation and its record append-only (0142)', 'true',
+         (coalesce((select pg_get_constraintdef(c.oid) = 'PRIMARY KEY (org_id, operation_id)'
+                      from pg_constraint c
+                     where c.conrelid = to_regclass('public.unit_type_applications') and c.contype = 'p'), false)
+          and coalesce((select not has_table_privilege('authenticated', t.oid, 'update, delete, truncate')
+                               and not has_table_privilege('anon', t.oid, 'select, insert, update, delete, truncate')
+                          from pg_class t where t.oid = to_regclass('public.unit_type_applications')), false))::text
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.

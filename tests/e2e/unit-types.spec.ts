@@ -104,6 +104,60 @@ test("a type stamps a whole block and replaces the layout completely", async ({ 
   await admin.from("properties").delete().eq("id", project.id);
 });
 
+test("stamping the same type twice on one page applies twice — a committed stamp is not 'already applied' (0142)", async ({
+  page,
+}) => {
+  // The form mints one operation id per submission and pins it only while an
+  // outcome is unknown; a COMMITTED stamp spends it. Otherwise the second press
+  // (same project, type and block — nothing a commit changes) would be answered
+  // "replayed" and never reach the units (review of T-unit-type-apply-atomic).
+  const admin = svc();
+  const { orgId } = await fixtureProfile(admin);
+  const tag = randomBytes(3).toString("hex");
+  const project = await seed(admin, orgId, tag);
+  await admin.from("unit_types").insert({ org_id: orgId, project_id: project.id, code: "T2", bedrooms: 2, covered_area_sqm: 80 });
+
+  await page.goto(`/properties/${project.id}/units`);
+  await page.getByLabel("Apply a type").click();
+  await page.getByRole("option", { name: /T2/ }).click();
+  await page.getByLabel("To", { exact: true }).click();
+  await page.getByRole("option", { name: "Block A" }).click();
+  const stamp = page.getByRole("button", { name: /Stamp onto units/ });
+  await stamp.click();
+  await expect(page.getByText("Layout applied to the units")).toBeVisible();
+
+  // someone edits a stamped unit; the person stamps the same selection again to reset it
+  const { data: a101 } = await admin
+    .from("properties")
+    .update({ bedrooms: 7 })
+    .eq("reference", `${project.reference}-A101`)
+    .select("id")
+    .single();
+  // the selection survived the commit (submitted from onSubmit, not a form action that resets it)
+  await expect(page.getByLabel("Apply a type")).toContainText("T2");
+  await expect(page.getByLabel("To", { exact: true })).toContainText("Block A");
+  await expect(stamp).toBeEnabled();
+  await stamp.click();
+  await expect
+    .poll(async () => {
+      const { count } = await admin
+        .from("events")
+        .select("id", { count: "exact", head: true })
+        .eq("entity_id", a101!.id)
+        .eq("event_type", "updated")
+        .eq("payload->>section", "unit_type");
+      return count;
+    })
+    .toBe(2);
+  await expect(page.getByText("Already applied")).toHaveCount(0);
+  const { data: after } = await admin.from("properties").select("bedrooms").eq("id", a101!.id).single();
+  expect(after!.bedrooms, "the second stamp reached the unit").toBe(2);
+
+  await admin.from("unit_types").delete().eq("project_id", project.id);
+  await admin.from("properties").delete().eq("parent_id", project.id);
+  await admin.from("properties").delete().eq("id", project.id);
+});
+
 test("a type with no rate leaves existing prices alone", async ({ page }) => {
   const admin = svc();
   const { orgId } = await fixtureProfile(admin);

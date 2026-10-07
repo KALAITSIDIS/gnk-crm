@@ -69,6 +69,9 @@ const TABLES = [
   "key_movements", "mandates", "leads", "interaction_notes", "deals", "offers", "viewings",
   "viewing_slips", "documents", "tasks", "price_lists", "price_list_items",
   "payment_plans", "price_history", "reservations", "reservation_installments",
+  // 0142: which unit-type applications committed — ids and counts only; a
+  // restore that loses it lets a retried submission apply a second time.
+  "unit_type_applications",
   "share_links", "share_link_properties", "share_link_attempts",
   "public_listing_attempts", "public_enquiry_attempts",
   // 0095: the feed_token IS the portal's pull URL, so a restore that loses
