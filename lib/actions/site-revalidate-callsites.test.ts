@@ -14,7 +14,10 @@ import { describe, expect, it } from "vitest";
  * and a new action that touches a listing's public face must be added here.
  *
  * Source scan by design — the actions are exercised elsewhere; this pins
- * placement, which no behavioural test of a mocked client can.
+ * placement, which no behavioural test of a mocked client can. The unit
+ * actions' knocks are ALSO proved by behaviour, through the real notifier, in
+ * unit-site-revalidate.test.ts (T-unit-site-revalidate) — this list is where a
+ * new action is remembered, that file is where a knock is seen.
  */
 const here = dirname(fileURLToPath(import.meta.url));
 const strip = (src: string) =>
@@ -22,6 +25,8 @@ const strip = (src: string) =>
 
 const properties = strip(readFileSync(join(here, "properties.ts"), "utf-8"));
 const media = strip(readFileSync(join(here, "media.ts"), "utf-8"));
+const units = strip(readFileSync(join(here, "units.ts"), "utf-8"));
+const SOURCES: Record<string, string> = { "properties.ts": properties, "media.ts": media, "units.ts": units };
 
 /** The body of one exported async function, up to the next export. */
 function body(src: string, name: string): string {
@@ -32,9 +37,16 @@ function body(src: string, name: string): string {
 }
 
 const NOTIFY = /notifySite(?:After|IfPublic)\(/;
-const WRITE = /\.(update|insert|delete)\(/;
+// a row write, or the call of a function that writes in one transaction
+// (the unit actions' 0141/0142 functions; applyPriceUplift's goes through
+// recordPriceList)
+const WRITE = /\.(update|insert|delete|rpc)\(|recordPriceList\(/;
 
-const CASES: Array<[string, string, string]> = [
+/**
+ * [file, action, why it matters, and — only where the action has one — why it
+ * also knocks on a path that writes nothing]
+ */
+const CASES: Array<[string, string, string, string?]> = [
   ["properties.ts", "updatePropertySection", "a section save can publish, withdraw, reprice or retitle"],
   ["properties.ts", "archiveProperty", "an archive removes a listing from the feed"],
   ["properties.ts", "restoreProperty", "a restore can put it back"],
@@ -43,18 +55,35 @@ const CASES: Array<[string, string, string]> = [
   ["media.ts", "setMediaAlt", "the alt text the site renders changes"],
   ["media.ts", "moveMedia", "the gallery order changes"],
   ["media.ts", "deleteMediaBulk", "photographs disappear"],
+  [
+    "units.ts",
+    "updateUnitStatus",
+    "a published unit sells, reserves or returns to market",
+    "the status is already set — a repeat of a change whose answer (and knock) was lost",
+  ],
+  ["units.ts", "applyPriceUplift", "a block's prices move"],
+  ["units.ts", "applyUnitType", "a block's beds, areas and prices move"],
 ];
 
 describe("writes that change the public face tell the site, after the write", () => {
-  for (const [file, fn, why] of CASES) {
+  for (const [file, fn, why, noWriteKnock] of CASES) {
     it(`${fn} — ${why}`, () => {
-      const src = file === "properties.ts" ? properties : media;
+      const src = SOURCES[file]!;
       const b = body(src, fn);
       const write = b.search(WRITE);
-      const notify = b.search(NOTIFY);
       expect(write, `${fn} writes`).toBeGreaterThanOrEqual(0);
-      expect(notify, `${fn} calls the notifier`).toBeGreaterThanOrEqual(0);
-      expect(notify, `${fn} notifies after its write, not before`).toBeGreaterThan(write);
+      expect(b.slice(write).search(NOTIFY), `${fn} calls the notifier after its write`).toBeGreaterThanOrEqual(0);
+      const early = b.slice(0, write);
+      const knockBefore = early.search(NOTIFY);
+      if (!noWriteKnock) {
+        expect(knockBefore, `${fn} notifies after its write, not before`).toBe(-1);
+      } else {
+        // only on a path that returns before the write is reached: the block
+        // the early knock sits in reaches a `return` before it closes (any
+        // later return — another refusal on the way to the write — does not count)
+        expect(knockBefore, `${fn}: ${noWriteKnock}`).toBeGreaterThanOrEqual(0);
+        expect(early.slice(knockBefore), `${fn}: the early knock's own block returns before writing`).toMatch(/^[^}]*\breturn\b/);
+      }
     });
   }
 });

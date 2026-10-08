@@ -35,6 +35,7 @@ import {
 } from "@/lib/services/unit-generator";
 import type { UpliftRow } from "@/lib/services/price-uplift";
 import { certainlyRolledBack } from "@/lib/services/rpc-outcome";
+import { EVERY_LISTING, notifySiteAfter } from "@/lib/services/site-revalidate";
 import {
   PRICES_BUSY,
   PRICES_NOTHING_CHANGED,
@@ -183,11 +184,17 @@ export async function updateUnitStatus(
 
   const { data: unit } = await supabase
     .from("properties")
-    .select("id, org_id, parent_id, reference, status")
+    .select("id, org_id, parent_id, reference, status, visibility")
     .eq("id", unitId)
     .maybeSingle();
   if (!unit) return { error: "Unit not found" };
-  if (unit.status === status) return { error: null };
+  if (unit.status === status) {
+    // Nothing to write — most likely a press repeating a change that already
+    // committed and lost its answer before the knock below went out. The knock
+    // is harmless to repeat (the site re-reads the public feed); nothing else is.
+    if (unit.visibility === "public") notifySiteAfter(unit.reference);
+    return { error: null };
+  }
 
   // DB-01: same admin gate as the details form — leaving sold/rented is a
   // regression the grid must not offer listing managers implicitly
@@ -199,13 +206,22 @@ export async function updateUnitStatus(
     .from("properties")
     .update({ status: status as (typeof PROPERTY_STATUSES)[number] })
     .eq("id", unitId)
-    .select("id");
+    .select("id, reference, visibility");
   if (error) return { error: error.message };
   if (!updatedRows || updatedRows.length === 0) {
     return {
       error: "Status not changed — only admins and listing managers manage units.",
     };
   }
+
+  // A published unit is a listing of its own on the site (public_listings,
+  // 0088) — and its page must be rebuilt whichever way the status moved: one
+  // going sold or reserved leaves the feed, and its cached page with it.
+  // Scheduled HERE, before the timeline and the follow-up below, because
+  // either can throw after the commit and an after() scheduled first still
+  // runs. The visibility is the one this write returned, not the earlier read.
+  const written = updatedRows[0]!;
+  if (written.visibility === "public") notifySiteAfter(written.reference);
 
   await logEvent(supabase, {
     orgId: unit.org_id,
@@ -800,6 +816,11 @@ export async function applyPriceUplift(
     return { error: PRICES_STALE, savedAt: null };
   }
 
+  // Committed — or a replay of a commit whose answer (and knock) may have been
+  // lost. Prices on the public site move: ONE knock for every listing page,
+  // first, so it depends on nothing that follows (lib/services/site-revalidate.ts).
+  if (answer.kind === "reprice") notifySiteAfter(EVERY_LISTING);
+
   {
     // A block reprice can bring buyers into range across several units. ONE
     // task against the project, not one per unit: it was one act and it is one
@@ -1048,6 +1069,10 @@ export async function applyUnitType(
     reportUnitType("unit type: unreadable answer", { code: "unreadable_answer" }, input.project_id);
     return { error: UNIT_TYPE_UNCONFIRMED, savedAt: null, unconfirmed: true };
   }
+
+  // Committed, or a replay of a commit: beds, baths, areas and prices on the
+  // public site move — ONE knock for every listing page, first.
+  notifySiteAfter(EVERY_LISTING);
 
   // committed: a failed refresh never turns the commit into an error
   for (const path of [`/properties/${input.project_id}/units`, "/properties"]) {
