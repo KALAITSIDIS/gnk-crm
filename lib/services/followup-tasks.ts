@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import { logEvent } from "@/lib/services/events";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { certainlyRolledBack } from "@/lib/services/rpc-outcome";
 import {
   cyprusEndOfToday,
   isLiveReservation,
@@ -39,43 +40,109 @@ import {
  *
  * Because the admin client bypasses RLS, `org_id` is filtered EXPLICITLY below.
  * Losing that would make a property id from another organisation reachable.
+ *
+ * The Details form's entry point, its contract unchanged: a failed update
+ * closes nothing and returns 0, a task closed without its line throws. The
+ * units grid asks `closeListingStatusChecks` instead, which says which.
  */
 export async function completeListingStatusChecks(
   supabase: SupabaseClient<Database>,
-  params: {
-    propertyId: string;
-    orgId: string;
-    actorId: string;
-    /** the status the listing was just moved to */
-    newStatus: string;
-  },
+  params: ListingCheckParams,
 ): Promise<number> {
-  if (params.newStatus !== "sold" && params.newStatus !== "rented") return 0;
+  const closure = await closeListingStatusChecks(supabase, params);
+  if (closure.failed === "unrecorded") {
+    throw new Error("completeListingStatusChecks: a closed check's superseded line was not written");
+  }
+  return closure.closed;
+}
+
+type ListingCheckParams = {
+  propertyId: string;
+  orgId: string;
+  actorId: string;
+  /** the status the listing holds — the one that satisfies the checks */
+  newStatus: string;
+};
+
+/**
+ * What closing the checks did, told apart so the caller can say the TRUE thing
+ * (the T-atomic-deal-close idiom below): supabase-js resolves a failed request
+ * as `{ error }`, and a bare count cannot tell "no check was open" from "the
+ * checks could not be closed".
+ *
+ * - `open`: the update was refused, or its answer was lost and the checks it
+ *   may have closed could not be found — they may still be open. Running this
+ *   again closes whichever still are: `is_done = false` is the filter, so a
+ *   check is closed — and its line written — once.
+ * - `unrecorded`: closed, but at least one `superseded` line was not written.
+ *   That check is done now, so no later run writes its line.
+ *
+ * NOT BOUNDED IN TIME (T-unit-status-atomic review): what satisfies a check is
+ * the status the listing holds, and both raisers (a won deal, a converted
+ * hold) raise one only while the listing is on the market — a check raised
+ * while a sale was waiting on the unit's lock must close with it. The caller
+ * runs this only while the listing holds `newStatus`.
+ *
+ * Throws only where the system client cannot be built at all.
+ */
+export type ListingCheckClosure = { closed: number; failed: null | "open" | "unrecorded" };
+
+export async function closeListingStatusChecks(
+  supabase: SupabaseClient<Database>,
+  params: ListingCheckParams,
+): Promise<ListingCheckClosure> {
+  if (params.newStatus !== "sold" && params.newStatus !== "rented") return { closed: 0, failed: null };
 
   const admin = createAdminClient();
-  const { data: superseded } = await admin
+  // THIS run's mark: the checks it closed carry it, so a lost answer can be read back
+  const stamp = new Date().toISOString();
+  const closing = await admin
     .from("tasks")
-    .update({ is_done: true, done_at: new Date().toISOString() })
+    .update({ is_done: true, done_at: stamp })
     // EXPLICIT, because the admin client has no RLS to do it — see the header
     .eq("org_id", params.orgId)
     .eq("property_id", params.propertyId)
     .eq("kind", "listing_status_check")
     .eq("is_done", false)
     .select("id");
-  for (const t of superseded ?? []) {
-    await logEvent(supabase, {
-      orgId: params.orgId,
-      actorId: params.actorId,
-      entityType: "task",
-      entityId: t.id,
-      eventType: "superseded",
-      payload: {
-        kind: "listing_status_check",
-        reason: `listing status set to ${params.newStatus} — the check's ask is satisfied`,
-      },
-    });
+  let superseded = closing.data;
+  if (closing.error) {
+    if (certainlyRolledBack(closing.error.code)) return { closed: 0, failed: "open" };
+    // the update may have committed with its answer lost: the checks THIS run
+    // closed carry its stamp — find them, so their lines are still written
+    // (otherwise they are done with no line, and no later run would see them)
+    const back = await admin
+      .from("tasks")
+      .select("id")
+      .eq("org_id", params.orgId)
+      .eq("property_id", params.propertyId)
+      .eq("kind", "listing_status_check")
+      .eq("is_done", true)
+      .eq("done_at", stamp);
+    if (back.error || !back.data || back.data.length === 0) return { closed: 0, failed: "open" };
+    superseded = back.data;
   }
-  return (superseded ?? []).length;
+
+  let unrecorded = false;
+  for (const t of superseded ?? []) {
+    try {
+      await logEvent(supabase, {
+        orgId: params.orgId,
+        actorId: params.actorId,
+        entityType: "task",
+        entityId: t.id,
+        eventType: "superseded",
+        payload: {
+          kind: "listing_status_check",
+          reason: `listing status set to ${params.newStatus} — the check's ask is satisfied`,
+        },
+      });
+    } catch {
+      // the next task's line is still worth writing
+      unrecorded = true;
+    }
+  }
+  return { closed: (superseded ?? []).length, failed: unrecorded ? "unrecorded" : null };
 }
 
 

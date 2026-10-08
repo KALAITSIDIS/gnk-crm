@@ -29,7 +29,8 @@ import {
  *   1. a published unit sold: the row moves, ONE status line is written, the
  *      door is told once with the unit's reference — and the feed no longer
  *      carries it (the page the knock rebuilds will answer 404);
- *   2. the same press again — a retry after a lost answer — writes and
+ *   2. the same press again — a retry after a lost answer, the same change
+ *      and operation id — is answered "replayed" (0143): it writes and
  *      records nothing, and tells the door again;
  *   3. a private unit, and a write RLS refuses, never reach the door;
  *   4. a door answering 500 never turns a committed change into an error;
@@ -261,12 +262,14 @@ describe("updateUnitStatus — one unit", () => {
     const unit = p.units.A1!;
     expect((await feed()).has(unit.reference), "published and available: on the site").toBe(true);
 
-    const first = await as(admin, () => updateUnitStatus(unit.id, "sold"));
+    // ONE change: the grid re-sends exactly this after an unconfirmed answer
+    const op = randomUUID();
+    const first = await as(admin, () => updateUnitStatus(unit.id, "sold", "available", op));
     const k1 = [...(await knocked(1))];
     const lines1 = await statusLines(unit.id);
     const onSite = (await feed()).has(unit.reference);
 
-    const again = await as(admin, () => updateUnitStatus(unit.id, "sold"));
+    const again = await as(admin, () => updateUnitStatus(unit.id, "sold", "available", op));
     const k2 = await knocked(2);
     const lines2 = await statusLines(unit.id);
 
@@ -274,12 +277,13 @@ describe("updateUnitStatus — one unit", () => {
       `[evidence] sold: ${JSON.stringify(first)} · status lines ${lines1} · knocks ${JSON.stringify(k1.map((k) => k.body))} · in the feed afterwards: ${onSite}\n` +
         `  again: ${JSON.stringify(again)} · status lines ${lines2} · knocks ${JSON.stringify(k2.map((k) => k.body))}`,
     );
-    expect(first).toEqual({ error: null });
+    expect(first).toMatchObject({ error: null });
+    expect(first.replayed ?? false).toBe(false);
     expect(lines1).toBe(1);
     expect(k1).toEqual([{ key: KEY, body: { reference: unit.reference } }]);
     expect(onSite, "the page the knock rebuilds now answers 404").toBe(false);
     expect((await feed()).has(p.units.A2!.reference), "the unit beside it is untouched").toBe(true);
-    expect(again).toEqual({ error: null });
+    expect(again).toMatchObject({ error: null, replayed: true });
     expect(lines2, "the retry records nothing").toBe(1);
     expect(k2.map((k) => k.body)).toEqual([{ reference: unit.reference }, { reference: unit.reference }]);
   });
@@ -289,12 +293,12 @@ describe("updateUnitStatus — one unit", () => {
       { code: "P1", visibility: "private", price: 200000 },
       { code: "P2", visibility: "public", price: 200000 },
     ]);
-    const priv = await as(admin, () => updateUnitStatus(p.units.P1!.id, "sold"));
-    const refused = await as(agent, () => updateUnitStatus(p.units.P2!.id, "sold"));
+    const priv = await as(admin, () => updateUnitStatus(p.units.P1!.id, "sold", "available", randomUUID()));
+    const refused = await as(agent, () => updateUnitStatus(p.units.P2!.id, "sold", "available", randomUUID()));
     const k = await knocked(0);
     const { rows } = await pg.query<{ status: string }>(`select status from properties where id = $1`, [p.units.P2!.id]);
     console.log(`[evidence] private: ${JSON.stringify(priv)} · agent: ${JSON.stringify(refused)} · P2 status ${rows[0]!.status} · knocks ${k.length}`);
-    expect(priv).toEqual({ error: null });
+    expect(priv).toMatchObject({ error: null });
     expect((await feed()).has(p.units.P1!.reference)).toBe(false);
     expect(refused.error).not.toBeNull();
     expect(rows[0]!.status, "the refused write wrote nothing").toBe("available");
@@ -304,10 +308,10 @@ describe("updateUnitStatus — one unit", () => {
   it("4. the door answers 500: the committed change is still reported saved", async () => {
     const p = await newProject([{ code: "D1", visibility: "public", price: 200000 }]);
     door.mode = "500";
-    const r = await as(admin, () => updateUnitStatus(p.units.D1!.id, "reserved"));
+    const r = await as(admin, () => updateUnitStatus(p.units.D1!.id, "reserved", "available", randomUUID()));
     const k = await knocked(1);
     const { rows } = await pg.query<{ status: string }>(`select status from properties where id = $1`, [p.units.D1!.id]);
-    expect(r).toEqual({ error: null });
+    expect(r).toMatchObject({ error: null });
     expect(rows[0]!.status).toBe("reserved");
     expect(k).toHaveLength(1);
   });

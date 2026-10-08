@@ -9,7 +9,6 @@ import { logEvent } from "@/lib/services/events";
 import { createClient } from "@/lib/supabase/server";
 import {
   emptyToUndefined,
-  isStatusRegression,
   measuredArea,
   measuredFloor,
   PROPERTY_STATUSES,
@@ -49,6 +48,15 @@ import {
   UNIT_TYPE_OUT_OF_DATE,
   UNIT_TYPE_UNCONFIRMED,
 } from "@/lib/validators/unit-types";
+import {
+  UNIT_STATUS_BUSY,
+  UNIT_STATUS_FOLLOW_UP_OPEN,
+  UNIT_STATUS_FOLLOW_UP_UNRECORDED,
+  UNIT_STATUS_NOTHING_CHANGED,
+  UNIT_STATUS_OUT_OF_DATE,
+  UNIT_STATUS_UNCONFIRMED,
+  type UnitStatusResult,
+} from "@/lib/validators/unit-status";
 
 export type UnitActionState = {
   error: string | null;
@@ -170,96 +178,205 @@ export async function createUnit(
   return { error: null, savedAt: Date.now() };
 }
 
-/** Result object, not throw — thrown server-action messages are stripped in
- * prod, and RLS filters a denied update to 0 rows with no error at all. */
+/* ------------------------------------------------------------------ */
+/* A unit's status — ONE database transaction with its audit lines    */
+/* (T-unit-status-atomic, migration 0143).                             */
+/* ------------------------------------------------------------------ */
+
+const UNIT_STATUS_RPC = "set_unit_status";
+
+/** What `set_unit_status` answers when it did not raise (0143). */
+type UnitStatusAnswer =
+  | { result: "unchanged"; unit_id: string; parent_id: string | null; reference: string; visibility: string; status: string }
+  | {
+      result: "applied" | "replayed";
+      unit_id: string;
+      parent_id: string | null;
+      reference: string;
+      visibility: string;
+      status: string;
+      to: string;
+      org_id: string;
+      actor_id: string;
+    };
+
+function readUnitStatusAnswer(data: unknown, unitId: string): UnitStatusAnswer | null {
+  if (!data || typeof data !== "object") return null;
+  const d = data as Record<string, unknown>;
+  if (d.result !== "applied" && d.result !== "replayed" && d.result !== "unchanged") return null;
+  // the unit asked about (a uuid's text is lower case; the id sent may not
+  // be), and the fields the knock and the refresh read
+  if (typeof d.unit_id !== "string" || d.unit_id !== unitId.toLowerCase()) return null;
+  if (typeof d.reference !== "string" || typeof d.visibility !== "string") return null;
+  if (typeof d.status !== "string" || (d.parent_id !== null && typeof d.parent_id !== "string")) return null;
+  if (d.result !== "unchanged") {
+    // and what the follow-up needs: the change, who and where
+    if (typeof d.to !== "string" || typeof d.org_id !== "string" || typeof d.actor_id !== "string") return null;
+  }
+  return d as UnitStatusAnswer;
+}
+
+/** The sentence for a request that did not commit — or might have (`unknown`). */
+function unitStatusRefusal(error: { code?: string; message?: string }): { text: string; unknown: boolean; busy?: true } {
+  // P0001 is `raise exception` — the function's own sentence, meant to be read
+  if (error.code === "P0001" && error.message) return { text: error.message, unknown: false };
+  // lock_timeout (the function's own 3 s), or a deadlock: THIS request wrote
+  // nothing (flagged: an earlier request of the same change may still be in
+  // flight — the grid decides)
+  if (error.code === "55P03" || error.code === "40P01") return { text: UNIT_STATUS_BUSY, unknown: false, busy: true };
+  return certainlyRolledBack(error.code)
+    ? { text: UNIT_STATUS_NOTHING_CHANGED, unknown: false }
+    : { text: UNIT_STATUS_UNCONFIRMED, unknown: true };
+}
+
+/** Shape only — the step and the error code or name, never a database message. */
+function reportUnitStatus(message: string, tags: Record<string, string>, unitId: string): void {
+  console.error(`${message} (${Object.values(tags).join(", ")}) for unit ${unitId}`);
+  try {
+    Sentry.captureMessage(message, { level: "error", tags, extra: { unitId } });
+  } catch {
+    // Sentry is best-effort; the console line stands
+  }
+}
+
+const unitStatusSchema = z.object({
+  unit_id: z.guid("Unit not found"),
+  expected: z.enum(PROPERTY_STATUSES, UNIT_STATUS_OUT_OF_DATE),
+  operation_id: z.guid(UNIT_STATUS_OUT_OF_DATE),
+});
+
+/**
+ * Change one unit's status from the units grid (0143).
+ *
+ * ONE TRANSACTION. `set_unit_status` checks the caller (admin or listing
+ * manager, aal2, active), locks the unit, decides the transition from the
+ * LOCKED row — the status this page showed (`expected`) must still hold, and
+ * leaving sold or rented is admin-only — and writes the status with its
+ * `status_changed` line and, for a regression, its
+ * `status_regression_override` line: all of them or none.
+ *
+ * An operation id, minted by the grid once per change, makes a retry answer
+ * what the first request committed ("replayed") instead of changing anything.
+ * A unit already in the asked status answers "unchanged" and writes nothing.
+ *
+ * AFTER the commit, and never able to undo it: the site is told (a published
+ * unit is a listing of its own), and the listing-status check a won deal
+ * raised is closed. That closure runs again on a replay — while the unit
+ * still holds the change's status — so the same change finishes a follow-up
+ * that failed; a follow-up that did not finish is said in `notice`, never
+ * reported as a failed change.
+ *
+ * NEVER throws: Next strips a thrown Server Action message in production, and
+ * an unknown outcome must say so rather than "nothing changed".
+ */
 export async function updateUnitStatus(
   unitId: string,
   status: string,
-): Promise<{ error: string | null }> {
+  expected: string,
+  operationId: string,
+): Promise<UnitStatusResult> {
   if (!(PROPERTY_STATUSES as readonly string[]).includes(status)) {
-    return { error: `Invalid status: ${status}` };
+    return { error: `Invalid status: ${status}`, savedAt: null };
   }
-  const supabase = await createClient();
-  const profile = await getCurrentProfile(supabase);
-
-  const { data: unit } = await supabase
-    .from("properties")
-    .select("id, org_id, parent_id, reference, status, visibility")
-    .eq("id", unitId)
-    .maybeSingle();
-  if (!unit) return { error: "Unit not found" };
-  if (unit.status === status) {
-    // Nothing to write — most likely a press repeating a change that already
-    // committed and lost its answer before the knock below went out. The knock
-    // is harmless to repeat (the site re-reads the public feed); nothing else is.
-    if (unit.visibility === "public") notifySiteAfter(unit.reference);
-    return { error: null };
+  const parsed = unitStatusSchema.safeParse({ unit_id: unitId, expected, operation_id: operationId });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? UNIT_STATUS_OUT_OF_DATE, savedAt: null };
   }
 
-  // DB-01: same admin gate as the details form — leaving sold/rented is a
-  // regression the grid must not offer listing managers implicitly
-  if (isStatusRegression(unit.status, status) && profile.role !== "admin") {
-    return { error: "Only an admin can move a sold or rented unit back to market." };
+  let supabase: Awaited<ReturnType<typeof createClient>>;
+  try {
+    supabase = await createClient();
+  } catch (e) {
+    reportUnitStatus("unit status: no client", { error: e instanceof Error ? e.name : "threw" }, unitId);
+    return { error: UNIT_STATUS_NOTHING_CHANGED, savedAt: null };
   }
 
-  const { data: updatedRows, error } = await supabase
-    .from("properties")
-    .update({ status: status as (typeof PROPERTY_STATUSES)[number] })
-    .eq("id", unitId)
-    .select("id, reference, visibility");
-  if (error) return { error: error.message };
-  if (!updatedRows || updatedRows.length === 0) {
-    return {
-      error: "Status not changed — only admins and listing managers manage units.",
-    };
-  }
-
-  // A published unit is a listing of its own on the site (public_listings,
-  // 0088) — and its page must be rebuilt whichever way the status moved: one
-  // going sold or reserved leaves the feed, and its cached page with it.
-  // Scheduled HERE, before the timeline and the follow-up below, because
-  // either can throw after the commit and an after() scheduled first still
-  // runs. The visibility is the one this write returned, not the earlier read.
-  const written = updatedRows[0]!;
-  if (written.visibility === "public") notifySiteAfter(written.reference);
-
-  await logEvent(supabase, {
-    orgId: unit.org_id,
-    actorId: profile.id,
-    entityType: "property",
-    entityId: unitId,
-    eventType: "status_changed",
-    payload: { reference: unit.reference, from: unit.status, to: status },
-  });
-
-  if (isStatusRegression(unit.status, status)) {
-    await logEvent(supabase, {
-      orgId: unit.org_id,
-      actorId: profile.id,
-      entityType: "property",
-      entityId: unitId,
-      eventType: "status_regression_override",
-      payload: { from: unit.status, to: status },
+  let res: Awaited<ReturnType<typeof supabase.rpc<typeof UNIT_STATUS_RPC>>>;
+  try {
+    res = await supabase.rpc(UNIT_STATUS_RPC, {
+      p_unit_id: unitId,
+      p_status: status,
+      p_expected: expected,
+      p_operation_id: operationId,
     });
+  } catch (e) {
+    // the request may have reached the database and committed; the grid
+    // re-sends this same change (lib/utils/operation-id.ts)
+    reportUnitStatus("unit status: request threw", { error: e instanceof Error ? e.name : "threw" }, unitId);
+    return { error: UNIT_STATUS_UNCONFIRMED, savedAt: null, unconfirmed: true };
+  }
+  if (res.error) {
+    const refusal = unitStatusRefusal(res.error);
+    if (res.error.code !== "P0001") {
+      reportUnitStatus("unit status: not changed", { code: res.error.code || "none" }, unitId);
+    }
+    if (refusal.unknown) return { error: refusal.text, savedAt: null, unconfirmed: true };
+    return refusal.busy ? { error: refusal.text, savedAt: null, busy: true } : { error: refusal.text, savedAt: null };
+  }
+  const answer = readUnitStatusAnswer(res.data, unitId);
+  if (!answer) {
+    reportUnitStatus("unit status: unreadable answer", { code: "unreadable_answer" }, unitId);
+    return { error: UNIT_STATUS_UNCONFIRMED, savedAt: null, unconfirmed: true };
   }
 
-  // DB-01's other leg: the prompt raised at deal-win completes the moment the
-  // status it asked for is set (review 2026-09-01 — it used to stay open forever)
-  const { completeListingStatusChecks } = await import("@/lib/services/followup-tasks");
-  const closed = await completeListingStatusChecks(supabase, {
-    propertyId: unitId,
-    orgId: unit.org_id,
-    actorId: profile.id,
-    newStatus: status,
-  });
-  if (closed > 0) {
-    revalidatePath("/tasks");
-    revalidatePath("/dashboard");
+  // The unit holds the asked status — changed now, by this change earlier, or
+  // already. A published unit is a listing of its own on the site
+  // (public_listings, 0088), and its page must be rebuilt whichever way the
+  // status moved: one going sold or reserved leaves the feed, and its cached
+  // page with it. FIRST, before the follow-up below; the visibility is the one
+  // the database answered. Harmless to repeat on a replay — the answer that
+  // carried the first knock may be the one that was lost.
+  if (answer.visibility === "public") notifySiteAfter(answer.reference);
+
+  let notice: string | null = null;
+  // DB-01's other leg: the check raised at deal-win completes the moment the
+  // status it asked for is set — on a replay too, so the same change finishes
+  // a closure that failed; on a replay only while the unit STILL holds the
+  // change's status. What closes a check is the status the database holds
+  // now, not a line (a line a session wrote itself could otherwise close
+  // someone else's check on a unit that was never sold — status_changed is
+  // not a reserved type), and not a time either: a check a won deal raised
+  // while this change waited on the unit's lock must close with it.
+  if (answer.result === "applied" || (answer.result === "replayed" && answer.status === answer.to)) {
+    try {
+      const { closeListingStatusChecks } = await import("@/lib/services/followup-tasks");
+      const closure = await closeListingStatusChecks(supabase, {
+        propertyId: answer.unit_id,
+        orgId: answer.org_id,
+        actorId: answer.actor_id,
+        newStatus: answer.to,
+      });
+      if (closure.failed) {
+        notice = closure.failed === "open" ? UNIT_STATUS_FOLLOW_UP_OPEN : UNIT_STATUS_FOLLOW_UP_UNRECORDED;
+        reportUnitStatus("unit status: follow-up unfinished", { code: closure.failed }, unitId);
+      }
+      if (closure.closed > 0) refresh("/tasks", "/dashboard");
+    } catch (e) {
+      notice = UNIT_STATUS_FOLLOW_UP_OPEN;
+      reportUnitStatus("unit status: follow-up threw", { error: e instanceof Error ? e.name : "threw" }, unitId);
+    }
   }
 
-  if (unit.parent_id) revalidatePath(`/properties/${unit.parent_id}/units`);
-  revalidatePath("/properties");
-  return { error: null };
+  // committed: a failed refresh never turns the commit into an error
+  refresh(...(answer.parent_id ? [`/properties/${answer.parent_id}/units`] : []), "/properties");
+  return {
+    error: null,
+    savedAt: Date.now(),
+    ...(answer.result === "replayed" ? { replayed: true } : {}),
+    ...(answer.result === "unchanged" ? { unchanged: true } : {}),
+    ...(notice ? { notice } : {}),
+  };
+}
+
+/** revalidatePath after a commit — each path on its own; a throw is logged, never returned. */
+function refresh(...paths: string[]): void {
+  for (const path of paths) {
+    try {
+      revalidatePath(path);
+    } catch (e) {
+      console.error(`[units] revalidatePath(${path}) failed:`, e instanceof Error ? e.message : e);
+    }
+  }
 }
 
 /**
