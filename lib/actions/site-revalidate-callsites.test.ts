@@ -55,12 +55,10 @@ const CASES: Array<[string, string, string, string?]> = [
   ["media.ts", "setMediaAlt", "the alt text the site renders changes"],
   ["media.ts", "moveMedia", "the gallery order changes"],
   ["media.ts", "deleteMediaBulk", "photographs disappear"],
-  [
-    "units.ts",
-    "updateUnitStatus",
-    "a published unit sells, reserves or returns to market",
-    "the status is already set — a repeat of a change whose answer (and knock) was lost",
-  ],
+  // 0143: a repeat of a change whose answer (and knock) was lost is answered
+  // by set_unit_status itself ("replayed" / "unchanged") and knocks AFTER it —
+  // there is no longer a path that knocks without asking the database
+  ["units.ts", "updateUnitStatus", "a published unit sells, reserves or returns to market"],
   ["units.ts", "applyPriceUplift", "a block's prices move"],
   ["units.ts", "applyUnitType", "a block's beds, areas and prices move"],
 ];

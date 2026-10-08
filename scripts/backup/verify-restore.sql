@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 141::bigint as migrations,
+    2::bigint as auth_users, 142::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -194,6 +194,9 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   -- 0142: authenticated ONLY — a unit-type stamp needs an accountable actor;
   -- SECURITY INVOKER like 0141 (pinned although invokers are out of grant_unpinned's scope)
   ('apply_unit_type',           false, false, true, false),
+  -- 0143: authenticated ONLY — a unit's status change needs an accountable
+  -- actor; SECURITY INVOKER like 0141/0142 (pinned although invokers are out of grant_unpinned's scope)
+  ('set_unit_status',           false, false, true, false),
   ('add_deal_stage',       false, false, true, true),
   ('reorder_stage',        false, false, true, true),
   ('admin_dashboard_stats',false, false, true, true),
@@ -871,6 +874,22 @@ misc as (
           and coalesce((select not has_table_privilege('authenticated', t.oid, 'update, delete, truncate')
                                and not has_table_privilege('anon', t.oid, 'select, insert, update, delete, truncate')
                           from pg_class t where t.oid = to_regclass('public.unit_type_applications')), false))::text
+  union all
+  -- 0143: a unit's status change commits WITH its audit lines (set_unit_status,
+  -- SECURITY INVOKER): the unit locked FOR NO KEY UPDATE, the transition decided
+  -- from the locked row (expected status, admin-only regression), the write's
+  -- and both lines' row counts checked, waits bounded. Read as code — block and
+  -- line comments stripped.
+  select 'INTEGRITY: a unit status change commits with its audit lines, decided from the locked row (0143)', 'true',
+         coalesce((select not p.prosecdef
+                          and p.proconfig @> array['lock_timeout=3s']
+                          and c.code ~ 'p\.kind = ''unit''\s+for no key update;'
+                          and c.code ~ 'if v_unit\.status <> v_expected then\s+raise exception'
+                          and c.code ~ 'if v_regress and v_role <> ''admin'' then\s+raise exception'
+                          and (select count(*) from regexp_matches(c.code, 'get diagnostics v_rows = row_count;\s+if v_rows <> 1 then', 'g')) = 3
+                     from pg_proc p
+                     cross join lateral (select regexp_replace(regexp_replace(p.prosrc, '/\*.*?\*/', '', 'g'), '--[^\n]*', '', 'g') as code) c
+                    where p.oid = to_regprocedure('public.set_unit_status(uuid, text, text, uuid)')), false)::text
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.

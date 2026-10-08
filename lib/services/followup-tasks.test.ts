@@ -27,6 +27,7 @@ vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => admin.client }
 vi.mock("@/lib/services/events", () => ({ logEvent }));
 
 const {
+  closeListingStatusChecks,
   completeListingStatusChecks,
   raiseLiveHoldCheck,
   completeLiveHoldChecks,
@@ -120,6 +121,89 @@ describe("completeListingStatusChecks", () => {
 
     expect(await completeListingStatusChecks(caller.client as never, params)).toBe(0);
     expect(logEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("closeListingStatusChecks — the units grid's closure says what it did (T-unit-status-atomic)", () => {
+  it("never bounded in time — a check raised while the sale waited on the unit's lock closes with it (review)", async () => {
+    const svc = fakeClient({ tasks: [{ data: [{ id: "t1" }], error: null }] });
+    admin.client = svc.client;
+    expect(await closeListingStatusChecks(fakeClient({}).client as never, params)).toEqual({ closed: 1, failed: null });
+    expect(svc.argsOf("tasks", "lte")).toEqual([]);
+    expect(svc.argsOf("tasks", "lt")).toEqual([]);
+    expect(svc.argsOf("tasks", "eq")).toEqual(
+      expect.arrayContaining([
+        ["org_id", "org-1"],
+        ["property_id", "prop-1"],
+        ["kind", "listing_status_check"],
+        ["is_done", false],
+      ]),
+    );
+  });
+
+  it("a REFUSED update is `open` — never a silent zero — and writes no line, reads nothing back", async () => {
+    const svc = fakeClient({ tasks: [{ data: null, error: { message: "boom", code: "23514" } }] });
+    admin.client = svc.client;
+    expect(await closeListingStatusChecks(fakeClient({}).client as never, params)).toEqual({ closed: 0, failed: "open" });
+    expect(logEvent).not.toHaveBeenCalled();
+    expect(svc.served.tasks, "a definite refusal closed nothing to look for").toBe(1);
+  });
+
+  it("an update whose answer was LOST: the checks this run closed are read back by its stamp, and their lines written", async () => {
+    const svc = fakeClient({
+      tasks: [
+        { data: null, error: { message: "fetch failed", code: "" } },
+        { data: [{ id: "t1" }], error: null },
+      ],
+    });
+    admin.client = svc.client;
+    expect(await closeListingStatusChecks(fakeClient({}).client as never, params)).toEqual({ closed: 1, failed: null });
+    const [stamped] = svc.argsOf("tasks", "update")[0] as [{ done_at: string }];
+    expect(svc.argsOf("tasks", "eq")).toEqual(
+      expect.arrayContaining([
+        ["is_done", true],
+        ["done_at", stamped.done_at],
+      ]),
+    );
+    expect(logEvent.mock.calls.map((c) => c[1].entityId)).toEqual(["t1"]);
+  });
+
+  it("…and when nothing carries the stamp (or the read fails), the checks may still be open: `open`", async () => {
+    for (const back of [{ data: [], error: null }, { data: null, error: { message: "again" } }]) {
+      admin.client = fakeClient({ tasks: [{ data: null, error: { message: "fetch failed", code: "" } }, back] }).client;
+      expect(await closeListingStatusChecks(fakeClient({}).client as never, params)).toEqual({ closed: 0, failed: "open" });
+    }
+    expect(logEvent).not.toHaveBeenCalled();
+  });
+
+  it("a line that fails is `unrecorded`, and the next task's line is still written", async () => {
+    const svc = fakeClient({ tasks: [{ data: [{ id: "t1" }, { id: "t2" }], error: null }] });
+    admin.client = svc.client;
+    logEvent.mockRejectedValueOnce(new Error("logEvent failed (task.superseded): boom"));
+    expect(await closeListingStatusChecks(fakeClient({}).client as never, params)).toEqual({
+      closed: 2,
+      failed: "unrecorded",
+    });
+    expect(logEvent.mock.calls.map((c) => c[1].entityId)).toEqual(["t1", "t2"]);
+  });
+
+  it("completeListingStatusChecks keeps the Details form's contract: a failed update is 0, an unrecorded close throws", async () => {
+    admin.client = fakeClient({ tasks: [{ data: null, error: { message: "boom" } }] }).client;
+    expect(await completeListingStatusChecks(fakeClient({}).client as never, params)).toBe(0);
+
+    admin.client = fakeClient({ tasks: [{ data: [{ id: "t1" }], error: null }] }).client;
+    logEvent.mockRejectedValueOnce(new Error("boom"));
+    await expect(completeListingStatusChecks(fakeClient({}).client as never, params)).rejects.toThrow(/superseded line/);
+  });
+
+  it("an on-market status closes nothing and asks nothing", async () => {
+    const svc = fakeClient({});
+    admin.client = svc.client;
+    expect(await closeListingStatusChecks(fakeClient({}).client as never, { ...params, newStatus: "reserved" })).toEqual({
+      closed: 0,
+      failed: null,
+    });
+    expect(svc.served.tasks ?? 0).toBe(0);
   });
 });
 

@@ -3882,6 +3882,15 @@ export type Database = {
       rls_hoisted_policy_count: { Args: never; Returns: number }
       run_chain_checks: { Args: never; Returns: undefined }
       run_chain_checks_full: { Args: never; Returns: undefined }
+      set_unit_status: {
+        Args: {
+          p_expected: string
+          p_operation_id: string
+          p_status: string
+          p_unit_id: string
+        }
+        Returns: Json
+      }
       share_link_over_budget: {
         Args: { p_ip_hash: string; p_limit?: number }
         Returns: boolean
