@@ -218,9 +218,23 @@ It checks its own output against every failure this project has actually hit:
 | zero `supabase_admin` in the schema file | the wrong `--schema` flag — restore dies at line 19 (§4b.2) |
 | `data.sql` line 1 is `SET session_replication_role = replica;` | otherwise `trg_events_hash` re-mints every hash on restore (§5) |
 | `auth.users` / `events` / `storage.objects` COPY blocks present | a restore where nobody can log in |
-| **events in the dump == events live right now** | a truncated dump, which does not error |
-| **every exported table's rows == its `COPY` block's rows** | a dump that silently lost a table — `--schema` is not `--strict-names`, so a mistyped one is ignored, and stripping the whole public section still leaves 178 KB that clears every floor and grep above |
+| **every table in `public`, `events_parts`, `auth`, `storage`: `COPY` rows == `count(*)` in the dump's OWN snapshot, both directions** (since 2026-10-09) | a dump that silently lost or truncated a table — `--schema` is not `--strict-names`, so a mistyped one is ignored, and stripping the whole public section still leaves 178 KB that clears every floor and grep above. Counted from the catalog inside the one REPEATABLE READ transaction both `pg_dump`s import (`--snapshot`, `scripts/backup/dump-snapshot.mjs`), so writes that land during the run cannot make an intact dump disagree. Sentinel tables must be counted; an extension's table (`spatial_ref_sys`, dumped through PostGIS's filter) is listed and skipped |
+| **events in the dump (summed over partitions) == `public.events` in the same snapshot** | a partition the dump never reached |
+| JSON export: every table it wrote exists in the snapshot; a count that drifted is a **warning** | an export and a dump that disagree about what exists. Drift itself is expected — export.mjs reads through PostgREST after the dumps, while the crons keep writing — and `data.sql`, not the JSON, is what a restore loads |
 | size floors, and partial output deleted on failure | the 0-byte `pg_dump.sql` that reads as a backup |
+
+**The row counts used to come from the JSON export, and that raced (2026-10-09).**
+The export reads each table 20-45 s after the dump's snapshot. At 03:46:00 the
+two-minute `enquiry-alerts` cron inserted a sweep row in between — dump 12365,
+export 12366 — and a complete backup was failed as untrustworthy (the PC had
+woken from sleep at 03:45:12, which moved the run onto the tick). Wake and
+catch-up nights hit that about half the time. The snapshot needs a
+**session-mode** connection, which §3.1 already prescribes: `capture.mjs`
+refuses the transaction pooler (port 6543), and a `SUPABASE_DB_URL` for a
+different project than `SUPABASE_URL`, with exit 2 (DECISIONS
+`T-dump-snapshot-counts`). Each run logs a `timing:` line — snapshot id and
+time on the database clock, data dump and export end — because `backup.log`
+outlives the staging folder the next run sweeps.
 
 Anything failing is listed on stderr *and* recorded as `verified:false` in
 `manifest.json`, so a set that went wrong says so from inside.
@@ -283,8 +297,10 @@ this task, and it breaks quietly** — so the script now exits `3` and logs
 path that no longer exists. If you relocate the workspace again, edit those two
 lines first and then run the §3.2 manual invocation to prove it still works.
 
-03:45 sits after the 03:30 `verify-events-chain` cron, so each set contains that
-night's chain check.
+~~03:45 sits after the 03:30 `verify-events-chain` cron, so each set contains that
+night's chain check.~~ **Wrong, corrected 2026-10-09:** pg_cron runs in UTC, so
+`verify-events-chain` (`30 3 * * *`) fires at 06:30 local (05:30 in winter) —
+AFTER the 03:45 local backup. Each set holds the PREVIOUS day's chain check.
 
 **`C:\Users\user\.gnk-crm\` is outside the repo tree on purpose.** A database
 password inside it would have synced to the cloud back when the workspace was

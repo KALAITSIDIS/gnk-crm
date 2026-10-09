@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { TABLES } from "./export-tables.mjs";
 
 /**
  * The restore pack's hand-pinned facts, locked to the repo in CI.
@@ -13,8 +14,9 @@ import { describe, expect, it } from "vitest";
  * cron_health() ELEVEN MINUTES after being generated (2026-09-01 review).
  * The pack only runs at drill time, so CI is where the staleness must fail.
  *
- * export.mjs's TABLES list is pinned the same way: it lagged ten tables until
- * REL-04 (2026-08-30) and missed 0084's counter five migrations later.
+ * The export's TABLES list (export-tables.mjs) is pinned the same way: it
+ * lagged ten tables until REL-04 (2026-08-30) and missed 0084's counter five
+ * migrations later.
  */
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -110,7 +112,7 @@ describe("verify-restore.sql stays in lockstep with the repo", () => {
     ).toEqual([]);
   });
 
-  it("export.mjs backs up every table the migrations create", () => {
+  it("the export backs up every table the migrations create", () => {
     // Same technique as the SECURITY DEFINER pin above: replay create / drop /
     // rename in file order, so 0063's rename-then-recreate of `events` resolves
     // the way Postgres did. `--` comments are stripped first (prose mentions
@@ -136,18 +138,15 @@ describe("verify-restore.sql stays in lockstep with the repo", () => {
     }
     expect(live.size, "the scanner must find the known schema").toBeGreaterThan(30);
 
-    const src = readFileSync(join(here, "export.mjs"), "utf-8");
-    const start = src.indexOf("const TABLES = [");
-    const block = src.slice(start, src.indexOf("];", start));
-    const exported = new Set([...block.matchAll(/"([a-z_0-9]+)"/g)].map((m) => m[1]));
+    const exported = new Set<string>(TABLES);
 
     expect(
       [...live].filter((t) => !exported.has(t)).sort(),
-      "created by a migration but absent from export.mjs TABLES — a restore would lose it",
+      "created by a migration but absent from export-tables.mjs TABLES — a restore would lose it",
     ).toEqual([]);
     expect(
       [...exported].filter((t) => !live.has(t)).sort(),
-      "in export.mjs TABLES but no migration creates it — the nightly export would throw",
+      "in export-tables.mjs TABLES but no migration creates it — the nightly export would throw",
     ).toEqual([]);
   });
 });
