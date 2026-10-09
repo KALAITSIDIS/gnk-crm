@@ -230,6 +230,13 @@ const snapshotFlags = (snapshot) => (snapshot ? ["--snapshot", snapshot] : []);
  */
 export const DATA_DUMP_EXCLUDED_TABLES = ["auth.schema_migrations", "storage.migrations", "supabase_functions.migrations"];
 
+/**
+ * What the data dump holds, and therefore what the snapshot counts — one
+ * list, so the two cannot drift. events_parts holds the `events` partitions
+ * (0063): the parent emits no COPY of its own.
+ */
+export const DATA_SCHEMAS = ["public", "events_parts", "auth", "storage"];
+
 export function schemaDumpArgs(schemas, { snapshot } = {}) {
   return ["--schema-only", "--quote-all-identifiers", "--role", "postgres", ...schemaFlags(schemas), ...snapshotFlags(snapshot)];
 }

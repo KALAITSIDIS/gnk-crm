@@ -59,7 +59,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, r
 import { join, relative, sep } from "node:path";
 import { openDumpSnapshot } from "./dump-snapshot.mjs";
 import {
-  DATA_DUMP_EXCLUDED_TABLES, connEnvFromUrl, dataDumpArgs, resolvePgTools, rewriteDataDump, rewriteRolesDump,
+  DATA_DUMP_EXCLUDED_TABLES, DATA_SCHEMAS, connEnvFromUrl, dataDumpArgs, resolvePgTools, rewriteDataDump, rewriteRolesDump,
   rewriteSchemaDump, rolesDumpArgs, runPg, schemaDumpArgs, snapshotConnectionProblem,
 } from "./pg-native.mjs";
 import { verifyStagedSet } from "./verify-row-counts.mjs";
@@ -134,13 +134,6 @@ if (connProblem) {
   console.error(connProblem);
   process.exit(2);
 }
-
-/**
- * What the data dump holds, and therefore what the snapshot counts — one
- * list, so the two cannot drift. events_parts holds the `events` partitions
- * (0063): the parent emits no COPY of its own.
- */
-const DATA_SCHEMAS = ["public", "events_parts", "auth", "storage"];
 
 const stamp = new Date().toISOString().slice(0, 10);
 const finalDir = join(outRoot, stamp);

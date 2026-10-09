@@ -53,7 +53,7 @@ export function enumerationSql({ schemas, excluded }) {
     "  WHEN e.extname IS NOT NULL THEN format($q$SELECT json_build_object('schema', %L, 'table', %L, 'extension', %L)$q$, n.nspname, c.relname, e.extname)",
     "  WHEN c.relkind = 'p' THEN format($q$SELECT json_build_object('schema', %L, 'table', %L, 'partitioned', true, 'rows', count(*)) FROM %I.%I$q$, n.nspname, c.relname, n.nspname, c.relname)",
     "  ELSE format($q$SELECT json_build_object('schema', %L, 'table', %L, 'rows', count(*)) FROM ONLY %I.%I$q$, n.nspname, c.relname, n.nspname, c.relname)",
-    "END",
+    "END AS stmt",
     "FROM pg_catalog.pg_class c",
     "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace",
     "LEFT JOIN pg_catalog.pg_depend d ON d.classid = 'pg_catalog.pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e'",
