@@ -639,6 +639,22 @@ describe("5. closing a deal, and the totals built on these columns", () => {
     expect(typeof w1, `won_month.total read ${JSON.stringify(w1)}`).toBe("number");
     expect(w1).toBe(w0);
     expect((await stored("deals", d)).expected_value).toBe("64000.00");
+
+    // Since 0140 won_month reads coalesce(final_value, expected_value, 0), so
+    // the deal above (final value 63 000) no longer reads its estimate at all.
+    // The won deal whose won figure IS its estimate is one closed with NO final
+    // value — an admin override without an accepted offer — so the NaN path is
+    // pinned on that one too.
+    const n = await newDeal({ expected: "51000.00" });
+    expect((await admin.client.rpc("close_deal", { p_deal_id: n, p_outcome: "won", p_override: true })).error).toBeNull();
+    expect(await stored("deals", n)).toMatchObject({ status: "won", final_value: null, expected_value: "51000.00" });
+    const w2 = await wonMonthTotal();
+    expect(typeof w2).toBe("number");
+    expect(w2 as number).toBeCloseTo((w1 as number) + 51000, 2);
+    refusedBy(await admin.client.from("deals").update({ expected_value: "NaN" }).eq("id", n), "deals_expected_value_finite");
+    const w3 = await wonMonthTotal();
+    expect(typeof w3, `won_month.total read ${JSON.stringify(w3)}`).toBe("number");
+    expect(w3).toBe(w2);
   });
 
   it("the agent report's won value comes from final_value, and a NaN write cannot turn it NaN", async () => {

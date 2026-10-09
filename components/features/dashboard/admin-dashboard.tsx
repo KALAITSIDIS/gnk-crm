@@ -6,7 +6,7 @@ import { attachCurrentTitles } from "@/lib/services/event-context";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
 import { formatDate, formatMoney, formatResponseMinutes } from "@/lib/utils/format";
-import { zonedParts, zonedWallClockToUtc } from "@/lib/utils/tz";
+import { cyprusMonthStart, zonedParts } from "@/lib/utils/tz";
 
 /**
  * Admin dashboard (T5.3, doc 05 + doc 02 §C9). Every number is reproducible
@@ -98,7 +98,7 @@ export async function AdminDashboard({ orgId }: { orgId: string }) {
 
   const now = new Date(); // per-request clock anchors every window below
   const todayKey = zonedParts(now).dayKey; // Cyprus calendar day (doc 02 §A11)
-  const monthStart = zonedWallClockToUtc(`${todayKey.slice(0, 7)}-01T00:00`).toISOString();
+  const monthStart = cyprusMonthStart(now); // the Cyprus calendar month's first instant
   const d7 = new Date(now.getTime() - 7 * 86_400_000).toISOString();
   const d30 = new Date(now.getTime() - 30 * 86_400_000).toISOString();
   // date-only arithmetic on the Cyprus day key — DST cannot shift a date+30d

@@ -36,7 +36,13 @@ export interface KanbanDeal {
   id: string;
   title: string;
   stage_id: string;
-  expected_value: number | null;
+  /**
+   * The figure the card shows and its column sums — `dealValue()`: a won deal
+   * at its confirmed final value (its estimate when none was recorded), every
+   * other deal at its estimate. Display only: nothing on the board sends it
+   * anywhere, and it is not the stored estimate (`deals.expected_value`).
+   */
+  displayValue: number | null;
   health_score: number;
   healthFactors: HealthFactor[] | null;
   agentInitials: string;
@@ -110,8 +116,8 @@ function DealCard({ deal, dragging = false }: { deal: KanbanDeal; dragging?: boo
         />
       </div>
       <div className="flex items-center justify-between text-xs text-text-2">
-        <span className="font-semibold tabular-nums text-text-1">
-          {formatMoney(deal.expected_value)}
+        <span data-testid="deal-value" className="font-semibold tabular-nums text-text-1">
+          {formatMoney(deal.displayValue)}
         </span>
         {deal.propertyRef ? <span className="font-mono">{deal.propertyRef}</span> : null}
       </div>
@@ -150,7 +156,8 @@ function StageColumn({
   // on the deal page, so their columns never accept a drop.
   const closedColumn = stage.is_won || stage.is_lost;
   const { setNodeRef, isOver } = useDroppable({ id: stage.id, disabled: closedColumn });
-  const total = deals.reduce((sum, d) => sum + (d.expected_value ?? 0), 0);
+  // the sum of exactly the figures the cards below show
+  const total = deals.reduce((sum, d) => sum + (d.displayValue ?? 0), 0);
   const headingId = `stage-heading-${stage.id}`;
 
   /**
@@ -191,7 +198,9 @@ function StageColumn({
           {deals.length}
         </span>
       </div>
-      <span className="px-1 text-xs tabular-nums text-text-2">{formatMoney(total)}</span>
+      <span data-testid="stage-total" className="px-1 text-xs tabular-nums text-text-2">
+        {formatMoney(total)}
+      </span>
       <ul
         aria-label={`${stage.name} deals`}
         className="flex min-h-16 list-none flex-col gap-2"
