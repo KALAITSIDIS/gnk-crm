@@ -188,7 +188,7 @@ describe("the answer", () => {
   });
 
   it("an error that proves the transaction rolled back: nothing was changed, the database's words stay out", async () => {
-    for (const code of ["42501", "PGRST202", "PGRST301", "57014", "40P01", "PGRST003"]) {
+    for (const code of ["42501", "PGRST202", "PGRST301", "40P01", "PGRST003"]) {
       state.rpc.mockResolvedValue({
         data: null,
         error: { code, message: 'permission denied for table "deals" — internal detail' },
@@ -212,6 +212,9 @@ describe("the answer", () => {
       async () => ({ data: null, error: {} }),
       async () => ({ data: null, error: { code: "08006", message: "connection failure" } }),
       async () => ({ data: null, error: { code: "PGRST000", message: "could not connect" } }),
+      // a cancel can be reported for a COMMIT that went through (T-media-insert-outcome)
+      async () => ({ data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } }),
+      async () => ({ data: null, error: { code: "PGRST001", message: "Database client error." } }),
       async () => {
         throw new Error("socket hang up");
       },

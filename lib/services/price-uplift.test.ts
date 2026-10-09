@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   blocksOf,
   inScope,
+  MIN_PRICE,
   previewUplift,
+  reviewedScope,
   ROUND_TO,
   upliftPrice,
   type UpliftTarget,
@@ -122,5 +124,78 @@ describe("scope", () => {
 
   it("a block scope covers only that block", () => {
     expect(inScope(units, "A").map((u) => u.id)).toEqual(["a", "c"]);
+  });
+});
+
+/**
+ * Exact decimals (T-price-uplift-atomic, 0141): the database computes the
+ * write in numeric, and this preview must agree with it digit for digit —
+ * supabase/tests/price-list-version.test.ts compares the two on a real stack.
+ * These pin the arithmetic itself, independently of the database.
+ */
+describe("exact arithmetic — the €100 rule at a half", () => {
+  it("a half rounds UP, where floating point rounded it down", () => {
+    // 50000 × 1.001 = 50050 exactly; in float64 it is 50049.999…, which the
+    // pre-0141 preview (and write) rounded to 50000
+    expect(upliftPrice(50000, { mode: "percent", amount: 0.1 })).toBe(50100);
+    expect(upliftPrice(150000, { mode: "percent", amount: 0.1 })).toBe(150200);
+    expect(upliftPrice(250000, { mode: "percent", amount: 0.02 })).toBe(250100);
+    // and just under a half rounds down
+    expect(upliftPrice(49999, { mode: "percent", amount: 0.1 })).toBe(50000);
+  });
+
+  it("decimal prices and amounts: the cents decide", () => {
+    expect(upliftPrice("1234.56", { mode: "fixed", amount: 15.44 })).toBe(1300); // 1250.00 → half → up
+    expect(upliftPrice("1234.56", { mode: "fixed", amount: 15.43 })).toBe(1200); // 1249.99 → down
+    expect(upliftPrice(1234.56, { mode: "fixed", amount: 15.44 })).toBe(1300);
+    expect(upliftPrice("1000.00", { mode: "percent", amount: 5 })).toBe(1100); // 1050 → half → up
+  });
+
+  it("every way a number can be spelled reads the same digits", () => {
+    expect(upliftPrice("250000.00", { mode: "percent", amount: 3 })).toBe(257500);
+    expect(upliftPrice("2.5e5", { mode: "percent", amount: 3 })).toBe(257500);
+    expect(upliftPrice(250000, { mode: "percent", amount: 1e-7 })).toBe(250000); // String(1e-7) is "1e-7"
+    expect(upliftPrice("1e3", { mode: "fixed", amount: 100 })).toBe(1100);
+    expect(upliftPrice(100000, { mode: "fixed", amount: -1e21 })).toBe(MIN_PRICE); // String(-1e21) is "-1e+21"
+  });
+
+  it("cuts: half away from zero, then never below the floor", () => {
+    expect(upliftPrice(250000, { mode: "percent", amount: -0.1 })).toBe(249800); // 249750 → half → away from zero = up
+    expect(upliftPrice(100000, { mode: "percent", amount: -150 })).toBe(MIN_PRICE);
+    expect(upliftPrice(100, { mode: "fixed", amount: -50 })).toBe(MIN_PRICE);
+    expect(upliftPrice(149.99, { mode: "fixed", amount: -50 })).toBe(MIN_PRICE);
+  });
+
+  it("an amount that is not a finite number prices nothing", () => {
+    expect(upliftPrice(250000, { mode: "percent", amount: Number.NaN })).toBeNull();
+    expect(upliftPrice(250000, { mode: "fixed", amount: Number.POSITIVE_INFINITY })).toBeNull();
+  });
+
+  it("whole euros and whole percents agree with plain integer arithmetic, everywhere on a grid", () => {
+    // an independent reference: price × (100 + pct) is an integer; to the
+    // nearest multiple of 10 000 (half up, all positive here) is hundreds
+    for (let price = 100; price <= 300_000; price += 997) {
+      for (const pct of [-99, -37, -10, -3, -1, 1, 2, 3, 5, 7, 10, 25, 100]) {
+        const x = price * (100 + pct);
+        const want = Math.max(Math.floor((x + 5000) / 10000) * 100, MIN_PRICE);
+        expect(upliftPrice(price, { mode: "percent", amount: pct }), `${price} ${pct}%`).toBe(want);
+      }
+    }
+  });
+});
+
+describe("reviewedScope", () => {
+  it("sends every unit the preview covered, priced or not, with the price it showed", () => {
+    expect(
+      reviewedScope([
+        unit({ id: "a", asking_price: "250000.00" }),
+        unit({ id: "b", asking_price: null }),
+        unit({ id: "c", asking_price: 0 }),
+      ]),
+    ).toEqual([
+      { id: "a", price: 250000 },
+      { id: "b", price: null },
+      { id: "c", price: 0 },
+    ]);
   });
 });

@@ -70,6 +70,42 @@ export function connEnvFromUrl(dbUrl) {
   return env;
 }
 
+/**
+ * Why this connection cannot carry the shared dump snapshot, or null.
+ *
+ *   - The transaction pooler (6543) hands each transaction to whichever
+ *     backend is free; pg_dump needs session mode anyway, and the snapshot
+ *     session must keep ONE backend for as long as the dumps run.
+ *   - A database in a different project from SUPABASE_URL. The row check now
+ *     reads production through one path — the dumps and the counts share
+ *     this URL — so a wrong project would check its own dump against its own
+ *     counts and pass. The old check also read PostgREST and noticed by
+ *     accident; this says it on purpose.
+ * Hosts it cannot read a project ref from (a local stack) are not judged.
+ */
+export function snapshotConnectionProblem({ dbUrl, apiUrl }) {
+  let db;
+  let api;
+  try {
+    db = new URL(dbUrl);
+    api = new URL(apiUrl);
+  } catch {
+    return null; // connEnvFromUrl and the caller report a malformed URL
+  }
+  if (db.hostname.endsWith(".pooler.supabase.com") && db.port === "6543") {
+    return "SUPABASE_DB_URL uses the transaction pooler (port 6543). The dumps share one held snapshot and need the session pooler: port 5432 (§3.1).";
+  }
+  const dbRef =
+    decodeURIComponent(db.username).match(/^postgres\.([a-z0-9]+)$/)?.[1] ??
+    db.hostname.match(/^db\.([a-z0-9]+)\.supabase\.co$/)?.[1] ??
+    null;
+  const apiRef = api.hostname.match(/^([a-z0-9]+)\.supabase\.co$/)?.[1] ?? null;
+  if (dbRef && apiRef && dbRef !== apiRef) {
+    return `SUPABASE_DB_URL is for project ${dbRef} but SUPABASE_URL is for ${apiRef} — a different project; the dumps and the export would describe two databases.`;
+  }
+  return null;
+}
+
 // ----------------------------------------------------------------- line model
 /**
  * sed works on newline-terminated lines and `d` removes the line WITH its
@@ -178,17 +214,39 @@ export function rewriteRolesDump(text) {
  */
 const schemaFlags = (schemas) => schemas.flatMap((s) => ["--schema", s]);
 
-export function schemaDumpArgs(schemas) {
-  return ["--schema-only", "--quote-all-identifiers", "--role", "postgres", ...schemaFlags(schemas)];
+/**
+ * `--snapshot <id>`: read the MVCC snapshot a held transaction exported
+ * (dump-snapshot.mjs), so the dumps and the row counts they are checked
+ * against see the same instant. pg_dump imports it or exits non-zero — it
+ * never falls back to a fresh snapshot. Absent, the args are byte-identical
+ * to the CLI's.
+ */
+const snapshotFlags = (snapshot) => (snapshot ? ["--snapshot", snapshot] : []);
+
+/**
+ * The platform tables the data dump leaves out (they exist on any target).
+ * One list, because dump-snapshot.mjs counts every table the dump should
+ * hold: a table excluded here but counted there would fail every night.
+ */
+export const DATA_DUMP_EXCLUDED_TABLES = ["auth.schema_migrations", "storage.migrations", "supabase_functions.migrations"];
+
+/**
+ * What the data dump holds, and therefore what the snapshot counts — one
+ * list, so the two cannot drift. events_parts holds the `events` partitions
+ * (0063): the parent emits no COPY of its own.
+ */
+export const DATA_SCHEMAS = ["public", "events_parts", "auth", "storage"];
+
+export function schemaDumpArgs(schemas, { snapshot } = {}) {
+  return ["--schema-only", "--quote-all-identifiers", "--role", "postgres", ...schemaFlags(schemas), ...snapshotFlags(snapshot)];
 }
 
-export function dataDumpArgs(schemas) {
+export function dataDumpArgs(schemas, { snapshot } = {}) {
   return [
     "--data-only", "--quote-all-identifiers", "--role", "postgres",
-    "--exclude-table", "auth.schema_migrations",
-    "--exclude-table", "storage.migrations",
-    "--exclude-table", "supabase_functions.migrations",
+    ...DATA_DUMP_EXCLUDED_TABLES.flatMap((t) => ["--exclude-table", t]),
     ...schemaFlags(schemas),
+    ...snapshotFlags(snapshot),
   ];
 }
 

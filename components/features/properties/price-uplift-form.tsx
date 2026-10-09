@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState } from "react";
+import { startTransition, useActionState, useEffect, useRef, useState, type FormEvent } from "react";
 import { TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 import { applyPriceUplift, type UnitActionState } from "@/lib/actions/units";
@@ -18,10 +18,13 @@ import {
   blocksOf,
   inScope,
   previewUplift,
+  reviewedScope,
   type UpliftMode,
   type UpliftTarget,
 } from "@/lib/services/price-uplift";
 import { formatMoney } from "@/lib/utils/format";
+import { settleOperation, stampOperationId, type OperationRef } from "@/lib/utils/operation-id";
+import { PRICES_UNCONFIRMED, replayedText } from "@/lib/validators/price-lists";
 
 const initialState: UnitActionState = { error: null, savedAt: null };
 const ALL_BLOCKS = "__all__";
@@ -29,10 +32,17 @@ const ALL_BLOCKS = "__all__";
 /**
  * "Raise the C block by 3%" (BACKLOG audit finding 4, the other half).
  *
- * The preview shares `previewUplift` with the action, so what it shows is what
- * gets written — the same rule as the bulk unit generator, and for the same
- * reason: a price change nobody could check before committing is worse than
- * editing sixty rows by hand.
+ * The preview is computed with the same rule, in the same exact decimals, as
+ * the database write (`record_price_list_version`, 0141) — the same reason the
+ * bulk unit generator shares `generateUnits`: a price change nobody could check
+ * before committing is worse than editing sixty rows by hand.
+ *
+ * WHAT YOU SAW IS WHAT IS WRITTEN. The form sends the scope it previewed — every
+ * unit, with the price it showed — and the database applies the change only if
+ * the units still hold exactly those prices; otherwise it changes nothing and
+ * the page redraws with the current ones. Each submission carries one
+ * operation id, so a retry (after an error, or an answer that never came back)
+ * is answered with what was already committed instead of being applied twice.
  *
  * It says plainly that it does TWO things — change the units and record a
  * version — because "apply" that quietly also snapshots would be a surprise the
@@ -47,15 +57,50 @@ export function PriceUpliftForm({
   units: UpliftTarget[];
   nextVersion: number;
 }) {
-  const [state, formAction, pending] = useActionState(applyPriceUplift, initialState);
+  const operation: OperationRef = useRef<{ key: string; id: string; unresolved?: boolean } | null>(null);
+  const [notes, setNotes] = useState("");
+  const [state, dispatch, pending] = useActionState(
+    async (prev: UnitActionState, fd: FormData): Promise<UnitActionState> => {
+      stampOperationId(operation, fd);
+      let result: UnitActionState;
+      try {
+        result = await applyPriceUplift(prev, fd);
+      } catch {
+        // the request never came back: it may have committed — the same
+        // submission pressed again is answered, not applied twice
+        result = { error: PRICES_UNCONFIRMED, savedAt: null, unconfirmed: true };
+      }
+      // an unknown outcome keeps this submission's id for the next press, even
+      // if the page redraws in between (lib/utils/operation-id.ts)
+      settleOperation(operation, result.unconfirmed === true);
+      // the note belongs to the version just recorded; a failed attempt keeps it
+      if (result.savedAt) setNotes("");
+      return result;
+    },
+    initialState,
+  );
+  /**
+   * Dispatched from onSubmit, NOT passed as `<form action>`: React resets a
+   * form after every action it runs from `action` — refused ones included — and
+   * the Radix Selects below answer a form reset by jumping back to their first
+   * value. After an error the form then said "All units · Percentage" over the
+   * amount still typed (5000 → +5000% on every unit), right where it told the
+   * person to press again (review of T-price-uplift-atomic, 2026-10-05).
+   */
+  const submit = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    startTransition(() => dispatch(fd));
+  };
   const lastToasted = useRef<number | null>(null);
 
   useEffect(() => {
     if (state.savedAt && state.savedAt !== lastToasted.current) {
       lastToasted.current = state.savedAt;
-      toast.success("Prices updated and a new version recorded");
+      if (state.replayed) toast.info(replayedText(state.version));
+      else toast.success("Prices updated and a new version recorded");
     }
-  }, [state.savedAt]);
+  }, [state]);
 
   const [block, setBlock] = useState<string>(ALL_BLOCKS);
   const [mode, setMode] = useState<UpliftMode>("percent");
@@ -71,12 +116,14 @@ export function PriceUpliftForm({
 
   return (
     <form
-      action={formAction}
+      onSubmit={submit}
       className="flex flex-col gap-3 rounded-[10px] border border-border bg-surface p-4"
     >
       <input type="hidden" name="project_id" value={projectId} />
       <input type="hidden" name="block" value={block === ALL_BLOCKS ? "" : block} />
       <input type="hidden" name="mode" value={mode} />
+      {/* the scope as previewed — the database refuses the write if it moved */}
+      <input type="hidden" name="expected" value={JSON.stringify(reviewedScope(scoped))} />
 
       <div>
         <h3 className="text-base font-semibold text-text-1">Reprice a block</h3>
@@ -133,7 +180,13 @@ export function PriceUpliftForm({
 
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="uplift-notes">Version note</Label>
-          <Input id="uplift-notes" name="notes" placeholder="e.g. from 1 September" />
+          <Input
+            id="uplift-notes"
+            name="notes"
+            placeholder="e.g. from 1 September"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+          />
         </div>
       </div>
 

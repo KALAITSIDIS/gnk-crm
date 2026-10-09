@@ -613,18 +613,42 @@ describe("the guarded rules hold for a direct RPC call", () => {
   });
 
   it("an accepted offer whose amount is NaN is refused as a price, not stored", async () => {
-    // numeric admits NaN and the offers CHECK (amount >= 0) passes it
+    // numeric admits NaN and the offers CHECK (amount >= 0) passes it — so
+    // since 0144 offers_amount_finite refuses the row outright, and this guard
+    // is depth: proven against a plant made in a transaction that drops the
+    // CHECK, calls close_deal as the agent and is ROLLED BACK
     const deal = await newDeal();
-    await o.query(
-      `insert into offers (org_id, deal_id, amount, status, decided_at) values ($1, $2, 'NaN', 'accepted', now())`,
-      [ORG, deal],
+    const plant = `insert into offers (org_id, deal_id, amount, status, decided_at) values ($1, $2, 'NaN', 'accepted', now())`;
+    const refused = await o.query(plant, [ORG, deal]).then(
+      () => "accepted",
+      (e: { code?: string; constraint?: string }) => `${e.code} ${e.constraint}`,
     );
-    const r = await rpc(agent.client, deal, "won");
-    expect(r.error?.message).toBe("The accepted offer's amount is not a valid price — correct the offer first.");
+    expect(refused, "the table refuses the row outright").toBe("23514 offers_amount_finite");
+    for (const typed of [null, 410000]) {
+      await o.query("begin");
+      try {
+        await o.query("alter table offers drop constraint if exists offers_amount_finite");
+        await o.query(plant, [ORG, deal]);
+        await o.query("set local role authenticated");
+        await o.query("select set_config('request.jwt.claims', $1, true)", [
+          JSON.stringify({ sub: agent.id, role: "authenticated", aal: "aal2" }),
+        ]);
+        if (typed === null) {
+          const e = await closeSql(o, deal, "won").then(
+            () => null,
+            (x: Error) => x,
+          );
+          expect(e?.message).toBe("The accepted offer's amount is not a valid price — correct the offer first.");
+        } else {
+          // a typed price is used instead of the offer's, so the close can still happen
+          expect(await closeSql(o, deal, "won", { final: typed })).toMatchObject({ result: "closed", final_value: 410000 });
+        }
+      } finally {
+        await o.query("rollback");
+      }
+    }
+    // hygiene: both plants were rolled back with their transactions
     expect((await row(deal)).status).toBe("open");
-    // a typed price is used instead of the offer's, so the close can still happen
-    const typed = await rpc(agent.client, deal, "won", { final: 410000 });
-    expect(typed.data).toMatchObject({ result: "closed", final_value: 410000 });
   });
 
   it("Lost: the reason goes to the row, trimmed; the event is { stage } and nothing else", async () => {

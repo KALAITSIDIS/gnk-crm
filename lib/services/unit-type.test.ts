@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeType, priceFromType, stampOf, type UnitType } from "./unit-type";
+import { describeType, priceFromType, type UnitType } from "./unit-type";
 
 const type = (over: Partial<UnitType> = {}): UnitType => ({
   id: "t1",
@@ -41,38 +41,30 @@ describe("priceFromType", () => {
   });
 });
 
-describe("stampOf", () => {
-  it("writes the layout onto the unit", () => {
-    expect(stampOf(type(), null)).toEqual({
-      bedrooms: 2,
-      bathrooms: 1,
-      covered_area_sqm: 85,
-      veranda_sqm: 20,
-      asking_price: 255000,
-    });
+describe("priceFromType is exact — the figure the stamp (0142) writes", () => {
+  it("a half rounds UP, as round(covered × rate, −2) does", () => {
+    // in floating point 64.35 × 1000 / 100 is 643.4999…, which rounded DOWN to €64.300
+    expect(priceFromType(type({ covered_area_sqm: 64.35, price_per_sqm: 1000 }))).toBe(64400);
+    expect(priceFromType(type({ covered_area_sqm: "16.15", price_per_sqm: "1000.00" }))).toBe(16200);
+    expect(priceFromType(type({ covered_area_sqm: 64.6, price_per_sqm: 250 }))).toBe(16200);
+    // and a value just under a half still rounds down
+    expect(priceFromType(type({ covered_area_sqm: 64.34, price_per_sqm: 1000 }))).toBe(64300);
   });
 
-  it("CLEARS a field the type leaves blank — a stamp, not a merge", () => {
-    // stamping A1 onto a unit should make it an A1, not an A1 with the previous
-    // layout's bathroom count still attached
-    const s = stampOf(type({ bathrooms: null, veranda_sqm: null }), null);
-    expect(s.bathrooms).toBeNull();
-    expect(s.veranda_sqm).toBeNull();
-  });
-
-  it("LEAVES AN EXISTING PRICE ALONE when the type has no rate", () => {
-    // a layout template says what the flat is, not what it is worth today —
-    // wiping a price nobody asked to change would be destructive
-    const s = stampOf(type({ price_per_sqm: null }), 260000);
-    expect(s.asking_price).toBe(260000);
-  });
-
-  it("overwrites an existing price when the type CAN compute one", () => {
-    expect(stampOf(type(), 999999).asking_price).toBe(255000);
-  });
-
-  it("leaves an unpriced unit unpriced when the type has no rate either", () => {
-    expect(stampOf(type({ price_per_sqm: null }), null).asking_price).toBeNull();
+  it("agrees with integer arithmetic over a grid of areas and rates (two decimals each)", () => {
+    // area and rate as the numeric(10,2) columns hold them: hundredths
+    const disagreements: string[] = [];
+    for (let a = 1; a <= 20000; a += 7) {
+      for (const r of [100, 2941, 15050, 100000, 294135, 333333]) {
+        const cents = BigInt(a) * BigInt(r); // area × rate × 10^4
+        const unit = BigInt(1000000); // €100 at scale 10^4
+        const q = cents / unit;
+        const want = Number((cents % unit) * BigInt(2) >= unit ? q + BigInt(1) : q) * 100;
+        const got = priceFromType(type({ covered_area_sqm: (a / 100).toFixed(2), price_per_sqm: (r / 100).toFixed(2) }));
+        if (got !== want) disagreements.push(`${a / 100} × ${r / 100}: ${got} ≠ ${want}`);
+      }
+    }
+    expect(disagreements).toEqual([]);
   });
 });
 

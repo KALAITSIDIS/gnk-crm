@@ -1,9 +1,11 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState } from "react";
+import { startTransition, useActionState, useEffect, useRef, useState, type FormEvent } from "react";
 import { LayoutTemplate, Plus, Stamp } from "lucide-react";
 import { toast } from "sonner";
 import { applyUnitType, createUnitType, type UnitActionState } from "@/lib/actions/units";
+import { sendPinned, type OperationRef } from "@/lib/utils/operation-id";
+import { UNIT_TYPE_REPLAYED, UNIT_TYPE_UNCONFIRMED } from "@/lib/validators/unit-types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -46,7 +48,32 @@ export function UnitTypesSection({
   canManage: boolean;
 }) {
   const [createState, createAction, creating] = useActionState(createUnitType, initialState);
-  const [applyState, applyAction, applying] = useActionState(applyUnitType, initialState);
+  const operation: OperationRef = useRef<{ key: string; id: string; unresolved?: boolean } | null>(null);
+  const [applyState, applyAction, applying] = useActionState(
+    // one id per submission (0142): a press to check an unknown outcome is
+    // answered, never applied twice; a committed stamp spends its id, so
+    // stamping the same selection again later applies again
+    // (lib/utils/operation-id.ts sendPinned)
+    (prev: UnitActionState, fd: FormData): Promise<UnitActionState> =>
+      sendPinned<UnitActionState>(operation, fd, (sent) => applyUnitType(prev, sent), {
+        error: UNIT_TYPE_UNCONFIRMED,
+        savedAt: null,
+        unconfirmed: true,
+      }),
+    initialState,
+  );
+  /**
+   * Dispatched from onSubmit, NOT passed as `<form action>`: React resets a
+   * form after every action it runs from `action`, and the Radix Selects below
+   * answer a form reset by jumping back to their first value — the type
+   * cleared and the scope back on "All units", right where an error told the
+   * person to press again (the 0141 form's lesson).
+   */
+  const submitApply = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    startTransition(() => applyAction(fd));
+  };
   const created = useRef<number | null>(null);
   const stamped = useRef<number | null>(null);
 
@@ -60,9 +87,10 @@ export function UnitTypesSection({
   useEffect(() => {
     if (applyState.savedAt && applyState.savedAt !== stamped.current) {
       stamped.current = applyState.savedAt;
-      toast.success("Layout applied to the units");
+      if (applyState.replayed) toast.info(UNIT_TYPE_REPLAYED);
+      else toast.success("Layout applied to the units");
     }
-  }, [applyState.savedAt]);
+  }, [applyState.savedAt, applyState.replayed]);
 
   const [typeId, setTypeId] = useState<string>("");
   const [block, setBlock] = useState<string>(ALL_BLOCKS);
@@ -107,7 +135,7 @@ export function UnitTypesSection({
       )}
 
       {canManage && types.length > 0 && unitCount > 0 ? (
-        <form action={applyAction} className="flex flex-col gap-3 border-t border-border/60 pt-3">
+        <form onSubmit={submitApply} className="flex flex-col gap-3 border-t border-border/60 pt-3">
           <input type="hidden" name="project_id" value={projectId} />
           <input type="hidden" name="unit_type_id" value={typeId} />
           <input type="hidden" name="block" value={block === ALL_BLOCKS ? "" : block} />

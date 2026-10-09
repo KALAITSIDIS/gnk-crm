@@ -23,6 +23,8 @@ import {
 import { cyprusEndOfToday } from "@/lib/validators/reservations";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { contactLinkError } from "@/lib/services/contact-reread";
+// did a failed close certainly not commit — shared with the price-list actions (0141)
+import { certainlyRolledBack } from "@/lib/services/rpc-outcome";
 
 export type MoveDealResult = { error: string | null };
 
@@ -430,21 +432,6 @@ function readCloseAnswer(data: unknown): CloseDealAnswer | null {
 }
 
 const NOTHING_CHANGED = "Could not close the deal — nothing was changed. Try again.";
-
-/**
- * Did this error come from a request whose transaction certainly did NOT
- * commit? A five-character SQLSTATE means PostgreSQL answered and the
- * statement failed — except class 08 (connection exceptions), which can mean
- * the connection dropped around the COMMIT. PGRST1xx-3xx are request-level
- * refusals made before or instead of running the function; PGRST002/003 mean
- * no connection was obtained. Everything else — no code (a network failure,
- * a gateway `{}` or HTML body), PGRST000/001, a status 0 — is unknown.
- */
-function certainlyRolledBack(code: string | undefined): boolean {
-  if (!code) return false;
-  if (/^PGRST[123]\d\d$/.test(code) || code === "PGRST002" || code === "PGRST003") return true;
-  return /^[0-9A-Z]{5}$/.test(code) && !code.startsWith("08");
-}
 
 /**
  * What went wrong with a close that did not commit — or might have. `unknown`

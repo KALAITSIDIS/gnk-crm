@@ -4,7 +4,8 @@ import { removeObjectsBestEffort } from "@/lib/services/storage";
 import { mediaBucketFor } from "@/lib/services/media-bucket";
 import { createHash, randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { getCurrentProfile } from "@/lib/services/auth";
+import { z } from "zod";
+import { getCurrentProfile, type CurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
 import { notifySiteIfPublic } from "@/lib/services/site-revalidate";
 import {
@@ -17,22 +18,69 @@ import {
   shouldWatermark,
   type RenditionName,
 } from "@/lib/services/media";
-import { recomputeQualityScore } from "@/lib/services/quality-score";
+import {
+  discardAttemptObjects,
+  insertDefinitelyRefused,
+  mayInsertPropertyMedia,
+  putAttemptObjects,
+  reportMediaUpload,
+  type AttemptObject,
+} from "@/lib/services/media-upload";
+import { recomputeQualityScore, recomputeQuietly } from "@/lib/services/quality-score";
 import { UPLOADABLE_MEDIA_KINDS } from "@/lib/validators/media";
 import { binaryBody } from "@/lib/services/storage-upload";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
-export type MediaActionState = { error: string | null; savedAt: number | null };
+export type MediaActionState = {
+  error: string | null;
+  savedAt: number | null;
+  /** files this request committed — an error can follow earlier saved files */
+  saved?: number;
+  /** a SAVED upload whose follow-up (its timeline line) did not complete */
+  warning?: string | null;
+};
 
 const WATERMARK_PATH = "branding/watermark.png"; // uploaded via Settings (T5.4)
 
+const NOT_ALLOWED = "Upload not allowed — this property isn't assigned to you.";
+
+/**
+ * Upload photographs or floor plans to one listing (DECISIONS
+ * T-media-upload-authz for the order and the failure semantics).
+ *
+ * 1. EVERYTHING IS CHECKED BEFORE ANYTHING PRIVILEGED RUNS: the input, every
+ *    file in the batch, the caller (getCurrentProfile reads the profile
+ *    through RLS, so an unauthenticated, aal1 or deactivated session has no
+ *    profile), and the caller's right to ADD media to THIS listing —
+ *    `mayInsertPropertyMedia`, the insert policy said in the application. A
+ *    property READ is not that right: every member of the organisation can
+ *    read every listing. A check that cannot be answered refuses.
+ * 2. Only then the service role: the watermark, the pipeline, the uploads.
+ * 3. The row is inserted on the caller's SESSION, so RLS still has the last
+ *    word — a reassignment or deactivation since step 1 is refused there.
+ * 4. An attempt that does not commit is compensated: every object it may have
+ *    written is removed once every upload has settled, and a removal that
+ *    cannot be verified is reported, not claimed. Only an insert DEFINITELY
+ *    refused (`insertDefinitelyRefused`) is compensated; any other answer is
+ *    read back by the attempt id, and unless THAT row is found the files are
+ *    kept and the outcome is reported as unknown — a committed row is never
+ *    left pointing at deleted files.
+ * 5. After a commit, nothing turns the upload into a failure: the event, the
+ *    score and the site knock are follow-ups.
+ *
+ * The media tab sends one file per request (REL-05). A direct call may send
+ * several: they are processed in order, and a failure stops the batch with a
+ * result that says how many were saved — those stay.
+ */
 export async function uploadPropertyMedia(
   _prev: MediaActionState,
   formData: FormData,
 ): Promise<MediaActionState> {
   const propertyId = formData.get("property_id");
-  if (typeof propertyId !== "string") return { error: "Missing property", savedAt: null };
+  if (typeof propertyId !== "string" || !z.guid().safeParse(propertyId).success) {
+    return { error: "Missing property", savedAt: null };
+  }
 
   const files = formData.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
   // MEDIA-K (2026-09-02): the upload names its kind; junk falls back to
@@ -43,18 +91,48 @@ export async function uploadPropertyMedia(
     ? (rawKind as (typeof UPLOADABLE_MEDIA_KINDS)[number])
     : "photo";
   if (files.length === 0) return { error: "Pick at least one image", savedAt: null };
+  // the whole batch, before a byte is processed or stored
+  for (const file of files) {
+    if (!ACCEPTED_MIME.includes(file.type)) {
+      return { error: `${file.name}: only JPEG/PNG/WebP accepted`, savedAt: null };
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      return { error: `${file.name}: exceeds 20 MB`, savedAt: null };
+    }
+  }
 
   const supabase = await createClient();
-  const profile = await getCurrentProfile(supabase);
+  let profile: CurrentProfile;
+  try {
+    profile = await getCurrentProfile(supabase);
+  } catch {
+    // signed out, aal1 (require_aal2 hides the profile) or deactivated
+    return { error: "Sign in again (with your second factor) to upload.", savedAt: null };
+  }
 
-  // RLS-checked read also proves the caller may touch this property
-  const { data: property } = await supabase
+  const { data: property, error: propertyErr } = await supabase
     .from("properties")
-    .select("id, org_id, visibility")
+    .select("id, org_id, visibility, assigned_agent_id")
     .eq("id", propertyId)
     .maybeSingle();
+  if (propertyErr) {
+    return { error: "Could not check your permission for this property — nothing was uploaded.", savedAt: null };
+  }
   if (!property) return { error: "Property not found", savedAt: null };
+  if (!mayInsertPropertyMedia(profile, property)) return { error: NOT_ALLOWED, savedAt: null };
 
+  const { data: existing, error: galleryErr } = await supabase
+    .from("property_media")
+    .select("id, sort_order, is_cover")
+    .eq("property_id", propertyId);
+  // an unread gallery would number from 0 and crown a second cover
+  if (galleryErr) {
+    return { error: "Could not read this property's gallery — nothing was uploaded.", savedAt: null };
+  }
+  let nextSort = Math.max(-1, ...(existing ?? []).map((m) => m.sort_order)) + 1;
+  let hasCover = (existing ?? []).some((m) => m.is_cover);
+
+  // ---- privileged work starts here, for an authorised caller only ----
   const admin = createAdminClient();
 
   // org watermark is optional until Settings ships it
@@ -67,34 +145,27 @@ export async function uploadPropertyMedia(
     if (wmFile) watermark = Buffer.from(await wmFile.arrayBuffer());
   }
 
-  const { data: existing } = await supabase
-    .from("property_media")
-    .select("id, sort_order, is_cover")
-    .eq("property_id", propertyId);
-  let nextSort = Math.max(-1, ...(existing ?? []).map((m) => m.sort_order)) + 1;
-  let hasCover = (existing ?? []).some((m) => m.is_cover);
+  let saved = 0;
+  let warning: string | null = null;
+  let failure: string | null = null;
 
   for (const file of files) {
-    if (!ACCEPTED_MIME.includes(file.type)) {
-      return { error: `${file.name}: only JPEG/PNG/WebP accepted`, savedAt: null };
-    }
-    if (file.size > MAX_UPLOAD_BYTES) {
-      return { error: `${file.name}: exceeds 20 MB`, savedAt: null };
-    }
-
     const input = Buffer.from(await file.arrayBuffer());
     let processed;
     try {
       processed = await processPropertyImage(input, { watermark });
     } catch {
-      return { error: `${file.name}: unreadable image`, savedAt: null };
+      failure = `${file.name}: unreadable image`;
+      break;
     }
 
-    const id = randomUUID();
+    // ONE id per attempt: it names every object the attempt writes AND the
+    // row it inserts, so an object without a row is recognisable as one
+    const attemptId = randomUUID();
     const ext = file.type === "image/png" ? "png" : file.type === "image/webp" ? "webp" : "jpg";
-    const originalPath = `properties/${propertyId}/original/${id}.${ext}`;
+    const originalPath = `properties/${property.id}/original/${attemptId}.${ext}`;
     const renditionPath = (r: RenditionName) =>
-      `properties/${propertyId}/${id}_${r}.${renditionExt(r)}`;
+      `properties/${property.id}/${attemptId}_${r}.${renditionExt(r)}`;
 
     // original (with EXIF) → private documents bucket, always. Renditions →
     // the bucket the KIND decides (media-bucket.ts): public for a photograph,
@@ -106,21 +177,28 @@ export async function uploadPropertyMedia(
     // renditions live in the private bucket, where nothing — no portal feed,
     // no public page — ever reads one.
     const stored = RENDITIONS.filter((r) => r.name !== "jpeg" || kind === "photo");
-    const uploads = [
-      admin.storage
-        .from("documents")
-        .upload(originalPath, binaryBody(input, file.type), { contentType: file.type }),
-      ...stored.map(({ name }) =>
-        admin.storage
-          .from(renditionBucket)
-          .upload(renditionPath(name), binaryBody(processed.renditions[name], renditionMime(name)), {
-            contentType: renditionMime(name),
-          }),
-      ),
+    const objects: AttemptObject[] = [
+      { bucket: "documents", path: originalPath, body: binaryBody(input, file.type), contentType: file.type },
+      ...stored.map(({ name }) => ({
+        bucket: renditionBucket,
+        path: renditionPath(name),
+        body: binaryBody(processed.renditions[name], renditionMime(name)),
+        contentType: renditionMime(name),
+      })),
     ];
-    const results = await Promise.all(uploads);
-    const failed = results.find((r) => r.error);
-    if (failed?.error) return { error: `Upload failed: ${failed.error.message}`, savedAt: null };
+    const context = { propertyId: property.id, attemptId };
+
+    const put = await putAttemptObjects(admin.storage, objects);
+    if (put.failed.length > 0) {
+      const removed = await discardAttemptObjects(admin.storage, objects, put.foreign, {
+        ...context,
+        why: "upload failed",
+      });
+      failure =
+        `${file.name}: Upload failed: ${put.failed[0].reason}` +
+        (removed ? "" : " — some of its files could not be removed and have been reported");
+      break;
+    }
 
     // 0088: the ORIGINAL bytes, so "this photograph is already on <reference>"
     // is a fact the worklist can state (a warning, never a score change — a
@@ -130,8 +208,9 @@ export async function uploadPropertyMedia(
     const { data: row, error: insertErr } = await supabase
       .from("property_media")
       .insert({
+        id: attemptId,
         org_id: property.org_id,
-        property_id: propertyId,
+        property_id: property.id,
         kind,
         storage_path_original: originalPath,
         path_thumb: renditionPath("thumb"),
@@ -143,7 +222,7 @@ export async function uploadPropertyMedia(
         width: processed.width,
         height: processed.height,
         content_sha256: contentSha256,
-        sort_order: nextSort++,
+        sort_order: nextSort,
         // only photos are cover-eligible: a floor-plan cover would score the
         // 5 cover points while the feed (photos-only) shows no cover at all
         is_cover: kind === "photo" && !hasCover,
@@ -153,38 +232,91 @@ export async function uploadPropertyMedia(
       })
       .select("id")
       .single();
-    if (insertErr) {
-      // the row was rejected (RLS/validation) — don't strand the uploaded files
-      await removeObjectsBestEffort(admin.storage, renditionBucket, RENDITIONS.map(({ name }) => renditionPath(name)), "media upload: cleanup after a rejected row");
-      await removeObjectsBestEffort(admin.storage, "documents", [originalPath], "media upload: cleanup after a rejected row");
-      return {
-        error: insertErr.message.includes("row-level security")
-          ? "Upload not allowed — this property isn't assigned to you."
-          : insertErr.message,
-        savedAt: null,
-      };
+
+    let mediaId = row?.id ?? null;
+    if (insertErr && insertDefinitelyRefused(insertErr)) {
+      // refused before any commit (RLS, a constraint, a PostgREST request or
+      // JWT refusal): no row can reference these objects
+      const removed = await discardAttemptObjects(admin.storage, objects, put.foreign, {
+        ...context,
+        why: "row refused",
+      });
+      const why =
+        insertErr.code === "42501" || insertErr.message?.includes("row-level security")
+          ? NOT_ALLOWED
+          : (insertErr.message ?? "the row was refused");
+      failure =
+        `${file.name}: ${why}` +
+        (removed ? "" : " Some of its files could not be removed and have been reported.");
+      break;
     }
+    if (insertErr || !mediaId) {
+      // No definite answer — a lost response, a code that can follow a
+      // COMMIT, or a success that names no row: it may have committed. Ask
+      // the database, by the attempt id the row would carry.
+      const { data: found, error: readErr } = await supabase
+        .from("property_media")
+        .select("id")
+        .eq("id", attemptId)
+        .maybeSingle();
+      // only THIS attempt's row counts: a gateway's `{}`, or postgrest-js's
+      // `[]` for a 404 with an array body, is not a row (and not "saved")
+      if (readErr || found?.id !== attemptId) {
+        // Not found is not proof either — the insert may still be landing.
+        // Keep the files (a committed row must never point at deleted ones)
+        // and say so; the attempt id finds them if they turn out orphaned.
+        reportMediaUpload("[media upload] row outcome unknown — files kept", "insert_unknown", {
+          ...context,
+          paths: objects.map((o) => `${o.bucket}/${o.path}`),
+          readBack: readErr ? "failed" : "absent",
+        });
+        failure = `${file.name}: could not confirm whether it was saved — refresh the page before uploading it again.`;
+        break;
+      }
+      mediaId = attemptId;
+    }
+
+    // ---- committed: from here on, nothing un-saves this file ----
+    saved++;
+    nextSort++;
     if (kind === "photo") hasCover = true;
 
-    await logEvent(supabase, {
-      orgId: property.org_id,
-      actorId: profile.id,
-      entityType: "property",
-      entityId: propertyId,
-      eventType: "media_uploaded",
-      // No file name: it is whatever the uploader's machine called the file
-      // ("Andreou villa front.jpg"), and the chain is beyond erasure (SEC-03).
-      // The id names the photo; the digest of its bytes says WHICH image it
-      // was, and outlives the row — the row never stored the name at all.
-      payload: { media_id: row.id, kind, watermarked: processed.watermarked, content_sha256: contentSha256 },
-    });
+    try {
+      await logEvent(supabase, {
+        orgId: property.org_id,
+        actorId: profile.id,
+        entityType: "property",
+        entityId: property.id,
+        eventType: "media_uploaded",
+        // No file name: it is whatever the uploader's machine called the file
+        // ("Andreou villa front.jpg"), and the chain is beyond erasure (SEC-03).
+        // The id names the photo; the digest of its bytes says WHICH image it
+        // was, and outlives the row — the row never stored the name at all.
+        payload: { media_id: mediaId ?? attemptId, kind, watermarked: processed.watermarked, content_sha256: contentSha256 },
+      });
+    } catch {
+      reportMediaUpload("[media upload] saved, but its media_uploaded event was not written", "event", {
+        ...context,
+      });
+      warning = "Saved, but its timeline entry could not be written — this has been reported.";
+    }
   }
 
-  await recomputeQualityScore(supabase, propertyId);
-  await notifySiteIfPublic(supabase, propertyId);
-  revalidatePath(`/properties/${propertyId}`);
-  revalidatePath("/properties");
-  return { error: null, savedAt: Date.now() };
+  if (saved > 0) {
+    await recomputeQuietly(supabase, property.id);
+    await notifySiteIfPublic(supabase, property.id);
+    revalidatePath(`/properties/${property.id}`);
+    revalidatePath("/properties");
+  }
+  if (failure) {
+    return {
+      error: saved > 0 ? `${saved} of ${files.length} saved, then ${failure}` : failure,
+      savedAt: saved > 0 ? Date.now() : null,
+      saved,
+      warning,
+    };
+  }
+  return { error: null, savedAt: Date.now(), saved, warning };
 }
 
 /** Result object, not throw — thrown server-action messages are stripped in

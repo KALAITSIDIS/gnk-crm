@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 import { ChevronDown, ChevronRight, Plus } from "lucide-react";
 import { toast } from "sonner";
@@ -34,6 +35,13 @@ import { formatArea, formatMoney } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { PROPERTY_STATUSES, PROPERTY_TYPES } from "@/lib/validators/properties";
 import type { PriceListComparison } from "@/lib/services/price-list";
+import { newOperationId, settleOperation, stampOperationId, type OperationRef } from "@/lib/utils/operation-id";
+import { PRICES_UNCONFIRMED, replayedText } from "@/lib/validators/price-lists";
+import {
+  describeUnitStatusOutcome,
+  UNIT_STATUS_UNCONFIRMED,
+  type UnitStatusResult,
+} from "@/lib/validators/unit-status";
 
 const initialState: UnitActionState = { error: null, savedAt: null };
 
@@ -64,6 +72,107 @@ function useSavedToast(state: UnitActionState) {
   }, [state]);
 }
 
+/** Send one change — the grid's only caller of updateUnitStatus; the fields are the ones `fd` was stamped with. */
+function sendStatus(fd: FormData): Promise<UnitStatusResult> {
+  return updateUnitStatus(
+    String(fd.get("unit_id")),
+    String(fd.get("status")),
+    String(fd.get("expected")),
+    String(fd.get("operation_id")),
+  );
+}
+
+const STATUS_UNKNOWN: UnitStatusResult = { error: UNIT_STATUS_UNCONFIRMED, savedAt: null, unconfirmed: true };
+
+/**
+ * One unit's status (T-unit-status-atomic, 0143).
+ *
+ * CONTROLLED BY WHAT THE DATABASE SAID — the page's row — never by the pick:
+ * a refused or unknown change leaves the trigger on the status the unit
+ * actually has (an uncontrolled Select kept showing the refused pick, and then
+ * ignored a second pick of the same status as "no change").
+ *
+ * Each pick is a NEW change: the status this row showed (`expected` — the
+ * database refuses it if the unit moved meanwhile) and a fresh operation id.
+ * No id is pinned across picks, unlike the 0141 / 0142 forms: the transition
+ * is decided from the locked row, so a pick made after an unknown outcome can
+ * never make that change twice — it is refused as stale, or answered
+ * "unchanged". The toast's Check (an unknown outcome) and Retry (a follow-up
+ * left open) re-send THAT change, its own id included: the database answers
+ * what it committed, and the replay finishes the follow-up.
+ */
+function UnitStatusCell({ unit }: { unit: UnitRow }) {
+  const router = useRouter();
+  const [picked, setPicked] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  const announce = (result: UnitStatusResult, fd: FormData) => {
+    const outcome = describeUnitStatusOutcome(result, String(fd.get("status")));
+    const action =
+      outcome.offer === "check"
+        ? { label: "Check", onClick: () => send(fd, true) }
+        : outcome.offer === "retry"
+          ? { label: "Retry", onClick: () => send(fd, true) }
+          : undefined;
+    // an offer stays until it is answered or dismissed (outcome-actions.tsx's UNTIL_DISMISSED)
+    const opts = action ? { action, duration: Infinity, closeButton: true } : undefined;
+    if (outcome.tone === "error") toast.error(outcome.text, opts);
+    else if (outcome.tone === "warning") toast.warning(outcome.text, opts);
+    else if (outcome.tone === "info") toast.info(outcome.text);
+    else toast.success(outcome.text);
+    // a refusal may mean the unit moved, an unknown outcome may have
+    // committed: show what the database holds now (a commit refreshed already)
+    if (result.error) router.refresh();
+  };
+
+  /** Send one change — `again` when it is the same change re-sent (Check, Retry). */
+  const send = (fd: FormData, again: boolean) => {
+    setPicked(String(fd.get("status")));
+    startTransition(async () => {
+      let result: UnitStatusResult;
+      try {
+        result = await sendStatus(fd);
+      } catch {
+        // the request never came back: it may have committed
+        result = STATUS_UNKNOWN;
+      }
+      // a lock wait on a re-send: the original may still be running and commit
+      if (again && result.busy) result = STATUS_UNKNOWN;
+      // cleared in the transition, so it lands WITH the refreshed row — never
+      // flashing the old status while another row's change is still in flight
+      startTransition(() => setPicked(null));
+      announce(result, fd);
+    });
+  };
+
+  const change = (to: string) => {
+    const fd = new FormData();
+    fd.set("unit_id", unit.id);
+    fd.set("status", to);
+    fd.set("expected", unit.status);
+    fd.set("operation_id", newOperationId());
+    send(fd, false);
+  };
+
+  const shown = picked ?? unit.status;
+  return (
+    <Select value={shown} disabled={pending} onValueChange={change}>
+      <SelectTrigger className="h-8 w-40 text-[13px]" aria-label={`Status of ${unit.reference}`}>
+        <SelectValue>
+          <StatusBadge status={shown} />
+        </SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        {PROPERTY_STATUSES.map((s) => (
+          <SelectItem key={s} value={s}>
+            {labelize(s)}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 export function UnitsMatrix({
   units,
   canManage = true,
@@ -72,8 +181,6 @@ export function UnitsMatrix({
   /** unit status/insert rights: admin & listing manager (properties RLS) */
   canManage?: boolean;
 }) {
-  const [isPending, startTransition] = useTransition();
-
   return (
     <div className="overflow-x-auto rounded-[10px] border border-border bg-surface">
       <Table>
@@ -111,30 +218,7 @@ export function UnitsMatrix({
               </TableCell>
               <TableCell>
                 {canManage ? (
-                  <Select
-                    defaultValue={u.status}
-                    disabled={isPending}
-                    onValueChange={(v) =>
-                      startTransition(async () => {
-                        const { error } = await updateUnitStatus(u.id, v);
-                        if (error) toast.error(error);
-                        else toast.success("Saved");
-                      })
-                    }
-                  >
-                    <SelectTrigger className="h-8 w-40 text-[13px]">
-                      <SelectValue>
-                        <StatusBadge status={u.status} />
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {PROPERTY_STATUSES.map((s) => (
-                        <SelectItem key={s} value={s}>
-                          {labelize(s)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <UnitStatusCell unit={u} />
                 ) : (
                   <StatusBadge status={u.status} />
                 )}
@@ -342,8 +426,36 @@ export function PriceListsSection({
   priceLists: PriceListRow[];
   canManage?: boolean;
 }) {
-  const [state, formAction, pending] = useActionState(createPriceListVersion, initialState);
-  useSavedToast(state);
+  // One operation id per submission (0141): a retry after an error or a lost
+  // answer is the same submission and is answered, not recorded twice. The
+  // latest version is part of what is submitted, so once a version lands (and
+  // the page redraws) the next press is a new submission.
+  const operation: OperationRef = useRef<{ key: string; id: string; unresolved?: boolean } | null>(null);
+  const [notes, setNotes] = useState("");
+  const [state, formAction, pending] = useActionState(
+    async (prev: UnitActionState, fd: FormData): Promise<UnitActionState> => {
+      stampOperationId(operation, fd);
+      let result: UnitActionState;
+      try {
+        result = await createPriceListVersion(prev, fd);
+      } catch {
+        result = { error: PRICES_UNCONFIRMED, savedAt: null, unconfirmed: true };
+      }
+      // an unknown outcome keeps this submission's id for the next press
+      settleOperation(operation, result.unconfirmed === true);
+      if (result.savedAt) setNotes("");
+      return result;
+    },
+    initialState,
+  );
+  const lastToasted = useRef<number | null>(null);
+  useEffect(() => {
+    if (state.savedAt && state.savedAt !== lastToasted.current) {
+      lastToasted.current = state.savedAt;
+      if (state.replayed) toast.info(replayedText(state.version));
+      else toast.success("Saved");
+    }
+  }, [state]);
 
   return (
     <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-surface p-4">
@@ -363,9 +475,16 @@ export function PriceListsSection({
         <>
           <form action={formAction} className="flex items-end gap-2">
             <input type="hidden" name="project_id" value={projectId} />
+            <input type="hidden" name="latest_version" value={priceLists[0]?.version ?? 0} />
             <div className="flex flex-1 flex-col gap-1.5">
               <Label htmlFor="notes">Notes for new version</Label>
-              <Input id="notes" name="notes" placeholder="e.g. +3% from 1 Aug" />
+              <Input
+                id="notes"
+                name="notes"
+                placeholder="e.g. +3% from 1 Aug"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+              />
             </div>
             <Button type="submit" size="sm" disabled={pending}>
               {pending ? "Snapshotting…" : "New version"}

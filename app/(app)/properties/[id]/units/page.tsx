@@ -36,6 +36,7 @@ import { fetchProjectVelocity } from "@/lib/queries/sales-velocity";
 import { NOT_RECORDED_NOTICE } from "@/lib/services/optimistic-save";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
+import { fetchAll } from "@/lib/supabase/fetch-all";
 
 interface PriceListItemRow {
   unit_id: string;
@@ -76,20 +77,36 @@ export default async function ProjectUnitsPage({
   const profile = await getCurrentProfile(supabase);
   const canManage = profile.role === "admin" || profile.role === "listing_manager";
 
-  const [unitsRes, priceListsRes, plansRes, phasesRes, typesRes] = await Promise.all([
-    supabase
-      .from("properties")
-      .select(UNIT_ROW_SELECT)
-      .eq("parent_id", id)
-      .eq("kind", "unit")
-      // the ONE definition (container-units.ts) excludes archived units, so
-      // this list must too — the page was printing "12 units" over a matrix
-      // of archived rows while its own banner said the project had none
-      // (2026-09-02 fix-wave review). An archived unit lives in the archived
-      // list, where Restore is.
-      .neq("visibility", "archived")
-      .order("block")
-      .order("unit_number"),
+  const [unitRows, priceListsRes, plansRes, phasesRes, typesRes] = await Promise.all([
+    // EVERY unit, page by page (fetch-all.ts): this list is also the scope the
+    // reprice form reviews, and the database refuses a reprice whose reviewed
+    // scope is not the whole scope (0141) — an unpaged read stopped at
+    // PostgREST's 1,000 rows and left a larger project unrepriceable
+    fetchAll(
+      async (from, to) => ({
+        data: unwrapRows(
+          await supabase
+            .from("properties")
+            .select(UNIT_ROW_SELECT)
+            .eq("parent_id", id)
+            .eq("kind", "unit")
+            // the ONE definition (container-units.ts) excludes archived units, so
+            // this list must too — the page was printing "12 units" over a matrix
+            // of archived rows while its own banner said the project had none
+            // (2026-09-02 fix-wave review). An archived unit lives in the archived
+            // list, where Restore is.
+            .neq("visibility", "archived")
+            .order("block")
+            .order("unit_number")
+            // a unique last key: pages over a non-unique order are not stable
+            .order("id")
+            .range(from, to),
+          "units",
+        ),
+        error: null,
+      }),
+      "units",
+    ),
     supabase
       .from("price_lists")
       // audit finding 4: the PRICES, not just a count of them. list_price was
@@ -122,7 +139,6 @@ export default async function ProjectUnitsPage({
       .eq("project_id", id)
       .order("code"),
   ]);
-  const unitRows = unwrapRows(unitsRes, "units");
   const priceListRows = unwrapRows(priceListsRes, "price lists");
   const planRows = unwrapRows(plansRes, "payment plans");
   const phaseRows = unwrapRows(phasesRes, "phases");

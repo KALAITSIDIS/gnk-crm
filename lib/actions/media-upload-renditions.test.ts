@@ -42,12 +42,18 @@ vi.mock("@/lib/services/auth", () => ({
   getCurrentProfile: async () => ({ id: "u-1", orgId: "org-1", role: "admin" }),
 }));
 vi.mock("@/lib/services/events", () => ({ logEvent: vi.fn(async () => {}) }));
-vi.mock("@/lib/services/quality-score", () => ({ recomputeQualityScore: vi.fn(async () => null) }));
+vi.mock("@/lib/services/quality-score", () => ({
+  recomputeQualityScore: vi.fn(async () => null),
+  recomputeQuietly: vi.fn(async () => {}),
+}));
 vi.mock("@/lib/services/site-revalidate", () => ({ notifySiteIfPublic: vi.fn(async () => {}) }));
 vi.mock("@/lib/services/storage", () => ({ removeObjectsBestEffort: vi.fn(async () => {}) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 const { uploadPropertyMedia } = await import("@/lib/actions/media");
+
+// the action refuses anything that is not a uuid before it reads a row
+const PROPERTY_ID = "5c1e2f3a-4b5c-4d6e-8f7a-0b1c2d3e4f01";
 
 /** A real image, because the action runs the real pipeline over it. */
 const source = await sharp({
@@ -59,7 +65,7 @@ const source = await sharp({
 function harness(kind: "photo" | "floor_plan") {
   stored.uploads.length = 0;
   const caller = fakeClient({
-    properties: [{ data: { id: "prop-1", org_id: "org-1", visibility: "draft" }, error: null }],
+    properties: [{ data: { id: PROPERTY_ID, org_id: "org-1", visibility: "draft" }, error: null }],
     property_media: [
       { data: [], error: null }, // the gallery as it stands
       { data: { id: "m-1" }, error: null }, // the insert's `.select("id").single()`
@@ -67,7 +73,7 @@ function harness(kind: "photo" | "floor_plan") {
   });
   state.caller = caller.client;
   const form = new FormData();
-  form.set("property_id", "prop-1");
+  form.set("property_id", PROPERTY_ID);
   form.set("kind", kind);
   form.append("files", new File([source], "villa.jpg", { type: "image/jpeg" }));
   return {

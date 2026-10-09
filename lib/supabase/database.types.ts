@@ -1543,6 +1543,8 @@ export type Database = {
           effective_date: string
           id: string
           notes: string | null
+          operation: Json | null
+          operation_id: string | null
           org_id: string
           project_id: string
           version: number
@@ -1553,6 +1555,8 @@ export type Database = {
           effective_date?: string
           id?: string
           notes?: string | null
+          operation?: Json | null
+          operation_id?: string | null
           org_id: string
           project_id: string
           version: number
@@ -1563,6 +1567,8 @@ export type Database = {
           effective_date?: string
           id?: string
           notes?: string | null
+          operation?: Json | null
+          operation_id?: string | null
           org_id?: string
           project_id?: string
           version?: number
@@ -2667,6 +2673,60 @@ export type Database = {
           },
         ]
       }
+      unit_type_applications: {
+        Row: {
+          block: string | null
+          created_at: string
+          created_by: string
+          operation_id: string
+          org_id: string
+          price_changed: number
+          project_id: string
+          request: string
+          unit_type_id: string
+          units: number
+        }
+        Insert: {
+          block?: string | null
+          created_at?: string
+          created_by: string
+          operation_id: string
+          org_id: string
+          price_changed: number
+          project_id: string
+          request: string
+          unit_type_id: string
+          units: number
+        }
+        Update: {
+          block?: string | null
+          created_at?: string
+          created_by?: string
+          operation_id?: string
+          org_id?: string
+          price_changed?: number
+          project_id?: string
+          request?: string
+          unit_type_id?: string
+          units?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "unit_type_applications_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "unit_type_applications_project_fkey"
+            columns: ["org_id", "project_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["org_id", "id"]
+          },
+        ]
+      }
       unit_types: {
         Row: {
           bathrooms: number | null
@@ -3205,6 +3265,15 @@ export type Database = {
           walked: number
         }[]
       }
+      apply_unit_type: {
+        Args: {
+          p_block?: string
+          p_operation_id: string
+          p_project_id: string
+          p_unit_type_id: string
+        }
+        Returns: Json
+      }
       claim_notification_jobs: {
         Args: {
           p_job_id?: string
@@ -3684,6 +3753,18 @@ export type Database = {
         }
         Returns: undefined
       }
+      record_price_list_version: {
+        Args: {
+          p_amount?: number
+          p_block?: string
+          p_expected?: Json
+          p_mode?: string
+          p_notes?: string
+          p_operation_id: string
+          p_project_id: string
+        }
+        Returns: Json
+      }
       redact_stale_enquiries: { Args: { p_months?: number }; Returns: number }
       remind_due_installments: { Args: { p_org?: string }; Returns: undefined }
       reorder_stage: {
@@ -3801,6 +3882,15 @@ export type Database = {
       rls_hoisted_policy_count: { Args: never; Returns: number }
       run_chain_checks: { Args: never; Returns: undefined }
       run_chain_checks_full: { Args: never; Returns: undefined }
+      set_unit_status: {
+        Args: {
+          p_expected: string
+          p_operation_id: string
+          p_status: string
+          p_unit_id: string
+        }
+        Returns: Json
+      }
       share_link_over_budget: {
         Args: { p_ip_hash: string; p_limit?: number }
         Returns: boolean

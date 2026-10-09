@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 140::bigint as migrations,
+    2::bigint as auth_users, 144::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -187,6 +187,16 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   -- deal won or lost (deals_closed_guard refuses every other); it restates
   -- deals_update and require_aal2 itself, and service_role still may not call it
   ('close_deal',           true,  false, true, false),
+  -- 0141: authenticated ONLY — a price-list version needs an accountable
+  -- actor; SECURITY INVOKER, so every policy on the rows it writes still
+  -- binds the caller (pinned although invokers are out of grant_unpinned's scope)
+  ('record_price_list_version', false, false, true, false),
+  -- 0142: authenticated ONLY — a unit-type stamp needs an accountable actor;
+  -- SECURITY INVOKER like 0141 (pinned although invokers are out of grant_unpinned's scope)
+  ('apply_unit_type',           false, false, true, false),
+  -- 0143: authenticated ONLY — a unit's status change needs an accountable
+  -- actor; SECURITY INVOKER like 0141/0142 (pinned although invokers are out of grant_unpinned's scope)
+  ('set_unit_status',           false, false, true, false),
   ('add_deal_stage',       false, false, true, true),
   ('reorder_stage',        false, false, true, true),
   ('admin_dashboard_stats',false, false, true, true),
@@ -817,6 +827,93 @@ misc as (
          coalesce((select regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'coalesce\(final_value, expected_value, 0\) as won_value'
                      from pg_proc p
                     where p.oid = to_regprocedure('public.admin_dashboard_stats(timestamp with time zone,timestamp with time zone,timestamp with time zone)')), false)::text
+  union all
+  -- 0141: a price-list version and the bulk reprice it records commit as ONE
+  -- transaction (record_price_list_version, SECURITY INVOKER): the container
+  -- and its units locked FOR NO KEY UPDATE (units in id order), the UPDATE's
+  -- row count checked, the per-unit trail counted, and the per-unit line left
+  -- to trg_price_history. Read as code — block and line comments stripped. A
+  -- restore that brought back a body without them reads false.
+  select 'INTEGRITY: a price-list version and the reprice it records commit together, one per-unit line each (0141)', 'true',
+         coalesce((select not p.prosecdef
+                          and c.code ~ 'p\.kind in \(''project'', ''phase''\)\s+for no key update;'
+                          and c.code ~ 'order by u\.id\s+for no key update;'
+                          and c.code ~ 'get diagnostics v_rows = row_count;\s+if v_rows <> v_changed then'
+                          and c.code ~ 'e\.event_type = ''price_changed''\s+and e\.occurred_at = now\(\)'
+                          and c.code !~* 'insert\s+into\s+(public\.)?events[^;]*price_changed'
+                     from pg_proc p
+                     cross join lateral (select regexp_replace(regexp_replace(p.prosrc, '/\*.*?\*/', '', 'g'), '--[^\n]*', '', 'g') as code) c
+                    where p.oid = to_regprocedure('public.record_price_list_version(uuid, uuid, text, text, numeric, text, jsonb)')), false)::text
+  union all
+  -- 0141: and one version answers one submission — a retry is answered, not
+  -- applied twice, only while the operation id is unique per organisation
+  select 'INTEGRITY: a price-list operation id is unique per organisation (0141)', 'true',
+         coalesce((select i.indisunique and i.indisvalid
+                          and pg_get_indexdef(i.indexrelid) ~ '\(org_id, operation_id\)$'
+                     from pg_index i
+                    where i.indexrelid = to_regclass('public.price_lists_org_operation_key')), false)::text
+  union all
+  -- 0142: applying a unit type commits as ONE transaction (apply_unit_type,
+  -- SECURITY INVOKER): the container and its units locked FOR NO KEY UPDATE
+  -- (units in id order), the stamp's and the audit lines' row counts checked,
+  -- a price the type cannot say left as the locked row holds it, the per-unit
+  -- price line left to trg_price_history, waits bounded. Read as code — block
+  -- and line comments stripped.
+  select 'INTEGRITY: a unit-type stamp commits whole, never writes back a price it read (0142)', 'true',
+         coalesce((select not p.prosecdef
+                          and p.proconfig @> array['lock_timeout=3s']
+                          and c.code ~ 'p\.kind in \(''project'', ''phase''\)\s+for no key update;'
+                          and c.code ~ 'order by u\.id\s+for no key update\) s;'
+                          and c.code ~ 'get diagnostics v_rows = row_count;\s+if v_rows <> v_scope then'
+                          and c.code ~ 'get diagnostics v_lines = row_count;\s+if v_lines <> v_scope then'
+                          and c.code ~ 'asking_price\s+= coalesce\(v_price, u\.asking_price\)'
+                          and c.code !~* 'insert\s+into\s+(public\.)?events[^;]*price_changed'
+                     from pg_proc p
+                     cross join lateral (select regexp_replace(regexp_replace(p.prosrc, '/\*.*?\*/', '', 'g'), '--[^\n]*', '', 'g') as code) c
+                    where p.oid = to_regprocedure('public.apply_unit_type(uuid, uuid, uuid, text)')), false)::text
+  union all
+  -- 0142: and one application answers one submission — only while the
+  -- operation record keeps (org, operation id) as its key and sessions can
+  -- neither rewrite nor remove it
+  select 'INTEGRITY: a unit-type operation id is unique per organisation and its record append-only (0142)', 'true',
+         (coalesce((select pg_get_constraintdef(c.oid) = 'PRIMARY KEY (org_id, operation_id)'
+                      from pg_constraint c
+                     where c.conrelid = to_regclass('public.unit_type_applications') and c.contype = 'p'), false)
+          and coalesce((select not has_table_privilege('authenticated', t.oid, 'update, delete, truncate')
+                               and not has_table_privilege('anon', t.oid, 'select, insert, update, delete, truncate')
+                          from pg_class t where t.oid = to_regclass('public.unit_type_applications')), false))::text
+  union all
+  -- 0143: a unit's status change commits WITH its audit lines (set_unit_status,
+  -- SECURITY INVOKER): the unit locked FOR NO KEY UPDATE, the transition decided
+  -- from the locked row (expected status, admin-only regression), the write's
+  -- and both lines' row counts checked, waits bounded. Read as code — block and
+  -- line comments stripped.
+  select 'INTEGRITY: a unit status change commits with its audit lines, decided from the locked row (0143)', 'true',
+         coalesce((select not p.prosecdef
+                          and p.proconfig @> array['lock_timeout=3s']
+                          and c.code ~ 'p\.kind = ''unit''\s+for no key update;'
+                          and c.code ~ 'if v_unit\.status <> v_expected then\s+raise exception'
+                          and c.code ~ 'if v_regress and v_role <> ''admin'' then\s+raise exception'
+                          and (select count(*) from regexp_matches(c.code, 'get diagnostics v_rows = row_count;\s+if v_rows <> 1 then', 'g')) = 3
+                     from pg_proc p
+                     cross join lateral (select regexp_replace(regexp_replace(p.prosrc, '/\*.*?\*/', '', 'g'), '--[^\n]*', '', 'g') as code) c
+                    where p.oid = to_regprocedure('public.set_unit_status(uuid, text, text, uuid)')), false)::text
+  union all
+  -- 0144: a deal or offer amount is a finite number. numeric(14,2) stores NaN
+  -- and NaN >= 0 is true, so the 0076 / 0077 non-negative CHECKs admitted it
+  -- and one such row turned every sum over the column NaN. Three CHECKs refuse
+  -- NaN and ±Infinity for every writer (service_role and postgres included);
+  -- exact definitions, validated — a validated CHECK means no stored row
+  -- breaks it, so the rows need no separate count.
+  select 'INTEGRITY: no deal or offer amount is NaN or infinite — three validated CHECKs refuse one for every writer (0144)', 'true',
+         ((select count(*) from pg_constraint c
+            where c.contype = 'c' and c.convalidated
+              and ((c.conrelid = to_regclass('public.offers') and c.conname = 'offers_amount_finite'
+                    and pg_get_constraintdef(c.oid) = 'CHECK ((amount <> ALL (ARRAY[''NaN''::numeric, ''Infinity''::numeric, ''-Infinity''::numeric])))')
+                or (c.conrelid = to_regclass('public.deals') and c.conname = 'deals_expected_value_finite'
+                    and pg_get_constraintdef(c.oid) = 'CHECK (((expected_value IS NULL) OR (expected_value <> ALL (ARRAY[''NaN''::numeric, ''Infinity''::numeric, ''-Infinity''::numeric]))))')
+                or (c.conrelid = to_regclass('public.deals') and c.conname = 'deals_final_value_finite'
+                    and pg_get_constraintdef(c.oid) = 'CHECK (((final_value IS NULL) OR (final_value <> ALL (ARRAY[''NaN''::numeric, ''Infinity''::numeric, ''-Infinity''::numeric]))))'))) = 3)::text
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.

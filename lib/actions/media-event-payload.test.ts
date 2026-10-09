@@ -45,7 +45,10 @@ vi.mock("@/lib/supabase/admin", () => ({
 vi.mock("@/lib/services/auth", () => ({
   getCurrentProfile: async () => ({ id: "agent-1", orgId: "org-1", role: "admin" }),
 }));
-vi.mock("@/lib/services/quality-score", () => ({ recomputeQualityScore: vi.fn(async () => null) }));
+vi.mock("@/lib/services/quality-score", () => ({
+  recomputeQualityScore: vi.fn(async () => null),
+  recomputeQuietly: vi.fn(async () => {}),
+}));
 vi.mock("@/lib/services/site-revalidate", () => ({ notifySiteIfPublic: vi.fn(async () => {}) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
@@ -141,7 +144,7 @@ describe("uploadPropertyMedia logs the photo by id and digest, not by file name"
   });
 
   it("a rejected row logs nothing (and still does not echo the name into the chain)", async () => {
-    const { fake, run } = upload("photo", [FILE_NAME], [{ data: null, error: { message: "new row violates row-level security" } }]);
+    const { fake, run } = upload("photo", [FILE_NAME], [{ data: null, error: { message: "new row violates row-level security", code: "42501" } }]);
     expect((await run()).error).toMatch(/not allowed/);
     expect(inserted(fake)).toEqual([]);
   });

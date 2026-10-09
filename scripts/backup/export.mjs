@@ -32,6 +32,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { TABLES, readAllRows } from "./export-tables.mjs";
 
 const args = process.argv.slice(2);
 const outRoot = args[args.indexOf("--out") + 1] ?? "../gnk-backups";
@@ -57,31 +58,6 @@ if (key.startsWith("eyJ")) {
   process.exit(1);
 }
 
-/**
- * Load order is irrelevant on restore (it runs with session_replication_role =
- * replica, so FKs are deferred), but keeping parents first makes a partial
- * restore readable if anyone ever does one by hand.
- */
-const TABLES = [
-  "organizations", "profiles", "districts", "areas", "cyprus_config",
-  "deal_stages", "reference_counters", "task_kinds", "unit_types", "contacts",
-  "buyer_requirements", "properties", "property_media", "property_keys",
-  "key_movements", "mandates", "leads", "interaction_notes", "deals", "offers", "viewings",
-  "viewing_slips", "documents", "tasks", "price_lists", "price_list_items",
-  "payment_plans", "price_history", "reservations", "reservation_installments",
-  "share_links", "share_link_properties", "share_link_attempts",
-  "public_listing_attempts", "public_enquiry_attempts",
-  // 0095: the feed_token IS the portal's pull URL, so a restore that loses
-  // this table points every enabled portal at a dead link.
-  "portal_connections", "portal_listings",
-  // 0101: the desk-alert outbox — ids, states and counters only, no person;
-  // a restore that loses it loses which enquiries still owe the desk a word.
-  "notification_jobs",
-  "enquiry_alert_sweep_runs",
-  "chain_checks", "events_chain_checkpoint",
-  "events",
-];
-
 const BUCKETS = ["documents", "signatures", "media"];
 
 const sb = createClient(url, key, { auth: { persistSession: false } });
@@ -93,16 +69,9 @@ const started = Date.now();
 const manifest = { takenAt: new Date().toISOString(), source: url, tables: {}, buckets: {} };
 
 for (const table of TABLES) {
-  // Page through: a table larger than the PostgREST cap would otherwise be
-  // silently truncated, which is the one thing a backup must never do.
-  const rows = [];
-  const PAGE = 1000;
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await sb.from(table).select("*").range(from, from + PAGE - 1);
-    if (error) throw new Error(`${table}: ${error.message}`);
-    rows.push(...data);
-    if (data.length < PAGE) break;
-  }
+  // In primary-key order, a page at a time, each resuming after the last key
+  // read — never by offset (export-tables.mjs says what offsets lost).
+  const rows = await readAllRows(sb, table);
   writeFileSync(join(outDir, "data", `${table}.json`), JSON.stringify(rows));
   manifest.tables[table] = rows.length;
   console.log(`${table.padEnd(20)} ${rows.length}`);
