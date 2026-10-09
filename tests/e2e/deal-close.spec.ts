@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { type SupabaseClient } from "@supabase/supabase-js";
 import { fixtureProfile, isLocal, opTimeout, serviceClient } from "./helpers";
 
@@ -43,6 +43,27 @@ async function removeFixture(svc: SupabaseClient): Promise<void> {
     .eq("email", AGENT_EMAIL)
     .maybeSingle();
   if (agentProfile) await svc.auth.admin.deleteUser(agentProfile.id);
+}
+
+/** A figure as formatMoney prints it ("€1.234.567", "€1.000,25", "€0"; "—" is no figure) → euros. */
+function euros(text: string): number {
+  const t = text.trim();
+  if (t === "—") return 0;
+  const n = Number(t.replace("€", "").replace(/\./g, "").replace(",", "."));
+  if (!Number.isFinite(n)) throw new Error(`not a money figure: ${JSON.stringify(text)}`);
+  return n;
+}
+
+/** The admin dashboard's "Won this month" tile: its € figure and its deal count. */
+async function wonThisMonth(page: Page): Promise<{ total: number; count: number }> {
+  await page.goto("/dashboard", { waitUntil: "networkidle" });
+  const label = page.getByText("Won this month", { exact: true });
+  await expect(label).toBeVisible({ timeout: opTimeout(15_000) });
+  const value = await label.locator("xpath=following-sibling::p[1]").innerText();
+  const sub = await label.locator("xpath=following-sibling::p[2]").innerText();
+  const count = Number(sub.match(/^(\d+)/)?.[1]);
+  if (!Number.isInteger(count)) throw new Error(`no deal count under the tile: ${JSON.stringify(sub)}`);
+  return { total: euros(value), count };
 }
 
 test.beforeEach(() => {
@@ -141,6 +162,10 @@ test("Mark won confirms the accepted price, stamps it, and prompts the listing f
   expect(holdErr, "seeding the live hold").toBeNull();
 
   try {
+    // the admin's "Won this month" before the close (workers: 1, so nothing
+    // else closes a deal between the two reads; the delta is this close alone)
+    const wonBefore = await wonThisMonth(page);
+
     await page.goto(`/deals/${deal!.id}`, { waitUntil: "networkidle" });
 
     await page.getByRole("button", { name: /mark won/i }).click();
@@ -172,6 +197,36 @@ test("Mark won confirms the accepted price, stamps it, and prompts the listing f
       .eq("event_type", "won");
     expect(wonEvents).toHaveLength(1);
     expect(Number((wonEvents![0].payload as { final_value?: number }).final_value)).toBe(250000);
+
+    // the stored estimate is untouched — the confirmed price is a second column
+    const { data: estimate } = await svc.from("deals").select("expected_value").eq("id", deal!.id).single();
+    expect(Number(estimate!.expected_value)).toBe(999999);
+
+    // ---------- the dashboard agrees: "Won this month" rose by the CONFIRMED price ----------
+    // (0140 — at 0093 it rose by the deliberately stale 999,999 estimate)
+    const wonAfter = await wonThisMonth(page);
+    expect({ total: wonAfter.total - wonBefore.total, count: wonAfter.count - wonBefore.count }).toEqual({
+      total: 250000,
+      count: 1,
+    });
+
+    // ---------- the board agrees: a won card shows the CONFIRMED price ----------
+    // (0140's rule — the dashboard, the money reports and the pipeline read
+    // coalesce(final_value, expected_value) for a won deal; the estimate here is
+    // a deliberately stale 999,999)
+    await page.goto("/pipeline", { waitUntil: "networkidle" });
+    const card = page.getByRole("listitem").filter({ hasText: DEAL_TITLE });
+    await expect(card).toContainText("€250.000");
+    await expect(card).not.toContainText("€999.999");
+    // ...and its column's total is the sum of exactly the figures its cards show
+    const column = page.locator("section[data-stage-id]").filter({ has: card });
+    await expect(column).toHaveAttribute("data-stage-closed", "true");
+    const shown = (await column.getByTestId("deal-value").allTextContents()).map(euros);
+    expect(shown).toContain(250000);
+    expect(euros(await column.getByTestId("stage-total").innerText())).toBeCloseTo(
+      shown.reduce((a, b) => a + b, 0),
+      2,
+    );
 
     // DB-01: the listing still reads available → the prompt task, never a flip
     const { data: still } = await svc

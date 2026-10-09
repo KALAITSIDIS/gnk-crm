@@ -94,6 +94,18 @@ export function zonedDateRangeToUtc(
 }
 
 /**
+ * The instant the Cyprus calendar month holding `now` began, as a UTC ISO
+ * string — the admin dashboard's "won this month" window start (doc 02 §A11).
+ * The month is Nicosia's, not UTC's: at 2026-09-30T21:00Z it is already
+ * 1 October there (EEST, UTC+3), so October's window opens at
+ * 2026-09-30T21:00:00.000Z; in winter (EET, UTC+2) a month opens at 22:00Z.
+ */
+export function cyprusMonthStart(now: Date, tz: string = CYPRUS_TZ): string {
+  const dayKey = zonedParts(now, tz).dayKey;
+  return zonedWallClockToUtc(`${dayKey.slice(0, 7)}-01T00:00`, tz).toISOString();
+}
+
+/**
  * Cyprus-local calendar coordinates for a UTC instant: the day bucket
  * ("YYYY-MM-DD"), minutes since local midnight, and a "HH:mm" label. Used to
  * place viewings on the calendar grid without redoing tz math on the client.

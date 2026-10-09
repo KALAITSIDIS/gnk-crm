@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { utcToDatetimeLocal, zonedDateRangeToUtc, zonedParts, zonedWallClockToUtc } from "./tz";
+import {
+  cyprusMonthStart,
+  utcToDatetimeLocal,
+  zonedDateRangeToUtc,
+  zonedParts,
+  zonedWallClockToUtc,
+} from "./tz";
 
 // Cyprus DST 2026: EEST (UTC+3) from 29 Mar to 25 Oct, EET (UTC+2) otherwise.
 describe("zonedWallClockToUtc", () => {
@@ -62,6 +68,38 @@ describe("zonedDateRangeToUtc", () => {
       lt: undefined,
     });
     expect(zonedDateRangeToUtc(undefined, undefined)).toEqual({ gte: undefined, lt: undefined });
+  });
+});
+
+// The admin dashboard's "won this month" window start (0140's won_month reads
+// won_at >= this instant).
+describe("cyprusMonthStart", () => {
+  it("summer (EEST, UTC+3): the last millisecond of 30 September is still September", () => {
+    expect(cyprusMonthStart(new Date("2026-09-30T20:59:59.999Z"))).toBe("2026-08-31T21:00:00.000Z");
+  });
+
+  it("summer: 21:00Z on 30 September is already 1 October in Cyprus — October opens there", () => {
+    expect(cyprusMonthStart(new Date("2026-09-30T21:00:00.000Z"))).toBe("2026-09-30T21:00:00.000Z");
+    expect(cyprusMonthStart(new Date("2026-10-09T12:00:00.000Z"))).toBe("2026-09-30T21:00:00.000Z");
+  });
+
+  it("a month that leaves summer time (DST ends 25 October 2026) still opens at its EEST midnight", () => {
+    expect(cyprusMonthStart(new Date("2026-10-31T21:59:59.999Z"))).toBe("2026-09-30T21:00:00.000Z");
+  });
+
+  it("winter (EET, UTC+2): a month opens at 22:00Z the day before", () => {
+    expect(cyprusMonthStart(new Date("2026-10-31T22:00:00.000Z"))).toBe("2026-10-31T22:00:00.000Z");
+    expect(cyprusMonthStart(new Date("2026-11-30T21:59:59.999Z"))).toBe("2026-10-31T22:00:00.000Z");
+    expect(cyprusMonthStart(new Date("2026-11-30T22:00:00.000Z"))).toBe("2026-11-30T22:00:00.000Z");
+  });
+
+  it("crosses the year in Cyprus time, not UTC's", () => {
+    expect(cyprusMonthStart(new Date("2026-12-31T21:59:59.999Z"))).toBe("2026-11-30T22:00:00.000Z");
+    expect(cyprusMonthStart(new Date("2026-12-31T22:00:00.000Z"))).toBe("2026-12-31T22:00:00.000Z");
+  });
+
+  it("a month that enters summer time (DST starts 28 March 2027) opens at its EET midnight", () => {
+    expect(cyprusMonthStart(new Date("2027-03-31T12:00:00.000Z"))).toBe("2027-02-28T22:00:00.000Z");
   });
 });
 
