@@ -79,28 +79,25 @@ export default async function PipelinePage({
   const daysSince = (iso: string | null) =>
     iso === null ? 0 : Math.max(0, Math.floor((now - new Date(iso).getTime()) / 86_400_000));
 
-  const deals: KanbanDeal[] = dealRows.map((d) => {
+  const deals: KanbanDeal[] = dealRows.map((d) => ({
+    id: d.id,
+    title: d.title,
+    stage_id: d.stage_id,
     // a won card shows (and its column sums) the confirmed final value — the
     // dashboard's and the reports' rule (0076 / 0140). Display only: the
     // deal's stored estimate is not touched.
-    const shown = dealValue(d);
-    return {
-      id: d.id,
-      title: d.title,
-      stage_id: d.stage_id,
-      displayValue: shown === null ? null : Number(shown),
-      health_score: d.health_score,
-      healthFactors: Array.isArray((d.health as { factors?: unknown } | null)?.factors)
-        ? ((d.health as { factors: KanbanDeal["healthFactors"] }).factors ?? null)
-        : null,
-      agentInitials: initials(d.agent_id ? agentName.get(d.agent_id) : undefined),
-      status: d.status as KanbanDeal["status"],
-      daysInStage: daysSince(
-        d.status === "won" ? d.won_at : d.status === "lost" ? d.lost_at : d.stage_entered_at,
-      ),
-      propertyRef: (d.properties as { reference: string } | null)?.reference ?? null,
-    };
-  });
+    displayValue: dealValue(d),
+    health_score: d.health_score,
+    healthFactors: Array.isArray((d.health as { factors?: unknown } | null)?.factors)
+      ? ((d.health as { factors: KanbanDeal["healthFactors"] }).factors ?? null)
+      : null,
+    agentInitials: initials(d.agent_id ? agentName.get(d.agent_id) : undefined),
+    status: d.status as KanbanDeal["status"],
+    daysInStage: daysSince(
+      d.status === "won" ? d.won_at : d.status === "lost" ? d.lost_at : d.stage_entered_at,
+    ),
+    propertyRef: (d.properties as { reference: string } | null)?.reference ?? null,
+  }));
   /* eslint-enable react-hooks/purity */
 
   const openCount = (openRes.data ?? []).length;

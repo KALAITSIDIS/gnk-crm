@@ -15,13 +15,14 @@
  * whose select forgot the column fails to compile instead of silently showing
  * the estimate; at run time a missing key still reads as "none recorded". The
  * fallback tests for null, never truthiness: a final value of 0 is a
- * confirmed 0.
+ * confirmed 0. The figure goes through `Number()` as the board's estimate
+ * always did before it.
  */
 export function dealValue(d: {
   status: string;
   expected_value: number | null;
   final_value: number | null;
 }): number | null {
-  if (d.status === "won" && d.final_value !== null && d.final_value !== undefined) return d.final_value;
-  return d.expected_value;
+  const v = d.status === "won" && d.final_value !== null && d.final_value !== undefined ? d.final_value : d.expected_value;
+  return v === null || v === undefined ? null : Number(v);
 }
