@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 142::bigint as migrations,
+    2::bigint as auth_users, 143::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -890,6 +890,22 @@ misc as (
                      from pg_proc p
                      cross join lateral (select regexp_replace(regexp_replace(p.prosrc, '/\*.*?\*/', '', 'g'), '--[^\n]*', '', 'g') as code) c
                     where p.oid = to_regprocedure('public.set_unit_status(uuid, text, text, uuid)')), false)::text
+  union all
+  -- 0144: a deal or offer amount is a finite number. numeric(14,2) stores NaN
+  -- and NaN >= 0 is true, so the 0076 / 0077 non-negative CHECKs admitted it
+  -- and one such row turned every sum over the column NaN. Three CHECKs refuse
+  -- NaN and ±Infinity for every writer (service_role and postgres included);
+  -- exact definitions, validated — a validated CHECK means no stored row
+  -- breaks it, so the rows need no separate count.
+  select 'INTEGRITY: no deal or offer amount is NaN or infinite — three validated CHECKs refuse one for every writer (0144)', 'true',
+         ((select count(*) from pg_constraint c
+            where c.contype = 'c' and c.convalidated
+              and ((c.conrelid = to_regclass('public.offers') and c.conname = 'offers_amount_finite'
+                    and pg_get_constraintdef(c.oid) = 'CHECK ((amount <> ALL (ARRAY[''NaN''::numeric, ''Infinity''::numeric, ''-Infinity''::numeric])))')
+                or (c.conrelid = to_regclass('public.deals') and c.conname = 'deals_expected_value_finite'
+                    and pg_get_constraintdef(c.oid) = 'CHECK (((expected_value IS NULL) OR (expected_value <> ALL (ARRAY[''NaN''::numeric, ''Infinity''::numeric, ''-Infinity''::numeric]))))')
+                or (c.conrelid = to_regclass('public.deals') and c.conname = 'deals_final_value_finite'
+                    and pg_get_constraintdef(c.oid) = 'CHECK (((final_value IS NULL) OR (final_value <> ALL (ARRAY[''NaN''::numeric, ''Infinity''::numeric, ''-Infinity''::numeric]))))'))) = 3)::text
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.
