@@ -3,7 +3,7 @@ import { getTranslations } from "next-intl/server";
 import { ArrowLeft, Info, TriangleAlert } from "lucide-react";
 import { EvidenceBuilder } from "@/components/features/reports/evidence-builder";
 import { getCurrentProfile } from "@/lib/services/auth";
-import { assembleEvidence, evidenceDealFigure } from "@/lib/services/evidence";
+import { assembleEvidence, evidenceDealLine } from "@/lib/services/evidence";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTime } from "@/lib/utils/format";
@@ -190,9 +190,8 @@ export default async function CommissionEvidencePage({
               <ul className="flex flex-col gap-2 text-sm">
                 {preview.deals.map((d, i) => (
                   <li key={i}>
-                    <span className="font-medium text-text-1">
-                      {d.title} — {d.status}
-                      {evidenceDealFigure(d) !== null ? ` — ${evidenceDealFigure(d)}` : ""}
+                    <span data-testid="evidence-deal-line" className="font-medium text-text-1">
+                      {evidenceDealLine(d)}
                     </span>
                     <span className="block text-text-2">
                       {d.commissionNotes ?? t("noCommissionNotes")}

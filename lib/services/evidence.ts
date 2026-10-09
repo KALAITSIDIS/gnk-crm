@@ -90,6 +90,16 @@ export function evidenceDealFigure(deal: Pick<EvidenceDeal, "value" | "valueIsFi
 }
 
 /**
+ * A deal's whole headline line — "Title — won — final value €250.000" — the
+ * ONE builder both the PDF and the on-screen preview render, so the two can
+ * never drift apart.
+ */
+export function evidenceDealLine(deal: Pick<EvidenceDeal, "title" | "status" | "value" | "valueIsFinal">): string {
+  const figure = evidenceDealFigure(deal);
+  return `${deal.title} — ${deal.status}${figure === null ? "" : ` — ${figure}`}`;
+}
+
+/**
  * "skipped" = verification not run (preview). The generate action always runs
  * it, so a stored PDF only ever carries "verified" or "failed" — and an RPC
  * error refuses generation instead of masquerading as "failed".

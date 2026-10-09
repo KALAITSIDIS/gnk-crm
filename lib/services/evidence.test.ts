@@ -3,6 +3,7 @@ import { fakeClient } from "@/lib/testing/fake-client";
 import {
   assembleEvidence,
   evidenceDealFigure,
+  evidenceDealLine,
   reportContentHash,
   sortChronological,
   type EvidenceRow,
@@ -308,6 +309,16 @@ describe("the deal lines state a figure WITH its basis (T-won-value-surfaces)", 
     expect(evidenceDealFigure({ value: 0, valueIsFinal: true })).toBe("final value €0");
     expect(evidenceDealFigure({ value: 999999, valueIsFinal: false })).toBe("expected value €999.999");
     expect(evidenceDealFigure({ value: null, valueIsFinal: false })).toBeNull();
+  });
+
+  it("evidenceDealLine: the one headline both the PDF and the preview print", () => {
+    expect(evidenceDealLine({ title: "Villa", status: "won", value: 250000, valueIsFinal: true })).toBe(
+      "Villa — won — final value €250.000",
+    );
+    expect(evidenceDealLine({ title: "Flat", status: "open", value: 999999, valueIsFinal: false })).toBe(
+      "Flat — open — expected value €999.999",
+    );
+    expect(evidenceDealLine({ title: "Plot", status: "lost", value: null, valueIsFinal: false })).toBe("Plot — lost");
   });
 
   it("assembleEvidence values each deal by the won-value rule and says which figure it is", async () => {

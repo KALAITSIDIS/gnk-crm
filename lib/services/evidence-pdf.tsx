@@ -9,7 +9,7 @@ import {
   View,
   renderToBuffer,
 } from "@react-pdf/renderer";
-import { evidenceDealFigure, type EvidenceData } from "@/lib/services/evidence";
+import { evidenceDealLine, type EvidenceData } from "@/lib/services/evidence";
 import { PDF_FONT, registerPdfFonts } from "@/lib/services/pdf-fonts";
 import { formatDateTime } from "@/lib/utils/format";
 
@@ -184,10 +184,7 @@ function EvidenceDoc({ d, generatedAt }: { d: EvidenceData; generatedAt: string 
             <Text style={styles.section}>Deals &amp; commission notes</Text>
             {d.deals.map((deal, i) => (
               <View key={i} style={styles.dealRow} wrap={false}>
-                <Text style={styles.dealTitle}>
-                  {deal.title} — {deal.status}
-                  {evidenceDealFigure(deal) !== null ? ` — ${evidenceDealFigure(deal)}` : ""}
-                </Text>
+                <Text style={styles.dealTitle}>{evidenceDealLine(deal)}</Text>
                 <Text>{glyphSafe(deal.commissionNotes ?? "No commission notes recorded.")}</Text>
               </View>
             ))}

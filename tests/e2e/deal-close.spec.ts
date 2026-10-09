@@ -193,6 +193,14 @@ test("Mark won confirms the accepted price, stamps it, and prompts the listing f
     await expect(headerValue).toHaveText(/^Final value\s+€250\.000$/);
     await expect(costs).toHaveAttribute("href", "/calculators?price=250000");
 
+    // ...and the buyer's commission-evidence preview states the deal's figure
+    // WITH its basis — the same line the PDF prints (evidenceDealLine)
+    await page.goto(`/reports/commission-evidence?contact=${buyer!.id}`, { waitUntil: "networkidle" });
+    const evidenceLine = page.getByTestId("evidence-deal-line").filter({ hasText: DEAL_TITLE });
+    await expect(evidenceLine).toHaveText(`${DEAL_TITLE} — won — final value €250.000`, {
+      timeout: opTimeout(15_000),
+    });
+
     // ---------- the database agrees ----------
     const { data: closed } = await svc
       .from("deals")
