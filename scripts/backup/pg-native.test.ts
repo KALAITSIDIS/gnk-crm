@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  DATA_DUMP_EXCLUDED_TABLES,
   EXE,
   connEnvFromUrl,
   dataDumpArgs,
@@ -12,6 +13,7 @@ import {
   rolesDumpArgs,
   runPg,
   schemaDumpArgs,
+  snapshotConnectionProblem,
 } from "./pg-native.mjs";
 
 /**
@@ -284,6 +286,50 @@ describe("argument builders mirror the CLI's pg_dump invocations", () => {
   });
   it("roles: pg_dumpall flags, no passwords (the connecting role cannot read them anyway)", () => {
     expect(rolesDumpArgs()).toEqual(["--roles-only", "--role", "postgres", "--quote-all-identifiers", "--no-role-passwords", "--no-comments"]);
+  });
+  it("schema and data read the held snapshot when one is given, and only then", () => {
+    const snap = "00000003-0000001B-1";
+    expect(schemaDumpArgs(["public"], { snapshot: snap })).toEqual([
+      "--schema-only", "--quote-all-identifiers", "--role", "postgres", "--schema", "public", "--snapshot", snap,
+    ]);
+    expect(dataDumpArgs(["public"], { snapshot: snap }).slice(-2)).toEqual(["--snapshot", snap]);
+    expect(schemaDumpArgs(["public"], {})).not.toContain("--snapshot");
+    expect(dataDumpArgs(["public"], { snapshot: undefined })).not.toContain("--snapshot");
+  });
+  it("data: the excluded tables are one shared list, so the snapshot's table count cannot drift from the dump", () => {
+    expect(DATA_DUMP_EXCLUDED_TABLES).toEqual(["auth.schema_migrations", "storage.migrations", "supabase_functions.migrations"]);
+    const args = dataDumpArgs(["public"]);
+    expect(args.filter((_, i) => args[i - 1] === "--exclude-table")).toEqual(DATA_DUMP_EXCLUDED_TABLES);
+  });
+});
+
+describe("snapshotConnectionProblem", () => {
+  const api = "https://yjgirvzgoiywdojnpkpd.supabase.co";
+  const pooler = (user: string, port = 5432) => `postgresql://${user}:pw@aws-0-eu-central-1.pooler.supabase.com:${port}/postgres?sslmode=require`;
+
+  it("accepts the session pooler for the project SUPABASE_URL names", () => {
+    expect(snapshotConnectionProblem({ dbUrl: pooler("postgres.yjgirvzgoiywdojnpkpd"), apiUrl: api })).toBeNull();
+    expect(snapshotConnectionProblem({ dbUrl: "postgresql://postgres:pw@db.yjgirvzgoiywdojnpkpd.supabase.co:5432/postgres", apiUrl: api })).toBeNull();
+    expect(snapshotConnectionProblem({ dbUrl: "postgresql://postgres:postgres@127.0.0.1:54322/postgres", apiUrl: "http://127.0.0.1:54321" })).toBeNull();
+  });
+
+  /**
+   * The row check now reads production through ONE path — the dumps and the
+   * counts share a connection string — so a URL pointing at another project
+   * would check that project's dump against that project's counts and pass.
+   * The old check read PostgREST too, and noticed by accident.
+   */
+  it("refuses a database URL for a different project than SUPABASE_URL", () => {
+    expect(snapshotConnectionProblem({ dbUrl: pooler("postgres.otherprojectref0000"), apiUrl: api })).toMatch(
+      /otherprojectref0000.*yjgirvzgoiywdojnpkpd/,
+    );
+    expect(
+      snapshotConnectionProblem({ dbUrl: "postgresql://postgres:pw@db.otherprojectref0000.supabase.co:5432/postgres", apiUrl: api }),
+    ).toMatch(/different project/);
+  });
+
+  it("refuses the transaction pooler, which cannot hold the snapshot pg_dump imports", () => {
+    expect(snapshotConnectionProblem({ dbUrl: pooler("postgres.yjgirvzgoiywdojnpkpd", 6543), apiUrl: api })).toMatch(/6543.*session/);
   });
 });
 

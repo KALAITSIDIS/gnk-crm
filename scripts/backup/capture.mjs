@@ -36,8 +36,13 @@
  *   - `data.sql` must start `SET session_replication_role = replica;` or
  *     `trg_events_hash` re-mints every hash on restore and the chain then
  *     verifies against invented values (§5).
- *   - A dump can be truncated without erroring — so the event count inside
- *     data.sql is compared against the LIVE count.
+ *   - A dump can be truncated, or lose a table, without erroring — so every
+ *     COPY block is compared with a row count taken in the dump's OWN
+ *     snapshot (dump-snapshot.mjs: one held REPEATABLE READ transaction, both
+ *     pg_dumps run --snapshot), for every table in the dumped schemas, the
+ *     events partitions included. Counts read at any other moment race the
+ *     cron jobs that keep writing: on 2026-10-09 a PostgREST count taken 45 s
+ *     after the dump failed a complete backup (T-dump-snapshot-counts).
  *   - A failed dump can still leave a file (the CLI did, as 0 bytes). Size floors
  *     catch it.
  *   - The CLI emits NO `CREATE EXTENSION`, so the schema dump is given one and
@@ -52,11 +57,12 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
+import { openDumpSnapshot } from "./dump-snapshot.mjs";
 import {
-  connEnvFromUrl, dataDumpArgs, resolvePgTools, rewriteDataDump, rewriteRolesDump, rewriteSchemaDump,
-  rolesDumpArgs, runPg, schemaDumpArgs,
+  DATA_DUMP_EXCLUDED_TABLES, connEnvFromUrl, dataDumpArgs, resolvePgTools, rewriteDataDump, rewriteRolesDump,
+  rewriteSchemaDump, rolesDumpArgs, runPg, schemaDumpArgs, snapshotConnectionProblem,
 } from "./pg-native.mjs";
-import { PARTITIONED_TABLES, rowCountProblems, tableCountsFromSet } from "./verify-row-counts.mjs";
+import { verifyStagedSet } from "./verify-row-counts.mjs";
 
 const args = process.argv.slice(2);
 const arg = (n, d) => (args.indexOf(n) !== -1 ? args[args.indexOf(n) + 1] : d);
@@ -120,6 +126,21 @@ try {
   console.error(e.message);
   process.exit(2);
 }
+// The dumps and the counts that check them share one held snapshot, over one
+// connection string: it must be session mode, and it must be SUPABASE_URL's
+// project, or the check would compare a database with itself.
+const connProblem = snapshotConnectionProblem({ dbUrl, apiUrl });
+if (connProblem) {
+  console.error(connProblem);
+  process.exit(2);
+}
+
+/**
+ * What the data dump holds, and therefore what the snapshot counts — one
+ * list, so the two cannot drift. events_parts holds the `events` partitions
+ * (0063): the parent emits no COPY of its own.
+ */
+const DATA_SCHEMAS = ["public", "events_parts", "auth", "storage"];
 
 const stamp = new Date().toISOString().slice(0, 10);
 const finalDir = join(outRoot, stamp);
@@ -145,6 +166,12 @@ mkdirSync(stageDir, { recursive: true });
 
 const sb = createClient(apiUrl, svcKey, { auth: { persistSession: false } });
 const problems = [];
+/**
+ * Worth reading, not worth failing the night over: the JSON export drifting
+ * from the dump's snapshot while production kept working, a live count that
+ * moved since. Logged and kept in the manifest.
+ */
+const warnings = [];
 const sha256 = (b) => createHash("sha256").update(b).digest("hex");
 const log = (s) => console.log(s);
 
@@ -280,6 +307,23 @@ log(`capture ${stamp}  ->  ${finalDir}`);
 log(`staging in ${stagingRoot}\n`);
 log("dumps");
 log(`  via ${pg.source}`);
+
+/**
+ * ONE SNAPSHOT for both dumps and the row counts that check them (T-dump-
+ * snapshot-counts). Opened before the schema dump, so the schema and the data
+ * describe the same instant too — catch-up runs happen in the daytime, when a
+ * hosted migration can land between two separate snapshots. If it cannot be
+ * opened the dumps still run (their files are the evidence) but the night
+ * FAILS: a row check that did not run is reported, never skipped.
+ */
+let snap = null;
+try {
+  snap = await openDumpSnapshot({ psql: pg.psql, connEnv, schemas: DATA_SCHEMAS, excluded: DATA_DUMP_EXCLUDED_TABLES });
+  const ext = snap.extensionTables.map((t) => `${t.schema}.${t.table}`).join(", ") || "none";
+  log(`  snapshot ${snap.snapshotId} at ${snap.takenAt}: ${snap.tables.length} tables counted; extension-owned, not compared: ${ext}`);
+} catch (e) {
+  problems.push(`${redact(e.message)}\n      the dumps ran WITHOUT a shared snapshot, so the row check did NOT run`);
+}
 /**
  * `events_parts` IS IN BOTH DUMPS SINCE 0063 (found 2026-08-29, the FIRST
  * capture against partitioned production). Migration 0063 moved the events
@@ -291,17 +335,26 @@ log(`  via ${pg.source}`);
  * ("missing COPY public.events" + count mismatch) and refused to promote,
  * which is the system working; this is the fix.
  */
-const schemaFile = dump("schema", pg.pgDump, schemaDumpArgs(["public", "events_parts"]), rewriteSchemaDump, "pg_dump.sql");
+const snapshot = snap?.snapshotId;
+const schemaFile = dump("schema", pg.pgDump, schemaDumpArgs(["public", "events_parts"], { snapshot }), rewriteSchemaDump, "pg_dump.sql");
 addExtensionPreamble(schemaFile);
-const dataFile = dump("data", pg.pgDump, dataDumpArgs(["public", "events_parts", "auth", "storage"]), rewriteDataDump, "data.sql");
+const dataFile = dump("data", pg.pgDump, dataDumpArgs(DATA_SCHEMAS, { snapshot }), rewriteDataDump, "data.sql");
+const dataDumpDone = new Date().toISOString();
+// Both pg_dumps have imported the snapshot (or failed); the session can go.
+if (snap) {
+  const rc = await snap.close();
+  if (rc !== 0) warnings.push(`snapshot session: psql exited ${rc} on ROLLBACK — the dumps had already imported the snapshot`);
+}
 const rolesFile = dump("roles", pg.pgDumpall, rolesDumpArgs(), rewriteRolesDump, "roles.sql");
 
+let exportDone = null;
 if (!skipStorage) {
   log("\nstorage + table json (export.mjs)");
   const r = spawnSync(process.execPath, [join(import.meta.dirname, "export.mjs"), "--out", stagingRoot], {
     encoding: "utf8",
     env: { ...process.env },
   });
+  exportDone = new Date().toISOString();
   if (r.status !== 0) {
     problems.push(`export.mjs: exit ${r.status}\n      ${redact(`${r.stderr ?? ""}`).split("\n").map((l) => l.trim()).filter(Boolean).slice(-6).join("\n      ")}`);
   } else log("  ok");
@@ -369,8 +422,9 @@ else {
    * Events are PARTITIONED since 0063: the parent `public.events` emits no
    * COPY at all — the rows arrive as one COPY block PER PARTITION in the
    * `events_parts` schema (that schema holds nothing else). Sum them; the
-   * cross-check against the live count below is what catches a dump that
-   * silently lost a partition.
+   * row check compares each partition with its own snapshot count, and the
+   * sum against the PARENT's snapshot count below catches a partition the
+   * dump never reached at all (one living outside events_parts).
    */
   const partSegs = dataSql.split('COPY "events_parts"."').slice(1);
   if (!partSegs.length) {
@@ -386,56 +440,63 @@ else {
   }
 
   /**
-   * Every table export.mjs counted must appear in the dump with the same number
-   * of rows. The checks above cannot see an ABSENT table: stripping the entire
-   * public section from a real 246 KB data.sql leaves 178 KB of auth, storage
-   * and events_parts that clears the 10 KB floor, both substring greps, the
-   * replica header and the events count, and the set is promoted verified.
-   * pg_dump is not run with --strict-names, so a mistyped --schema public is
-   * ignored silently rather than failing the dump (§4b.2 is the sibling case).
+   * Every COPY block against the dump's own snapshot, both ways, and the JSON
+   * export against the same (verify-row-counts.mjs). The checks above cannot
+   * see an ABSENT table: stripping the entire public section from a real
+   * 246 KB data.sql leaves 178 KB that clears the floor, both greps and the
+   * replica header. pg_dump is not run with --strict-names, so a mistyped
+   * --schema public is ignored silently rather than failing the dump.
    *
-   * Measured against the real 2026-09-16 and 2026-09-20 sets before this
-   * landed: 39 of 39 tables agree exactly, so a disagreement is a true signal
-   * and not an approximation that would cry wolf nightly.
+   * The comparator used to be the export's PostgREST JSON, read 20-45 s after
+   * the dump's snapshot; on 2026-10-09 a cron insert in between failed a
+   * complete backup. Counted inside the snapshot the dumps import, an intact
+   * dump matches EXACTLY whatever production writes meanwhile.
    *
-   * stageDir, NOT stagingRoot — as the staging comment above already says, both
-   * tools append the same stamp, so they meet one level down. The first version
-   * read stagingRoot, found nothing on every run, and reported it as a
-   * --skip-storage skip, which is why an absent directory is now a PROBLEM
-   * unless storage really was skipped. A check that silently does nothing is
-   * worse than no check, because the log claims it ran.
+   * stageDir, NOT stagingRoot: both tools append the same stamp, so they meet
+   * one level down. The first version read stagingRoot, found nothing on every
+   * run, and called it a --skip-storage skip — verifyStagedSet makes an absent
+   * directory a PROBLEM unless storage really was skipped.
    */
-  const counts = tableCountsFromSet(stageDir);
-  if (counts === null) {
-    if (skipStorage) {
-      log("  data: row-count cross-check SKIPPED — --skip-storage, export.mjs wrote no table json");
-    } else {
-      problems.push(
-        `data: no data/*.json under ${relative(outRoot, stageDir) || stageDir} — export.mjs ran but its table json is not where the cross-check reads it, so the check did NOT run`,
-      );
-    }
-  } else {
-    const rowProblems = rowCountProblems(dataSql, counts);
-    problems.push(...rowProblems);
-    const checked = Object.keys(counts).filter((t) => !PARTITIONED_TABLES.has(t)).length;
-    log(
-      rowProblems.length
-        ? `  data: ${rowProblems.length} of ${checked} table(s) DISAGREE with the export`
-        : `  data: ${checked} table row counts match the export`,
-    );
+  const v = verifyStagedSet({ dataSql, stageDir, snap, skipStorage });
+  problems.push(...v.problems);
+  warnings.push(...v.warnings);
+  for (const line of v.lines) log(`  ${line}`);
+
+  const eventsInSnapshot = snap?.partitioned.find((p) => p.schema === "public" && p.table === "events")?.rows ?? null;
+  if (snap && dumpedEvents !== null) {
+    if (eventsInSnapshot === null) {
+      problems.push("data: the snapshot did not count public.events — the events check did NOT run");
+    } else if (dumpedEvents !== eventsInSnapshot) {
+      problems.push(`EVENT COUNT MISMATCH: dump has ${dumpedEvents} across its partitions, the dump's own snapshot has ${eventsInSnapshot}`);
+    } else log(`  data: ${dumpedEvents} events in the dump = public.events in its snapshot`);
   }
 }
 
 if (rolesFile && statSync(rolesFile).size < 50) problems.push("roles: implausibly small");
 
+/**
+ * The live count still runs: it is the one REST call a --skip-storage run
+ * makes, so it is what catches a wrong SUPABASE_URL or service key there.
+ * Its NUMBER is no longer a check — it is read after the dumps, and anything
+ * written since legitimately differs (the 2026-10-09 lesson). A difference is
+ * logged as a warning.
+ */
 const { count: liveEvents, error: cErr } = await sb.from("events").select("*", { count: "exact", head: true });
 if (cErr) problems.push(`live count failed: ${cErr.message || "no response — check SUPABASE_URL and the service key"}`);
 else {
-  log(`  live:  ${liveEvents} events in production`);
-  if (dumpedEvents !== null && dumpedEvents !== liveEvents) {
-    problems.push(`EVENT COUNT MISMATCH: dump has ${dumpedEvents}, production has ${liveEvents}`);
+  log(`  live:  ${liveEvents} events in production now`);
+  const eventsInSnapshot = snap?.partitioned.find((p) => p.schema === "public" && p.table === "events")?.rows;
+  if (eventsInSnapshot !== undefined && liveEvents !== eventsInSnapshot) {
+    warnings.push(`events: production has ${liveEvents} now, the dump's snapshot ${eventsInSnapshot} — written since the snapshot`);
   }
 }
+
+// backup.log outlives the staging folder (the next run sweeps it): keep the
+// timeline here, so a disagreement can be explained from the log alone.
+log(
+  `  timing: snapshot ${snap ? `${snap.snapshotId} taken ${snap.takenAt} (database clock)` : "NONE"}; ` +
+    `data dump done ${dataDumpDone}; export done ${exportDone ?? "skipped"} (this machine's clock)`,
+);
 
 // ------------------------------------------------------------ checksums + list
 const walk = (dir, base = dir) =>
@@ -457,17 +518,39 @@ writeFileSync(
     source: apiUrl,
     files: files.length,
     bytes: files.reduce((a, f) => a + statSync(join(stageDir, f)).size, 0),
-    events: { inDump: dumpedEvents, live: liveEvents ?? null },
+    events: {
+      inDump: dumpedEvents,
+      inSnapshot: snap?.partitioned.find((p) => p.schema === "public" && p.table === "events")?.rows ?? null,
+      live: liveEvents ?? null,
+    },
+    // What the row check compared against, so a set can answer "was this
+    // table complete?" from inside itself.
+    snapshot: snap
+      ? {
+          id: snap.snapshotId,
+          takenAt: snap.takenAt,
+          tables: Object.fromEntries(snap.tables.map((t) => [`${t.schema}.${t.table}`, t.rows])),
+          extensionTables: snap.extensionTables.map((t) => `${t.schema}.${t.table}`),
+        }
+      : null,
     storageIncluded: !skipStorage,
     verified: problems.length === 0,
     problems,
+    warnings,
   }, null, 1),
 );
+
+const logWarnings = (out) => {
+  if (!warnings.length) return;
+  out(`\n${warnings.length} warning(s) — not failures:`);
+  for (const w of warnings) out(`  - ${w}`);
+};
 
 // -------------------------------------------------------------------- promote
 if (problems.length) {
   console.error(`\nBACKUP NOT TRUSTWORTHY — ${problems.length} problem(s):`);
   for (const p of problems) console.error(`  - ${p}`);
+  logWarnings(console.error);
   console.error(`\nDESTINATION NOT TOUCHED. ${existsSync(finalDir) ? `The existing ${stamp} set is intact.` : `No ${stamp} set was created.`}`);
   console.error(`Partial output left for inspection: ${stageDir}`);
 } else {
@@ -509,6 +592,7 @@ if (problems.length) {
     }
     log(`  retention: kept ${Math.min(managed.length, keep)} of ${managed.length} verified sets (--keep ${keep}); unmanaged sets untouched`);
   }
+  logWarnings(log);
   log("\nverified — every check passed");
 }
 
