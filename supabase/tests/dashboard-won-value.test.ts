@@ -15,8 +15,10 @@ import { BODY_0093_MD5, REVERT_0140_SQL, SIG_0140 as SIG, readMigration0140 } fr
  *
  * THE GAP (reproduced at 0093 by this file — the test marked RED at 0093
  * failed there): 0076 made a won deal count at coalesce(final_value,
- * expected_value) everywhere; 0093 rebuilt admin_dashboard_stats() from 0057's
- * body and undid it for the dashboard tile, which summed the ESTIMATE again.
+ * expected_value) in the dashboard tile and the two money reports
+ * (report_agent_performance, report_source_roi); 0093 rebuilt
+ * admin_dashboard_stats() from 0057's body and undid it for the dashboard
+ * tile, which summed the ESTIMATE again.
  * close_deal records the accepted offer's amount as final_value, so nearly
  * every real win reads wrong.
  *
@@ -157,7 +159,10 @@ beforeAll(async () => {
   }
   // a win before the window
   await wonDeal(ORG, 999_000, 999_000, new Date(Date.now() - 40 * DAY));
-  // a LOST deal inside the window: never a win, whatever it was worth
+  // a LOST deal carrying a stray won_at INSIDE the window (no CHECK ties
+  // won_at to status; a pre-0117 race and maintenance reopens left such rows):
+  // only `status = 'won'` keeps it out, so this pins that predicate — a real
+  // lost close has won_at null, which would exclude it twice over
   const lost = await svc.from("deals").insert({
     org_id: ORG,
     stage_id: await stageOf(ORG, "lost"),
@@ -165,12 +170,15 @@ beforeAll(async () => {
     title: `DWV ${RUN} lost`,
     status: "lost",
     expected_value: 5_555_555,
+    final_value: 4_444_444,
+    won_at: new Date(Date.now() - 2 * HOUR).toISOString(),
     lost_at: new Date(Date.now() - HOUR).toISOString(),
     lost_reason: "Buyer withdrew",
   });
   if (lost.error) throw new Error(`lost deal: ${lost.error.message}`);
-  // an OPEN deal that somehow carries a final value: the pipeline still reads
-  // its estimate (only a won deal has a confirmed price)
+  // an OPEN deal that somehow carries a final value and an in-window won_at:
+  // it is no win, and the pipeline still reads its estimate (only a won deal
+  // has a confirmed price)
   openStageOrg = await stageOf(ORG, "open");
   const open = await svc.from("deals").insert({
     org_id: ORG,
@@ -180,6 +188,7 @@ beforeAll(async () => {
     status: "open",
     expected_value: 70_000,
     final_value: 1,
+    won_at: new Date(Date.now() - 3 * HOUR).toISOString(),
   });
   if (open.error) throw new Error(`open deal: ${open.error.message}`);
   // another organisation's win in the same window (estimate = final: this
@@ -237,10 +246,10 @@ describe("1. the admin's \"won this month\", through PostgREST", () => {
     }
   });
 
-  it("only this organisation's wins, only inside the window: another organisation's, an older win and a lost deal are not counted", async () => {
+  it("only this organisation's wins, only inside the window: another organisation's, an older win, and a lost or open deal carrying a stray in-window won_at are not counted", async () => {
     const mine = await wonMonth(admin);
     expect(mine.count).toBe(IN_WINDOW.length);
-    expect(mine.total).toBeLessThan(5_555_555);
+    expect(mine.total).toBeLessThan(1_000_000);
     expect(await wonMonth(otherAdmin)).toEqual({ total: 5_000_000, count: 1 });
   });
 

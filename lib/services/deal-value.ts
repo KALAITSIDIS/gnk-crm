@@ -2,13 +2,15 @@
  * The figure a deal is DISPLAYED at on the pipeline board (a card, and the
  * column total that sums the cards): a WON deal at its confirmed final value,
  * falling back to its estimate when none was recorded; every other deal at
- * its estimate. The reports' rule (0076) and the dashboard's "won this month"
- * (0140) — `coalesce(final_value, expected_value)` for won rows — so each
- * deal is valued the same way on every one of those surfaces. (Their totals
- * still differ by design: the board's closed columns hold a rolling 30 days,
- * the dashboard a Cyprus calendar month.) close_deal records the accepted
- * offer's amount as final_value, so nearly every real win differs from its
- * estimate.
+ * its estimate. The rule of the two money reports (report_agent_performance,
+ * report_source_roi — 0076) and of the dashboard's "won this month" (0140) —
+ * `coalesce(final_value, expected_value)` for won rows — so each deal is valued
+ * the same way on those surfaces. (Their totals still differ by design: the
+ * board's closed columns hold a rolling 30 days, the dashboard a Cyprus
+ * calendar month. The deal page header, the deals CSV and the commission
+ * evidence still read the estimate — BACKLOG "Won deal values".) close_deal
+ * records the accepted offer's amount as final_value, so nearly every real win
+ * differs from its estimate.
  *
  * A display value only: the stored estimate (`deals.expected_value`) is never
  * replaced by it. `final_value` is REQUIRED in the argument's type so a caller

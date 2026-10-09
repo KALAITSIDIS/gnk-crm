@@ -211,7 +211,7 @@ test("Mark won confirms the accepted price, stamps it, and prompts the listing f
     });
 
     // ---------- the board agrees: a won card shows the CONFIRMED price ----------
-    // (0140's rule — the dashboard, the reports and the pipeline read
+    // (0140's rule — the dashboard, the money reports and the pipeline read
     // coalesce(final_value, expected_value) for a won deal; the estimate here is
     // a deliberately stale 999,999)
     await page.goto("/pipeline", { waitUntil: "networkidle" });

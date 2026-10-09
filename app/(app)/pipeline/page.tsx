@@ -84,8 +84,8 @@ export default async function PipelinePage({
     title: d.title,
     stage_id: d.stage_id,
     // a won card shows (and its column sums) the confirmed final value — the
-    // dashboard's and the reports' rule (0076 / 0140). Display only: the
-    // deal's stored estimate is not touched.
+    // rule of the dashboard's "won this month" and the money reports (0076 /
+    // 0140). Display only: the deal's stored estimate is not touched.
     displayValue: dealValue(d),
     health_score: d.health_score,
     healthFactors: Array.isArray((d.health as { factors?: unknown } | null)?.factors)
