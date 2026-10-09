@@ -1,5 +1,32 @@
 import { describe, expect, it } from "vitest";
-import { dealValue } from "./deal-value";
+import { dealValue, dealValueIsFinal } from "./deal-value";
+
+describe("dealValueIsFinal — is the displayed figure the confirmed price?", () => {
+  it("a won deal with a final value recorded: yes — including a confirmed 0", () => {
+    expect(dealValueIsFinal({ status: "won", final_value: 250_000 })).toBe(true);
+    expect(dealValueIsFinal({ status: "won", final_value: 0 })).toBe(true);
+  });
+
+  it("a won deal with no final value (legacy, or an override close without a figure): no — it shows its estimate", () => {
+    expect(dealValueIsFinal({ status: "won", final_value: null })).toBe(false);
+  });
+
+  it("an open or lost deal: no, whatever stray final_value it holds", () => {
+    expect(dealValueIsFinal({ status: "open", final_value: 1 })).toBe(false);
+    expect(dealValueIsFinal({ status: "lost", final_value: 1 })).toBe(false);
+  });
+
+  it("agrees with dealValue: when it says final, dealValue is the final value", () => {
+    for (const d of [
+      { status: "won", expected_value: 999_999, final_value: 250_000 },
+      { status: "won", expected_value: 999_999, final_value: null },
+      { status: "won", expected_value: 90_000, final_value: 0 },
+      { status: "open", expected_value: 70_000, final_value: 1 },
+    ]) {
+      expect(dealValue(d)).toBe(dealValueIsFinal(d) ? d.final_value : d.expected_value);
+    }
+  });
+});
 
 describe("dealValue — what a deal is displayed at on the board", () => {
   it("a won deal counts at its confirmed final value", () => {

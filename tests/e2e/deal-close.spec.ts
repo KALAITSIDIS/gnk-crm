@@ -168,6 +168,12 @@ test("Mark won confirms the accepted price, stamps it, and prompts the listing f
 
     await page.goto(`/deals/${deal!.id}`, { waitUntil: "networkidle" });
 
+    // before the close the header states the ESTIMATE, labelled, and Costs opens at it
+    const headerValue = page.getByTestId("deal-header-value");
+    const costs = page.getByRole("link", { name: "Costs", exact: true });
+    await expect(headerValue).toHaveText(/^Expected value\s+€999\.999$/);
+    await expect(costs).toHaveAttribute("href", "/calculators?price=999999");
+
     await page.getByRole("button", { name: /mark won/i }).click();
     const dialog = page.getByRole("dialog");
     // WF-2: prefilled from the accepted offer, editable
@@ -178,8 +184,14 @@ test("Mark won confirms the accepted price, stamps it, and prompts the listing f
     // database, or the assert races the server action (it did, first run:
     // the dialog's own "Final value" label satisfied a bare text assert)
     await expect(page.getByRole("dialog")).toBeHidden({ timeout: opTimeout(20_000) });
-    // the closed banner replaces the action bar and carries the price
-    await expect(page.getByText(/final value/i)).toBeVisible({ timeout: opTimeout(15_000) });
+    // the closed banner replaces the action bar and carries the price (the
+    // header says "Final value" too now, so this pins the banner's own "·" form)
+    await expect(page.getByText(/· final value €250\.000/)).toBeVisible({ timeout: opTimeout(15_000) });
+    // ...and the header now leads with the CONFIRMED price, labelled, and Costs
+    // opens at it — the stale 999,999 estimate stays the stored estimate
+    // (T-won-value-surfaces)
+    await expect(headerValue).toHaveText(/^Final value\s+€250\.000$/);
+    await expect(costs).toHaveAttribute("href", "/calculators?price=250000");
 
     // ---------- the database agrees ----------
     const { data: closed } = await svc

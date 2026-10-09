@@ -9,9 +9,9 @@ import {
   View,
   renderToBuffer,
 } from "@react-pdf/renderer";
-import type { EvidenceData } from "@/lib/services/evidence";
+import { evidenceDealFigure, type EvidenceData } from "@/lib/services/evidence";
 import { PDF_FONT, registerPdfFonts } from "@/lib/services/pdf-fonts";
-import { formatDateTime, formatMoney } from "@/lib/utils/format";
+import { formatDateTime } from "@/lib/utils/format";
 
 /**
  * Commission evidence PDF (T5.2, doc 02 §C6): company header, contact
@@ -186,7 +186,7 @@ function EvidenceDoc({ d, generatedAt }: { d: EvidenceData; generatedAt: string 
               <View key={i} style={styles.dealRow} wrap={false}>
                 <Text style={styles.dealTitle}>
                   {deal.title} — {deal.status}
-                  {deal.expectedValue !== null ? ` — ${formatMoney(deal.expectedValue)}` : ""}
+                  {evidenceDealFigure(deal) !== null ? ` — ${evidenceDealFigure(deal)}` : ""}
                 </Text>
                 <Text>{glyphSafe(deal.commissionNotes ?? "No commission notes recorded.")}</Text>
               </View>

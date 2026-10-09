@@ -51,7 +51,8 @@ const evidenceFixture: EvidenceData = {
     {
       title: "Πώληση — Κάτω Πάφος",
       status: "active",
-      expectedValue: 480000,
+      value: 480000,
+      valueIsFinal: false,
       commissionNotes: "50/50 με συνεργάτη · аванс получен",
     },
   ],
@@ -66,6 +67,21 @@ describe("renderEvidencePdf (unicode)", () => {
     expect(pdf.subarray(0, 5).toString("latin1")).toBe("%PDF-");
     expect(pdf.length).toBeGreaterThan(10_000);
     expect(pdf.toString("latin1")).toContain("NotoSans");
+  });
+});
+
+describe("the PDF states each deal's figure with its basis (T-won-value-surfaces)", () => {
+  it("a won deal prints its confirmed price as 'final value', another deal its estimate as 'expected value' — never a bare figure", async () => {
+    const fixture: EvidenceData = {
+      ...evidenceFixture,
+      deals: [
+        { title: "Won deal", status: "won", value: 250000, valueIsFinal: true, commissionNotes: null },
+        { title: "Open deal", status: "open", value: 999999, valueIsFinal: false, commissionNotes: null },
+      ],
+    };
+    const text = extractPdfText(await renderEvidencePdf(fixture, "10 Oct 2026, 12:00")).replace(/\n/g, "");
+    expect(text).toContain("Won deal — won — final value €250.000");
+    expect(text).toContain("Open deal — open — expected value €999.999");
   });
 });
 

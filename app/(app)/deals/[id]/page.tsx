@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import type { EntityOption } from "@/lib/actions/entity-search";
 import type { HealthFactor } from "@/lib/services/health-score";
 import { getCurrentProfile } from "@/lib/services/auth";
+import { dealValue, dealValueIsFinal } from "@/lib/services/deal-value";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTime, formatMoney } from "@/lib/utils/format";
 import { zonedWallClockToUtc } from "@/lib/utils/tz";
@@ -42,6 +43,9 @@ export default async function DealDetailPage({
 
   const { data: deal } = await supabase.from("deals").select("*").eq("id", id).maybeSingle();
   if (!deal) notFound();
+  // the header's figure and the Costs link's price (T-won-value-surfaces)
+  const headerValue = dealValue(deal);
+  const headerIsFinal = dealValueIsFinal(deal);
 
   const [{ data: stage }, { data: offerRows }, { data: nudgeCfg }] = await Promise.all([
     supabase
@@ -202,14 +206,24 @@ export default async function DealDetailPage({
           ) : null}
           <HealthDot score={deal.health_score} factors={healthFactors} />
           <AddTaskDialog entity={{ deal_id: deal.id }} entityLabel={deal.title} />
-          <span className="text-sm tabular-nums text-text-2">
-            {formatMoney(deal.expected_value)}
+          {/* A won deal leads with its CONFIRMED price (dealValue — the board's
+              and the dashboard's figure), labelled so it is never mistaken
+              for the estimate; every other deal, and a win closed without a
+              figure, shows the estimate as such. The stored estimate is still
+              edited in Details below and is never overwritten. */}
+          <span data-testid="deal-header-value" className="text-sm tabular-nums text-text-2">
+            <span className="text-text-3">{headerIsFinal ? "Final value" : "Expected value"}</span>{" "}
+            {formatMoney(headerValue)}
           </span>
-          {deal.expected_value !== null ? (
+          {headerValue !== null ? (
             <Link
-              href={`/calculators?price=${Number(deal.expected_value)}`}
+              href={`/calculators?price=${headerValue}`}
               className="inline-flex items-center gap-1 text-xs font-medium text-text-2 hover:text-brand-700"
-              title="Purchase-cost calculators for the expected value"
+              title={
+                headerIsFinal
+                  ? "Purchase-cost calculators at the final value"
+                  : "Purchase-cost calculators for the expected value"
+              }
             >
               <Calculator className="size-3.5" /> Costs
             </Link>

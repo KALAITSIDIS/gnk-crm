@@ -3,10 +3,10 @@ import { getTranslations } from "next-intl/server";
 import { ArrowLeft, Info, TriangleAlert } from "lucide-react";
 import { EvidenceBuilder } from "@/components/features/reports/evidence-builder";
 import { getCurrentProfile } from "@/lib/services/auth";
-import { assembleEvidence } from "@/lib/services/evidence";
+import { assembleEvidence, evidenceDealFigure } from "@/lib/services/evidence";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { formatDateTime, formatMoney } from "@/lib/utils/format";
+import { formatDateTime } from "@/lib/utils/format";
 import type { EntityOption } from "@/lib/actions/entity-search";
 
 export const dynamic = "force-dynamic";
@@ -192,7 +192,7 @@ export default async function CommissionEvidencePage({
                   <li key={i}>
                     <span className="font-medium text-text-1">
                       {d.title} — {d.status}
-                      {d.expectedValue !== null ? ` — ${formatMoney(d.expectedValue)}` : ""}
+                      {evidenceDealFigure(d) !== null ? ` — ${evidenceDealFigure(d)}` : ""}
                     </span>
                     <span className="block text-text-2">
                       {d.commissionNotes ?? t("noCommissionNotes")}

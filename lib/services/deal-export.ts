@@ -6,6 +6,11 @@ import { formatDateTime } from "@/lib/utils/format";
  * unit-testable; the route wires it to an RLS-scoped query. Money is a raw number
  * so a spreadsheet can sum it. Buyer/seller are aliased contact embeds.
  *
+ * Both money columns are the STORED figures, side by side: "Expected value"
+ * (the estimate) and "Final value" (the confirmed price close_deal records on a
+ * win; blank otherwise). A spreadsheet applies the app's rule itself —
+ * coalesce(final, expected) for won rows (T-won-value-surfaces).
+ *
  * The two embeds are hinted by CONSTRAINT NAME, not by column: a column hint
  * stops resolving (PGRST200) once its key is composite, and 0139 makes both
  * keys `(org_id, <col>) → contacts (org_id, id)` while KEEPING their names —
@@ -13,13 +18,14 @@ import { formatDateTime } from "@/lib/utils/format";
  */
 
 export const DEAL_EXPORT_SELECT =
-  "title, deal_type, status, expected_value, commission_split_notes, won_at, lost_at, lost_reason, created_at, agent_id, deal_stages(name), properties(reference), buyer:contacts!deals_buyer_contact_id_fkey(display_name), seller:contacts!deals_seller_contact_id_fkey(display_name)";
+  "title, deal_type, status, expected_value, final_value, commission_split_notes, won_at, lost_at, lost_reason, created_at, agent_id, deal_stages(name), properties(reference), buyer:contacts!deals_buyer_contact_id_fkey(display_name), seller:contacts!deals_seller_contact_id_fkey(display_name)";
 
 export interface DealExportRow {
   title: string | null;
   deal_type: string | null;
   status: string | null;
   expected_value: number | string | null;
+  final_value: number | string | null;
   commission_split_notes: string | null;
   won_at: string | null;
   lost_at: string | null;
@@ -32,7 +38,9 @@ export interface DealExportRow {
   seller: { display_name: string | null } | null;
 }
 
-const num = (v: number | string | null): string => (v === null || v === "" ? "" : String(v));
+// a missing key (a select that lost the column) is a blank cell, never "undefined"
+const num = (v: number | string | null | undefined): string =>
+  v === null || v === undefined || v === "" ? "" : String(v);
 
 export function dealCsvColumns(agentName: Map<string, string>): CsvColumn<DealExportRow>[] {
   return [
@@ -41,6 +49,7 @@ export function dealCsvColumns(agentName: Map<string, string>): CsvColumn<DealEx
     { header: "Stage", value: (d) => d.deal_stages?.name ?? "" },
     { header: "Status", value: (d) => d.status },
     { header: "Expected value", value: (d) => num(d.expected_value) },
+    { header: "Final value", value: (d) => num(d.final_value) },
     { header: "Property", value: (d) => d.properties?.reference ?? "" },
     { header: "Buyer", value: (d) => d.buyer?.display_name ?? "" },
     { header: "Seller", value: (d) => d.seller?.display_name ?? "" },

@@ -2,9 +2,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createTranslator } from "next-intl";
 import type { Database, Json } from "@/lib/supabase/database.types";
 import en from "@/messages/en.json";
+import { dealValue, dealValueIsFinal } from "@/lib/services/deal-value";
 import { describeEvent, type EventTranslator } from "@/lib/services/events";
 import { sha256Hex } from "@/lib/services/hash";
 import { slipObjectPath } from "@/lib/services/slip-paths";
+import { formatMoney } from "@/lib/utils/format";
 import { zonedDateRangeToUtc } from "@/lib/utils/tz";
 
 /**
@@ -64,8 +66,27 @@ export interface EvidenceSlip {
 export interface EvidenceDeal {
   title: string;
   status: string;
-  expectedValue: number | null;
+  /** dealValue(): a won deal's confirmed final value, else its estimate */
+  value: number | null;
+  /** true when `value` is the confirmed final value (dealValueIsFinal) */
+  valueIsFinal: boolean;
   commissionNotes: string | null;
+}
+
+/**
+ * A deal's figure as the evidence states it — ALWAYS with its basis, so a
+ * reader on the other side of a commission dispute never takes an estimate
+ * for the agreed price: "final value €250.000" for a won deal with a
+ * confirmed price, "expected value €999.999" for anything else (open, lost,
+ * or won without a recorded figure); null when there is no figure. The PDF
+ * and the on-screen preview both print this, so they read identically. The
+ * deal lines are not part of the report hash (that covers the event rows), and
+ * a stored report verifies by its PDF bytes — no existing report changes
+ * (T-won-value-surfaces).
+ */
+export function evidenceDealFigure(deal: Pick<EvidenceDeal, "value" | "valueIsFinal">): string | null {
+  if (deal.value === null) return null;
+  return `${deal.valueIsFinal ? "final value" : "expected value"} ${formatMoney(deal.value)}`;
 }
 
 /**
@@ -190,7 +211,7 @@ export async function assembleEvidence(
   // related entities (optionally narrowed to one property and/or one deal)
   let dealsQ = supabase
     .from("deals")
-    .select("id, title, status, expected_value, commission_split_notes, property_id")
+    .select("id, title, status, expected_value, final_value, commission_split_notes, property_id")
     .or(`buyer_contact_id.eq.${opts.contactId},seller_contact_id.eq.${opts.contactId}`);
   if (opts.propertyId) dealsQ = dealsQ.eq("property_id", opts.propertyId);
   if (opts.dealId) dealsQ = dealsQ.eq("id", opts.dealId);
@@ -377,7 +398,8 @@ export async function assembleEvidence(
     deals: (deals ?? []).map((d) => ({
       title: d.title,
       status: d.status,
-      expectedValue: d.expected_value === null ? null : Number(d.expected_value),
+      value: dealValue(d),
+      valueIsFinal: dealValueIsFinal(d),
       commissionNotes: d.commission_split_notes,
     })),
     chain,
