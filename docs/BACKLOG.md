@@ -3138,9 +3138,9 @@ VERIFY, run before starting.
   `offers(org_id, deal_id) where status = 'accepted'` after checking hosted (keyed by organisation too — 0122's / 0129's
   lesson: a unique index answers before `offers_org_deal_fkey`, so `(deal_id)` alone would be an oracle on A's accepted offers). Found by T-atomic-deal-close. **VERIFY:**
   `grep -n -A30 "export async function updateOfferStatus" lib/actions/deals.ts | grep 'status !== "open"'` — no hit means open.
-- ~~**The dashboard's "won this month" lost `final_value` again, S.**~~ **FIXED on branch `fix/dashboard-won-value`
-  (2026-10-04; reconciled with main and re-verified 2026-10-09) — NOT LANDED: it lands as hosted 0140 (out of numeric
-  order, after 0144) and then the merge; DECISIONS `T-dashboard-won-value`. Migration 0140 restores 0076's coalesce in
+- ~~**The dashboard's "won this month" lost `final_value` again, S.**~~ **FIXED and LANDED 2026-10-09 — hosted 0140 first
+  (~17:11Z, out of numeric order after 0144; ledger 144), PR #123 → main `034ed9b`, deployed; DECISIONS
+  `T-dashboard-won-value`. Migration 0140 restores 0076's coalesce in
   `admin_dashboard_stats()` (RED 9 of 20 at 0093, GREEN 20/20), and the pipeline board shows a won card — and sums its
   column — at its final value (`dealValue`, display only).** (original) 0093 rebuilt `admin_dashboard_stats` from
   0057's body and silently undid 0076's `coalesce(final_value, expected_value)`: the tile sums `expected_value`
