@@ -24,8 +24,12 @@
 --    operator, never a guess. Nothing here changes anything, and the migration
 --    never rewrites an amount on its own.
 --
--- Measured on production: NOT RUN (2026-10-09 — production reads wait for the
--- operator's approval).
+-- Measured 2026-10-09 ~10:00Z on production (yjgirvzgoiywdojnpkpd, ledger 142
+-- rows, latest 0143, PostgreSQL 17.6), read-only, on the operator's word: 0
+-- offers, 1 deal; every count 0; the row listing empty. The three existing
+-- non-negative CHECKs are validated with exactly the definitions 0144's
+-- postflight expects, and the columns are numeric(14,2) (amount not null,
+-- the two deal values nullable). 0144 applies cleanly there.
 -- =============================================================================
 
 begin transaction read only;
