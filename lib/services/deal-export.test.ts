@@ -9,6 +9,7 @@ const base: DealExportRow = {
   deal_type: "sale",
   status: "open",
   expected_value: "750000.00",
+  final_value: null,
   commission_split_notes: "3% split 50/50 with partner agency",
   won_at: null,
   lost_at: null,
@@ -26,7 +27,7 @@ const line = (csv: string, i = 1) => csv.replace(/^﻿/, "").split("\r\n")[i];
 describe("dealCsvColumns", () => {
   it("names every column in the header", () => {
     expect(line(toCsv(dealCsvColumns(AGENTS), []), 0)).toBe(
-      "Title,Type,Stage,Status,Expected value,Property,Buyer,Seller,Agent,Commission notes,Won,Lost,Lost reason,Created",
+      "Title,Type,Stage,Status,Expected value,Final value,Property,Buyer,Seller,Agent,Commission notes,Won,Lost,Lost reason,Created",
     );
   });
 
@@ -52,6 +53,37 @@ describe("dealCsvColumns", () => {
     const row = line(csv);
     // Won and Lost are consecutive empty cells before Lost reason (also empty)
     expect(row).not.toContain("ghost");
+  });
+});
+
+describe("the two money columns — the stored estimate and the confirmed price, raw (T-won-value-surfaces)", () => {
+  // cells 5 and 6 of a data row (0-based 4 and 5): Expected value, Final value
+  const money = (row: DealExportRow) => {
+    const cells = line(toCsv(dealCsvColumns(AGENTS), [row])).split(",");
+    return [cells[4], cells[5]];
+  };
+
+  it("a won deal exports its estimate AND its confirmed price, side by side", () => {
+    expect(money({ ...base, status: "won", expected_value: "999999.00", final_value: "250000.00" })).toEqual([
+      "999999.00",
+      "250000.00",
+    ]);
+  });
+
+  it("no final value is an empty cell — never 'null', '0' or 'undefined'", () => {
+    expect(money(base)).toEqual(["750000.00", ""]);
+    // a row from a select that lost the column (the route casts, so tsc cannot see it)
+    const { final_value: _dropped, ...withoutKey } = { ...base };
+    void _dropped;
+    expect(money(withoutKey as DealExportRow)).toEqual(["750000.00", ""]);
+  });
+
+  it("a confirmed 0 is written as 0", () => {
+    expect(money({ ...base, status: "won", final_value: 0 })).toEqual(["750000.00", "0"]);
+  });
+
+  it("the route's select asks for final_value (it casts the rows, so only this test sees a missing column)", () => {
+    expect(DEAL_EXPORT_SELECT.split(",").map((c) => c.trim())).toContain("final_value");
   });
 });
 

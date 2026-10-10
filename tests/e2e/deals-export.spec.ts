@@ -21,7 +21,7 @@ test.describe("Deals CSV export", () => {
     const body = await res.text();
     expect(body.charCodeAt(0)).toBe(0xfeff);
     expect(body.replace(/^﻿/, "")).toMatch(
-      /^Title,Type,Stage,Status,Expected value,Property,Buyer,Seller,Agent,Commission notes,Won,Lost,Lost reason,Created\r\n/,
+      /^Title,Type,Stage,Status,Expected value,Final value,Property,Buyer,Seller,Agent,Commission notes,Won,Lost,Lost reason,Created\r\n/,
     );
   });
 

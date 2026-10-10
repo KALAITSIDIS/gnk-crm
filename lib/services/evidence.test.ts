@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { fakeClient } from "@/lib/testing/fake-client";
-import { assembleEvidence, reportContentHash, sortChronological, type EvidenceRow } from "./evidence";
+import {
+  assembleEvidence,
+  evidenceDealFigure,
+  evidenceDealLine,
+  reportContentHash,
+  sortChronological,
+  type EvidenceRow,
+} from "./evidence";
 
 let seq = 0;
 const row = (occurredAt: string, line: string, extra?: Partial<EvidenceRow>): EvidenceRow => ({
@@ -293,5 +300,72 @@ describe("assembleEvidence prints no typed text from event payloads", () => {
     expect(out.rows.map((r) => r.line)).toEqual(["Imported from CSV", "Imported from CSV", "Imported from CSV"]);
     const text = JSON.stringify(out.rows);
     for (const word of ["Zenobia", "Quillfeather", "99778899"]) expect(text).not.toContain(word);
+  });
+});
+
+describe("the deal lines state a figure WITH its basis (T-won-value-surfaces)", () => {
+  it("evidenceDealFigure: the confirmed price as 'final value', anything else as 'expected value', nothing as nothing", () => {
+    expect(evidenceDealFigure({ value: 250000, valueIsFinal: true })).toBe("final value €250.000");
+    expect(evidenceDealFigure({ value: 0, valueIsFinal: true })).toBe("final value €0");
+    expect(evidenceDealFigure({ value: 999999, valueIsFinal: false })).toBe("expected value €999.999");
+    expect(evidenceDealFigure({ value: null, valueIsFinal: false })).toBeNull();
+  });
+
+  it("evidenceDealLine: the one headline both the PDF and the preview print", () => {
+    expect(evidenceDealLine({ title: "Villa", status: "won", value: 250000, valueIsFinal: true })).toBe(
+      "Villa — won — final value €250.000",
+    );
+    expect(evidenceDealLine({ title: "Flat", status: "open", value: 999999, valueIsFinal: false })).toBe(
+      "Flat — open — expected value €999.999",
+    );
+    expect(evidenceDealLine({ title: "Plot", status: "lost", value: null, valueIsFinal: false })).toBe("Plot — lost");
+  });
+
+  it("assembleEvidence values each deal by the won-value rule and says which figure it is", async () => {
+    const CONTACT = "66666666-6666-4666-8666-666666666667";
+    const d = (id: string, status: string, expected_value: number | null, final_value: number | null) => ({
+      id,
+      title: `Deal ${id.slice(0, 2)}`,
+      status,
+      expected_value,
+      final_value,
+      commission_split_notes: null,
+      property_id: null,
+    });
+    const caller = fakeClient({
+      contacts: [{ data: { id: CONTACT, display_name: "Fixture Buyer", phone_e164: null, email: null }, error: null }],
+      organizations: [{ data: { name: "Fixture Agency" }, error: null }],
+      deals: [
+        {
+          data: [
+            d("a1111111-1111-4111-8111-111111111111", "won", 999999, 250000), // closed at the offer, stale estimate
+            d("a2222222-2222-4222-8222-222222222222", "won", 90000, 0), // a confirmed 0
+            d("a3333333-3333-4333-8333-333333333333", "won", 80000, null), // override close, no figure
+            d("a4444444-4444-4444-8444-444444444444", "open", 70000, 1), // a stray final value on an open deal
+            d("a5555555-5555-4555-8555-555555555555", "lost", 60000, null),
+          ],
+          error: null,
+        },
+      ],
+      // the contact family, then the deal family
+      events: [
+        { data: [], error: null },
+        { data: [], error: null },
+      ],
+    });
+    const out = await assembleEvidence(caller.client as never, fakeClient({}).client as never, "org-1", {
+      contactId: CONTACT,
+      generatedBy: { name: "Admin", role: "admin" },
+    });
+    if ("errorKey" in out) throw new Error(`assembly failed: ${out.errorKey}`);
+    expect(out.deals.map((x) => [x.status, evidenceDealFigure(x)])).toEqual([
+      ["won", "final value €250.000"],
+      ["won", "final value €0"],
+      ["won", "expected value €80.000"],
+      ["open", "expected value €70.000"],
+      ["lost", "expected value €60.000"],
+    ]);
+    // the report hash covers the event rows only — the deal figures do not move it
+    expect(out.reportHash).toBe(reportContentHash(out.rows));
   });
 });
