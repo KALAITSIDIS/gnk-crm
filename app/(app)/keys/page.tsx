@@ -1,11 +1,9 @@
-import { Download } from "lucide-react";
 import { KeysFilters } from "@/components/features/keys/filters";
 import { RegisterKeyDialog } from "@/components/features/keys/key-dialogs";
 import {
   KeysRegister,
   type KeyRegisterRow,
 } from "@/components/features/keys/keys-register";
-import { Button } from "@/components/ui/button";
 import { Pager } from "@/components/features/shared/pager";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -23,6 +21,7 @@ import {
   pageSchema,
   totalPages as countPages,
 } from "@/lib/validators/pagination";
+import { ExportCsvButton } from "@/components/features/shared/export-csv-button";
 
 export const dynamic = "force-dynamic";
 
@@ -145,14 +144,8 @@ export default async function KeysPage({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {registeredCount > 0 ? (
-            <Button asChild variant="outline">
-              {/* Carries the active filters; plain anchor for a file download. */}
-              <a href={keysExportHref} download>
-                <Download className="size-4" /> Export CSV
-              </a>
-            </Button>
-          ) : null}
+          {/* Carries the active filters. */}
+          {registeredCount > 0 ? <ExportCsvButton href={keysExportHref} /> : null}
           {canEdit ? <RegisterKeyDialog /> : null}
         </div>
       </div>

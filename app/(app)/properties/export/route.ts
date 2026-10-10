@@ -23,9 +23,7 @@ import {
   mandateEmbed,
   parsePropertyFilters,
 } from "@/lib/queries/properties-list";
-
-// See the contacts export for the rationale; 10k is well above any single desk.
-const EXPORT_CAP = 10_000;
+import { exportFailed, readExportRows } from "@/lib/services/export-read";
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
@@ -34,21 +32,24 @@ export async function GET(request: NextRequest) {
   const filters = parsePropertyFilters(sp);
 
   // Same mandate pre-query + embed choice the list page makes, so the export
-  // selects exactly the rows the filtered list shows.
-  const excludeIds = await fetchMandateExcludeIds(supabase, filters);
-  const base = supabase
-    .from("properties")
-    .select(`${PROPERTY_EXPORT_BASE_SELECT}, ${mandateEmbed(filters)}`);
-
-  const { data, error } = await applyPropertyListFilters(base, filters, excludeIds)
-    .order("created_at", { ascending: false })
-    .range(0, EXPORT_CAP - 1);
-
-  if (error) {
-    return NextResponse.json({ error: "Export failed." }, { status: 500 });
-  }
-
-  const rows = (data ?? []) as unknown as PropertyExportRow[];
+  // selects exactly the rows the filtered list shows. It throws on a failed
+  // page (fetchAll); that is a refused export too, said like the others.
+  const excludeIds = await fetchMandateExcludeIds(supabase, filters).catch(() => null);
+  if (!excludeIds) return exportFailed();
+  const read = await readExportRows(
+    (from, to) =>
+      applyPropertyListFilters(
+        supabase.from("properties").select(`${PROPERTY_EXPORT_BASE_SELECT}, ${mandateEmbed(filters)}`),
+        filters,
+        excludeIds,
+      )
+        .order("created_at", { ascending: false })
+        .order("id")
+        .range(from, to),
+    "properties",
+  );
+  if ("refused" in read) return read.refused;
+  const rows = read.rows as unknown as PropertyExportRow[];
 
   // Audit BEFORE returning the CSV — no PII leaves without a record (fail-closed).
   await logListExport(supabase, {

@@ -18,12 +18,7 @@ import {
   applyContactListFilters,
   parseContactListFilters,
 } from "@/lib/queries/contacts-list";
-
-// A generous ceiling so an export is never silently truncated at the list's
-// page size, while still bounding the work (PERF-2: unbounded reads are a DoS
-// on themselves). Well above any realistic single-desk contact book; revisit
-// with streaming if a client ever approaches it.
-const EXPORT_CAP = 10_000;
+import { exportFailed, readAgentNames, readExportRows } from "@/lib/services/export-read";
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
@@ -37,24 +32,22 @@ export async function GET(request: NextRequest) {
 
   // Names for the Agent column, including deactivated agents so their contacts
   // don't export as unassigned — mirrors the list page exactly.
-  const { data: profileRows } = await supabase
-    .from("profiles")
-    .select("id, full_name, is_active")
-    .order("full_name");
-  const agentName = new Map(
-    (profileRows ?? []).map((p) => [p.id, p.is_active ? p.full_name : `${p.full_name} (inactive)`]),
+  const agentName = await readAgentNames(supabase);
+  if (!agentName) return exportFailed();
+
+  // EVERY matching contact up to the ceiling, or a refusal — never just the
+  // rows one PostgREST response holds (readExportRows, EXPORT_CEILING). A fresh
+  // query per page, the same filters and session each time, ordered uniquely.
+  const read = await readExportRows(
+    (from, to) =>
+      applyContactListFilters(supabase.from("contacts").select(CONTACT_EXPORT_SELECT), filters)
+        .order("created_at", { ascending: false })
+        .order("id")
+        .range(from, to),
+    "contacts",
   );
-
-  const base = supabase.from("contacts").select(CONTACT_EXPORT_SELECT);
-  const { data, error } = await applyContactListFilters(base, filters)
-    .order("created_at", { ascending: false })
-    .range(0, EXPORT_CAP - 1);
-
-  if (error) {
-    return NextResponse.json({ error: "Export failed." }, { status: 500 });
-  }
-
-  const rows = (data ?? []) as ContactExportRow[];
+  if ("refused" in read) return read.refused;
+  const rows: ContactExportRow[] = read.rows;
 
   // Audit the export BEFORE handing over the CSV — no PII leaves without a
   // record of who took it. logListExport throws on failure, which 500s the GET.

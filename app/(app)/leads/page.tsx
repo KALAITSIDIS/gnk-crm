@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AlertCircle, Download, Inbox } from "lucide-react";
+import { AlertCircle, Inbox } from "lucide-react";
 import { AddLeadDialog } from "@/components/features/leads/add-lead-dialog";
 import { DeskAlertChip } from "@/components/features/leads/desk-alert";
 import { EnquiryContactSuggestions } from "@/components/features/leads/enquiry-contact-suggestions";
@@ -7,7 +7,6 @@ import { EscalationChip } from "@/components/features/leads/escalation-status";
 import { LeadsFilters } from "@/components/features/leads/filters";
 import { LeadRowActions } from "@/components/features/leads/lead-actions";
 import { LeadMessage } from "@/components/features/leads/lead-message";
-import { Button } from "@/components/ui/button";
 import { ChatLinks } from "@/components/features/shared/chat-links";
 import { Pager } from "@/components/features/shared/pager";
 import { ResponseClock } from "@/components/features/shared/response-clock";
@@ -28,6 +27,7 @@ import {
   pageSchema,
   totalPages as countPages,
 } from "@/lib/validators/pagination";
+import { ExportCsvButton } from "@/components/features/shared/export-csv-button";
 
 export const dynamic = "force-dynamic";
 
@@ -153,12 +153,7 @@ export default async function LeadsPage({
         <div className="flex items-center gap-2">
           <LeadsFilters />
           {scopedTotal > 0 ? (
-            <Button asChild variant="outline">
-              {/* Plain anchor, not next/link: this is a file download. */}
-              <a href={exportHref} download>
-                <Download className="size-4" /> Export CSV
-              </a>
-            </Button>
+            <ExportCsvButton href={exportHref} />
           ) : null}
           <AddLeadDialog
             key={preset ?? "manual"}

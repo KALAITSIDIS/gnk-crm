@@ -8,8 +8,7 @@ import {
   viewingCsvColumns,
   type ViewingExportRow,
 } from "@/lib/services/viewing-export";
-
-const EXPORT_CAP = 10_000;
+import { readExportRows } from "@/lib/services/export-read";
 
 export async function GET() {
   const supabase = await createClient();
@@ -17,19 +16,21 @@ export async function GET() {
 
   // The calendar screen has no filters; the export covers EVERY viewing, all
   // time (past viewings + signed slips are what commission reporting needs).
-  const { data, error } = await supabase
-    .from("viewings")
-    .select(VIEWING_EXPORT_SELECT)
-    .order("scheduled_at", { ascending: false })
-    .range(0, EXPORT_CAP - 1);
-
-  if (error) {
-    return NextResponse.json({ error: "Export failed." }, { status: 500 });
-  }
-
+  const read = await readExportRows(
+    (from, to) =>
+      supabase
+        .from("viewings")
+        .select(VIEWING_EXPORT_SELECT)
+        .order("scheduled_at", { ascending: false })
+        .order("id")
+        .range(from, to),
+    "viewings",
+    { filterable: false },
+  );
+  if ("refused" in read) return read.refused;
   // No cast: the generated types carry the slip as ONE object (a one-to-one),
   // and ViewingExportRow must agree — it said array until 2026-10-01.
-  const rows: ViewingExportRow[] = data ?? [];
+  const rows: ViewingExportRow[] = read.rows;
 
   await logListExport(supabase, {
     orgId: profile.orgId,

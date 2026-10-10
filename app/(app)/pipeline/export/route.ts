@@ -3,10 +3,9 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { logListExport } from "@/lib/services/export-audit";
 import { toCsv, csvFilename } from "@/lib/services/csv";
+import { exportFailed, readAgentNames, readExportRows } from "@/lib/services/export-read";
 import { DEAL_EXPORT_SELECT, dealCsvColumns, type DealExportRow } from "@/lib/services/deal-export";
 import { applyDealTypeFilter, parseDealType } from "@/lib/queries/deals-list";
-
-const EXPORT_CAP = 10_000;
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
@@ -14,26 +13,24 @@ export async function GET(request: NextRequest) {
   const sp: Record<string, string> = Object.fromEntries(request.nextUrl.searchParams.entries());
   const dealType = parseDealType(sp);
 
-  const { data: profileRows } = await supabase
-    .from("profiles")
-    .select("id, full_name, is_active")
-    .order("full_name");
-  const agentName = new Map(
-    (profileRows ?? []).map((p) => [p.id, p.is_active ? p.full_name : `${p.full_name} (inactive)`]),
-  );
+  const agentName = await readAgentNames(supabase);
+  if (!agentName) return exportFailed();
 
   // The board shows open + a 30-day closed window; the export gives EVERY deal of
   // this type (all statuses) — reporting wants old won deals too. See DECISIONS.
-  const base = supabase.from("deals").select(DEAL_EXPORT_SELECT);
-  const { data, error } = await applyDealTypeFilter(base, dealType)
-    .order("created_at", { ascending: false })
-    .range(0, EXPORT_CAP - 1);
-
-  if (error) {
-    return NextResponse.json({ error: "Export failed." }, { status: 500 });
-  }
-
-  const rows = (data ?? []) as unknown as DealExportRow[];
+  // Paged — a fresh query per page, ordered uniquely (readExportRows).
+  const read = await readExportRows(
+    (from, to) =>
+      applyDealTypeFilter(supabase.from("deals").select(DEAL_EXPORT_SELECT), dealType)
+        .order("created_at", { ascending: false })
+        .order("id")
+        .range(from, to),
+    "deals",
+    // the deal type picks a pipeline; nothing narrows one
+    { filterable: false },
+  );
+  if ("refused" in read) return read.refused;
+  const rows = read.rows as unknown as DealExportRow[];
 
   await logListExport(supabase, {
     orgId: profile.orgId,

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Building2, Download, ListChecks, Map, Plus } from "lucide-react";
+import { Building2, ListChecks, Map, Plus } from "lucide-react";
 import {
   PropertiesFilters,
   type AreaOption,
@@ -21,6 +21,7 @@ import {
   mandateEmbed,
   parsePropertyFilters,
 } from "@/lib/queries/properties-list";
+import { ExportCsvButton } from "@/components/features/shared/export-csv-button";
 
 type SearchParams = { [key: string]: string | string[] | undefined };
 
@@ -185,12 +186,7 @@ export default async function PropertiesPage({
             </Link>
           </Button>
           {total > 0 ? (
-            <Button asChild variant="outline">
-              {/* Plain anchor, not next/link: this is a file download. */}
-              <a href={exportHref} download>
-                <Download className="size-4" /> Export CSV
-              </a>
-            </Button>
+            <ExportCsvButton href={exportHref} />
           ) : null}
           <Button asChild>
             <Link href="/properties/new">
