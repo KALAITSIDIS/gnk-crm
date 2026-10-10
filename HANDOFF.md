@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-08
 
-**2026-10-10, latest (operator: "you decide the correct and proceed" → "push it and land it"): a won deal's CONFIRMED price, labelled, on its own page, in the deals CSV and in the commission evidence — the follow-ups of T-dashboard-won-value. No migration, nothing on hosted. DECISIONS `T-won-value-surfaces`.**
+**2026-10-10, latest (operator: "you decide the correct and proceed" → "push it and land it"): a won deal's CONFIRMED price, labelled, on its own page, in the deals CSV and in the commission evidence — the follow-ups of T-dashboard-won-value. No migration, nothing on hosted. LANDED 2026-10-10 — PR #125, main `69985c4`, deployed. DECISIONS `T-won-value-surfaces`.**
 - **What.** Deal page header: `dealValue()` labelled "Final value" / "Expected value", Costs opens at that figure (estimate still edited in Details). Deals CSV: a raw "Final value" column after "Expected value". Evidence: every deal line states its basis ("final value €X" / "expected value €Y") through one `evidenceDealLine()` shared by the PDF and the preview; report hash and stored PDFs untouched. `dealValueIsFinal()` is the one rule behind label and figure.
 - **Deferred on purpose.** The board's 1000-row cap (production holds 1 deal). Recorded, not built: every list CSV export (seven routes) stops at 1000 rows — measured; the Costs link shows on rental deals.
 
