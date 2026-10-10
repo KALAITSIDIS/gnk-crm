@@ -1,8 +1,7 @@
-import { AlertTriangle, Download } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import {
   CreateViewingDialog,
 } from "@/components/features/viewings/create-viewing-dialog";
-import { Button } from "@/components/ui/button";
 import {
   ViewingsCalendar,
   type CalendarViewing,
@@ -20,6 +19,7 @@ import {
   type CalendarViewMode,
 } from "@/lib/services/calendar-window";
 import type { ViewingStatus } from "@/lib/validators/viewings";
+import { ExportCsvButton } from "@/components/features/shared/export-csv-button";
 
 export const dynamic = "force-dynamic";
 
@@ -147,13 +147,8 @@ export default async function ViewingsPage({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {/* Exports EVERY viewing (all time), not just the calendar window.
-              Plain anchor: file download. */}
-          <Button asChild variant="outline">
-            <a href="/viewings/export" download>
-              <Download className="size-4" /> Export CSV
-            </a>
-          </Button>
+          {/* Exports EVERY viewing (all time), not just the calendar window. */}
+          <ExportCsvButton href="/viewings/export" />
           <CreateViewingDialog defaultAgent={defaultAgent} role={profile.role} />
         </div>
       </div>

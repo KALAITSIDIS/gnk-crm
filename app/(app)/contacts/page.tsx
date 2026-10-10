@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Download, Plus, Users } from "lucide-react";
+import { Plus, Users } from "lucide-react";
 import { ContactsFilters } from "@/components/features/contacts/filters";
 import { StatusBadge } from "@/components/features/shared/status-badge";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ import {
   parseContactListFilters,
 } from "@/lib/queries/contacts-list";
 import { formatDateTime } from "@/lib/utils/format";
+import { ExportCsvButton } from "@/components/features/shared/export-csv-button";
 
 type SearchParams = { [key: string]: string | string[] | undefined };
 
@@ -107,12 +108,7 @@ export default async function ContactsPage({
         </div>
         <div className="flex items-center gap-2">
           {total > 0 ? (
-            <Button asChild variant="outline">
-              {/* Plain anchor, not next/link: this is a file download, not a navigation. */}
-              <a href={exportHref} download>
-                <Download className="size-4" /> Export CSV
-              </a>
-            </Button>
+            <ExportCsvButton href={exportHref} />
           ) : null}
           <Button asChild>
             <Link href="/contacts/new">

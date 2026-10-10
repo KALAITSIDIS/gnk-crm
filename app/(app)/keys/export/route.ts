@@ -10,8 +10,7 @@ import {
   fetchKeyMatchedPropertyIds,
   parseKeyFilters,
 } from "@/lib/queries/keys-list";
-
-const EXPORT_CAP = 10_000;
+import { exportFailed, readExportRows } from "@/lib/services/export-read";
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
@@ -19,18 +18,19 @@ export async function GET(request: NextRequest) {
   const sp: Record<string, string> = Object.fromEntries(request.nextUrl.searchParams.entries());
   const filters = parseKeyFilters(sp);
 
-  const matchedPropertyIds = await fetchKeyMatchedPropertyIds(supabase, filters);
-  const base = supabase.from("property_keys").select(KEY_EXPORT_SELECT);
-
-  const { data, error } = await applyKeyListFilters(base, filters, matchedPropertyIds)
-    .order("created_at", { ascending: false })
-    .range(0, EXPORT_CAP - 1);
-
-  if (error) {
-    return NextResponse.json({ error: "Export failed." }, { status: 500 });
-  }
-
-  const rows = (data ?? []) as unknown as KeyExportRow[];
+  // a failed reference lookup would silently drop the keys it should find
+  const matchedPropertyIds = await fetchKeyMatchedPropertyIds(supabase, filters).catch(() => null);
+  if (!matchedPropertyIds) return exportFailed();
+  const read = await readExportRows(
+    (from, to) =>
+      applyKeyListFilters(supabase.from("property_keys").select(KEY_EXPORT_SELECT), filters, matchedPropertyIds)
+        .order("created_at", { ascending: false })
+        .order("id")
+        .range(from, to),
+    "keys",
+  );
+  if ("refused" in read) return read.refused;
+  const rows = read.rows as unknown as KeyExportRow[];
 
   await logListExport(supabase, {
     orgId: profile.orgId,

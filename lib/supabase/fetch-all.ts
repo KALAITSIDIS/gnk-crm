@@ -51,3 +51,39 @@ export async function fetchAll<T>(
     from += got.length;
   }
 }
+
+/** Every row up to a ceiling — or word that the query matches more than that. */
+export type UpTo<T> = { more: false; rows: T[] } | { more: true; rows: null };
+
+/**
+ * `fetchAll` with a ceiling, for a read whose size a user's filters decide
+ * (the list CSV exports). Same paging, same rules — a fresh, uniquely ordered
+ * query per page, advance by what arrived, stop on an empty page, throw on a
+ * failed one — but it never asks for more than ONE row past `max`: that row's
+ * presence is the whole question, so at most `max + 1` rows are ever read or
+ * held. Past the ceiling it answers `more` and hands back NO rows, so a caller
+ * cannot mistake the first `max` for everything.
+ */
+export async function fetchUpTo<T>(
+  page: (from: number, to: number) => PromiseLike<PageResult<T>>,
+  label: string,
+  max: number,
+  pageSize: number = FETCH_PAGE,
+): Promise<UpTo<T>> {
+  const rows: T[] = [];
+  for (;;) {
+    const from = rows.length;
+    const to = Math.min(from + pageSize, max + 1) - 1;
+    const { data, error } = await page(from, to);
+    if (error) throw new Error(`Query failed (${label}): ${error.message}`);
+    // An answer with no rows array is not an empty page: postgrest-js reports
+    // an OK response with an EMPTY BODY as `data: null, error: null`, and
+    // reading that as the end would hand back the pages before it as all.
+    if (!Array.isArray(data)) throw new Error(`Query failed (${label}): the answer held no rows`);
+    const got = data;
+    if (got.length === 0) return { more: false, rows };
+    // never keep more than was asked for, whatever the server sent
+    rows.push(...got.slice(0, to - from + 1));
+    if (rows.length > max) return { more: true, rows: null };
+  }
+}

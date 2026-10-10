@@ -4,8 +4,7 @@ import { getCurrentProfile } from "@/lib/services/auth";
 import { logListExport } from "@/lib/services/export-audit";
 import { toCsv, csvFilename } from "@/lib/services/csv";
 import { TASK_EXPORT_SELECT, taskCsvColumns, type TaskExportRow } from "@/lib/services/task-export";
-
-const EXPORT_CAP = 10_000;
+import { readExportRows } from "@/lib/services/export-read";
 
 export async function GET() {
   const supabase = await createClient();
@@ -13,18 +12,21 @@ export async function GET() {
 
   // "My tasks", like the page — assignee = the current user — but EVERY task
   // (open and done, all time), not the page's split. RLS scopes it further.
-  const { data, error } = await supabase
-    .from("tasks")
-    .select(TASK_EXPORT_SELECT)
-    .eq("assignee_id", profile.id)
-    .order("due_at", { ascending: true, nullsFirst: false })
-    .range(0, EXPORT_CAP - 1);
-
-  if (error) {
-    return NextResponse.json({ error: "Export failed." }, { status: 500 });
-  }
-
-  const rows = (data ?? []) as unknown as TaskExportRow[];
+  // Undated tasks last, as before; `id` breaks every tie, the undated included.
+  const read = await readExportRows(
+    (from, to) =>
+      supabase
+        .from("tasks")
+        .select(TASK_EXPORT_SELECT)
+        .eq("assignee_id", profile.id)
+        .order("due_at", { ascending: true, nullsFirst: false })
+        .order("id")
+        .range(from, to),
+    "tasks",
+    { filterable: false },
+  );
+  if ("refused" in read) return read.refused;
+  const rows = read.rows as unknown as TaskExportRow[];
 
   await logListExport(supabase, {
     orgId: profile.orgId,

@@ -6,8 +6,7 @@ import { LEAD_STATUS_FILTERS } from "@/lib/validators/contacts";
 import { toCsv, csvFilename } from "@/lib/services/csv";
 import { LEAD_EXPORT_SELECT, leadCsvColumns, type LeadExportRow } from "@/lib/services/lead-export";
 import { applyLeadListFilters, parseLeadFilters } from "@/lib/queries/leads-list";
-
-const EXPORT_CAP = 10_000;
+import { exportFailed, readAgentNames, readExportRows } from "@/lib/services/export-read";
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
@@ -15,24 +14,19 @@ export async function GET(request: NextRequest) {
   const sp: Record<string, string> = Object.fromEntries(request.nextUrl.searchParams.entries());
   const filters = parseLeadFilters(sp);
 
-  const { data: profileRows } = await supabase
-    .from("profiles")
-    .select("id, full_name, is_active")
-    .order("full_name");
-  const agentName = new Map(
-    (profileRows ?? []).map((p) => [p.id, p.is_active ? p.full_name : `${p.full_name} (inactive)`]),
+  const agentName = await readAgentNames(supabase);
+  if (!agentName) return exportFailed();
+
+  const read = await readExportRows(
+    (from, to) =>
+      applyLeadListFilters(supabase.from("leads").select(LEAD_EXPORT_SELECT), filters)
+        .order("received_at", { ascending: false })
+        .order("id")
+        .range(from, to),
+    "leads",
   );
-
-  const base = supabase.from("leads").select(LEAD_EXPORT_SELECT);
-  const { data, error } = await applyLeadListFilters(base, filters)
-    .order("received_at", { ascending: false })
-    .range(0, EXPORT_CAP - 1);
-
-  if (error) {
-    return NextResponse.json({ error: "Export failed." }, { status: 500 });
-  }
-
-  const rows = (data ?? []) as unknown as LeadExportRow[];
+  if ("refused" in read) return read.refused;
+  const rows = read.rows as unknown as LeadExportRow[];
 
   await logListExport(supabase, {
     orgId: profile.orgId,

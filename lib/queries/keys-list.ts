@@ -21,18 +21,25 @@ export function parseKeyFilters(sp: KeySearchParams): KeyFilters {
   return keyFiltersSchema.parse({ status: first(sp.status), q: first(sp.q) });
 }
 
-/** Property ids whose reference matches the text term (empty when no term). */
+/**
+ * Property ids whose reference matches the text term (empty when no term).
+ * THROWS when the read fails: an empty answer here silently drops every key
+ * found only by its property reference, from the list AND from an export that
+ * then calls itself complete (T-export-complete). The page shows its load
+ * failure; the export refuses.
+ */
 export async function fetchKeyMatchedPropertyIds(
   supabase: SupabaseClient<Database>,
   filters: KeyFilters,
 ): Promise<string[]> {
   const term = filters.q ? sanitizeSearchTerm(filters.q) : "";
   if (!term) return [];
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("properties")
     .select("id")
     .ilike("reference", `%${term}%`)
     .limit(200);
+  if (error) throw new Error(`Query failed (key search: property references): ${error.message}`);
   return (data ?? []).map((p) => p.id);
 }
 

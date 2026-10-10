@@ -1,10 +1,8 @@
-import { Download } from "lucide-react";
 import {
   QuickAddTask,
   TaskSection,
   type TaskItem,
 } from "@/components/features/tasks/task-list";
-import { Button } from "@/components/ui/button";
 import { Pager } from "@/components/features/shared/pager";
 import { StrandedTasks } from "@/components/features/tasks/stranded-tasks";
 import { fetchStrandedTasks } from "@/lib/queries/stranded-tasks";
@@ -17,6 +15,7 @@ import {
   pageSchema,
   totalPages as countPages,
 } from "@/lib/validators/pagination";
+import { ExportCsvButton } from "@/components/features/shared/export-csv-button";
 
 export const dynamic = "force-dynamic";
 
@@ -173,11 +172,7 @@ export default async function TasksPage({
           </p>
         </div>
         {/* Exports all of my tasks (open + done), not just this page. */}
-        <Button asChild variant="outline" size="sm">
-          <a href="/tasks/export" download>
-            <Download className="size-4" /> Export CSV
-          </a>
-        </Button>
+        <ExportCsvButton href="/tasks/export" size="sm" />
       </div>
 
       <QuickAddTask />

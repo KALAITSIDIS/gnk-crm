@@ -1,15 +1,14 @@
 import Link from "next/link";
-import { Download } from "lucide-react";
 import {
   KanbanBoard,
   type KanbanDeal,
   type KanbanStage,
 } from "@/components/features/pipeline/kanban";
-import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
 import { DEAL_TYPES, parseDealType } from "@/lib/queries/deals-list";
 import { dealValue } from "@/lib/services/deal-value";
+import { ExportCsvButton } from "@/components/features/shared/export-csv-button";
 
 export const dynamic = "force-dynamic";
 
@@ -112,12 +111,8 @@ export default async function PipelinePage({
           </p>
         </div>
         {/* Exports EVERY deal of this type (all statuses), not just the board's
-            30-day closed window. Plain anchor: file download. */}
-        <Button asChild variant="outline">
-          <a href={`/pipeline/export?type=${dealType}`} download>
-            <Download className="size-4" /> Export CSV
-          </a>
-        </Button>
+            30-day closed window. */}
+        <ExportCsvButton href={`/pipeline/export?type=${dealType}`} />
       </div>
 
       <div className="flex gap-1 border-b border-border">
