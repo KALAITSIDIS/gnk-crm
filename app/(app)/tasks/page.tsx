@@ -61,6 +61,13 @@ export default async function TasksPage({
       .eq("assignee_id", profile.id)
       .eq("is_done", false)
       .order("due_at", { ascending: true, nullsFirst: false })
+      // `id` breaks due_at ties — and ties are the norm here: every due date is
+      // a Cyprus 23:59 stamp and every undated task is null. Without a unique
+      // last key each offset page may order tied tasks differently, repeating
+      // some and skipping others. Same order as the CSV export. (A task added
+      // or done between two page loads still shifts the pages — each is its
+      // own request.) T-list-page-order
+      .order("id")
       // Paged over the WHOLE open set, ordered by due date — so the most
       // overdue work is always on page 1 and the Overdue/Upcoming split below
       // stays meaningful (audit 2026-07-22, PERF-2; was a flat .limit(200)).

@@ -63,6 +63,11 @@ export default async function KeysPage({
       matchedPropertyIds,
     )
       .order("created_at", { ascending: false })
+      // `id` breaks created_at ties: without a unique last key each offset page
+      // may order tied keys differently, repeating some and skipping others.
+      // Same order as the CSV export. (A key registered between two page loads
+      // still shifts the pages — each is its own request.) T-list-page-order
+      .order("id")
       .range(from, to),
     supabase
       .from("key_movements")

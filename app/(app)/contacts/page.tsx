@@ -60,8 +60,13 @@ export default async function ContactsPage({
     );
 
   const from = (page - 1) * CONTACTS_PAGE_SIZE;
+  // `id` breaks created_at ties: without a unique last key each offset page may
+  // order tied rows differently, repeating some and skipping others. Same order
+  // as the CSV export. (A contact added between two page loads still shifts the
+  // pages — each is its own request.) T-list-page-order
   const result = await applyContactListFilters(base, filters)
     .order("created_at", { ascending: false })
+    .order("id")
     .range(from, from + CONTACTS_PAGE_SIZE - 1);
   if (result.error && result.error.code !== "PGRST103") {
     throw new Error(`Contacts query failed: ${result.error.message}`);
