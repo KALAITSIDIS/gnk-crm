@@ -232,7 +232,7 @@ Import exists (`scripts/import/`); export did not. **Why:** accountants, lawyers
 
 **Viewings export shipped 2026-07-24** — the calendar has no user filters, so the export covers EVERY viewing (all time), including past viewings and their signed slips (RLS-scoped), which is what commission reporting needs. `lib/services/viewing-export.ts`; no shared query module (nothing to filter).
 
-**Keys export shipped 2026-07-24** — `lib/queries/keys-list.ts` (status + text search with the property-id pre-query, shared with the register page) + `lib/services/key-export.ts`.
+**Keys export shipped 2026-07-24** — `lib/queries/keys-list.ts` (status + text search with the property-id pre-query, shared with the register page) + `lib/services/key-export.ts`. (Since 2026-10-11 there is no pre-query: the reference is matched inside the key query — DECISIONS `T-key-reference-search`.)
 
 **Tasks export shipped 2026-07-24** — "my tasks" (assignee-scoped) but EVERY task (open + done, all time), a personal work-history report. `lib/services/task-export.ts`.
 
