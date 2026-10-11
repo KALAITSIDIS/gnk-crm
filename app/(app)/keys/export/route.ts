@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
   // the list page's search, reference included, in every page request
   const read = await readExportRows(
     (from, to) =>
-      applyKeyListFilters(supabase.from("property_keys").select(withKeySearchEmbed(KEY_EXPORT_SELECT)), filters)
+      applyKeyListFilters(supabase.from("property_keys").select(withKeySearchEmbed(KEY_EXPORT_SELECT, filters)), filters)
         .order("created_at", { ascending: false })
         .order("id")
         .range(from, to),

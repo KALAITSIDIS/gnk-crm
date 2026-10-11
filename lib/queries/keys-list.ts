@@ -31,18 +31,30 @@ export function parseKeyFilters(sp: KeySearchParams): KeyFilters {
  * (`.limit(200)`, no order) and inlined them as `property_id.in.(…)`: a term
  * matching more than 200 references silently dropped the rest's keys, and the
  * URL grew with every id. The request is now the same size whatever matches.
+ *
+ * PostgREST builds an empty embed as the property's whole row and tests that
+ * row for null, so the search needs table-level SELECT on `properties` and
+ * reads one property row per key it considers (measured negligible at today's
+ * sizes; BACKLOG "Keys search — 2026-10-11").
  */
 const REFERENCE_MATCH = "reference_match";
-export const KEY_REFERENCE_MATCH_EMBED = `${REFERENCE_MATCH}:properties()` as const;
+export const KEY_REFERENCE_MATCH_EMBED = `${REFERENCE_MATCH}:properties()`;
+
+/** The search term as every predicate uses it ("" = no search). */
+function searchTerm(filters: KeyFilters): string {
+  return filters.q ? sanitizeSearchTerm(filters.q) : "";
+}
 
 /**
- * A key select with the reference-match embed added. Every query that goes
- * through `applyKeyListFilters` must select through this: PostgREST refuses a
- * filter on an embed the select does not name (400, PGRST108) — a failed load,
- * never a narrower list.
+ * The select for a key query that goes through `applyKeyListFilters`, given the
+ * SAME filters: the caller's columns, plus the reference-match embed when — and
+ * only when — there is a search term, so an unsearched register does not pay a
+ * property lookup per key. The embed adds nothing to a row, so the row type is
+ * the columns'. A select and a filter that disagree make PostgREST refuse the
+ * filter (400, PGRST108) — a failed load, never a narrower list.
  */
-export function withKeySearchEmbed<const S extends string>(columns: S): `${S}, ${typeof KEY_REFERENCE_MATCH_EMBED}` {
-  return `${columns}, ${KEY_REFERENCE_MATCH_EMBED}`;
+export function withKeySearchEmbed<const S extends string>(columns: S, filters: KeyFilters): S {
+  return (searchTerm(filters) ? `${columns}, ${KEY_REFERENCE_MATCH_EMBED}` : columns) as S;
 }
 
 interface KeyFilterBuilder<Q> {
@@ -55,7 +67,7 @@ export function applyKeyListFilters<Q extends KeyFilterBuilder<Q>>(query: Q, fil
   let out = query;
   if (filters.status !== "all") out = out.eq("status", filters.status as never);
 
-  const term = filters.q ? sanitizeSearchTerm(filters.q) : "";
+  const term = searchTerm(filters);
   if (term) {
     out = out.ilike(`${REFERENCE_MATCH}.reference`, `%${term}%`).or(
       [

@@ -39,8 +39,9 @@ import { parseCsvTable } from "../../scripts/import/_shared.mts";
  *      last): the broad term and each exact reference find them, and so does
  *      each key's own code;
  *   3. the request does not grow with the matches: one key request per page,
- *      the same length for every family's term, no property-id lookup and no
- *      `property_id` in the URL;
+ *      the same length for every family's term, on the page and in the export;
+ *      no property-id lookup, no `property_id` list and no id at all in a key
+ *      request;
  *   4. the key code, the description and the holder's name each match on their
  *      own when the reference does not, case-insensitively; a key matching on
  *      several fields appears once; every key of a matching property appears;
@@ -98,6 +99,14 @@ const codeOf = (family: string, n: number) => `KC${TAG}-${family}-${String(n).pa
 /** The branch fixture's search term — stored upper-case, searched lower-case. */
 const ZQ = `ZQ${TAG}`;
 const HIDDEN_REF = `${ZQ}-HIDDEN`;
+/**
+ * The temporary restrictive policy of the unreadable-property test. A FIXED
+ * name, dropped before and after the file too: it has to be committed for
+ * PostgREST to see it, so a run killed mid-test leaves it behind — and the next
+ * run removes it. It names this run's organisation, so a leftover hides nothing
+ * of anyone else's.
+ */
+const HIDE_POLICY = "zz_key_reference_search_hide";
 
 const ctx = await vi.hoisted(async () => {
   const { AsyncLocalStorage } = await import("node:async_hooks");
@@ -283,6 +292,7 @@ beforeAll(async () => {
   svc = serviceClient();
   pg = new Client({ connectionString: DB_URL });
   await pg.connect();
+  await pg.query(`drop policy if exists ${HIDE_POLICY} on public.properties`);
 
   await ensureTestOrg(svc, ORG, `Key reference search ${RUN}`, SLUG);
   await ensureTestOrg(svc, OTHER_ORG, `Key reference search other ${RUN}`, `${SLUG}-other`);
@@ -342,6 +352,7 @@ beforeAll(async () => {
 }, 300_000);
 
 afterAll(async () => {
+  await pg.query(`drop policy if exists ${HIDE_POLICY} on public.properties`);
   await pg.query("delete from property_keys where org_id = any($1::uuid[])", [ORGS]);
   await pg.query("delete from properties where org_id = any($1::uuid[])", [ORGS]);
   for (const id of userIds) await svc.auth.admin.deleteUser(id);
@@ -462,19 +473,44 @@ async function expectWalk(label: string, user: TestUser, filters: Params, want: 
 // ---------------------------------------------------------------------------
 // The CSV of the same search, through the real export route
 // ---------------------------------------------------------------------------
-async function exportKeys(user: TestUser, filters: Params): Promise<{ status: number; rows: Record<string, string>[]; body: string }> {
+interface Exported {
+  status: number;
+  rows: Record<string, string>[];
+  body: string;
+  /** Every REST GET the export sent. */
+  gets: string[];
+  /** Its key reads (one per 1,000-row page), in the order sent. */
+  keyReads: URL[];
+}
+
+async function exportKeys(user: TestUser, filters: Params): Promise<Exported> {
   const url = new URL("http://localhost/keys/export");
   for (const [k, v] of Object.entries(filters)) url.searchParams.set(k, v);
-  const { client } = await session(user);
-  const res = await ctx.als.run(client, () => keysExport(new NextRequest(url)));
+  const s = await session(user);
+  s.gets.length = 0;
+  const res = await ctx.als.run(s.client, () => keysExport(new NextRequest(url)));
   const body = await res.text();
-  return { status: res.status, rows: res.status === 200 ? parseCsvTable(body).rows : [], body };
+  const gets = [...s.gets];
+  const keyReads = gets.map((u) => new URL(u)).filter((u) => u.pathname === "/rest/v1/property_keys");
+  return { status: res.status, rows: res.status === 200 ? parseCsvTable(body).rows : [], body, gets, keyReads };
+}
+
+/** The export's reads carry the search themselves: no property lookup, no id in any key read. */
+function expectExportShape(label: string, csv: Exported): void {
+  expect.soft(csv.keyReads.length, `${label}: the export read keys`).toBeGreaterThan(0);
+  expect.soft(csv.gets.filter((u) => new URL(u).pathname === "/rest/v1/properties"), `${label}: no property lookup in the export`).toEqual([]);
+  for (const u of csv.keyReads) {
+    const query = decodeURIComponent(u.search);
+    expect.soft(query, `${label}: no property id list in an export read`).not.toMatch(/property_id[.=]in\./);
+    expect.soft(query.match(UUID_ANYWHERE) ?? [], `${label}: no id in an export read`).toEqual([]);
+  }
 }
 
 /** The CSV lists the walk's keys, in its order, each with the property the screen showed. */
 async function expectCsvMatchesScreen(label: string, user: TestUser, filters: Params, w: Walk): Promise<void> {
   const csv = await exportKeys(user, filters);
   expect(csv.status, `${label} export: ${csv.body.slice(0, 200)}`).toBe(200);
+  expectExportShape(label, csv);
   const screen = await codesOf(w.ids);
   const codes = csv.rows.map((r) => r["Key code"] ?? "");
   const same = JSON.stringify(screen) === JSON.stringify(codes);
@@ -541,9 +577,10 @@ describe("a property-reference search on the keys register finds every matching 
     }
   }, 120_000);
 
-  it("the key request is the same size whatever the term matches — no property lookup, no id list", async () => {
+  it("the key request is the same size whatever the term matches — no property lookup, no id list — on the page and in the export", async () => {
     const { client, gets } = await session(admin);
     const sizes: Record<string, number> = {};
+    const exportSizes: Record<string, number> = {};
     for (const f of [...FAMILIES, FEW]) {
       gets.length = 0;
       await show(client, { q: termOf(f.name) });
@@ -551,10 +588,18 @@ describe("a property-reference search on the keys register finds every matching 
       expect(list, `${f.name}: one key request`).toHaveLength(1);
       expect(gets.filter((u) => new URL(u).pathname === "/rest/v1/properties"), `${f.name}: no property lookup`).toEqual([]);
       sizes[`${f.name} (${f.properties} references)`] = list[0]!.href.length;
+
+      const csv = await exportKeys(admin, { q: termOf(f.name) });
+      expect(csv.status, `${f.name} export`).toBe(200);
+      expectExportShape(`${f.name} export`, csv);
+      // the first read (offset 0): later pages differ only in their offset's digits
+      exportSizes[`${f.name} (${f.properties} references)`] = csv.keyReads[0]!.href.length;
     }
-    console.log(`[evidence] key request length by matching references: ${JSON.stringify(sizes)}`);
+    console.log(`[evidence] key request length by matching references: page ${JSON.stringify(sizes)}; export ${JSON.stringify(exportSizes)}`);
     expect(new Set(Object.values(sizes)).size, "one length for every family's term").toBe(1);
     expect(Math.max(...Object.values(sizes)), "and a short one").toBeLessThan(2_000);
+    expect(new Set(Object.values(exportSizes)).size, "the export: one length for every family's term").toBe(1);
+    expect(Math.max(...Object.values(exportSizes)), "and a short one").toBeLessThan(2_000);
   }, 120_000);
 
   it("the code, the description and the holder each match on their own; a key matching twice appears once; every key of a matching property; the shown reference is the key's own", async () => {
@@ -605,12 +650,21 @@ describe("a property-reference search on the keys register finds every matching 
     expect(out.pages[0]!.header, "the header counts the whole register while searching").toBe(header);
 
     const all = await expected(ORG, null);
+    const adminSession = await session(admin);
     for (const q of ["", "   "]) {
-      const s = await show((await session(admin)).client, { q });
-      console.log(`[evidence] keys q=${JSON.stringify(q)}: stated ${s.total} (database ${all.length})`);
+      adminSession.gets.length = 0;
+      const s = await show(adminSession.client, { q });
+      // an unsearched read does not pay for the reference-match embed
+      const pageReads = adminSession.gets.filter((u) => new URL(u).pathname === "/rest/v1/property_keys");
+      const csv = await exportKeys(admin, { q });
+      const selects = [...pageReads.map((u) => new URL(u)), ...csv.keyReads].map((u) => u.searchParams.get("select") ?? "");
+      console.log(`[evidence] keys q=${JSON.stringify(q)}: stated ${s.total} (database ${all.length}), csv ${csv.rows.length}, reads selecting reference_match ${selects.filter((x) => x.includes("reference_match")).length} of ${selects.length}`);
       expect(s.total, `q=${JSON.stringify(q)} is the whole register`).toBe(all.length);
       expect(s.ids).toEqual(all.slice(0, PAGE_SIZE));
       expect(s.header).toBe(header);
+      expect(csv.rows).toHaveLength(all.length);
+      expect(selects.length).toBeGreaterThan(0);
+      expect(selects.filter((x) => x.includes("reference_match")), "no reference_match without a term").toEqual([]);
     }
 
     const none = await expectWalk("q=<matches nothing>", admin, { q: `NONE${TAG}` }, []);
@@ -636,10 +690,10 @@ describe("a property-reference search on the keys register finds every matching 
   }, 240_000);
 
   it("a property the session cannot read never makes its key findable by its reference", async () => {
-    const policy = `zz_krs_hide_${RUN}`;
-    // TAG is [0-9A-Z]: the literal needs no escaping beyond its quotes
+    // ORG is a uuid and TAG is [0-9A-Z]: the literals need no escaping beyond their quotes
     await pg.query(
-      `create policy ${policy} on public.properties as restrictive for select to authenticated using (reference <> '${HIDDEN_REF}')`,
+      `create policy ${HIDE_POLICY} on public.properties as restrictive for select to authenticated
+         using (org_id <> '${ORG}'::uuid or reference <> '${HIDDEN_REF}')`,
     );
     try {
       const term = ZQ.toLowerCase();
@@ -660,7 +714,7 @@ describe("a property-reference search on the keys register finds every matching 
       const csvRef = await exportKeys(admin, { q: HIDDEN_REF });
       expect(csvRef.rows, "nor does the CSV").toEqual([]);
     } finally {
-      await pg.query(`drop policy if exists ${policy} on public.properties`);
+      await pg.query(`drop policy if exists ${HIDE_POLICY} on public.properties`);
     }
   }, 120_000);
 

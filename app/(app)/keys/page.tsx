@@ -55,6 +55,7 @@ export default async function KeysPage({
         .select(
           withKeySearchEmbed(
             "id, key_code, description, status, current_holder_name, property_id, properties(reference)",
+            filters,
           ),
           { count: "exact" },
         ),

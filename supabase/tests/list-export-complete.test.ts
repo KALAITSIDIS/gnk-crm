@@ -587,8 +587,10 @@ describe("every list export holds the whole authorised set past max_rows", () =>
     await expectComplete("keys all", admin, "keys", {}, await EXPECTED.keys(null));
     await expectComplete("keys checked_out", admin, "keys", { status: "checked_out" }, await EXPECTED.keys("checked_out"));
     // a search that matches only through the property REFERENCE (an aliased embed
-    // of the key's property, `reference_match.not.is.null` inside the .or()) —
-    // reapplied on every page (T-key-reference-search)
+    // of the key's property, `reference_match.not.is.null` inside the .or()). Every
+    // key here hangs on one of three matching properties, so this proves the CSV
+    // is complete, not that the search narrows each page — key-reference-search's
+    // F1001 CSV (1,001 of 1,612 keys, two pages) does that (T-key-reference-search)
     const term = `PR${TAG}-0000`;
     const byReference = await column(
       `select k.key_code as v from property_keys k join properties p on p.org_id = k.org_id and p.id = k.property_id

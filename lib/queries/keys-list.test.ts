@@ -21,11 +21,26 @@ describe("parseKeyFilters", () => {
 });
 
 describe("withKeySearchEmbed", () => {
-  it("adds the reference-match embed — the property again, under an alias, selecting nothing", () => {
+  const COLUMNS = "key_code, properties(reference)";
+
+  it("adds the reference-match embed — the property again, under an alias, selecting nothing — when there is a term", () => {
     expect(KEY_REFERENCE_MATCH_EMBED).toBe("reference_match:properties()");
-    expect(withKeySearchEmbed("key_code, properties(reference)")).toBe(
+    expect(withKeySearchEmbed(COLUMNS, parseKeyFilters({ q: "PAF" }))).toBe(
       "key_code, properties(reference), reference_match:properties()",
     );
+    expect(withKeySearchEmbed(COLUMNS, parseKeyFilters({ q: "PAF", status: "lost" }))).toBe(
+      "key_code, properties(reference), reference_match:properties()",
+    );
+  });
+
+  it("leaves an unsearched select alone — exactly when applyKeyListFilters adds no reference filter", () => {
+    for (const sp of [{}, { status: "checked_out" }, { q: "   " }, { q: "(,)" }]) {
+      const filters = parseKeyFilters(sp);
+      const { s, calls } = spy();
+      applyKeyListFilters(s as never, filters);
+      expect(withKeySearchEmbed(COLUMNS, filters), JSON.stringify(sp)).toBe(COLUMNS);
+      expect(calls.some((c) => c.method === "ilike"), JSON.stringify(sp)).toBe(false);
+    }
   });
 });
 
