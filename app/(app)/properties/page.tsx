@@ -84,8 +84,14 @@ export default async function PropertiesPage({
   const query = applyPropertyListFilters(base, filters, excludeIds);
 
   const from = (filters.page - 1) * PROPERTIES_PAGE_SIZE;
+  // `id` breaks created_at ties: without a unique last key each offset page may
+  // order tied rows differently, repeating some and skipping others. Same order
+  // as the CSV export; the table and the cards render these same rows. (A
+  // listing added between two page loads still shifts the pages — each is its
+  // own request.) T-list-page-order
   const result = await query
     .order("created_at", { ascending: false })
+    .order("id")
     .range(from, from + PROPERTIES_PAGE_SIZE - 1);
 
   // PGRST103 = page beyond the result set → render the empty-page state

@@ -74,7 +74,12 @@ export default async function LeadsPage({
   // header counts are exact DB counts, independent of the current page
   const { from, to } = pageRange(page);
   const [leadsResult, openCount, awaitingCount, { data: agents }] = await Promise.all([
-    leadsQuery.order("received_at", { ascending: false }).range(from, to),
+    // `id` breaks received_at ties: without a unique last key each offset page
+    // may order tied leads differently, repeating some and skipping others.
+    // Same order as the CSV export. (A lead arriving or closing between two
+    // page loads still shifts the pages — each is its own request.)
+    // T-list-page-order
+    leadsQuery.order("received_at", { ascending: false }).order("id").range(from, to),
     supabase
       .from("leads")
       .select("id", { count: "exact", head: true })
