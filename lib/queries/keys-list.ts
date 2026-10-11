@@ -1,13 +1,10 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@/lib/supabase/database.types";
 import { keyFiltersSchema, sanitizeSearchTerm, type KeyFilters } from "@/lib/validators/keys";
 
 /**
  * Shared filter logic for the keys register, used by the list page and the CSV
  * export. Two filters: `status` and a free-text `q`. The text search matches the
- * property REFERENCE, which lives on a joined table PostgREST cannot reach from
- * `.or()`, so the matching property ids are resolved first and folded into the
- * disjunction — the same pattern the properties mandate filter uses.
+ * key's code, description and holder's name, and its property's REFERENCE —
+ * all four in ONE request (T-key-reference-search; see `withKeySearchEmbed`).
  */
 
 type ParamValue = string | string[] | undefined;
@@ -22,51 +19,52 @@ export function parseKeyFilters(sp: KeySearchParams): KeyFilters {
 }
 
 /**
- * Property ids whose reference matches the text term (empty when no term).
- * THROWS when the read fails: an empty answer here silently drops every key
- * found only by its property reference, from the list AND from an export that
- * then calls itself complete (T-export-complete). The page shows its load
- * failure; the export refuses.
+ * The key's own property, embedded a second time under an alias that selects
+ * nothing. The search's reference predicate is applied to THIS embed, so it is
+ * non-null exactly when the key's property reference matches, and the `.or()`
+ * tests that beside the key's own fields. The property is read under the
+ * caller's RLS like any embed: a property the session cannot read matches
+ * nothing. The display embed (`properties(reference)`) stays unfiltered, so a
+ * key found by its code still shows its property.
+ *
+ * It replaced a lookup that read the matching property ids first
+ * (`.limit(200)`, no order) and inlined them as `property_id.in.(…)`: a term
+ * matching more than 200 references silently dropped the rest's keys, and the
+ * URL grew with every id. The request is now the same size whatever matches.
  */
-export async function fetchKeyMatchedPropertyIds(
-  supabase: SupabaseClient<Database>,
-  filters: KeyFilters,
-): Promise<string[]> {
-  const term = filters.q ? sanitizeSearchTerm(filters.q) : "";
-  if (!term) return [];
-  const { data, error } = await supabase
-    .from("properties")
-    .select("id")
-    .ilike("reference", `%${term}%`)
-    .limit(200);
-  if (error) throw new Error(`Query failed (key search: property references): ${error.message}`);
-  return (data ?? []).map((p) => p.id);
+const REFERENCE_MATCH = "reference_match";
+export const KEY_REFERENCE_MATCH_EMBED = `${REFERENCE_MATCH}:properties()` as const;
+
+/**
+ * A key select with the reference-match embed added. Every query that goes
+ * through `applyKeyListFilters` must select through this: PostgREST refuses a
+ * filter on an embed the select does not name (400, PGRST108) — a failed load,
+ * never a narrower list.
+ */
+export function withKeySearchEmbed<const S extends string>(columns: S): `${S}, ${typeof KEY_REFERENCE_MATCH_EMBED}` {
+  return `${columns}, ${KEY_REFERENCE_MATCH_EMBED}`;
 }
 
 interface KeyFilterBuilder<Q> {
   eq(column: string, value: never): Q;
+  ilike(column: string, pattern: string): Q;
   or(filter: string): Q;
 }
 
-export function applyKeyListFilters<Q extends KeyFilterBuilder<Q>>(
-  query: Q,
-  filters: KeyFilters,
-  matchedPropertyIds: readonly string[],
-): Q {
+export function applyKeyListFilters<Q extends KeyFilterBuilder<Q>>(query: Q, filters: KeyFilters): Q {
   let out = query;
   if (filters.status !== "all") out = out.eq("status", filters.status as never);
 
   const term = filters.q ? sanitizeSearchTerm(filters.q) : "";
   if (term) {
-    const clauses = [
-      `key_code.ilike.%${term}%`,
-      `description.ilike.%${term}%`,
-      `current_holder_name.ilike.%${term}%`,
-    ];
-    if (matchedPropertyIds.length) {
-      clauses.push(`property_id.in.(${matchedPropertyIds.join(",")})`);
-    }
-    out = out.or(clauses.join(","));
+    out = out.ilike(`${REFERENCE_MATCH}.reference`, `%${term}%`).or(
+      [
+        `key_code.ilike.%${term}%`,
+        `description.ilike.%${term}%`,
+        `current_holder_name.ilike.%${term}%`,
+        `${REFERENCE_MATCH}.not.is.null`,
+      ].join(","),
+    );
   }
   return out;
 }
