@@ -26,4 +26,15 @@ test.describe("Keys CSV export", () => {
     expect(res.status()).toBe(200);
     expect(res.headers()["content-type"]).toContain("text/csv");
   });
+
+  // The search is one request whose select must name the embed its reference
+  // filter uses; a drift is a 400 from PostgREST, i.e. a 500 refusal here
+  // (T-key-reference-search). The DB suite proves which keys it finds.
+  test("a search, alone or with a status, is accepted (still a valid CSV)", async ({ page }) => {
+    for (const qs of ["q=PAF", "q=paf&status=in_office"]) {
+      const res = await page.request.get(`/keys/export?${qs}`);
+      expect(res.status(), qs).toBe(200);
+      expect(res.headers()["content-type"], qs).toContain("text/csv");
+    }
+  });
 });

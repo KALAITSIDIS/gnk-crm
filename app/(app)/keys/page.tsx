@@ -12,8 +12,8 @@ import { formatDateTime } from "@/lib/utils/format";
 import { type KeyStatus } from "@/lib/validators/keys";
 import {
   applyKeyListFilters,
-  fetchKeyMatchedPropertyIds,
   parseKeyFilters,
+  withKeySearchEmbed,
 } from "@/lib/queries/keys-list";
 import {
   isRangeBeyondEnd,
@@ -45,22 +45,21 @@ export default async function KeysPage({
   const profile = await getCurrentProfile(supabase);
 
   // The text filter runs in the query (paged register — a client-side filter
-  // would search one page only, PERF-2). The property REFERENCE is on a joined
-  // table PostgREST cannot reach from .or(), so its ids are resolved first and
-  // folded into the disjunction. Both steps are shared with the export route.
-  const matchedPropertyIds = await fetchKeyMatchedPropertyIds(supabase, filters);
-
+  // would search one page only, PERF-2), the property REFERENCE included, in
+  // this one request. Shared with the export route. T-key-reference-search
   const { from, to } = pageRange(page);
   const [keysRes, movementsRes, registeredRes, checkedOutRes] = await Promise.all([
     applyKeyListFilters(
       supabase
         .from("property_keys")
         .select(
-          "id, key_code, description, status, current_holder_name, property_id, properties(reference)",
+          withKeySearchEmbed(
+            "id, key_code, description, status, current_holder_name, property_id, properties(reference)",
+            filters,
+          ),
           { count: "exact" },
         ),
       filters,
-      matchedPropertyIds,
     )
       .order("created_at", { ascending: false })
       // `id` breaks created_at ties: without a unique last key each offset page

@@ -7,10 +7,10 @@ import { toCsv, csvFilename } from "@/lib/services/csv";
 import { KEY_EXPORT_SELECT, keyCsvColumns, type KeyExportRow } from "@/lib/services/key-export";
 import {
   applyKeyListFilters,
-  fetchKeyMatchedPropertyIds,
   parseKeyFilters,
+  withKeySearchEmbed,
 } from "@/lib/queries/keys-list";
-import { exportFailed, readExportRows } from "@/lib/services/export-read";
+import { readExportRows } from "@/lib/services/export-read";
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
@@ -18,12 +18,10 @@ export async function GET(request: NextRequest) {
   const sp: Record<string, string> = Object.fromEntries(request.nextUrl.searchParams.entries());
   const filters = parseKeyFilters(sp);
 
-  // a failed reference lookup would silently drop the keys it should find
-  const matchedPropertyIds = await fetchKeyMatchedPropertyIds(supabase, filters).catch(() => null);
-  if (!matchedPropertyIds) return exportFailed();
+  // the list page's search, reference included, in every page request
   const read = await readExportRows(
     (from, to) =>
-      applyKeyListFilters(supabase.from("property_keys").select(KEY_EXPORT_SELECT), filters, matchedPropertyIds)
+      applyKeyListFilters(supabase.from("property_keys").select(withKeySearchEmbed(KEY_EXPORT_SELECT, filters)), filters)
         .order("created_at", { ascending: false })
         .order("id")
         .range(from, to),

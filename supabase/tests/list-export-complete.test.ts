@@ -44,8 +44,9 @@ import { parseCsvTable } from "../../scripts/import/_shared.mts";
  *      10,001 refuses (422 too_many) — nothing downloaded, nothing audited,
  *      at most 10,001 rows ever requested;
  *   4. a server capped BELOW the page size (300, 750) still yields every row;
- *   5. a later page's failure, the agent-name, mandate or key-reference
- *      lookup's failure and the audit write's failure each release no CSV
+ *   5. a later page's failure, the agent-name or mandate lookup's failure, a
+ *      key search's reference-matching read failing and the audit write's
+ *      failure each release no CSV
  *      (and the read failures write no audit line);
  *   6. the deals CSV keeps expected and final values as separate raw columns
  *      (a final 0 stays "0", an absent one stays blank); CSV quoting, the BOM
@@ -585,8 +586,11 @@ describe("every list export holds the whole authorised set past max_rows", () =>
   it("keys: all, and one status", async () => {
     await expectComplete("keys all", admin, "keys", {}, await EXPECTED.keys(null));
     await expectComplete("keys checked_out", admin, "keys", { status: "checked_out" }, await EXPECTED.keys("checked_out"));
-    // a search that matches only through the property REFERENCE (a lookup first, then
-    // `property_id.in.(…)` inside the .or()) — reapplied on every page
+    // a search that matches only through the property REFERENCE (an aliased embed
+    // of the key's property, `reference_match.not.is.null` inside the .or()). Every
+    // key here hangs on one of three matching properties, so this proves the CSV
+    // is complete, not that the search narrows each page — key-reference-search's
+    // F1001 CSV (1,001 of 1,612 keys, two pages) does that (T-key-reference-search)
     const term = `PR${TAG}-0000`;
     const byReference = await column(
       `select k.key_code as v from property_keys k join properties p on p.org_id = k.org_id and p.id = k.property_id
@@ -758,14 +762,16 @@ describe("a failure releases no CSV", () => {
     expect((await exportedEvents(ORG)).count).toBe(before.count);
   }, 60_000);
 
-  it("keys: the property-reference lookup cannot be read → 500 with the reason, never a narrower CSV", async () => {
-    steer.failGet = { match: /\/rest\/v1\/properties\?select=id&reference=ilike/, nth: 1, seen: 0 };
+  it("keys: the reference-matching search cannot be read → 500 with the reason, never a narrower CSV", async () => {
+    // the search's first page — the request that carries the reference predicate
+    steer.failGet = { match: /\/rest\/v1\/property_keys\?.*reference_match\.reference=ilike/, nth: 1, seen: 0 };
     const before = await exportedEvents(ORG);
     const a = await exportAs(admin, "keys", { q: `PR${TAG}-0000` });
-    console.log(`[evidence] keys reference lookup fails: status ${a.status}, reason ${a.json?.reason}`);
+    console.log(`[evidence] keys reference search fails: status ${a.status}, reason ${a.json?.reason}, csv rows ${a.rows.length}`);
     expect(steer.failGet.seen).toBe(1);
     expect(a.status).toBe(500);
     expect(a.json?.reason).toBe("failed");
+    expect(a.rows).toEqual([]);
     expect((await exportedEvents(ORG)).count).toBe(before.count);
   }, 60_000);
 
