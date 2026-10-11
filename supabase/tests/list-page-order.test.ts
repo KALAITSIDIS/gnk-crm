@@ -15,23 +15,25 @@ import {
 import { parseCsvTable } from "../../scripts/import/_shared.mts";
 
 /**
- * Browsing the Contacts, Leads, Keys and Properties lists page by page shows
- * every record of the scope exactly once — through the REAL page server
+ * Browsing the Contacts, Leads, Keys, Properties and My tasks lists page by page
+ * shows every record of the scope exactly once — through the REAL page server
  * components, against a REAL PostgREST, with the session's RLS and aal2 token
  * (T-list-page-order).
  *
  * At 3c6865d each page ordered by its timestamp alone (`created_at` /
- * `received_at` desc) and then asked for a 25-row offset range. Rows sharing a
- * timestamp have no defined order between them, so the database was free to
- * return them in a different order for each offset: one record on two pages,
- * another on none, while the header count stayed exact. The CSV exports already
- * ended their order on `id`; the pages now do too.
+ * `received_at` desc; a task's `due_at` asc, undated last) and then asked for a
+ * 25-row offset range. Rows sharing a timestamp have no defined order between
+ * them, so the database was free to return them in a different order for each
+ * offset: one record on two pages, another on none, while the header count
+ * stayed exact. The CSV exports already ended their order on `id`; the pages
+ * now do too.
  *
  * Nothing below the page is stubbed except the Next.js request plumbing
  * (`createClient` hands the page a real session client). The test reads what
  * the page RETURNS — the rows it renders, its header total, its page count and
  * its Previous/Next links — and compares it with the database's own answer,
- * computed as postgres: `order by <timestamp> desc, id`.
+ * computed as postgres: `order by <timestamp> desc, id` (tasks: `due_at asc
+ * nulls last, id`).
  *
  * WHAT IT PINS (each walk prints one `[evidence]` line):
  *   1. each list, walked page by page over an unchanged set in which most
@@ -48,7 +50,8 @@ import { parseCsvTable } from "../../scripts/import/_shared.mts";
  *      scope, the mandate filters) keep their meaning past page one, and their
  *      excluded records never appear;
  *   4. an agent walks the same order as an admin (the mandate filter shows an
- *      agent only their own mandates); another organisation's records — newer
+ *      agent only their own mandates; My tasks shows each their own open tasks,
+ *      never a colleague's or a done one); another organisation's records — newer
  *      than everything here, so a leak would land on page one — never appear,
  *      and that organisation's admin walks only its own;
  *   5. the property table and card views list the same records in the same
@@ -105,15 +108,18 @@ import ContactsPage from "@/app/(app)/contacts/page";
 import LeadsPage from "@/app/(app)/leads/page";
 import KeysPage from "@/app/(app)/keys/page";
 import PropertiesPage from "@/app/(app)/properties/page";
+import TasksPage from "@/app/(app)/tasks/page";
 import { GET as contactsExport } from "@/app/(app)/contacts/export/route";
 import { GET as leadsExport } from "@/app/(app)/leads/export/route";
 import { GET as keysExport } from "@/app/(app)/keys/export/route";
 import { GET as propertiesExport } from "@/app/(app)/properties/export/route";
+import { GET as tasksExport } from "@/app/(app)/tasks/export/route";
 import { KeysRegister } from "@/components/features/keys/keys-register";
 import { PropertiesCards, PropertiesTable } from "@/components/features/properties/list";
 import { Pager } from "@/components/features/shared/pager";
+import { TaskSection } from "@/components/features/tasks/task-list";
 
-type List = "contacts" | "leads" | "keys" | "properties";
+type List = "contacts" | "leads" | "keys" | "properties" | "tasks";
 type Params = Record<string, string>;
 
 const PAGES: Record<List, (props: { searchParams: Promise<Params> }) => Promise<ReactNode>> = {
@@ -121,18 +127,21 @@ const PAGES: Record<List, (props: { searchParams: Promise<Params> }) => Promise<
   leads: LeadsPage,
   keys: KeysPage,
   properties: PropertiesPage,
+  tasks: TasksPage,
 };
 const EXPORTS: Record<List, (req: NextRequest) => Promise<Response>> = {
   contacts: contactsExport,
   leads: leadsExport,
   keys: keysExport,
   properties: propertiesExport,
+  tasks: tasksExport,
 };
 const TABLE: Record<List, string> = {
   contacts: "contacts",
   leads: "leads",
   keys: "property_keys",
   properties: "properties",
+  tasks: "tasks",
 };
 /** What each page must ask PostgREST for: its own sort, then the unique id. */
 const WIRE_ORDER: Record<List, string> = {
@@ -140,6 +149,7 @@ const WIRE_ORDER: Record<List, string> = {
   leads: "received_at.desc,id.asc",
   keys: "created_at.desc,id.asc",
   properties: "created_at.desc,id.asc",
+  tasks: "due_at.asc.nullslast,id.asc",
 };
 /** The CSV column that names each record, and the database column behind it. */
 const IDENTITY: Record<List, { csv: string; sql: string }> = {
@@ -147,6 +157,7 @@ const IDENTITY: Record<List, { csv: string; sql: string }> = {
   leads: { csv: "Message", sql: "message" },
   keys: { csv: "Key code", sql: "key_code" },
   properties: { csv: "Reference", sql: "reference" },
+  tasks: { csv: "Title", sql: "title" },
 };
 
 // ---------------------------------------------------------------------------
@@ -294,6 +305,20 @@ function read(list: List, root: ReactNode): Screen {
         ...fromHeader(els, /^(\d+) (?:archived )?propert(?:y|ies)$/),
       };
     }
+    case "tasks": {
+      // the page's open rows, split in its own order: every overdue task sorts
+      // before every upcoming one (due date ascending, undated last). "Recently
+      // done" is a separate, unpaged read and is not part of the walk.
+      const section = (title: string) => {
+        const el = els.find((e) => e.type === TaskSection && e.props.title === title);
+        if (!el) throw new Error(`the tasks page rendered no "${title}" section`);
+        return el;
+      };
+      const open = [section("Overdue"), section("Upcoming")];
+      const ids = open.flatMap((s) => (s.props.items as { id: string }[]).map((t) => t.id));
+      const empty = open.map((s) => String(s.props.emptyText)).join(" ");
+      return { ids, text: `${text} ${empty}`, ...fromPager(els) };
+    }
   }
 }
 
@@ -391,6 +416,31 @@ beforeAll(async () => {
        from generate_series(1, $5::int) g`,
     [ORG, TAG, parents.map((p) => p.id), TIED, N],
   );
+  // tasks: the admin's own — most due on ONE past day (overdue), a slice a day
+  // either side, one in 17 due in the future (upcoming), one in 9 undated
+  // (sorted last, all tied, more than a page of them) — some already done; and
+  // the agent's
+  await pg.query(
+    `insert into tasks (org_id, title, assignee_id, created_by, due_at)
+     select $1::uuid, format('PT%s-%s', $2::text, lpad(g::text, 5, '0')), $3::uuid, $3::uuid,
+            case when g % 9 = 0 then null
+                 when g % 17 = 0 then '2030-01-01 21:59:00+00'::timestamptz
+                 else ${VARIED("g", "$4")} end
+       from generate_series(1, $5::int) g`,
+    [ORG, TAG, admin.id, TIED, N],
+  );
+  await pg.query(
+    `insert into tasks (org_id, title, assignee_id, created_by, due_at, is_done, done_at)
+     select $1::uuid, format('PD%s-%s', $2::text, lpad(g::text, 5, '0')), $3::uuid, $3::uuid, $4::timestamptz, true, now()
+       from generate_series(1, 20) g`,
+    [ORG, TAG, admin.id, TIED],
+  );
+  await pg.query(
+    `insert into tasks (org_id, title, assignee_id, created_by, due_at)
+     select $1::uuid, format('PG%s-%s', $2::text, lpad(g::text, 5, '0')), $3::uuid, $3::uuid, $4::timestamptz
+       from generate_series(1, 60) g`,
+    [ORG, TAG, agent.id, TIED],
+  );
 
   // OTHER_ORG: thirty of each, all newer than ORG's (leads all 'new')
   const X = `X${TAG}`;
@@ -418,10 +468,16 @@ beforeAll(async () => {
        from generate_series(1, 30) g`,
     [OTHER_ORG, X, OTHER_AT],
   );
+  await pg.query(
+    `insert into tasks (org_id, title, assignee_id, created_by, due_at)
+     select $1::uuid, format('PT%s-%s', $2::text, lpad(g::text, 5, '0')), $3::uuid, $3::uuid, $4::timestamptz
+       from generate_series(1, 30) g`,
+    [OTHER_ORG, X, outsider.id, OTHER_AT],
+  );
 }, 300_000);
 
 afterAll(async () => {
-  for (const t of ["property_keys", "mandates", "leads"]) {
+  for (const t of ["tasks", "property_keys", "mandates", "leads"]) {
     await pg.query(`delete from ${t} where org_id = any($1::uuid[])`, [ORGS]);
   }
   await pg.query("delete from properties where org_id = any($1::uuid[])", [ORGS]);
@@ -484,6 +540,13 @@ const EXPECTED = {
        order by p.created_at desc, p.id`,
       [org, o.archived ?? false, o.type ?? null, o.mandate ?? null, o.agentId ?? null, o.q ?? null],
     ),
+  /** My tasks: the signed-in user's OPEN tasks, soonest due first, undated last. */
+  tasks: (org: string, assignee: string) =>
+    ids(
+      `select id::text as v from tasks where org_id = $1 and assignee_id = $2 and not is_done
+       order by due_at asc nulls last, id`,
+      [org, assignee],
+    ),
 };
 
 // ---------------------------------------------------------------------------
@@ -529,6 +592,7 @@ const BEYOND_TEXT: Record<List, RegExp> = {
   leads: /Nothing on this page\./,
   keys: /Nothing on this page\./,
   properties: /Nothing on this page\./,
+  tasks: /None on this page\./,
 };
 
 /**
@@ -612,14 +676,19 @@ async function expectWalk(
 // ---------------------------------------------------------------------------
 // The CSV of the same scope, read through the real export route
 // ---------------------------------------------------------------------------
-async function exportedIdentities(list: List, user: TestUser, filters: Params): Promise<string[]> {
+async function exportedIdentities(
+  list: List,
+  user: TestUser,
+  filters: Params,
+  keep: (row: Record<string, string>) => boolean,
+): Promise<string[]> {
   const url = new URL(`http://localhost/${list}/export`);
   for (const [k, v] of Object.entries(filters)) url.searchParams.set(k, v);
   const { client } = await session(user);
   const res = await ctx.als.run(client, () => EXPORTS[list](new NextRequest(url)));
   const body = await res.text();
   expect(res.status, `${list} export: ${body.slice(0, 200)}`).toBe(200);
-  return parseCsvTable(body).rows.map((r) => r[IDENTITY[list].csv] ?? "");
+  return parseCsvTable(body).rows.filter(keep).map((r) => r[IDENTITY[list].csv] ?? "");
 }
 
 async function identitiesOf(list: List, idList: string[]): Promise<string[]> {
@@ -631,9 +700,19 @@ async function identitiesOf(list: List, idList: string[]): Promise<string[]> {
   return idList.map((id) => name.get(id) ?? `?${id}`);
 }
 
-async function expectScreenMatchesCsv(list: List, user: TestUser, filters: Params, walk: Walk): Promise<void> {
+/**
+ * `keep` narrows the CSV to the screen's scope where the two differ by design:
+ * the tasks CSV holds every task of mine, the page only the open ones.
+ */
+async function expectScreenMatchesCsv(
+  list: List,
+  user: TestUser,
+  filters: Params,
+  walk: Walk,
+  keep: (row: Record<string, string>) => boolean = () => true,
+): Promise<void> {
   const screen = await identitiesOf(list, walk.ids);
-  const csv = await exportedIdentities(list, user, filters);
+  const csv = await exportedIdentities(list, user, filters, keep);
   const same = JSON.stringify(screen) === JSON.stringify(csv);
   console.log(`[evidence] ${list} screen vs CSV: screen ${screen.length}, csv ${csv.length}, same order ${same ? "yes" : "NO"}`);
   expect.soft(csv, `${list}: the CSV lists the screen's records in the screen's order`).toEqual(screen);
@@ -657,6 +736,16 @@ describe("browsing a list page by page shows each record exactly once", () => {
       const tied = Number(rows.find((r) => r.t === t && r.at.startsWith("2026-01-01"))!.c);
       expect(tied, `${t}: the tie spans several pages`).toBeGreaterThan(4 * PAGE_SIZE);
     }
+    // my open tasks: overdue (a day before, the tie, a day after), upcoming, undated
+    const { rows: due } = await pg.query<{ at: string; c: string }>(
+      `select coalesce(due_at::text, 'undated') as at, count(*) as c from tasks
+        where org_id = $1 and assignee_id = $2 and not is_done group by due_at order by due_at nulls last`,
+      [ORG, admin.id],
+    );
+    console.log(`[evidence] tasks due dates: ${due.map((r) => `${r.at.slice(0, 10)}×${r.c}`).join(", ")}`);
+    expect(due, "tasks: five due-date groups").toHaveLength(5);
+    expect(Number(due.find((r) => r.at.startsWith("2026-01-01"))!.c), "tasks: the tie spans several pages").toBeGreaterThan(4 * PAGE_SIZE);
+    expect(Number(due.find((r) => r.at === "undated")!.c), "tasks: more undated (tied) than one page holds").toBeGreaterThan(PAGE_SIZE);
   });
 
   it("contacts: active, a type filter, a search, the archived scope; as an admin and as an agent", async () => {
@@ -723,11 +812,26 @@ describe("browsing a list page by page shows each record exactly once", () => {
     await expectWalk("mandate=none/admin", "properties", admin, { view: "table", mandate: "none" }, await EXPECTED.properties(ORG, { mandate: "none" }));
   }, 240_000);
 
+  it("my tasks: my open tasks — overdue, upcoming, undated last — never a colleague's or a done one", async () => {
+    const mine = await EXPECTED.tasks(ORG, admin.id);
+    const theirs = await EXPECTED.tasks(ORG, agent.id);
+    const { rows: done } = await pg.query<{ v: string }>(
+      "select id::text as v from tasks where org_id = $1 and assignee_id = $2 and is_done",
+      [ORG, admin.id],
+    );
+    const elsewhere = await EXPECTED.tasks(OTHER_ORG, outsider.id);
+    const w = await expectWalk("mine/admin", "tasks", admin, {}, mine, [...theirs, ...done.map((r) => r.v), ...elsewhere]);
+    await expectWalk("mine/agent", "tasks", agent, {}, theirs, [...mine, ...elsewhere]);
+    // the CSV holds every task of mine, open and done; its open ones are the screen, in the screen's order
+    await expectScreenMatchesCsv("tasks", admin, {}, w, (row) => row.Status === "open");
+  }, 180_000);
+
   it("another organisation's admin walks only its own records", async () => {
     await expectWalk("other org", "contacts", outsider, {}, await EXPECTED.contacts(OTHER_ORG, false), await EXPECTED.contacts(ORG, false));
     await expectWalk("other org", "leads", outsider, {}, await EXPECTED.leads(OTHER_ORG, ["new", "contacted", "qualified"]), await EXPECTED.leads(ORG, null));
     await expectWalk("other org", "keys", outsider, {}, await EXPECTED.keys(OTHER_ORG, null), await EXPECTED.keys(ORG, null));
     await expectWalk("other org", "properties", outsider, { view: "table" }, await EXPECTED.properties(OTHER_ORG), await EXPECTED.properties(ORG));
+    await expectWalk("other org", "tasks", outsider, {}, await EXPECTED.tasks(OTHER_ORG, outsider.id), await EXPECTED.tasks(ORG, admin.id));
   }, 120_000);
 
   it("an empty scope is one empty page with no pager", async () => {
