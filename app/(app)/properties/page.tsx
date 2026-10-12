@@ -17,7 +17,6 @@ import { unwrapRows } from "@/lib/supabase/unwrap";
 import { PROPERTIES_PAGE_SIZE } from "@/lib/validators/properties";
 import {
   applyPropertyListFilters,
-  fetchMandateExcludeIds,
   mandateEmbed,
   parsePropertyFilters,
 } from "@/lib/queries/properties-list";
@@ -66,9 +65,8 @@ export default async function PropertiesPage({
     name: (a.name as { en?: string })?.en ?? "—",
   }));
 
-  // Shared with the export route so the two select exactly the same rows.
-  const excludeIds = await fetchMandateExcludeIds(supabase, filters);
-
+  // Shared with the export route and the map so they select exactly the same
+  // rows; the mandate filters ride in this one request (T-mandate-filter-anti-join).
   const base = supabase
     .from("properties")
     .select(
@@ -81,7 +79,7 @@ export default async function PropertiesPage({
       { count: "exact" },
     );
 
-  const query = applyPropertyListFilters(base, filters, excludeIds);
+  const query = applyPropertyListFilters(base, filters);
 
   const from = (filters.page - 1) * PROPERTIES_PAGE_SIZE;
   // `id` breaks created_at ties: without a unique last key each offset page may

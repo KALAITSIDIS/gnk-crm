@@ -4,7 +4,6 @@ import { PropertyMap } from "@/components/features/properties/map-view";
 import { Button } from "@/components/ui/button";
 import {
   applyPropertyListFilters,
-  fetchMandateExcludeIds,
   mandateEmbed,
   parsePropertyFilters,
 } from "@/lib/queries/properties-list";
@@ -31,29 +30,24 @@ export default async function PropertiesMapPage({
   const filters = parsePropertyFilters(sp);
   const supabase = await createClient();
 
-  // Same exclusion set the list page computes for the "no mandate" / "expired"
-  // filters — omitting this would let the map disagree with the list.
-  const excludeIds = await fetchMandateExcludeIds(supabase, filters);
-
   const query = applyPropertyListFilters(
     supabase
       .from("properties")
       .select(
         // The mandate embed is here because applyPropertyListFilters EMITS a
-        // filter on it for mandate=active/expired, and PostgREST rejects a
-        // filter naming a relationship the select does not embed (400
-        // PGRST108). The map has always shared the filter builder without
-        // sharing this half of its contract, so those two filters threw here
-        // long before the embed was renamed. The map does not RENDER a mandate;
-        // the embed exists to make the filter legal, and !inner is what
-        // restricts the pins.
+        // filter on it for every mandate filter (and, for none/expired, on the
+        // empty block embed it carries), and PostgREST rejects a filter naming
+        // a relationship the select does not embed (400 PGRST108). The map has
+        // always shared the filter builder without sharing this half of its
+        // contract, so those filters threw here long before the embed was
+        // renamed. The map does not RENDER a mandate; the embeds exist to make
+        // the filters legal, and !inner / the anti-join restrict the pins.
         `id, reference, location, title, asking_price, rent_price_month,
          areas(centroid), districts(centroid),
          property_media(path_thumb, is_cover, sort_order, kind),
          ${mandateEmbed(filters)}`,
       ),
     filters,
-    excludeIds,
   );
 
   const rows = unwrapRows(await query, "properties");

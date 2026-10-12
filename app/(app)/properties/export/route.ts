@@ -19,11 +19,10 @@ import {
 } from "@/lib/services/property-export";
 import {
   applyPropertyListFilters,
-  fetchMandateExcludeIds,
   mandateEmbed,
   parsePropertyFilters,
 } from "@/lib/queries/properties-list";
-import { exportFailed, readExportRows } from "@/lib/services/export-read";
+import { readExportRows } from "@/lib/services/export-read";
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
@@ -31,17 +30,14 @@ export async function GET(request: NextRequest) {
   const sp: Record<string, string> = Object.fromEntries(request.nextUrl.searchParams.entries());
   const filters = parsePropertyFilters(sp);
 
-  // Same mandate pre-query + embed choice the list page makes, so the export
-  // selects exactly the rows the filtered list shows. It throws on a failed
-  // page (fetchAll); that is a refused export too, said like the others.
-  const excludeIds = await fetchMandateExcludeIds(supabase, filters).catch(() => null);
-  if (!excludeIds) return exportFailed();
+  // The same embeds and filters the list page applies, so the export selects
+  // exactly the rows the filtered list shows — the mandate filters included, in
+  // each page request (T-mandate-filter-anti-join).
   const read = await readExportRows(
     (from, to) =>
       applyPropertyListFilters(
         supabase.from("properties").select(`${PROPERTY_EXPORT_BASE_SELECT}, ${mandateEmbed(filters)}`),
         filters,
-        excludeIds,
       )
         .order("created_at", { ascending: false })
         .order("id")

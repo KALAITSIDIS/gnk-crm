@@ -2,18 +2,18 @@ import { describe, expect, it } from "vitest";
 import {
   parsePropertyFilters,
   applyPropertyListFilters,
-  fetchMandateExcludeIds,
   mandateEmbed,
+  MANDATE_BLOCK_EMBED,
+  MANDATE_HAS_EMBED,
   MANDATE_REL,
 } from "./properties-list";
-import { fakeClient } from "@/lib/testing/fake-client";
 import type { PropertyFilters } from "@/lib/validators/properties";
 
 /**
  * A chainable spy standing in for the Supabase filter builder. Every predicate
  * records {method, args} and returns the spy, so a test can assert exactly which
  * filters a given filter-set applies — the point being that the properties query
- * is intricate (scope, transaction-context price, mandate exclusion) and must
+ * is intricate (scope, transaction-context price, mandate anti-joins) and must
  * stay identical between the list page and the export.
  */
 function spyBuilder() {
@@ -88,6 +88,8 @@ describe("mandateEmbed", () => {
     const embed = mandateEmbed(base(mandate ? { mandate } : {}));
     expect(embed, "doc 04: all UI mandate reads go through the view").toContain("mandates_safe");
     expect(embed.startsWith("mandates_safe"), "the base table is not a prefix match").toBe(true);
+    // the anti-join aliases embed the view too, never the base table
+    expect(embed, "no embed of the base table").not.toMatch(/(^|[\s,:])mandates(!inner)?\(/);
     expect(embed.includes("!inner")).toBe(inner);
   });
 
@@ -108,24 +110,45 @@ describe("mandateEmbed", () => {
    * -> 400 PGRST108 "'mandates' is not an embedded resource in this request";
    * with the prefix corrected -> 200, one row.
    */
-  it.each(["active", "expired"] as const)(
-    "the mandate=%s filter names the relationship the select actually embeds",
+  it.each(["active", "expired", "none"] as const)(
+    "every mandate=%s filter names an embed the select actually carries",
     (mandate) => {
       const filters = base({ mandate });
       const { spy, calls } = spyBuilder();
-      applyPropertyListFilters(spy as never, filters, []);
+      applyPropertyListFilters(spy as never, filters);
+      const select = mandateEmbed(filters);
 
-      const mandateEq = calls.find(
-        (c) => c.method === "eq" && String(c.args[0]).includes("."),
+      // filters on an embedded resource: "<embed>.<column>", or the anti-join's "<alias>" is null
+      const embedFilters = calls.filter(
+        (c) => String(c.args[0]).includes(".") ? !["or"].includes(c.method) : c.method === "is",
       );
-      expect(mandateEq, "the filter is emitted at all").toBeDefined();
+      expect(embedFilters.length, "the filter is emitted at all").toBeGreaterThan(0);
+      for (const f of embedFilters) {
+        const prefix = String(f.args[0]).split(".")[0]!;
+        const named = select.startsWith(`${prefix}(`) || select.startsWith(`${prefix}!inner(`) || select.includes(`${prefix}:`);
+        expect(named, `select embeds "${select}" but ${f.method} names "${prefix}"`).toBe(true);
+      }
+    },
+  );
 
-      const prefix = String(mandateEq!.args[0]).split(".")[0];
-      expect(prefix, "PostgREST rejects a prefix that is not embedded here").toBe(MANDATE_REL);
-      expect(
-        mandateEmbed(filters).startsWith(prefix),
-        `select embeds "${mandateEmbed(filters)}" but the filter prefixes "${prefix}"`,
-      ).toBe(true);
+  /*
+   * THE ALIAS RULE (T-mandate-filter-anti-join). Measured on PostgREST v14.5:
+   * when the view is embedded more than once, a filter on the UNALIASED
+   * `mandates_safe.status` is not applied where it is written — "expired" as
+   * `mandates_safe!inner(type, status)` + `mandates_safe.status=eq.expired` + the
+   * aliased block listed every mandated listing, active ones included. So in a
+   * select carrying an alias of the view, every filter names an alias.
+   */
+  it.each(["active", "expired", "none"] as const)(
+    "mandate=%s: beside an alias of the view, no filter names the unaliased embed",
+    (mandate) => {
+      const filters = base({ mandate });
+      const { spy, calls } = spyBuilder();
+      applyPropertyListFilters(spy as never, filters);
+      const embedsOfView = mandateEmbed(filters).split(MANDATE_REL).length - 1;
+      const onUnaliased = calls.filter((c) => String(c.args[0]).startsWith(`${MANDATE_REL}.`));
+      if (embedsOfView > 1) expect(onUnaliased, mandateEmbed(filters)).toEqual([]);
+      else expect(embedsOfView).toBe(1);
     },
   );
 });
@@ -141,7 +164,7 @@ describe("applyPropertyListFilters", () => {
 
   it("default active scope excludes retired status AND visibility", () => {
     const { spy, calls } = spyBuilder();
-    applyPropertyListFilters(spy as never, base(), []);
+    applyPropertyListFilters(spy as never, base());
     const neqs = retiredNeqs(calls);
     expect(neqs).toHaveLength(2);
     expect(neqs.map((c) => c.args[0])).toEqual(["status", "visibility"]);
@@ -149,7 +172,7 @@ describe("applyPropertyListFilters", () => {
 
   it("archived scope ORs the two retired markers instead of excluding them", () => {
     const { spy, calls } = spyBuilder();
-    applyPropertyListFilters(spy as never, base({ scope: "archived" }), []);
+    applyPropertyListFilters(spy as never, base({ scope: "archived" }));
     expect(retiredNeqs(calls)).toHaveLength(0);
     const or = calls.find((c) => c.method === "or");
     expect(or?.args[0]).toContain("status.eq.withdrawn");
@@ -158,7 +181,7 @@ describe("applyPropertyListFilters", () => {
 
   it("an explicit retired status filter suppresses scope predicates (would otherwise be empty)", () => {
     const { spy, calls } = spyBuilder();
-    applyPropertyListFilters(spy as never, base({ status: "withdrawn" }), []);
+    applyPropertyListFilters(spy as never, base({ status: "withdrawn" }));
     expect(retiredNeqs(calls)).toHaveLength(0);
     // no scope OR either — resolvePropertyScope returned "none"
     expect(calls.filter((c) => c.method === "or")).toHaveLength(0);
@@ -167,7 +190,7 @@ describe("applyPropertyListFilters", () => {
 
   it("price bounds hit the transaction-specific column when a transaction is chosen", () => {
     const { spy, calls } = spyBuilder();
-    applyPropertyListFilters(spy as never, base({ transaction: "rent", price_min: "500", price_max: "2000" }), []);
+    applyPropertyListFilters(spy as never, base({ transaction: "rent", price_min: "500", price_max: "2000" }));
     const gte = calls.find((c) => c.method === "gte" && c.args[0] === "rent_price_month");
     const lte = calls.find((c) => c.method === "lte" && c.args[0] === "rent_price_month");
     expect(gte?.args[1]).toBe(500);
@@ -176,14 +199,14 @@ describe("applyPropertyListFilters", () => {
 
   it("price bounds OR across both columns when no transaction is chosen", () => {
     const { spy, calls } = spyBuilder();
-    applyPropertyListFilters(spy as never, base({ price_min: "100000" }), []);
+    applyPropertyListFilters(spy as never, base({ price_min: "100000" }));
     const or = calls.find((c) => c.method === "or" && String(c.args[0]).includes("asking_price.gte"));
     expect(or?.args[0]).toBe("asking_price.gte.100000,rent_price_month.gte.100000");
   });
 
   it("a ceiling alone also ORs across both columns", () => {
     const { spy, calls } = spyBuilder();
-    applyPropertyListFilters(spy as never, base({ price_max: "500000" }), []);
+    applyPropertyListFilters(spy as never, base({ price_max: "500000" }));
     const or = calls.find((c) => c.method === "or" && String(c.args[0]).includes("asking_price.lte"));
     expect(or?.args[0]).toBe("asking_price.lte.500000,rent_price_month.lte.500000");
   });
@@ -193,7 +216,7 @@ describe("applyPropertyListFilters", () => {
     // let at 500 a month match 100,000–500,000: the sale cleared the floor,
     // the rent cleared the ceiling, and neither figure was in the range.
     const { spy, calls } = spyBuilder();
-    applyPropertyListFilters(spy as never, base({ price_min: "100000", price_max: "500000" }), []);
+    applyPropertyListFilters(spy as never, base({ price_min: "100000", price_max: "500000" }));
     const priceOrs = calls.filter((c) => c.method === "or" && /price/.test(String(c.args[0])));
     expect(priceOrs).toHaveLength(1);
     expect(priceOrs[0]!.args[0]).toBe(
@@ -207,29 +230,63 @@ describe("applyPropertyListFilters", () => {
     applyPropertyListFilters(
       spy as never,
       base({ transaction: "sale_or_rent", price_min: "100000", price_max: "500000" }),
-      [],
     );
     const priceOrs = calls.filter((c) => c.method === "or" && /price/.test(String(c.args[0])));
     expect(priceOrs).toHaveLength(1);
     expect(String(priceOrs[0]!.args[0])).toMatch(/^and\(asking_price/);
   });
 
-  it("excludes the pre-queried mandate ids for the 'none' filter", () => {
+  /*
+   * "No mandate" / "Expired" are anti-joins on an aliased, empty embed of the
+   * view — never an id list in the URL, which past ~400 mandated listings was
+   * 414 (T-mandate-filter-anti-join).
+   */
+  const mandateCalls = (calls: { method: string; args: unknown[] }[]) =>
+    calls.filter((c) => /^mandate/.test(String(c.args[0])));
+
+  it("mandate=none: no active or expired mandate — the block embed narrowed to both, then empty", () => {
     const { spy, calls } = spyBuilder();
-    applyPropertyListFilters(spy as never, base({ mandate: "none" }), ["id-1", "id-2"]);
-    const not = calls.find((c) => c.method === "not");
-    expect(not?.args).toEqual(["id", "in", "(id-1,id-2)"]);
+    applyPropertyListFilters(spy as never, base({ mandate: "none" }));
+    expect(mandateEmbed(base({ mandate: "none" }))).toBe(`mandates_safe(type, status), ${MANDATE_BLOCK_EMBED}`);
+    expect(mandateCalls(calls)).toEqual([
+      { method: "in", args: ["mandate_block.status", ["active", "expired"]] },
+      { method: "is", args: ["mandate_block", null] },
+    ]);
   });
 
-  it("does not emit a NOT IN when there are no ids to exclude", () => {
+  it("mandate=expired: an expired mandate (inner-joined alias) and no active one (the block)", () => {
     const { spy, calls } = spyBuilder();
-    applyPropertyListFilters(spy as never, base({ mandate: "none" }), []);
-    expect(methods(calls)).not.toContain("not");
+    applyPropertyListFilters(spy as never, base({ mandate: "expired" }));
+    expect(mandateEmbed(base({ mandate: "expired" }))).toBe(
+      `mandates_safe(type, status), ${MANDATE_HAS_EMBED}, ${MANDATE_BLOCK_EMBED}`,
+    );
+    expect(mandateCalls(calls)).toEqual([
+      { method: "eq", args: ["mandate_has.status", "expired"] },
+      { method: "in", args: ["mandate_block.status", ["active"]] },
+      { method: "is", args: ["mandate_block", null] },
+    ]);
+  });
+
+  it("mandate=active is unchanged: the inner-joined display embed, filtered", () => {
+    const { spy, calls } = spyBuilder();
+    applyPropertyListFilters(spy as never, base({ mandate: "active" }));
+    expect(mandateEmbed(base({ mandate: "active" }))).toBe("mandates_safe!inner(type, status)");
+    expect(mandateCalls(calls)).toEqual([{ method: "eq", args: ["mandates_safe.status", "active"] }]);
+  });
+
+  it("no mandate filter: no mandate predicate, and never an id list", () => {
+    for (const f of [base(), base({ mandate: "none" }), base({ mandate: "expired" }), base({ mandate: "active" })]) {
+      const { spy, calls } = spyBuilder();
+      applyPropertyListFilters(spy as never, f);
+      expect(methods(calls), JSON.stringify(f.mandate)).not.toContain("not");
+      if (!f.mandate) expect(mandateCalls(calls)).toEqual([]);
+    }
+    expect(mandateEmbed(base())).toBe("mandates_safe(type, status)");
   });
 
   it("maps a sale filter to both sale and sale_or_rent", () => {
     const { spy, calls } = spyBuilder();
-    applyPropertyListFilters(spy as never, base({ transaction: "sale" }), []);
+    applyPropertyListFilters(spy as never, base({ transaction: "sale" }));
     const inCall = calls.find((c) => c.method === "in" && c.args[0] === "transaction_type");
     expect(inCall?.args[1]).toEqual(["sale", "sale_or_rent"]);
   });
@@ -241,7 +298,7 @@ describe("applyPropertyListFilters — kind scope (audit finding 3)", () => {
 
   it("excludes units by default, so a project cannot bury the list", () => {
     const { spy, calls } = spyBuilder();
-    applyPropertyListFilters(spy as never, base(), []);
+    applyPropertyListFilters(spy as never, base());
     const k = kindCalls(calls);
     expect(k).toHaveLength(1);
     expect(k[0].method).toBe("neq");
@@ -250,7 +307,7 @@ describe("applyPropertyListFilters — kind scope (audit finding 3)", () => {
 
   it("an explicit kind=unit selects units instead of excluding them", () => {
     const { spy, calls } = spyBuilder();
-    applyPropertyListFilters(spy as never, base({ kind: "unit" }), []);
+    applyPropertyListFilters(spy as never, base({ kind: "unit" }));
     const k = kindCalls(calls);
     expect(k).toHaveLength(1);
     expect(k[0].method).toBe("eq");
@@ -259,55 +316,10 @@ describe("applyPropertyListFilters — kind scope (audit finding 3)", () => {
 
   it("an explicit non-unit kind narrows without also excluding units twice", () => {
     const { spy, calls } = spyBuilder();
-    applyPropertyListFilters(spy as never, base({ kind: "project" }), []);
+    applyPropertyListFilters(spy as never, base({ kind: "project" }));
     const k = kindCalls(calls);
     expect(k).toHaveLength(1);
     expect(k[0].method).toBe("eq");
     expect(k[0].args[1]).toBe("project");
-  });
-});
-
-describe("fetchMandateExcludeIds reads every excluded id, and fails loud (A08a)", () => {
-  type Client = Parameters<typeof fetchMandateExcludeIds>[0];
-  const ids = (from: number, n: number) =>
-    Array.from({ length: n }, (_, i) => ({ property_id: "p" + (from + i) }));
-
-  it("pages past the thousandth mandate — the 1,001st exclusion used to fall off the list", async () => {
-    const { client, served, argsOf } = fakeClient({
-      mandates_safe: [
-        { data: ids(0, 1000), error: null },
-        { data: ids(1000, 3), error: null },
-      ],
-    });
-    const out = await fetchMandateExcludeIds(client as unknown as Client, base({ mandate: "none" }));
-    expect(out).toHaveLength(1003);
-    expect(served.mandates_safe, "two pages of rows, then the empty read that ends it").toBe(3);
-    // WHICH pages, and ordered: the count alone passed with .range() deleted
-    expect(argsOf("mandates_safe", "range")).toEqual([
-      [0, 999],
-      [1000, 1999],
-      [1003, 2002],
-    ]);
-    expect(argsOf("mandates_safe", "order")).toEqual([["id"], ["id"], ["id"]]);
-  });
-
-  it("dedupes ids across pages", async () => {
-    const { client } = fakeClient({
-      mandates_safe: [{ data: [...ids(0, 2), ...ids(0, 2)], error: null }],
-    });
-    expect(await fetchMandateExcludeIds(client as unknown as Client, base({ mandate: "expired" }))).toEqual(["p0", "p1"]);
-  });
-
-  it("throws on a failed page rather than excluding nothing", async () => {
-    const { client } = fakeClient({ mandates_safe: [{ data: null, error: { message: "boom" } }] });
-    await expect(
-      fetchMandateExcludeIds(client as unknown as Client, base({ mandate: "none" })),
-    ).rejects.toThrow("Query failed (mandates_safe): boom");
-  });
-
-  it("reads nothing at all when the filter does not need it", async () => {
-    const { client, served } = fakeClient({});
-    expect(await fetchMandateExcludeIds(client as unknown as Client, base({ mandate: "active" }))).toEqual([]);
-    expect(served.mandates).toBeUndefined();
   });
 });

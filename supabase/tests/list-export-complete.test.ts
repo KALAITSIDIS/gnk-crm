@@ -36,7 +36,7 @@ import { parseCsvTable } from "../../scripts/import/_shared.mts";
  *      repeated;
  *      another organisation's rows never appear; the audit count = the rows;
  *   2. filters, archive scopes, the deal type, the mandate filters (an
- *      `!inner` embed and an exclusion list), a key search that matches
+ *      `!inner` embed and an anti-join), a key search that matches
  *      through property references, "my tasks" and an agent's own
  *      deals keep their meaning past the first page; an empty set exports a
  *      header-only CSV; a smaller set exports exactly;
@@ -44,8 +44,8 @@ import { parseCsvTable } from "../../scripts/import/_shared.mts";
  *      10,001 refuses (422 too_many) — nothing downloaded, nothing audited,
  *      at most 10,001 rows ever requested;
  *   4. a server capped BELOW the page size (300, 750) still yields every row;
- *   5. a later page's failure, the agent-name or mandate lookup's failure, a
- *      key search's reference-matching read failing and the audit write's
+ *   5. a later page's failure, the agent-name lookup's failure, a mandate
+ *      anti-join's read failing, a key search's reference-matching read failing and the audit write's
  *      failure each release no CSV
  *      (and the read failures write no audit line);
  *   6. the deals CSV keeps expected and final values as separate raw columns
@@ -623,7 +623,7 @@ describe("every list export holds the whole authorised set past max_rows", () =>
     await expectComplete("properties villa", admin, "properties", { type: "villa" }, await EXPECTED.properties("default", "villa"));
   });
 
-  it("properties: the mandate filters — an !inner embed paged past the cap, and an exclusion list", async () => {
+  it("properties: the mandate filters — an !inner embed paged past the cap, and an anti-join", async () => {
     const active = await column(
       `select p.reference as v from properties p where p.org_id = $1 and p.kind <> 'unit'
          and p.status <> 'withdrawn' and p.visibility <> 'archived'
@@ -775,14 +775,18 @@ describe("a failure releases no CSV", () => {
     expect((await exportedEvents(ORG)).count).toBe(before.count);
   }, 60_000);
 
-  it("properties: the mandate exclusion cannot be read → 500 with the reason, no CSV", async () => {
-    steer.failGet = { match: /\/rest\/v1\/mandates_safe\?/, nth: 1, seen: 0 };
+  it("properties: the mandate anti-join cannot be read → 500 with the reason, never a CSV that lost the filter", async () => {
+    // "No mandate" is an anti-join in each page request since
+    // T-mandate-filter-anti-join (no separate mandate read): fail the request
+    // that carries it
+    steer.failGet = { match: /\/rest\/v1\/properties\?.*mandate_block=is\.null/, nth: 1, seen: 0 };
     const before = await exportedEvents(OTHER_ORG);
     const a = await exportAs(outsider, "properties", { mandate: "none" });
-    console.log(`[evidence] properties mandate lookup fails: status ${a.status}, reason ${a.json?.reason}`);
+    console.log(`[evidence] properties mandate anti-join fails: status ${a.status}, reason ${a.json?.reason}, csv rows ${a.rows.length}`);
     expect(steer.failGet.seen).toBe(1);
     expect(a.status).toBe(500);
     expect(a.json?.reason).toBe("failed");
+    expect(a.rows).toEqual([]);
     expect((await exportedEvents(OTHER_ORG)).count).toBe(before.count);
   }, 60_000);
 
