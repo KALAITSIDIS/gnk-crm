@@ -1,6 +1,3 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@/lib/supabase/database.types";
-import { fetchAll } from "@/lib/supabase/fetch-all";
 import {
   propertyFiltersSchema,
   resolvePropertyKindScope,
@@ -13,9 +10,9 @@ import {
 /**
  * Shared query logic for the properties list, used by the list page and the CSV
  * export route so they cannot disagree about which rows the current filters
- * select. Properties are the intricate case: a mandate filter needs a separate
- * pre-query for the ids to exclude and changes the join embed, and the price/
- * scope predicates are transaction-context-dependent. All of that lives here
+ * select. Properties are the intricate case: a mandate filter changes the join
+ * embeds (an inner join, or an anti-join on a second, empty embed), and the
+ * price/scope predicates are transaction-context-dependent. All of that lives here
  * once; the page and the export each add only their own `.select()` columns,
  * ordering and pagination.
  */
@@ -86,49 +83,62 @@ export function mandateFilterKey(column: "status" | "type"): string {
   return `${MANDATE_REL}.${column}`;
 }
 
-export function mandateEmbed(
-  filters: PropertyFilters,
-): "mandates_safe!inner(type, status)" | "mandates_safe(type, status)" {
-  return filters.mandate === "active" || filters.mandate === "expired"
-    ? "mandates_safe!inner(type, status)"
-    : "mandates_safe(type, status)";
+/**
+ * "No mandate" and "Expired (not active)", as ANTI-JOINS the database does in
+ * the one properties request: "none" = no active AND no expired mandate;
+ * "expired" = an expired one and no active one (an active mandate wins the
+ * badge). The listing's own mandates are embedded again under aliases that
+ * select nothing — `mandate_block` narrowed to the blocking statuses, the
+ * listing kept only when it is EMPTY (`mandate_block=is.null`); for "expired",
+ * `mandate_has` inner-joined to an expired one. Through `mandates_safe`, like
+ * every UI mandate read, so each role is blocked by exactly the mandates it can
+ * see (an agent: their own, or on a listing assigned to them). An empty embed
+ * adds nothing to a row, so the row type is the display embed's.
+ *
+ * It replaced a pre-query that read every blocking mandate's property id and
+ * wrote them into the request as `id=not.in.(…)` — about 39 bytes each: past
+ * about 200 mandated listings the gateway answered 414 (the local Kong's 8 KB
+ * request line, measured: 197 ids passed, 198 did not; hosted's limit is not
+ * measured) and the list, the map and the export failed. The request is now the same size whatever the
+ * mandate count (T-mandate-filter-anti-join).
+ *
+ * EVERY FILTER NAMES AN ALIAS when the view is embedded more than once.
+ * Measured on PostgREST v14.5: beside an aliased embed of the same view, a
+ * filter on the UNALIASED `mandates_safe.status` (or on a display embed
+ * self-aliased `mandates_safe:`) is not applied where it is written — "expired"
+ * as `mandates_safe!inner` + `mandates_safe.status=eq.expired` + the block
+ * listed every mandated listing, active ones included. So the display embed
+ * stays plain and unfiltered whenever an alias rides with it; "active" keeps
+ * its filtered `!inner` display embed because its request embeds the view
+ * only once.
+ */
+const MANDATE_BLOCK = "mandate_block";
+const MANDATE_HAS = "mandate_has";
+export const MANDATE_BLOCK_EMBED = `${MANDATE_BLOCK}:${MANDATE_REL}()` as const;
+export const MANDATE_HAS_EMBED = `${MANDATE_HAS}:${MANDATE_REL}!inner()` as const;
+
+/** The statuses that block each exclusion filter; null when the filter excludes nothing. */
+function mandateBlockStatuses(filters: PropertyFilters): readonly ("active" | "expired")[] | null {
+  if (filters.mandate === "none") return ["active", "expired"];
+  if (filters.mandate === "expired") return ["active"];
+  return null;
 }
 
 /**
- * Property ids to EXCLUDE for the "no mandate" / "expired (not active)" filters.
- * "none" = no active AND no expired mandate; "expired" excludes any with an
- * active mandate (an active mandate wins the badge). Returns [] when the filter
- * does not need it. Throws on query error (fail loud). Paged through fetchAll
- * since 2026-09-06: a single select stops at PostgREST's 1,000 silently, and
- * the 1,001st excluded id would have let its property back onto the list
- * (the audit's A08a).
+ * The mandate embeds to put in the SELECT: the display embed (inner-joined and
+ * filtered for "active"), plus the aliases `applyPropertyListFilters` filters
+ * on for "none" / "expired" — so every select that takes `mandateEmbed` names
+ * them (a filter on an alias the select lacks is 400 PGRST108, never a wider
+ * list).
  */
-export async function fetchMandateExcludeIds(
-  supabase: SupabaseClient<Database>,
+export function mandateEmbed(
   filters: PropertyFilters,
-): Promise<string[]> {
-  if (filters.mandate !== "none" && filters.mandate !== "expired") return [];
-  const statuses =
-    filters.mandate === "none" ? (["active", "expired"] as const) : (["active"] as const);
-  const rows = await fetchAll(
-    (from, to) =>
-      supabase
-        // the view, for the same reason as `mandateEmbed` above: on the base
-        // table this returned [] for a listing manager, so "no mandate" excluded
-        // nothing and listed every mandated property in the org
-        .from("mandates_safe")
-        .select("property_id")
-        .in("status", statuses)
-        .order("id")
-        .range(from, to),
-    // the label names what was actually queried, so a failure points at the view
-    "mandates_safe",
-  );
-  // the view's columns are nullable in the generated types (a view has no NOT
-  // NULL), so the narrowing is real, not ceremony
-  return [
-    ...new Set(rows.map((m) => m.property_id).filter((id): id is string => id !== null)),
-  ];
+): "mandates_safe!inner(type, status)" | "mandates_safe(type, status)" {
+  if (filters.mandate === "active") return "mandates_safe!inner(type, status)";
+  const display = "mandates_safe(type, status)";
+  if (filters.mandate === "expired") return `${display}, ${MANDATE_HAS_EMBED}, ${MANDATE_BLOCK_EMBED}` as typeof display;
+  if (filters.mandate === "none") return `${display}, ${MANDATE_BLOCK_EMBED}` as typeof display;
+  return display;
 }
 
 /**
@@ -144,17 +154,17 @@ interface PropertyFilterBuilder<Q> {
   in(column: string, values: never): Q;
   gte(column: string, value: never): Q;
   lte(column: string, value: never): Q;
-  not(column: string, operator: string, value: never): Q;
+  is(column: string, value: null): Q;
 }
 
 /**
- * Apply every list filter to an already-`select()`-ed properties query. Mirrors
- * the list page one-for-one. `excludeIds` comes from fetchMandateExcludeIds.
+ * Apply every list filter to an already-`select()`-ed properties query — one
+ * whose select includes `mandateEmbed(filters)`. Mirrors the list page
+ * one-for-one.
  */
 export function applyPropertyListFilters<Q extends PropertyFilterBuilder<Q>>(
   query: Q,
   filters: PropertyFilters,
-  excludeIds: readonly string[],
 ): Q {
   let q = query;
 
@@ -237,10 +247,14 @@ export function applyPropertyListFilters<Q extends PropertyFilterBuilder<Q>>(
   // boundary for every role and 500'd the CSV export.
   if (filters.mandate === "active")
     q = q.eq(mandateFilterKey("status") as never, "active" as never);
+  // "expired": an expired mandate, on the inner-joined alias (see MANDATE_HAS_EMBED)
   if (filters.mandate === "expired")
-    q = q.eq(mandateFilterKey("status") as never, "expired" as never);
-  if ((filters.mandate === "none" || filters.mandate === "expired") && excludeIds.length > 0) {
-    q = q.not("id", "in", `(${excludeIds.join(",")})` as never);
+    q = q.eq(`${MANDATE_HAS}.status` as never, "expired" as never);
+  // the anti-join (see MANDATE_BLOCK_EMBED): the block embed narrowed to the
+  // blocking statuses, and the listing kept only when nothing is left in it
+  const blocking = mandateBlockStatuses(filters);
+  if (blocking) {
+    q = q.in(`${MANDATE_BLOCK}.status`, blocking as never).is(MANDATE_BLOCK, null);
   }
 
   return q;

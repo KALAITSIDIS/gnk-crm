@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { assertShellRendered } from "./helpers";
 
 /**
  * Properties CSV export (IMPROVEMENTS B10). Row rendering is unit-tested in
@@ -22,6 +23,23 @@ test.describe("Properties CSV export", () => {
     expect(body.replace(/^﻿/, "")).toMatch(
       /^Reference,Kind,Type,Transaction,Status,Visibility,Title,District,Area,Address,Bedrooms,Bathrooms,Covered m²,Plot m²,Asking price,Rent\/month,Mandate,Owner,Developer,Agent,Title deed,Permit,Latitude,Longitude,Quality\r\n/,
     );
+  });
+
+  // Each mandate filter's select must carry the embeds its filters name — a
+  // drift is a 400 from PostgREST (PGRST108): a 500 refusal here, the error
+  // boundary on the list and the map. "No mandate" and "Expired" are anti-joins
+  // on aliased embeds since T-mandate-filter-anti-join; the DB suite proves which
+  // listings each holds (supabase/tests/mandate-filter-anti-join.test.ts).
+  test("every mandate filter is accepted — by the export, the list and the map", async ({ page }) => {
+    for (const mandate of ["none", "expired", "active"]) {
+      const res = await page.request.get(`/properties/export?mandate=${mandate}`);
+      expect(res.status(), `export mandate=${mandate}`).toBe(200);
+      expect(res.headers()["content-type"], `export mandate=${mandate}`).toContain("text/csv");
+      for (const path of [`/properties?mandate=${mandate}&view=table`, `/properties/map?mandate=${mandate}`]) {
+        await page.goto(path);
+        await assertShellRendered(page);
+      }
+    }
   });
 
   test("the archived scope produces its own filename", async ({ page }) => {
