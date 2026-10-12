@@ -1,4 +1,10 @@
-import { keyFiltersSchema, sanitizeSearchTerm, type KeyFilters } from "@/lib/validators/keys";
+import {
+  KEY_SEARCH_NOTHING,
+  KEY_SEARCH_TOO_LONG,
+  keyFiltersSchema,
+  sanitizeSearchTerm,
+  type KeyFilters,
+} from "@/lib/validators/keys";
 
 /**
  * Shared filter logic for the keys register, used by the list page and the CSV
@@ -14,8 +20,27 @@ function first(v: ParamValue): string | undefined {
   return Array.isArray(v) ? v[0] : v;
 }
 
-export function parseKeyFilters(sp: KeySearchParams): KeyFilters {
-  return keyFiltersSchema.parse({ status: first(sp.status), q: first(sp.q) });
+/** The register's filters — or, when the search cannot be run, the words that say why. */
+export type ParsedKeyFilters = { filters: KeyFilters; refusal: null } | { filters: null; refusal: string };
+
+/**
+ * Never throws (a throw was the page's error boundary and the export's bare
+ * 500). `status` falls back to "all" (a stale or hand-typed scope). A search
+ * the register cannot run as asked — longer than the box allows, or nothing
+ * but characters the search leaves out — is REFUSED, never truncated or run as
+ * the whole register: the caller runs no key query at all and says so. A
+ * repeated parameter reads its FIRST value, here and in the export route
+ * (T-keys-search-length).
+ */
+export function parseKeyFilters(sp: KeySearchParams): ParsedKeyFilters {
+  const parsed = keyFiltersSchema.safeParse({ status: first(sp.status), q: first(sp.q) });
+  if (parsed.success) {
+    // "(,)" would otherwise add no predicate: the whole register, labelled a search
+    if (parsed.data.q && !sanitizeSearchTerm(parsed.data.q)) return { filters: null, refusal: KEY_SEARCH_NOTHING };
+    return { filters: parsed.data, refusal: null };
+  }
+  const tooLong = parsed.error.issues.some((i) => i.code === "too_big");
+  return { filters: null, refusal: tooLong ? KEY_SEARCH_TOO_LONG : "That search could not be read. Nothing was searched." };
 }
 
 /**

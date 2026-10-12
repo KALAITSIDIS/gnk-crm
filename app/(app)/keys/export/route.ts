@@ -9,14 +9,22 @@ import {
   applyKeyListFilters,
   parseKeyFilters,
   withKeySearchEmbed,
+  type KeySearchParams,
 } from "@/lib/queries/keys-list";
-import { readExportRows } from "@/lib/services/export-read";
+import { exportInvalid, readExportRows } from "@/lib/services/export-read";
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
-  const sp: Record<string, string> = Object.fromEntries(request.nextUrl.searchParams.entries());
-  const filters = parseKeyFilters(sp);
+  // every value of a repeated parameter, so `parseKeyFilters` reads the FIRST —
+  // as the page does (Object.fromEntries kept the last: a URL the page refused
+  // exported another search). T-keys-search-length
+  const params = request.nextUrl.searchParams;
+  const sp: KeySearchParams = Object.fromEntries([...new Set(params.keys())].map((k) => [k, params.getAll(k)]));
+  // a search the register would refuse is refused here too, before any key is
+  // read: never the unfiltered register as this search's file
+  const { filters, refusal } = parseKeyFilters(sp);
+  if (!filters) return exportInvalid(refusal);
 
   // the list page's search, reference included, in every page request
   const read = await readExportRows(

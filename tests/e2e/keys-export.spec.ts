@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { KEY_SEARCH_MAX, KEY_SEARCH_NOTHING, KEY_SEARCH_TOO_LONG } from "@/lib/validators/keys";
 
 /**
  * Keys register CSV export (IMPROVEMENTS B10). Row rendering is unit-tested in
@@ -36,5 +37,40 @@ test.describe("Keys CSV export", () => {
       expect(res.status(), qs).toBe(200);
       expect(res.headers()["content-type"], qs).toContain("text/csv");
     }
+  });
+
+  // A search the register cannot run as asked — longer than the box allows, or
+  // nothing but characters a search leaves out — is refused in words: never
+  // the bare 500 it used to be, never the unfiltered register as this search's
+  // file. supabase/tests/keys-search-length.test.ts proves no key is read and
+  // nothing audited. T-keys-search-length
+  test("a search over the limit, or with nothing to search, is refused in words; one at the limit is a CSV", async ({ page }) => {
+    for (const [q, error] of [
+      ["x".repeat(KEY_SEARCH_MAX + 1), KEY_SEARCH_TOO_LONG],
+      ["(,)", KEY_SEARCH_NOTHING],
+    ]) {
+      const refused = await page.request.get(`/keys/export?q=${encodeURIComponent(q)}`);
+      expect(refused.status(), q).toBe(400);
+      expect(refused.headers()["content-type"], q).toContain("application/json");
+      expect(refused.headers()["cache-control"], q).toContain("no-store");
+      expect(await refused.json(), q).toEqual({ error, reason: "invalid" });
+    }
+
+    const atLimit = await page.request.get(`/keys/export?q=${"x".repeat(KEY_SEARCH_MAX)}`);
+    expect(atLimit.status()).toBe(200);
+    expect(atLimit.headers()["content-type"]).toContain("text/csv");
+  });
+});
+
+test.describe("Keys register search length", () => {
+  // (No Export assertion here: the e2e organisation holds no keys, so Export
+  // is hidden on every /keys URL — the DB test pins "no Export on a refusal".)
+  test("a linked search over the limit says so in the register's place, and the box holds 100", async ({ page }) => {
+    await page.goto(`/keys?q=${"x".repeat(KEY_SEARCH_MAX + 1)}`);
+    await expect(page.getByText(KEY_SEARCH_TOO_LONG)).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Search keys" })).toHaveAttribute(
+      "maxlength",
+      String(KEY_SEARCH_MAX),
+    );
   });
 });

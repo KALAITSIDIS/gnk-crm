@@ -5,7 +5,7 @@ import {
   EXPORT_TOO_MANY_MESSAGE,
   EXPORT_TOO_MANY_UNFILTERED_MESSAGE,
 } from "@/lib/constants/export";
-import { exportFailed, readAgentNames, readExportRows } from "./export-read";
+import { exportFailed, exportInvalid, readAgentNames, readExportRows } from "./export-read";
 
 /**
  * The refusals a list export answers with (T-export-complete). The paging
@@ -68,6 +68,16 @@ describe("exportFailed", () => {
     const res = exportFailed();
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({ error: EXPORT_FAILED_MESSAGE, reason: "failed" });
+  });
+});
+
+describe("exportInvalid", () => {
+  it("is a 400 carrying the route's own words, not cached (T-keys-search-length)", async () => {
+    const res = exportInvalid("That search is too long.");
+    expect(res.status).toBe(400);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("content-type")).toContain("application/json");
+    expect(await res.json()).toEqual({ error: "That search is too long.", reason: "invalid" });
   });
 });
 
