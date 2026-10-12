@@ -27,3 +27,30 @@ export function unwrapRows<T>(
   }
   return res.data ?? [];
 }
+
+/**
+ * The count's twin of `unwrapRows`, for a `{ count: "exact" }` read (usually
+ * `head: true`). A failed count throws to the same boundary — `count ?? 0`
+ * would paint a failure as a genuine zero ("0 registered" over a register that
+ * has keys). A response with NO count fails too: postgrest-js answers a HEAD
+ * request's 404 with `status: 204, error: null, count: null` (measured
+ * 2026-10-12), and parses an uncounted `Content-Range: 0-24/*` as NaN — so an
+ * error check alone would still read those as zero, or as "NaN registered".
+ *
+ * A HEAD failure has no body, so its error message is empty and carries no
+ * PostgREST code — the status names it instead, and the clock-skew route can
+ * fire only for a counted GET.
+ */
+export function unwrapCount(
+  res: { count: number | null; error: PostgrestError | null; status?: number },
+  label: string,
+): number {
+  if (res.error) {
+    if (isClockSkewRejection(res.error)) redirect(SESSION_CLOCK_PATH);
+    throw new Error(`Query failed (${label}): ${res.error.message || `HTTP ${res.status ?? "error"}`}`);
+  }
+  if (typeof res.count !== "number" || !Number.isFinite(res.count)) {
+    throw new Error(`Query failed (${label}): no count returned (HTTP ${res.status ?? "?"})`);
+  }
+  return res.count;
+}

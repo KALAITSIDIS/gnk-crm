@@ -13,7 +13,7 @@ const redirect = vi.hoisted(() => vi.fn((path: string) => {
 }));
 vi.mock("next/navigation", () => ({ redirect }));
 
-const { unwrapRows } = await import("./unwrap");
+const { unwrapCount, unwrapRows } = await import("./unwrap");
 const { SESSION_CLOCK_PATH, isClockSkewRejection } = await import("./clock-skew");
 
 const err = (over: Partial<PostgrestError>): PostgrestError =>
@@ -69,5 +69,51 @@ describe("unwrapRows", () => {
       unwrapRows({ data: null, error: err({ code: "PGRST301", message: "JWT expired" }) }, "districts"),
     ).toThrow("Query failed (districts): JWT expired");
     expect(redirect).not.toHaveBeenCalled();
+  });
+});
+
+describe("unwrapCount", () => {
+  it("returns the count, a genuine zero included", () => {
+    redirect.mockClear();
+    expect(unwrapCount({ count: 40, error: null, status: 200 }, "key count")).toBe(40);
+    expect(unwrapCount({ count: 0, error: null, status: 200 }, "key count")).toBe(0);
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("throws on a failed count instead of reading it as zero — a HEAD failure's empty message names the status", () => {
+    redirect.mockClear();
+    // what postgrest-js returns for a HEAD 500 / 401 (no body): message "" (measured 2026-10-12)
+    expect(() => unwrapCount({ count: null, error: err({ message: "" }), status: 500 }, "key count")).toThrow(
+      "Query failed (key count): HTTP 500",
+    );
+    expect(() => unwrapCount({ count: null, error: err({ message: "" }), status: 401 }, "key count")).toThrow(
+      "Query failed (key count): HTTP 401",
+    );
+    // a counted GET carries PostgREST's message
+    expect(() =>
+      unwrapCount({ count: null, error: err({ code: "42501", message: "permission denied" }), status: 403 }, "key count"),
+    ).toThrow("Query failed (key count): permission denied");
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("throws when no count came back — postgrest-js answers a HEAD 404 with error null, count null", () => {
+    expect(() => unwrapCount({ count: null, error: null, status: 204 }, "key count")).toThrow(
+      "Query failed (key count): no count returned (HTTP 204)",
+    );
+    expect(() => unwrapCount({ count: null, error: null }, "key count")).toThrow(
+      "Query failed (key count): no count returned (HTTP ?)",
+    );
+    // an uncounted Content-Range ("…/*") parses to NaN in postgrest-js
+    expect(() => unwrapCount({ count: Number.NaN, error: null, status: 200 }, "key count")).toThrow(
+      "Query failed (key count): no count returned (HTTP 200)",
+    );
+  });
+
+  it("routes a clock-skewed token like unwrapRows does", () => {
+    redirect.mockClear();
+    expect(() =>
+      unwrapCount({ count: null, error: err({ code: "PGRST303", message: "JWT issued at future" }), status: 401 }, "key count"),
+    ).toThrow(`NEXT_REDIRECT:${SESSION_CLOCK_PATH}`);
+    expect(redirect).toHaveBeenCalledWith(SESSION_CLOCK_PATH);
   });
 });
