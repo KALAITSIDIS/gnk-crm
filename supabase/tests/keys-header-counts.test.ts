@@ -282,6 +282,10 @@ describe("the keys page header states the register's counts, or fails", () => {
     // postgrest-js turns a HEAD 404 into status 204, error null, count null
     ["the registered count answers 404 (no count, no error)", isRegisteredCount, failWith(404), /^Query failed \(key count\): no count returned \(HTTP 204\)$/],
     ["the checked-out count answers without a count", isCheckedOutCount, () => new Response(null, { status: 200 }), /^Query failed \(checked-out key count\): no count returned \(HTTP 200\)$/],
+    // what PostgREST sends when it computed no count: postgrest-js parses the "*" as NaN
+    ["the registered count answers an uncounted range (*/*)", isRegisteredCount,
+      () => new Response(null, { status: 200, headers: { "content-range": "*/*" } }),
+      /^Query failed \(key count\): no count returned \(HTTP 200\)$/],
   ];
 
   it.each(FAILURES)("%s → the page's load failure, never a header", async (label, match, respond, says) => {

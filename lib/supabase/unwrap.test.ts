@@ -103,6 +103,10 @@ describe("unwrapCount", () => {
     expect(() => unwrapCount({ count: null, error: null }, "key count")).toThrow(
       "Query failed (key count): no count returned (HTTP ?)",
     );
+    // an uncounted Content-Range ("…/*") parses to NaN in postgrest-js
+    expect(() => unwrapCount({ count: Number.NaN, error: null, status: 200 }, "key count")).toThrow(
+      "Query failed (key count): no count returned (HTTP 200)",
+    );
   });
 
   it("routes a clock-skewed token like unwrapRows does", () => {
