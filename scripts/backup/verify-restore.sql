@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 144::bigint as migrations,
+    2::bigint as auth_users, 145::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -309,6 +309,9 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   -- bodies, revoked from all four roles explicitly like the guards above
   ('trg_contacts_erasure_lifecycle',   false, false, false, false),
   ('trg_documents_kept_for_retention', false, false, false, false),
+  -- 0145: a session may not delete a paid instalment line — an invoker
+  -- trigger body, revoked from all four roles explicitly like the guards above
+  ('trg_installment_paid_kept',        false, false, false, false),
   -- 0101: erasure cancels a lead's pending desk alert — a trigger body that
   -- even service_role may not call (like the definer trigger bodies above)
   ('cancel_lead_notification_jobs', true, false, false, false),
@@ -914,6 +917,28 @@ misc as (
                     and pg_get_constraintdef(c.oid) = 'CHECK (((expected_value IS NULL) OR (expected_value <> ALL (ARRAY[''NaN''::numeric, ''Infinity''::numeric, ''-Infinity''::numeric]))))')
                 or (c.conrelid = to_regclass('public.deals') and c.conname = 'deals_final_value_finite'
                     and pg_get_constraintdef(c.oid) = 'CHECK (((final_value IS NULL) OR (final_value <> ALL (ARRAY[''NaN''::numeric, ''Infinity''::numeric, ''-Infinity''::numeric]))))'))) = 3)::text
+  union all
+  -- 0145: a paid instalment line is never deleted by a user session — its own
+  -- DELETE, or the cascade from its reservations DELETE (bound through the
+  -- role GUC, since the cascade runs as the table's owner).
+  -- reservation_installments_keep_paid, an enabled BEFORE DELETE row trigger
+  -- calling the invoker guard. A restore that lost or disabled the trigger, or
+  -- a guard bound on current_user alone (the cascade's door) or refusing
+  -- nothing, reads false here.
+  select 'SECURITY: a paid instalment line is kept from user sessions — their DELETE and their reservation DELETE''s cascade (0145)', 'true',
+         (exists (select 1 from pg_trigger t
+                   where t.tgrelid = 'public.reservation_installments'::regclass and t.tgname = 'reservation_installments_keep_paid'
+                     and t.tgfoid = to_regprocedure('public.trg_installment_paid_kept()')
+                     and not t.tgisinternal and t.tgenabled = 'O' and t.tgqual is null
+                     and (t.tgtype & 2) = 2 and (t.tgtype & 1) = 1 and (t.tgtype & 8) = 8
+                     and (t.tgtype & (4 | 16 | 32)) = 0 and cardinality(t.tgattr::int2[]) = 0)
+          and coalesce((select not p.prosecdef
+                               and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'current_user not in \(''authenticated'', ''anon''\)'
+                               and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'current_setting\(''role'', true\), ''none''\) not in \(''authenticated'', ''anon''\)'
+                               and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'old\.paid_at is not null'
+                               and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'errcode = ''42501'''
+                          from pg_proc p
+                         where p.oid = to_regprocedure('public.trg_installment_paid_kept()')), false))::text
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.

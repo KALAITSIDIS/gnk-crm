@@ -29,17 +29,41 @@ export type ScheduleActionState = { error: string | null; savedAt: number | null
 const ok = (): ScheduleActionState => ({ error: null, savedAt: Date.now() });
 const fail = (error: string): ScheduleActionState => ({ error, savedAt: null });
 
-/** How many lines of this schedule are already marked paid. */
+/** The refusal when the paid-line check itself could not be read. */
+const PAID_CHECK_UNREAD =
+  "Could not check whether any instalment is paid — nothing was changed. Try again.";
+const PAID_REFUSAL_APPLY =
+  "Some instalments are already marked paid — un-mark them first, or the payments would no longer line up with the schedule.";
+const PAID_REFUSAL_CLEAR = "Instalments are marked paid — un-mark them before removing the schedule.";
+
+/**
+ * The database's own refusal to delete a paid line (0145's trigger: 42501) —
+ * reached when a line was paid after the check, and the whole DELETE is
+ * refused, nothing removed. Said in the screen's words, not the raw text.
+ */
+const isPaidLineKept = (e: { code?: string; message: string }) =>
+  e.code === "42501" && /paid instalment/i.test(e.message);
+
+/**
+ * How many lines of this schedule are already marked paid — or `null` when
+ * that could not be established. Both callers delete every line when this says
+ * 0, so an unread count must never read as 0: postgrest-js answers a failed
+ * HEAD count with `count: null` (a 404 with no error at all, an uncounted range
+ * with NaN). The database refuses to delete a paid line anyway (0145); this
+ * check is what turns that into words, and keeps a refused action from
+ * reaching its delete. T-schedule-paid-guard
+ */
 async function paidLineCount(
   supabase: Awaited<ReturnType<typeof createClient>>,
   reservationId: string,
-): Promise<number> {
-  const { count } = await supabase
+): Promise<number | null> {
+  const { count, error } = await supabase
     .from("reservation_installments")
     .select("id", { count: "exact", head: true })
     .eq("reservation_id", reservationId)
     .not("paid_at", "is", null);
-  return count ?? 0;
+  if (error || typeof count !== "number" || !Number.isFinite(count)) return null;
+  return count;
 }
 
 /**
@@ -71,11 +95,9 @@ export async function applyPaymentPlan(
     .maybeSingle();
   if (!reservation) return fail("That reservation no longer exists.");
 
-  if ((await paidLineCount(supabase, reservation_id)) > 0) {
-    return fail(
-      "Some instalments are already marked paid — un-mark them first, or the payments would no longer line up with the schedule.",
-    );
-  }
+  const paidLines = await paidLineCount(supabase, reservation_id);
+  if (paidLines === null) return fail(PAID_CHECK_UNREAD);
+  if (paidLines > 0) return fail(PAID_REFUSAL_APPLY);
 
   const { data: plan } = await supabase
     .from("payment_plans")
@@ -112,7 +134,7 @@ export async function applyPaymentPlan(
     .from("reservation_installments")
     .delete()
     .eq("reservation_id", reservation_id);
-  if (clearErr) return fail(clearErr.message);
+  if (clearErr) return fail(isPaidLineKept(clearErr) ? PAID_REFUSAL_APPLY : clearErr.message);
 
   const { error: insertErr } = await supabase.from("reservation_installments").insert(
     built.lines.map((l) => ({
@@ -296,9 +318,9 @@ export async function clearSchedule(
     .maybeSingle();
   if (!reservation) return fail("That reservation no longer exists.");
 
-  if ((await paidLineCount(supabase, reservation_id)) > 0) {
-    return fail("Instalments are marked paid — un-mark them before removing the schedule.");
-  }
+  const paidLines = await paidLineCount(supabase, reservation_id);
+  if (paidLines === null) return fail(PAID_CHECK_UNREAD);
+  if (paidLines > 0) return fail(PAID_REFUSAL_CLEAR);
 
   // RLS filters a denied DELETE to zero rows rather than erroring, so the count
   // is what distinguishes "not allowed" from "nothing there".
@@ -306,7 +328,7 @@ export async function clearSchedule(
     .from("reservation_installments")
     .delete({ count: "exact" })
     .eq("reservation_id", reservation_id);
-  if (error) return fail(error.message);
+  if (error) return fail(isPaidLineKept(error) ? PAID_REFUSAL_CLEAR : error.message);
   if (!count) {
     return fail("Only an admin or listing manager can remove a schedule.");
   }
