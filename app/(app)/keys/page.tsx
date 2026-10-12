@@ -7,7 +7,7 @@ import {
 import { Pager } from "@/components/features/shared/pager";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
-import { unwrapRows } from "@/lib/supabase/unwrap";
+import { unwrapCount, unwrapRows } from "@/lib/supabase/unwrap";
 import { formatDateTime } from "@/lib/utils/format";
 import { type KeyStatus } from "@/lib/validators/keys";
 import {
@@ -92,8 +92,10 @@ export default async function KeysPage({
   const movementRows = unwrapRows(movementsRes, "key movements");
 
   const filteredTotal = keysRes.count ?? 0;
-  const registeredCount = registeredRes.count ?? 0;
-  const checkedOut = checkedOutRes.count ?? 0;
+  // a count that could not be read is a load failure, never "0 registered"
+  // (which would also hide Export) — T-keys-header-counts
+  const registeredCount = unwrapCount(registeredRes, "key count");
+  const checkedOut = unwrapCount(checkedOutRes, "checked-out key count");
   const pageCount = countPages(filteredTotal);
   const isFiltered = filters.status !== "all" || Boolean(filters.q);
 
