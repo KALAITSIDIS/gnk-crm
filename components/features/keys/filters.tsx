@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { KEY_SCOPES } from "@/lib/validators/keys";
+import { KEY_SCOPES, KEY_SEARCH_MAX } from "@/lib/validators/keys";
 
 function labelize(v: string) {
   return v === "all" ? "All statuses" : v.replace(/_/g, " ");
@@ -100,6 +100,10 @@ export function KeysFilters() {
         onChange={(e) => onText(e.target.value)}
         placeholder="Filter by code, property, holder…"
         aria-label="Search keys"
+        // the register refuses a longer search arriving by URL in words; the
+        // box stops typing at the limit and cuts a longer paste to it, in
+        // plain sight (T-keys-search-length)
+        maxLength={KEY_SEARCH_MAX}
         className="w-64"
       />
     </div>

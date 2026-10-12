@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { EXPORT_FAILED_MESSAGE, EXPORT_TOO_MANY_MESSAGE } from "@/lib/constants/export";
+import { KEY_SEARCH_TOO_LONG } from "@/lib/validators/keys";
 import {
   EXPORT_SESSION_ENDED_MESSAGE,
   csvFilenameOf,
@@ -30,6 +31,7 @@ describe("isCsvAnswer — only a real CSV is saved", () => {
   it.each([
     ["the ceiling's refusal", json(422, { error: EXPORT_TOO_MANY_MESSAGE, reason: "too_many" })],
     ["a failed export", json(500, { error: EXPORT_FAILED_MESSAGE, reason: "failed" })],
+    ["a refused search", json(400, { error: KEY_SEARCH_TOO_LONG, reason: "invalid" })],
     ["a crashed route (empty 500)", answer(null, { status: 500 })],
     ["a sign-in page reached through the proxy's redirect", answer("<html>", { status: 200, headers: { "content-type": "text/html" } }, { url: "http://x/login" })],
     ["a redirected 200 that even claims text/csv", answer("x", { status: 200, headers: { "content-type": "text/csv" } }, { url: "http://x/login" })],
@@ -42,6 +44,10 @@ describe("exportRefusalMessage — what the user is told", () => {
     expect(message).toBe(EXPORT_TOO_MANY_MESSAGE);
     expect(message).toMatch(/More than 10,000 records match/);
     expect(message).toMatch(/Nothing was downloaded — narrow the filters/);
+  });
+
+  it("the route's own reason: a search it refused (T-keys-search-length)", async () => {
+    expect(await exportRefusalMessage(json(400, { error: KEY_SEARCH_TOO_LONG, reason: "invalid" }))).toBe(KEY_SEARCH_TOO_LONG);
   });
 
   it("the route's own reason: failed", async () => {

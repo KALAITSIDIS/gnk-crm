@@ -39,7 +39,10 @@ export default async function KeysPage({
 }) {
   const sp = await searchParams;
   const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
-  const filters = parseKeyFilters(sp);
+  // a search the register cannot run (longer than the box allows) is refused
+  // in words: no key query at all — never the unfiltered register, never a
+  // truncated search (T-keys-search-length)
+  const { filters, refusal } = parseKeyFilters(sp);
   const page = pageSchema.parse(first(sp.page));
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
@@ -48,26 +51,29 @@ export default async function KeysPage({
   // would search one page only, PERF-2), the property REFERENCE included, in
   // this one request. Shared with the export route. T-key-reference-search
   const { from, to } = pageRange(page);
-  const [keysRes, movementsRes, registeredRes, checkedOutRes] = await Promise.all([
-    applyKeyListFilters(
-      supabase
-        .from("property_keys")
-        .select(
-          withKeySearchEmbed(
-            "id, key_code, description, status, current_holder_name, property_id, properties(reference)",
-            filters,
+  const keysQuery = filters
+    ? applyKeyListFilters(
+        supabase
+          .from("property_keys")
+          .select(
+            withKeySearchEmbed(
+              "id, key_code, description, status, current_holder_name, property_id, properties(reference)",
+              filters,
+            ),
+            { count: "exact" },
           ),
-          { count: "exact" },
-        ),
-      filters,
-    )
-      .order("created_at", { ascending: false })
-      // `id` breaks created_at ties: without a unique last key each offset page
-      // may order tied keys differently, repeating some and skipping others.
-      // Same order as the CSV export. (A key registered between two page loads
-      // still shifts the pages — each is its own request.) T-list-page-order
-      .order("id")
-      .range(from, to),
+        filters,
+      )
+        .order("created_at", { ascending: false })
+        // `id` breaks created_at ties: without a unique last key each offset page
+        // may order tied keys differently, repeating some and skipping others.
+        // Same order as the CSV export. (A key registered between two page loads
+        // still shifts the pages — each is its own request.) T-list-page-order
+        .order("id")
+        .range(from, to)
+    : null;
+  const [keysRes, movementsRes, registeredRes, checkedOutRes] = await Promise.all([
+    keysQuery,
     supabase
       .from("key_movements")
       .select(
@@ -85,19 +91,18 @@ export default async function KeysPage({
       .eq("status", "checked_out"),
   ]);
   // a stale ?page= past the end is an empty page, not a load failure
-  const keyRows = unwrapRows(
-    isRangeBeyondEnd(keysRes.error) ? { data: [], error: null } : keysRes,
-    "keys",
-  );
+  const keyRows = keysRes
+    ? unwrapRows(isRangeBeyondEnd(keysRes.error) ? { data: [], error: null } : keysRes, "keys")
+    : [];
   const movementRows = unwrapRows(movementsRes, "key movements");
 
-  const filteredTotal = keysRes.count ?? 0;
+  const filteredTotal = keysRes?.count ?? 0;
   // a count that could not be read is a load failure, never "0 registered"
   // (which would also hide Export) — T-keys-header-counts
   const registeredCount = unwrapCount(registeredRes, "key count");
   const checkedOut = unwrapCount(checkedOutRes, "checked-out key count");
   const pageCount = countPages(filteredTotal);
-  const isFiltered = filters.status !== "all" || Boolean(filters.q);
+  const isFiltered = !filters || filters.status !== "all" || Boolean(filters.q);
 
   const keys: KeyRegisterRow[] = keyRows.map((k) => ({
     id: k.id,
@@ -150,8 +155,9 @@ export default async function KeysPage({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {/* Carries the active filters. */}
-          {registeredCount > 0 ? <ExportCsvButton href={keysExportHref} /> : null}
+          {/* Carries the active filters — none for a refused search, whose
+              export would only be refused too. */}
+          {registeredCount > 0 && !refusal ? <ExportCsvButton href={keysExportHref} /> : null}
           {canEdit ? <RegisterKeyDialog /> : null}
         </div>
       </div>
@@ -162,11 +168,12 @@ export default async function KeysPage({
         keys={keys}
         canEdit={canEdit}
         emptyText={
-          page > 1
+          refusal ??
+          (page > 1
             ? "Nothing on this page."
             : isFiltered
               ? "No keys match."
-              : "No keys registered yet."
+              : "No keys registered yet.")
         }
       />
 

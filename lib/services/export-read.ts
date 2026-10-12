@@ -34,8 +34,9 @@ import {
  *
  * REFUSALS ARE ANSWERS, NOT FILES. Past `EXPORT_CEILING` nothing is returned
  * (422, reason `too_many`); a failed page fails the whole export (500,
- * `failed`) — never the pages read before it. Neither is audited: no record
- * left. The download button shows the message (`components/features/shared/export-csv-button.tsx`).
+ * `failed`) — never the pages read before it; filters the route cannot run as
+ * asked are refused before any read (400, `invalid` — `exportInvalid`). None
+ * is audited: no record left. The download button shows the message (`components/features/shared/export-csv-button.tsx`).
  */
 export async function readExportRows<T>(
   page: (from: number, to: number) => PromiseLike<PageResult<T>>,
@@ -77,9 +78,18 @@ export async function readAgentNames(
 /** The answer for an export that failed before any row was read. */
 export const exportFailed = (): NextResponse => refuse("failed", EXPORT_FAILED_MESSAGE);
 
+/**
+ * The answer for an export whose filters cannot be run as asked (400): nothing
+ * is read and nothing audited — never the unfiltered list, never a truncated
+ * filter's rows under this request's name (T-keys-search-length).
+ */
+export const exportInvalid = (error: string): NextResponse => refuse("invalid", error);
+
+const REFUSAL_STATUS: Record<ExportRefusalReason, number> = { too_many: 422, failed: 500, invalid: 400 };
+
 function refuse(reason: ExportRefusalReason, error: string): NextResponse {
   return NextResponse.json(
     { error, reason },
-    { status: reason === "too_many" ? 422 : 500, headers: { "Cache-Control": "no-store" } },
+    { status: REFUSAL_STATUS[reason], headers: { "Cache-Control": "no-store" } },
   );
 }

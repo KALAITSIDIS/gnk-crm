@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { parseKeyFilters, applyKeyListFilters, withKeySearchEmbed, KEY_REFERENCE_MATCH_EMBED } from "./keys-list";
+import { KEY_SEARCH_MAX, KEY_SEARCH_NOTHING, KEY_SEARCH_TOO_LONG, type KeyFilters } from "@/lib/validators/keys";
+import { parseKeyFilters, applyKeyListFilters, withKeySearchEmbed, KEY_REFERENCE_MATCH_EMBED, type KeySearchParams } from "./keys-list";
+
+/** Filters a valid search parses to (fails the test on a refusal). */
+function filtersOf(sp: KeySearchParams): KeyFilters {
+  const parsed = parseKeyFilters(sp);
+  if (!parsed.filters) throw new Error(`refused: ${parsed.refusal}`);
+  return parsed.filters;
+}
 
 function spy() {
   const calls: { method: string; args: unknown[] }[] = [];
@@ -13,10 +21,44 @@ function spy() {
 
 describe("parseKeyFilters", () => {
   it("defaults status to all and keeps a valid status + trimmed q", () => {
-    expect(parseKeyFilters({}).status).toBe("all");
-    expect(parseKeyFilters({ status: "checked_out" }).status).toBe("checked_out");
-    expect(parseKeyFilters({ status: "bogus" }).status).toBe("all");
-    expect(parseKeyFilters({ q: "  534  " }).q).toBe("534");
+    expect(filtersOf({}).status).toBe("all");
+    expect(filtersOf({ status: "checked_out" }).status).toBe("checked_out");
+    expect(filtersOf({ status: "bogus" }).status).toBe("all");
+    expect(filtersOf({ q: "  534  " }).q).toBe("534");
+  });
+
+  // T-keys-search-length: a search longer than the box allows is REFUSED in
+  // words — never thrown (the page error boundary / the export bare 500), never
+  // truncated, never dropped to an unfiltered register.
+  it("refuses a search longer than the box allows, in words", () => {
+    for (const q of ["x".repeat(KEY_SEARCH_MAX + 1), `  ${"x".repeat(KEY_SEARCH_MAX + 1)}  `, "α".repeat(KEY_SEARCH_MAX + 1)]) {
+      expect(parseKeyFilters({ q }), q.length.toString()).toEqual({ filters: null, refusal: KEY_SEARCH_TOO_LONG });
+      expect(parseKeyFilters({ q, status: "checked_out" })).toEqual({ filters: null, refusal: KEY_SEARCH_TOO_LONG });
+    }
+    expect(KEY_SEARCH_TOO_LONG).toBe("That search is too long — 100 characters at most. Nothing was searched.");
+  });
+
+  it("runs a search of exactly the limit, counted after trimming", () => {
+    const at = "x".repeat(KEY_SEARCH_MAX);
+    expect(parseKeyFilters({ q: at })).toEqual({ filters: { status: "all", q: at }, refusal: null });
+    expect(parseKeyFilters({ q: `   ${at}   ` })).toEqual({ filters: { status: "all", q: at }, refusal: null });
+    expect(parseKeyFilters({ q: "α".repeat(KEY_SEARCH_MAX) }).filters?.q).toBe("α".repeat(KEY_SEARCH_MAX));
+  });
+
+  it("refuses a search of nothing but the characters a search leaves out — never the whole register", () => {
+    for (const q of ["(,)", ",", "\\", " ( ) ", "()"]) {
+      expect(parseKeyFilters({ q }), JSON.stringify(q)).toEqual({ filters: null, refusal: KEY_SEARCH_NOTHING });
+      expect(parseKeyFilters({ q, status: "lost" }), JSON.stringify(q)).toEqual({ filters: null, refusal: KEY_SEARCH_NOTHING });
+    }
+    // an empty or blank box is no search at all, not a refusal
+    for (const q of ["", "   "]) expect(parseKeyFilters({ q })).toEqual({ filters: { status: "all", q: undefined }, refusal: null });
+    // a term with something left after the sanitizer still searches
+    expect(filtersOf({ q: "(PAF)" }).q).toBe("(PAF)");
+  });
+
+  it("reads the first of a repeated search, and refuses it when that one is too long", () => {
+    expect(filtersOf({ q: ["534", "x".repeat(KEY_SEARCH_MAX + 1)] }).q).toBe("534");
+    expect(parseKeyFilters({ q: ["x".repeat(KEY_SEARCH_MAX + 1), "534"] }).refusal).toBe(KEY_SEARCH_TOO_LONG);
   });
 });
 
@@ -25,17 +67,18 @@ describe("withKeySearchEmbed", () => {
 
   it("adds the reference-match embed — the property again, under an alias, selecting nothing — when there is a term", () => {
     expect(KEY_REFERENCE_MATCH_EMBED).toBe("reference_match:properties()");
-    expect(withKeySearchEmbed(COLUMNS, parseKeyFilters({ q: "PAF" }))).toBe(
+    expect(withKeySearchEmbed(COLUMNS, filtersOf({ q: "PAF" }))).toBe(
       "key_code, properties(reference), reference_match:properties()",
     );
-    expect(withKeySearchEmbed(COLUMNS, parseKeyFilters({ q: "PAF", status: "lost" }))).toBe(
+    expect(withKeySearchEmbed(COLUMNS, filtersOf({ q: "PAF", status: "lost" }))).toBe(
       "key_code, properties(reference), reference_match:properties()",
     );
   });
 
   it("leaves an unsearched select alone — exactly when applyKeyListFilters adds no reference filter", () => {
-    for (const sp of [{}, { status: "checked_out" }, { q: "   " }, { q: "(,)" }]) {
-      const filters = parseKeyFilters(sp);
+    // "(,)" is refused by the parser (below); the builders still add nothing for it
+    for (const filters of [filtersOf({}), filtersOf({ status: "checked_out" }), filtersOf({ q: "   " }), { status: "all" as const, q: "(,)" }]) {
+      const sp = filters;
       const { s, calls } = spy();
       applyKeyListFilters(s as never, filters);
       expect(withKeySearchEmbed(COLUMNS, filters), JSON.stringify(sp)).toBe(COLUMNS);
@@ -47,19 +90,19 @@ describe("withKeySearchEmbed", () => {
 describe("applyKeyListFilters", () => {
   it("applies no status predicate for the 'all' scope and no term", () => {
     const { s, calls } = spy();
-    applyKeyListFilters(s as never, parseKeyFilters({}));
+    applyKeyListFilters(s as never, filtersOf({}));
     expect(calls).toHaveLength(0);
   });
 
   it("filters by a concrete status", () => {
     const { s, calls } = spy();
-    applyKeyListFilters(s as never, parseKeyFilters({ status: "lost" }));
+    applyKeyListFilters(s as never, filtersOf({ status: "lost" }));
     expect(calls).toEqual([{ method: "eq", args: ["status", "lost"] }]);
   });
 
   it("ORs the text term across code/description/holder and the property reference", () => {
     const { s, calls } = spy();
-    applyKeyListFilters(s as never, parseKeyFilters({ q: "villa" }));
+    applyKeyListFilters(s as never, filtersOf({ q: "villa" }));
     expect(calls).toEqual([
       // the reference predicate sits on the aliased embed, never on the displayed one
       { method: "ilike", args: ["reference_match.reference", "%villa%"] },
@@ -74,7 +117,7 @@ describe("applyKeyListFilters", () => {
 
   it("keeps the status beside the search, and the term as the sanitizer leaves it", () => {
     const { s, calls } = spy();
-    applyKeyListFilters(s as never, parseKeyFilters({ status: "checked_out", q: " PAF(1),2 " }));
+    applyKeyListFilters(s as never, filtersOf({ status: "checked_out", q: " PAF(1),2 " }));
     expect(calls[0]).toEqual({ method: "eq", args: ["status", "checked_out"] });
     expect(calls[1]).toEqual({ method: "ilike", args: ["reference_match.reference", "%PAF 1  2%"] });
     expect(calls[2]?.args[0]).toBe(
@@ -84,7 +127,7 @@ describe("applyKeyListFilters", () => {
 
   it("adds nothing for a term the sanitizer empties", () => {
     const { s, calls } = spy();
-    applyKeyListFilters(s as never, parseKeyFilters({ q: "(,)" }));
+    applyKeyListFilters(s as never, { status: "all", q: "(,)" });
     expect(calls).toHaveLength(0);
   });
 });

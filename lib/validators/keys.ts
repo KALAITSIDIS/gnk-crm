@@ -72,12 +72,27 @@ export const markLostKeySchema = z.object({
 export const KEY_SCOPES = ["all", ...KEY_STATUSES] as const;
 export type KeyScope = (typeof KEY_SCOPES)[number];
 
+/**
+ * The longest search the register runs, after trimming — counted as a
+ * JavaScript string's length (UTF-16 code units), which is what Chromium's
+ * `maxLength` on the search box counts too. A longer one reaching the server (a
+ * linked or hand-typed URL, an export request) is REFUSED in these words, never
+ * truncated or dropped: either would show a different search's results as if
+ * they were this one's. (The box itself cuts a longer PASTE to 100, in plain
+ * sight — the browser's defined behaviour for the limit; the cut text is what
+ * is searched and shown.) T-keys-search-length
+ */
+export const KEY_SEARCH_MAX = 100;
+export const KEY_SEARCH_TOO_LONG = `That search is too long — ${KEY_SEARCH_MAX} characters at most. Nothing was searched.`;
+/** A search of only the characters the search leaves out — the same rule: refused, never the whole register. */
+export const KEY_SEARCH_NOTHING = "That search has nothing to search for — commas, brackets and backslashes are left out of a search. Nothing was searched.";
+
 export const keyFiltersSchema = z.object({
   status: z.enum(KEY_SCOPES).catch("all").default("all"),
   q: z
     .string()
     .trim()
-    .max(100)
+    .max(KEY_SEARCH_MAX, KEY_SEARCH_TOO_LONG)
     .optional()
     .transform((v) => v || undefined),
 });

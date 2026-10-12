@@ -22,5 +22,9 @@ export const EXPORT_TOO_MANY_UNFILTERED_MESSAGE =
 
 export const EXPORT_FAILED_MESSAGE = "The export failed and nothing was downloaded. Try again.";
 
-/** Why an export route refused; the body of its non-CSV answer carries it. */
-export type ExportRefusalReason = "too_many" | "failed";
+/**
+ * Why an export route refused; the body of its non-CSV answer carries it.
+ * `invalid`: the request's filters could not be run as asked (a search longer
+ * than the list allows) — nothing was read (T-keys-search-length).
+ */
+export type ExportRefusalReason = "too_many" | "failed" | "invalid";
