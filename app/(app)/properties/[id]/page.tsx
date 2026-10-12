@@ -297,6 +297,7 @@ export default async function PropertyDetailPage({
   const sharedPhotoWith = await fetchSharedPhotoReferences(
     supabase,
     id,
+    p.org_id as string,
     photos.map((m) => m.content_sha256).filter((h): h is string => Boolean(h)),
   );
   const quality = computeQualityScore({

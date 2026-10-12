@@ -1,5 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
+// RELATIVE and WITH the extension, not "@/": quality-score.ts loads this file,
+// and scripts/recompute-scores.mts and the importers load that under plain
+// Node, which resolves neither a tsconfig alias nor an extensionless path
+import { fetchAll } from "../supabase/fetch-all.ts";
 
 type Client = SupabaseClient<Database>;
 
@@ -65,28 +69,65 @@ export function sharedPhotoReferences(
 }
 
 /**
+ * Hashes asked about per request: 64 hex characters and a comma each, so
+ * ~2.7 KB of URL whatever the listing's photo count (T-shared-photo-references).
+ */
+const HASHES_PER_READ = 40;
+
+/**
  * The same question for ONE property, asked of the database: which other
  * properties (by reference, sorted) carry one of these hashes. RLS scopes the
  * answer to the caller's org, which is the org the question is about. Throws
  * on a failed read — "nobody shares this" and "the read failed" are different
  * facts (lib/supabase/fetch-all.ts says why).
+ *
+ * The hashes go out in slices of HASHES_PER_READ, each read paged, and the
+ * sharing listing's reference rides with each row (its property embedded) —
+ * no id list. It used to send every hash in one URL and every sharing
+ * listing's id in a second, unpaged: past about 122 hashes or 210 sharing
+ * listings the gateway answered 414, the property page fell over, and
+ * set-cover / delete-photo threw after their write had committed
+ * (T-shared-photo-references). That cause is gone; a read that fails for
+ * another reason still throws there (BACKLOG "Shared photographs — 2026-10-12").
  */
 export async function fetchSharedPhotoReferences(
   supabase: Client,
   propertyId: string,
+  /**
+   * The property's organisation. Under a session RLS scopes the answer to it
+   * anyway; under the service role (the nightly score recompute, the
+   * importers) this filter is what lets the planner use the
+   * (org_id, content_sha256) index instead of walking the whole table — and
+   * what keeps another organisation's listing out of the answer.
+   */
+  orgId: string,
   hashes: readonly string[],
 ): Promise<string[]> {
   const wanted = [...new Set(hashes.filter(Boolean))];
   if (wanted.length === 0) return [];
-  const media = await supabase
-    .from("property_media")
-    .select("property_id")
-    .in("content_sha256", wanted)
-    .neq("property_id", propertyId);
-  if (media.error) throw new Error(`Query failed (shared photographs): ${media.error.message}`);
-  const ids = [...new Set((media.data ?? []).map((m) => m.property_id))];
-  if (ids.length === 0) return [];
-  const props = await supabase.from("properties").select("reference").in("id", ids);
-  if (props.error) throw new Error(`Query failed (shared photographs): ${props.error.message}`);
-  return (props.data ?? []).map((p) => p.reference).sort();
+  const slices: string[][] = [];
+  for (let i = 0; i < wanted.length; i += HASHES_PER_READ) slices.push(wanted.slice(i, i + HASHES_PER_READ));
+  // the slices are independent: asked together (any failure still throws)
+  const pages = await Promise.all(
+    slices.map((slice) =>
+      fetchAll(
+        (from, to) =>
+          supabase
+            .from("property_media")
+            .select("id, listing:properties(reference)")
+            .eq("org_id", orgId)
+            .in("content_sha256", slice)
+            .neq("property_id", propertyId)
+            .order("id")
+            .range(from, to),
+        "shared photographs",
+      ),
+    ),
+  );
+  const references = new Set<string>();
+  for (const r of pages.flat()) {
+    const ref = (r.listing as { reference: string } | null)?.reference;
+    if (ref) references.add(ref);
+  }
+  return [...references].sort();
 }
