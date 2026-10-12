@@ -47,8 +47,8 @@
 -- session's reservation DELETE over a paid line is refused, reservation and
 -- lines intact. The same binding covers any future SECURITY DEFINER or
 -- invoker function a SESSION calls that would delete a paid line — such a
--- function must refuse or un-mark first (the preflight's tripwire finds none
--- today).
+-- function must refuse or un-mark first (the preflight's apply-time tripwire
+-- finds none today; it is a check when this file runs, not a guard after).
 --
 -- TRUSTED PATHS (not bound): service_role (imports, e2e fixtures, the
 -- application's admin client), postgres (maintenance, test fixtures, cron —
@@ -70,8 +70,10 @@
 -- un-mark one without its installment_unpaid event — none deletes a paid
 -- line; applyPaymentPlan's delete → insert → link is still not atomic.
 --
--- EXISTING ROWS. Nothing is changed or repaired. The final row reports the
--- paid lines and the reservations holding one (read-only).
+-- EXISTING ROWS. Nothing is changed or repaired. The final row (and a NOTICE)
+-- reports the paid lines and the reservations holding one, read-only — but
+-- the guarded single execute_sql the house applies hosted migrations with
+-- discards both, so the hosted preflight reads those counts itself.
 --
 -- LOCKS. CREATE TRIGGER takes SHARE ROW EXCLUSIVE on reservation_installments
 -- (taken first, by the preflight's LOCK, so nothing is upgraded later): reads
@@ -97,8 +99,10 @@
 -- Pins that move with this file: scripts/backup/verify-restore.sql (the
 -- migrations count 144 -> 145, a grants row, the 0145 SECURITY row); docs/04
 -- (reservation_installments). NO EXPLICIT begin/commit — the CLI wraps the
--- file (HANDOFF §3), as does one execute_sql call. The file's LAST result is
--- a read-only summary.
+-- file (HANDOFF §3), as does one execute_sql call; applied hosted inside the
+-- md5-guarded DO (DECISIONS T-unit-type-apply-atomic), where a clean return
+-- with no rows is the success signal. The file's LAST result is a read-only
+-- summary for the CLI.
 -- =============================================================================
 
 -- Bounded lock waits (0113's lesson); see LOCKS above.
@@ -161,13 +165,16 @@ begin
 
   -- 5. no SECURITY DEFINER body deletes lines or reservations: a session
   --    calling one would be bound by the role GUC (header, WHO IS BOUND) —
-  --    say so before it ships (0118's tripwire; extension-owned excluded)
+  --    say so before it ships (0118's tripwire; extension-owned excluded).
+  --    An APPLY-TIME check, not a durable guard: it reads plpgsql/sql
+  --    bodies and SQL-standard (BEGIN ATOMIC) ones, quoted identifiers
+  --    included; dynamic SQL is beyond any text scan
   select string_agg(ns.nspname || '.' || p.proname, ', ' order by ns.nspname, p.proname) into v_diag
     from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
    where p.prosecdef
      and ns.nspname not in ('pg_catalog', 'information_schema')
-     and regexp_replace(p.prosrc, '--[^\n]*', '', 'g')
-         ~* 'delete\s+from\s+(only\s+)?(public\.)?(reservation_installments|reservations)\y'
+     and regexp_replace(coalesce(p.prosrc, '') || ' ' || coalesce(pg_get_function_sqlbody(p.oid), ''), '--[^\n]*', '', 'g')
+         ~* 'delete\s+from\s+(only\s+)?("?public"?\s*\.\s*)?"?(reservation_installments|reservations)"?\y'
      and not exists (select 1 from pg_depend d
                       where d.classid = 'pg_proc'::regclass and d.objid = p.oid
                         and d.refclassid = 'pg_extension'::regclass and d.deptype = 'e');
@@ -270,5 +277,6 @@ begin
   raise notice '0145: existing rows (read-only, nothing changed) — %', current_setting('gnk.m0145_existing', true);
 end $$;
 
--- the apply tool may drop NOTICEs: the last row carries the diagnostic
+-- for the CLI: the last row carries the diagnostic (a guarded hosted apply
+-- discards it; its preflight reads the same counts)
 select '0145 applied — existing rows (read-only, nothing changed): ' || current_setting('gnk.m0145_existing', true) as existing_rows;

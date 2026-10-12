@@ -923,8 +923,10 @@ misc as (
   -- role GUC, since the cascade runs as the table's owner).
   -- reservation_installments_keep_paid, an enabled BEFORE DELETE row trigger
   -- calling the invoker guard. A restore that lost or disabled the trigger, or
-  -- a guard bound on current_user alone (the cascade's door) or refusing
-  -- nothing, reads false here.
+  -- a guard bound on current_user alone (the cascade's door), on the two
+  -- conditions joined by OR or tested apart (the same door), refusing nothing,
+  -- or returning NULL (a silently skipped row) reads false here: the binding
+  -- is matched as ONE statement and the body's last return is OLD.
   select 'SECURITY: a paid instalment line is kept from user sessions — their DELETE and their reservation DELETE''s cascade (0145)', 'true',
          (exists (select 1 from pg_trigger t
                    where t.tgrelid = 'public.reservation_installments'::regclass and t.tgname = 'reservation_installments_keep_paid'
@@ -933,11 +935,11 @@ misc as (
                      and (t.tgtype & 2) = 2 and (t.tgtype & 1) = 1 and (t.tgtype & 8) = 8
                      and (t.tgtype & (4 | 16 | 32)) = 0 and cardinality(t.tgattr::int2[]) = 0)
           and coalesce((select not p.prosecdef
-                               and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'current_user not in \(''authenticated'', ''anon''\)'
-                               and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'current_setting\(''role'', true\), ''none''\) not in \(''authenticated'', ''anon''\)'
-                               and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'old\.paid_at is not null'
-                               and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'errcode = ''42501'''
+                               and c.code ~ 'if current_user not in \(''authenticated'', ''anon''\)\s+and coalesce\(current_setting\(''role'', true\), ''none''\) not in \(''authenticated'', ''anon''\) then\s+return old;\s+end if;'
+                               and c.code ~ 'if old\.paid_at is not null then\s+raise exception ''A paid instalment cannot be deleted[^'']*'', old\.id\s+using errcode = ''42501'';\s+end if;\s+return old;\s+end\s*$'
+                               and c.code !~* 'return\s+null'
                           from pg_proc p
+                          cross join lateral (select regexp_replace(p.prosrc, '--[^\n]*', '', 'g') as code) c
                          where p.oid = to_regprocedure('public.trg_installment_paid_kept()')), false))::text
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),

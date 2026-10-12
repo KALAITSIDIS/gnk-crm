@@ -270,7 +270,7 @@ afterAll(async () => {
   await pg.end();
 }, 300_000);
 
-const REFUSED_UNREAD = "Could not check whether any instalment is paid — nothing was changed. Try again.";
+const REFUSED_UNREAD = "Could not check whether any instalment is paid — nothing was changed.";
 const REFUSED_CLEAR = "Instalments are marked paid — un-mark them before removing the schedule.";
 const REFUSED_APPLY = /^Some instalments are already marked paid — un-mark them first/;
 const KEPT = /^A paid instalment cannot be deleted — un-mark it first \(reservation_installments\.[0-9a-f-]{36}\)$/;
@@ -364,6 +364,40 @@ describe("the database keeps a paid line from user sessions (0145)", () => {
     else expect(o.result?.error).toMatch(REFUSED_APPLY);
     expect(after.map((l) => [l.label, l.paid])).toEqual([["Deposit", false], ["Frame", true], ["Keys", false]]);
     expect(await scheduleEvents(s.propertyId)).toEqual([]);
+  }, 60_000);
+
+  it.each(ACTIONS)("%s: a mark-paid still UNCOMMITTED when the DELETE arrives is waited for and seen — kept", async (name, action, fields) => {
+    const s = await schedule(false);
+    const holder = new Client({ connectionString: DB_URL });
+    await holder.connect();
+    let sentAt = 0;
+    let committedAt = 0;
+    try {
+      const o = await press(admin, action, fields(s), {
+        // the action has checked (nothing paid); a writer marks a line paid and holds the row lock,
+        // the action's DELETE is sent into that lock, and the writer commits ~600 ms later
+        beforeDelete: async () => {
+          await holder.query("begin");
+          await holder.query("update reservation_installments set paid_at = now(), paid_amount = amount where id = $1", [s.lines[1]]);
+          setTimeout(() => {
+            void holder.query("commit").then(() => { committedAt = Date.now(); });
+          }, 600);
+          sentAt = Date.now();
+        },
+      });
+      const answeredAt = Date.now();
+      const after = await linesOf(s.reservationId);
+      console.log(`[evidence] ${name}, paid by a transaction still open when the DELETE arrived: "${o.result?.error}"; the DELETE answered ${answeredAt - sentAt} ms after it was sent, ${committedAt ? answeredAt - committedAt : "?"} ms after the commit; lines ${after.length} (paid ${after.filter((l) => l.paid).map((l) => l.label).join(",")})`);
+      expect(committedAt, "the writer committed").toBeGreaterThan(0);
+      expect(answeredAt - sentAt, "the DELETE waited for the writer's row lock").toBeGreaterThanOrEqual(500);
+      if (name === "clearSchedule") expect(o.result?.error).toBe(REFUSED_CLEAR);
+      else expect(o.result?.error).toMatch(REFUSED_APPLY);
+      expect(after.map((l) => [l.label, l.paid])).toEqual([["Deposit", false], ["Frame", true], ["Keys", false]]);
+      expect(await scheduleEvents(s.propertyId)).toEqual([]);
+    } finally {
+      await holder.query("rollback").catch(() => {});
+      await holder.end();
+    }
   }, 60_000);
 
   it.each(ACTIONS)("%s: a count that says 0 while a line is paid → kept, said in the screen's words", async (name, action, fields) => {
@@ -477,35 +511,50 @@ describe("0145 itself", () => {
     return `select * from (${pack.slice(from, to)}) r(check_name, expected, actual)`;
   };
 
-  it("the restore pack's 0145 row passes now, and reads a disabled trigger, a current_user-only guard and a guard that refuses nothing", async () => {
+  it("the restore pack's 0145 row passes now, and reads every weakened guard false: disabled, current_user only, OR-joined, split, refusing nothing, returning NULL", async () => {
     const now = await rolledBack([packRow()]);
     expect(now.error).toBeNull();
     expect((now.last as { rows: { expected: string; actual: string }[] }).rows[0]).toMatchObject({ expected: "true", actual: "true" });
-    const drifts = [
-      "alter table public.reservation_installments disable trigger reservation_installments_keep_paid",
-      `create or replace function public.trg_installment_paid_kept() returns trigger language plpgsql security invoker
-         set search_path = public, pg_temp as $f$ begin
-           if current_user not in ('authenticated', 'anon') then return old; end if;
-           if old.paid_at is not null then raise exception 'kept' using errcode = '42501'; end if;
-           return old; end $f$`,
-      `create or replace function public.trg_installment_paid_kept() returns trigger language plpgsql security invoker
-         set search_path = public, pg_temp as $f$ begin return old; end $f$`,
+    // the committed body with one change each — the shapes a hand edit or a later migration could leave
+    const body = (() => {
+      const m = readMigration0145();
+      const from = m.indexOf("create function public.trg_installment_paid_kept()");
+      const to = m.indexOf("end $$;", from) + "end $$;".length;
+      return m.slice(from, to).replace("create function", "create or replace function");
+    })();
+    const variant = (from: string, to: string) => {
+      if (!body.includes(from)) throw new Error(`the guard body has no ${JSON.stringify(from)}`);
+      return body.replace(from, () => to); // a function: a string replacement would read "$$" as "$"
+    };
+    const BIND = "  if current_user not in ('authenticated', 'anon')\n     and coalesce(current_setting('role', true), 'none') not in ('authenticated', 'anon') then\n    return old;\n  end if;";
+    const drifts: [string, string][] = [
+      ["trigger disabled", "alter table public.reservation_installments disable trigger reservation_installments_keep_paid"],
+      ["current_user only", variant(BIND, "  if current_user not in ('authenticated', 'anon') then\n    return old;\n  end if;")],
+      ["OR-joined (the cascade's door)", variant("     and coalesce(current_setting", "     or coalesce(current_setting")],
+      ["the two conditions tested apart", variant(BIND,
+        "  if current_user not in ('authenticated', 'anon') then\n    return old;\n  end if;\n  if coalesce(current_setting('role', true), 'none') not in ('authenticated', 'anon') then\n    return old;\n  end if;")],
+      ["refuses nothing", variant("  if old.paid_at is not null then", "  if false then")],
+      ["returns NULL (skips the row silently)", variant("  end if;\n  return old;\nend $$;", "  end if;\n  return null;\nend $$;")],
     ];
-    for (const drift of drifts) {
+    expect(body, "the committed body itself passes the row").toContain(BIND);
+    const sanity = await rolledBack([body, packRow()]);
+    expect((sanity.last as { rows: { actual: string }[] }).rows[0]!.actual, "the committed body, re-created").toBe("true");
+    for (const [label, drift] of drifts) {
       const r = await rolledBack([drift, packRow()]);
-      expect(r.error, drift).toBeNull();
+      expect(r.error, label).toBeNull();
       const row = (r.last as { rows: { expected: string; actual: string }[] }).rows[0]!;
-      expect(row.actual, drift).toBe("false");
+      console.log(`[evidence] restore pack 0145 row, ${label}: ${row.actual}`);
+      expect(row.actual, label).toBe("false");
     }
   }, 60_000);
 
-  it("its preflight refuses a SECURITY DEFINER function that deletes instalment lines — nothing changed", async () => {
-    const planted = await rolledBack([
-      REVERT_0145_SQL,
-      `create function public.zz_spg_deleter(p uuid) returns void language sql security definer set search_path = public as $f$ delete from public.reservation_installments where id = p $f$`,
-      readMigration0145(),
-    ]);
-    console.log(`[evidence] 0145 over a planted deleter: ${planted.error}`);
-    expect(planted.error).toMatch(/^0145 aborted: a SECURITY DEFINER function deletes instalment lines or reservations \(public\.zz_spg_deleter\)/);
+  it.each([
+    ["plain", `create function public.zz_spg_deleter(p uuid) returns void language sql security definer set search_path = public as $f$ delete from public.reservation_installments where id = p $f$`],
+    ["quoted identifiers", `create function public.zz_spg_deleter(p uuid) returns void language sql security definer set search_path = public as $f$ delete from "public"."reservations" where id = p $f$`],
+    ["a BEGIN ATOMIC body (no prosrc)", `create function public.zz_spg_deleter(p uuid) returns void language sql security definer set search_path = public begin atomic delete from public.reservation_installments where id = p; end`],
+  ])("its preflight refuses a SECURITY DEFINER function that deletes lines or reservations (%s) — nothing changed", async (_label, planted) => {
+    const r = await rolledBack([REVERT_0145_SQL, planted, readMigration0145()]);
+    console.log(`[evidence] 0145 over a planted deleter (${_label}): ${r.error}`);
+    expect(r.error).toMatch(/^0145 aborted: a SECURITY DEFINER function deletes instalment lines or reservations \(public\.zz_spg_deleter\)/);
   }, 60_000);
 });

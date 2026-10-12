@@ -31,7 +31,7 @@ const fail = (error: string): ScheduleActionState => ({ error, savedAt: null });
 
 /** The refusal when the paid-line check itself could not be read. */
 const PAID_CHECK_UNREAD =
-  "Could not check whether any instalment is paid — nothing was changed. Try again.";
+  "Could not check whether any instalment is paid — nothing was changed.";
 const PAID_REFUSAL_APPLY =
   "Some instalments are already marked paid — un-mark them first, or the payments would no longer line up with the schedule.";
 const PAID_REFUSAL_CLEAR = "Instalments are marked paid — un-mark them before removing the schedule.";
