@@ -346,7 +346,7 @@ export async function recomputeQualityScore(
          covered_area_sqm, plot_area_sqm, bedrooms, bathrooms, planning_zone_code,
          building_density_pct, location, location_approx, title_deed_status, permit_status, quality_score,
          assigned_agent_id, owner_contact_id, developer_contact_id,
-         year_built, construction_status, delivery_date`,
+         year_built, construction_status, delivery_date, org_id`,
       )
       .eq("id", propertyId)
       .maybeSingle(),
@@ -386,6 +386,7 @@ export async function recomputeQualityScore(
   const sharedPhotoWith = await fetchSharedPhotoReferences(
     supabase,
     propertyId,
+    p.org_id,
     (media ?? []).map((m) => m.content_sha256).filter((h): h is string => Boolean(h)),
   );
 
