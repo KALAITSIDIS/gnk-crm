@@ -3013,7 +3013,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(anonSees ?? [], "anon must not read task_kinds").toHaveLength(0);
   });
 
-  it("34. reservation_installments: org-scoped, delete-gated, and paid lines must state an amount", async () => {
+  it("34. reservation_installments: org-scoped, delete-gated, paid lines must state an amount and are kept", async () => {
     // 0050. The migration's own paid-coherence probe is SKIPPED on a database
     // with no reservations — which is exactly what CI applies migrations to —
     // so this is where that constraint is covered unconditionally.
@@ -3104,11 +3104,26 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       .eq("id", line!.id);
     expect(agentDeleted ?? 0, "an agent must not delete a schedule line").toBe(0);
 
+    // the line is PAID (above): 0145 keeps it from every user session, the
+    // listing manager included — un-mark it first, then it deletes
+    const { error: lmPaidErr, count: lmPaidDeleted } = await lmA.client
+      .from("reservation_installments")
+      .delete({ count: "exact" })
+      .eq("id", line!.id);
+    expect(lmPaidErr?.code, "a paid line is kept, even from a listing manager (0145)").toBe("42501");
+    expect(lmPaidDeleted ?? 0).toBe(0);
+
+    const { error: unmarkErr } = await agentA1.client
+      .from("reservation_installments")
+      .update({ paid_at: null, paid_amount: null })
+      .eq("id", line!.id);
+    expect(unmarkErr, "any org member may un-mark a line").toBeNull();
+
     const { error: lmDelErr, count: lmDeleted } = await lmA.client
       .from("reservation_installments")
       .delete({ count: "exact" })
       .eq("id", line!.id);
-    expect(lmDelErr, "a listing manager may delete").toBeNull();
+    expect(lmDelErr, "a listing manager may delete an unpaid line").toBeNull();
     expect(lmDeleted ?? 0).toBe(1);
 
     // --- the schedule dies with its reservation, never outlives it ----------
