@@ -6,9 +6,14 @@ import { SlipDownloadButton } from "@/components/features/viewings/slip-download
 import { getCurrentProfile } from "@/lib/services/auth";
 import { SLIP_GDPR_LINE } from "@/lib/services/viewings";
 import { createClient } from "@/lib/supabase/server";
+import { unwrapRows } from "@/lib/supabase/unwrap";
 import { formatDateTime } from "@/lib/utils/format";
 
 export const dynamic = "force-dynamic";
+// Bounds signViewingSlip, which this page runs: slip files older than five
+// minutes then belong to no live attempt (lib/actions/viewing-slips.ts,
+// STRANDED_SLIP_AFTER_MS — T-signed-slip-kept).
+export const maxDuration = 60;
 
 export default async function SignSlipPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -27,14 +32,18 @@ export default async function SignSlipPage({ params }: { params: Promise<{ id: s
     .maybeSingle();
   if (!v) notFound();
 
-  const [{ data: org }, { data: slip }] = await Promise.all([
+  const [{ data: org }, slipRes] = await Promise.all([
     supabase.from("organizations").select("name").eq("id", v.org_id).maybeSingle(),
+    // A LIST, so a failed or hollow answer fails the page by name instead of
+    // reading as "not signed" and offering the pad over a signed viewing
+    // (T-signed-slip-kept: a `maybeSingle` cannot tell hollow from none)
     supabase
       .from("viewing_slips")
       .select("id, signer_name, second_attendee_name, signed_at")
       .eq("viewing_id", id)
-      .maybeSingle(),
+      .limit(1),
   ]);
+  const slip = unwrapRows(slipRes, "viewing slip")[0] ?? null;
 
   const property = v.properties as { reference: string; address: string | null } | null;
   const buyerName = (v.contacts as { display_name: string | null } | null)?.display_name ?? "";

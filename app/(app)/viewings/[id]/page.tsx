@@ -9,6 +9,7 @@ import { ViewingStatusActions } from "@/components/features/viewings/viewing-sta
 import { Button } from "@/components/ui/button";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
+import { unwrapRows } from "@/lib/supabase/unwrap";
 import { formatDateTime } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import type { ViewingFeedback, ViewingStatus } from "@/lib/validators/viewings";
@@ -50,11 +51,18 @@ export default async function ViewingDetailPage({ params }: { params: Promise<{ 
     .maybeSingle();
   if (!v) notFound();
 
-  const { data: slip } = await supabase
-    .from("viewing_slips")
-    .select("id, signer_name, second_attendee_name, signed_at")
-    .eq("viewing_id", id)
-    .maybeSingle();
+  // A LIST, so a failed or hollow answer fails the page by name instead of
+  // saying "Not signed yet" — and linking to the pad — over a signed slip
+  // (T-signed-slip-kept: a `maybeSingle` cannot tell hollow from none)
+  const slip =
+    unwrapRows(
+      await supabase
+        .from("viewing_slips")
+        .select("id, signer_name, second_attendee_name, signed_at")
+        .eq("viewing_id", id)
+        .limit(1),
+      "viewing slip",
+    )[0] ?? null;
 
   // The card needs "is one already filed" on FIRST PAINT — so the Download
   // button is there before any regenerate — and now also whether the filed one
