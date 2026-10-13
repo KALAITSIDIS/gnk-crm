@@ -186,19 +186,64 @@ describe("signing a slip is retry-safe", () => {
     expect(logEvent).not.toHaveBeenCalled();
   });
 
-  it("a failed row insert, confirmed absent by a re-read, takes both objects back out", async () => {
-    setup({ slipReads: [NONE, NONE], insert: { data: null, error: { message: "connection reset", code: "XX000" } } });
+  it("a failed row insert the database refused, confirmed absent by a re-read, takes both objects back out", async () => {
+    setup({ slipReads: [NONE, NONE], insert: { data: null, error: { message: "violates foreign key constraint", code: "23503" } } });
     const r = await sign();
-    expect(r.error).toBe("connection reset");
+    expect(r.error).toBe("violates foreign key constraint");
     expect(ops().at(-1)).toBe(`remove:${PNG},${PDF}`);
     expect(logEvent).not.toHaveBeenCalled();
   });
 
+  // A code is not proof the statement rolled back (DECISIONS T-media-insert-outcome):
+  // these can follow a commit, or come from in front of Postgres while the
+  // request is still in flight — so the files stay (T-refusal-allowlist).
+  it.each([
+    ["an internal error", "XX000", 500],
+    ["a statement timeout", "57014", 500],
+    ["a connection exception", "08006", 503],
+    ["no pool connection answered", "PGRST001", 503],
+  ])("%s (%s), re-read as absent: nothing removed — it may still land", async (_, code, status) => {
+    setup({ slipReads: [NONE, NONE], insert: { data: null, error: { message: "x", code }, status } });
+    const r = await sign();
+    expect(r).toEqual({
+      error: `The slip may not have been saved (HTTP ${status}) — reload the viewing in a few minutes before signing again.`,
+      savedAt: null,
+    });
+    expect(removals()).toEqual([]);
+    expect(logEvent).not.toHaveBeenCalled();
+  });
+
   it("a slip signed by someone else in between is reported as such, and this attempt's uploads are taken back out", async () => {
-    setup({ insert: { data: null, error: { message: "duplicate key", code: "23505" } } });
+    setup({
+      slipReads: [NONE, { data: [{ id: "slip-other", signature_sha256: "f".repeat(64) }], error: null }],
+      insert: { data: null, error: { message: "duplicate key", code: "23505" } },
+    });
     const r = await sign();
     expect(r.error).toBe("This viewing already has a signed slip.");
     expect(ops().at(-1)).toBe(`remove:${PNG},${PDF}`);
+    expect(logEvent).not.toHaveBeenCalled();
+  });
+
+  it("a 23505 whose row is THIS attempt's own (a replayed POST, the first committed): recorded, nothing removed", async () => {
+    setup({
+      slipReads: [NONE, { data: [{ id: "slip-1", signature_sha256: SHA }], error: null }],
+      insert: { data: null, error: { message: "duplicate key", code: "23505" } },
+    });
+    const r = await sign();
+    expect(r.error).toBeNull();
+    expect(removals()).toEqual([]);
+    expect(logEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it("a 23505 whose re-read fails: nothing removed — the row may be this attempt's own", async () => {
+    setup({
+      slipReads: [NONE, { data: null, error: { message: "read failed", code: "XX000" } }],
+      insert: { data: null, error: { message: "duplicate key", code: "23505" } },
+    });
+    const r = await sign();
+    expect(r.error).toMatch(/^Could not confirm whether the slip was saved — reload the viewing before signing again: /);
+    expect(removals()).toEqual([]);
+    expect(logEvent).not.toHaveBeenCalled();
   });
 });
 

@@ -130,8 +130,11 @@ describe("a refusal with words keeps its words", () => {
 /**
  * Whether the database REFUSED the line — and so did not write it — is what
  * decides if an action may undo its own write (the evidence report, the
- * viewing confirmation). Only an answer carrying a SQLSTATE or PostgREST code
- * says so; everything else may have written the line.
+ * viewing confirmation). Only a code `certainlyRolledBack` understands says so
+ * (DECISIONS T-media-insert-outcome); everything else may have written the
+ * line — a CODE included: 57014 / 53 / 58 / XX can be reported for a COMMIT
+ * that went through, class 08 comes from in front of Postgres, PGRST111 / 112
+ * are built after the commit (T-refusal-allowlist).
  */
 const refusalOf = async (answer: () => Response | Promise<Response>) => {
   const { supabase } = clientAnswering(answer);
@@ -147,10 +150,12 @@ const json = (status: number, body: unknown) => () => new Response(JSON.stringif
 describe("EventWriteError says whether the database refused the line", () => {
   it.each([
     ["an RLS refusal (403, 42501)", json(403, { code: "42501", message: "new row violates row-level security policy" })],
-    ["a database error (500, XX000)", json(500, { code: "XX000", message: "internal error" })],
+    ["a foreign-key refusal (409, 23503)", json(409, { code: "23503", message: "violates foreign key constraint" })],
     ["a PostgREST refusal (400, PGRST204)", json(400, { code: "PGRST204", message: "Could not find the column" })],
+    ["an expired session (401, PGRST301)", json(401, { code: "PGRST301", message: "JWT expired" })],
+    ["a serialization failure (40001)", json(500, { code: "40001", message: "could not serialize access" })],
     // its words are missing, its code is not
-    ["a database error with no message (500, XX000)", json(500, { code: "XX000" })],
+    ["a refusal with no message (403, 42501)", json(403, { code: "42501" })],
   ])("refused: %s", async (_, answer) => {
     expect(await refusalOf(answer)).toBe(true);
   });
@@ -162,7 +167,19 @@ describe("EventWriteError says whether the database refused the line", () => {
     ),
     ["a gateway's words with no code (502)", json(502, { message: "An invalid response was received from the upstream server" })],
     ["a code that is not text (502)", json(502, { code: 502, message: "Bad gateway" })],
+    // a refusal's code as a NUMBER is a gateway's body, not PostgreSQL's — never coerced
+    ["an allowlisted SQLSTATE as a number (403, 42501)", json(403, { code: 42501, message: "denied" })],
     ["an empty code (500)", json(500, { code: "", message: "x" })],
+    // a CODE that can follow a commit is not a refusal (T-refusal-allowlist)
+    ["an internal error (500, XX000)", json(500, { code: "XX000", message: "internal error" })],
+    ["an internal error with no message (500, XX000)", json(500, { code: "XX000" })],
+    ["a statement timeout (500, 57014)", json(500, { code: "57014", message: "canceling statement due to statement timeout" })],
+    ["out of memory (500, 53200)", json(500, { code: "53200", message: "out of memory" })],
+    ["a connection exception (503, 08006)", json(503, { code: "08006", message: "connection failure" })],
+    ["statement completion unknown (40003)", json(500, { code: "40003", message: "statement completion unknown" })],
+    ["no pool connection answered (503, PGRST001)", json(503, { code: "PGRST001", message: "Database client error" })],
+    ["a response built after the commit (500, PGRST111)", json(500, { code: "PGRST111", message: "Invalid response.headers" })],
+    ["a code nobody has classified (500, PGRST999)", json(500, { code: "PGRST999", message: "new" })],
   ])("not refused — the line may be written: %s", async (_, answer) => {
     expect(await refusalOf(answer)).toBe(false);
   });
