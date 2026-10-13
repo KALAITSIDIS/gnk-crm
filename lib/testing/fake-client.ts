@@ -22,6 +22,9 @@ export interface FakePage {
   data: unknown[] | Record<string, unknown> | null;
   error: { message: string; code?: string } | null;
   count?: number | null;
+  /** the HTTP status; an insert's page that names none answers 201 (see `answer`) */
+  status?: number;
+  statusText?: string;
 }
 
 export interface FakeCall {
@@ -30,12 +33,32 @@ export interface FakeCall {
   args: unknown[];
 }
 
+/**
+ * What an awaited chain resolves to. A chain that called `insert` answers as
+ * PostgREST does — 201 Created, with no rows unless it selected them (measured
+ * on the local stack) — because logEvent refuses an insert answer that is not
+ * a 201 (T-log-event-hollow), and a fake that answered every insert with no
+ * status would make every event write in a test a failed one. So a page that
+ * names no status is a successful insert; a test that wants a hollow answer
+ * names it (`{ data: null, error: null, status: 204 }`). A scripted page's own
+ * fields win, a failed page is left alone, and reads are untouched. Not
+ * `upsert`: it answers 201 or 200 by whether the row existed, which a fake
+ * cannot know.
+ */
+function answer(scripted: FakePage | undefined, verbs: FakeCall[]): FakePage {
+  const insert = verbs.some((v) => v.method === "insert");
+  const selected = verbs.some((v) => v.method === "select");
+  const page = scripted ?? { data: insert && !selected ? null : [], error: null };
+  if (!insert || page.error) return page;
+  return { status: 201, statusText: "Created", ...page };
+}
+
 export function fakeClient(pages: Record<string, FakePage[]>) {
   /** how many times each table's chain has been awaited */
   const served: Record<string, number> = {};
   /** every builder method called, in order, with its arguments */
   const calls: FakeCall[] = [];
-  const chain = (table: string): unknown =>
+  const chain = (table: string, verbs: FakeCall[] = []): unknown =>
     new Proxy(
       {},
       {
@@ -43,13 +66,14 @@ export function fakeClient(pages: Record<string, FakePage[]>) {
           if (prop === "then") {
             const n = served[table] ?? 0;
             served[table] = n + 1;
-            const page = pages[table]?.[n] ?? { data: [], error: null };
+            const page = answer(pages[table]?.[n], verbs);
             return (resolve: (v: FakePage) => void) => resolve(page);
           }
           if (typeof prop !== "string") return undefined;
           return (...args: unknown[]) => {
-            calls.push({ table, method: prop, args });
-            return chain(table);
+            const call = { table, method: prop, args };
+            calls.push(call);
+            return chain(table, [...verbs, call]);
           };
         },
       },

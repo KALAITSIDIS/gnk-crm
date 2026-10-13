@@ -3,9 +3,13 @@ import { auditFilters, logListExport, vet } from "./export-audit";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 
-/** Minimal fake client that records the row passed to events.insert(). */
+/**
+ * Minimal fake client that records the row passed to events.insert(), and
+ * answers as PostgREST does: 201 Created, no rows. logEvent refuses an insert
+ * answer that is not a 201 (T-log-event-hollow).
+ */
 function fakeClient() {
-  const insert = vi.fn().mockResolvedValue({ error: null });
+  const insert = vi.fn().mockResolvedValue({ data: null, error: null, status: 201, statusText: "Created" });
   const client = {
     from: (table: string) => {
       expect(table).toBe("events");
@@ -50,6 +54,15 @@ describe("logListExport", () => {
     await expect(
       logListExport(client, { orgId: "o", actorId: "u", list: "contacts", count: 1 }),
     ).rejects.toThrow(/logEvent failed/);
+  });
+
+  it("fails closed on an answer that does not confirm the audit line, too", async () => {
+    // an empty-bodied 404, as postgrest-js hands it back: no error, status 204
+    const insert = vi.fn().mockResolvedValue({ data: null, error: null, status: 204, statusText: "No Content" });
+    const client = { from: () => ({ insert }) } as unknown as SupabaseClient<Database>;
+    await expect(
+      logListExport(client, { orgId: "o", actorId: "u", list: "contacts", count: 1 }),
+    ).rejects.toThrow("logEvent failed (export.exported): the write was not confirmed (HTTP 204)");
   });
 });
 

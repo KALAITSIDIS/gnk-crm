@@ -124,6 +124,8 @@ const rest =
   (method: string, table: string, ...needles: string[]) =>
   (m: string, url: string) =>
     m === method && url.includes(`/rest/v1/${table}?`) && needles.every((n) => url.includes(n));
+/** The events insert: a single-object POST has no query string, so `rest()` cannot name it. */
+const eventsInsert = (m: string, url: string) => m === "POST" && new URL(url).pathname === "/rest/v1/events";
 const hollow = (match: Hollow["match"], shape: Shape = "200 empty", opts: { forward?: boolean; times?: number } = {}): Hollow => ({
   match,
   answer: ANSWERS[shape].answer,
@@ -468,6 +470,23 @@ describe("a hollow answer to any erasure step stops the run before the contact i
     expect(await events(c, "erased")).toHaveLength(1);
   });
 
+  it("the erased record's write never arrived (500 null): the erasure says its record failed — never a recorded erasure", async () => {
+    // T-log-event-hollow: logEvent took this answer for a written event, and
+    // the erasure returned success with NO `erased` line (measured, 3c40779)
+    const c = await newContact();
+    const doc = await kycDocument(c);
+    const r = await run("erase", c, { on: "admin", hollow: hollow(eventsInsert, "500 null", { forward: false }) });
+    console.log(`[evidence] erase, record write 500 null: ${JSON.stringify(r.result)}`);
+    expect(r.result).toEqual({
+      error:
+        "Erased, but the record of it failed to write: logEvent failed (contact.erased): the write was not confirmed (HTTP 500). Run it again — the data is already gone and only the record will be written.",
+      erasedAt: expect.any(String),
+    });
+    expect(r.hits).toEqual([expect.stringMatching(/^admin POST \/rest\/v1\/events$/)]);
+    expect(await objectExists(doc.path), "the erasure itself ran").toBe(false);
+    expect(await events(c, "erased")).toEqual([]);
+  });
+
   it("the row delete never arrived AND the re-read comes back empty: unproven is not deleted — the run stops", async () => {
     const c = await newContact();
     const doc = await kycDocument(c);
@@ -682,6 +701,22 @@ describe("the retention purge never reads a hollow answer as 'nothing retained'"
     expect(await objectExists(doc.path)).toBe(false);
     expect(await docRows(doc.id)).toBe(0);
     expect((await row(c)).retention_until).toBe("2020-06-01");
+    expect(await purged(c)).toEqual([]);
+  });
+
+  it("the purge record's write never arrived (500 0, a falsy error): the purge names the record to write", async () => {
+    // T-log-event-hollow: logEvent took this answer for a written event, and
+    // the purge returned success with NO `retention_purged` line (measured, 3c40779)
+    const { c, doc } = await retained();
+    const r = await run("purge", c, { on: "admin", hollow: hollow(eventsInsert, "500 0", { forward: false }) });
+    console.log(`[evidence] purge, record write 500 0: ${JSON.stringify(r.result)}`);
+    expect(r.result).toEqual({
+      error:
+        "Purged — 1 retained file(s) and the retention date are gone — but the record of it failed to write: logEvent failed (contact.retention_purged): the write was not confirmed (HTTP 500). The record (retention_purged, 1 documents, retention until 2020-06-01) must be written by an administrator.",
+      purgedAt: expect.any(String),
+    });
+    expect(r.hits).toEqual([expect.stringMatching(/^admin POST \/rest\/v1\/events$/)]);
+    expect(await objectExists(doc.path), "the purge itself ran").toBe(false);
     expect(await purged(c)).toEqual([]);
   });
 
