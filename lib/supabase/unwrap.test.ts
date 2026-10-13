@@ -42,8 +42,40 @@ describe("unwrapRows", () => {
     expect(redirect).not.toHaveBeenCalled();
   });
 
-  it("treats a null payload as empty rather than an error", () => {
-    expect(unwrapRows({ data: null, error: null }, "districts")).toEqual([]);
+  it("returns a genuine empty answer as []", () => {
+    expect(unwrapRows({ data: [], error: null, status: 200 }, "districts")).toEqual([]);
+  });
+
+  /*
+   * T-null-answer-guard. This test used to say "treats a null payload as empty
+   * rather than an error" — but a list read always answers with an array, and
+   * postgrest-js reports an empty-bodied OK answer, an empty-bodied 404 (as 204)
+   * and a `null` body even under a 500 as `data: null, error: null`. Each was
+   * painted as "nothing here".
+   */
+  it("refuses an answer with no rows array, naming the status", () => {
+    redirect.mockClear();
+    expect(() => unwrapRows({ data: null, error: null, status: 204 }, "property keys")).toThrow(
+      "Query failed (property keys): the answer held no rows (HTTP 204)",
+    );
+    expect(() => unwrapRows({ data: null, error: null }, "property keys")).toThrow(
+      "Query failed (property keys): the answer held no rows (HTTP ?)",
+    );
+    // not an array at all — returned as-is before, to fail later as "x.map is not a function"
+    expect(() => unwrapRows({ data: { id: 1 } as never, error: null, status: 200 }, "areas")).toThrow(
+      "Query failed (areas): the answer held no rows (HTTP 200)",
+    );
+    // a falsy error (a 500 whose body is `0`) slips past `if (res.error)`; the rows check does not
+    expect(() => unwrapRows({ data: null, error: 0 as never, status: 500 }, "areas")).toThrow(
+      "Query failed (areas): the answer held no rows (HTTP 500)",
+    );
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("names the HTTP status when a failure's message is empty — a bodiless 500 / 504", () => {
+    expect(() => unwrapRows({ data: null, error: err({ message: "" }), status: 504 }, "districts")).toThrow(
+      "Query failed (districts): HTTP 504",
+    );
   });
 
   it("routes a clock-skewed token to the session page instead of the boundary", () => {

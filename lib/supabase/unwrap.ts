@@ -12,10 +12,18 @@ import { isClockSkewRejection, SESSION_CLOCK_PATH } from "@/lib/supabase/clock-s
  * One error is routed instead of thrown: a token PostgREST will not accept
  * (`PGRST303`) fails EVERY query on EVERY route, so the boundary's "Try again"
  * cannot clear it — see lib/supabase/clock-skew.ts. This is the chokepoint for
- * all 47 call sites, which is why the check lives here rather than per page.
+ * every list read that uses it, which is why the check lives here rather than
+ * per page.
+ *
+ * A list read answers with an ARRAY — `[]` when nothing matched. An answer with
+ * no array is not "nothing matched" (T-null-answer-guard): postgrest-js reports
+ * an OK answer with an empty body, a 404 with an empty body (as 204) and a body
+ * of `null` — even under a 500 — as `data: null, error: null` (measured,
+ * 2.110.2). This returned [] for all of them: "No keys registered", a "none"
+ * mandate badge, a units page short of its units, where the read had failed.
  */
 export function unwrapRows<T>(
-  res: { data: T[] | null; error: PostgrestError | null },
+  res: { data: T[] | null; error: PostgrestError | null; status?: number },
   label: string,
 ): T[] {
   if (res.error) {
@@ -23,9 +31,13 @@ export function unwrapRows<T>(
     // before the generic throw. No call site wraps unwrapRows in try/catch —
     // one that did would swallow the redirect and show the boundary instead.
     if (isClockSkewRejection(res.error)) redirect(SESSION_CLOCK_PATH);
-    throw new Error(`Query failed (${label}): ${res.error.message}`);
+    // a bodiless failure (an empty 500, 503, 504) carries an EMPTY message
+    throw new Error(`Query failed (${label}): ${res.error.message || `HTTP ${res.status ?? "error"}`}`);
   }
-  return res.data ?? [];
+  if (!Array.isArray(res.data)) {
+    throw new Error(`Query failed (${label}): the answer held no rows (HTTP ${res.status ?? "?"})`);
+  }
+  return res.data;
 }
 
 /**
