@@ -57,11 +57,49 @@ describe("fetchAll", () => {
     expect(calls).toHaveLength(2);
   });
 
-  it("returns [] for an empty table in one read, and null data counts as empty", async () => {
+  it("returns [] for an empty table in one read", async () => {
     const calls: [number, number][] = [];
     expect(await fetchAll(serve(table(0), calls), "test")).toEqual([]);
     expect(calls).toEqual([[0, 999]]);
-    expect(await fetchAll(async () => ({ data: null, error: null }), "test")).toEqual([]);
+  });
+
+  /*
+   * T-null-answer-guard. This test used to say "null data counts as empty" —
+   * and postgrest-js hands back `data: null, error: null` for an OK answer with
+   * an empty body, a 404 with an empty body (as 204) and a `null` body even
+   * under a 500. Each ended the sweep as if it were complete.
+   */
+  it("THROWS on a page with no rows array — never the pages before it as everything", async () => {
+    // the first page
+    await expect(fetchAll(async () => ({ data: null, error: null, status: 204 }), "areas")).rejects.toThrow(
+      "Query failed (areas): the answer held no rows (HTTP 204)",
+    );
+    // a later page: a full first page, then nothing — the 1,000 are NOT the answer
+    let n = 0;
+    const hollow = async (from: number, to: number) =>
+      n++ === 0 ? { data: table(2500).slice(from, to + 1), error: null } : { data: null, error: null, status: 200 };
+    await expect(fetchAll(hollow, "units")).rejects.toThrow("Query failed (units): the answer held no rows (HTTP 200)");
+    // a body that is not an array at all: refused by name, not a TypeError from the spread
+    await expect(
+      fetchAll(async () => ({ data: { id: "a" } as never, error: null, status: 200 }), "units"),
+    ).rejects.toThrow("Query failed (units): the answer held no rows (HTTP 200)");
+    // a falsy error (a 500 whose body is `0`) passes `if (error)` — the rows check still refuses it
+    await expect(
+      fetchAll(async () => ({ data: null, error: 0 as never, status: 500 }), "units"),
+    ).rejects.toThrow("Query failed (units): the answer held no rows (HTTP 500)");
+    // a hand-built page with no status still names the failure
+    await expect(fetchAll(async () => ({ data: null, error: null }), "units")).rejects.toThrow(
+      "Query failed (units): the answer held no rows (HTTP ?)",
+    );
+  });
+
+  it("names the HTTP status when a failed page's message is empty — a bodiless 500 / 504", async () => {
+    await expect(
+      fetchAll(async () => ({ data: null, error: { message: "" }, status: 504 }), "buyer_requirements"),
+    ).rejects.toThrow("Query failed (buyer_requirements): HTTP 504");
+    await expect(
+      fetchUpTo(async () => ({ data: null, error: { message: "" }, status: 500 }), "leads export", 10),
+    ).rejects.toThrow("Query failed (leads export): HTTP 500");
   });
 
   it("THROWS on a failed page instead of returning the rows read so far", async () => {
@@ -150,9 +188,11 @@ describe("fetchUpTo", () => {
     const hollow = async (from: number, to: number) =>
       n++ === 0 ? { data: table(2500).slice(from, to + 1), error: null } : { data: null, error: null };
     await expect(fetchUpTo(hollow, "leads export", 10_000)).rejects.toThrow(
-      "Query failed (leads export): the answer held no rows",
+      "Query failed (leads export): the answer held no rows (HTTP ?)",
     );
-    await expect(fetchUpTo(async () => ({ data: null, error: null }), "x", 10)).rejects.toThrow();
+    await expect(fetchUpTo(async () => ({ data: null, error: null, status: 204 }), "x", 10)).rejects.toThrow(
+      "Query failed (x): the answer held no rows (HTTP 204)",
+    );
   });
 
   it("THROWS on a later page's failure instead of returning the pages before it", async () => {

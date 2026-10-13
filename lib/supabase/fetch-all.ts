@@ -18,7 +18,8 @@
  * FAILS LOUD. A page that errors throws, rather than returning what was read
  * so far as if it were everything — "no matches" and "the read failed" are
  * different facts, and returning [] for both is how a feature stops working
- * with nothing anywhere to say so.
+ * with nothing anywhere to say so. So does a page whose answer carries no rows
+ * array: an empty page is `[]`, never "nothing came back".
  */
 
 /** PostgREST's default `max-rows`. A page this size that comes back full may have more behind it. */
@@ -27,6 +28,8 @@ export const FETCH_PAGE = 1000;
 export interface PageResult<T> {
   data: T[] | null;
   error: { message: string } | null;
+  /** postgrest-js's HTTP status — what names a failure whose body said nothing */
+  status?: number;
 }
 
 export async function fetchAll<T>(
@@ -36,9 +39,17 @@ export async function fetchAll<T>(
 ): Promise<T[]> {
   const rows: T[] = [];
   for (let from = 0; ; ) {
-    const { data, error } = await page(from, from + pageSize - 1);
-    if (error) throw new Error(`Query failed (${label}): ${error.message}`);
-    const got = data ?? [];
+    const { data, error, status } = await page(from, from + pageSize - 1);
+    // a bodiless failure (an empty 500, 503, 504) carries an EMPTY message
+    if (error) throw new Error(`Query failed (${label}): ${error.message || `HTTP ${status ?? "error"}`}`);
+    // An answer with NO rows array is not an empty page (T-null-answer-guard).
+    // postgrest-js reports an OK answer with an empty body, a 404 with an empty
+    // body (as 204) and a body of `null` — even under a 500 — as `data: null,
+    // error: null` (measured, 2.110.2). `data ?? []` read each as the end and
+    // handed back the pages before it as everything. A body that is not an
+    // array at all (an object, a string) is refused the same way.
+    if (!Array.isArray(data)) throw new Error(`Query failed (${label}): the answer held no rows (HTTP ${status ?? "?"})`);
+    const got = data;
     rows.push(...got);
     // Stop on an EMPTY page, and advance by what actually arrived — not by
     // the page size. PostgREST caps a response at the project's `max-rows`,
@@ -74,12 +85,12 @@ export async function fetchUpTo<T>(
   for (;;) {
     const from = rows.length;
     const to = Math.min(from + pageSize, max + 1) - 1;
-    const { data, error } = await page(from, to);
-    if (error) throw new Error(`Query failed (${label}): ${error.message}`);
+    const { data, error, status } = await page(from, to);
+    if (error) throw new Error(`Query failed (${label}): ${error.message || `HTTP ${status ?? "error"}`}`);
     // An answer with no rows array is not an empty page: postgrest-js reports
     // an OK response with an EMPTY BODY as `data: null, error: null`, and
     // reading that as the end would hand back the pages before it as all.
-    if (!Array.isArray(data)) throw new Error(`Query failed (${label}): the answer held no rows`);
+    if (!Array.isArray(data)) throw new Error(`Query failed (${label}): the answer held no rows (HTTP ${status ?? "?"})`);
     const got = data;
     if (got.length === 0) return { more: false, rows };
     // never keep more than was asked for, whatever the server sent
