@@ -194,6 +194,18 @@ describe("re-running", () => {
     expect(h.calls).toEqual(["hasErasedEvent"]);
   });
 
+  it("a failed record check is RETURNED, never thrown, and nothing runs (T-erasure-null-answers)", async () => {
+    // thrown, the action's caller got a rejection a production build hides
+    const h = harness({ failAt: "hasErasedEvent" });
+    const r = await run(h, "2026-09-05T09:00:00.000Z");
+    expect(r).toEqual({
+      error: "Could not check the erasure record — nothing was changed: hasErasedEvent failed",
+      erasedAt: null,
+    });
+    expect(h.calls).toEqual(["hasErasedEvent"]);
+    expect(h.payloads).toEqual([]);
+  });
+
   it("a marker without the redaction (a session could set erased_at before 0134) is not recorded as an erasure: refused before any write", async () => {
     const h = harness({ erasedEventExists: false });
     const r = await run(h, "2026-09-05T09:00:00.000Z", erasedRow(null, { notes: "still here", consent_marketing: true, is_archived: false }));
