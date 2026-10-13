@@ -1,6 +1,19 @@
 # HANDOFF — 2026-08-08
 
-**2026-10-13, latest (chosen after T-signed-slip-kept: BACKLOG "Null answers — 2026-10-13", "`logEvent` takes a hollow insert answer as written"): an event write is believed only when PostgREST confirms it with a 201. The two actions that undo their own document when its event fails now undo it only on an answer that carries an error code, not on a hollow or code-less one. No migration, nothing on hosted. LANDED 2026-10-13 on the operator's "merge #153": PR #153 merged 20:54:09Z, pinned to `f7ce4e3` → main `3e62e38`, deployed. DECISIONS `T-log-event-hollow`. Its records came after the merge, in one PR, because the code PR carried none.**
+**2026-10-14, latest (first item of BACKLOG "Throws after a commit — 2026-10-13", found by T-log-event-hollow's records check): an event line or a slip row counts as refused only on a code `certainlyRolledBack` understands, and a slip's 23505 is read back before its files are taken. No migration, nothing on hosted. PR #155, stacked on #154 (which merges first); the merge waits for the operator's word. DECISIONS `T-refusal-allowlist`.**
+- **What.** `EventWriteError.refused` (#153) and the slip take-back (#151) took ANY code as a refusal. DECISIONS `T-media-insert-outcome` records that 57014 / 53 / 58 / XX / 08 and PGRST111 / 112 can follow a commit. REPRODUCED at `7eaeabe` on the real stack:
+  - XX000 after the line landed destroyed the confirmation or report its line names;
+  - a slip insert answered 57014 that landed later was left with an empty bucket;
+  - so was a slip insert that landed and was answered 23505 (a replayed POST).
+  - Now: `refused = certainlyRolledBack(code)` in both places, and a 23505 is re-read, with this attempt's own row recorded.
+- **Verified (locally, `.iso/nullguard` = v14.5; not production).**
+  - RED: unit 15/101, DB 6/57. GREEN.
+  - 11 of 11 mutants killed.
+  - Unit 3,665/3,665; full DB suite 82 files, 1,733/1,733; `typecheck` and `lint` pass.
+  - Review: 3 confirmed, 0 refuted. Two were fixed here (the numeric-code test, the slip's 23505) and one was recorded.
+- **Left open.** First the new BACKLOG item: five document actions delete their just-uploaded file on ANY failed `documents` insert. Then the 38 sites of "Throws after a commit — 2026-10-13".
+
+**2026-10-13 (chosen after T-signed-slip-kept: BACKLOG "Null answers — 2026-10-13", "`logEvent` takes a hollow insert answer as written"): an event write is believed only when PostgREST confirms it with a 201. The two actions that undo their own document when its event fails now undo it only on an answer that carries an error code, not on a hollow or code-less one. No migration, nothing on hosted. LANDED 2026-10-13 on the operator's "merge #153": PR #153 merged 20:54:09Z, pinned to `f7ce4e3` → main `3e62e38`, deployed. DECISIONS `T-log-event-hollow`. Its records came after the merge, in one PR, because the code PR carried none.**
 - **What.** `logEvent` and `logEvents` threw only on a truthy postgrest-js `error`, so hollow answers counted as written. REPRODUCED at `3c40779` through the real actions on v14.5:
   - the contacts export shipped its CSV of personal data with NO audit line, in all five hollow shapes;
   - the erasure (500 `null`) and the purge (500 `0`) returned success with no `erased` / `retention_purged` line;
