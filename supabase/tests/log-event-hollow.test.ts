@@ -371,8 +371,12 @@ const CASES: Case[] = [
 ];
 
 const objectExists = async (path: string) => (await svc.storage.from("documents").exists(path)).data === true;
-const objectCount = async (prefix: string, search: string) =>
-  ((await svc.storage.from("documents").list(prefix, { search, limit: 1000 })).data ?? []).length;
+/** How many files under `prefix` match `search` — a failed listing fails the test, never counts 0. */
+const objectCount = async (prefix: string, search: string) => {
+  const { data, error } = await svc.storage.from("documents").list(prefix, { search, limit: 1000 });
+  if (error || !data) throw new Error(`storage listing ${prefix}: ${error?.message ?? "no answer"}`);
+  return data.length;
+};
 const linesNaming = async (eventType: string, entityId: string, documentId: string) =>
   (
     await pg.query(
