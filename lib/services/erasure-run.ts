@@ -134,7 +134,17 @@ export async function runContactErasure(input: {
   // A previous run that got as far as the patch but not the event is the one
   // case a re-run must accept; a run that wrote its event is complete.
   if (input.alreadyErasedAt) {
-    const recorded = await attempt("checking the erasure record", () => steps.hasErasedEvent());
+    // A failed check is RETURNED, never thrown: the action's caller would get
+    // a rejection whose words a production build hides — and, before
+    // T-erasure-null-answers, a hollow answer here read as "not recorded" and
+    // the re-run wrote a second `erased` event.
+    let recorded: boolean;
+    try {
+      recorded = await steps.hasErasedEvent();
+    } catch (e) {
+      const why = e instanceof Error ? e.message : String(e);
+      return { error: `Could not check the erasure record — nothing was changed: ${why}`, erasedAt: null };
+    }
     if (recorded) {
       return { error: "This contact's personal data has already been erased.", erasedAt: null };
     }

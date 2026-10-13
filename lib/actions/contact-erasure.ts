@@ -8,14 +8,22 @@ import { runContactErasure, type ErasureSteps } from "@/lib/services/erasure-run
 import { logEvent } from "@/lib/services/events";
 import { removeObjectsOrFail } from "@/lib/services/storage";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { rowsOf } from "@/lib/supabase/rows";
 import { createClient } from "@/lib/supabase/server";
 
 export type ErasureState = { error: string | null; erasedAt: string | null };
 
-/** Turn a supabase result's error into a thrown one, so a step never half-succeeds silently. */
-function fail(r: { error: { message: string } | null }): void {
-  if (r.error) throw new Error(r.error.message);
-}
+/*
+ * Every answer a step reads goes through `rowsOf` (lib/supabase/rows.ts):
+ * a failed read throws, and so does an answer with NO rows array — the only
+ * "none" is `[]` (T-erasure-null-answers). Until 2026-10-13 the steps threw on
+ * a truthy error only and then read `data ?? []`: postgrest-js reports an
+ * empty-bodied OK answer, an empty 404 and a `null` body (even under a 500) as
+ * `data: null, error: null`, and a 500 whose body is `0` as a falsy error. A
+ * hollow deals answer for a contact WITH a deal made "no relationship", and the
+ * run destroyed the KYC file (measured); a hollow document listing recorded
+ * the erasure with the files still there.
+ */
 
 /**
  * GDPR Article 17 erasure for a contact.
@@ -90,27 +98,26 @@ export async function eraseContactPersonalData(
         supabase.from("viewings").select("id").eq("contact_id", contactId),
         supabase.from("mandates_safe").select("id, expiry_date").eq("owner_contact_id", contactId),
       ]);
-      fail(dealsRes);
-      fail(viewingsRes);
-      fail(mandatesRes);
-      const viewingIds = (viewingsRes.data ?? []).map((v) => v.id);
+      const deals = rowsOf(dealsRes, "deals");
+      const viewings = rowsOf(viewingsRes, "viewings");
+      const mandates = rowsOf(mandatesRes, "mandates");
+      const viewingIds = viewings.map((v) => v.id);
       let slipRows: { signed_at: string | null }[] = [];
       if (viewingIds.length > 0) {
         const slipRes = await supabase
           .from("viewing_slips")
           .select("signed_at")
           .in("viewing_id", viewingIds);
-        fail(slipRes);
-        slipRows = slipRes.data ?? [];
+        slipRows = rowsOf(slipRes, "viewing slips");
       }
       return {
-        dealCount: (dealsRes.data ?? []).length,
+        dealCount: deals.length,
         viewingSlipCount: slipRows.length,
-        mandateCount: (mandatesRes.data ?? []).length,
+        mandateCount: mandates.length,
         relationshipEndCandidates: [
-          ...(dealsRes.data ?? []).flatMap((d) => [d.won_at, d.lost_at]),
+          ...deals.flatMap((d) => [d.won_at, d.lost_at]),
           ...slipRows.map((v) => v.signed_at),
-          ...(mandatesRes.data ?? []).map((m) => m.expiry_date),
+          ...mandates.map((m) => m.expiry_date),
         ],
       };
     },
@@ -125,8 +132,7 @@ export async function eraseContactPersonalData(
         .eq("entity_id", contactId)
         .eq("event_type", "erased")
         .limit(1);
-      fail(r);
-      return (r.data ?? []).length > 0;
+      return rowsOf(r, "the erasure record").length > 0;
     },
 
     // The person's own words. Lead messages are ordinary columns, not
@@ -141,8 +147,7 @@ export async function eraseContactPersonalData(
         .not("message", "is", null)
         .neq("message", LEAD_MESSAGE_REDACTED)
         .select("id");
-      fail(r);
-      return r.data?.length ?? 0;
+      return rowsOf(r, "leads").length;
     },
 
     // The desk's own words about the person (0094, audit SEC-03): the notes
@@ -152,8 +157,9 @@ export async function eraseContactPersonalData(
     // bounded by the org and by the contact the admin check above covered.
     // Only rows not already redacted, so a re-run counts what it did.
     async redactNotes() {
-      const leads = await supabase.from("leads").select("id").eq("contact_id", contactId);
-      fail(leads);
+      const leadIds = rowsOf(await supabase.from("leads").select("id").eq("contact_id", contactId), "the contact's leads").map(
+        (l) => l.id,
+      );
       const redaction = { body: null, redacted_at: new Date().toISOString() };
       const own = await admin
         .from("interaction_notes")
@@ -163,9 +169,7 @@ export async function eraseContactPersonalData(
         .eq("entity_id", contactId)
         .is("redacted_at", null)
         .select("id");
-      fail(own);
-      let count = own.data?.length ?? 0;
-      const leadIds = (leads.data ?? []).map((l) => l.id);
+      let count = rowsOf(own, "the contact's notes").length;
       if (leadIds.length > 0) {
         const theirs = await admin
           .from("interaction_notes")
@@ -175,8 +179,7 @@ export async function eraseContactPersonalData(
           .in("entity_id", leadIds)
           .is("redacted_at", null)
           .select("id");
-        fail(theirs);
-        count += theirs.data?.length ?? 0;
+        count += rowsOf(theirs, "the leads' notes").length;
       }
       return count;
     },
@@ -190,8 +193,7 @@ export async function eraseContactPersonalData(
         .delete()
         .eq("contact_id", contactId)
         .select("id");
-      fail(r);
-      return r.data?.length ?? 0;
+      return rowsOf(r, "saved searches").length;
     },
 
     async listDocuments() {
@@ -200,8 +202,7 @@ export async function eraseContactPersonalData(
         .select("id, storage_path")
         .eq("entity_type", "contact")
         .eq("entity_id", contactId);
-      fail(r);
-      return r.data ?? [];
+      return rowsOf(r, "documents");
     },
 
     // Proven, not assumed: every path must be absent afterwards.
@@ -224,8 +225,18 @@ export async function eraseContactPersonalData(
         .eq("entity_id", contactId)
         .in("id", ids)
         .select("id");
-      fail(r);
-      return r.data?.length ?? 0;
+      if (r.error || Array.isArray(r.data)) return rowsOf(r, "document rows").length;
+      // The answer was lost — the delete may have landed. Proven, not assumed
+      // (as the files are): a re-run could not count rows already gone, and
+      // would record the destruction as 0 (T-erasure-null-answers review).
+      const left = rowsOf(
+        await admin.from("documents").select("id").eq("org_id", profile.orgId).in("id", ids),
+        "document rows (re-read after an unconfirmed delete)",
+      );
+      if (left.length > 0) {
+        throw new Error(`document rows: ${left.length} of ${ids.length} listed row(s) remain after an unconfirmed delete`);
+      }
+      return ids.length;
     },
 
     // As the system (0134 — header), bounded by the caller's organisation
@@ -239,8 +250,17 @@ export async function eraseContactPersonalData(
         .eq("id", contactId)
         .is("erased_at", null)
         .select("id");
-      fail(r);
-      return (r.data ?? []).length > 0;
+      // [] — and only [] — is "erased meanwhile"
+      if (r.error || Array.isArray(r.data)) return rowsOf(r, "the contact").length > 0;
+      // The answer was lost — the patch may have landed. Its own marker says
+      // which: this run's instant and actor are this run's patch. Settled here,
+      // because once the contact is marked the page offers no second click.
+      const [now] = rowsOf(
+        await admin.from("contacts").select("erased_at, erased_by").eq("org_id", profile.orgId).eq("id", contactId),
+        "the contact (re-read after an unconfirmed patch)",
+      );
+      if (!now?.erased_at) return rowsOf(r, "the contact").length > 0; // not marked: the failure stands
+      return Date.parse(now.erased_at) === Date.parse(patch.erased_at) && now.erased_by === patch.erased_by;
     },
 
     // As the system too (0134): attributed to the admin, in their organisation.
@@ -336,56 +356,115 @@ export async function purgeExpiredRetention(contactId: string): Promise<Retentio
     };
   }
 
-  const { data: docs, error: listErr } = await supabase
-    .from("documents")
-    .select("id, storage_path")
-    .eq("entity_type", "contact")
-    .eq("entity_id", contactId);
-  if (listErr) return { error: listErr.message, purgedAt: null };
-  const paths = (docs ?? []).map((d) => d.storage_path).filter((p): p is string => Boolean(p));
+  // Each answer below is checked by `rowsOf` (header of the erasure): an
+  // answer with no rows array is a failure, RETURNED — this action returns its
+  // errors, a production build hides a thrown one's words. Until 2026-10-13 a
+  // hollow listing read as "no documents": the purge cleared the marker and
+  // recorded 0 destroyed with the files still there, and a retry then said
+  // "Nothing is retained" (measured, T-erasure-null-answers).
+  const why = (e: unknown) => (e instanceof Error ? e.message : String(e));
+  let docs: { id: string; storage_path: string | null }[];
+  try {
+    docs = rowsOf(
+      await supabase.from("documents").select("id, storage_path").eq("entity_type", "contact").eq("entity_id", contactId),
+      "the retained documents",
+    );
+  } catch (e) {
+    return { error: `Could not list the retained documents — nothing was destroyed: ${why(e)}`, purgedAt: null };
+  }
+  const paths = docs.map((d) => d.storage_path).filter((p): p is string => Boolean(p));
   const admin = createAdminClient();
   try {
     await removeObjectsOrFail(admin.storage, "documents", paths);
   } catch (e) {
-    const why = e instanceof Error ? e.message : String(e);
-    return { error: `The retained files were NOT destroyed: ${why}. Nothing was changed — try again.`, purgedAt: null };
+    return { error: `The retained files were NOT destroyed: ${why(e)}. Nothing was changed — try again.`, purgedAt: null };
   }
 
   // As the system (0134 refuses a session's delete of an erased contact's
   // documents): exactly the rows listed above, whose files are now gone.
-  const listedIds = (docs ?? []).map((d) => d.id);
-  const { data: deletedRows, error: deleteErr } = listedIds.length
-    ? await admin
+  // A LOST answer to a write that may have landed is settled HERE, by reading
+  // what is left as the system — proven, not assumed, as the files are. Never
+  // handed to a re-run: one finds nothing left to destroy and records the
+  // destruction as 0 (T-erasure-null-answers review).
+  const listedIds = docs.map((d) => d.id);
+  let documentsDestroyed = 0;
+  if (listedIds.length) {
+    try {
+      const r = await admin
         .from("documents")
         .delete()
         .eq("org_id", profile.orgId)
         .eq("entity_type", "contact")
         .eq("entity_id", contactId)
         .in("id", listedIds)
-        .select("id")
-    : { data: [], error: null };
-  if (deleteErr) {
-    return {
-      error: `The files are gone but their records were not deleted: ${deleteErr.message}. Run it again to finish.`,
-      purgedAt: null,
-    };
+        .select("id");
+      if (r.error || Array.isArray(r.data)) {
+        documentsDestroyed = rowsOf(r, "the document records").length;
+      } else {
+        const left = rowsOf(
+          await admin.from("documents").select("id").eq("org_id", profile.orgId).in("id", listedIds),
+          "the document records (re-read after an unconfirmed delete)",
+        );
+        if (left.length > 0) {
+          throw new Error(`the document records: ${left.length} of ${listedIds.length} remain after an unconfirmed delete`);
+        }
+        documentsDestroyed = listedIds.length;
+      }
+    } catch (e) {
+      // the rows are still there: a re-run lists them, proves the files
+      // absent, deletes them and counts them
+      return {
+        error: `The files are gone but their records were not deleted: ${why(e)}. Run it again to finish.`,
+        purgedAt: null,
+      };
+    }
   }
-  const documentsDestroyed = deletedRows?.length ?? 0;
 
   // Clear the marker so the row leaves the retention surface — as the system
   // (header), bounded as it says. Row-count guarded and re-checked against the
   // date read above, so two concurrent purges cannot both claim success: the
-  // service role is not filtered by RLS, so zero rows means exactly that.
-  const { data: updated, error: updateErr } = await admin
-    .from("contacts")
-    .update({ retention_until: null, kyc: {} })
-    .eq("org_id", profile.orgId)
-    .eq("id", contactId)
-    .eq("retention_until", contact.retention_until)
-    .not("erased_at", "is", null)
-    .select("id");
-  if (updateErr) return { error: updateErr.message, purgedAt: null };
-  if (!updated || updated.length === 0) {
+  // service role is not filtered by RLS, so zero rows — `[]`, and only `[]` —
+  // means exactly that.
+  const decidedOn: string = contact.retention_until;
+  const clearMarker = async () =>
+    admin
+      .from("contacts")
+      .update({ retention_until: null, kyc: {} })
+      .eq("org_id", profile.orgId)
+      .eq("id", contactId)
+      .eq("retention_until", decidedOn)
+      .not("erased_at", "is", null)
+      .select("id");
+  /** Why the marker could not be cleared — everything irreversible is already done. */
+  const markerFailure = (e: unknown): RetentionPurgeState => {
+    revalidatePath("/settings/retention");
+    revalidatePath(`/contacts/${contactId}`);
+    return {
+      error: `The ${documentsDestroyed} retained file(s) and their records are destroyed, but the retention date could not be cleared: ${why(e)}. Nothing is left to destroy — do not run the purge again (it would record 0 destroyed): the record (retention_purged, ${documentsDestroyed} documents, retention until ${contact.retention_until}) must be written by an administrator.`,
+      purgedAt: null,
+    };
+  };
+  let cleared: number;
+  try {
+    const r = await clearMarker();
+    if (r.error || Array.isArray(r.data)) {
+      cleared = rowsOf(r, "the retention date").length;
+    } else {
+      // lost: did the clear land? The date this purge decided on says.
+      const [now] = rowsOf(
+        await admin.from("contacts").select("retention_until").eq("org_id", profile.orgId).eq("id", contactId),
+        "the retention date (re-read after an unconfirmed clear)",
+      );
+      if (now && now.retention_until === null) cleared = 1;
+      else if (now && now.retention_until === contact.retention_until) {
+        // not cleared: once more, guarded as before
+        cleared = rowsOf(await clearMarker(), "the retention date").length;
+      } else cleared = 0;
+    }
+  } catch (e) {
+    return markerFailure(e);
+  }
+  if (cleared === 0) {
     return { error: "This contact's retained records were purged meanwhile — reload the page.", purgedAt: null };
   }
 
@@ -407,11 +486,10 @@ export async function purgeExpiredRetention(contactId: string): Promise<Retentio
     // Everything irreversible is done and the marker is gone, so a retry
     // answers "nothing is retained": say exactly what is missing instead of
     // throwing (a production build hides a thrown action's words).
-    const why = e instanceof Error ? e.message : String(e);
     revalidatePath("/settings/retention");
     revalidatePath(`/contacts/${contactId}`);
     return {
-      error: `Purged — ${documentsDestroyed} retained file(s) and the retention date are gone — but the record of it failed to write: ${why}. The record (retention_purged, ${documentsDestroyed} documents, retention until ${contact.retention_until}) must be written by an administrator.`,
+      error: `Purged — ${documentsDestroyed} retained file(s) and the retention date are gone — but the record of it failed to write: ${why(e)}. The record (retention_purged, ${documentsDestroyed} documents, retention until ${contact.retention_until}) must be written by an administrator.`,
       purgedAt,
     };
   }
