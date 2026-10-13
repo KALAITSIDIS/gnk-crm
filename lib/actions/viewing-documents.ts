@@ -3,7 +3,7 @@
 import { removeObjectsBestEffort } from "@/lib/services/storage";
 import { revalidatePath } from "next/cache";
 import { getCurrentProfile } from "@/lib/services/auth";
-import { logEvent } from "@/lib/services/events";
+import { documentEventWritten, EventWriteError, logEvent } from "@/lib/services/events";
 import { sha256Hex } from "@/lib/services/hash";
 import { binaryBody } from "@/lib/services/storage-upload";
 import { renderViewingConfirmationPdf } from "@/lib/services/viewing-confirmation-pdf";
@@ -29,11 +29,14 @@ const fail = (error: string): ConfirmationActionState => ({
  * against the viewing.
  *
  * Follows `generateEvidenceReport` deliberately, including its unwind order:
- * a failed `documents` insert removes the uploaded file, and a failed event
- * removes BOTH the row and the file. Guardrail 1 — no stored document without
- * its event — matters here for the same reason it does for the evidence report:
- * a PDF in the bucket with nothing in the hash-chained log is a document whose
- * provenance cannot be shown.
+ * a failed `documents` insert removes the uploaded file, and an event the
+ * database REFUSED removes BOTH the row and the file. Guardrail 1 — no stored
+ * document without its event — matters here for the same reason it does for
+ * the evidence report: a PDF in the bucket with nothing in the hash-chained
+ * log is a document whose provenance cannot be shown. Any other event failure
+ * may have written the line, which names the document: destroying it then is
+ * the opposite break, a line naming nothing — so the line is read back and the
+ * document kept (T-log-event-hollow).
  *
  * Regenerating is allowed and each run files a new document. The confirmation
  * is not evidential (the signed slip is), and a viewing that gets rescheduled
@@ -156,10 +159,27 @@ export async function generateViewingConfirmation(
       payload: { document_id: doc.id, pdf_sha256: sha256Hex(pdf) },
     });
   } catch (e) {
-    // guardrail 1: no stored document without its event — roll both back
-    await admin.from("documents").delete().eq("id", doc.id);
-    await removeObjectsBestEffort(admin.storage, "documents", [path], "viewing document delete");
-    return fail(`Rolled back: ${(e as Error).message}`);
+    // guardrail 1: no stored document without its event — roll both back.
+    // Only on the database's own refusal, though: any other failure may have
+    // written the line, which names this document by id and digest, so read it
+    // back as the system and keep the document (lib/actions/reports.ts alike).
+    if (!(e instanceof EventWriteError) || e.refused) {
+      await admin.from("documents").delete().eq("id", doc.id);
+      await removeObjectsBestEffort(admin.storage, "documents", [path], "viewing document delete");
+      return fail(`Rolled back: ${(e as Error).message}`);
+    }
+    const written = await documentEventWritten(admin, {
+      orgId: v.org_id,
+      entityType: "viewing",
+      entityId: viewingId,
+      eventType: "viewing_confirmation_generated",
+      documentId: doc.id,
+    });
+    if (written !== true) {
+      return fail(
+        `The confirmation is saved, but its line on the viewing's timeline could not be confirmed: ${e.message}. Reload the viewing before generating another.`,
+      );
+    }
   }
 
   revalidatePath(`/viewings/${viewingId}`);

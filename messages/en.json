@@ -166,6 +166,7 @@
         "renderFailed": "Could not render the PDF: {message}",
         "storeFailed": "Could not store the report",
         "rolledBack": "Report rolled back — its event could not be written: {message}",
+        "notConfirmed": "The report is saved, but its line on the timeline could not be confirmed: {message}. Reload the page before generating it again.",
         "contactNotFound": "Contact not found",
         "dealNotFound": "Deal not found for this contact (or not visible to you)",
         "chainUnavailable": "Hash-chain verification unavailable: {message}"

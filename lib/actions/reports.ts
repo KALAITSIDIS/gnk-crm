@@ -7,7 +7,7 @@ import { z } from "zod";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { assembleEvidence, EVENTS_PER_FAMILY } from "@/lib/services/evidence";
 import { renderEvidencePdf } from "@/lib/services/evidence-pdf";
-import { logEvent } from "@/lib/services/events";
+import { documentEventWritten, EventWriteError, logEvent } from "@/lib/services/events";
 import { extractSha256Hex, sha256Hex } from "@/lib/services/hash";
 import { binaryBody } from "@/lib/services/storage-upload";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -145,10 +145,24 @@ export async function generateEvidenceReport(
       },
     });
   } catch (e) {
-    // guardrail 1: no stored report without its event — roll the report back
-    await admin.from("documents").delete().eq("id", doc.id);
-    await removeObjectsBestEffort(admin.storage, "documents", [path], "report delete");
-    return fail(t("rolledBack", { message: (e as Error).message }));
+    // guardrail 1: no stored report without its event — roll the report back.
+    // But only the database's own refusal says the line was not written. Any
+    // other failure may have written it, naming this report by id and digest,
+    // and destroying the report then leaves the evidence ledger pointing at
+    // nothing: read the line back as the system, and keep the report.
+    if (!(e instanceof EventWriteError) || e.refused) {
+      await admin.from("documents").delete().eq("id", doc.id);
+      await removeObjectsBestEffort(admin.storage, "documents", [path], "report delete");
+      return fail(t("rolledBack", { message: (e as Error).message }));
+    }
+    const written = await documentEventWritten(admin, {
+      orgId: profile.orgId,
+      entityType: "contact",
+      entityId: d.contact_id,
+      eventType: "evidence_report_generated",
+      documentId: doc.id,
+    });
+    if (written !== true) return fail(t("notConfirmed", { message: e.message }));
   }
 
   revalidatePath("/reports/commission-evidence");

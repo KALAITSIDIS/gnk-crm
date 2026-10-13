@@ -53,12 +53,85 @@ const eventRow = (params: LogEventParams) => ({
   payload: params.payload ?? {},
 });
 
+/**
+ * Why an insert of event rows is not known to have landed, or null when it is.
+ *
+ * PostgREST answers a committed insert with 201 Created and nothing else —
+ * measured on the local stack (PostgREST v14.5) for one row and for many, on
+ * the session client and on the service role. `if (error)` alone took every
+ * answer postgrest-js cannot read as an error for a written event: an OK
+ * status with an empty body, a 404 with an empty body (reported as 204), a
+ * body of `null` under any status, a 500 included, and a body of `0`,
+ * `false` or `""`, which makes `error` itself falsy (measured on
+ * postgrest-js 2.110.2, lib/services/events-hollow.test.ts). None of those
+ * says the row was written, and a mutation must not believe its event was.
+ *
+ * Its words reach people: four sites show them (the erasure's two records,
+ * the viewing confirmation, the evidence report), so an error with no message
+ * is named by its status rather than printed as "undefined".
+ */
+function eventWriteFailure(res: { error: unknown; status: number }): { message: string; refused: boolean } | null {
+  if (res.error) {
+    const { message, code } = res.error as { message?: unknown; code?: unknown };
+    return {
+      message: typeof message === "string" && message ? message : `HTTP ${res.status}`,
+      refused: typeof code === "string" && code !== "",
+    };
+  }
+  return res.status === 201 ? null : { message: `the write was not confirmed (HTTP ${res.status})`, refused: false };
+}
+
+/**
+ * logEvent's and logEvents' failure. `refused` is true when the DATABASE said
+ * no — the answer carried a SQLSTATE or a PostgREST code — so the rows were
+ * not written. Anything else says nothing either way: a hollow answer, a
+ * gateway's words, a request that never came back. Those rows may be written,
+ * or be written yet (PostgREST finishes a request whose client has gone), so
+ * an action that undoes its own write when its event fails may do so only
+ * when `refused`; otherwise its line may name what it would destroy
+ * (documentEventWritten settles it).
+ */
+export class EventWriteError extends Error {
+  readonly refused: boolean;
+  constructor(message: string, refused: boolean) {
+    super(message);
+    this.name = "EventWriteError";
+    this.refused = refused;
+  }
+}
+
 /** Write one event row. Throws on failure — mutations must not silently lose their event. */
 export async function logEvent(supabase: Client, params: LogEventParams): Promise<void> {
-  const { error } = await supabase.from("events").insert(eventRow(params));
-  if (error) {
-    throw new Error(`logEvent failed (${params.entityType}.${params.eventType}): ${error.message}`);
+  const failure = eventWriteFailure(await supabase.from("events").insert(eventRow(params)));
+  if (failure) {
+    throw new EventWriteError(
+      `logEvent failed (${params.entityType}.${params.eventType}): ${failure.message}`,
+      failure.refused,
+    );
   }
+}
+
+/**
+ * Whether the event an unsettled EventWriteError left behind is on the chain:
+ * a line of `eventType` on the entity whose payload names `documentId`. Read
+ * through the SERVICE-ROLE client the caller passes, so what one session may
+ * see does not decide it. null when the read itself did not answer.
+ */
+export async function documentEventWritten(
+  admin: Client,
+  q: { orgId: string; entityType: EntityType; entityId: string; eventType: string; documentId: string },
+): Promise<boolean | null> {
+  const res = await admin
+    .from("events")
+    .select("id")
+    .eq("org_id", q.orgId)
+    .eq("entity_type", q.entityType)
+    .eq("entity_id", q.entityId)
+    .eq("event_type", q.eventType)
+    .eq("payload->>document_id", q.documentId)
+    .limit(1);
+  if (res.error || !Array.isArray(res.data)) return null;
+  return res.data.length > 0;
 }
 
 /**
@@ -77,9 +150,9 @@ export async function logEvent(supabase: Client, params: LogEventParams): Promis
  */
 export async function logEvents(supabase: Client, events: LogEventParams[]): Promise<void> {
   if (events.length === 0) return;
-  const { error } = await supabase.from("events").insert(events.map(eventRow));
-  if (error) {
-    throw new Error(`logEvents failed (${events.length} rows): ${error.message}`);
+  const failure = eventWriteFailure(await supabase.from("events").insert(events.map(eventRow)));
+  if (failure) {
+    throw new EventWriteError(`logEvents failed (${events.length} rows): ${failure.message}`, failure.refused);
   }
 }
 

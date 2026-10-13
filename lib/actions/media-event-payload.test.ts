@@ -98,7 +98,7 @@ function upload(kind: "photo" | "floor_plan", names: string[] = [FILE_NAME], ins
 describe("uploadPropertyMedia logs the photo by id and digest, not by file name", () => {
   it("a photograph: ONE media_uploaded with id, kind, watermark flag and content digest", async () => {
     const { fake, run } = upload("photo");
-    expect((await run()).error).toBeNull();
+    expect(await run()).toMatchObject({ error: null, warning: null });
     const rows = inserted(fake);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
@@ -119,14 +119,14 @@ describe("uploadPropertyMedia logs the photo by id and digest, not by file name"
 
   it("the event's digest is the ROW's digest — one fact, one computation", async () => {
     const { fake, run } = upload("photo");
-    expect((await run()).error).toBeNull();
+    expect(await run()).toMatchObject({ error: null, warning: null });
     const [row] = fake.argsOf("property_media", "insert")[0] as [Record<string, unknown>];
     expect(inserted(fake)[0].payload).toMatchObject({ content_sha256: row.content_sha256 });
   });
 
   it("a floor plan: the same shape, with its kind", async () => {
     const { fake, run } = upload("floor_plan");
-    expect((await run()).error).toBeNull();
+    expect(await run()).toMatchObject({ error: null, warning: null });
     expect(inserted(fake)[0].payload).toEqual({
       media_id: "m-1",
       kind: "floor_plan",
@@ -138,7 +138,7 @@ describe("uploadPropertyMedia logs the photo by id and digest, not by file name"
 
   it("several files: one event each, none carrying its name", async () => {
     const { fake, run } = upload("photo", [FILE_NAME, "Kyriakos garden 99111222.jpg"]);
-    expect((await run()).error).toBeNull();
+    expect(await run()).toMatchObject({ error: null, warning: null });
     expect(inserted(fake).map((r) => (r.payload as { media_id: string }).media_id)).toEqual(["m-1", "m-2"]);
     expect(leaked(fake)).toEqual([]);
   });
