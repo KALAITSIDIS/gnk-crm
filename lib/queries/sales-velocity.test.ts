@@ -47,7 +47,8 @@ describe("fetchProjectVelocity", () => {
 
     await fetchProjectVelocity(caller.client as never, "proj-1", new Date("2026-09-07T00:00:00Z"));
 
-    expect(events.served.events, "the system answered it").toBe(1);
+    // fetchAll: the page that held the row, then the empty page that ends the read
+    expect(events.served.events, "the system answered it").toBe(2);
     expect(
       caller.served.events ?? 0,
       "the caller's client, which would have shown only their own status changes, was never asked",
@@ -138,6 +139,87 @@ describe("fetchProjectVelocity", () => {
 
     await expect(
       fetchProjectVelocity(caller.client as never, "proj-1", new Date("2026-09-07T00:00:00Z")),
-    ).rejects.toThrow(/Velocity event query failed/);
+    ).rejects.toThrow(/Query failed \(velocity events\): statement timeout/);
+  });
+
+  /*
+   * T-velocity-id-lists: every sold unit's id in one URL answered 414 past
+   * about 204 sold units, and the whole units page fell over. The ids now go out
+   * in slices, each slice's read paged.
+   */
+  it("asks about the sold units in bounded slices, each read paged and ordered uniquely", async () => {
+    const events = fakeClient({});
+    admin.client = events.client;
+    const sold = Array.from({ length: 250 }, (_, i) => unit(`u${i}`, "sold"));
+    const caller = fakeClient({ properties: [{ data: sold, error: null }] });
+
+    await fetchProjectVelocity(caller.client as never, "proj-1", new Date("2026-09-07T00:00:00Z"));
+    const slices = events
+      .argsOf("events", "in")
+      .filter((a) => a[0] === "entity_id")
+      .map((a) => a[1] as string[]);
+    expect(slices.map((s) => s.length)).toEqual([100, 100, 50]);
+    expect(slices.flat(), "every sold unit asked about, once").toEqual(sold.map((u) => u.id));
+    expect(events.argsOf("events", "range")).toEqual([[0, 999], [0, 999], [0, 999]]);
+    expect(events.argsOf("events", "order")).toEqual([
+      ["occurred_at", { ascending: true }],
+      ["id"],
+      ["occurred_at", { ascending: true }],
+      ["id"],
+      ["occurred_at", { ascending: true }],
+      ["id"],
+    ]);
+    // every slice carries the organisation: the admin client has no RLS, so a
+    // slice without it would read every organisation's events for those ids
+    expect(events.argsOf("events", "eq").filter((a) => a[0] === "org_id")).toEqual([
+      ["org_id", "org-1"],
+      ["org_id", "org-1"],
+      ["org_id", "org-1"],
+    ]);
+    // the units themselves are read page by page too — the rows, then the empty
+    // page that ends the read — each page over the same unique order
+    expect(caller.argsOf("properties", "range")).toEqual([[0, 999], [250, 1249]]);
+    expect(caller.argsOf("properties", "order")).toEqual([["id"], ["id"]]);
+  });
+
+  it("a failed unit read throws, and nothing is asked of the system", async () => {
+    const events = fakeClient({});
+    admin.client = events.client;
+    const caller = fakeClient({
+      properties: [{ data: null, error: { message: "statement timeout" } }],
+    });
+
+    await expect(
+      fetchProjectVelocity(caller.client as never, "proj-1", new Date("2026-09-07T00:00:00Z")),
+    ).rejects.toThrow(/Query failed \(velocity units\): statement timeout/);
+    expect(events.served.events ?? 0).toBe(0);
+  });
+
+  it("a unit repeated across two pages counts once", async () => {
+    /*
+     * Offset pages are separate snapshots: a unit inserted between them shifts
+     * the next page, which repeats the last row already read. The review
+     * measured it on the real stack — 201 units, 2 sold, over 200 and 1.
+     */
+    const events = fakeClient({});
+    admin.client = events.client;
+    const caller = fakeClient({
+      properties: [
+        { data: [unit("u1", "available"), unit("u2", "sold")], error: null },
+        { data: [unit("u2", "sold")], error: null },
+      ],
+    });
+
+    const res = await fetchProjectVelocity(
+      caller.client as never,
+      "proj-1",
+      new Date("2026-09-07T00:00:00Z"),
+    );
+    expect(res.totalUnits).toBe(2);
+    expect(res.soldTotal).toBe(1);
+    expect(res.byStatus).toEqual({ available: 1, sold: 1 });
+    expect(events.argsOf("events", "in")).toEqual(
+      expect.arrayContaining([["entity_id", ["u2"]]]),
+    );
   });
 });

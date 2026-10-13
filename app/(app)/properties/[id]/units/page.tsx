@@ -77,7 +77,7 @@ export default async function ProjectUnitsPage({
   const profile = await getCurrentProfile(supabase);
   const canManage = profile.role === "admin" || profile.role === "listing_manager";
 
-  const [unitRows, priceListsRes, plansRes, phasesRes, typesRes] = await Promise.all([
+  const [unitRows, priceListsRes, plansRes, phasesRes, typesRes, velocity] = await Promise.all([
     // EVERY unit, page by page (fetch-all.ts): this list is also the scope the
     // reprice form reviews, and the database refuses a reprice whose reviewed
     // scope is not the whole scope (0141) — an unpaged read stopped at
@@ -138,6 +138,11 @@ export default async function ProjectUnitsPage({
       )
       .eq("project_id", id)
       .order("code"),
+    // 0054: the sales-velocity card — its own unit read, then the sold units'
+    // events (lib/queries/sales-velocity.ts). It needs nothing read above, so it
+    // is asked alongside them: both of its reads are paged (T-velocity-id-lists),
+    // and run last they added their round trips to every view of this page.
+    fetchProjectVelocity(supabase, id),
   ]);
   const priceListRows = unwrapRows(priceListsRes, "price lists");
   const planRows = unwrapRows(plansRes, "payment plans");
@@ -216,11 +221,6 @@ export default async function ProjectUnitsPage({
     acc[u.status] = (acc[u.status] ?? 0) + 1;
     return acc;
   }, {});
-
-  // 0054: two round trips of its own, the second bounded by the number of SOLD
-  // units rather than by project size — see lib/queries/sales-velocity.ts. Kept
-  // out of the Promise.all above because the event query needs the unit ids.
-  const velocity = await fetchProjectVelocity(supabase, id);
 
   return (
     <div className="flex flex-col gap-4">
