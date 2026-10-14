@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
+import { certainlyRolledBack } from "@/lib/services/rpc-outcome";
 import { sha256Hex } from "@/lib/services/hash";
 import { renderSlipPdf } from "@/lib/services/slip-pdf";
 import { slipObjectPath } from "@/lib/services/slip-paths";
@@ -253,15 +254,12 @@ export async function signViewingSlip(
     .select("id");
   const saved = !ins.error && Array.isArray(ins.data) && ins.data.length === 1;
   if (!saved) {
-    if (ins.error?.code === "23505") {
-      // 23505 unique_violation → signed between the check and this insert;
-      // the two objects are this attempt's own (it holds the PNG claim)
-      await takeBack([sigPath, pdfPath]);
-      return { error: "This viewing already has a signed slip.", savedAt: null };
-    }
-    // Anything else may have COMMITTED — a lost answer, a gateway 5xx, a
-    // hollow or falsy answer — so ask before removing: a stranded file is
-    // recoverable, a removed one is not.
+    // Anything but a clean answer may have COMMITTED — a lost answer, a
+    // gateway 5xx, a hollow or falsy answer, even a 23505: under this
+    // attempt's PNG claim the row a unique violation meets can be this
+    // attempt's OWN, its POST replayed after the first one committed
+    // (T-refusal-allowlist's review). So ask before removing: a stranded file
+    // is recoverable, a removed one is not.
     let after: { signature_sha256: string | null }[];
     try {
       after = await slipRows();
@@ -271,16 +269,26 @@ export async function signViewingSlip(
         savedAt: null,
       };
     }
+    if (ins.error?.code === "23505" && after[0]?.signature_sha256 !== sha256) {
+      // 23505 unique_violation, and the row is not this attempt's → signed
+      // between the check and this insert; the two objects are this
+      // attempt's own (it holds the PNG claim)
+      await takeBack([sigPath, pdfPath]);
+      return { error: "This viewing already has a signed slip.", savedAt: null };
+    }
     if (after.length === 0) {
-      // Not committed — YET. Only a refusal the database itself gave (a
-      // SQLSTATE or PostgREST code) means the statement rolled back or never
-      // ran. A code-less one — a gateway 5xx, a reset connection, a hollow or
-      // falsy answer — may still be on its way: PostgREST finishes a request
-      // whose client has gone (measured by the review), and a row committing
-      // after its files were taken back points at nothing. Those files are
-      // left; the 5-minute stale clearing above frees them only if no row
-      // ever appears (statements time out long before).
-      const refused = typeof ins.error?.code === "string" && ins.error.code !== "";
+      // Not committed — YET. Only a code `certainlyRolledBack` understands
+      // (raised before the transaction ran, or while the statement ran) means
+      // it rolled back or never ran; a code alone is not that proof — class 08
+      // comes from whatever sits in front of Postgres, PGRST000 / 001 are
+      // unknown (DECISIONS T-media-insert-outcome, T-refusal-allowlist). Any
+      // other failure — such a code, a gateway 5xx, a reset connection, a
+      // hollow or falsy answer — may still be on its way: PostgREST finishes a
+      // request whose client has gone (measured by the review), and a row
+      // committing after its files were taken back points at nothing. Those
+      // files are left; the 5-minute stale clearing above frees them only if
+      // no row ever appears (statements time out long before).
+      const refused = certainlyRolledBack(ins.error?.code);
       if (refused) {
         await takeBack([sigPath, pdfPath]);
         return { error: ins.error!.message || `The slip was not saved (${ins.error!.code}).`, savedAt: null };

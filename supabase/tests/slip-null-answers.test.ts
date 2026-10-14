@@ -404,6 +404,46 @@ describe("the slip's insert is never read as done — or undone — on an unclea
     expect((await sign(v, SECOND)).error).toBe("This viewing already has a signed slip.");
   });
 
+  it("the insert answered a CODE (57014) and landed after it: the files were kept — a code is not a refusal", async () => {
+    // T-refusal-allowlist: class 57 can follow a commit or precede one still
+    // on its way (DECISIONS T-media-insert-outcome); at 7eaeabe any code took
+    // the files back, and the row then committed pointing at nothing
+    const v = await newViewing();
+    const timeout = () =>
+      new Response(JSON.stringify({ code: "57014", details: null, hint: null, message: "canceling statement due to statement timeout" }), {
+        status: 500,
+        headers: JSONH,
+      });
+    const r = await sign(v, ORIGINAL, { match: insertPost, answer: timeout, later: true });
+    // the held insert is sent BEFORE any assertion, so a failure here never leaks it into the next case
+    const late = await state.kept.shift()!();
+    const o = await observe(v);
+    console.log(`[evidence] slip insert answered 57014, landed after: ${r.error ?? "ok"} | late insert ${late}, rows ${o.rows}, objects ${o.objectIds.length}`);
+    expect(r).toMatchObject({ error: "The slip may not have been saved (HTTP 500) — reload the viewing in a few minutes before signing again.", ok: false });
+    expect(late, "the late insert committed").toBe(201);
+    expect(o.rows).toBe(1);
+    expect(o.pngSha, "its signature is there").toBe(o.rowPng);
+    expect(o.pdfSha, "its PDF is there").toBe(o.rowPdf);
+  });
+
+  it("the insert landed and a replay of it was refused 23505: re-read as this attempt's own row — recorded, its files kept", async () => {
+    // T-refusal-allowlist's review: a gateway replaying the POST shows the
+    // client a 23505 for a row this attempt committed; at 7eaeabe the 23505
+    // branch took the files back without asking, emptying a signed slip
+    const v = await newViewing();
+    const replayed = () =>
+      new Response(JSON.stringify({ code: "23505", details: null, hint: null, message: 'duplicate key value violates unique constraint "viewing_slips_viewing_id_key"' }), {
+        status: 409,
+        headers: JSONH,
+      });
+    const r = await sign(v, ORIGINAL, { match: insertPost, answer: replayed });
+    const o = await observe(v);
+    console.log(`[evidence] slip insert landed, answered 23505: ${r.error ?? "ok"} | rows ${o.rows}, objects ${o.objectIds.length}`);
+    expect(r.hits).toHaveLength(1);
+    expect(r.error).toBeNull();
+    expectIntact(o);
+  });
+
   it("the insert landed, its answer a 504: re-read as this attempt's own row — recorded, its files kept", async () => {
     const v = await newViewing();
     const r = await sign(v, ORIGINAL, { match: insertPost, answer: () => new Response("", { status: 504 }) });

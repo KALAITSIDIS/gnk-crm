@@ -9768,3 +9768,59 @@ From BACKLOG "Null answers — 2026-10-13": "`logEvent` takes a hollow insert an
   - the 34 the scope judged worse that this change did not fix;
   - two it had called borderline (`portals.ts:208`, `reservations.ts:359`);
   - two more event lines inside listed actions (`leads.ts:1225`, `contacts.ts:397`).
+
+## T-refusal-allowlist — an event line or a slip row counts as refused only on a code `certainlyRolledBack` understands, and a slip's 23505 is read back first (2026-10-14; no migration; PR #155)
+
+This is the first item of BACKLOG "Throws after a commit — 2026-10-13". T-log-event-hollow's records check (#154) found it in my own two landed changes. I chose it next under the standing agreement to navigate and choose. The branch is stacked on #154 (T-log-event-hollow's records), which merges first. The merge waits for the operator's word.
+
+**The defect (from code and the earlier record; reproduced below).** `EventWriteError.refused` (#153, `lib/services/events.ts`) and `signViewingSlip`'s insert take-back (#151, `lib/actions/viewing-slips.ts`) both treated ANY non-empty string code as the database's refusal. DECISIONS `T-media-insert-outcome` (2026-10-07) had already measured and recorded that a code is not that proof:
+- 57014, 53xxx, 58xxx and XX000 can be reported for a COMMIT that went through;
+- class 08 comes from whatever sits in front of Postgres;
+- PGRST111 and 112 are built after the commit;
+- PGRST000, 001, 103 and 116, and every unclassified code, are unknown.
+
+`certainlyRolledBack` (`lib/services/rpc-outcome.ts`) is that allowlist. `deals.ts`, `units.ts`, `followup-tasks.ts` and `media-upload.ts` already used it; my two changes did not.
+
+The review then found a second instance in the same function. The slip's 23505 branch took the files back without asking whose row the unique violation had met. Under the attempt's PNG claim (`upsert: false`), that row can be the attempt's OWN, if its POST was replayed after the first one committed.
+
+**Reproduced first (at `7eaeabe`, the base, on the real stack, one request faulted at the transport).**
+1. **The viewing confirmation and the evidence report, XX000 after the line landed.** Both rolled back. The document and its file were destroyed while the line naming them was written: "documents +0, file none … new lines 1".
+2. **The same two actions, 57014 for a request that never arrived.** Both rolled back on a code that proves nothing.
+3. **The slip insert, 57014 with the insert landing after its answer.** The files were taken back, and the row committed pointing at an EMPTY bucket: "late insert 201, rows 1, objects 0".
+4. **The slip insert landed and was answered 23505,** which is what a replayed POST shows the client. The files were taken back and the user was told "This viewing already has a signed slip."; the committed slip was left with "rows 1, objects 0".
+
+**What changed.**
+- `eventWriteFailure` sets `refused: certainlyRolledBack(code)`.
+- The slip take-back after a re-read finds no row runs only on `certainlyRolledBack(ins.error?.code)`.
+- On a 23505 the slip re-reads its rows first. If the row carries this attempt's signature digest, it is this attempt's own row and is recorded as saved. Otherwise, as before, someone else signed and the attempt's own files are taken back. If the re-read fails, nothing is removed and the user reads "Could not confirm whether the slip was saved…".
+- The doc comments name the allowlist and why a code alone is not proof.
+- The two document actions are unchanged: they still read the line back on anything that is not a refusal.
+
+**Tests.**
+- **`lib/services/events-hollow.test.ts`.**
+  - Refused: 42501, 23503, PGRST204, PGRST301 and 40001, plus a 42501 with no message.
+  - Unknown: XX000 (also with no message), 57014, 53200, 08006, 40003, PGRST001, PGRST111, an unclassified PGRST999, and 42501 sent as a NUMBER, which is a gateway's body and is never coerced.
+- **`lib/actions/viewing-slips-retry-safe.test.ts`.**
+  - The take-back is proved on 23503 (it was XX000).
+  - XX000, 57014, 08006 and PGRST001 each keep the files.
+  - 23505 meeting another slip still takes back. 23505 meeting this attempt's own row is recorded. 23505 with a failed re-read removes nothing.
+- **`supabase/tests/log-event-hollow.test.ts`.**
+  - The refusal case moves to 42501.
+  - The confirmation and the report each gain two cases: XX000 after the line landed (kept, success via the read-back) and 57014 with the request never arrived (kept, "could not be confirmed").
+- **`supabase/tests/slip-null-answers.test.ts`.**
+  - A 57014 whose insert lands after its answer keeps the files. The held request is sent before any assertion, because an early failure had leaked it into the next cases.
+  - An insert that landed and was answered 23505 is recorded, intact.
+
+**Verified (locally, in worktree `.worktrees/gnk-crm/log-event-hollow` on branch `fix/refusal-allowlist`, against the disposable stack `.iso/nullguard` = v14.5; not production).**
+- **RED at `7eaeabe`:** unit 15 of 101; DB 6 of 57, each failing on its own case.
+- **GREEN:** all.
+- **Mutants:** 11 of 11 killed.
+  - events.ts (5): any non-empty code; never refused; always refused; the allowlist without its statement-level classes; the code coerced to a string.
+  - viewing-slips.ts (6): any non-empty code; never refused; always refused; 23505 taken back without asking whose row; 23505 taken back only on its own row; 23505 never taken back.
+- **Suites:** unit 3,665/3,665; full DB suite 82 files, 1,733/1,733; `typecheck`, `lint`, `build` and `check:static-routes` pass.
+- **Review:** a 3-lens adversarial workflow (semantics of the allowlist on these two tables; every reader of the old rule; whether each test can fail for its reason), with every finding verified. 3 confirmed, 0 refuted:
+  1. The only numeric-code test could no longer fail. Fixed: 42501 as a number.
+  2. The slip's 23505 take-back. Fixed, above.
+  3. Five document actions delete their just-uploaded file on ANY failed `documents` insert, though the row may have committed. These are `uploadContactDocument`, `uploadPropertyDocument`, `uploadMandateDocument`, `generateEvidenceReport` and `generateViewingConfirmation`. The error can be a code-less 502, a reset, PGRST111/112, XX000 or 57014. This is pre-existing and outside this change; it is on the BACKLOG ("Throws after a commit — 2026-10-13").
+
+**Rollback.** Revert the merge. This is application only: no migration, nothing on hosted.

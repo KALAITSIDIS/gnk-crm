@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Json } from "@/lib/supabase/database.types";
 import { portalById } from "@/lib/services/portals/registry";
+import { certainlyRolledBack } from "@/lib/services/rpc-outcome";
 import { formatDateTime } from "@/lib/utils/format";
 
 /**
@@ -75,21 +76,26 @@ function eventWriteFailure(res: { error: unknown; status: number }): { message: 
     const { message, code } = res.error as { message?: unknown; code?: unknown };
     return {
       message: typeof message === "string" && message ? message : `HTTP ${res.status}`,
-      refused: typeof code === "string" && code !== "",
+      refused: certainlyRolledBack(code),
     };
   }
   return res.status === 201 ? null : { message: `the write was not confirmed (HTTP ${res.status})`, refused: false };
 }
 
 /**
- * logEvent's and logEvents' failure. `refused` is true when the DATABASE said
- * no — the answer carried a SQLSTATE or a PostgREST code — so the rows were
- * not written. Anything else says nothing either way: a hollow answer, a
- * gateway's words, a request that never came back. Those rows may be written,
- * or be written yet (PostgREST finishes a request whose client has gone), so
- * an action that undoes its own write when its event fails may do so only
- * when `refused`; otherwise its line may name what it would destroy
- * (documentEventWritten settles it).
+ * logEvent's and logEvents' failure. `refused` is true only when the answer's
+ * code is one `certainlyRolledBack` understands (lib/services/rpc-outcome.ts,
+ * DECISIONS T-media-insert-outcome): raised before the transaction ran or
+ * while the statement ran, so the rows were not written. A code alone is not
+ * that proof — 57014 / 53 / 58 / XX can be reported for a COMMIT that went
+ * through, class 08 comes from whatever sits in front of Postgres, PGRST111 /
+ * 112 are built after the commit (T-refusal-allowlist). Anything else says
+ * nothing either way: such a code, a hollow answer, a gateway's words, a
+ * request that never came back. Those rows may be written, or be written yet
+ * (PostgREST finishes a request whose client has gone), so an action that
+ * undoes its own write when its event fails may do so only when `refused`;
+ * otherwise its line may name what it would destroy (documentEventWritten
+ * settles it).
  */
 export class EventWriteError extends Error {
   readonly refused: boolean;

@@ -4018,24 +4018,43 @@ Found by T-log-event-hollow's scope. Its sweep covered all 115 `logEvent` / `log
 
 Its first item is not a site: it is the refusal rule this change added, which is wider than the house allowlist. Fix shape for all of them is the house's degrade idiom: catch the `logEvent` failure AT THE SITE, finish the remaining writes and follow-ups, and return a success with a notice. Precedents: `lib/actions/properties.ts:784-792` `record()` with `NOT_RECORDED_NOTICE` (`lib/services/optimistic-save.ts:53`), the `lib/actions/media.ts:284-302` warning, `lib/actions/deals.ts:602-613` `raised_unlogged`, and `linkLeadContact` (`lib/actions/leads.ts:368-382`). Most sites also need a `notice` field on their state type and a toast in their component. Each event VERIFY lists the event lines still written by a bare `await logEvent(` at their present indentation; wrapping a call in `try` indents it and a helper renames it, so a fixed site drops out. The other VERIFYs grep the call or line the shape changes. Ranked by harm, most first:
 
-- **`EventWriteError.refused` and the slip insert's take-back count ANY code as the database's refusal, which is wider than the measured allowlist `certainlyRolledBack`, M.**
-  - **The rule.** `refused` is `typeof code === "string" && code !== ""` (`lib/services/events.ts:78`). T-signed-slip-kept's insert take-back uses the same test (`lib/actions/viewing-slips.ts:283`).
-  - **Why a code is not proof.** DECISIONS `T-media-insert-outcome` (2026-10-07) measured and recorded that a code does not prove the transaction rolled back:
-    - 57014 / 53xxx / 58xxx / XX000 can be reported for a COMMIT that went through;
-    - class 08 comes from whatever sits in front of Postgres;
-    - PGRST111 / 112 are built after the commit (measured with the row committed);
-    - PGRST000 / 001 / 103 / 116 and every unclassified code are unknown.
-  - **The house rule.** `certainlyRolledBack` (`lib/services/rpc-outcome.ts`) is that allowlist. `deals.ts`, `units.ts`, `followup-tasks.ts` and `media-upload.ts` already use it.
-  - **The cost.** After one of those codes, when the line or row committed:
-    - `generateEvidenceReport` and `generateViewingConfirmation` still destroy the document their line names;
-    - `signViewingSlip` is narrower: it re-reads the rows before its take-back (`viewing-slips.ts:265-283`), so a code reported after a commit finds the row and takes nothing. Only a coded answer to a request still in flight (class 08 from a proxy, PGRST000 / 001) can take back files whose row commits later.
+- ~~**`EventWriteError.refused` and the slip insert's take-back count ANY code as the database's refusal, which is wider than the measured allowlist `certainlyRolledBack`, M.**~~ **FIXED 2026-10-14 — DECISIONS `T-refusal-allowlist` (PR #155, awaiting merge).**
+  - `refused` is `certainlyRolledBack(code)` in `eventWriteFailure`, and the slip take-back uses the same test.
+  - A slip's 23505 is read back first: this attempt's own row (a replayed POST) is recorded, not emptied.
+  - Reproduced first through the REAL actions at `7eaeabe`:
+    - XX000 after the line landed destroyed the confirmation or report its line names;
+    - a slip insert answered 57014 that landed later was left with an empty bucket;
+    - so was one that landed and was answered 23505.
+  - VERIFY (fixed): `grep -c 'code !== ""' lib/services/events.ts lib/actions/viewing-slips.ts`. 0 and 0 mean fixed.
+  - (original, below)
+    - **The rule.** `refused` is `typeof code === "string" && code !== ""` (`lib/services/events.ts:78`). T-signed-slip-kept's insert take-back uses the same test (`lib/actions/viewing-slips.ts:283`).
+    - **Why a code is not proof.** DECISIONS `T-media-insert-outcome` (2026-10-07) measured and recorded that a code does not prove the transaction rolled back:
+      - 57014 / 53xxx / 58xxx / XX000 can be reported for a COMMIT that went through;
+      - class 08 comes from whatever sits in front of Postgres;
+      - PGRST111 / 112 are built after the commit (measured with the row committed);
+      - PGRST000 / 001 / 103 / 116 and every unclassified code are unknown.
+    - **The house rule.** `certainlyRolledBack` (`lib/services/rpc-outcome.ts`) is that allowlist. `deals.ts`, `units.ts`, `followup-tasks.ts` and `media-upload.ts` already use it.
+    - **The cost.** After one of those codes, when the line or row committed:
+      - `generateEvidenceReport` and `generateViewingConfirmation` still destroy the document their line names;
+      - `signViewingSlip` is narrower: it re-reads the rows before its take-back (`viewing-slips.ts:265-283`), so a code reported after a commit finds the row and takes nothing. Only a coded answer to a request still in flight (class 08 from a proxy, PGRST000 / 001) can take back files whose row commits later.
+      This is far narrower than before either change, when ANY failure triggered it, but it is not the house rule. `supabase/tests/log-event-hollow.test.ts` even pins XX000 as a refusal. FOUND by T-log-event-hollow's records check, from code and the earlier record; not reproduced.
+    - **Shape:**
+      - `refused: certainlyRolledBack(code)` in `eventWriteFailure`;
+      - the slip take-back on `certainlyRolledBack(code)` (its 23505 branch runs first);
+      - the tests' refusal case on an allowlisted code (42501, 23503), with XX000 / 57014 / 08006 / PGRST001 as unknown: kept, then read back.
+    - **VERIFY:** `grep -n 'code !== ""' lib/services/events.ts lib/actions/viewing-slips.ts`. Two hits mean open.
 
-    This is far narrower than before either change, when ANY failure triggered it, but it is not the house rule. `supabase/tests/log-event-hollow.test.ts` even pins XX000 as a refusal. FOUND by T-log-event-hollow's records check, from code and the earlier record; not reproduced.
-  - **Shape:**
-    - `refused: certainlyRolledBack(code)` in `eventWriteFailure`;
-    - the slip take-back on `certainlyRolledBack(code)` (its 23505 branch runs first);
-    - the tests' refusal case on an allowlisted code (42501, 23503), with XX000 / 57014 / 08006 / PGRST001 as unknown: kept, then read back.
-  - **VERIFY:** `grep -n 'code !== ""' lib/services/events.ts lib/actions/viewing-slips.ts`. Two hits mean open.
+- **Five document actions delete their just-uploaded file on ANY failed `documents` insert, though the row may have committed, S.**
+  - **The sites.** Each guard is a bare error check, and the cleanup follows it:
+    - `uploadContactDocument` (`lib/actions/contact-documents.ts:89-91`), `uploadPropertyDocument` (`property-documents.ts:77-79`) and `uploadMandateDocument` (`mandates.ts:479-481`) use `if (docErr)`.
+    - `generateEvidenceReport` (`reports.ts:125-126`) and `generateViewingConfirmation` (`viewing-documents.ts:147-148`) use `if (docErr || !doc)`.
+  - **Why it matters.** Any error is taken as a rejected row. A code-less 502 or reset, a gateway `{}`, PGRST111 / 112 (built after the commit), and XX000 / 57014 (reportable for a COMMIT that went through) can all follow a committed row (DECISIONS `T-media-insert-outcome`). The file is then removed under a committed `documents` row whose `storage_path` points at nothing. The user uploads again, so the broken entry stays listed. For a mandate, the return comes before `signed_document_id` is linked.
+  - **Severity.** The uploader still has the file and the PDFs can be generated again, so nothing is lost for good. It was FOUND by T-refusal-allowlist's review, from code and the earlier record, and has not been reproduced. The NOTE "a `maybeSingle()` answer cannot be guarded" in "Null answers — 2026-10-13" covers only the hollow `!doc` arm at the last two sites.
+  - **Shape.** The T-media-insert-outcome shape:
+    1. Remove the object only on `certainlyRolledBack(docErr.code)`.
+    2. Otherwise, and on a hollow success, read the row back as the service role by this attempt's unique `storage_path` (a list read through `rowsOf`). A row means saved: carry on, and for a mandate, link it.
+    3. If there is no row or the read is unclear, keep the object and say "could not confirm — reload before uploading again".
+  - **VERIFY:** `grep -n "if (docErr) {\|if (docErr || !doc) {" lib/actions/contact-documents.ts lib/actions/property-documents.ts lib/actions/mandates.ts lib/actions/reports.ts lib/actions/viewing-documents.ts`. Five hits mean open.
 
 - **A one-time secret is created and never shown: an invited colleague's password, a portal feed URL, a share link, M.**
   - **inviteUser.** `inviteUser` (`lib/actions/settings.ts:199`, `user.invited`) throws after the service role created the auth user with a one-time password (:177-185) and the session inserted the profile (:187-197). `useActionState` (`components/features/settings/users-panel.tsx:71`) rethrows to `app/(app)/error.tsx`, so InviteFlow's credentials branch (:73-107) never renders, and the password exists nowhere else.

@@ -334,14 +334,31 @@ type Case = {
   outcome: Outcome;
   /** whether the document's line is on the chain afterwards */
   line: boolean;
+  /** what logEvent's failure says, after "logEvent failed (<type>): " — for "unconfirmed" */
+  says?: string;
 };
 const CASES: Case[] = [
   { name: "no fault", fault: null, outcome: "kept", line: true },
   {
-    name: "the database refused the line (500, XX000)",
-    fault: { answer: json(500, { code: "XX000", message: "injected refusal" }), forward: false },
+    name: "the database refused the line (403, 42501)",
+    fault: { answer: json(403, { code: "42501", message: "injected refusal" }), forward: false },
     outcome: "rolled back",
     line: false,
+  },
+  // A CODE is not proof the line was refused (DECISIONS T-media-insert-outcome):
+  // XX000 / 57014 can be reported for a COMMIT that went through (T-refusal-allowlist)
+  {
+    name: "an internal error (500, XX000) after the line landed",
+    fault: { answer: json(500, { code: "XX000", message: "injected internal error" }), forward: true },
+    outcome: "kept",
+    line: true,
+  },
+  {
+    name: "a statement timeout (500, 57014), the request never arrived",
+    fault: { answer: json(500, { code: "57014", message: "canceling statement due to statement timeout" }), forward: false },
+    outcome: "unconfirmed",
+    line: false,
+    says: "canceling statement due to statement timeout",
   },
   {
     name: "200 empty, the line landed",
@@ -360,6 +377,7 @@ const CASES: Case[] = [
     fault: { answer: () => new Response("", { status: 404, headers: JSONH }), forward: false },
     outcome: "unconfirmed",
     line: false,
+    says: "the write was not confirmed (HTTP 204)",
   },
   {
     name: "200 empty, the line landed, but reading it back failed",
@@ -367,6 +385,7 @@ const CASES: Case[] = [
     readFault: json(500, { code: "XX000", message: "read-back refused" }),
     outcome: "unconfirmed",
     line: true,
+    says: "the write was not confirmed (HTTP 200)",
   },
 ];
 
@@ -446,9 +465,8 @@ async function expectCase(
   }
 }
 
-/** What logEvent says for the two hollow answers the unconfirmed cases use. */
-const NOT_CONFIRMED = (type: string, c: Case) =>
-  `logEvent failed (${type}): the write was not confirmed (${c.fault?.forward === false ? "HTTP 204" : "HTTP 200"})`;
+/** What logEvent says for an unconfirmed case. */
+const NOT_CONFIRMED = (type: string, c: Case) => `logEvent failed (${type}): ${c.says}`;
 
 describe("4. the viewing confirmation is undone only on the database's refusal", () => {
   const TYPE = "viewing.viewing_confirmation_generated";
