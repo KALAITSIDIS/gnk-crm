@@ -33,13 +33,14 @@ export const SIG_0146 = "public.resolve_share_link(text)";
 /** md5 of 0137's prosrc (carriage returns ignored) — 0146's preflight guard, and what the rollback restores. */
 export { BODY_0137_MD5 };
 /** md5 of 0146's prosrc — its postflight's pin. */
-export const BODY_0146_MD5 = "e592f596582022c927e1df28742e3140";
+export const BODY_0146_MD5 = "aa14a6657e4414b83c9c5b21a9fc521a";
 /** 0041's ACL, which 0146 keeps exactly. */
 export const ACL_0041 = "{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}";
 
 /**
- * 0146's seven edits to 0137's function text, [0137's text, 0146's text] — each unique in the body. Reversing them on
- * 0146's body must give 0137's byte for byte; that is the "change nothing else" proof.
+ * 0146's nine edits to 0137's function text, [0137's text, 0146's text] — each unique in the body. Reversing them on
+ * 0146's body must give 0137's byte for byte; that is the "change nothing else" proof. The last two (the agent block
+ * of each kind) came from the review round: the page showed whichever profile the link's created_by named.
  */
 export const EDITS_0146: readonly (readonly [string, string])[] = [
   [
@@ -70,6 +71,14 @@ export const EDITS_0146: readonly (readonly [string, string])[] = [
     "        join properties pr on pr.id = slp.property_id\n",
     "        -- 0146: only the link's own organisation's properties are shown\n        join properties pr on pr.id = slp.property_id and pr.org_id = v_link.org_id\n",
   ],
+  [
+    "        select jsonb_build_object('name', pf.full_name, 'email', pf.email, 'phone', pf.phone_e164)\n          from profiles pf where pf.id = v_link.created_by),\n",
+    "        select jsonb_build_object('name', pf.full_name, 'email', pf.email, 'phone', pf.phone_e164)\n          -- 0146: only a member of the link's own organisation is shown as its agent\n          from profiles pf where pf.id = v_link.created_by and pf.org_id = v_link.org_id),\n",
+  ],
+  [
+    "      select jsonb_build_object('name', pf.full_name, 'email', pf.email, 'phone', pf.phone_e164)\n        from profiles pf where pf.id = v_link.created_by),\n",
+    "      select jsonb_build_object('name', pf.full_name, 'email', pf.email, 'phone', pf.phone_e164)\n        -- 0146: only a member of the link's own organisation is shown as its agent\n        from profiles pf where pf.id = v_link.created_by and pf.org_id = v_link.org_id),\n",
+  ],
 ];
 
 /** The three policies' checks, as pg_get_expr renders them under `"$user", public, extensions` — before and after 0146. */
@@ -90,7 +99,7 @@ export const POLICIES_0146 = {
     table: "share_links",
     before: "(org_id = ( SELECT current_org_id() AS current_org_id))",
     after:
-      "((org_id = ( SELECT current_org_id() AS current_org_id)) AND ((price_list_id IS NULL) OR (EXISTS ( SELECT 1\n   FROM price_lists pl\n  WHERE ((pl.id = share_links.price_list_id) AND (pl.org_id = ( SELECT current_org_id() AS current_org_id)))))))",
+      "((org_id = ( SELECT current_org_id() AS current_org_id)) AND ((price_list_id IS NULL) OR (EXISTS ( SELECT 1\n   FROM price_lists pl\n  WHERE ((pl.id = share_links.price_list_id) AND (pl.org_id = ( SELECT current_org_id() AS current_org_id)))))) AND ((created_by IS NULL) OR (EXISTS ( SELECT 1\n   FROM profiles pf\n  WHERE ((pf.id = share_links.created_by) AND (pf.org_id = ( SELECT current_org_id() AS current_org_id)))))))",
   },
 } as const;
 /** share_links_update's USING, which 0146 does not touch (0100's). */

@@ -61,12 +61,10 @@ export const policyOf = (stmt: string): [string, string] => {
 };
 
 /** 0147's lock statement, as the file carries it (the rollback takes the same locks in the same order). */
-function locks0147(): string {
-  const s = readMigration0147();
-  const from = s.indexOf("lock table public.organizations,");
-  const to = s.indexOf("in access exclusive mode;", from) + "in access exclusive mode;".length;
-  if (from < 0 || to <= from) throw new Error("revert-0147: 0147's lock statement was not found");
-  return s.slice(from, to);
+export function locks0147(): string {
+  const m = /lock table public\.[^;]*in access exclusive mode;/.exec(readMigration0147());
+  if (!m) throw new Error("revert-0147: 0147's lock statement was not found");
+  return m[0];
 }
 
 function slice(file: string, start: string, end: string): string {

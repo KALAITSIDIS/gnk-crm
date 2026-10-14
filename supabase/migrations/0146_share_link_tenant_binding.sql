@@ -1,8 +1,10 @@
 -- =============================================================================
--- 0146 — a share link shows only its own organisation's rows: the property
---        it names, the price list it pins, and the tree its page walks
---        (T-share-link-tenant, 2026-10-14; an external audit's finding,
---        verified independently first)
+-- 0146 — a share link shows only its own organisation's rows of these: the
+--        property it names, the price list it pins, the tree its page walks
+--        and the staff member it shows as its agent (T-share-link-tenant,
+--        2026-10-14; an external audit's finding, verified independently
+--        first; the agent from the review round). NOT the district / area
+--        names — see NOT CHANGED.
 --
 -- THE GAP (measured on the local stack at 0145 by
 -- supabase/tests/share-link-tenant-binding.test.ts, pinned RED first —
@@ -32,6 +34,14 @@
 --     caller's own organisation and role, so B could also hang its own units
 --     under A's project: A's own availability page then listed B's units at
 --     B's prices.
+--   * share_links.created_by (0023) is a single-column key onto profiles(id);
+--     share_links_update's WITH CHECK never looked at it (authenticated holds
+--     table-wide UPDATE; no trigger guards the column), and the resolver read
+--     the page's `agent` by it with no organisation predicate. B's admin, or
+--     the link's creator, could re-point B's link at A's staff member: B's
+--     anonymous page then showed A's staff member's name, email and phone
+--     (found by the review round of this file; measured at its first version:
+--     the update accepted, a missing profile 23503 — an oracle).
 --
 -- THE FIX, two layers (a policy binds SESSIONS; the resolver binds what is
 -- SHOWN, whoever wrote the row — the service role, a definer, a row from
@@ -47,22 +57,29 @@
 --      binds the target too — there is no separate target column.
 --   2. share_links_insert and share_links_update (WITH CHECK) gain `and
 --      (price_list_id is null or exists (… price_lists pl where pl.id =
---      price_list_id and pl.org_id = (select current_org_id())))`. A revoke
+--      price_list_id and pl.org_id = (select current_org_id())))`, and
+--      share_links_update also `and (created_by is null or exists (…
+--      profiles pf where pf.id = created_by and pf.org_id = (select
+--      current_org_id())))` (share_links_insert already pins created_by to
+--      the caller, whose profile IS the caller's organisation's). A revoke
 --      (revoked_at / revoked_by) of a link pinning its own organisation's
---      list, or none, passes as before. USING is unchanged.
---   3. resolve_share_link: 0137's text byte for byte but seven edits, each
+--      list, or none, made by its own organisation's staff, passes as
+--      before. USING is unchanged.
+--   3. resolve_share_link: 0137's text byte for byte but nine edits, each
 --      with a `-- 0146:` comment line: `org_id = v_link.org_id` on the target
 --      lookup, the walk's anchor and its recursive member (which closes the
 --      parent_id route), the price-list lookup and the proposal's properties
 --      join; the list's lines are joined on the list READ (v_pl.id), not on
 --      the link's raw id; the linked-row count counts the link's own
 --      organisation's rows — archived ones INCLUDED, as before, so the page
---      still reports a retired listing as a shortfall. Nothing else moves:
---      `pinned means pinned` is kept, so a link whose pinned list is not its
---      own shows NO price rather than a live one.
+--      still reports a retired listing as a shortfall; and `pf.org_id =
+--      v_link.org_id` on the agent block of each kind (a creator of another
+--      organisation shows NO agent). Nothing else moves: `pinned means
+--      pinned` is kept, so a link whose pinned list is not its own shows NO
+--      price rather than a live one.
 --   A cross-organisation id and a missing one now read the same 42501 at the
 --   policy (WITH CHECK runs before the key's 23503) — no existence oracle
---   through these two columns for a session.
+--   through these three columns for a session.
 --
 -- WHY POLICIES, NOT COMPOSITE KEYS (0123 / 0139's layer A): share_link_
 -- properties has no org_id column and price_lists no (org_id, id) key, so a
@@ -83,11 +100,15 @@
 -- share_link_properties (measured): every read of them — the public share
 -- page, the staff list — waits until this commits (milliseconds). Both are
 -- taken FIRST, in ONE statement inside the preflight, share_links before
--- share_link_properties (the order resolve_share_link and createShareLink
--- take them). CREATE OR REPLACE FUNCTION takes no table lock (a call already
--- running keeps the old body to its end). lock_timeout 5 s per table: a 55P03
--- or a 40P01 keeps nothing — apply again, and do NOT write the ledger row.
--- ONE transaction (checked below).
+-- share_link_properties: resolve_share_link's order (the public page, the
+-- hot path). An INSERT into share_link_properties takes the OTHER order —
+-- its own table at parse, then share_links through the policy's subquery
+-- and the key's check (measured: it holds share_link_properties and waits
+-- on share_links) — so no order suits both: a link created in the same
+-- instant can 40P01. CREATE OR REPLACE FUNCTION takes no table lock (a call
+-- already running keeps the old body to its end). lock_timeout 5 s per
+-- table: a 55P03 or a 40P01 keeps nothing — apply again, and do NOT write
+-- the ledger row. ONE transaction (checked below).
 --
 -- PREFLIGHT refuses, changing nothing, unless: resolve_share_link is the only
 -- function of that name, its body exactly 0137's (md5 of prosrc, carriage
@@ -95,16 +116,20 @@
 -- DEFINER, owned by postgres, `search_path=public`, VOLATILE, returning
 -- jsonb, with 0041's ACL exactly; the three policies' texts are exactly 0023's
 -- / 0100's (read under the fixed search_path below), each permissive, for
--- PUBLIC, of its command; share_link_properties has no UPDATE (or ALL)
--- permissive policy and no API role holds UPDATE on it.
+-- PUBLIC, of its command, and each the ONLY permissive policy for its command
+-- (permissive policies OR together: a sibling — or an ALL policy — would
+-- undo every check this file adds); share_link_properties has no UPDATE (or
+-- ALL) permissive policy and no API role holds UPDATE on it.
 --
--- POSTFLIGHT: the new body's md5 and its seven predicates; 0137's two
--- throttle predicates still there; 0041's EXPOSURE GUARD (no forbidden column
--- name in the body — the list is in 0041's header, deliberately NOT repeated
--- inside the function); the definer's owner, search_path, volatility, return
--- type and ACL exactly as before; the three policies' exact new texts, each
--- still permissive, for PUBLIC, of its command; nothing else on the two tables
--- changed (their policy count).
+-- POSTFLIGHT, each guard before the md5 pin (so each can be seen to refuse
+-- on its own): the body's nine predicates; 0137's two throttle predicates
+-- still there; 0041's EXPOSURE GUARD (no forbidden column name in the body —
+-- the list is in 0041's header, deliberately NOT repeated inside the
+-- function); the definer's owner, search_path, volatility, return type and
+-- ACL exactly as before; then the new body's md5; the three policies' exact
+-- new texts, each still permissive, for PUBLIC, of its command, and still
+-- the only permissive one for it; nothing else on the two tables changed
+-- (their policy count).
 --
 -- EXISTING ROWS — READ-ONLY DIAGNOSTIC, NO REPAIR (the file's last row):
 --   link_rows_across_orgs       share_link_properties rows whose property is
@@ -112,17 +137,24 @@
 --   pinned_lists_across_orgs    links pinning a price list of another
 --                               organisation;
 --   rows_under_a_foreign_parent properties whose parent is another
---                               organisation's.
+--                               organisation's;
+--   creators_across_orgs        links whose created_by is a profile of
+--                               another organisation.
 -- None is shown by the resolver any more. A link pinning another
--- organisation's list can no longer be UPDATED by a session (revoke
--- included) until its price_list_id is cleared — an operator decision per
--- counted row. Hosted held 0 / 0 / 0 on 2026-10-14 (read-only).
+-- organisation's list, or naming another organisation's creator, can no
+-- longer be UPDATED by a session (revoke included) until that column is
+-- cleared or corrected — an operator decision per counted row. Hosted held
+-- 0 / 0 / 0 / 0 on 2026-10-14 (read-only).
 --
 -- NOT CHANGED (BACKLOG, the composite-key series): properties.parent_id, the
--- area_id / district_id links (the proposal still names a district or area
--- by id), deals.stage_id, price_list_items.unit_id, price_lists.project_id —
--- all still single-column; created_by / revoked_by onto profiles. Who may
--- call the resolver; what it returns; the throttle; anything else in it.
+-- area_id / district_id links (the proposal and the project block still name
+-- a district or area by id with no organisation predicate — a foreign
+-- district's NAME would show), deals.stage_id, price_list_items.unit_id,
+-- price_lists.project_id — all still single-column; the keys onto profiles
+-- (created_by is bound by share_links_update's check and the resolver, not
+-- by a key; revoked_by is shown nowhere and stays unbound — BACKLOG's
+-- profile-links entry). Who may call the resolver; what it returns; the
+-- throttle; anything else in it.
 --
 -- ROLLBACK, a forward migration in one transaction: restore 0137's function
 -- text and grants (supabase/tests/revert-0146.ts slices exactly that from
@@ -206,6 +238,19 @@ begin
          and pg_get_expr(p.polwithcheck, p.polrelid) = '(org_id = ( SELECT current_org_id() AS current_org_id))') <> 1 then
     raise exception '0146 aborted: share_links_update is not 0100''s policy — nothing was changed';
   end if;
+  -- ... and each is the ONLY permissive policy for its command: permissive
+  -- policies OR together, so a sibling (or an ALL policy) would undo the
+  -- check this file adds while every text above still read as pinned
+  if (select count(*) from pg_policy p
+       where p.polrelid = 'public.share_link_properties'::regclass and p.polpermissive and p.polcmd in ('a', '*')) <> 1 then
+    raise exception '0146 aborted: share_link_properties_insert is not the only permissive INSERT policy on share_link_properties — nothing was changed';
+  end if;
+  if (select count(*) from pg_policy p
+       where p.polrelid = 'public.share_links'::regclass and p.polpermissive and p.polcmd in ('a', '*')) <> 1
+     or (select count(*) from pg_policy p
+          where p.polrelid = 'public.share_links'::regclass and p.polpermissive and p.polcmd in ('w', '*')) <> 1 then
+    raise exception '0146 aborted: share_links_insert / share_links_update are not the only permissive INSERT / UPDATE policies on share_links — nothing was changed';
+  end if;
 
   -- 3. a share_link_properties row cannot be re-pointed: no UPDATE path
   if exists (select 1 from pg_policy p
@@ -222,7 +267,7 @@ begin
 
   -- EXISTING ROWS (read-only; header) — under the locks just taken: exact
   perform set_config('gnk.m0146_existing',
-    format('link_rows_across_orgs=%s pinned_lists_across_orgs=%s rows_under_a_foreign_parent=%s',
+    format('link_rows_across_orgs=%s pinned_lists_across_orgs=%s rows_under_a_foreign_parent=%s creators_across_orgs=%s',
            (select count(*) from public.share_link_properties slp
               join public.share_links l on l.id = slp.share_link_id
               join public.properties p on p.id = slp.property_id
@@ -232,7 +277,10 @@ begin
              where pl.org_id <> l.org_id),
            (select count(*) from public.properties c
               join public.properties p on p.id = c.parent_id
-             where c.org_id <> p.org_id)),
+             where c.org_id <> p.org_id),
+           (select count(*) from public.share_links l
+              join public.profiles pf on pf.id = l.created_by
+             where pf.org_id <> l.org_id)),
     true);
 
   raise notice '0146: preflight passed — resolve_share_link is 0137''s definer body with 0041''s ACL; the three policies are 0023''s / 0100''s';
@@ -252,7 +300,8 @@ alter policy share_link_properties_insert on public.share_link_properties
   );
 
 -- ---------------------------------------------------------------------------
--- 2. a share link pins only its own organisation's price list
+-- 2. a share link pins only its own organisation's price list, and names
+--    only its own organisation's staff member as its creator
 -- ---------------------------------------------------------------------------
 alter policy share_links_insert on public.share_links
   with check (
@@ -273,11 +322,16 @@ alter policy share_links_update on public.share_links
     and (price_list_id is null
          or exists (select 1 from price_lists pl
                      where pl.id = share_links.price_list_id and pl.org_id = (select current_org_id())))
+    -- 0146: and so is the profile it names as its creator (the page shows it as the link's agent)
+    and (created_by is null
+         or exists (select 1 from profiles pf
+                     where pf.id = share_links.created_by and pf.org_id = (select current_org_id())))
   );
 
 -- ---------------------------------------------------------------------------
--- 3. the public share page reads only the link's own organisation's rows
--- (0137's text; the seven edits and their `-- 0146:` comment lines are this
+-- 3. the public share page reads only the link's own organisation's target,
+-- tree, price list, properties and agent (0137's text; the nine edits and
+-- their `-- 0146:` comment lines are this
 -- file's)
 -- ---------------------------------------------------------------------------
 create or replace function resolve_share_link(p_token_sha256 text) returns jsonb
@@ -488,7 +542,8 @@ begin
                                                       'effective_date', v_pl.effective_date) end,
       'agent', (
         select jsonb_build_object('name', pf.full_name, 'email', pf.email, 'phone', pf.phone_e164)
-          from profiles pf where pf.id = v_link.created_by),
+          -- 0146: only a member of the link's own organisation is shown as its agent
+          from profiles pf where pf.id = v_link.created_by and pf.org_id = v_link.org_id),
       'org', (
         select jsonb_build_object('name', o.name) from organizations o where o.id = v_link.org_id)
     );
@@ -573,7 +628,8 @@ begin
     'properties',     v_props,
     'agent', (
       select jsonb_build_object('name', pf.full_name, 'email', pf.email, 'phone', pf.phone_e164)
-        from profiles pf where pf.id = v_link.created_by),
+        -- 0146: only a member of the link's own organisation is shown as its agent
+        from profiles pf where pf.id = v_link.created_by and pf.org_id = v_link.org_id),
     'org', (
       select jsonb_build_object('name', o.name) from organizations o where o.id = v_link.org_id)
   );
@@ -609,15 +665,13 @@ begin
   if v_src is null then
     raise exception '0146 postflight: resolve_share_link is not the volatile definer owned by postgres with search_path public returning jsonb';
   end if;
-  if v_md5 is distinct from 'e592f596582022c927e1df28742e3140' then
-    raise exception '0146 postflight: resolve_share_link''s body is not this file''s (md5 %)', v_md5;
-  end if;
   if (select count(*) from pg_proc p
        where p.pronamespace = 'public'::regnamespace and p.proname = 'resolve_share_link') <> 1 then
     raise exception '0146 postflight: resolve_share_link is overloaded';
   end if;
 
-  -- the seven predicates (header, THE FIX 3), comments stripped
+  -- the nine predicates (header, THE FIX 3), comments stripped — each guard
+  -- below runs BEFORE the md5 pin, so each can be seen to refuse on its own
   if v_src !~ 'select \* into v_project from properties where id = v_target and org_id = v_link\.org_id;'
      or v_src !~ 'select \* into v_pl from price_lists where id = v_link\.price_list_id and org_id = v_link\.org_id;'
      or v_src !~ 'where p\.id = v_target\s+and p\.org_id = v_link\.org_id\s+union all'
@@ -625,7 +679,9 @@ begin
      or v_src !~ 'on pli\.price_list_id = v_pl\.id\s+and pli\.unit_id\s+= pr\.id'
      or v_src ~ 'pli\.price_list_id\s*=\s*v_link\.price_list_id'
      or v_src !~ 'select count\(\*\) into v_count\s+from share_link_properties slp\s+where slp\.share_link_id = v_link\.id\s+and exists \(select 1 from properties p\s+where p\.id = slp\.property_id and p\.org_id = v_link\.org_id\);'
-     or v_src !~ 'join properties pr on pr\.id = slp\.property_id and pr\.org_id = v_link\.org_id' then
+     or v_src !~ 'join properties pr on pr\.id = slp\.property_id and pr\.org_id = v_link\.org_id'
+     or regexp_count(v_src, 'from profiles pf where pf\.id = v_link\.created_by and pf\.org_id = v_link\.org_id\)') <> 2
+     or v_src ~ 'pf\.id = v_link\.created_by\)' then
     raise exception '0146 postflight: resolve_share_link does not carry every organisation predicate this file writes';
   end if;
 
@@ -649,6 +705,11 @@ begin
     raise exception '0146 postflight: resolve_share_link''s ACL changed (%)', coalesce(v_txt, 'default');
   end if;
 
+  -- and the body is exactly this file's (last: any edit the guards above miss)
+  if v_md5 is distinct from 'aa14a6657e4414b83c9c5b21a9fc521a' then
+    raise exception '0146 postflight: resolve_share_link''s body is not this file''s (md5 %)', v_md5;
+  end if;
+
   -- the three policies, exactly
   if (select count(*) from pg_policy p
        where p.polrelid = 'public.share_link_properties'::regclass and p.polname = 'share_link_properties_insert'
@@ -666,8 +727,16 @@ begin
        where p.polrelid = 'public.share_links'::regclass and p.polname = 'share_links_update'
          and p.polcmd = 'w' and p.polpermissive and p.polroles = array[0::oid]
          and pg_get_expr(p.polqual, p.polrelid) = '((org_id = ( SELECT current_org_id() AS current_org_id)) AND ((created_by = ( SELECT auth.uid() AS uid)) OR (( SELECT current_role_gnk() AS current_role_gnk) = ''admin''::user_role)))'
-         and pg_get_expr(p.polwithcheck, p.polrelid) = E'((org_id = ( SELECT current_org_id() AS current_org_id)) AND ((price_list_id IS NULL) OR (EXISTS ( SELECT 1\n   FROM price_lists pl\n  WHERE ((pl.id = share_links.price_list_id) AND (pl.org_id = ( SELECT current_org_id() AS current_org_id)))))))') <> 1 then
+         and pg_get_expr(p.polwithcheck, p.polrelid) = E'((org_id = ( SELECT current_org_id() AS current_org_id)) AND ((price_list_id IS NULL) OR (EXISTS ( SELECT 1\n   FROM price_lists pl\n  WHERE ((pl.id = share_links.price_list_id) AND (pl.org_id = ( SELECT current_org_id() AS current_org_id)))))) AND ((created_by IS NULL) OR (EXISTS ( SELECT 1\n   FROM profiles pf\n  WHERE ((pf.id = share_links.created_by) AND (pf.org_id = ( SELECT current_org_id() AS current_org_id)))))))') <> 1 then
     raise exception '0146 postflight: share_links_update is not this file''s policy (its USING is 0100''s)';
+  end if;
+  if (select count(*) from pg_policy p
+       where p.polrelid = 'public.share_link_properties'::regclass and p.polpermissive and p.polcmd in ('a', '*')) <> 1
+     or (select count(*) from pg_policy p
+          where p.polrelid = 'public.share_links'::regclass and p.polpermissive and p.polcmd in ('a', '*')) <> 1
+     or (select count(*) from pg_policy p
+          where p.polrelid = 'public.share_links'::regclass and p.polpermissive and p.polcmd in ('w', '*')) <> 1 then
+    raise exception '0146 postflight: a permissive INSERT / UPDATE policy sits beside the three this file binds (permissive policies OR together)';
   end if;
   if (select count(*) from pg_policy p
        where p.polrelid in ('public.share_links'::regclass, 'public.share_link_properties'::regclass))::text
@@ -681,7 +750,7 @@ begin
     raise exception '0146 postflight: share_link_properties has an UPDATE path';
   end if;
 
-  raise notice '0146: postflight passed — a share link names, pins and shows only its own organisation''s rows';
+  raise notice '0146: postflight passed — a share link names, pins and shows only its own organisation''s properties, price list and agent';
   raise notice '0146: existing rows (read-only, nothing changed) — %', current_setting('gnk.m0146_existing', true);
 end $$;
 

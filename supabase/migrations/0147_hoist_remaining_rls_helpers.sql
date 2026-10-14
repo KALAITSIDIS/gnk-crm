@@ -41,17 +41,23 @@
 --
 -- LOCKS. ALTER POLICY takes ACCESS EXCLUSIVE on its table (measured): reads
 -- wait too, for the milliseconds to commit. All 19 tables are taken FIRST, in
--- ONE statement inside the preflight, parents before children in 0132's order
--- (organizations, profiles, cyprus_config, districts, areas, deal_stages,
--- unit_types, property_media, property_keys, key_movements, price_lists,
+-- ONE statement inside the preflight: the 17 table-specific ones in 0132's
+-- order (cyprus_config, districts, areas, deal_stages, unit_types,
+-- property_media, property_keys, key_movements, price_lists,
 -- price_list_items, price_history, payment_plans, documents, mandates,
--- share_links, share_link_properties, chain_checks). profiles and
--- organizations are read by every RLS check (current_org_id()), so EVERY
--- session read waits while this holds them: apply in a quiet minute, outside
--- 02:55–04:05 UTC, away from 06:00, at the middle of an odd minute that is
--- not a multiple of five (0131 / 0132's rule — the desk-alert sweep and the
--- escalation write leads-side rows; run_chain_checks writes chain_checks
--- nightly). lock_timeout 5 s per table: a 55P03 or a 40P01 keeps nothing —
+-- share_links, share_link_properties, chain_checks), then organizations and
+-- profiles LAST. Every RLS check reads profiles (current_org_id()) and every
+-- insert's key check reads organizations, AFTER its statement has locked its
+-- own table: held first, they would stall the whole application for every
+-- lock_timeout wait on the other 17, and invert the order sessions take
+-- (a 40P01 against any statement on a table still to be locked). Taken last,
+-- the application-wide wait covers only the final acquisitions (measured in
+-- rls-hoist.test.ts: waiting on a busy documents, this file holds neither).
+-- While it holds them EVERY session read still waits: apply in a quiet
+-- minute, outside 02:55–04:05 UTC, away from 06:00, at the middle of an odd
+-- minute that is not a multiple of five (0131 / 0132's rule — the desk-alert
+-- sweep and the escalation write leads-side rows; run_chain_checks writes
+-- chain_checks nightly). lock_timeout 5 s per table: a 55P03 or a 40P01 keeps nothing —
 -- apply again, and do NOT write the ledger row. ONE transaction (checked).
 --
 -- PREFLIGHT refuses, changing nothing, unless: the policies in public that
@@ -108,12 +114,13 @@ do $$
 declare
   v_diag text;
 begin
-  -- the locks ALTER POLICY needs, first, parents before children (header, LOCKS)
-  lock table public.organizations, public.profiles, public.cyprus_config, public.districts,
-             public.areas, public.deal_stages, public.unit_types, public.property_media,
-             public.property_keys, public.key_movements, public.price_lists, public.price_list_items,
-             public.price_history, public.payment_plans, public.documents, public.mandates,
-             public.share_links, public.share_link_properties, public.chain_checks
+  -- the locks ALTER POLICY needs, first — organizations and profiles LAST:
+  -- every RLS check reads them (header, LOCKS)
+  lock table public.cyprus_config, public.districts, public.areas, public.deal_stages,
+             public.unit_types, public.property_media, public.property_keys, public.key_movements,
+             public.price_lists, public.price_list_items, public.price_history, public.payment_plans,
+             public.documents, public.mandates, public.share_links, public.share_link_properties,
+             public.chain_checks, public.organizations, public.profiles
     in access exclusive mode;
 
   -- 1. the policies that call a helper bare are exactly these 51 — each

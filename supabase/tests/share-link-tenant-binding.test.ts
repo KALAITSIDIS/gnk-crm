@@ -40,30 +40,42 @@ import {
  * WHAT IT PINS:
  *   1. an aal2 org-B admin's direct PostgREST insert into share_link_properties
  *      naming an org-A property — proposal or availability target — is
- *      refused 42501, and so is a missing id (no oracle); B's own is accepted;
+ *      refused 42501, and so is a missing id (no oracle); B's own is accepted
+ *      — and so it is for B's agent and listing manager (the new check reads
+ *      properties through THEIR RLS; a listing not assigned to them included);
  *   2. a share_links insert or update pinning A's price list is refused
  *      42501 (a missing id too); B's own list and none are accepted, and a
- *      revoke still works;
+ *      revoke still works (an agent's and a listing manager's own included);
+ *      an update naming A's staff member as the link's creator — whom the
+ *      public page shows as its agent — is refused 42501 (a missing profile
+ *      too), a B colleague is accepted;
  *   3. rows written by a trusted path (the service role — as a row from
  *      before 0146 would be) are not shown: a proposal omits A's property and
  *      does not count it; a B link aimed at A's project resolves to nothing;
  *      B's unit and phase hung under A's project do not appear on A's page;
- *      a B link pinning A's list shows none of A's numbers;
+ *      a B link pinning A's list shows none of A's numbers; a B link naming
+ *      A's staff member as its creator shows no agent;
  *   4. a link whose rows are all its own organisation's resolves to the SAME
  *      payload as on 0137's body — proposal, live and pinned availability —
  *      against a literal captured on the base schema;
- *   5. the function's shape: 0137's body but the seven edits, 0041's ACL and
- *      exposure guard; the three policies' exact texts;
+ *   5. the function's shape: 0137's body but the nine edits, 0041's ACL and
+ *      exposure guard; the three policies' exact texts, each the only
+ *      permissive policy for its command (permissive policies OR together);
  *   6. 0146 itself, inside rolled-back transactions: it replays over its
- *      rollback text, its preflight refuses every drift it names, its
- *      postflight refuses a weakened body, the rollback brings the leak back,
- *      and the restore pack's 0146 row reads true now and false without it.
+ *      rollback text, its preflight refuses every drift it names (a sibling
+ *      permissive policy included), each postflight guard refuses the weakened
+ *      body it names — with ITS message, not the md5 pin's — the rollback
+ *      brings the leak back, and the restore pack's 0146 row reads true now
+ *      and false without it;
+ *   7. a killed run of this file leaves nothing behind once the next run's
+ *      beforeAll has swept: organisation, users, profiles, events, rows.
  *
  * Sections 1–3 write through PostgREST and the service role (committed: a
  * session and anon cannot see an uncommitted row) — in two THROWAWAY
- * organisations, removed at the end as postgres; a killed run's leftovers are
- * swept in beforeAll. Sections 4–6 run as postgres in transactions that are
- * always rolled back. Requires the local Supabase stack. Run: npm run test:rls
+ * organisations, removed at the end as postgres; a killed run's organisations
+ * are removed whole in beforeAll (section 7). Sections 4–6 run as postgres in
+ * transactions that are always rolled back. Requires the local Supabase
+ * stack. Run: npm run test:rls
  */
 const DB_URL = process.env.DB_URL ?? "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
 const ORG_A = randomUUID();
@@ -77,7 +89,10 @@ let svc: SupabaseClient;
 let o: Client;
 let adminA: TestUser;
 let adminB: TestUser;
-const userIds: string[] = [];
+let agentB: TestUser;
+let lmB: TestUser;
+/** A's admin's phone: a marker B's page must not carry. */
+const A_PHONE = "+35799424242";
 
 /** Committed fixtures (sections 1–3). Each reference and price is a marker a payload must or must not carry. */
 const f = {
@@ -145,21 +160,44 @@ async function clearOrgs(orgIds: string[]) {
   }
 }
 
+/** Throwaway organisations removed whole, as postgres: their rows, users, profiles, events and reference data. */
+async function removeOrgs(orgIds: string[]) {
+  if (!orgIds.length) return;
+  await clearOrgs(orgIds);
+  const users = await o.query<{ id: string }>("select id from profiles where org_id = any($1::uuid[])", [orgIds]);
+  for (const { id } of users.rows) {
+    const { error } = await svc.auth.admin.deleteUser(id); // its profile goes with it (on delete cascade)
+    if (error) console.warn(`removeOrgs: auth user ${id} not deleted: ${error.message}`);
+  }
+  for (const t of ["profiles", "events", "events_chain_checkpoint", "chain_checks", "deal_stages", "areas", "districts"]) {
+    await o.query(`delete from ${t} where org_id = any($1::uuid[])`, [orgIds]);
+  }
+  await o.query("delete from organizations where id = any($1::uuid[])", [orgIds]);
+}
+
+/** A killed earlier run's throwaway organisations (this file's names), never `except` — removed whole. */
+async function sweepStaleRuns(except: string[]) {
+  const stale = await o.query<{ id: string }>(
+    "select id from organizations where name like any($1::text[]) and not (id = any($2::uuid[]))",
+    [[`${NAME_A} %`, `${NAME_B} %`], except],
+  );
+  await removeOrgs(stale.rows.map((r) => r.id));
+}
+
 beforeAll(async () => {
   svc = serviceClient();
   o = new Client({ connectionString: DB_URL });
   await o.connect();
-  const stale = await o.query<{ id: string }>("select id from organizations where name like any($1::text[])", [
-    [`${NAME_A} %`, `${NAME_B} %`],
-  ]);
-  await clearOrgs(stale.rows.map((r) => r.id));
+  await sweepStaleRuns([ORG_A, ORG_B]);
 
   await ensureTestOrg(svc, ORG_A, `${NAME_A} ${RUN}`, `share-tenant-a-${RUN}`);
   await ensureTestOrg(svc, ORG_B, `${NAME_B} ${RUN}`, `share-tenant-b-${RUN}`);
   adminA = await createTestUser(svc, `st-a-${RUN}@test.local`, "admin", ORG_A);
-  userIds.push(adminA.id);
   adminB = await createTestUser(svc, `st-b-${RUN}@test.local`, "admin", ORG_B);
-  userIds.push(adminB.id);
+  agentB = await createTestUser(svc, `st-b-ag-${RUN}@test.local`, "agent", ORG_B);
+  lmB = await createTestUser(svc, `st-b-lm-${RUN}@test.local`, "listing_manager", ORG_B);
+  const phone = await svc.from("profiles").update({ phone_e164: A_PHONE }).eq("id", adminA.id);
+  if (phone.error) throw new Error(`profiles: ${phone.error.message}`);
 
   // organisation A: a private listing, a phased project, a pinned price list, and a project B will plant under
   f.listingA = await property(ORG_A, "LA", { visibility: "private", title: { en: A_LISTING_TITLE }, asking_price: 420001 });
@@ -188,21 +226,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await clearOrgs([ORG_A, ORG_B]);
-  for (const id of userIds) {
-    const { error } = await svc.auth.admin.deleteUser(id);
-    if (error) console.warn(`afterAll: auth user ${id} not deleted: ${error.message}`);
-  }
-  for (const org of [ORG_A, ORG_B]) {
-    await o.query("delete from profiles where org_id = $1", [org]);
-    await o.query("delete from events where org_id = $1", [org]);
-    await o.query("delete from events_chain_checkpoint where org_id = $1", [org]);
-    await o.query("delete from chain_checks where org_id = $1", [org]);
-    await o.query("delete from deal_stages where org_id = $1", [org]);
-    await o.query("delete from areas where org_id = $1", [org]);
-    await o.query("delete from districts where org_id = $1", [org]);
-    await o.query("delete from organizations where id = $1", [org]);
-  }
+  await removeOrgs([ORG_A, ORG_B]);
   await o.end();
 });
 
@@ -241,6 +265,22 @@ describe("1. a session's share link names only its own organisation's properties
     expect(link.error).toBeNull();
     const r = await adminA.client.from("share_link_properties").insert({ share_link_id: link.id, property_id: f.listingA, sort_order: 0 });
     expect(r.error?.code).toBe("42501");
+  });
+
+  it("B's agent and listing manager — not admins, the listing not assigned to them — add B's own listing and target B's own project; A's are refused", async () => {
+    // the new check reads properties through the CALLER's RLS: a role-scoped properties_select would refuse these
+    for (const who of [agentB, lmB]) {
+      const link = await sessionLink(who, ORG_B);
+      expect(link.error, `${who.email}: proposal link`).toBeNull();
+      const own = await who.client.from("share_link_properties").insert({ share_link_id: link.id, property_id: f.listingB, sort_order: 0 });
+      expect(own.error, `${who.email}: B's own listing`).toBeNull();
+      const foreign = await who.client.from("share_link_properties").insert({ share_link_id: link.id, property_id: f.listingA, sort_order: 1 });
+      expect(foreign.error?.code, `${who.email}: A's listing`).toBe("42501");
+      const avail = await sessionLink(who, ORG_B, { kind: "availability" });
+      expect(avail.error, `${who.email}: availability link`).toBeNull();
+      const target = await who.client.from("share_link_properties").insert({ share_link_id: avail.id, property_id: f.projB, sort_order: 0 });
+      expect(target.error, `${who.email}: B's own project`).toBeNull();
+    }
   });
 });
 
@@ -284,6 +324,38 @@ describe("2. a session's share link pins only its own organisation's price list"
       expect(r.error, `revoke (${price_list_id ? "pinned" : "live"})`).toBeNull();
       expect(r.data).toHaveLength(1);
     }
+  });
+
+  it("B's agent and listing manager pin B's own list, are refused A's, and revoke their own link", async () => {
+    for (const who of [agentB, lmB]) {
+      const link = await sessionLink(who, ORG_B, { kind: "availability", price_list_id: f.plB });
+      expect(link.error, `${who.email}: B's own list`).toBeNull();
+      const foreign = await sessionLink(who, ORG_B, { kind: "availability", price_list_id: f.plA });
+      expect(foreign.error?.code, `${who.email}: A's list`).toBe("42501");
+      const r = await who.client
+        .from("share_links")
+        .update({ revoked_at: new Date().toISOString(), revoked_by: who.id })
+        .eq("id", link.id)
+        .is("revoked_at", null)
+        .select("id");
+      expect(r.error, `${who.email}: revoke`).toBeNull();
+      expect(r.data).toHaveLength(1);
+    }
+  });
+
+  it("an update naming A's staff member as the link's creator (the page's agent) is refused 42501, and so is a missing profile; a B colleague is accepted", async () => {
+    const link = await sessionLink(adminB, ORG_B);
+    expect(link.error).toBeNull();
+    const foreign = await adminB.client.from("share_links").update({ created_by: adminA.id }).eq("id", link.id).select("id");
+    const missing = await adminB.client.from("share_links").update({ created_by: randomUUID() }).eq("id", link.id).select("id");
+    console.log(`[evidence] B's update naming A's admin as creator: ${foreign.error?.code ?? `accepted (${foreign.data?.length} row)`}; a missing profile: ${missing.error?.code ?? "accepted"}`);
+    expect(foreign.error?.code, "A's profile").toBe("42501");
+    expect(missing.error?.code, "a missing profile — the same answer").toBe("42501");
+    const now = await o.query("select created_by from share_links where id = $1", [link.id]);
+    expect(now.rows[0].created_by).toBe(adminB.id);
+    const colleague = await adminB.client.from("share_links").update({ created_by: agentB.id }).eq("id", link.id).select("id");
+    expect(colleague.error, "a B colleague").toBeNull();
+    expect(colleague.data).toHaveLength(1);
   });
 });
 
@@ -336,15 +408,28 @@ describe("3. the public page shows only the link's own organisation's rows, whoe
     for (const marker of ["430002", A_LIST_DATE, "510001"]) expect(text).not.toContain(marker);
   });
 
-  it("controls: A's own phased project, live and pinned to A's own list, still shows A's units and A's quoted price", async () => {
+  it("a B link naming A's staff member as its creator shows no agent — not A's name, email or phone (proposal and availability)", async () => {
+    for (const [extra, ids] of [[{}, [f.listingB]], [{ kind: "availability" }, [f.projB]]] as const) {
+      const l = await svcLink(ORG_B, adminA.id, extra, [...ids]);
+      const p = await resolveAsAnon(l.token);
+      console.log(`[evidence] B ${"kind" in extra ? "availability" : "proposal"} link created_by A's admin: agent ${JSON.stringify(p!.agent)}`);
+      expect(p!.agent, "another organisation's staff member is not shown").toBeNull();
+      const text = JSON.stringify(p);
+      for (const marker of [adminA.email, A_PHONE]) expect(text).not.toContain(marker);
+    }
+  });
+
+  it("controls: A's own phased project, live and pinned to A's own list, still shows A's units, A's quoted price and A's agent", async () => {
     const live = await resolveAsAnon((await svcLink(ORG_A, adminA.id, { kind: "availability" }, [f.projA])).token);
     expect((live!.units as { reference: string }[]).map((u) => u.reference).sort()).toEqual([ref("PA-U1"), ref("PA-U2")].sort());
+    expect(live!.agent).toEqual({ name: `Test admin ${adminA.email}`, email: adminA.email, phone: A_PHONE });
     const pinned = await resolveAsAnon((await svcLink(ORG_A, adminA.id, { kind: "availability", price_list_id: f.plA }, [f.projA])).token);
     expect(pinned!.price_list).toEqual({ version: 7, effective_date: A_LIST_DATE });
     const prices = Object.fromEntries((pinned!.units as { reference: string; price: unknown }[]).map((u) => [u.reference, u.price]));
     expect(prices).toEqual({ [ref("PA-U1")]: 430001, [ref("PA-U2")]: null });
     const prop = await resolveAsAnon((await svcLink(ORG_A, adminA.id, {}, [f.listingA])).token);
     expect((prop!.properties as { reference: string }[]).map((x) => x.reference)).toEqual([ref("LA")]);
+    expect(prop!.agent).toEqual({ name: `Test admin ${adminA.email}`, email: adminA.email, phone: A_PHONE });
   });
 });
 
@@ -789,7 +874,7 @@ describe("5. the function and the three policies, as 0146 leaves them", () => {
     expect(await bodyMd5()).toBe(BODY_0146_MD5);
   });
 
-  it("the body is 0137's but the seven edits — on the database and in the file", async () => {
+  it("the body is 0137's but the nine edits — on the database and in the file", async () => {
     const now = await prosrc();
     let before = "";
     await rolledBack(async () => {
@@ -827,6 +912,15 @@ describe("5. the function and the three policies, as 0146 leaves them", () => {
     });
   });
 
+  it("each binding is the only permissive policy for its command — permissive policies OR together, so a sibling would undo it", async () => {
+    const { rows } = await o.query(
+      `select (select count(*)::int from pg_policy p where p.polrelid = 'public.share_link_properties'::regclass and p.polpermissive and p.polcmd in ('a', '*')) as slp_insert,
+              (select count(*)::int from pg_policy p where p.polrelid = 'public.share_links'::regclass and p.polpermissive and p.polcmd in ('a', '*')) as links_insert,
+              (select count(*)::int from pg_policy p where p.polrelid = 'public.share_links'::regclass and p.polpermissive and p.polcmd in ('w', '*')) as links_update`,
+    );
+    expect(rows[0]).toEqual({ slp_insert: 1, links_insert: 1, links_update: 1 });
+  });
+
   it("share_link_properties has no UPDATE path: no UPDATE / ALL permissive policy, no API role's UPDATE grant", async () => {
     const { rows } = await o.query(
       `select (select count(*)::int from pg_policy p where p.polrelid = 'public.share_link_properties'::regclass and p.polpermissive and p.polcmd in ('w', '*')) as policies,
@@ -846,7 +940,7 @@ describe("6. the migration itself (rolled back)", () => {
       for (const [name, want] of Object.entries(POLICIES_0146)) expect(reverted[name]?.c, `${name} reverted`).toBe(want.before);
       const res = await o.query(readMigration0146());
       const results = Array.isArray(res) ? res : [res];
-      expect(results[results.length - 1]!.rows[0].existing_rows).toMatch(/^link_rows_across_orgs=\d+ pinned_lists_across_orgs=\d+ rows_under_a_foreign_parent=\d+$/);
+      expect(results[results.length - 1]!.rows[0].existing_rows).toMatch(/^link_rows_across_orgs=\d+ pinned_lists_across_orgs=\d+ rows_under_a_foreign_parent=\d+ creators_across_orgs=\d+$/);
       expect(notices.some((m) => m.startsWith("0146: preflight passed"))).toBe(true);
       expect(notices.some((m) => m.startsWith("0146: postflight passed"))).toBe(true);
       expect(await bodyMd5()).toBe(BODY_0146_MD5);
@@ -855,18 +949,18 @@ describe("6. the migration itself (rolled back)", () => {
     });
   });
 
-  it("the rollback recipe brings the leak back: a B proposal shows A's listing, B's unit shows on A's page, A's list on B's", async () => {
+  it("the rollback recipe brings the leak back: a B proposal shows A's listing and A's agent, B's unit shows on A's page, A's list on B's", async () => {
     await rolledBack(async () => {
       const plant = async (org: string, extra: Record<string, unknown>, ids: string[]) => {
         const token = mint();
         const { rows } = await o.query<{ id: string }>(
-          "insert into share_links (org_id, token_sha256, expires_at, kind, price_list_id) values ($1, $2, now() + interval '1 day', $3, $4) returning id",
-          [org, sha(token), extra.kind ?? "proposal", extra.price_list_id ?? null],
+          "insert into share_links (org_id, token_sha256, expires_at, kind, price_list_id, created_by) values ($1, $2, now() + interval '1 day', $3, $4, $5) returning id",
+          [org, sha(token), extra.kind ?? "proposal", extra.price_list_id ?? null, extra.created_by ?? null],
         );
         for (const [i, id] of ids.entries()) await o.query("insert into share_link_properties values ($1, $2, $3)", [rows[0]!.id, id, i]);
         return token;
       };
-      const proposal = await plant(ORG_B, {}, [f.listingB, f.listingA]);
+      const proposal = await plant(ORG_B, { created_by: adminA.id }, [f.listingB, f.listingA]);
       const foreignTarget = await plant(ORG_B, { kind: "availability" }, [f.projA]);
       // a project of A's own for this case (section 3's plants are committed under f.projPlantA)
       const unitRow = (org: string, r: string, parent: string) =>
@@ -879,6 +973,7 @@ describe("6. the migration itself (rolled back)", () => {
 
       const shown = async () => ({
         proposal: ((await resolvePg(proposal))!.properties as { reference: string }[]).map((x) => x.reference),
+        agent: ((await resolvePg(proposal))!.agent as { email: string } | null)?.email ?? null,
         foreignTarget: (await resolvePg(foreignTarget)) !== null,
         aPage: ((await resolvePg(aPage))!.units as { reference: string }[]).map((u) => u.reference).sort(),
         pinned: (await resolvePg(pinned))!.price_list,
@@ -891,11 +986,12 @@ describe("6. the migration itself (rolled back)", () => {
       console.log(`[evidence] rollback recipe: ${JSON.stringify(leaked)}; 0146: ${JSON.stringify(bound)}`);
       expect(leaked).toEqual({
         proposal: [ref("LB"), ref("LA")],
+        agent: adminA.email,
         foreignTarget: true,
         aPage: [ref("RB-OWN"), ref("RB-PLANT")].sort(),
         pinned: { version: 7, effective_date: A_LIST_DATE },
       });
-      expect(bound).toEqual({ proposal: [ref("LB")], foreignTarget: false, aPage: [ref("RB-OWN")], pinned: null });
+      expect(bound).toEqual({ proposal: [ref("LB")], agent: null, foreignTarget: false, aPage: [ref("RB-OWN")], pinned: null });
     });
   });
 
@@ -905,74 +1001,115 @@ describe("6. the migration itself (rolled back)", () => {
       await o.query(REVERT_0146_SQL());
       const res = await o.query(readMigration0146());
       const results = Array.isArray(res) ? res : [res];
-      const m = /^link_rows_across_orgs=(\d+) pinned_lists_across_orgs=(\d+) rows_under_a_foreign_parent=(\d+)$/.exec(results[results.length - 1]!.rows[0].existing_rows);
+      const m = /^link_rows_across_orgs=(\d+) pinned_lists_across_orgs=(\d+) rows_under_a_foreign_parent=(\d+) creators_across_orgs=(\d+)$/.exec(results[results.length - 1]!.rows[0].existing_rows);
       await o.query("rollback to savepoint d");
       expect(m, "the last row's shape").not.toBeNull();
-      return { links: Number(m![1]), lists: Number(m![2]), parents: Number(m![3]) };
+      return { links: Number(m![1]), lists: Number(m![2]), parents: Number(m![3]), creators: Number(m![4]) };
     };
     await rolledBack(async () => {
       const before = await diagnostic();
       const { rows } = await o.query<{ id: string }>(
-        "insert into share_links (org_id, token_sha256, expires_at, kind, price_list_id) values ($1, $2, now() + interval '1 day', 'availability', $3) returning id",
-        [ORG_B, sha(mint()), f.plA],
-      ); // a list across organisations
+        "insert into share_links (org_id, token_sha256, expires_at, kind, price_list_id, created_by) values ($1, $2, now() + interval '1 day', 'availability', $3, $4) returning id",
+        [ORG_B, sha(mint()), f.plA, adminA.id],
+      ); // a list across organisations, and a creator across organisations
+      await o.query(
+        "insert into share_links (org_id, token_sha256, expires_at, created_by) values ($1, $2, now() + interval '1 day', $3)",
+        [ORG_B, sha(mint()), adminB.id],
+      ); // a creator of its own: not counted
       await o.query("insert into share_link_properties values ($1, $2, 0), ($1, $3, 1)", [rows[0]!.id, f.projB, f.listingA]); // one row across, one not
       await o.query("insert into properties (org_id, reference, property_type, kind, parent_id) values ($1, $2, 'apartment', 'unit', $3)", [ORG_B, ref("DIAG"), f.projA]); // under a foreign parent
       await o.query("insert into properties (org_id, reference, property_type, kind, parent_id) values ($1, $2, 'apartment', 'unit', $3)", [ORG_A, ref("DIAG2"), f.projA]); // under its own: not counted
       const after = await diagnostic();
-      expect(after).toEqual({ links: before.links + 1, lists: before.lists + 1, parents: before.parents + 1 });
+      expect(after).toEqual({ links: before.links + 1, lists: before.lists + 1, parents: before.parents + 1, creators: before.creators + 1 });
       const left = await o.query("select count(*)::int as n from share_link_properties where share_link_id = $1", [rows[0]!.id]);
       expect(left.rows[0].n, "nothing repaired").toBe(2);
     });
   });
 
-  // the file's own text, weakened — the postflight must refuse it (and the replaced body goes with the refusal)
-  for (const [i, [from, to]] of EDITS_0146.entries()) {
-    it(`the postflight refuses the file with edit ${i + 1} undone`, async () => {
-      const bad = readMigration0146().replace(to, () => from);
-      expect(bad).not.toBe(readMigration0146());
-      await rolledBack(async () => {
-        await o.query(REVERT_0146_SQL());
-        await o.query("savepoint s");
-        await expect(o.query(bad)).rejects.toThrow(/0146 postflight: resolve_share_link/);
-        await o.query("rollback to savepoint s");
-        expect(await bodyMd5()).toBe(BODY_0137_MD5);
-      });
-    });
-  }
-
-  for (const name of Object.keys(POLICIES_0146) as (keyof typeof POLICIES_0146)[]) {
-    it(`the postflight refuses the file with ${name}'s 0146 clause dropped`, async () => {
-      const m = readMigration0146();
-      const clause = name === "share_link_properties_insert"
-        ? "    -- 0146: and so is the property it names (an availability link's target too)\n    and exists (select 1 from properties p\n                 where p.id = share_link_properties.property_id and p.org_id = (select current_org_id()))\n"
-        : "    -- 0146: a pinned price list is the caller's organisation's\n    and (price_list_id is null\n         or exists (select 1 from price_lists pl\n                     where pl.id = share_links.price_list_id and pl.org_id = (select current_org_id())))\n";
-      const at = m.indexOf(`alter policy ${name} on`);
-      const end = m.indexOf("  );", at);
-      expect(m.slice(at, end)).toContain(clause);
-      const bad = m.slice(0, at) + m.slice(at, end).replace(clause, "") + m.slice(end);
-      await rolledBack(async () => {
-        await o.query(REVERT_0146_SQL());
-        await o.query("savepoint s");
-        await expect(o.query(bad)).rejects.toThrow(new RegExp(`0146 postflight: ${name} is not this file's`));
-        await o.query("rollback to savepoint s");
-      });
-    });
-  }
-
-  it("the postflight's exposure guard refuses a body that names a forbidden column", async () => {
-    const bad = readMigration0146().replace(
-      "    -- 0146: the target is a property of the link's own organisation, or none\n",
-      "    -- 0146: the target is a property of the link's own organisation, or none — never its internal_notes\n",
-    );
-    expect(bad).not.toBe(readMigration0146());
+  /** The file with `text` changed, applied over the rollback text inside a rolled-back transaction: it must refuse with `refusal`. */
+  async function refusedBy(bad: string, refusal: RegExp) {
+    expect(bad, "the change is in the file").not.toBe(readMigration0146());
     await rolledBack(async () => {
       await o.query(REVERT_0146_SQL());
       await o.query("savepoint s");
-      // the md5 pin answers first; either way the file is refused
-      await expect(o.query(bad)).rejects.toThrow(/0146 postflight: resolve_share_link/);
+      await expect(o.query(bad)).rejects.toThrow(refusal);
       await o.query("rollback to savepoint s");
+      expect(await bodyMd5(), "the replaced body goes with the refusal").toBe(BODY_0137_MD5);
     });
+  }
+
+  // The file's own text, weakened: EACH postflight guard must refuse it with ITS message. The body's md5 pin runs
+  // after them — were it first, it would answer every one of these and a guard that could never raise would pass.
+  for (const [i, [from, to]] of EDITS_0146.entries()) {
+    it(`the postflight's predicate guard refuses the file with edit ${i + 1} undone`, async () => {
+      await refusedBy(
+        readMigration0146().replace(to, () => from),
+        /0146 postflight: resolve_share_link does not carry every organisation predicate this file writes/,
+      );
+    });
+  }
+
+  it("the postflight's throttle guard refuses the file with 0137's organisation bound dropped from a throttle", async () => {
+    await refusedBy(
+      readMigration0146().replace("         and org_id      = v_link.org_id\n         and actor_id    is null\n", "         and actor_id    is null\n"),
+      /0146 postflight: the two `opened` throttles are not both bounded by the link's organisation and a null actor/,
+    );
+  });
+
+  it("the postflight's exposure guard refuses a body that names a forbidden column", async () => {
+    await refusedBy(
+      readMigration0146().replace(
+        "    -- 0146: the target is a property of the link's own organisation, or none\n",
+        "    -- 0146: the target is a property of the link's own organisation, or none — never its internal_notes\n",
+      ),
+      /0146 postflight: resolve_share_link names the forbidden column internal_notes/,
+    );
+  });
+
+  it("the postflight's md5 pin refuses a body every other guard accepts", async () => {
+    await refusedBy(
+      readMigration0146().replace(
+        "-- throttle: one `opened` event per link per Cyprus day (see header)",
+        "-- throttle: one `opened` event per link per Cyprus day (see the header)",
+      ),
+      /0146 postflight: resolve_share_link's body is not this file's/,
+    );
+  });
+
+  const PRICE_CLAUSE =
+    "    -- 0146: a pinned price list is the caller's organisation's\n    and (price_list_id is null\n         or exists (select 1 from price_lists pl\n                     where pl.id = share_links.price_list_id and pl.org_id = (select current_org_id())))\n";
+  const CLAUSES: [keyof typeof POLICIES_0146, string, string][] = [
+    [
+      "share_link_properties_insert",
+      "property",
+      "    -- 0146: and so is the property it names (an availability link's target too)\n    and exists (select 1 from properties p\n                 where p.id = share_link_properties.property_id and p.org_id = (select current_org_id()))\n",
+    ],
+    ["share_links_insert", "price list", PRICE_CLAUSE],
+    ["share_links_update", "price list", PRICE_CLAUSE],
+    [
+      "share_links_update",
+      "creator",
+      "    -- 0146: and so is the profile it names as its creator (the page shows it as the link's agent)\n    and (created_by is null\n         or exists (select 1 from profiles pf\n                     where pf.id = share_links.created_by and pf.org_id = (select current_org_id())))\n",
+    ],
+  ];
+  for (const [name, what, clause] of CLAUSES) {
+    it(`the postflight refuses the file with ${name}'s 0146 ${what} clause dropped`, async () => {
+      const m = readMigration0146();
+      const at = m.indexOf(`alter policy ${name} on`);
+      const end = m.indexOf("  );", at);
+      expect(m.slice(at, end)).toContain(clause);
+      await refusedBy(m.slice(0, at) + m.slice(at, end).replace(clause, "") + m.slice(end), new RegExp(`0146 postflight: ${name} is not this file's`));
+    });
+  }
+
+  it("the postflight refuses a file that adds a permissive sibling beside a binding (permissive policies OR together)", async () => {
+    const m = readMigration0146();
+    const at = m.indexOf("-- ---------------------------------------------------------------------------\n-- Postflight");
+    expect(at).toBeGreaterThan(0);
+    await refusedBy(
+      `${m.slice(0, at)}create policy zz_links_update_probe on public.share_links for update using (true);\n\n${m.slice(at)}`,
+      /0146 postflight: a permissive INSERT \/ UPDATE policy sits beside the three this file binds/,
+    );
   });
 
   const drifts: [string, string | null, RegExp][] = [
@@ -989,6 +1126,11 @@ describe("6. the migration itself (rolled back)", () => {
     ["share_links_update narrowed to a role", "alter policy share_links_update on public.share_links to authenticated", /0146 aborted: share_links_update is not 0100's policy/],
     ["an UPDATE grant on share_link_properties", "grant update on public.share_link_properties to authenticated", /0146 aborted: share_link_properties has an UPDATE path/],
     ["a permissive UPDATE policy on share_link_properties", "create policy slp_update_probe on public.share_link_properties for update using (true)", /0146 aborted: share_link_properties has an UPDATE path/],
+    // permissive policies OR together: a sibling would undo the check this file adds
+    ["a second permissive INSERT policy on share_link_properties", "create policy zz_slp_insert_probe on public.share_link_properties for insert with check (true)", /0146 aborted: share_link_properties_insert is not the only permissive INSERT policy on share_link_properties/],
+    ["a permissive ALL policy on share_links", "create policy zz_links_all_probe on public.share_links for all using (true)", /0146 aborted: share_links_insert \/ share_links_update are not the only permissive INSERT \/ UPDATE policies on share_links/],
+    ["a second permissive INSERT policy on share_links", "create policy zz_links_insert_probe on public.share_links for insert with check (true)", /0146 aborted: share_links_insert \/ share_links_update are not the only permissive INSERT \/ UPDATE policies on share_links/],
+    ["a second permissive UPDATE policy on share_links", "create policy zz_links_update_probe on public.share_links for update using (true)", /0146 aborted: share_links_insert \/ share_links_update are not the only permissive INSERT \/ UPDATE policies on share_links/],
   ];
   for (const [what, drift, refusal] of drifts) {
     it(`the preflight refuses: ${what} — and changes nothing`, async () => {
@@ -1036,7 +1178,7 @@ describe("6. the migration itself (rolled back)", () => {
 
   it("the restore pack's 0146 row reads true now, and false on the rollback text and with any one binding missing", async () => {
     const pack = readFileSync(join(import.meta.dirname, "..", "..", "scripts", "backup", "verify-restore.sql"), "utf-8").replace(/\r\n/g, "\n");
-    const from = pack.indexOf("  select 'SECURITY: a share link names, pins and shows only its own organisation''s rows (0146)'");
+    const from = pack.indexOf("  select 'SECURITY: a share link names, pins and shows only its own organisation''s properties, price list and agent (0146)'");
     expect(from, "the pack carries the 0146 row").toBeGreaterThan(0);
     const to = pack.indexOf("\n  union all\n", from);
     const row = `select * from (${pack.slice(from, to)}) r(check_name, expected, actual)`;
@@ -1047,6 +1189,14 @@ describe("6. the migration itself (rolled back)", () => {
       "alter policy share_link_properties_insert on public.share_link_properties with check (exists (select 1 from share_links s where s.id = share_link_properties.share_link_id and s.org_id = (select current_org_id())))",
       "alter policy share_links_insert on public.share_links with check (((org_id = (select current_org_id())) AND (created_by = (select auth.uid()))))",
       "alter policy share_links_update on public.share_links with check ((org_id = (select current_org_id())))",
+      // share_links_update with one of its two 0146 clauses
+      "alter policy share_links_update on public.share_links with check (org_id = (select current_org_id()) and (price_list_id is null or exists (select 1 from price_lists pl where pl.id = share_links.price_list_id and pl.org_id = (select current_org_id()))))",
+      "alter policy share_links_update on public.share_links with check (org_id = (select current_org_id()) and (created_by is null or exists (select 1 from profiles pf where pf.id = share_links.created_by and pf.org_id = (select current_org_id()))))",
+      // a permissive sibling ORs a binding away
+      "create policy zz_slp_insert_probe on public.share_link_properties for insert with check (true)",
+      "create policy zz_links_insert_probe on public.share_links for insert with check (true)",
+      "create policy zz_links_update_probe on public.share_links for update using (true)",
+      "create policy zz_links_all_probe on public.share_links for all using (true)",
     ];
     for (const install of weakened) {
       await rolledBack(async () => {
@@ -1054,5 +1204,36 @@ describe("6. the migration itself (rolled back)", () => {
         expect((await o.query<{ actual: string }>(row)).rows[0]!.actual, install.slice(0, 120)).toBe("false");
       });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("7. a killed run of this file leaves nothing behind once the next run has swept", () => {
+  it("the sweep beforeAll runs removes an earlier run's organisation whole — users, profiles, events, links, properties — and never this run's", async () => {
+    // what a run killed before its afterAll leaves: a throwaway organisation with a user, a listing, a link, an event
+    const killed = randomUUID();
+    await ensureTestOrg(svc, killed, `${NAME_B} killed-${RUN}`, `share-tenant-killed-${RUN}`);
+    const user = await createTestUser(svc, `st-killed-${RUN}@test.local`, "admin", killed, { enrolFactor: false });
+    const listing = await property(killed, "KILLED", { visibility: "public" });
+    const l = await svcLink(killed, user.id, {}, [listing]);
+    expect(await resolveAsAnon(l.token), "the link resolves (and writes its `opened` event)").not.toBeNull();
+
+    await sweepStaleRuns([ORG_A, ORG_B]);
+
+    const { rows } = await o.query(
+      `select (select count(*)::int from organizations where id = $1) as orgs,
+              (select count(*)::int from profiles where org_id = $1) as profiles,
+              (select count(*)::int from auth.users where id = $2) as users,
+              (select count(*)::int from events where org_id = $1) as events,
+              (select count(*)::int from share_links where org_id = $1) as links,
+              (select count(*)::int from properties where org_id = $1) as properties,
+              (select count(*)::int from districts where org_id = $1) as districts,
+              (select count(*)::int from deal_stages where org_id = $1) as stages`,
+      [killed, user.id],
+    );
+    console.log(`[evidence] a killed run's rows after the sweep: ${JSON.stringify(rows[0])}`);
+    expect(rows[0]).toEqual({ orgs: 0, profiles: 0, users: 0, events: 0, links: 0, properties: 0, districts: 0, stages: 0 });
+    const own = await o.query<{ n: number }>("select count(*)::int as n from organizations where id = any($1::uuid[])", [[ORG_A, ORG_B]]);
+    expect(own.rows[0]!.n, "this run's organisations are untouched").toBe(2);
   });
 });

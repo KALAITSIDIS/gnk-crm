@@ -25,7 +25,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Client } from "pg";
 import { ORG_A, createTestUser, ensureTestOrg, serviceClient, type TestUser } from "./helpers";
-import { COMMENTS_0146_MD5, GUARD_0030_MD5, GUARD_0147_MD5, REVERT_0147_SQL, alters0147, policyOf, readMigration0147 } from "./revert-0147";
+import { COMMENTS_0146_MD5, GUARD_0030_MD5, GUARD_0147_MD5, REVERT_0147_SQL, alters0147, locks0147, policyOf, readMigration0147 } from "./revert-0147";
 
 const DB_URL = process.env.DB_URL ?? "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
 const svc = serviceClient();
@@ -297,6 +297,57 @@ describe("0147 itself (rolled back)", () => {
       });
     });
   }
+
+  it("while a table it locks is busy, 0147 holds neither organizations nor profiles — every RLS check reads them, so they are taken last", async () => {
+    // current_org_id() reads profiles in every RLS check, and every insert's key check reads organizations: held
+    // first, they would stall the whole application for every lock_timeout wait on the other 17 tables
+    const busy = new Client({ connectionString: DB_URL });
+    const mig = new Client({ connectionString: DB_URL });
+    await busy.connect();
+    await mig.connect();
+    const locksOf = async (pid: number) =>
+      (
+        await o.query<{ relname: string; granted: boolean }>(
+          `select c.relname, l.granted from pg_locks l join pg_class c on c.oid = l.relation
+            where l.pid = $1 and l.mode = 'AccessExclusiveLock' and c.relnamespace = 'public'::regnamespace
+            order by c.relname`,
+          [pid],
+        )
+      ).rows;
+    try {
+      await busy.query("begin");
+      await busy.query("lock table public.documents in access share mode"); // a long read of one of the 19
+      await mig.query("begin");
+      await mig.query("set local lock_timeout = '20s'");
+      const pid = (await mig.query<{ pid: number }>("select pg_backend_pid() as pid")).rows[0]!.pid;
+      const pending = mig.query(locks0147()).then(
+        () => "granted",
+        (e: Error) => e.message,
+      );
+      let locks: { relname: string; granted: boolean }[] = [];
+      for (let i = 0; i < 200 && !locks.some((l) => !l.granted); i++) {
+        await new Promise((r) => setTimeout(r, 50));
+        locks = await locksOf(pid);
+      }
+      const held = locks.filter((l) => l.granted).map((l) => l.relname);
+      const waiting = locks.filter((l) => !l.granted).map((l) => l.relname);
+      console.log(`[evidence] 0147's locks while documents is busy: holds ${JSON.stringify(held)}; waits on ${JSON.stringify(waiting)}`);
+      expect(waiting, "it is waiting on the busy table").toEqual(["documents"]);
+      expect(held).not.toContain("profiles");
+      expect(held).not.toContain("organizations");
+      await busy.query("rollback");
+      expect(await pending).toBe("granted");
+      const all = (await locksOf(pid)).filter((l) => l.granted).map((l) => l.relname);
+      expect(all, "then it holds all 19").toHaveLength(19);
+      expect(all).toEqual(expect.arrayContaining(["organizations", "profiles"]));
+    } finally {
+      // the busy table first: a rollback queued on `mig` would wait behind its pending LOCK
+      await busy.query("rollback").catch(() => undefined);
+      await mig.query("rollback").catch(() => undefined);
+      await mig.end();
+      await busy.end();
+    }
+  });
 
   it("the file refuses before it changes anything", () => {
     const sql = readMigration0147().replace(/--[^\n]*/g, "");

@@ -943,14 +943,18 @@ misc as (
                          where p.oid = to_regprocedure('public.trg_installment_paid_kept()')), false))::text
   union all
   -- 0146: a share link names, pins and shows only its own organisation's
-  -- rows. share_link_properties_insert binds the property to the caller's
-  -- organisation; share_links_insert / _update bind a pinned price list; the
+  -- properties, price list and agent. share_link_properties_insert binds the
+  -- property to the caller's organisation; share_links_insert / _update bind
+  -- a pinned price list, and _update the creator (shown as the agent); the
   -- public page (resolve_share_link) reads the target, the walk's anchor and
   -- recursive member, the pinned list, its lines (through the list read), the
-  -- proposal's properties and the linked-row count in the link's own
-  -- organisation only. A restore that brought back 0137's body or 0023 /
-  -- 0100's checks — or lost any one of these bindings — reads false here.
-  select 'SECURITY: a share link names, pins and shows only its own organisation''s rows (0146)', 'true',
+  -- proposal's properties, the linked-row count and the agent of each kind in
+  -- the link's own organisation only; each binding is the only permissive
+  -- policy for its command (permissive policies OR together — a sibling would
+  -- undo it). A restore that brought back 0137's body or 0023 / 0100's checks
+  -- — or lost any one of these bindings, or gained a sibling — reads false.
+  -- (The district / area names are still read by id: BACKLOG.)
+  select 'SECURITY: a share link names, pins and shows only its own organisation''s properties, price list and agent (0146)', 'true',
          (coalesce((select p.prosecdef
                            and c.code ~ 'from properties where id = v_target and org_id = v_link\.org_id'
                            and c.code ~ 'from price_lists where id = v_link\.price_list_id and org_id = v_link\.org_id'
@@ -960,6 +964,8 @@ misc as (
                            and c.code !~ 'pli\.price_list_id\s*=\s*v_link\.price_list_id'
                            and c.code ~ 'into v_count\s+from share_link_properties slp\s+where slp\.share_link_id = v_link\.id\s+and exists \(select 1 from properties p\s+where p\.id = slp\.property_id and p\.org_id = v_link\.org_id\)'
                            and c.code ~ 'join properties pr on pr\.id = slp\.property_id and pr\.org_id = v_link\.org_id'
+                           and regexp_count(c.code, 'from profiles pf where pf\.id = v_link\.created_by and pf\.org_id = v_link\.org_id\)') = 2
+                           and c.code !~ 'pf\.id = v_link\.created_by\)'
                       from pg_proc p
                       cross join lateral (select regexp_replace(p.prosrc, '--[^\n]*', '', 'g') as code) c
                      where p.oid = to_regprocedure('public.resolve_share_link(text)')), false)
@@ -970,7 +976,17 @@ misc as (
           and (select count(*) from pg_policy p
                 where p.polrelid = 'public.share_links'::regclass and p.polname in ('share_links_insert', 'share_links_update')
                   and pg_get_expr(p.polwithcheck, p.polrelid)
-                        ~ '\(price_list_id IS NULL\) OR \(EXISTS \( SELECT 1\s+FROM (public\.)?price_lists pl\s+WHERE \(\(pl\.id = share_links\.price_list_id\) AND \(pl\.org_id = \( SELECT (public\.)?current_org_id\(\) AS current_org_id\)\)') = 2)::text
+                        ~ '\(price_list_id IS NULL\) OR \(EXISTS \( SELECT 1\s+FROM (public\.)?price_lists pl\s+WHERE \(\(pl\.id = share_links\.price_list_id\) AND \(pl\.org_id = \( SELECT (public\.)?current_org_id\(\) AS current_org_id\)\)') = 2
+          and coalesce((select pg_get_expr(p.polwithcheck, p.polrelid)
+                                 ~ '\(created_by IS NULL\) OR \(EXISTS \( SELECT 1\s+FROM (public\.)?profiles pf\s+WHERE \(\(pf\.id = share_links\.created_by\) AND \(pf\.org_id = \( SELECT (public\.)?current_org_id\(\) AS current_org_id\)\)'
+                          from pg_policy p
+                         where p.polrelid = 'public.share_links'::regclass and p.polname = 'share_links_update'), false)
+          and (select count(*) from pg_policy p
+                where p.polrelid = 'public.share_link_properties'::regclass and p.polpermissive and p.polcmd in ('a', '*')) = 1
+          and (select count(*) from pg_policy p
+                where p.polrelid = 'public.share_links'::regclass and p.polpermissive and p.polcmd in ('a', '*')) = 1
+          and (select count(*) from pg_policy p
+                where p.polrelid = 'public.share_links'::regclass and p.polpermissive and p.polcmd in ('w', '*')) = 1)::text
   union all
   -- 0147: no RLS policy in public calls current_org_id() / current_role_gnk()
   -- bare (once per row): every helper call in every predicate sits in a
