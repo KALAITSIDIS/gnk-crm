@@ -1,30 +1,88 @@
 # HANDOFF — 2026-08-08
 
-**2026-10-14, latest (external audit verified; five changes on four PRs plus this records PR, NOT LANDED): the external architectural audit the operator pasted (7 items) was verified item by item before anything changed — three DISAGREE / ALREADY RESOLVED, four AGREE WITH MODIFICATIONS — and the real gaps beside it became five changes: `T-share-link-tenant` (0146) and `T-rls-hoist-rest` (0147) on PR #160, `T-deal-health-race` (#157), `T-upload-size-honest` (#158), `T-site-knock-order` (#159). Nothing is on hosted and nothing is merged. DECISIONS `T-external-audit-2026-10-14` and the five entries after it.**
+**2026-10-14, latest (external audit verified; five changes LANDED — hosted 0146 + 0147, PRs #160, #157, #159, #158): the external architectural audit the operator pasted (7 items) was verified item by item before anything changed — three DISAGREE / ALREADY RESOLVED, four AGREE WITH MODIFICATIONS — and the real gaps beside it became five changes: `T-share-link-tenant` (0146) and `T-rls-hoist-rest` (0147) on PR #160, `T-deal-health-race` (#157), `T-upload-size-honest` (#158), `T-site-knock-order` (#159). LANDED 2026-10-14 on the operator's "land it": hosted 0146 (≈18:16Z) and 0147 (≈18:20Z) first, then #160 → main `4735777`, #157 → `f074e7f`, #159 → `8ecb772`, #158 → `3fe15d2`, each deployed. These records are PR #161. DECISIONS `T-external-audit-2026-10-14` and the five entries after it.**
 - **What.**
   - **Item 1 (RLS).** No leak through the 19 EXISTS policies; the gap was beside them. MEASURED at 0145 on the local stack: a session of organisation B could link, aim, pin and name A's listing, project, price list and admin, and B's anonymous share page then showed them. 0146 binds the three share-link policies and adds organisation predicates to `resolve_share_link`. 0147 hoists the last 51 bare policies and makes `rls_bare_helper_calls()` schema-wide.
   - **Item 2 (JSONB race).** True for `deals.health` only: a recompute that read before a budget save reverted the user's flag for good (MEASURED: score 30 where 55). Now its write is predicated on `updated_at` and re-read once on a miss — no migration.
   - **Item 6 (uploads).** Photos were already handled; three document forms promised 15 MB through the action body, so anything over ~4.5 MB hit Vercel's 413 and the error page. Now no upload request exceeds 3,500,000 bytes: documents are refused in the browser over it, branding over 2 MB, and photos are re-encoded first and refused only if still over; verify-report posts only a SHA-256, a transparent photo is filled white before re-encoding, and the upload button always resets.
   - **Item 7 (site freshness).** The webhook exists and lead capture is idempotent; but `syncInheritedField` and `renameArea` never told the site, and seven actions knocked only after a step that can throw. Now the knock is scheduled straight after the proven write.
   - **Items 3, 4, 5.** Nothing to change: their remedies (`security_invoker` on `mandates_safe`, strict `z.uuid()`, `structuredClone` / client stage guards) would regress. DECISIONS lists why, so no one re-applies them.
-- **Verified.**
-  - The agents measured on `.iso/audit1014` = Postgres 17.11.0.004 with PostgREST **v16.4** (their drafts said v14.5 — wrong; corrected in the records).
-  - Re-verified on PostgREST **v14.5** (hosted's): the rls branch's new and changed test files (`share-link-tenant-binding`, `rls-hoist`) RED at origin/main's 145, 31 failed / 57 passed of 88; its full DB suite 83 files 1,819/1,819 after 0146 + 0147 (Postgres 17.11.0.004), and 1,824/1,824 with the FINAL 0147 on CI's image 17.6.1.159; the health branch's full suite 83 files 1,740/1,740 at 145.
-  - Unit, re-run one after another on a quiet machine: 3,665 (`83bc9a4`), 3,674 (`b3f763b`), 3,736 (`e7221fb`), 3,701 (`8bf0a83`), all green; `typecheck` and `lint` pass on every head, `b47f927` included.
-  - Branch CI green (checks, rls, e2e): #157 run 38600609217, #158 run 38600613920, #159 run 38600619298. #160: run 38600602984 on `83bc9a4` failed at `supabase start` (0147's preflight pinned a guard's ACL as text); fixed in `b47f927`; **run 38604283010 green on `b47f927`** (checks, unit 3,665; rls 83 files, 1,824/1,824 on CI's stack — Postgres 17.6.1.159, PostgREST v16.1; e2e; finished 17:25:30Z). `59d8d0e` on top corrects only the comments about which stack lacks the grant (0147 md5 now `cce6b3c9…`); run 38611522514 on it. PR [#160](https://github.com/KALAITSIDIS/gnk-crm/pull/160) is open from `59d8d0e`.
-  - The four branches merge pairwise without a textual conflict (`git merge-tree`).
-- **Next (each on the operator's word).** Steps 1 and 2 follow branch CI green on the head whose files they transcribe, as 0145 did (DECISIONS `T-schedule-paid-guard`). Met on `b47f927` (run 38604283010); confirm run 38611522514 on the head `59d8d0e` before step 1. If the head moves again, CI runs on the new head first, and the md5s below are re-read from it.
-  1. **Hosted 0146.** The read-only preflight (DECISIONS `T-share-link-tenant` lists every expected value); the transcription proof `e82bb8dc78b65f90745de1dc3420f6d1` (44,472 bytes); ONE md5-guarded `execute_sql`; verify in a separate call (resolver prosrc md5 — `md5(replace(prosrc, E'\r', ''))`, the form 0146's postflight pins, not the `pg_get_functiondef` form — `aa14a6657e4414b83c9c5b21a9fc521a`, the three WITH CHECK md5s, pack row `true`); the ledger row `('0146', 'share_link_tenant_binding')` by hand; advisors.
-  2. **Hosted 0147.** Its preflight read first (51 bare policies, digest `aa98b512…`, the guards' privileges); the transcription proof `cce6b3c96c982beb5fcb6606ab2846e5` (38,659 bytes — the FINAL file at `59d8d0e`; `5b3f1481…` at `b47f927` and `52cb92aa…` in the drafts are stale); ONE guarded call in a quiet minute (it locks 19 tables, `organizations` and `profiles` last); verify (guard prosrc md5, the same form, `bbf45e18e481985b9d6491045388da68`, bare 0, hoisted 21, 155 policies, pack row `0`); the ledger row `('0147', 'hoist_remaining_rls_helpers')`; advisors. Not deploy-coupled: hosted first, then merge.
-  3. **Merge PR #160** (`fix/share-link-tenant`, head `59d8d0e`) **after hosted 0147**; then deploy READY, runtime errors, merge CI.
-  4. **#157 and #159 in any order; #158 only once the operator accepts the document limit** (Decisions, first bullet — merging #158 is that acceptance). No migration in any of them; each followed by deploy READY, runtime errors, merge CI. After #157, the read-only `computed_at` vs `updated_at` aggregate (DECISIONS `T-deal-health-race`) once deals have been saved; after #158, look for a `lost_request` event in Sentry when one happens (none seen yet).
-  5. **This records PR last**, updated with the landing details: the PR numbers and main shas, #160 filled in, and the BACKLOG entries the unlanded PRs fix struck only then — the inherited-field sync and the three property actions' knock order (#159), `property_media_select` (0147), and the half-fix sub-bullet under "A committed photo delete, archive or sold/rented save …" (#159). Until then they stand open, each with a dated "NOT LANDED" parenthetical.
-- **Decisions for the operator.**
-  - **The document limit.** Once #158 lands, a document over 3,500,000 bytes (3.34 MiB, labelled "3.3 MB") is refused in the browser — including those between that and Vercel's documented ~4.5 MB, which would have saved (inferred: the 3.0–4.5 MB band is unmeasured) — until documents go direct to storage (BACKLOG). Accept it until then, or prioritise direct-to-storage (or a production probe of the 3.0–4.5 MB band). Merging #158 is the acceptance (Next 4).
-  - **The listing-manager recompute.** A listing manager's (or a non-owner agent's) legal save fans out a deal-health recompute that RLS refuses, so a stored score depends on who saved: recompute as the system, a definer RPC, or accept it and say so.
-  - **`SENTRY_AUTH_TOKEN`** on Vercel project gnk-crm is stored encrypted, not sensitive, and flagged `readable-secret` (measured; value not read): re-create it as sensitive?
-- **Left open (BACKLOG "External audit — 2026-10-14" and the entries it names).** The board's drop (no try/catch, no refresh, listing managers always revert); unchecked URL and action ids; the five strict `.uuid()` sites; the mandates base-table commission arm; `mandates_safe` not `security_barrier`; gnk-web's `crypto.randomUUID()` without a fallback; the enquiries route comment; composite keys for `area_id` / `district_id` / `stage_id`. A concurrent session is building `T-document-insert-outcome` in `.worktrees/gnk-crm/document-insert-outcome` (uncommitted edits to the five document actions and `messages/*.json`; #158 avoided those files): its `documentNotConfirmed` answers must carry `unconfirmed: true` (BACKLOG, merge-time).
-- **Where things are (2026-10-14).** Worktrees under `.worktrees/gnk-crm/`: `share-link-tenant` (`59d8d0e`; keep it until the hosted 0146 / 0147 transcription proofs are made from it), `deal-health-race` (`b3f763b`), `upload-size-honest` (`e7221fb`), `site-knock-order` (`8bf0a83`), `records-audit` (this records branch) and `audit-verify` (detached at `489c507`, the verification checkout). The disposable stack `.iso/audit1014` is still up (DB port 58322): no longer the agents' 17.11.0.004 / v16.4 stack, it was rebuilt from scratch as Postgres 17.6.1.159 (CI's image) with PostgREST v14.5 and reads ledger 0147 (read 2026-10-14). After landing, remove each branch's worktree once its PR has merged, remove `audit-verify`, and stop `.iso/audit1014`. `.iso/nullguard` (17.11.0.004 with v14.5, ledger 0145) is also up; it is an earlier session's, and whether the concurrent session uses it is not known, so leave it.
+- **Verified (before landing).**
+  - **PostgREST versions.** The agents measured on PostgREST v16.4, not v14.5 as their drafts said. Everything was re-verified on v14.5 (hosted's):
+    - the rls branch RED at 145, 31 / 88;
+    - its full DB suite 1,819/1,819, and 1,824/1,824 with the final 0147 on CI's image;
+    - the health branch's suite 1,740/1,740.
+  - **Unit, `typecheck` and `lint`.** Unit 3,665 (`83bc9a4`), 3,674 (`b3f763b`), 3,736 (`e7221fb`) and 3,701 (`8bf0a83`); `typecheck` and `lint` pass on every head.
+  - **Branch CI** green on every landed head (checks, rls, e2e):
+    - #160 run 38611522514 on `59d8d0e`. Before it, run 38600602984 on `83bc9a4` had failed on 0147's ACL-as-text pin, which was fixed in `b47f927` (run 38604283010 green);
+    - #157 run 38600609217;
+    - #158 run 38600613920;
+    - #159 run 38600619298.
+- **Landed (2026-10-14, on the operator's "land it"; DECISIONS has each step).**
+  - **Hosted preflight,** read-only, 18:14Z:
+    - ledger 145, last `0145`; resolver md5 `466cf76e…`;
+    - 155 policies, 52 bare; guards `90aac6a2…` / `57e24dda…` / `edfd09ff…`; hoisted 21;
+    - the four cross-org counts 0; one permissive policy per bound command.
+
+    Advisors baseline: security 2 ERROR (`mandates_safe`, `spatial_ref_sys`; both by design) and 38 WARN; performance INFO only (47 unindexed foreign keys, 42 unused indexes).
+  - **Rehearsal first** on `.iso/audit1014` (Postgres 17.6.1.159 with PostgREST v14.5, reset to 145), with the exact guarded wrappers:
+    - a corrupted copy of each was refused ("guard: the text sent is not the file");
+    - 0147 before 0146 was refused;
+    - in order both applied (bare 51 → 0).
+  - **Hosted 0146,** ≈18:16Z, one md5-guarded `execute_sql` (`e82bb8dc…`). Verified:
+    - resolver `aa14a6657e4414b83c9c5b21a9fc521a`, its ACL and shape unchanged;
+    - WITH CHECK `7c5f9dda…` / `b4ba72fd…` / `1f673344…`, USING `b3a1023c…` unchanged;
+    - 155 policies, 51 bare.
+
+    Ledger → 146.
+  - **Hosted 0147,** ≈18:19–18:20Z, one md5-guarded `execute_sql` (`cce6b3c9…`). Verified:
+    - `rls_bare_helper_calls()` 0 rows, md5 `bbf45e18e481985b9d6491045388da68`, ACL postgres + service_role;
+    - hoisted 21; `rls_bare_auth_calls()` 0 rows;
+    - 155 policies, 0 bare by an independent scan.
+
+    Ledger → 147.
+  - **After both:** the advisors were identical to the baseline. From outside, with the publishable key, `/rpc/resolve_share_link` (all-zeros token) answered 200 `null` and `/rpc/rls_bare_helper_calls` 401 / 42501.
+  - **Merges,** each pinned with `--match-head-commit`. Each was followed by a Vercel production deployment READY and aliased to gnk-crm.vercel.app; `get_runtime_errors` since 18:21Z was clean after each.
+    - #160 (`59d8d0e`) merged 18:21:42Z → main `4735777`; `dpl_949UXmyfnf2CYEuE26JW32YXhAon` READY 18:22:56Z; merge CI run 38614497698.
+    - #157 (`b3f763b`) merged 18:23:51Z → main `f074e7f`; `dpl_GJd5b25kESk4CmPhamSwPSUBpQea` READY 18:24:58Z; merge CI run 38614807370.
+    - #159 (`8bf0a83`) merged 18:25:20Z → main `8ecb772`; `dpl_5bfhMx1ryV38Zj7LqvUXgHiDBjxB` READY 18:26:46Z; merge CI run 38615017720.
+    - #158 (`e7221fb`) merged 18:27:10Z → main `3fe15d2`; `dpl_DCv6ZB3yUNB9myWuvzUfFrTKBvee` READY 18:29:34Z; merge CI run 38615279928.
+  - **The four merge CI runs were IN PROGRESS when these records were written.** The orchestrator confirms them before #161 merges.
+  - **Signed out on production:** `/login` 200; `/properties`, `/deals/x`, `/settings` and `/reports/commission-evidence` 307 → `/login`.
+  - **A slip:** one GET of `/p/<all-zeros token>` on production at ≈18:23Z, against the rule never to probe `/p/` there (each request notes a miss against the caller's IP hash; 20 per 15 minutes refuses that IP, 0081). It was one miss, against the operator's own IP: harmless, and it expires.
+  - **The operator's "land it" accepted the document limit:** merging #158 was the acceptance. A document over 3,500,000 bytes ("3.3 MB") is refused in the browser until documents go direct to storage.
+  - **BACKLOG, struck:**
+    - the inherited-field sync and the three property actions' knock order (#159);
+    - `property_media_select` (0147);
+    - the half-fix sub-bullet under "A committed photo delete, archive or sold/rented save …" (#159).
+
+    Each VERIFY was re-run on origin/main `3fe15d2`.
+  - **Rollback:**
+    - hosted: 0147's forward revert first, then 0146's (`revert-0147.ts` / `revert-0146.ts`, each guarded);
+    - each PR: revert its merge (application only).
+- **What next.**
+  - **The operator's two open decisions.**
+    - The listing-manager recompute: a listing manager's (or a non-owner agent's) legal save fans out a deal-health recompute that RLS refuses, so a stored score depends on who saved. Recompute as the system, use a definer RPC, or accept it and say so.
+    - `SENTRY_AUTH_TOKEN` on Vercel project gnk-crm is stored as readable (encrypted), not sensitive, and flagged `readable-secret` (measured; value not read). Re-create it as sensitive?
+  - **The concurrent session's merge-time item.** `T-document-insert-outcome` (`.worktrees/gnk-crm/document-insert-outcome`) is still uncommitted. When it lands, its `documentNotConfirmed` answers must carry `unconfirmed: true` (BACKLOG, merge-time); #158's client half is on main.
+  - **Reads waiting on traffic.**
+    - After #157: the read-only `computed_at` against `updated_at` aggregate (DECISIONS `T-deal-health-race`), once deals have been saved.
+    - After #158: a `lost_request` event in Sentry, when one happens (none seen yet).
+  - **Then pick from BACKLOG "External audit — 2026-10-14":**
+    - the board's drop (no try/catch, no refresh, listing managers always revert);
+    - unchecked URL and action ids;
+    - document direct-to-storage, i18n and e2e follow-ups;
+    - the operator scripts' knock and `moveMedia`'s half-swap;
+    - the five strict `.uuid()` sites;
+    - the mandates base-table commission arm and `mandates_safe` not `security_barrier`;
+    - gnk-web's `crypto.randomUUID()`; the enquiries route comment;
+    - composite keys for `area_id` / `district_id` / `stage_id`.
+
+    Or from "Throws after a commit — 2026-10-13".
+- **Where things are (cleanup done, 2026-10-14).**
+  - **Branches.** The remote branches `fix/share-link-tenant`, `fix/deal-health-race`, `fix/upload-size-honest` and `fix/site-knock-order` are deleted; the local branches are kept.
+  - **Worktrees.** Removed: `.worktrees/gnk-crm/{share-link-tenant,deal-health-race,upload-size-honest,site-knock-order,audit-verify}` and `.worktrees/gnk-web/audit-verify`. This records worktree, `.worktrees/gnk-crm/records-audit`, stays until #161 merges.
+  - **Stacks.** The disposable stack `.iso/audit1014` is stopped (`--no-backup`) and its directory removed. `.iso/nullguard` (another session's) is left untouched.
 - **Trap (new; §4 item 4).** A migration preflight never pins `proacl` as TEXT for a function whose grants come partly from default privileges — check what the grants decide with `has_function_privilege`, or compare with an ACL captured earlier in the same transaction. 0147's first preflight did, and branch CI's fresh stack refused it.
 
 **2026-10-14 (first item of BACKLOG "Throws after a commit — 2026-10-13", found by T-log-event-hollow's records check): an event line or a slip row counts as refused only on a code `certainlyRolledBack` understands, and a slip's 23505 is read back before its files are taken. No migration, nothing on hosted. LANDED 2026-10-14 on the operator's "merge #155": PR #155 merged 07:32:31Z pinned to `cf6fb73` → main `aa1f765`, deployed (#154 merged first, 07:30:06Z → `a8152f4`). DECISIONS `T-refusal-allowlist`.**
@@ -111,7 +169,7 @@
 - **What.** At `d985029` the worklist read photos and mandates by `.in("property_id", ids)` of every live listing, the photo read unpaged: REPRODUCED through the real page (PostgREST v14.5) — 230 live listings → 414, the page fell over; 1,100 photos → max_rows cut the read, 10 listings chased for a cover they have. Now: the live listings read (paged) with each one's photos (cover first) and active mandate embedded, and the rest of the portfolio read for the unit tally. A first version (media-driven, joined back to the listing) was correct but measured 15 s at 1,000 live listings by the review — replaced. MEASURED: PostgREST caps embedded arrays at max_rows too.
 - **Verified (locally, `.iso/worklist` = v14.5; not production).** `supabase/tests/worklist-id-lists.test.ts` RED 3/3 at `d985029`, GREEN 3/3 (row cap lowered to 50; admin and listing manager); 8 mutants killed; full DB suite 76 files 1,631/1,631; unit 3,524/3,524; typecheck, lint, build, static routes; e2e worklist.spec.ts green on a local dev server; whole page 126 ms (60 live) → 1.8 s (2,000 live with 6,000 sold); a 9-agent review.
 - **Landed.** Branch CI green on `0b7e21e` (run 38301247986 — checks; rls 76 files 1,631/1,631 on CI's v16.1 stack with the same evidence as locally; e2e). Vercel production `dpl_8uCmAR3s7EZnY2cq8ajhzdMdJPCc` READY 20:18:41Z, aliased (fra1); no runtime errors; `/login` 200, `/properties/worklist` 307 signed out. Merge CI on `2cbd490`: run 38303280010 green (checks, rls, e2e). Rollback: revert the merge (no migration).
-- **Left open (BACKLOG "Worklist — 2026-10-12").** The property page's shared-photo check sends hash and id lists (414 at ~122 / ~210, throwing after committed media actions); `property_media_select` runs `current_org_id()` per row (fold into the `mandates_safe` hoist migration — since 2026-10-14 hoisted by 0147, `T-rls-hoist-rest`, NOT LANDED at writing); embedded arrays are capped at max_rows (NOTE); the two reads are two snapshots (NOTE).
+- **Left open (BACKLOG "Worklist — 2026-10-12").** The property page's shared-photo check sends hash and id lists (414 at ~122 / ~210, throwing after committed media actions); `property_media_select` runs `current_org_id()` per row (fold into the `mandates_safe` hoist migration — since 2026-10-14 hoisted by 0147, `T-rls-hoist-rest`, LANDED 2026-10-14); embedded arrays are capped at max_rows (NOTE); the two reads are two snapshots (NOTE).
 
 **2026-10-12 (operator: item #3 — the "No mandate" filter's id list): the properties "No mandate" and "Expired" filters are anti-joins the database does in the one properties request, so the list, the map and the CSV hold whatever the mandate count. No migration, nothing on hosted. LANDED 2026-10-12 on the operator's "merge #139": PR #139 merged 18:59:45Z pinned to `a918616` → main `d985029`, deployed. DECISIONS `T-mandate-filter-anti-join`.**
 - **What.** At `2327337` both filters read every blocking mandate's property id first and wrote them into the request as `id=not.in.(…)`: REPRODUCED through the real pages and route (PostgREST v14.5) — 460 blocking listings → a 17,450-char URL → Kong 414 on the list and the map, the export refused; the real threshold is about 200 ids (Kong's 8 KB request line), not 400. Now: aliased empty embeds of `mandates_safe` — `mandate_block` (filtered to the blocking statuses, kept when empty) and, for "expired", `mandate_has` (inner-joined to an expired one). MEASURED trap (v14.5 and v16.1): beside an alias of the same view, a filter on the unaliased embed is not applied where written — every filter names an alias; the display embed stays plain.

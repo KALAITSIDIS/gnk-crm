@@ -9842,7 +9842,7 @@ The review then found a second instance in the same function. The slip's 23505 b
 - The remote and local `fix/refusal-allowlist` are deleted; their commits are in main.
 - The worktree carried these records and is removed after them. The disposable stack `.iso/nullguard` stays up for the next item.
 
-## T-external-audit-2026-10-14 — an external architectural audit verified item by item before anything changed: three items DISAGREE / ALREADY RESOLVED, four AGREE WITH MODIFICATIONS, and the real gaps beside them became five changes on four PRs (2026-10-14; migrations 0146 and 0147; NOT LANDED — PRs #160, #157, #158, #159; landing on the operator's word)
+## T-external-audit-2026-10-14 — an external architectural audit verified item by item before anything changed: three items DISAGREE / ALREADY RESOLVED, four AGREE WITH MODIFICATIONS, and the real gaps beside them became five changes on four PRs (2026-10-14; migrations 0146 and 0147; LANDED 2026-10-14 — hosted 0146 and 0147 first, then PRs #160, #157, #159, #158, main `3fe15d2`, deployed)
 
 The operator pasted an external architectural audit on 2026-10-14: seven items, each a claim and a remedy. Every claim was taken as a hypothesis, and no remedy was applied as written.
 
@@ -9877,7 +9877,7 @@ The operator pasted an external architectural audit on 2026-10-14: seven items, 
 - **`org_id` inside every EXISTS subquery (1a).** Redundant for all 19 policies, and it would not have reached the real gap: `property_id`, a column no EXISTS touches.
 - **A `merge_deal_health(p_patch)` RPC (2).** Not built. A derived-keys-only RPC still lets a stale recompute store a score computed from the old flag; a generic `p_patch` is no tighter than today's PostgREST PATCH; and an RPC must reach hosted before the merge. The house A06 idiom (an `updated_at`-predicated write, re-read on a miss) closes both with no migration. Had an RPC been chosen, the challengers corrected the investigator: an explicit `current_org_id()` pin IS current house idiom (0141–0143 pin it, and their postflights assert it).
 
-**What was built (each its own entry below; all NOT LANDED at writing).**
+**What was built (each its own entry below; all LANDED 2026-10-14 — see each entry's Landing).**
 - `T-share-link-tenant` (0146): item 1's real gap.
 - `T-rls-hoist-rest` (0147): item 1b, as hygiene — generated, self-checked, with a schema-wide guard.
 - `T-deal-health-race`: item 2.
@@ -9899,7 +9899,17 @@ The operator pasted an external architectural audit on 2026-10-14: seven items, 
 
 **Rollback.** Nothing in this entry itself; each change below carries its own.
 
-## T-share-link-tenant — a share link names, pins and shows only its own organisation's properties, price list and agent (2026-10-14; migration 0146; NOT LANDED — PR #160, `fix/share-link-tenant` head `59d8d0e`; landing on the operator's word)
+**Landing (2026-10-14, on the operator's "land it").** Each step's facts are in its entry; the order was:
+1. A read-only hosted preflight (18:14Z) and a rehearsal of the exact guarded wrappers on the disposable stack `.iso/audit1014` (`T-share-link-tenant`).
+2. Hosted 0146 (≈18:16Z), then hosted 0147 (≈18:19–18:20Z), each ONE md5-guarded `execute_sql`, verified in a separate call, its ledger row written by hand (146, then 147 rows). The advisors read the same after as before.
+3. The merges, each pinned with `--match-head-commit` and followed by a production deployment READY on gnk-crm.vercel.app with no runtime errors:
+   - #160 at 18:21:42Z → main `4735777`;
+   - #157 at 18:23:51Z → `f074e7f`;
+   - #159 at 18:25:20Z → `8ecb772`;
+   - #158 at 18:27:10Z → `3fe15d2`. Merging #158 was the operator's acceptance of the document limit (`T-upload-size-honest`).
+4. These records (PR #161) last. The four merge CI runs were in progress when they were written; the orchestrator confirms them before #161 merges.
+
+## T-share-link-tenant — a share link names, pins and shows only its own organisation's properties, price list and agent (2026-10-14; migration 0146; LANDED 2026-10-14 — hosted 0146 first, PR #160, main `4735777`, deployed)
 
 Item 1 of `T-external-audit-2026-10-14`: the gap beside the audit's claim. The last replacement of `resolve_share_link` before this is 0137 (every migration grepped).
 
@@ -9961,9 +9971,37 @@ Item 1 of `T-external-audit-2026-10-14`: the gap beside the audit's claim. The l
 - The single-column keys themselves, and the district / area names the proposal still reads by id (composite-key series, BACKLOG).
 - `share_links.revoked_by` stays unbound (shown nowhere; an oracle on profile ids, with the other profile links).
 
-**Status.** NOT LANDED — PR #160 (`fix/share-link-tenant`, head `59d8d0e`, with 0147); landing on the operator's word, hosted first.
+**Landing (2026-10-14, on the operator's "land it").** Hosted first: 0146, then 0147 (`T-rls-hoist-rest`), then the merge.
+- **Hosted preflight** (read-only, one call, 18:14Z):
+  - the ledger 145 rows, the last `0145` (the earlier by-hand rows carry a name and no statements);
+  - `resolve_share_link` prosrc md5 `466cf76e…`, EXECUTE held by postgres, anon, authenticated and service_role;
+  - 155 policies, 52 bare;
+  - the four diagnostic counts 0: `link_rows`, `pinned_lists`, `rows_under_foreign_parent`, `creators`;
+  - one permissive policy for each bound command (1 / 1 / 1).
+- **The advisors' baseline:**
+  - security: 2 ERROR (`mandates_safe` and `spatial_ref_sys`, both by design) and 38 WARN (`extension_in_public` 1, anon definer 12, authenticated definer 23, leaked-password protection 1);
+  - performance: INFO only (47 unindexed foreign keys, 42 unused indexes).
+- **Rehearsal first,** on the disposable stack `.iso/audit1014` (Postgres 17.6.1.159 with PostgREST v14.5), reset to origin/main's 145 migrations. The exact guarded wrappers were run:
+  - a corrupted copy of each was refused with "guard: the text sent is not the file", and nothing changed;
+  - 0147 run before 0146 was refused ("not the 51 … unexpected or changed share_link_properties.share_link_properties_insert");
+  - guarded 0146, then guarded 0147, applied: resolver `aa14a665…`, bare 51 → 0, guard `bbf45e18…`, hoisted 21, 155 policies.
+- **Hosted 0146,** ≈18:16Z, as ONE md5-guarded `execute_sql` (`do $guard$ … md5(src) = 'e82bb8dc78b65f90745de1dc3420f6d1' … execute src`). Verified in a separate call:
+  - the resolver's prosrc md5 `aa14a6657e4414b83c9c5b21a9fc521a`; its ACL and shape unchanged (SECURITY DEFINER, VOLATILE, owner postgres, `{search_path=public}`);
+  - WITH CHECK md5s: `share_link_properties_insert` `7c5f9dda6ff454c709dff81a4142be00`, `share_links_insert` `b4ba72fdb94d0b9d19a9051dc609c4f1`, `share_links_update` `1f673344c1bdc2e77e598bd824a24388`; `share_links_update`'s USING unchanged, `b3a1023c8088a1ed078ff358a2d5612c`;
+  - 155 policies, 51 bare.
 
-## T-rls-hoist-rest — every RLS policy evaluates the helpers once per statement, and the guard looks at the whole schema (2026-10-14; migration 0147; NOT LANDED — PR #160, `fix/share-link-tenant` head `59d8d0e`; landing on the operator's word)
+  One verification read first failed on a `"char" || text` cast; it was a read, and the corrected re-run gave the values above. The ledger row `('0146', 'share_link_tenant_binding')` was inserted by hand → 146 rows.
+- **Hosted 0147** followed (`T-rls-hoist-rest`); the advisors after both were identical to the baseline.
+- **From outside,** through PostgREST with the publishable key: POST `/rpc/resolve_share_link` with an all-zeros token answered 200 `null`.
+- **Merge.** PR [#160](https://github.com/KALAITSIDIS/gnk-crm/pull/160) merged at 18:21:42Z, pinned to `59d8d0e`, giving main `4735777` (main unmoved at `489c507`; the merge's tree is byte-identical to the head's). Branch CI run 38611522514 on `59d8d0e` was green (checks, rls, e2e).
+- **Production.** Vercel `dpl_949UXmyfnf2CYEuE26JW32YXhAon` READY 18:22:56Z, aliased to gnk-crm.vercel.app; no runtime errors since 18:21Z. Signed out, `/login` answers 200, and `/properties`, `/deals/x`, `/settings` and `/reports/commission-evidence` answer 307 to `/login`.
+- **Merge CI** on `4735777`: run 38614497698, IN PROGRESS when this was written. The orchestrator confirms it before the records PR (#161) merges.
+- **A slip.** At ≈18:23Z one GET of `/p/<all-zeros token>` was made on production. The standing rule is never to probe `/p/` there: every request notes a miss against the caller's IP hash, and 20 in 15 minutes refuses that IP (0081). This was ONE miss, against the operator's own IP. It is harmless and it expires.
+- The writes to production in this landing were the two migrations, their two ledger rows and that one miss. The reads were catalog values, the migration ledger, counts and the advisors.
+- The remote `fix/share-link-tenant` is deleted (the local branch is kept). Its worktree is removed, and the disposable stack `.iso/audit1014` is stopped (`--no-backup`) and its directory removed.
+- **Rollback, now.** Revert 0147 first (`T-rls-hoist-rest`), then 0146 by the forward migration above, both guarded the same way. Reverting the merge alone changes nothing on hosted.
+
+## T-rls-hoist-rest — every RLS policy evaluates the helpers once per statement, and the guard looks at the whole schema (2026-10-14; migration 0147; LANDED 2026-10-14 — hosted 0147 first (after hosted 0146), PR #160, main `4735777`, deployed)
 
 Item 1b of `T-external-audit-2026-10-14`, done as hygiene: immaterial at today's sizes (the largest affected table, `areas`, has 130 rows), free to do (0100:15, "Hoisting is free"), and worth doing before `price_list_items`, `property_media` and `documents` grow.
 
@@ -10010,9 +10048,35 @@ Item 1b of `T-external-audit-2026-10-14`, done as hygiene: immaterial at today's
 
 **Left open.** `mandates_safe` (a view, not a policy) still calls its helpers per row — BACKLOG "`mandates_safe` evaluates its helpers once per row", unchanged by 0147.
 
-**Status.** NOT LANDED — PR [#160](https://github.com/KALAITSIDIS/gnk-crm/pull/160) (`fix/share-link-tenant`, head `59d8d0e`); branch CI green on `b47f927` (run 38604283010: checks, rls, e2e), and run 38611522514 on the comment-only `59d8d0e`; hosted 0147 after hosted 0146, then the merge, each on the operator's word.
+**Landing (2026-10-14, on the operator's "land it"; hosted 0146 just before — `T-share-link-tenant`).**
+- **Preflight** (the same read-only call, 18:14Z):
+  - 155 policies, 52 bare at 0145;
+  - the guards' prosrc md5s `90aac6a2…` (`rls_bare_helper_calls`), `57e24dda…` (`rls_hoisted_policy_count`) and `edfd09ff…` (`rls_bare_auth_calls`);
+  - hoisted 21.
 
-## T-deal-health-race — a deal-health recompute writes only over the row it read (2026-10-14; no migration; NOT LANDED — PR #157, `fix/deal-health-race` head `b3f763b`; landing on the operator's word)
+  After 0146 the bare count was 51. The file's own preflight, which pins the exact 51 and the guards' privileges, then passed on hosted.
+- **Rehearsal** on `.iso/audit1014` (`T-share-link-tenant`):
+  - run before 0146, 0147 was refused by name;
+  - a corrupted copy was refused by the guard;
+  - in order it applied: bare 51 → 0, guard `bbf45e18…`, hoisted 21, 155 policies.
+- **Hosted 0147,** ≈18:19–18:20Z, as ONE md5-guarded `execute_sql` (md5 `cce6b3c96c982beb5fcb6606ab2846e5`, the final file at `59d8d0e`). Verified in a separate call:
+  - `rls_bare_helper_calls()` 0 rows, prosrc md5 `bbf45e18e481985b9d6491045388da68`, ACL `{postgres=X/postgres,service_role=X/postgres}`;
+  - `rls_hoisted_policy_count()` 21; `rls_bare_auth_calls()` 0 rows;
+  - 155 policies, 0 bare by an independent scan;
+  - the resolver unchanged.
+
+  The ledger row `('0147', 'hoist_remaining_rls_helpers')` was inserted by hand → 147 rows.
+- **Advisors after both,** identical to the baseline:
+  - security: 2 ERROR and 38 WARN, the same findings;
+  - performance: INFO only, 47 + 42.
+- **From outside,** through PostgREST with the publishable key: POST `/rpc/rls_bare_helper_calls` answered 401 / 42501 (no API role but service_role executes it).
+- **Merge, production and merge CI** are #160's (`T-share-link-tenant`):
+  - main `4735777`, `dpl_949UXmyfnf2CYEuE26JW32YXhAon` READY 18:22:56Z, no runtime errors;
+  - merge CI run 38614497698, in progress at writing.
+- **BACKLOG, struck on landing:** "`property_media_select` evaluates `current_org_id()` once per row" (0147 hoists all three `property_media` policies). The 2026-08-11 RLS entry's "Superseded" note now says landed. `mandates_safe` (a view) stays open, as above.
+- **Rollback, now.** The forward migration carrying `supabase/tests/revert-0147.ts`'s text, guarded (above), and before 0146's. Meaning is unchanged either way.
+
+## T-deal-health-race — a deal-health recompute writes only over the row it read (2026-10-14; no migration; LANDED 2026-10-14 — PR #157, main `f074e7f`, deployed)
 
 Item 2 of `T-external-audit-2026-10-14`, narrowed to the one column it is true for.
 
@@ -10057,9 +10121,16 @@ Item 2 of `T-external-audit-2026-10-14`, narrowed to the one column it is true f
 
 **Left open (BACKLOG).** A listing manager's or non-owner agent's legal save fans out a recompute RLS refuses (an operator decision); `mergeContacts` repoints deals without a recompute; a deal section save whose line throws skips the recompute, and `logDealContact` returns after its commit (both in "Throws after a commit"); "Deal health persists a score computed from a failed or missing mandate read" (still open).
 
-**Status.** NOT LANDED — PR #157 (`fix/deal-health-race`, head `b3f763b`); landing on the operator's word.
+**Landing (2026-10-14, on the operator's "land it"; second of the four merges, after #160).**
+- **Branch CI** green on the head `b3f763b`: run 38600609217 (checks, rls, e2e).
+- **Merge.** PR [#157](https://github.com/KALAITSIDIS/gnk-crm/pull/157) merged at 18:23:51Z, pinned to `b3f763b`, giving main `f074e7f` over `4735777` (#160). The merge's change over `4735777` is exactly the head's change over `489c507` (equal patch-ids), and its tree is the clean three-way merge (`git merge-tree`).
+- **Production.** Vercel `dpl_GJd5b25kESk4CmPhamSwPSUBpQea` READY 18:24:58Z, aliased to gnk-crm.vercel.app; no runtime errors since 18:21Z. Signed out, `/login` answers 200, and `/properties`, `/deals/x`, `/settings` and `/reports/commission-evidence` answer 307 to `/login`.
+- **Merge CI** on `f074e7f`: run 38614807370, IN PROGRESS when this was written. The orchestrator confirms it before the records PR (#161) merges.
+- **Not yet done:** the post-deploy read above (`computed_at` against `updated_at`), which waits until agents or admins have saved deals (HANDOFF, What next).
+- The remote `fix/deal-health-race` is deleted (the local branch is kept), and its worktree is removed.
+- **Rollback.** Revert the merge (application only).
 
-## T-upload-size-honest — every browser upload is held to the measured request ceiling: documents and branding are refused before sending, verify-a-report posts only a SHA-256, and a photo never goes up black or leaves the button stuck (2026-10-14; no migration; NOT LANDED — PR #158, `fix/upload-size-honest` head `e7221fb`; landing on the operator's word)
+## T-upload-size-honest — every browser upload is held to the measured request ceiling: documents and branding are refused before sending, verify-a-report posts only a SHA-256, and a photo never goes up black or leaves the button stuck (2026-10-14; no migration; LANDED 2026-10-14 — PR #158, main `3fe15d2`, deployed)
 
 Item 6 of `T-external-audit-2026-10-14`: the real gap the audit's wording covered but did not name.
 
@@ -10094,11 +10165,23 @@ Item 6 of `T-external-audit-2026-10-14`: the real gap the audit's wording covere
 
 **Rollback.** Revert the merge. Application only.
 
-**Left open (BACKLOG "External audit — 2026-10-14").** Documents over ~3.3 MB need direct-to-storage (an operator decision on the interim limit); a document upload stores the object as the service role before RLS decides the row (latent); the verify form's description and two English strings (i18n); `T-document-insert-outcome`'s "not confirmed" answers must carry `unconfirmed: true`; no e2e covers a refused upload; the 3.0–4.5 MB band is unmeasured (a production probe is the operator's call). After the deploy (HANDOFF, the landing step for #158, not BACKLOG): no `lost_request` event has been seen arriving in Sentry; the DSN is inlined at build, so it can be checked only then.
+**Left open (BACKLOG "External audit — 2026-10-14").** Documents over ~3.3 MB need direct-to-storage (the interim limit was the operator's decision, accepted by "land it" on 2026-10-14 — Landing below); a document upload stores the object as the service role before RLS decides the row (latent); the verify form's description and two English strings (i18n); `T-document-insert-outcome`'s "not confirmed" answers must carry `unconfirmed: true`; no e2e covers a refused upload; the 3.0–4.5 MB band is unmeasured (a production probe is the operator's call). After the deploy (HANDOFF, the landing step for #158, not BACKLOG): no `lost_request` event has been seen arriving in Sentry; the DSN is inlined at build, so it can be checked only then.
 
-**Status.** NOT LANDED — PR #158 (`fix/upload-size-honest`, head `e7221fb`); landing on the operator's word. A concurrent session is building `T-document-insert-outcome` in `.worktrees/gnk-crm/document-insert-outcome` (uncommitted edits to the five document actions and `messages/*.json`); this change avoided those files.
+**Landing (2026-10-14, on the operator's "land it"; last of the four merges, after #159).**
+- **The document limit is accepted.** The operator's "land it" covered #158, and HANDOFF had recorded that merging #158 is the acceptance. A document over 3,500,000 bytes ("3.3 MB") is now refused in the browser until documents go direct to storage (BACKLOG). The 3.0–4.5 MB band stays unmeasured; a production probe of it is still the operator's call.
+- **Branch CI** green on the head `e7221fb`: run 38600613920 (checks, rls, e2e).
+- **Merge.** PR [#158](https://github.com/KALAITSIDIS/gnk-crm/pull/158) merged at 18:27:10Z, pinned to `e7221fb`, giving main `3fe15d2` over `8ecb772` (#159).
+  - One file was changed by both #159 and #158: `lib/actions/settings.ts`, where #159 adds the area rename's knock and #158 the branding limit.
+  - The merge's tree is the clean three-way merge of the two (`git merge-tree`: both `3aa8a934…`).
+  - Every other file of #158 is byte-identical to the head's.
+- **Production.** Vercel `dpl_DCv6ZB3yUNB9myWuvzUfFrTKBvee` READY 18:29:34Z, aliased to gnk-crm.vercel.app; no runtime errors since 18:21Z. Signed out, `/login` answers 200, and `/properties`, `/deals/x`, `/settings` and `/reports/commission-evidence` answer 307 to `/login`.
+- **Merge CI** on `3fe15d2`: run 38615279928, IN PROGRESS when this was written. The orchestrator confirms it before the records PR (#161) merges.
+- **Not yet done:** seeing a `lost_request` event arrive in Sentry, which waits for one to happen (HANDOFF, What next).
+- **The concurrent session.** `T-document-insert-outcome` in `.worktrees/gnk-crm/document-insert-outcome` is still uncommitted (unchanged). This change avoided its files, and its merge-time item stands: its `documentNotConfirmed` answers must carry `unconfirmed: true` (BACKLOG). #158's client half is on main.
+- The remote `fix/upload-size-honest` is deleted (the local branch is kept), and its worktree is removed.
+- **Rollback.** Revert the merge (application only). Reverting it brings back the error page for documents over ~4.5 MB.
 
-## T-site-knock-order — a committed write tells the site before any follow-up that can throw; the inherited-field sync and the area rename tell it at all (2026-10-14; no migration; NOT LANDED — PR #159, `fix/site-knock-order` head `8bf0a83`; landing on the operator's word)
+## T-site-knock-order — a committed write tells the site before any follow-up that can throw; the inherited-field sync and the area rename tell it at all (2026-10-14; no migration; LANDED 2026-10-14 — PR #159, main `8ecb772`, deployed)
 
 Item 7b of `T-external-audit-2026-10-14`: the staleness that was real (the webhook exists; mandates are not in the feed).
 
@@ -10131,4 +10214,16 @@ Item 7b of `T-external-audit-2026-10-14`: the staleness that was real (the webho
 
 **Left open (BACKLOG).** Each of these actions STILL throws after its committed write when a follow-up fails, so the user sees the error page — only the site refresh is fixed here ("Throws after a commit — 2026-10-13", amended). The operator scripts change the feed without a knock; `moveMedia`'s half-swap path neither knocks nor checks its restore; the ordering guard recognises throwing follow-ups by name (NOTE).
 
-**Status.** NOT LANDED — PR #159 (`fix/site-knock-order`, head `8bf0a83`); landing on the operator's word.
+**Landing (2026-10-14, on the operator's "land it"; third of the four merges, after #157).**
+- **Branch CI** green on the head `8bf0a83`: run 38600619298 (checks, rls, e2e).
+- **Merge.** PR [#159](https://github.com/KALAITSIDIS/gnk-crm/pull/159) merged at 18:25:20Z, pinned to `8bf0a83`, giving main `8ecb772` over `f074e7f` (#157). The merge's change over `f074e7f` is exactly the head's change over `489c507` (equal patch-ids), and its tree is the clean three-way merge (`git merge-tree`).
+- **Production.** Vercel `dpl_5bfhMx1ryV38Zj7LqvUXgHiDBjxB` READY 18:26:46Z, aliased to gnk-crm.vercel.app; no runtime errors since 18:21Z. Signed out, `/login` answers 200, and `/properties`, `/deals/x`, `/settings` and `/reports/commission-evidence` answer 307 to `/login`.
+- **Merge CI** on `8ecb772`: run 38615017720, IN PROGRESS when this was written. The orchestrator confirms it before the records PR (#161) merges.
+- **BACKLOG, struck on landing:**
+  - "The inherited-field sync moves public unit fields and tells nobody";
+  - "Three property actions schedule their knock after a step that can throw";
+  - the half-fix line under "A committed photo delete, archive or sold/rented save …".
+
+  Each VERIFY was re-run on origin/main `3fe15d2` and is quoted there.
+- The remote `fix/site-knock-order` is deleted (the local branch is kept), and its worktree is removed.
+- **Rollback.** Revert the merge (application only).
