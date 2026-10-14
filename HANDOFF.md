@@ -1,6 +1,37 @@
 # HANDOFF — 2026-08-08
 
-**2026-10-13, latest (chosen after T-erasure-null-answers — BACKLOG "Null answers — 2026-10-13", its first item): a signed viewing slip's signature and PDF are never destroyed — by a failed or hollow "already signed?" read, by two signings at once, or by an insert whose answer was lost. No migration, nothing on hosted. LANDED 2026-10-13 on the operator's "merge #151": PR #151 merged 19:14:19Z pinned to `e436768` → main `b55b095`, deployed. DECISIONS `T-signed-slip-kept`.**
+**2026-10-13, latest (chosen after T-signed-slip-kept: BACKLOG "Null answers — 2026-10-13", "`logEvent` takes a hollow insert answer as written"): an event write is believed only when PostgREST confirms it with a 201. The two actions that undo their own document when its event fails now undo it only on an answer that carries an error code, not on a hollow or code-less one. No migration, nothing on hosted. LANDED 2026-10-13 on the operator's "merge #153": PR #153 merged 20:54:09Z, pinned to `f7ce4e3` → main `3e62e38`, deployed. DECISIONS `T-log-event-hollow`. Its records came after the merge, in one PR, because the code PR carried none.**
+- **What.** `logEvent` and `logEvents` threw only on a truthy postgrest-js `error`, so hollow answers counted as written. REPRODUCED at `3c40779` through the real actions on v14.5:
+  - the contacts export shipped its CSV of personal data with NO audit line, in all five hollow shapes;
+  - the erasure (500 `null`) and the purge (500 `0`) returned success with no `erased` / `retention_purged` line;
+  - the evidence report and the viewing confirmation DESTROYED their document after a code-less 502 whose line had landed, leaving a line that names nothing.
+
+  Now:
+  - only a 201 is a confirmed write;
+  - `EventWriteError.refused` is true only for an answer with a SQLSTATE / PGRST code;
+  - the two document actions roll back only when `refused`; otherwise they read the line back (`documentEventWritten`) and keep the document;
+  - `lib/testing/fake-client.ts` answers inserts with 201.
+- **Verified (locally, `.iso/nullguard` = v14.5; not production).**
+  - Test files: `lib/services/events-hollow.test.ts` (52, the real postgrest-js with `fetch` stubbed), `lib/testing/fake-client.test.ts` (6), `supabase/tests/log-event-hollow.test.ts` (31) and `erasure-null-answers.test.ts` (+2).
+  - RED at the base: DB 21/31 and erasure 2/35. GREEN.
+  - 23 of 23 mutants killed.
+  - Full DB suite 82 files, 1,727/1,727; unit 3,647/3,647; `typecheck`, `lint`, `build` and `check:static-routes` pass.
+  - A 4-dimension adversarial review: 0 confirmed.
+- **Landed.**
+  - Branch CI green on `f7ce4e3`: run 38464539378 — checks; rls 82 files, 1,727/1,727 on CI's v16.1 stack with the same evidence as locally; e2e.
+  - Vercel production `dpl_CdmNsek8YKQhAs5LtADNF5T3oQaZ` READY 20:57:16Z, aliased (fra1). No runtime errors. `/login` answers 200; `/contacts/export`, `/reports/commission-evidence` and `/viewings` answer 307 signed out.
+  - Merge CI on `3e62e38`: run 38466481036 green (checks, rls, e2e).
+  - Rollback: revert the merge (application only).
+- **Left open (BACKLOG "Throws after a commit — 2026-10-13").**
+  - FIRST, found by the records' own check: `EventWriteError.refused` and #151's slip-insert take-back count ANY code as the database's refusal. That is wider than the measured allowlist `certainlyRolledBack` (DECISIONS `T-media-insert-outcome`). So after a 57014 / 53 / 58 / XX000 / 08 answer to a write that committed, the two document actions still destroy the document its line names. The slip action re-reads first, so it is exposed only to a coded answer to a request still in flight.
+  - Then 38 sites, one per VERIFY hit, where a `logEvent` throw after a committed write lands worse than silent success. Ranked:
+    1. the one-time secrets: `inviteUser`'s temporary password, the portal feed token, the share-link tokens;
+    2. a committed photo delete, archive or sold/rented save that shows the error page and skips the site refresh;
+    3. the duplicates on retry;
+    4. the follow-ups lost for good.
+  - These landings predate this change: any failed event write that carries an error already reaches them; the guard only adds the hollow answers.
+
+**2026-10-13 (chosen after T-erasure-null-answers — BACKLOG "Null answers — 2026-10-13", its first item): a signed viewing slip's signature and PDF are never destroyed — by a failed or hollow "already signed?" read, by two signings at once, or by an insert whose answer was lost. No migration, nothing on hosted. LANDED 2026-10-13 on the operator's "merge #151": PR #151 merged 19:14:19Z pinned to `e436768` → main `b55b095`, deployed. DECISIONS `T-signed-slip-kept`.**
 - **What.** `signViewingSlip` asked "already signed?" with a `maybeSingle` whose error it never read, then REMOVED whatever sat at the slip's two fixed paths (INT-08's pre-clean) before uploading. REPRODUCED at `86f3d22` through the real action and real local Storage: every hollow answer and a plain statement timeout left a signed slip's row and event pointing at an EMPTY bucket (the user told "already signed"); two signings at once did the same to the winner (forced, both windows); a code-less insert failure took the files back from under a row that committed later. Now: the check is a list read through `rowsOf` on the service role; nothing is removed before the upload — creating the PNG (`upsert: false`) is the attempt's claim; files at a taken path are cleared only when older than a 5-minute lease (the sign page's `maxDuration = 60` bounds an attempt) and the viewing is still unsigned; the PDF is never overwritten (taken out and written once more on a 409); an unclear insert is re-read, and its files taken back only on a refusal the database gave. The sign page and the viewing page read the slip as a list.
 - **Verified (locally, `.iso/nullguard` = v14.5; not production).** `supabase/tests/slip-null-answers.test.ts` (20) and `lib/actions/viewing-slips-retry-safe.test.ts` (31, rewritten — it pinned the pre-clean and scripted a hollow answer as "none"): RED RED at `86f3d22`: the DB test 18 of 20 (the 2 that pass are the control and a database refusal, which the base already took back) and the unit test 29 of 31; GREEN all; 20 mutants killed; full DB suite 81 files 1,694/1,694; unit 3,588/3,588; typecheck, lint, build, static routes; a 3-agent scope and a 9-agent review — its two measured late-write defects (a PDF overwrite introduced by the first draft; a code-less insert failure taken back) FIXED in the change.
 - **Landed.** Branch CI green on `e436768` (run 38436644876 — checks; rls 81 files 1,694/1,694 on CI's v16.1 stack with the same evidence as locally; e2e). Vercel production `dpl_BtQq6hUQUVBjoLKGyDTMdco8cpHg` READY 19:16:18Z, aliased (fra1); no runtime errors; `/login` 200, a viewing's sign page 307 signed out. Merge CI on `b55b095`: run 38453256931 green (checks, rls, e2e). Rollback: revert the merge (no migration) — it brings the pre-clean back.

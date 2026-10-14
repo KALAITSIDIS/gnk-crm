@@ -9685,3 +9685,86 @@ BACKLOG "Null answers — 2026-10-13", its first item after T-erasure-null-answe
 **Rollback.** Revert the merge (application only; no migration, nothing on hosted). A rollback brings the pre-clean back.
 
 **Landing (2026-10-13, on the operator's "merge #151").** Branch CI green on the head `e436768` (run 38436644876 — checks; rls 81 files 1,694/1,694 on CI's fresh PostgREST v16.1 stack, printing the same evidence as locally: the "already signed?" check answered in each of six shapes → "Could not check whether this viewing is already signed — nothing was changed: …" with 0 storage and 0 session writes; both forced race windows → one slip, intact, the other attempt told "in progress"; e2e). #150 (#149's records) merged first (17:37:23Z → main `ffe798e`; its first rls attempt hit the known stamp flake — BACKLOG "A concurrent stamp can be refused although nothing went wrong" — and the re-run passed), so the merge took only this change. PR [#151](https://github.com/KALAITSIDIS/gnk-crm/pull/151) merged 19:14:19Z pinned to `e436768` → main `b55b095` (main unmoved at `ffe798e`; the merge's tree is byte-identical to the head's). Vercel production `dpl_BtQq6hUQUVBjoLKGyDTMdco8cpHg` READY 19:16:18Z, aliased to gnk-crm.vercel.app (fra1); no runtime errors since the deploy; `/login` 200, a viewing's sign page 307 to /login signed out. Merge CI on `b55b095`: run 38453256931 green (checks, rls, e2e). No production page was loaded signed in and no production row was read or written. Remote `fix/signed-slip-kept` deleted (local branch kept); the worktree removed; the disposable stack `.iso/nullguard` stopped `--no-backup`.
+
+## T-log-event-hollow — an event write is believed only when PostgREST confirms it (2026-10-13; no migration; LANDED 2026-10-13 — PR #153, main `3e62e38`, deployed)
+
+From BACKLOG "Null answers — 2026-10-13": "`logEvent` takes a hollow insert answer as written — an erasure or purge then succeeds with no record". Chosen after T-signed-slip-kept landed, under the standing agreement to navigate and choose. The merge waited for the operator's word. Scoped at `b55b095` (main after #151), and built on `3c40779` (#152's records, docs only). This entry was written after the merge: the PR carried only code and tests, so the records follow in one PR.
+
+**Scoped first (a 4-agent workflow).**
+- **The guard.** MEASURED on postgrest-js 2.110.2 and the local stack (PostgREST v14.5): logEvent's request, a single-object insert with no `.select()`, answers `201 Created`, an empty body, `Content-Range: */*`. That holds for one row and many, on the session client and on the service role. An RLS refusal answers 403 / 42501. So `error || status !== 201` never trips on a real success; it only moves the hollow answers onto the path a truthy error already takes.
+- **The test fake.** 7 unit files ran the real logEvent, 6 of them through `lib/testing/fake-client.ts`, whose default page had no status. Under the guard 29 tests failed. Four media-upload tests stayed green only because `uploadPropertyMedia` turns the refusal into `warning`.
+- **The sweep.** All 115 call sites in 32 files were swept: `await logEvent(` / `await logEvents(` outside tests, counted by grep at `3e62e38`. PR #153's description says 116; 115 is the count. At 36 of them a throw after a committed write lands WORSE than silent success: an error page, follow-ups that no retry redoes, a one-time secret never shown, a duplicate on retry. Two of those are rollback sites that destroy a document the committed line names: the evidence report and the viewing confirmation.
+
+**Reproduced first (at `3c40779`, the base; real actions, a real aal2 admin, the real service role, one request faulted at the transport).**
+- **The contacts export** handed over its CSV of personal data with NO audit line, under all five hollow answers: 200 empty, 404 empty, 200 `null`, 500 `null`, 500 `0`.
+- **The erasure and the purge.** With an empty answer to the erasure's record write (500 `null`), the erasure returned SUCCESS with no `erased` line. With an empty answer to the purge's (500 `0`), the purge did the same with no `retention_purged` line. The BACKLOG's measurement was reproduced.
+- **The evidence report and the viewing confirmation.** After a gateway's 502 with no `code`, its line having landed, both destroyed the document and its file; the new line named a document that no longer existed. After a hollow answer to a request that never arrived, both returned success with a document and no line.
+
+**What changed.**
+- **`lib/services/events.ts`.** `eventWriteFailure` confirms a write only on 201. An error with no words is named by its HTTP status (four sites show the words to people). A hollow answer reads "the write was not confirmed (HTTP n)".
+- **`EventWriteError`** carries `refused`. It is true only when the answer carried a non-empty string `code` (SQLSTATE or PGRST), the same rule T-signed-slip-kept uses for a slip insert. Anything else may have written the line: a hollow answer, a gateway's words, a fetch that never came back (postgrest-js reports those as status 0, code `""`). PostgREST finishes a request whose client has gone.
+- **Wider than `certainlyRolledBack` (found by the records check, after the merge).** `refused` takes ANY non-empty string code, so it is not proof the line was refused. DECISIONS `T-media-insert-outcome` records:
+  - 57014 / 53xxx / 58xxx / XX000 can be reported for a COMMIT that went through;
+  - class 08 comes from whatever sits in front of Postgres;
+  - PGRST111 / 112 are built after a commit;
+  - PGRST000 / 001 / 103 / 116 and every unclassified code are unknown.
+
+  After such a coded answer to a line that committed, the two document actions still destroy the document it names, as they did at the base for every failure. `supabase/tests/log-event-hollow.test.ts` pins XX000 as a refusal, and #151's slip take-back uses the same rule. The slip re-reads its rows first, so only a coded answer to a request still in flight reaches it. The fix, `certainlyRolledBack` in both places, is the first item of BACKLOG "Throws after a commit — 2026-10-13".
+- **`documentEventWritten(admin, …)`** reads one line back by organisation, entity, type and the `document_id` it names.
+- **`generateEvidenceReport` and `generateViewingConfirmation`** delete their document only when `refused`. Otherwise they read the line back as the system and keep the document: success when the line is there, and "saved, but its line … could not be confirmed: … Reload …" when it is not or the read-back fails. The report's message is `reports.evidence.errors.notConfirmed` in en, el and ru.
+- **`lib/testing/fake-client.ts`** answers an awaited chain that called `insert` as PostgREST does: 201 Created, `data: null` unless it selected. Scripted fields win, failed pages and reads are left alone, and `upsert` is not touched (it answers 201 or 200 by whether the row existed).
+
+**Options weighed.**
+1. **`error || status !== 201`.** Chosen: every success is a 201, measured.
+2. **Add `{ count: "exact" }` and refuse `count !== rows`.** Rejected: it catches only a fabricated 201, and it changes the request of all 115 call sites and a unit assertion for nothing measured.
+3. **`.select("id")` and a rows check.** Rejected: it couples every event write to `events_select` RLS.
+4. **Wrap all 36 worse-landing sites in this change.** Rejected: those landings already happen for any truthy error (a network failure gives `TypeError: fetch failed`); the guard adds only the answers that never confirmed the write. They go to the BACKLOG ranked. The two rollback sites were the exception, fixed here: there the guard would have opened a NEW destructive path (a committed-hollow answer destroying the document its line names).
+5. **Leave logEvent believing hollow answers.** Rejected: a silent gap in the hash chain, and the export proves what it costs.
+
+**Tests.**
+- **`lib/services/events-hollow.test.ts`** (52 cases) uses the real supabase-js / postgrest-js with only `fetch` stubbed:
+  - the 201 answer, byte for byte, resolves, and the request is a POST of the row to `/rest/v1/events`;
+  - `logEvents` sends many rows in one request, and nothing for none;
+  - 11 empty or wordless answers each, for both functions, are refused by name;
+  - an RLS refusal keeps its words, and a failed fetch names itself;
+  - the `refused` verdict over 18 answers;
+  - `documentEventWritten`'s exact request and its five answers.
+- **`lib/testing/fake-client.test.ts`** (6) covers the fake's insert answer.
+- **`supabase/tests/log-event-hollow.test.ts`** (31) runs on the real stack:
+  1. 201 on both clients, the rows there;
+  2. a hollow answer refused whether the request never arrived (nothing written) or its answer was lost (the rows landed — "not confirmed" is not "not written");
+  3. the contacts export ships no CSV and writes no line under all five hollow answers (a control ships it);
+  4. and 5. the confirmation and the report under six cases each: control, refused (rolled back, row and file gone, no line), 200-empty landed (kept, success), a code-less 502 landed (kept, success), 404-empty never arrived (kept, "could not be confirmed", no line), and landed with the read-back failed (kept, "could not be confirmed").
+
+  The chain verifies afterwards.
+- **`supabase/tests/erasure-null-answers.test.ts`** (+2) covers the erasure's and the purge's record write answered empty.
+- **`export-audit.test.ts`** has an honest mock plus a hollow audit-line case. The four media-upload tests now also pin `warning: null`.
+
+**Verified (locally — worktree `.worktrees/gnk-crm/log-event-hollow`, disposable stack `.iso/nullguard` = PostgREST v14.5, the hosted version; not production).**
+- **RED at the base.** The new DB file failed 21 of 31; the erasure file failed 2 of 35. The unit file's hollow-answer cases as they then stood (10 shapes × `logEvent` and `logEvents` = 20) and export-audit's hollow case failed 21 of 21. That was measured before the 11th shape (a 500 whose error message is not text) and the refusal and read-back cases were added; the refusal and read-back cases test new exports.
+- **GREEN on everything.**
+- **Mutants: 23 of 23 killed.** On the guard and the fake (9): any 2xx accepted, no status check, an empty message kept, a non-text message kept, `logEvents` unguarded, inserts unstatused, chains forgetting their verbs, a scripted status overridden, the data default. On the refusal rule, the read-back and both actions (14).
+- **Suites.** The full DB suite ran 82 files, 1,727/1,727 (the erasure file's two new cases were picked up mid-run; the totals match CI's). Unit 3,647/3,647. `typecheck`, `lint`, `build` and `check:static-routes` all passed.
+- **Adversarial review** (4 dimensions, each finding verified): 0 confirmed, 2 refuted. One test-hygiene nit was taken anyway: a failed storage listing now fails the rollback check instead of counting 0.
+
+**Rollback.** Revert the merge (application only; no migration, nothing on hosted). A rollback brings back belief in hollow answers, the two destructive rollbacks, and the export's CSV with no audit line.
+
+**Landing (2026-10-13, on the operator's "merge #153").**
+- **Branch CI** green on the head `f7ce4e3`, run 38464539378:
+  - checks;
+  - rls: 82 files, 1,727/1,727 on CI's fresh PostgREST v16.1 stack, printing the same evidence as locally (both clients' inserts answered 201, 201; the export's audit line hollow in five shapes → "500 thrown logEvent failed (export.exported): the write was not confirmed (HTTP 200 / 204 / 500)"; the confirmation and the report after a code-less 502 → kept, one line naming them; the erasure's and purge's record writes → their "record of it failed to write" errors);
+  - e2e.
+- **Merge.** PR [#153](https://github.com/KALAITSIDIS/gnk-crm/pull/153) merged 20:54:09Z, pinned to `f7ce4e3` → main `3e62e38` (main unmoved at `3c40779`). The merge's tree is byte-identical to the head's.
+- **Production.** Vercel `dpl_CdmNsek8YKQhAs5LtADNF5T3oQaZ` READY 20:57:16Z, aliased to gnk-crm.vercel.app (fra1). No runtime errors since the deploy. Signed out, `/login` answers 200, and `/contacts/export`, `/reports/commission-evidence` and `/viewings` answer 307 to `/login`.
+- **Merge CI** on `3e62e38`: run 38466481036 green (checks, rls, e2e).
+- No production page was loaded signed in, and no production row was read or written.
+- The remote and local `fix/log-event-hollow` are deleted; their commits are in main.
+- The worktree carried these records and is removed after them.
+- The disposable stack `.iso/nullguard` stays up for the next item, the refusal allowlist.
+
+**Left open.**
+- FIRST: put `EventWriteError.refused` and the slip take-back on the measured allowlist (above).
+- Then BACKLOG "Throws after a commit — 2026-10-13" lists 38 sites, one per VERIFY hit, where a `logEvent` throw after a committed write lands worse than silent success, ranked by harm:
+  - the 34 the scope judged worse that this change did not fix;
+  - two it had called borderline (`portals.ts:208`, `reservations.ts:359`);
+  - two more event lines inside listed actions (`leads.ts:1225`, `contacts.ts:397`).
