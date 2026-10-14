@@ -7,7 +7,15 @@ const withNextIntl = createNextIntlPlugin();
 const nextConfig: NextConfig = {
   experimental: {
     serverActions: {
-      // multi-photo uploads go through a server action (media pipeline, T1.4)
+      // Next's own cap on a server-action body — NOT the ceiling in
+      // production. Vercel answers any request body over ~4.5 MB with a 413
+      // before the app runs (measured 2026-08-30, DECISIONS T-media-import),
+      // so every browser upload is held under UPLOAD_REQUEST_BUDGET_BYTES
+      // (lib/constants/upload.ts): photos are resized and sent one per
+      // request (media-tab.tsx, client-image.ts), documents and branding
+      // over it are refused before sending (use-upload-form.ts), and the
+      // verify-a-report form posts only a SHA-256. This number matters only
+      // where no platform cap applies (local dev, a self-hosted run).
       bodySizeLimit: "25mb",
     },
   },

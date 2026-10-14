@@ -7,6 +7,8 @@ import {
   uploadBranding,
   type SettingsActionState,
 } from "@/lib/actions/settings";
+import { BRANDING_MAX_BYTES, formatMegabytes } from "@/lib/constants/upload";
+import { useUploadForm } from "@/components/features/shared/use-upload-form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -50,6 +52,9 @@ export function OrgNameForm({ name }: { name: string }) {
   );
 }
 
+/** The branding PNG's cap as the form prints it ("2.0 MB") — the action's own. */
+const BRANDING_LIMIT_TEXT = formatMegabytes(BRANDING_MAX_BYTES, "down");
+
 export function BrandingUpload({
   kind,
   title,
@@ -61,11 +66,21 @@ export function BrandingUpload({
   hint: string;
   currentUrl: string | null;
 }) {
-  const [state, formAction, pending] = useActionState(uploadBranding, initialState);
-  useSavedToast(state, `${title} uploaded`);
+  // refused before sending past the action's own 2 MB cap — a larger PNG used
+  // to reach Vercel's ~4.5 MB 413 and the error boundary — and a lost answer
+  // said, not thrown (T-upload-size-honest — use-upload-form.ts). The upload
+  // overwrites one fixed path, so re-sending after an unknown outcome is safe.
+  const upload = useUploadForm({
+    action: uploadBranding,
+    initialState,
+    limit: BRANDING_MAX_BYTES,
+    tooLargeAdvice: "Use a smaller PNG.",
+    unconfirmedText: `Could not confirm whether the ${title.toLowerCase()} was saved — reload the page to see the current one.`,
+    savedText: `${title} uploaded`,
+  });
 
   return (
-    <form action={formAction} className="flex flex-col gap-2">
+    <form onSubmit={upload.onSubmit} className="flex flex-col gap-2">
       <input type="hidden" name="kind" value={kind} />
       <Label htmlFor={`branding-${kind}`}>{title}</Label>
       {currentUrl ? (
@@ -85,16 +100,19 @@ export function BrandingUpload({
           type="file"
           accept="image/png"
           required
+          onChange={upload.onFileChange}
           className="max-w-64"
         />
-        <Button type="submit" size="sm" disabled={pending}>
-          {pending ? "Uploading…" : "Upload"}
+        <Button type="submit" size="sm" disabled={upload.pending}>
+          {upload.pending ? "Uploading…" : "Upload"}
         </Button>
       </div>
-      <p className="text-xs text-text-3">{hint}</p>
-      {state.error ? (
+      <p className="text-xs text-text-3">
+        {hint} Up to {BRANDING_LIMIT_TEXT}.
+      </p>
+      {upload.error ? (
         <p role="alert" className="text-sm text-danger">
-          {state.error}
+          {upload.error}
         </p>
       ) : null}
     </form>

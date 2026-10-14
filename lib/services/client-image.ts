@@ -6,6 +6,8 @@
  * 3 MB → 200, 5/8/20 MB → 413. Camera originals commonly run 3–8 MB, so the
  * server action's 20 MB promise was undeliverable and the first real photo
  * upload would have failed with an opaque 413 that looks like a code fault.
+ * The budget every upload is held to lives in lib/constants/upload.ts
+ * (UPLOAD_REQUEST_BUDGET_BYTES), shared with the document forms.
  *
  * The fix costs nothing visible: renditions cap at 1600 px (thumb 400 / card
  * 800 / full 1600 — lib/services/media.ts), so re-encoding oversized photos
@@ -19,14 +21,21 @@
  * ceiling applies to the whole body, so even downscaled photos batched into
  * one FormData could crest it together.
  *
+ * NOTHING OVER THE BUDGET IS RETURNED (T-upload-size-honest): a photo whose
+ * re-encode is still too large is refused here with a message naming it — the
+ * platform's 413 would otherwise surface as an unexplained failure. A file
+ * over the budget of a type the server refuses anyway (a HEIC picked through
+ * "All files", a type the OS could not name) is refused for its TYPE: "use a
+ * smaller photo" would only lead to the server's "only JPEG/PNG/WebP
+ * accepted" (lib/actions/media.ts).
+ *
  * Canvas re-encode strips EXIF (orientation applied first via
  * createImageBitmap) — consistent with the server pipeline, which strips it
  * anyway. The pure decision logic lives in the exported helpers so it can be
  * unit-tested; only `downscaleForUpload` touches browser APIs.
  */
 
-/** Keep each request comfortably under the measured ~4.5 MB platform 413. */
-export const UPLOAD_REQUEST_BUDGET_BYTES = 3_500_000;
+import { fitsUploadBudget, formatMegabytes, UPLOAD_REQUEST_BUDGET_BYTES } from "@/lib/constants/upload";
 
 /** Long-edge target for client re-encode; > the 1600px "full" rendition. */
 export const MAX_EDGE_PX = 2000;
@@ -55,14 +64,35 @@ export function fitWithin(
   };
 }
 
+/** Why a resized photo is not sent: its re-encode is still over the budget. */
+function tooLargeText(name: string, bytes: number): string {
+  const size = formatMegabytes(bytes, "up");
+  const limit = formatMegabytes(UPLOAD_REQUEST_BUDGET_BYTES, "down");
+  return `${name} is still ${size} after resizing — over the ${limit} limit for one upload. Nothing was uploaded. Use a smaller photo.`;
+}
+
 /**
- * Returns the file itself when it already fits the request budget; otherwise
- * a JPEG re-encode at MAX_EDGE_PX. Throws with the file's name when the
- * browser cannot decode it — the caller surfaces that instead of letting the
- * platform answer 413 with no explanation.
+ * Why an over-budget file of another type is not sent: its type, which the
+ * server refuses at any size (`ACCEPTED_MIME`, lib/services/media.ts — checked
+ * by uploadPropertyMedia, lib/actions/media.ts).
+ */
+function unsupportedTypeText(name: string): string {
+  return `${name}: only JPEG, PNG or WebP images can be uploaded. Nothing was uploaded.`;
+}
+
+/**
+ * Returns a file that fits the request budget: the file itself when it
+ * already does, otherwise a JPEG re-encode at MAX_EDGE_PX. Throws a message
+ * naming the file when it cannot be brought under the budget — not a type the
+ * server accepts, not decodable, or still too large after re-encoding — so
+ * the caller says why instead of letting the platform answer 413.
  */
 export async function downscaleForUpload(file: File): Promise<File> {
-  if (!needsClientDownscale(file.size, file.type)) return file;
+  if (!needsClientDownscale(file.size, file.type)) {
+    if (fitsUploadBudget(file.size)) return file;
+    // over the budget and not one of DECODABLE: the type is the problem
+    throw new Error(unsupportedTypeText(file.name));
+  }
 
   let bitmap: ImageBitmap;
   try {
@@ -80,6 +110,12 @@ export async function downscaleForUpload(file: File): Promise<File> {
     bitmap.close();
     throw new Error(`${file.name}: canvas unavailable in this browser`);
   }
+  // JPEG has no alpha channel, and the HTML canvas spec serializes one by
+  // compositing the pixels onto opaque BLACK — a transparent PNG would arrive
+  // with a black background nobody chose. Lay the canvas on WHITE first: the
+  // same flatten the server pipeline applies on purpose (lib/services/media.ts).
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, width, height);
   ctx.drawImage(bitmap, 0, 0, width, height);
   bitmap.close();
 
@@ -87,6 +123,9 @@ export async function downscaleForUpload(file: File): Promise<File> {
     canvas.toBlob(resolveBlob, "image/jpeg", RE_ENCODE_QUALITY),
   );
   if (!blob) throw new Error(`${file.name}: could not be re-encoded`);
+  // a 2000px JPEG is normally a fraction of the budget; a noisy panorama can
+  // still crest it, and then it is refused here rather than by the platform
+  if (!fitsUploadBudget(blob.size)) throw new Error(tooLargeText(file.name, blob.size));
 
   const stem = file.name.replace(/\.[^.]+$/, "");
   return new File([blob], `${stem}.jpg`, { type: "image/jpeg" });

@@ -1,7 +1,9 @@
 "use client";
 
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
+import * as Sentry from "@sentry/nextjs";
 import { ArrowDown, ArrowUp, Star, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -14,6 +16,7 @@ import {
   type MediaActionState,
 } from "@/lib/actions/media";
 import { downscaleForUpload } from "@/lib/services/client-image";
+import { uploadOneByOne } from "@/lib/services/client-upload";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
@@ -51,6 +54,9 @@ function altEn(alt: unknown): string {
 
 const initialState: MediaActionState = { error: null, savedAt: null };
 
+/** A toast the user must read: an upload whose outcome is unknown. */
+const UNTIL_DISMISSED = { duration: Infinity, closeButton: true } as const;
+
 export function MediaTab({
   propertyId,
   items,
@@ -64,6 +70,7 @@ export function MediaTab({
   /** cover/reorder/delete rights: admin/LM only (property_media RLS) */
   canManage?: boolean;
 }) {
+  const router = useRouter();
   const [uploading, setUploading] = useState(false);
   const [uploadKind, setUploadKind] = useState<"photo" | "floor_plan">("photo");
   const [progress, setProgress] = useState<string | null>(null);
@@ -75,11 +82,20 @@ export function MediaTab({
   /**
    * REL-05 (measured 2026-08-30): Vercel 413s request bodies over ~4.5 MB
    * BEFORE the server action runs, so (a) each photo is downscaled in the
-   * browser when it would not fit, and (b) files go up ONE PER REQUEST —
+   * browser when it would not fit — and refused, never sent, when it still
+   * would not (client-image.ts) — and (b) files go up ONE PER REQUEST —
    * the ceiling is on the whole body, and several photos batched into one
    * FormData could crest it together even after downscaling. Sequential on
    * purpose: server actions serialize per client anyway, and per-file
    * progress beats one long spinner.
+   *
+   * T-upload-size-honest: a request that never comes back (the platform's
+   * error page, a dropped connection) rejects the action call. The loop
+   * (uploadOneByOne) turns that into an unknown-outcome message naming the
+   * photo, and `finally` puts the button back — it used to stay on
+   * "Uploading n/N" for good, with nothing said. The lost request is reported
+   * to Sentry, as the error boundary it no longer reaches did: a platform 413
+   * never reaches the server's logs.
    */
   async function handleUpload(e: React.FormEvent) {
     e.preventDefault();
@@ -90,42 +106,47 @@ export function MediaTab({
     }
     setUploading(true);
     setUploadError(null);
-    let failed: string | null = null;
-    let done = 0;
-    for (const original of files) {
-      setProgress(`${done + 1}/${files.length}`);
-      let file = original;
-      try {
-        file = await downscaleForUpload(original);
-      } catch (err) {
-        failed = err instanceof Error ? err.message : `${original.name}: unreadable image`;
-        break;
+    try {
+      const { done, failed, unconfirmed } = await uploadOneByOne(files, {
+        prepare: downscaleForUpload,
+        send: (file) => {
+          const fd = new FormData();
+          fd.set("property_id", propertyId);
+          // MEDIA-K: hand-built FormData — the select's name attribute alone
+          // would never travel; the choice rides React state
+          fd.set("kind", uploadKind);
+          fd.append("files", file);
+          return uploadPropertyMedia(initialState, fd);
+        },
+        onProgress: (position, total) => setProgress(`${position}/${total}`),
+        onWarning: (text) => toast.warning(text),
+        onRejected: (error) => Sentry.captureException(error, { tags: { lost_request: "photo-upload" } }),
+      });
+      if (failed) {
+        setUploadError(done > 0 ? `${done}/${files.length} uploaded, then: ${failed}` : failed);
+        if (unconfirmed) {
+          // it may be in the gallery already: say so until dismissed, and re-read the page
+          toast.error(failed, UNTIL_DISMISSED);
+          router.refresh();
+        } else {
+          toast.error(failed);
+        }
+      } else {
+        toast.success(
+          done === 1 ? "Saved" : `Saved ${done} ${uploadKind === "floor_plan" ? "plans" : "photos"}`,
+        );
+        if (fileInput.current) fileInput.current.value = "";
       }
-      const fd = new FormData();
-      fd.set("property_id", propertyId);
-      // MEDIA-K: hand-built FormData — the select's name attribute alone
-      // would never travel; the choice rides React state
-      fd.set("kind", uploadKind);
-      fd.append("files", file);
-      const res = await uploadPropertyMedia(initialState, fd);
-      // saved, with a follow-up that did not complete — said, not hidden
-      if (res.warning) toast.warning(res.warning);
-      if (res.error) {
-        failed = res.error;
-        break;
-      }
-      done++;
-    }
-    setUploading(false);
-    setProgress(null);
-    if (failed) {
-      setUploadError(done > 0 ? `${done}/${files.length} uploaded, then: ${failed}` : failed);
-      toast.error(failed);
-    } else {
-      toast.success(
-        done === 1 ? "Saved" : `Saved ${done} ${uploadKind === "floor_plan" ? "plans" : "photos"}`,
-      );
-      if (fileInput.current) fileInput.current.value = "";
+    } catch (error) {
+      // uploadOneByOne never throws; this keeps any other surprise off the
+      // error boundary — and reported, as the boundary would have
+      Sentry.captureException(error, { tags: { lost_request: "photo-upload" } });
+      const text = "The upload stopped unexpectedly — reload the page and check the photos before uploading again.";
+      setUploadError(text);
+      toast.error(text, UNTIL_DISMISSED);
+    } finally {
+      setUploading(false);
+      setProgress(null);
     }
   }
 

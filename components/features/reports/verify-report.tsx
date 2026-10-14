@@ -2,8 +2,10 @@
 
 import { useActionState } from "react";
 import { useTranslations } from "next-intl";
+import * as Sentry from "@sentry/nextjs";
 import { BadgeCheck, BadgeX, ShieldQuestion } from "lucide-react";
 import { verifyEvidenceReport, type VerifyReportState } from "@/lib/actions/reports";
+import { verifyInBrowser } from "@/lib/services/client-hash";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,13 +14,30 @@ import { formatDateTime } from "@/lib/utils/format";
 const initialState: VerifyReportState = { error: null, result: null };
 
 /**
- * Prove a commission evidence PDF untampered: upload the file (its SHA-256 is
- * recomputed server-side) or paste a digest, and match it against the
- * append-only evidence_report_generated event log.
+ * The form's action runs in the BROWSER (T-upload-size-honest —
+ * lib/services/client-hash.ts `verifyInBrowser`, unit-tested there): a chosen
+ * PDF is hashed here (Web Crypto) and only its digest goes to the server
+ * action, through the action's existing `sha256` path. The PDF itself is
+ * never posted — a report over ~4.5 MB used to die at Vercel's platform 413
+ * before the action ran, and the client threw into the error boundary. Every
+ * failure is an answer on the form; a request that never came back is also
+ * reported to Sentry, as the error boundary did.
+ */
+const verifyAction = (prev: VerifyReportState, formData: FormData) =>
+  verifyInBrowser(prev, formData, {
+    verify: verifyEvidenceReport,
+    onRejected: (error) => Sentry.captureException(error, { tags: { lost_request: "verify-report" } }),
+  });
+
+/**
+ * Prove a commission evidence PDF untampered: choose the file (its SHA-256 is
+ * computed in the browser — the PDF never leaves this device, whatever its
+ * size) or paste a digest, and match it against the append-only
+ * evidence_report_generated event log.
  */
 export function VerifyReport() {
   const t = useTranslations("reports.verify");
-  const [state, formAction, pending] = useActionState(verifyEvidenceReport, initialState);
+  const [state, formAction, pending] = useActionState(verifyAction, initialState);
 
   return (
     <section className="flex max-w-2xl flex-col gap-3 rounded-[10px] border border-border bg-surface p-5">
