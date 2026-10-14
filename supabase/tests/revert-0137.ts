@@ -21,6 +21,11 @@ export const readMigration0137 = () => read(MIGRATION_0137);
 
 /** md5 of 0041's prosrc — the preflight's guard, and what the rollback must restore. */
 export const BODY_0041_MD5 = "529134eb853faf9aa3b0c9a63257a35e";
+/**
+ * md5 of 0137's prosrc (carriage returns ignored) — what 0137 applied, local and hosted (2026-10-03), and 0146's
+ * preflight guard. The live body is 0146's since, so the replays compare against this, not against the live one.
+ */
+export const BODY_0137_MD5 = "466cf76e9326e96d6dc2ec6bc46f94ae";
 export const SIG_0137 = "public.resolve_share_link(text)";
 
 /** 0041's exposure guard: no column of these names may appear in the function's source (0041's header). */

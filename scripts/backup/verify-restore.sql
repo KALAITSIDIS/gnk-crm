@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 145::bigint as migrations,
+    2::bigint as auth_users, 146::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -941,6 +941,36 @@ misc as (
                           from pg_proc p
                           cross join lateral (select regexp_replace(p.prosrc, '--[^\n]*', '', 'g') as code) c
                          where p.oid = to_regprocedure('public.trg_installment_paid_kept()')), false))::text
+  union all
+  -- 0146: a share link names, pins and shows only its own organisation's
+  -- rows. share_link_properties_insert binds the property to the caller's
+  -- organisation; share_links_insert / _update bind a pinned price list; the
+  -- public page (resolve_share_link) reads the target, the walk's anchor and
+  -- recursive member, the pinned list, its lines (through the list read), the
+  -- proposal's properties and the linked-row count in the link's own
+  -- organisation only. A restore that brought back 0137's body or 0023 /
+  -- 0100's checks — or lost any one of these bindings — reads false here.
+  select 'SECURITY: a share link names, pins and shows only its own organisation''s rows (0146)', 'true',
+         (coalesce((select p.prosecdef
+                           and c.code ~ 'from properties where id = v_target and org_id = v_link\.org_id'
+                           and c.code ~ 'from price_lists where id = v_link\.price_list_id and org_id = v_link\.org_id'
+                           and c.code ~ 'where p\.id = v_target\s+and p\.org_id = v_link\.org_id\s+union all'
+                           and c.code ~ 'and c\.visibility <> ''archived''\s+and c\.org_id = v_link\.org_id'
+                           and c.code ~ 'on pli\.price_list_id = v_pl\.id'
+                           and c.code !~ 'pli\.price_list_id\s*=\s*v_link\.price_list_id'
+                           and c.code ~ 'into v_count\s+from share_link_properties slp\s+where slp\.share_link_id = v_link\.id\s+and exists \(select 1 from properties p\s+where p\.id = slp\.property_id and p\.org_id = v_link\.org_id\)'
+                           and c.code ~ 'join properties pr on pr\.id = slp\.property_id and pr\.org_id = v_link\.org_id'
+                      from pg_proc p
+                      cross join lateral (select regexp_replace(p.prosrc, '--[^\n]*', '', 'g') as code) c
+                     where p.oid = to_regprocedure('public.resolve_share_link(text)')), false)
+          and coalesce((select pg_get_expr(p.polwithcheck, p.polrelid)
+                                 ~ '\(p\.id = share_link_properties\.property_id\) AND \(p\.org_id = \( SELECT (public\.)?current_org_id\(\) AS current_org_id\)\)'
+                          from pg_policy p
+                         where p.polrelid = 'public.share_link_properties'::regclass and p.polname = 'share_link_properties_insert'), false)
+          and (select count(*) from pg_policy p
+                where p.polrelid = 'public.share_links'::regclass and p.polname in ('share_links_insert', 'share_links_update')
+                  and pg_get_expr(p.polwithcheck, p.polrelid)
+                        ~ '\(price_list_id IS NULL\) OR \(EXISTS \( SELECT 1\s+FROM (public\.)?price_lists pl\s+WHERE \(\(pl\.id = share_links\.price_list_id\) AND \(pl\.org_id = \( SELECT (public\.)?current_org_id\(\) AS current_org_id\)\)') = 2)::text
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.
