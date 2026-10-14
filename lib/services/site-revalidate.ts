@@ -39,6 +39,23 @@ export const REVALIDATE_KEY_HEADER = "x-gnk-revalidate-key";
  */
 const TIMEOUT_MS = 10_000;
 
+/**
+ * The bound on notifySiteIfPublic's listing lookup. Unlike the knock, the
+ * lookup is NOT after the response: setMediaCover, setMediaAlt, moveMedia and
+ * deleteMediaBulk await it straight after their write and BEFORE that write's
+ * event (T-site-knock-order), so a lookup
+ * that never answered would hold the event back until the platform killed the
+ * function — the photograph changed, its timeline line never written.
+ * supabase-js sets no timeout of its own: a read from a server that took the
+ * connection and never answered was measured still pending after three
+ * seconds, with nothing in supabase-js to end it (2026-10-14, 2.110.2). A
+ * one-row read by primary key that has not answered in five seconds is not
+ * going to; it is abandoned, postgrest-js RESOLVES that as `{ error }` (code
+ * "", measured), it is reported as any failed lookup is, and the action goes
+ * on to its event. The site then refreshes on its timers.
+ */
+const LOOKUP_TIMEOUT_MS = 5_000;
+
 let warnedUnset = false;
 
 /** Test seam: the once-per-instance latch. */
@@ -50,8 +67,10 @@ export type SiteRevalidateOutcome = "sent" | "skipped" | "failed";
 
 /**
  * A bulk change — many units' prices or layouts at once (applyPriceUplift,
- * applyUnitType). The site rebuilds the home page, the list and EVERY listing
- * page, each on its own next visit, from ONE request (gnk-web
+ * applyUnitType), a project field synced onto its units (syncInheritedField),
+ * or an area's name, which every listing in the area shows (renameArea;
+ * T-site-knock-order). The site rebuilds the home page, the list and EVERY
+ * listing page, each on its own next visit, from ONE request (gnk-web
  * lib/revalidate.ts readKnock; T-unit-site-revalidate). Chosen over sending
  * the affected references in batches: no read of which units are public, no
  * page of references to drop at a batch boundary, no unit the site does not
@@ -169,7 +188,9 @@ export function notifySiteAfter(target: SiteTarget): void {
  * the write it follows is already committed (rule 1), and the site refreshes
  * on its timers as it does after any failed knock. No row is not a failure:
  * the listing is gone, or is not the caller's to read, and either way there
- * is nothing to tell the site.
+ * is nothing to tell the site. A lookup that does not answer within
+ * LOOKUP_TIMEOUT_MS is abandoned and reported the same way: its callers await
+ * it before their event.
  */
 export async function notifySiteIfPublic(
   supabase: SupabaseClient<Database>,
@@ -181,6 +202,7 @@ export async function notifySiteIfPublic(
       .from("properties")
       .select("reference, visibility")
       .eq("id", propertyId)
+      .abortSignal(AbortSignal.timeout(LOOKUP_TIMEOUT_MS))
       .maybeSingle();
     if (error) {
       reportLookupFailure(propertyId, error.code || "unknown");

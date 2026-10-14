@@ -1,22 +1,25 @@
 import * as Sentry from "@sentry/nextjs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeClient, type FakePage } from "@/lib/testing/fake-client";
+import { stalledClient } from "@/lib/testing/stalled-client";
 
 /**
  * A committed media save stays saved when the site cannot be told.
  *
- * Each media action ends by asking the database whether the listing is public
- * and, if so, knocking on the marketing site. Both steps come AFTER the row is
- * written, and neither may turn that write into a failure the desk sees: the
- * photograph IS on the listing, whatever the database, the site or Sentry did
- * next. lib/services/site-revalidate.test.ts proves the helper's own outcomes;
- * this proves them from the action's side with the REAL helper in the chain —
- * a mocked notifier (media-upload-renditions.test.ts) cannot fail, so it
- * cannot prove that the save survives one that does.
+ * Each media action asks the database whether the listing is public and, if
+ * so, knocks on the marketing site. Both steps come AFTER the row is written —
+ * straight after it, before the event (T-site-knock-order), except the upload,
+ * which knocks once its batch has settled — and neither may turn that write
+ * into a failure the desk sees: the photograph IS on the listing, whatever the
+ * database, the site or Sentry did next. lib/services/site-revalidate.test.ts
+ * proves the helper's own outcomes; this proves them from the action's side
+ * with the REAL helper in the chain — a mocked notifier
+ * (media-upload-renditions.test.ts) cannot fail, so it cannot prove that the
+ * save survives one that does.
  *
  * setMediaAlt is the action under test because it is the lightest: no
- * storage, no admin client, no score — a read, a row-count-proved update, an
- * event, then the notifier.
+ * storage, no admin client, no score — a read, a row-count-proved update, the
+ * notifier, then an event.
  */
 const state = vi.hoisted(() => ({ caller: null as unknown }));
 
@@ -37,6 +40,7 @@ vi.mock("@sentry/nextjs", () => ({ captureMessage: vi.fn() }));
 // Deliberately NOT mocked: @/lib/services/site-revalidate. That is the point.
 
 const { setMediaAlt } = await import("@/lib/actions/media");
+const { logEvent } = await import("@/lib/services/events");
 
 const OLD = { ...process.env };
 const DB_ERROR = { code: "XX000", message: "Fixture database error" };
@@ -99,5 +103,34 @@ describe("a media save outlives a failed site notification", () => {
     await settle();
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(Sentry.captureMessage, "a lookup that worked is not a lookup failure").not.toHaveBeenCalled();
+  });
+
+  it("the lookup never answers: abandoned at its bound, reported, and the alt's event is still written", async () => {
+    // The lookup now runs BEFORE the event (T-site-knock-order). Unbounded, a
+    // stalled read would hold the event back until the platform killed the
+    // function: the alt saved, its line never written. The REAL postgrest-js
+    // over a connection that never answers; the bound is shortened, not waited.
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 200 }));
+    const realTimeout = AbortSignal.timeout.bind(AbortSignal);
+    vi.spyOn(AbortSignal, "timeout").mockImplementation(() => realTimeout(20));
+    vi.mocked(logEvent).mockClear();
+    const stalled = stalledClient();
+    const media = fakeClient({
+      property_media: [
+        { data: { alt: {} }, error: null },
+        { data: [{ id: "m-1" }], error: null },
+      ],
+    });
+    state.caller = { from: (t: string) => (t === "properties" ? stalled.from("properties") : media.client.from(t)) };
+    const outcome = await Promise.race([
+      setMediaAlt("prop-1", "m-1", "A villa at dusk"),
+      new Promise((r) => setTimeout(() => r("still waiting on the lookup"), 2_000)),
+    ]);
+    expect(outcome).toEqual({ error: null });
+    expect(media.argsOf("property_media", "update"), "the write happened").toHaveLength(1);
+    expect(logEvent, "the event is written once the lookup is abandoned").toHaveBeenCalledTimes(1);
+    await settle();
+    expect(fetchSpy, "no knock on a lookup that never answered").not.toHaveBeenCalled();
+    expect(Sentry.captureMessage, "reported once").toHaveBeenCalledTimes(1);
   });
 });

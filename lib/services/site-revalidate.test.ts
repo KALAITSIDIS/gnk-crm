@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Database } from "@/lib/supabase/database.types";
 import { fakeClient, type FakePage } from "@/lib/testing/fake-client";
+import { stalledClient } from "@/lib/testing/stalled-client";
 import {
   EVERY_LISTING,
   notifySite,
@@ -227,20 +228,49 @@ describe("notifySiteIfPublic", () => {
   it("a THROWN lookup is reported by its name, never its message, and does not knock", async () => {
     const fetchSpy = arm();
     vi.spyOn(console, "error").mockImplementation(() => {});
-    const thrower = {
-      from: () => ({
-        select: () => ({
-          eq: () => ({ maybeSingle: () => Promise.reject(new TypeError("fetch failed: 10.0.0.1")) }),
-        }),
-      }),
-    } as unknown as SupabaseClient<Database>;
+    // every builder step returns the chain, so the rejection is the answer's —
+    // not a TypeError for a builder method this stand-in happened to lack
+    const maybeSingle = vi.fn(() => Promise.reject(new TypeError("fetch failed: 10.0.0.1")));
+    const chain: Record<string, unknown> = { maybeSingle };
+    for (const step of ["select", "eq", "abortSignal"]) chain[step] = () => chain;
+    const thrower = { from: () => chain } as unknown as SupabaseClient<Database>;
     await expect(notifySiteIfPublic(thrower, "prop-5")).resolves.toBeUndefined();
     await settle();
+    expect(maybeSingle, "the lookup was sent").toHaveBeenCalledTimes(1);
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(Sentry.captureMessage).toHaveBeenCalledTimes(1);
     const context = JSON.stringify(vi.mocked(Sentry.captureMessage).mock.calls[0]);
     expect(context).toContain("TypeError");
     expect(context).not.toContain("10.0.0.1");
+  });
+
+  it("a lookup that never answers is abandoned at its bound: reported, no knock, and the caller goes on", async () => {
+    // The media actions look the listing up straight after their write and
+    // BEFORE its event (T-site-knock-order), so an unbounded lookup would hold
+    // that event back until the platform killed the function. The REAL
+    // postgrest-js over a connection that never answers (stalledClient); the
+    // bound the helper asks for is recorded, and shortened so the test does
+    // not wait it out.
+    const fetchSpy = arm();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const asked: number[] = [];
+    const realTimeout = AbortSignal.timeout.bind(AbortSignal);
+    vi.spyOn(AbortSignal, "timeout").mockImplementation((ms: number) => {
+      asked.push(ms);
+      return realTimeout(20);
+    });
+    const outcome = await Promise.race([
+      notifySiteIfPublic(stalledClient(), "prop-7").then(() => "returned"),
+      new Promise((r) => setTimeout(() => r("still waiting"), 2_000)),
+    ]);
+    expect(outcome, "the lookup is bounded").toBe("returned");
+    expect(asked, "one bound, asked for once").toHaveLength(1);
+    expect(asked[0], "and no longer than five seconds").toBeLessThanOrEqual(5_000);
+    expect(asked[0]).toBeGreaterThan(0);
+    await settle();
+    expect(fetchSpy, "an abandoned lookup must not guess that the listing is public").not.toHaveBeenCalled();
+    expect(Sentry.captureMessage, "reported once, as a failed lookup").toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(Sentry.captureMessage).mock.calls[0]![0])).toContain("listing lookup failed");
   });
 
   it("a reporter that throws is swallowed too — the write it follows is already committed", async () => {

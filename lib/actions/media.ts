@@ -350,6 +350,14 @@ export async function setMediaCover(
     .eq("property_id", propertyId)
     .eq("is_cover", true)
     .neq("id", mediaId);
+
+  // The site (T-site-knock-order): the new cover has committed whether or not
+  // the old one was cleared, so the site is told on both paths — and before
+  // the event and the score below, which can throw. AFTER the clear, never
+  // between it and the set: a read there would widen the window in which the
+  // listing has two covers, and in which two people setting different covers
+  // at once each clear the other's (T-site-knock-order review).
+  await notifySiteIfPublic(supabase, propertyId);
   if (clearErr) return { error: clearErr.message };
 
   await logEvent(supabase, {
@@ -361,7 +369,6 @@ export async function setMediaCover(
     payload: { media_id: mediaId },
   });
   await recomputeQualityScore(supabase, propertyId);
-  await notifySiteIfPublic(supabase, propertyId);
   revalidatePath(`/properties/${propertyId}`);
   revalidatePath("/properties");
   return { error: null };
@@ -447,6 +454,9 @@ export async function setMediaAlt(
     return { error: "Not saved — only admins and listing managers manage photos." };
   }
 
+  // the site FIRST, before the event that can throw (T-site-knock-order)
+  await notifySiteIfPublic(supabase, propertyId);
+
   await logEvent(supabase, {
     orgId: profile.orgId,
     actorId: profile.id,
@@ -456,7 +466,6 @@ export async function setMediaAlt(
     // the text itself, so the timeline shows what was written without a join
     payload: { media_id: mediaId, alt: trimmed || null },
   });
-  await notifySiteIfPublic(supabase, propertyId);
   revalidatePath(`/properties/${propertyId}`);
   return { error: null };
 }
@@ -503,6 +512,10 @@ export async function moveMedia(
     return { error: bErr?.message ?? "Order not changed — the other photo no longer exists." };
   }
 
+  // the site FIRST, once both halves of the swap are proven, before the event
+  // that can throw (T-site-knock-order)
+  await notifySiteIfPublic(supabase, propertyId);
+
   await logEvent(supabase, {
     orgId: profile.orgId,
     actorId: profile.id,
@@ -511,7 +524,6 @@ export async function moveMedia(
     eventType: "media_reordered",
     payload: { media_id: mediaId, direction },
   });
-  await notifySiteIfPublic(supabase, propertyId);
   revalidatePath(`/properties/${propertyId}`);
   return { error: null };
 }
@@ -524,7 +536,8 @@ export async function deleteMedia(propertyId: string, mediaId: string): Promise<
 /**
  * Delete one or more photos: rows first (RLS-checked, `.select()` returns only
  * what was actually deleted — so a permission-denied delete can't strand rows
- * pointing at removed files), then storage objects, cover promotion, events.
+ * pointing at removed files), then the site's knock, storage objects, cover
+ * promotion, events.
  */
 export async function deleteMediaBulk(
   propertyId: string,
@@ -549,6 +562,12 @@ export async function deleteMediaBulk(
       deleted: 0,
     };
   }
+
+  // The site, FIRST (T-site-knock-order): the rows are gone and the files go
+  // next, so a site left un-told renders broken photographs for up to an
+  // hour — and the event loop below can throw part-way. The knock runs after
+  // the response, once the files and the cover below are settled.
+  await notifySiteIfPublic(supabase, propertyId);
 
   const admin = createAdminClient();
   // Renditions live in the bucket their KIND decides (media-bucket.ts), so a
@@ -605,7 +624,6 @@ export async function deleteMediaBulk(
   }
 
   await recomputeQualityScore(supabase, propertyId);
-  await notifySiteIfPublic(supabase, propertyId);
   revalidatePath(`/properties/${propertyId}`);
   revalidatePath("/properties");
   return { error: null, deleted: deletedRows.length };
