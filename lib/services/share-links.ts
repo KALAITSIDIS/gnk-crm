@@ -104,7 +104,10 @@ export interface Proposal {
   message: string | null;
   locale: ShareLocale;
   expires_at: string;
-  /** how many were curated — may exceed `properties.length` if some archived */
+  /**
+   * how many were curated — may exceed `properties.length` if some archived. Since 0146 it counts only the link's
+   * own organisation's rows (a row naming another organisation's property is neither shown nor counted).
+   */
   property_count: number;
   properties: ProposalProperty[];
   agent: { name: string; email: string; phone: string | null } | null;

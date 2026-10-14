@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { Client } from "pg";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { anonClient, createTestUser, ensureTestOrg, serviceClient, type TestUser } from "./helpers";
-import { BODY_0041_MD5, FORBIDDEN_0041, REVERT_0137_SQL, SIG_0137 as SIG, readMigration0137 } from "./revert-0137";
+import { BODY_0041_MD5, BODY_0137_MD5, FORBIDDEN_0041, REVERT_0137_SQL, SIG_0137 as SIG, readMigration0137 } from "./revert-0137";
 
 /**
  * A share link's once-a-day `opened` line is throttled only by its own
@@ -22,8 +22,13 @@ import { BODY_0041_MD5, FORBIDDEN_0041, REVERT_0137_SQL, SIG_0137 as SIG, readMi
  * function itself with the hash it can read.
  *
  * THE FIX PINNED HERE: both throttle blocks (availability and proposal) carry
- * `org_id = v_link.org_id and actor_id is null`; the function is otherwise
- * 0041's, and 0041's exposure guard still holds.
+ * `org_id = v_link.org_id and actor_id is null`; 0137's function is otherwise
+ * 0041's, and 0041's exposure guard still holds. Since 0146 the LIVE body
+ * also carries 0146's organisation predicates (share-link-tenant-binding
+ * .test.ts pins those, and that 0146 kept both throttles): the body checks
+ * here therefore compare 0137's body — 0137 replayed over 0041's, inside a
+ * rolled-back transaction — not the live one; the behaviour runs on the live
+ * one.
  *
  * Every behavioural test runs in a transaction that is always rolled back:
  * the link is made there as postgres; a session's line is planted there as
@@ -261,15 +266,23 @@ describe("3. the function keeps its shape, its callers and 0041's exposure guard
     expect(rows[0]).toEqual({ prosecdef: true, owner: "postgres", proconfig: ["search_path=public"], ret: "jsonb" });
   });
 
-  it("the body is 0041's but the two predicates per throttle and their comment lines", async () => {
-    const now = (await o.query<{ src: string }>(`select prosrc as src from pg_proc where oid = '${SIG}'::regprocedure`)).rows[0]!.src;
+  it("0137's body is 0041's but the two predicates per throttle and their comment lines (0137 replayed over 0041's)", async () => {
+    let now = "";
     let before = "";
     await rolledBack(async () => {
       await o.query(REVERT_0137_SQL);
       before = (await o.query<{ src: string }>(`select prosrc as src from pg_proc where oid = '${SIG}'::regprocedure`)).rows[0]!.src;
+      await o.query(readMigration0137());
+      now = (await o.query<{ src: string }>(`select prosrc as src from pg_proc where oid = '${SIG}'::regprocedure`)).rows[0]!.src;
     });
     expect(now.replace(A_PRED, "").replace(B_PRED, "")).toBe(before);
     expect(now).not.toBe(before);
+  });
+
+  it("the live body (0146's since) still carries both throttles' predicates", async () => {
+    const live = (await o.query<{ src: string }>(`select prosrc as src from pg_proc where oid = '${SIG}'::regprocedure`)).rows[0]!.src;
+    expect(live.split(A_PRED).length - 1, "the availability throttle").toBe(1);
+    expect(live.split(B_PRED).length - 1, "the proposal throttle").toBe(1);
   });
 
   it("0041's exposure guard: no forbidden column name appears in the function's source", async () => {
@@ -292,8 +305,9 @@ describe("3. the function keeps its shape, its callers and 0041's exposure guard
 });
 
 describe("4. the migration itself (rolled back)", () => {
-  it("replays over 0041's body: preflight, postflight, the diagnostic as its last row, the same body as applied", async () => {
-    const applied = await bodyMd5();
+  it("replays over 0041's body: preflight, postflight, the diagnostic as its last row, the body 0137 applied", async () => {
+    // 0137's body as applied (local and hosted, 2026-10-03); the live one is 0146's since
+    const applied = BODY_0137_MD5;
     await rolledBack(async (notices) => {
       await o.query(REVERT_0137_SQL);
       expect(await bodyMd5()).toBe(BODY_0041_MD5);
@@ -359,7 +373,8 @@ describe("4. the migration itself (rolled back)", () => {
   });
 
   for (const [what, drift, refusal] of [
-    ["applied twice (the body is already 0137's)", "", /0137 aborted: resolve_share_link is not 0041's definer body/],
+    ["applied twice (the body is already 0137's)", "__0137_APPLIED__", /0137 aborted: resolve_share_link is not 0041's definer body/],
+    ["a later body (0146's, live)", "", /0137 aborted: resolve_share_link is not 0041's definer body/],
     ["a body that differs from 0041's", "__REVERT_EDITED__", /0137 aborted: resolve_share_link is not 0041's definer body/],
     ["not a definer", `alter function ${SIG} security invoker`, /0137 aborted: resolve_share_link is not 0041's definer body \(md5 missing/],
     ["anon may not call it", `revoke execute on function ${SIG} from anon`, /0137 aborted: resolve_share_link's grants are not 0041's/],
@@ -374,6 +389,10 @@ describe("4. the migration itself (rolled back)", () => {
       await rolledBack(async () => {
         if (drift === "__REVERT_EDITED__") {
           await o.query(REVERT_0137_SQL.replace("-- throttle: one `opened` event per link per Cyprus day (see header)", "-- throttle: one per day (edited by hand)"));
+        } else if (drift === "__0137_APPLIED__") {
+          await o.query(REVERT_0137_SQL);
+          await o.query(readMigration0137());
+          expect(await bodyMd5()).toBe(BODY_0137_MD5);
         } else if (drift) {
           await o.query(REVERT_0137_SQL);
           await o.query(drift);
