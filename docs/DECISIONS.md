@@ -9842,7 +9842,7 @@ The review then found a second instance in the same function. The slip's 23505 b
 - The remote and local `fix/refusal-allowlist` are deleted; their commits are in main.
 - The worktree carried these records and is removed after them. The disposable stack `.iso/nullguard` stays up for the next item.
 
-## T-external-audit-2026-10-14 — an external architectural audit verified item by item before anything changed: three items DISAGREE / ALREADY RESOLVED, four AGREE WITH MODIFICATIONS, and the real gaps beside them became five changes on four PRs (2026-10-14; migrations 0146 and 0147; NOT LANDED — PRs #RLS_PR, #157, #158, #159; landing on the operator's word)
+## T-external-audit-2026-10-14 — an external architectural audit verified item by item before anything changed: three items DISAGREE / ALREADY RESOLVED, four AGREE WITH MODIFICATIONS, and the real gaps beside them became five changes on four PRs (2026-10-14; migrations 0146 and 0147; NOT LANDED — PRs #160, #157, #158, #159; landing on the operator's word)
 
 The operator pasted an external architectural audit on 2026-10-14: seven items, each a claim and a remedy. Every claim was taken as a hypothesis, and no remedy was applied as written.
 
@@ -9899,7 +9899,7 @@ The operator pasted an external architectural audit on 2026-10-14: seven items, 
 
 **Rollback.** Nothing in this entry itself; each change below carries its own.
 
-## T-share-link-tenant — a share link names, pins and shows only its own organisation's properties, price list and agent (2026-10-14; migration 0146; NOT LANDED — PR #RLS_PR, `fix/share-link-tenant` head `b47f927`; landing on the operator's word)
+## T-share-link-tenant — a share link names, pins and shows only its own organisation's properties, price list and agent (2026-10-14; migration 0146; NOT LANDED — PR #160, `fix/share-link-tenant` head `59d8d0e`; landing on the operator's word)
 
 Item 1 of `T-external-audit-2026-10-14`: the gap beside the audit's claim. The last replacement of `resolve_share_link` before this is 0137 (every migration grepped).
 
@@ -9933,9 +9933,9 @@ Item 1 of `T-external-audit-2026-10-14`: the gap beside the audit's claim. The l
 - **Review round** (commit `83bc9a4`): RED on the unchanged files 26 failed / 38 passed (64), GREEN 64/64; 12 of 12 mutants killed.
 - **Re-verified on PostgREST v14.5** (hosted's version):
   - Postgres 17.11.0.004, fresh at origin/main's 145: this file and `rls-hoist.test.ts` RED, 31 failed / 57 passed of 88; after `migration up` of 0146 + 0147 (`83bc9a4`'s files, md5 `e82bb8dc…` / `52cb92aa…`), the full DB suite 83 files, 1,819/1,819.
-  - Postgres 17.6.1.159 (CI's image), fresh from the branch's 147 migrations with the FINAL 0147 (`b47f927`): 83 files, 1,824/1,824.
+  - Postgres 17.6.1.159 (CI's image), fresh from the branch's 147 migrations with 0147 as at `b47f927` (the final `59d8d0e` differs in comments only): 83 files, 1,824/1,824.
 - Unit 3,665/3,665 at `83bc9a4` (re-run sequentially on a quiet machine), `typecheck`, `lint`; types regenerated at 0147: identical.
-- Branch CI: run 38600602984 on `83bc9a4` failed at `supabase start` on 0147's preflight (`T-rls-hoist-rest`); run 38604283010 on `b47f927` green (checks, unit 3,665; rls 83 files, 1,824/1,824 on CI's stack — Postgres 17.6.1.159, PostgREST v16.1; e2e), finished 2026-10-14 17:25:30Z. No PR is open for `fix/share-link-tenant` yet (#RLS_PR).
+- Branch CI: run 38600602984 on `83bc9a4` failed at `supabase start` on 0147's preflight (`T-rls-hoist-rest`); run 38604283010 on `b47f927` green (checks, unit 3,665; rls 83 files, 1,824/1,824 on CI's stack — Postgres 17.6.1.159, PostgREST v16.1; e2e), finished 2026-10-14 17:25:30Z. No PR is open for `fix/share-link-tenant` yet (#160).
 
 **Review round (two adversarial reviews, nine findings, all fixed in `83bc9a4`).**
 - #1 / #4: `share_links.created_by` was a third route (above): bound in both layers; the claim narrowed everywhere it is made to properties, price list and agent — the district / area NAMES are not bound (composite-key series).
@@ -9961,9 +9961,9 @@ Item 1 of `T-external-audit-2026-10-14`: the gap beside the audit's claim. The l
 - The single-column keys themselves, and the district / area names the proposal still reads by id (composite-key series, BACKLOG).
 - `share_links.revoked_by` stays unbound (shown nowhere; an oracle on profile ids, with the other profile links).
 
-**Status.** NOT LANDED — PR #RLS_PR (`fix/share-link-tenant`, head `b47f927`, with 0147); landing on the operator's word, hosted first.
+**Status.** NOT LANDED — PR #160 (`fix/share-link-tenant`, head `59d8d0e`, with 0147); landing on the operator's word, hosted first.
 
-## T-rls-hoist-rest — every RLS policy evaluates the helpers once per statement, and the guard looks at the whole schema (2026-10-14; migration 0147; NOT LANDED — PR #RLS_PR, `fix/share-link-tenant` head `b47f927`; landing on the operator's word)
+## T-rls-hoist-rest — every RLS policy evaluates the helpers once per statement, and the guard looks at the whole schema (2026-10-14; migration 0147; NOT LANDED — PR #160, `fix/share-link-tenant` head `59d8d0e`; landing on the operator's word)
 
 Item 1b of `T-external-audit-2026-10-14`, done as hygiene: immaterial at today's sizes (the largest affected table, `areas`, has 130 rows), free to do (0100:15, "Hoisting is free"), and worth doing before `price_list_items`, `property_media` and `documents` grow.
 
@@ -9987,8 +9987,8 @@ Item 1b of `T-external-audit-2026-10-14`, done as hygiene: immaterial at today's
 - **The fix:** each guard is checked by what its grants decide, the 0143 idiom (`has_function_privilege`): never anon (PUBLIC's grant is anon's), and authenticated for `rls_bare_auth_calls` only. The self-check compares `rls_bare_helper_calls`' ACL with the one captured (`set_config`) before its CREATE OR REPLACE. Hosted's ACLs as read on 2026-10-14 satisfy both checks.
 - **Tests:** two replays with `service_role`'s EXECUTE revoked and granted; three drift refusals (the auth-call check granted to anon, taken from authenticated; the presence count granted to PUBLIC).
 - **Verified:** RED on the committed file 1 failed / 28 passed — the revoked-`service_role` replay, reproducing CI's refusal; GREEN 29/29. Mutants: the anon check and the authenticated check are both killed; the captured-ACL postflight comparison is an equivalent mutant (CREATE OR REPLACE cannot change an ACL), kept as an invariant; the PUBLIC check was redundant with the anon check and is removed. The full suite on CI's image (above) 1,824/1,824.
-- Final file md5 `5b3f14814021a80f9639b02dbc92f952`, 38,598 bytes. `83bc9a4`'s `52cb92aa…` and `7d04aeb`'s `13c5b5ad…` are STALE for 0147. 0146 is unchanged by `b47f927`: `e82bb8dc78b65f90745de1dc3420f6d1` (`145f728`'s `590e822c…` is stale).
-- **The file's comment is kept as committed, wrong cause and all.** 0147:223-228 says "CI's 17.6.1.159 image reads it without service_role", and `rls-hoist.test.ts`:168-173 (its comment and the two replay titles, "(CI's image)" / "(hosted's image)") say the same. The reads above contradict that. Correcting the migration's comment would change the md5 again — the way `52cb92aa…` and `13c5b5ad…` went stale — and void the CI evidence on `b47f927`, for a SQL comment that never reaches the database. So `5b3f14814021a80f9639b02dbc92f952` stays final, and these records hold the measured account. The test file is not md5-pinned: its comment and titles can be corrected by the next change that touches it (BACKLOG NOTE, "External audit — 2026-10-14").
+- **The comment corrected, `59d8d0e` (comment-only, on `b47f927`).** `b47f927`'s comment in 0147 and in `rls-hoist.test.ts` blamed "CI's 17.6.1.159 image"; the reads above contradict that. Both now say only what was measured — hosted and fresh local stacks grant it, the shared local stack built migration by migration does not, and a text pin refused CI's fresh stack — and the two replay titles no longer name an image. The preflight, the self-check and the tests are unchanged (rls-hoist 29/29 re-run); branch CI run 38611522514 on `59d8d0e`.
+- Final file md5 `cce6b3c96c982beb5fcb6606ab2846e5`, 38,659 bytes (`59d8d0e`). `b47f927`'s `5b3f1481…`, `83bc9a4`'s `52cb92aa…` and `7d04aeb`'s `13c5b5ad…` are STALE for 0147. 0146 is unchanged by both commits: `e82bb8dc78b65f90745de1dc3420f6d1` (`145f728`'s `590e822c…` is stale).
 - **The rule:** a migration preflight never pins `proacl` as text for a function whose grants come partly from default privileges. Check what the grants decide (`has_function_privilege`), or compare with a value captured earlier in the same transaction. The drift was on record before: 0023:79, 0037:11, and DECISIONS `T-primary-key-immutable` ("Default privileges differ by environment").
 
 **Tests.** `supabase/tests/rls-hoist.test.ts` (29): the independent scan finds nothing bare schema-wide; a planted bare call on `areas` and a restrictive probe are reported; the guard's body, comments and grants; the replay over `revert-0147.ts` reproduces the live schema policy for policy; the self-check refuses the file with ANY ONE of the 51 ALTERs dropped (all 51 tried), with an ALTER that changes meaning, with a guard narrowed to permissive; the preflight refuses applied-twice, a drifted, pre-hoisted or role-narrowed policy, a 52nd bare (restrictive) policy, and each grant drift; the busy-lock order; the two privilege replays.
@@ -10000,7 +10000,7 @@ Item 1b of `T-external-audit-2026-10-14`, done as hygiene: immaterial at today's
 
 **Hosted apply — second, after 0146 (the procedure in `T-share-link-tenant`).**
 1. **Read-only preflight first.** 51 bare-helper policies after 0146 (52 at 0145); one digest over (table, policy, cmd, permissive, roles, md5(qual), md5(with_check)) of the 51, ordered by table and policy (C collation): `aa98b512a84808348a7a90c8151c7fcc` (hosted = local, 2026-10-14); 155 policies in public. Guards: prosrc md5 `rls_bare_helper_calls` `90aac6a256ba53f176f169e0d6dd14ee`, `rls_hoisted_policy_count` `57e24ddac9d536d8ba9304e3f40ac0df`, `rls_bare_auth_calls` `edfd09ffbd87320e5b08edb574a8bdf8`; none executable by anon, `authenticated` only on `rls_bare_auth_calls`; configs `{search_path=pg_catalog}` ×2 and `{"search_path=public, pg_catalog"}`; comment md5s `ff4445693835baa0ae2e915c994068c4` / `350654610b8882b3749b37de399d2105` / `1949e03e670ace32f7f30285e70d9ff4`.
-2. **Transcription proof:** `5b3f14814021a80f9639b02dbc92f952`, 38,598 bytes — the FINAL file.
+2. **Transcription proof:** `cce6b3c96c982beb5fcb6606ab2846e5`, 38,659 bytes — the FINAL file (`59d8d0e`).
 3. **ONE md5-guarded `execute_sql`, in a quiet minute** — ACCESS EXCLUSIVE on 19 tables, `organizations` and `profiles` last, so every RLS read waits for the milliseconds to commit: outside 02:55–04:05 UTC, away from 06:00, mid odd minute, not a multiple of five. A 55P03 / 40P01 keeps nothing: apply again, no ledger row.
 4. **Verify in a separate call:** `rls_bare_helper_calls()` empty (now schema-wide), prosrc md5 (the same `md5(replace(prosrc, E'\r', ''))` form, as 0147's postflight pins it) `bbf45e18e481985b9d6491045388da68`, its ACL as read before; `rls_hoisted_policy_count()` 21; `rls_bare_auth_calls()` empty; 155 policies; the restore pack's 0147 row `0`.
 5. **Ledger row by hand:** `('0147', 'hoist_remaining_rls_helpers')` → 147 rows.
@@ -10010,7 +10010,7 @@ Item 1b of `T-external-audit-2026-10-14`, done as hygiene: immaterial at today's
 
 **Left open.** `mandates_safe` (a view, not a policy) still calls its helpers per row — BACKLOG "`mandates_safe` evaluates its helpers once per row", unchanged by 0147.
 
-**Status.** NOT LANDED — PR #RLS_PR (`fix/share-link-tenant`, head `b47f927`; the PR is not opened yet); branch CI green on `b47f927` (run 38604283010: checks, rls, e2e); hosted 0147 after hosted 0146, then the merge, each on the operator's word.
+**Status.** NOT LANDED — PR [#160](https://github.com/KALAITSIDIS/gnk-crm/pull/160) (`fix/share-link-tenant`, head `59d8d0e`); branch CI green on `b47f927` (run 38604283010: checks, rls, e2e), and run 38611522514 on the comment-only `59d8d0e`; hosted 0147 after hosted 0146, then the merge, each on the operator's word.
 
 ## T-deal-health-race — a deal-health recompute writes only over the row it read (2026-10-14; no migration; NOT LANDED — PR #157, `fix/deal-health-race` head `b3f763b`; landing on the operator's word)
 
