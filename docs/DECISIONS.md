@@ -9841,3 +9841,389 @@ The review then found a second instance in the same function. The slip's 23505 b
 - No production page was loaded signed in, and no production row was read or written.
 - The remote and local `fix/refusal-allowlist` are deleted; their commits are in main.
 - The worktree carried these records and is removed after them. The disposable stack `.iso/nullguard` stays up for the next item.
+
+## T-external-audit-2026-10-14 — an external architectural audit verified item by item before anything changed: three items DISAGREE / ALREADY RESOLVED, four AGREE WITH MODIFICATIONS, and the real gaps beside them became five changes on four PRs (2026-10-14; migrations 0146 and 0147; LANDED 2026-10-14 — hosted 0146 and 0147 first, then PRs #160, #157, #159, #158, main `3fe15d2`, deployed)
+
+The operator pasted an external architectural audit on 2026-10-14: seven items, each a claim and a remedy. Every claim was taken as a hypothesis, and no remedy was applied as written.
+
+**Method.**
+- **21 agents.** For each item, one investigator, then two adversarial challengers: an evidence lens (re-measure every load-bearing number and `path:line`) and a consequence lens (what the remedy would break). All 14 challenges upheld their investigator's overall verdict; their detail corrections are folded in below.
+- **Hosted, READ-ONLY.** Catalog and aggregate queries only (Supabase MCP `execute_sql` on `yjgirvzgoiywdojnpkpd`, SELECTs), the advisors, and the Vercel env listing (names and flags; no value read). No production row was read beyond counts and nothing was written.
+- **Code** at gnk-crm `489c507` (origin/main) and gnk-web `08b508b`. Probes (the installed zod versions) ran in the scratchpad only; the canvas rule in item 6 is the HTML spec, not run in a browser.
+- **Latent everywhere.** Hosted held 1 organisation, 0 cross-organisation rows, 2 active profiles (both admins) and 0 listing managers. No cross-tenant or listing-manager path below has been exploitable in production; the isolation series (0119–0139) makes multi-tenancy the declared threat model anyway.
+
+**The seven items.**
+
+| # | The audit claimed | Measured | Verdict |
+|---|---|---|---|
+| 1 | (a) child-table EXISTS policies do not assert `org_id`; (b) `current_org_id()` is called bare, with no initPlan caching; (c) `(org_id, id)` unique indexes are missing on properties, deals and mandates | (a) 19 of 155 policies use EXISTS and none leaks through its subquery: 7 check the child's own `org_id` under a composite key, 2 (`portal_listings`) scope both sides, 7 (`price_list_items` ×4, `share_link_properties` ×3) scope the parent inside, 3 are NOT EXISTS "in use" guards. The tables "units", "routes" and "deal logs" do not exist. The real gap sat beside it: `share_link_properties_insert` (0023:129-132) never checked the PROPERTY's organisation, `share_links.price_list_id` was never checked, and the anon SECURITY DEFINER `resolve_share_link` read both with no organisation predicate. (b) 52 policies on 19 tables were bare (50 with a bare `current_org_id()`, 35 with a bare `current_role_gnk()`), a recorded cost decision (0030:14-16); the 7 list tables are wrapped (guards 0 / 21 / 0); the largest affected table is `areas`, 130 rows. (c) All 9 parents of the 37 composite keys carry UNIQUE (org_id, id): properties 0088:172, deals 0119:134, mandates 0121:170. | AGREE WITH MODIFICATIONS — `T-share-link-tenant` (0146), `T-rls-hoist-rest` (0147) |
+| 2 | Deal and property actions merge JSONB in memory and lose updates; fix: a `merge_deal_health` RPC (`coalesce(col,'{}') \|\| p_patch`, SECURITY INVOKER, an explicit org check) | Only `deals.health`, and only one pair of writers: `updateDealSection`'s `budget_confirmed` save and `recomputeDealHealth` (10 call sites). A recompute that read before the save and wrote after it reverted the user's flag for good while the `updated` event said it changed. Properties are whole-value writes behind A06's `updated_at` predicate (`properties.ts:756`). `merge_deal_health` and `health_data` exist nowhere (0 hits; not on hosted). | AGREE WITH MODIFICATIONS — `T-deal-health-race` (no migration) |
+| 3 | (a) `mandates_safe` runs with definer rights, so set `security_invoker = true`; (b) `protect_profile_columns` compares with `<>`, so use IS DISTINCT FROM | (a) A definer view (reloptions NULL, owner postgres), on purpose: its WHERE repeats the organisation, the role rows and the aal2 gate (0127:381-390), commission is masked by a CASE, its only grant is `authenticated=r`. (b) Hosted's body equals 0002:102-115 and already uses IS DISTINCT FROM for id, org_id, role, email and is_active, all NOT NULL. | DISAGREE / ALREADY RESOLVED |
+| 4 | `z.guid()` fails at runtime under zod 3; uuid fields are loosely checked; fix: a shared regex or `z.string().uuid()` | gnk-crm runs zod 4.4.3 and gnk-web 4.5.4, where `z.guid` exists; the only zod 3 copy (3.25.76) is the shadcn CLI's dev-only dependency. The audit's regex is zod 4's guid pattern. Strict `z.uuid()` rejects the hosted organisation id `00000000-0000-0000-0000-000000000001` and every seed and fixture id. | DISAGREE / ALREADY RESOLVED |
+| 5 | The kanban snapshots with shallow spreads; compares with `JSON.stringify`; lets cards drop into invalid stages | `useOptimistic` with a pure reducer (`kanban.tsx:235-239`), no snapshot and no spread copy; 0 `JSON.stringify` in the board; the Won/Lost droppables are disabled (`kanban.tsx:157-158`), closed cards cannot be dragged, the page filters stages and deals by one deal type (DECISIONS `T-audit-pipeline` #4). | DISAGREE / ALREADY RESOLVED |
+| 6 | Media bytes go through a Server Action and risk Vercel's 4.5 MB limit; the PDFs fetch storage assets sequentially; fix: `createSignedUrls` | Photos were measured and handled on 2026-08-30 (DECISIONS `T-media-import`: 3 MB → 200; 5, 8, 20 MB → 413; re-encode over 3,500,000 bytes, one photo per request). The real gap: three document actions promised 15 MB through the action body with no client check, so 4.5–15 MB reached the platform 413 and the error page; verify-report posted the whole PDF only to hash it. `slip-pdf.tsx` and `evidence-pdf.tsx` fetch nothing; the loop is upstream (`lib/services/evidence.ts:355-378`) and DOWNLOADS. | AGREE WITH MODIFICATIONS — `T-upload-size-honest` |
+| 7 | Rapid double submits create duplicate leads (fix: deterministic idempotency); gnk-web lacks an authenticated revalidation webhook; mandate and property changes leave the site stale | Lead capture is idempotent at three layers (one key per form mount, gnk-web `components/enquiry-form.tsx:126`; a keyed retry only on a lost answer, `lib/crm.ts:550`; 0096's replay check, partial unique index and ON CONFLICT DO NOTHING). The webhook exists (gnk-web `app/api/revalidate/route.ts:31-59`, a timing-safe digest compare). Mandates are not in the feed. Real: `syncInheritedField` and `renameArea` never knocked, and seven actions knocked only after a step that can throw. Production: 8 website leads, 0 identical pairs. | AGREE WITH MODIFICATIONS — `T-site-knock-order` |
+
+**Remedies rejected or changed — do not re-apply them.**
+- **`security_invoker = true` on `mandates_safe` (3a).** The view is definer on purpose (0100:44-51, DECISIONS `T-advisor-lints`). As an invoker view it would be intersected with `mandates_select`, which has no listing-manager arm: every listing manager would read 0 mandates (an empty panel, "none" in the list and CSV, quality scores 10 points low), and RLS test 5 and the aal1-definer-boundary listing-manager test would fail. A base-table listing-manager policy instead would expose commission, because RLS cannot mask columns. The clean route is the commission-table split 0100:51 names.
+- **IS DISTINCT FROM in `protect_profile_columns` (3b).** Already there (above). A rewrite would only churn the restore pins.
+- **`z.string().uuid()` / `z.uuid()`, or a shared regex (4).** The regex changes nothing (it is zod 4's guid pattern). Strict uuid enforces RFC version and variant bits that Postgres ignores; inside `optionalUuid` it would null saved fields again, the trap DECISIONS 2026-07-11 · T3.2 records and `lib/validators/properties.test.ts:115` pins. The challengers narrowed the harm: no validator receives an organisation id, so it lands on seed, fixture and dev ids and on the silent-drop helpers, not on today's hosted traffic. guid's 8-4-4-4-12 shape is stricter than Postgres' uuid input, so a guid-checked value cannot raise 22P02.
+- **`structuredClone` snapshots, deep equality, client-side stage-transition guards (5).** `useOptimistic` reverts to the server's `deals` prop, which a refused move leaves unchanged (`revalidatePath` only on success, `deals.ts:48-52`); there is no comparison to replace (and jsonb comparisons elsewhere already sort keys, `lib/utils/diff.ts:19-25`). What the client cannot know statically only fresh server state can decide, and a copied transition table would drift from `move_deal_to_stage` (0131; hosted md5 = repo). The real gaps are elsewhere in the component (BACKLOG).
+- **`createSignedUrls` for the PDFs (6).** Signing adds a second hop per image where `download` already returns the bytes in one. `Promise.all` over the existing downloads would be the change; at one slip PNG per viewing it is negligible and was NOT made (a note on the evidence entry in BACKLOG).
+- **Direct-to-storage for photos (6).** Not needed: the server needs the bytes (sharp renditions, EXIF strip, watermark, `content_sha256`, the `T-media-upload-authz` check before anything privileged). For DOCUMENTS it is right, later (BACKLOG), and never through a browser supabase-js client: the first client-side Supabase call reopens the anon-RPC exposure (DECISIONS.md:459-462, docs/AUDIT_2026-09-06_RESPONSE.md:62). A keyless `fetch` PUT to the signed URL instead.
+- **A content-derived ("deterministic") idempotency key (7).** `leads_idempotency_key_uidx` has no time window, so a key derived from the content would replay a returning buyer's later identical enquiry for good — a lost lead. A key rendered into the ISR page would merge different visitors. The keyless residual (a no-JS or pre-hydration native post; a reload after an ambiguous timeout) is deliberate and pinned (`enquiry-idempotency.test.ts:69`).
+- **A revalidation webhook (7).** It exists, authenticated: 401 before any work, sha256 digests compared with `timingSafeEqual` (gnk-web `lib/revalidate.ts:49-51`), unknown body fields refused, the feed read before anything expires. Mandates need no knock: `public_listings` filters only `visibility = 'public' and status = 'available'` (LST-03).
+- **`(org_id, id)` indexes (1c).** They exist (above). What remains is single-column KEYS, which is the composite-key series' work.
+- **`org_id` inside every EXISTS subquery (1a).** Redundant for all 19 policies, and it would not have reached the real gap: `property_id`, a column no EXISTS touches.
+- **A `merge_deal_health(p_patch)` RPC (2).** Not built. A derived-keys-only RPC still lets a stale recompute store a score computed from the old flag; a generic `p_patch` is no tighter than today's PostgREST PATCH; and an RPC must reach hosted before the merge. The house A06 idiom (an `updated_at`-predicated write, re-read on a miss) closes both with no migration. Had an RPC been chosen, the challengers corrected the investigator: an explicit `current_org_id()` pin IS current house idiom (0141–0143 pin it, and their postflights assert it).
+
+**What was built (each its own entry below; all LANDED 2026-10-14 — see each entry's Landing).**
+- `T-share-link-tenant` (0146): item 1's real gap.
+- `T-rls-hoist-rest` (0147): item 1b, as hygiene — generated, self-checked, with a schema-wide guard.
+- `T-deal-health-race`: item 2.
+- `T-upload-size-honest`: item 6's real gap (documents, verify-report, branding) and four photo defects.
+- `T-site-knock-order`: item 7b's real gaps.
+
+**Found and NOT fixed** (BACKLOG "External audit — 2026-10-14", or the entries it names):
+- the board's drop has no try/catch and no refresh after a refusal; a listing manager's drags always revert (the toast is probably "Deal not found" — inferred);
+- URL and raw-string ids reach queries unchecked: `/contacts?agent=`, `/properties/<non-uuid>` and its `/units` show the error boundary instead of a 404; the contact page builds an `.or()` from the raw id; 14 server actions take raw id strings, and `moveDealToStage` returns Postgres' 22P02 text;
+- the five leftover strict `.uuid()` sites (an existing entry, whose VERIFY undercounted);
+- an agent who created a mandate but is not the assigned agent can read its commission from the base table (latent: 0 such rows; inserts are admin-only);
+- `mandates_safe` is not `security_barrier` (hardening; a timing side-channel at most);
+- gnk-web calls `crypto.randomUUID()` with no fallback (inferred: Safari / iOS before 15.4);
+- Vercel's `SENTRY_AUTH_TOKEN` on gnk-crm is flagged "readable-secret" (operator);
+- the enquiries route's comment says a 503 makes the site retry;
+- single-column `area_id` / `district_id` / `stage_id` keys blind the "in use" delete guards to another organisation's rows (composite-key series).
+
+**Challengers' corrections worth keeping.** `regeneratePortalToken` validates its argument as an enum, so it is not a raw-id action; `cyprus_config` holds 10 rows (not 0–4); seven actions, not three, knocked after a step that can throw (four in `media.ts`); a `properties.parent_id` plant under another organisation's project showed on that organisation's share page (closed by 0146's recursive-member predicate); a `{ reference }` knock still leaves sibling pages' "Other properties" cards to their timers (BACKLOG "Site freshness — 2026-10-08", a decision).
+
+**Rollback.** Nothing in this entry itself; each change below carries its own.
+
+**Landing (2026-10-14, on the operator's "land it").** Each step's facts are in its entry; the order was:
+1. A read-only hosted preflight (18:14Z) and a rehearsal of the exact guarded wrappers on the disposable stack `.iso/audit1014` (`T-share-link-tenant`).
+2. Hosted 0146 (≈18:16Z), then hosted 0147 (≈18:19–18:20Z), each ONE md5-guarded `execute_sql`, verified in a separate call, its ledger row written by hand (146, then 147 rows). The advisors read the same after as before.
+3. The merges, each pinned with `--match-head-commit` and followed by a production deployment READY on gnk-crm.vercel.app with no runtime errors:
+   - #160 at 18:21:42Z → main `4735777`;
+   - #157 at 18:23:51Z → `f074e7f`;
+   - #159 at 18:25:20Z → `8ecb772`;
+   - #158 at 18:27:10Z → `3fe15d2`. Merging #158 was the operator's acceptance of the document limit (`T-upload-size-honest`).
+4. These records (PR #161) last, after the four merge CI runs were read green (checks, rls, e2e on `4735777`, `f074e7f`, `8ecb772` and `3fe15d2`).
+
+## T-share-link-tenant — a share link names, pins and shows only its own organisation's properties, price list and agent (2026-10-14; migration 0146; LANDED 2026-10-14 — hosted 0146 first, PR #160, main `4735777`, deployed)
+
+Item 1 of `T-external-audit-2026-10-14`: the gap beside the audit's claim. The last replacement of `resolve_share_link` before this is 0137 (every migration grepped).
+
+**The gap.**
+- `share_link_properties_insert` (0023's text, unchanged since) checked only that the LINK is the caller's organisation's; `share_link_properties.property_id` is a single-column key onto `properties(id)`.
+- `share_links.price_list_id` (0041) is a single-column key onto `price_lists(id)`; `share_links_insert` / `share_links_update` (0100's texts) never looked at it, nor at `created_by` (a single-column key onto profiles).
+- `resolve_share_link` (SECURITY DEFINER, anon-executable — the `/p/<token>` page) read the target, the descendant walk, the pinned list and its lines, the proposal's properties, the linked-row count and the agent's profile with no organisation predicate.
+
+**Reproduced first (at 0145, through PostgREST as an aal2 admin of organisation B, two throwaway organisations, on the local stack `.iso/audit1014` — Postgres 17.11.0.004 with PostgREST v16.4).**
+- Accepted: B's link naming A's private listing; B's availability link aimed at A's project; B's link pinning A's price list, by insert and by a re-pin update; B's PATCH naming A's admin as `created_by` (1 row).
+- An existence oracle: a missing property, list or profile answered 23503 where a foreign one was accepted.
+- Read anonymously: B's proposal showed A's listing (`property_count` 2); B's link aimed at A's project returned A's unit matrix with prices; a B unit and phase hung under A's project (`properties.parent_id` is single-column) appeared on A's OWN page; a B link pinning A's list showed A's version, effective date and quoted number; B's page created by A's admin showed A's name, e-mail and phone.
+
+**What changed (0146: one transaction, `lock_timeout` 5 s, preflight → change → postflight; nothing is changed on a refusal).**
+1. `share_link_properties_insert` WITH CHECK keeps 0023's link clause (now hoisted) AND requires the property to be the caller's organisation's. An availability link's target is its first `share_link_properties` row, so this binds the target too. The table has no UPDATE policy or grant (asserted pre and post), so a row cannot be re-pointed.
+2. `share_links_insert` / `share_links_update` WITH CHECK add `price_list_id is null or` an own-organisation list; `share_links_update` also `created_by is null or` an own-organisation profile (review round). USING is unchanged and a revoke of a valid link passes. A foreign id and a missing id now both answer 42501 (WITH CHECK runs before the key): no oracle.
+3. Each binding must be the ONLY permissive policy for its command (preflight, postflight and the restore-pack row), because permissive policies OR together.
+4. `resolve_share_link`: 0137's text with nine edits, each marked `-- 0146:` — `org_id = v_link.org_id` on the target lookup, the walk's anchor and recursive member, the list lookup and the proposal's properties join; `pf.org_id = v_link.org_id` on both agent blocks; the lines joined on the org-checked `v_pl.id`; the count counts the link's own organisation's rows, archived ones still included (the page's shortfall note). Pinned still means pinned: a link whose pinned list is foreign shows NO price, never a live one. md5-guarded on 0137's body (`466cf76e…`, hosted = local); owner, ACL, SECURITY DEFINER, `search_path=public` and VOLATILE kept. The postflight pins every predicate, 0137's two throttles, 0041's exposure guard, the ACL and the three policy texts, with the md5 pin LAST so each guard is tested by its own message.
+5. A read-only diagnostic row (`link_rows_across_orgs`, `pinned_lists_across_orgs`, `rows_under_a_foreign_parent`, `creators_across_orgs`).
+- Moved with it: `scripts/backup/verify-restore.sql` (migrations pin, a 0146 SECURITY row that reads false on 0137's body, with any one edit undone or any one clause dropped), docs/04's share-link rows, the `property_count` comment in `lib/services/share-links.ts`, `supabase/tests/revert-0146.ts` (and `revert-0137.ts` exports 0137's md5).
+
+**Why policies and resolver predicates, not composite keys.** `share_link_properties` has no `org_id` and `price_lists` no `(org_id, id)` key, so a composite key is a schema change on both sides — the composite-key series' to make. The policies bind every session writer now; the resolver's predicates make a row written by any other path (the service role, a definer, a row from before 0146) invisible on the public page. Two layers, on purpose.
+
+**Tests.**
+- `supabase/tests/share-link-tenant-binding.test.ts` (64): the cross-organisation writes and reads above, each refused or invisible; same-organisation payloads byte-identical to a ~280-line literal captured on 0137's body (a proposal with media, district, area and an archived listing counted; live and pinned availability with a phase and sold / archived / draft / unpriced units); agent and listing-manager controls; each postflight guard by its own message; the sibling-policy drifts; the restore-pack row; replays and the rollback; a stale-run sweep.
+- `supabase/tests/share-link-opened-own-org.test.ts`: its two body checks now replay 0137 over 0041 (the live body is 0146's).
+- RLS tests 25 and 29 stay green.
+
+**Verified.**
+- **The agents' stack** (`.iso/audit1014`: Postgres 17.11.0.004, PostgREST v16.4 — their drafts said v14.5, which was wrong): RED at 0145 15 failed / 33 passed (48), GREEN 48/48; mutants 9 of 10 killed, and the walk ANCHOR predicate an equivalent mutant (the walk runs only after the target lookup found an own-organisation row with that key), kept as defence in depth.
+- **Review round** (commit `83bc9a4`): RED on the unchanged files 26 failed / 38 passed (64), GREEN 64/64; 12 of 12 mutants killed.
+- **Re-verified on PostgREST v14.5** (hosted's version):
+  - Postgres 17.11.0.004, fresh at origin/main's 145: this file and `rls-hoist.test.ts` RED, 31 failed / 57 passed of 88; after `migration up` of 0146 + 0147 (`83bc9a4`'s files, md5 `e82bb8dc…` / `52cb92aa…`), the full DB suite 83 files, 1,819/1,819.
+  - Postgres 17.6.1.159 (CI's image), fresh from the branch's 147 migrations with 0147 as at `b47f927` (the final `59d8d0e` differs in comments only): 83 files, 1,824/1,824.
+- Unit 3,665/3,665 at `83bc9a4` (re-run sequentially on a quiet machine), `typecheck`, `lint`; types regenerated at 0147: identical.
+- Branch CI: run 38600602984 on `83bc9a4` failed at `supabase start` on 0147's preflight (`T-rls-hoist-rest`); run 38604283010 on `b47f927` green (checks, unit 3,665; rls 83 files, 1,824/1,824 on CI's stack — Postgres 17.6.1.159, PostgREST v16.1; e2e), finished 2026-10-14 17:25:30Z. PR #160 was opened later, and landed from `59d8d0e` (Landing below).
+
+**Review round (two adversarial reviews, nine findings, all fixed in `83bc9a4`).**
+- #1 / #4: `share_links.created_by` was a third route (above): bound in both layers; the claim narrowed everywhere it is made to properties, price list and agent — the district / area NAMES are not bound (composite-key series).
+- #2 / #7: nothing checked that each binding is the only permissive policy: preflight, postflight and pack row now do.
+- #3: 0147's lock order (`T-rls-hoist-rest`).
+- #5: the postflight's md5 pin answered before every other guard: moved last.
+- #6: the new checks were exercised only by admins: agent and listing-manager controls, proven load-bearing by a mutant.
+- #8: records (the `property_media_select` entry — struck only when 0147 lands; until then a dated parenthetical — and the `mandates_safe` note).
+- #9: the stale sweep cleaned a killed run only partly: it removes it whole.
+
+**Hosted apply — 0146 FIRST, then 0147 (`T-rls-hoist-rest`), then the merge.** NOT deploy-coupled: the deployed app writes share-link rows only after reading them under RLS, and no signature, return shape or grant changes. Each step on the operator's word, outside 02:55–04:05 UTC. Precondition, as for 0145 (`T-schedule-paid-guard`): branch CI green on the head whose files are transcribed. Met by run 38604283010 on `b47f927`; a new head needs CI again first, and its md5s re-read.
+1. **Read-only preflight, one call.** Ledger 145 rows, latest `0145`. `resolve_share_link`: prosrc md5 `466cf76e9326e96d6dc2ec6bc46f94ae` (the file's form), `pg_get_functiondef` md5 `6a410ce13de90b229a80354dfa860cec`, ACL `{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}`, `{search_path=public}`, VOLATILE, SECURITY DEFINER, owner postgres, one overload. Policy md5s: `share_link_properties_insert` WITH CHECK `3d37b0f8eebb0d1bfbe3a3f6bee3b285`; `share_links_insert` WITH CHECK `59f8dc84bff95000aaec3d56cc5c78f2`; `share_links_update` USING `b3a1023c8088a1ed078ff358a2d5612c`, WITH CHECK `eb2dafebd4f53ceb4de337d006400859`; one permissive policy each for INSERT on `share_link_properties` and INSERT and UPDATE on `share_links`. The four diagnostic counts 0 (the guarded apply discards the file's own row). All read so on 2026-10-14.
+2. **Transcription proof:** md5 of the file as a dollar-quoted literal `e82bb8dc78b65f90745de1dc3420f6d1`, 44,472 bytes (LF).
+3. **ONE md5-guarded `execute_sql`** (DECISIONS `T-unit-type-apply-atomic`), never split: the preflight's locks are held to the end. ACCESS EXCLUSIVE on `share_links`, then `share_link_properties`, for milliseconds (the public page waits).
+4. **Verify in a separate read-only call:** prosrc md5 (`md5(replace(prosrc, E'\r', ''))`, the form step 1's `466cf76e…` and 0146's postflight use — not the `pg_get_functiondef` form) `aa14a6657e4414b83c9c5b21a9fc521a`; ACL, owner, config and volatility unchanged; WITH CHECK md5s `share_link_properties_insert` `7c5f9dda6ff454c709dff81a4142be00`, `share_links_insert` `b4ba72fdb94d0b9d19a9051dc609c4f1`, `share_links_update` `1f673344c1bdc2e77e598bd824a24388` (USING still `b3a1023c…`); the restore pack's 0146 row `true`.
+5. **Ledger row by hand:** `('0146', 'share_link_tenant_binding')` → 146 rows.
+6. **Advisors** read; no new finding expected.
+
+**Rollback.** If 0147 has landed, revert it first (`T-rls-hoist-rest`). Then a FORWARD migration carrying `supabase/tests/revert-0146.ts`'s text (0137's body sliced from its own file, the three WITH CHECKs as 0023 / 0100 wrote them), applied the same guarded way; the restore pack's pins moved back. It brings the leak back. The application works either way.
+
+**Left open.**
+- A link that ALREADY pins another organisation's list, or names another organisation's creator, cannot be updated — revoke included — by a session until that column is cleared (WITH CHECK sees no OLD row). Hosted held 0 (BACKLOG NOTE).
+- The single-column keys themselves, and the district / area names the proposal still reads by id (composite-key series, BACKLOG).
+- `share_links.revoked_by` stays unbound (shown nowhere; an oracle on profile ids, with the other profile links).
+
+**Landing (2026-10-14, on the operator's "land it").** Hosted first: 0146, then 0147 (`T-rls-hoist-rest`), then the merge.
+- **Hosted preflight** (read-only, one call, 18:14Z):
+  - the ledger 145 rows, the last `0145` (the earlier by-hand rows carry a name and no statements);
+  - `resolve_share_link` prosrc md5 `466cf76e…`, EXECUTE held by postgres, anon, authenticated and service_role;
+  - 155 policies, 52 bare;
+  - the four diagnostic counts 0: `link_rows`, `pinned_lists`, `rows_under_foreign_parent`, `creators`;
+  - one permissive policy for each bound command (1 / 1 / 1).
+- **The advisors' baseline:**
+  - security: 2 ERROR (`mandates_safe` and `spatial_ref_sys`, both by design) and 37 WARN (`extension_in_public` 1, anon definer 12, authenticated definer 23, leaked-password protection 1) — the count the earlier landings recorded, 0145's included;
+  - performance: INFO only (47 unindexed foreign keys, 42 unused indexes).
+- **Rehearsal first,** on the disposable stack `.iso/audit1014` (Postgres 17.6.1.159 with PostgREST v14.5), reset to origin/main's 145 migrations. The exact guarded wrappers were run:
+  - a corrupted copy of each was refused with "guard: the text sent is not the file", and nothing changed;
+  - 0147 run before 0146 was refused ("not the 51 … unexpected or changed share_link_properties.share_link_properties_insert");
+  - guarded 0146, then guarded 0147, applied: resolver `aa14a665…`, bare 51 → 0, guard `bbf45e18…`, hoisted 21, 155 policies.
+- **Hosted 0146,** ≈18:16Z, as ONE md5-guarded `execute_sql` (`do $guard$ … md5(src) = 'e82bb8dc78b65f90745de1dc3420f6d1' … execute src`). Verified in a separate call:
+  - the resolver's prosrc md5 `aa14a6657e4414b83c9c5b21a9fc521a`; its ACL and shape unchanged (SECURITY DEFINER, VOLATILE, owner postgres, `{search_path=public}`);
+  - WITH CHECK md5s: `share_link_properties_insert` `7c5f9dda6ff454c709dff81a4142be00`, `share_links_insert` `b4ba72fdb94d0b9d19a9051dc609c4f1`, `share_links_update` `1f673344c1bdc2e77e598bd824a24388`; `share_links_update`'s USING unchanged, `b3a1023c8088a1ed078ff358a2d5612c`;
+  - 155 policies, 51 bare.
+
+  One verification read first failed on a `"char" || text` cast; it was a read, and the corrected re-run gave the values above. The ledger row `('0146', 'share_link_tenant_binding')` was inserted by hand → 146 rows. The restore pack's 0146 row (step 4 of the plan above) was NOT read at landing; it is read-only and can be read at any time.
+- **Hosted 0147** followed (`T-rls-hoist-rest`); the advisors after both were identical to the baseline.
+- **From outside,** through PostgREST with the publishable key: POST `/rpc/resolve_share_link` with an all-zeros token answered 200 `null`.
+- **Merge.** PR [#160](https://github.com/KALAITSIDIS/gnk-crm/pull/160) merged at 18:21:42Z, pinned to `59d8d0e`, giving main `4735777` (main unmoved at `489c507`; the merge's tree is byte-identical to the head's). Branch CI run 38611522514 on `59d8d0e` was green (checks, rls, e2e).
+- **Production.** Vercel `dpl_949UXmyfnf2CYEuE26JW32YXhAon` READY 18:22:56Z, aliased to gnk-crm.vercel.app; no runtime errors since 18:21Z. Signed out, `/login` answers 200, and `/properties`, `/deals/x`, `/settings` and `/reports/commission-evidence` answer 307 to `/login`.
+- **Merge CI** on `4735777`: run 38614497698 green (checks, rls, e2e — read by the orchestrator 2026-10-14 before #161 merged).
+- **A slip.** At ≈18:23Z one GET of `/p/<all-zeros token>` was made on production. The standing rule is never to probe `/p/` there: every request notes a miss against the caller's IP hash, and 20 in 15 minutes refuses that IP (0081). This was ONE miss, against the operator's own IP. It is harmless and it expires.
+- The writes to production in this landing were the two migrations, their two ledger rows and that one miss. The reads were catalog values, the migration ledger, counts and the advisors.
+- The remote `fix/share-link-tenant` is deleted (the local branch is kept). Its worktree is removed, and the disposable stack `.iso/audit1014` is stopped (`--no-backup`) and its directory removed.
+- **Rollback, now.** Revert 0147 first (`T-rls-hoist-rest`), then 0146 by the forward migration above, both guarded the same way. Reverting the merge alone changes nothing on hosted.
+
+## T-rls-hoist-rest — every RLS policy evaluates the helpers once per statement, and the guard looks at the whole schema (2026-10-14; migration 0147; LANDED 2026-10-14 — hosted 0147 first (after hosted 0146), PR #160, main `4735777`, deployed)
+
+Item 1b of `T-external-audit-2026-10-14`, done as hygiene: immaterial at today's sizes (the largest affected table, `areas`, has 130 rows), free to do (0100:15, "Hoisting is free"), and worth doing before `price_list_items`, `property_media` and `documents` grow.
+
+**The gap (measured).** `current_org_id()` / `current_role_gnk()` are `language sql stable security definer set search_path`: never inlined, so a bare call is evaluated per row. 0030 hoisted the 7 list tables and 0100 twelve more policies; 52 permissive policies on 19 small tables were still bare at 0145 (51 after 0146), a recorded cost decision (0030:14-16, `rls-hoist.test.ts`, docs/04:27, BACKLOG "RLS helper functions are called ONCE PER ROW"). And `rls_bare_helper_calls()` looked at the 7 tables only, so its "empty" said nothing about the rest.
+
+**What changed (0147).**
+- 51 ALTER POLICY statements GENERATED from the local stack's `pg_policies` after 0146 — each the policy's own deparse with the bare calls written `(select …)`; USING / WITH CHECK only where the policy has one; roles, permissive flag and command untouched; `share_link_properties_insert` (already hoisted by 0146) not touched.
+- The preflight pins the exact 51 by (table, policy, command, md5(qual), md5(with_check)), permissive and `{public}`, and the three guards' bodies and grants. Run on a database still at 0145 it refuses (52 bare), so 0146 goes first.
+- The self-check (same transaction) snapshots every policy and compares after normalising BOTH sides (the wrapper back to the bare call; `public.` stripped first — 0030's trap): the same count (155), commands, roles, flags and predicates; exactly the 51 changed text; the widened guard AND an independent regex scan find nothing bare schema-wide; `rls_hoisted_policy_count()` still 21; `rls_bare_auth_calls()` still empty.
+- `rls_bare_helper_calls()` is schema-wide (permissive and restrictive), CREATE OR REPLACE with the same signature — its ACL and the restore pack's grants row stand. The three guards' comments rewritten (none says helpers are left bare).
+- **The 19 locks:** the 17 table-specific ones first, `organizations` and `profiles` LAST (review round #3): every RLS check reads profiles and every insert's key check organizations, so held first they stalled the whole application through every wait on the other 17. MEASURED by a new test: waiting on a busy `documents`, the first 0147 held 14 tables including both; now 12, neither.
+- Moved with it: `rls-hoist.test.ts` (header, titles, schema-wide assertions; `toEqual([])` and `toBe(21)` kept), docs/04:27 (and that `mandates_safe`, a view, is outside the guard), `verify-restore.sql` (migrations pin 147, a 0147 row counted without the guard — 0 now, 51 on the rollback text), `supabase/tests/revert-0147.ts`.
+
+**CI portability — found by branch CI, fixed in `b47f927`.**
+- Branch CI run 38600602984 (head `83bc9a4`) failed at `supabase start`: "0147 aborted: a guard function is not 0030 / 0100's (rls_bare_auth_calls)".
+- The preflight pinned each guard's `proacl` as TEXT. `rls_bare_auth_calls` was created by 0032 with only `revoke … from public, anon; grant … to authenticated`; whether `service_role` also holds EXECUTE comes from the environment's default privileges, not from any migration. Read on 2026-10-14 (read-only `proacl` and `pg_default_acl`):
+  - Hosted, and the two fresh disposable stacks — `.iso/nullguard` (Postgres 17.11.0.004, ledger 0145) and `.iso/audit1014` (17.6.1.159, which is CI's own image, ledger 0147) — read `{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}`. On both disposable stacks, postgres' default privileges in `public` grant functions to anon, authenticated and service_role, and tables `arwdDxtm` to anon.
+  - The shared main local stack (17.6.1.159, built incrementally, ledger 0140) reads it without `service_role`. There postgres' default privileges grant functions to postgres alone and tables `Dxtm` to anon — which is what `T-primary-key-immutable` records for CI and that stack.
+  - CI's fresh stack (17.6.1.159, the pinned CLI 2.115.0) refused the file, so its ACL differs from hosted's; it was not read.
+  - So the image is not what decides it: the same image grants it on one stack and not on another. The likelier cause is the CLI that ran `supabase start` (`T-primary-key-immutable`: the pinned 2.115.0 revokes those defaults at start). That is inferred, not measured on CI.
+- **The fix:** each guard is checked by what its grants decide, the 0143 idiom (`has_function_privilege`): never anon (PUBLIC's grant is anon's), and authenticated for `rls_bare_auth_calls` only. The self-check compares `rls_bare_helper_calls`' ACL with the one captured (`set_config`) before its CREATE OR REPLACE. Hosted's ACLs as read on 2026-10-14 satisfy both checks.
+- **Tests:** two replays with `service_role`'s EXECUTE revoked and granted; three drift refusals (the auth-call check granted to anon, taken from authenticated; the presence count granted to PUBLIC).
+- **Verified:** RED on the committed file 1 failed / 28 passed — the revoked-`service_role` replay, reproducing CI's refusal; GREEN 29/29. Mutants: the anon check and the authenticated check are both killed; the captured-ACL postflight comparison is an equivalent mutant (CREATE OR REPLACE cannot change an ACL), kept as an invariant; the PUBLIC check was redundant with the anon check and is removed. The full suite on CI's image (above) 1,824/1,824.
+- **The comment corrected, `59d8d0e` (comment-only, on `b47f927`).** `b47f927`'s comment in 0147 and in `rls-hoist.test.ts` blamed "CI's 17.6.1.159 image"; the reads above contradict that. Both now say only what was measured — hosted and fresh local stacks grant it, the shared local stack built migration by migration does not, and a text pin refused CI's fresh stack — and the two replay titles no longer name an image. The preflight, the self-check and the tests are unchanged (rls-hoist 29/29 re-run); branch CI run 38611522514 on `59d8d0e`.
+- Final file md5 `cce6b3c96c982beb5fcb6606ab2846e5`, 38,659 bytes (`59d8d0e`). `b47f927`'s `5b3f1481…`, `83bc9a4`'s `52cb92aa…` and `7d04aeb`'s `13c5b5ad…` are STALE for 0147. 0146 is unchanged by both commits: `e82bb8dc78b65f90745de1dc3420f6d1` (`145f728`'s `590e822c…` is stale).
+- **The rule:** a migration preflight never pins `proacl` as text for a function whose grants come partly from default privileges. Check what the grants decide (`has_function_privilege`), or compare with a value captured earlier in the same transaction. The drift was on record before: 0023:79, 0037:11, and DECISIONS `T-primary-key-immutable` ("Default privileges differ by environment").
+
+**Tests.** `supabase/tests/rls-hoist.test.ts` (29): the independent scan finds nothing bare schema-wide; a planted bare call on `areas` and a restrictive probe are reported; the guard's body, comments and grants; the replay over `revert-0147.ts` reproduces the live schema policy for policy; the self-check refuses the file with ANY ONE of the 51 ALTERs dropped (all 51 tried), with an ALTER that changes meaning, with a guard narrowed to permissive; the preflight refuses applied-twice, a drifted, pre-hoisted or role-narrowed policy, a 52nd bare (restrictive) policy, and each grant drift; the busy-lock order; the two privilege replays.
+
+**Verified.**
+- The agents' stack (Postgres 17.11.0.004, PostgREST v16.4): RED at 0146 7 failed / 16 passed (23) — the old guard answered `[]` while the scan found 51 (the vacuous pass) — GREEN 23/23. Live mutants: `price_lists_select` bare again and `documents_update` bare again → 4 tests fail each; the guard narrowed to permissive, or back to 0030's → 2 each. Review round: RED 1 failed / 23 passed (24) → GREEN 24/24; the "organizations and profiles first" mutant killed.
+- On PostgREST v14.5: the RED 31 / 88 at 145 and the full suites 1,819/1,819 and 1,824/1,824 recorded under `T-share-link-tenant`.
+- Types regenerated: identical.
+
+**Hosted apply — second, after 0146 (the procedure in `T-share-link-tenant`).**
+1. **Read-only preflight first.** 51 bare-helper policies after 0146 (52 at 0145); one digest over (table, policy, cmd, permissive, roles, md5(qual), md5(with_check)) of the 51, ordered by table and policy (C collation): `aa98b512a84808348a7a90c8151c7fcc` (hosted = local, 2026-10-14); 155 policies in public. Guards: prosrc md5 `rls_bare_helper_calls` `90aac6a256ba53f176f169e0d6dd14ee`, `rls_hoisted_policy_count` `57e24ddac9d536d8ba9304e3f40ac0df`, `rls_bare_auth_calls` `edfd09ffbd87320e5b08edb574a8bdf8`; none executable by anon, `authenticated` only on `rls_bare_auth_calls`; configs `{search_path=pg_catalog}` ×2 and `{"search_path=public, pg_catalog"}`; comment md5s `ff4445693835baa0ae2e915c994068c4` / `350654610b8882b3749b37de399d2105` / `1949e03e670ace32f7f30285e70d9ff4`.
+2. **Transcription proof:** `cce6b3c96c982beb5fcb6606ab2846e5`, 38,659 bytes — the FINAL file (`59d8d0e`).
+3. **ONE md5-guarded `execute_sql`, in a quiet minute** — ACCESS EXCLUSIVE on 19 tables, `organizations` and `profiles` last, so every RLS read waits for the milliseconds to commit: outside 02:55–04:05 UTC, away from 06:00, mid odd minute, not a multiple of five. A 55P03 / 40P01 keeps nothing: apply again, no ledger row.
+4. **Verify in a separate call:** `rls_bare_helper_calls()` empty (now schema-wide), prosrc md5 (the same `md5(replace(prosrc, E'\r', ''))` form, as 0147's postflight pins it) `bbf45e18e481985b9d6491045388da68`, its ACL as read before; `rls_hoisted_policy_count()` 21; `rls_bare_auth_calls()` empty; 155 policies; the restore pack's 0147 row `0`.
+5. **Ledger row by hand:** `('0147', 'hoist_remaining_rls_helpers')` → 147 rows.
+6. **Advisors:** no new finding expected (no grant or definer change; `auth_rls_initplan` was already silent).
+
+**Rollback.** A FORWARD migration carrying `supabase/tests/revert-0147.ts`'s text (the 51 policies bare again, 0030's guard body and 0100's comments, sliced from their files, the same 19 locks), guarded; the restore pack's pins moved back. Meaning is unchanged either way.
+
+**Left open.** `mandates_safe` (a view, not a policy) still calls its helpers per row — BACKLOG "`mandates_safe` evaluates its helpers once per row", unchanged by 0147.
+
+**Landing (2026-10-14, on the operator's "land it"; hosted 0146 just before — `T-share-link-tenant`).**
+- **Preflight** (the same read-only call, 18:14Z):
+  - 155 policies, 52 bare at 0145;
+  - the guards' prosrc md5s `90aac6a2…` (`rls_bare_helper_calls`), `57e24dda…` (`rls_hoisted_policy_count`) and `edfd09ff…` (`rls_bare_auth_calls`);
+  - hoisted 21.
+
+  After 0146 the bare count was 51. The file's own preflight, which pins the exact 51 and the guards' privileges, then passed on hosted.
+- **Rehearsal** on `.iso/audit1014` (`T-share-link-tenant`):
+  - run before 0146, 0147 was refused by name;
+  - a corrupted copy was refused by the guard;
+  - in order it applied: bare 51 → 0, guard `bbf45e18…`, hoisted 21, 155 policies.
+- **Hosted 0147,** ≈18:19–18:20Z, as ONE md5-guarded `execute_sql` (md5 `cce6b3c96c982beb5fcb6606ab2846e5`, the final file at `59d8d0e`). Verified in a separate call:
+  - `rls_bare_helper_calls()` 0 rows, prosrc md5 `bbf45e18e481985b9d6491045388da68`, ACL `{postgres=X/postgres,service_role=X/postgres}`;
+  - `rls_hoisted_policy_count()` 21; `rls_bare_auth_calls()` 0 rows;
+  - 155 policies, 0 bare by an independent scan;
+  - the resolver unchanged.
+
+  The ledger row `('0147', 'hoist_remaining_rls_helpers')` was inserted by hand → 147 rows. The restore pack's 0147 row (step 4 of the plan above) was NOT read at landing; it is read-only and can be read at any time.
+- **Advisors after both,** identical to the baseline:
+  - security: 2 ERROR and 37 WARN, the same findings (read again at 18:58:56Z: `extension_in_public` 1, anon definer 12, authenticated definer 23, leaked-password protection 1 — 37; a first draft of these records said 38, an addition slip);
+  - performance: INFO only, 47 + 42.
+- **From outside,** through PostgREST with the publishable key: POST `/rpc/rls_bare_helper_calls` answered 401 / 42501 (no API role but service_role executes it).
+- **Merge, production and merge CI** are #160's (`T-share-link-tenant`):
+  - main `4735777`, `dpl_949UXmyfnf2CYEuE26JW32YXhAon` READY 18:22:56Z, no runtime errors;
+  - merge CI run 38614497698 green (checks, rls, e2e).
+- **BACKLOG, struck on landing:** "`property_media_select` evaluates `current_org_id()` once per row" (0147 hoists all three `property_media` policies). The 2026-08-11 RLS entry's "Superseded" note now says landed. `mandates_safe` (a view) stays open, as above.
+- **Rollback, now.** The forward migration carrying `supabase/tests/revert-0147.ts`'s text, guarded (above), and before 0146's. Meaning is unchanged either way.
+
+## T-deal-health-race — a deal-health recompute writes only over the row it read (2026-10-14; no migration; LANDED 2026-10-14 — PR #157, main `f074e7f`, deployed)
+
+Item 2 of `T-external-audit-2026-10-14`, narrowed to the one column it is true for.
+
+**The defect.** `deals.health` (jsonb) holds one key a person enters, `budget_confirmed`, saved by `updateDealSection`'s health section (`lib/actions/deals.ts:149-162`, written at :178-185). Beside it sit two keys `recomputeDealHealth` derives, `factors` and `computed_at`, written with `deals.health_score`. The recompute read the deal, computed, and wrote `health: {...whatItRead, factors, computed_at}` filtered by id alone (`lib/services/health-score.ts:133-216` at `489c507`). Ten call sites run it after their own mutation (`deals.ts:51, 200, 322, 398, 656, 908`, `leads.ts:856`, `contacts.ts:413`, `mandates.ts:33`, `properties.ts:870`).
+- **The losing interleaving.** A recompute reads (flag absent or false); the budget save commits (flag true, its `updated` event false → true); the recompute writes what it read. The flag is gone for good, the score 25 points short, and the event log says the opposite.
+- **Reproduced first** through the REAL `recomputeDealHealth` and `updateDealSection` with the recompute's PATCH held at the fetch layer: the save left `{flag true, score 55}` and the held recompute then wrote `{score 30, budget factor 0 "not confirmed"}`.
+- Preserving the flag alone would not do: the score and the budget factor would still come from the old flag.
+
+**Why `updated_at` is the predicate (read in the migrations first).** `set_updated_at()` is `new.updated_at := now()` (0001:72-73), never redefined; `deals_updated` is BEFORE UPDATE FOR EACH ROW (0001:420), never dropped; the only other BEFORE UPDATE trigger, `deals_closed_guard` (0118, body last replaced at 0131), raises or returns NEW, never NULL. So EVERY update of deals — any column, any role, definers and the service role included — stamps a new `updated_at`.
+
+**What changed (`lib/services/health-score.ts`, application only).**
+1. The read takes `updated_at`; the PATCH is predicated on `.eq("updated_at", deal.updated_at)` with the value exactly as PostgREST served it (the T-optimistic-save idiom: never through `new Date()`), and carries `.select("id")` so the answer says whether a row was written.
+2. A written row returns. Anything else — zero rows, an error, no rows array — is decided by the next read, because a code is not a refusal and an answer lost after the commit looks the same: not visible any more → stop; the same `updated_at` → RLS refused the UPDATE (a listing manager, an agent on someone else's deal) → stop, the silent no-op it always was, now at the cost of one GET; moved → compute again from what was just read and write over THAT.
+3. **`HEALTH_WRITE_ATTEMPTS = 2`.** Giving up cannot put an old value back: the write not made is the only one that could have. Whoever moved the row after the second read wrote last. Another recompute's write is predicated on a row no older than ours, and a mutation with a trailing recompute re-reads after its move. A writer with NO recompute after it (`mergeContacts`' repoint, a direct PostgREST PATCH, a mutation that throws or returns between its commit and its recompute) leaves `health_score` / `factors` as the last successful recompute left them, until the next deal-side recompute. Reaching that needs two moves inside one read-to-write gap. (The comment at the constant says so since the review round.)
+4. The contract is kept: it never throws for a write it could not make (the ten callers have already committed and logged); it writes no event (derived state, DECISIONS T3.3); `recomputeDealsFor` is unchanged. The computation moved, unchanged, into `healthUpdateFor()`.
+5. Every input read (buyer KYC, title deed, mandate) now happens AFTER the deal read, so overlapping recomputes resolve to the later inputs too — pinned by the unit case "a retry reads the OTHER tables again".
+- **Left as it was, on purpose:** the health branch of `updateDealSection` is still a read-modify-write of `health` (`deals.ts:152-159`). It can only put back DERIVED keys a recompute wrote in between, never `health_score`, and its own trailing recompute (:200) rewrites all three from the row — unless that recompute never runs (BACKLOG, "Throws after a commit").
+
+**Tests.**
+- `lib/services/health-score.test.ts` (unit, 17): the two mandate cases script the real PATCH answer; a describe of 9 cases — the guard on the write's OWN chain (`["id","d1"]`, `["updated_at",T1]`, `select("id")`, taken from the update to the `select` that ends it), an uncontended write once, a zero-row answer on a moved row (retry computed from the second read), a second zero-row answer stops without throwing, a deal invisible on the re-read, an unmoved row (RLS) re-read once, an errored write not taken as written, a deal it cannot see never written, and the retry re-reading KYC, title deed and mandates.
+- `supabase/tests/deal-health-race.test.ts` (DB, 7) runs the REAL recompute and save with a probe that holds PATCHes of deals at the fetch layer: (1) uncontended `["GET","PATCH"]`, score 30 — pins that the predicate matches the timestamp PostgREST serves; (2) hold, the real budget save, release: flag kept, score 55, budget factor 25 "confirmed", one `updated` event; (3) hold, a direct PATCH of the flag (no trailing recompute), release: the retry itself writes 55; (4) a listing manager's recompute: the row byte-equal before and after, `["GET","PATCH","GET"]`; (5) the bound: both writes held, the flag moved on under the first and off under the second — the row ends equal to the last move, no third attempt; (6) two deals stamped with one `now()`: only the target written; (7) `verify_events_chain` ok.
+
+**Verified.**
+- **The agents' stack** (`.iso/audit1014`: Postgres 17.11.0.004, PostgREST v16.4 — not v14.5 as first assumed; it also carried 0146/0147 from the other branch, whose `deals` policies and triggers were read and are unchanged):
+  - RED on `489c507`'s service: unit 7 failed / 10 passed (17); DB 4 failed / 3 passed (7) — scenarios 2, 3, 4 and 5 (2 and 3 on the flag and the score, 4 on the request list, 5 on the race).
+  - GREEN: unit 17/17; DB 7/7, alone and inside the full suite (the six-scenario version before the review round: 6/6 in four runs).
+  - Mutants, all killed: 11 on the unit file (first round); 6 against both files — the predicate dropped, one attempt, the retry without a re-read (predicated and not), three attempts, a throw on the second miss — the last two killed by the DB test only once scenario 5 existed (the unit file killed them throughout); review round MF (the write's own `.eq("id")` dropped — it SURVIVED both files before the fix) and MG (the other tables memoised across attempts).
+- **Re-verified on PostgREST v14.5** (hosted's version), Postgres 17.11.0.004, fresh at origin/main's 145: the full DB suite 83 files, 1,740/1,740 — the two `share-link-opened-own-org` failures the agents saw were their shared stack's 0146, not this change. Scenario 1 passing there measures the `updated_at` round trip on v14.5 locally; production itself is not measured (below).
+- Unit 3,674/3,674 at `b3f763b` (re-run sequentially on a quiet machine); `typecheck`, `lint`. Branch CI green: run 38600609217 (checks, rls, e2e).
+
+**Review round (two reviewers, five findings; the service's code unchanged except one comment).**
+- R1 + R4 (low): "every writer that moves a deal runs its own recompute" was false (`mergeContacts`, a direct PATCH) — CONFIRMED, the comment fixed (item 3 above).
+- R2 (low): a predicate that never matched on hosted would look exactly like an RLS refusal and freeze every score silently — CONFIRMED as a mechanism, DEFERRED to a post-deploy read (below): `updatePropertySection` predicates on a PostgREST-served `updated_at` the same way on hosted since 2026-09-06, and a mismatch there would refuse every property save.
+- R3 (medium): the unit test's `["id","d1"]` was satisfied by the READ's filter — CONFIRMED (MF survived), FIXED (the write's own chain; DB scenario 6 measures the cross-deal loss MF causes: a twin's `{budget_confirmed: true}` replaced).
+- R5 (low): nothing pinned that a retry re-reads the other tables — CONFIRMED (MG survived), FIXED.
+
+**After the deploy (read-only, aggregates only), once agents or admins have saved deals:** `select count(*) as moved_since_deploy, count(*) filter (where (health->>'computed_at')::timestamptz < updated_at - interval '1 minute') as score_older_than_row from deals where updated_at > '<deploy time>';` — a predicate that never matched makes the two equal; a small non-zero count is expected from merges and direct PATCHes. Or: one budget save on an operator test deal must move both `health->>'computed_at'` and `health_score`.
+
+**Residuals.** Two transactions with an identical `now()` to the microsecond would let a moved row match (T-optimistic-save's assumption too). Heavy contention can exhaust the two attempts — what stands is still consistent with a row at least as new as our read. A refused recompute costs one more GET; a lost race one more read-compute-write.
+
+**Rollback.** Revert the merge. Application only: no migration, nothing on hosted.
+
+**Left open (BACKLOG).** A listing manager's or non-owner agent's legal save fans out a recompute RLS refuses (an operator decision); `mergeContacts` repoints deals without a recompute; a deal section save whose line throws skips the recompute, and `logDealContact` returns after its commit (both in "Throws after a commit"); "Deal health persists a score computed from a failed or missing mandate read" (still open).
+
+**Landing (2026-10-14, on the operator's "land it"; second of the four merges, after #160).**
+- **Branch CI** green on the head `b3f763b`: run 38600609217 (checks, rls, e2e).
+- **Merge.** PR [#157](https://github.com/KALAITSIDIS/gnk-crm/pull/157) merged at 18:23:51Z, pinned to `b3f763b`, giving main `f074e7f` over `4735777` (#160). The merge's change over `4735777` is exactly the head's change over `489c507` (equal patch-ids), and its tree is the clean three-way merge (`git merge-tree`).
+- **Production.** Vercel `dpl_GJd5b25kESk4CmPhamSwPSUBpQea` READY 18:24:58Z, aliased to gnk-crm.vercel.app; no runtime errors since 18:21Z. Signed out, `/login` answers 200, and `/properties`, `/deals/x`, `/settings` and `/reports/commission-evidence` answer 307 to `/login`.
+- **Merge CI** on `f074e7f`: run 38614807370 green (checks, rls, e2e — read by the orchestrator 2026-10-14 before #161 merged).
+- **Not yet done:** the post-deploy read above (`computed_at` against `updated_at`), which waits until agents or admins have saved deals (HANDOFF, What next).
+- The remote `fix/deal-health-race` is deleted (the local branch is kept), and its worktree is removed.
+- **Rollback.** Revert the merge (application only).
+
+## T-upload-size-honest — every browser upload is held to the measured request ceiling: documents and branding are refused before sending, verify-a-report posts only a SHA-256, and a photo never goes up black or leaves the button stuck (2026-10-14; no migration; LANDED 2026-10-14 — PR #158, main `3fe15d2`, deployed)
+
+Item 6 of `T-external-audit-2026-10-14`: the real gap the audit's wording covered but did not name.
+
+**The defect (from code, against a measured platform fact).** Vercel answers a request body over ~4.5 MB with a platform 413 before any app code runs (MEASURED on production 2026-08-30, `T-media-import`: 3 MB → 200; 5, 8 and 20 MB → 413). Next 16.3.8 then throws "An unexpected response was received from the server." on the client (`server-action-reducer.js:141-149`), and a form that hands its action to `useActionState` rethrows it into the route's error boundary.
+- **Documents.** `uploadPropertyDocument`, `uploadContactDocument` (KYC) and `uploadMandateDocument` take the whole `File` through the action body and allow 15 MB (`MAX_DOC_BYTES`); the forms said "≤ 15 MB" and checked nothing. Any document between ~4.5 and 15 MB — a scanned deed, a multi-page KYC pack — reached the error page; the 15 MB refusal could never be reached. Nothing in DECISIONS, BACKLOG or HANDOFF recorded it.
+- **Verify a report.** `verifyEvidenceReport` accepted the PDF up to 20 MB only to SHA-256 it.
+- **Branding** (found by the `type="file"` sweep): capped at 2 MB, a check a larger file never reached.
+- **Photos** (the 413 already handled by REL-05): (1) the canvas was never filled before `drawImage`, so a transparent PNG over the budget went up as a JPEG on BLACK (the canvas spec composites a format without alpha onto opaque black), defeating the server's deliberate white flatten; (2) the re-encoded blob was never re-checked, and an over-budget file the browser cannot decode was passed through whole; (3) `media-tab.tsx` awaited the action with no try/finally, so a rejected call left "Uploading n/N" for good; (4) the `next.config.ts` comment was stale.
+
+**The trade-off, plainly.** The gate is the photos' measured budget, `UPLOAD_REQUEST_BUDGET_BYTES = 3,500,000` bytes — 3.34 MiB, shown "3.3 MB". A document from 3,500,000 bytes up to the platform's ~4.5 MB would have saved under Vercel's documented limit (under the 413, under `bodySizeLimit: "25mb"`, under the 15 MB — inferred; the band is unmeasured) and is now REFUSED in the browser, with its size and the advice. The band between the measured 3 MB → 200 and 5 MB → 413 was never measured, so the gate holds documents to the budget the photos already used. Such a document has no way in until the direct-to-storage follow-up lands (BACKLOG) — the operator decides whether that limit stands until then. Accepted by the operator's "land it" on 2026-10-14 (Landing below).
+
+**What changed.**
+- **One limit, one module:** `lib/constants/upload.ts` — the budget (moved from `client-image.ts`, value unchanged), `BRANDING_MAX_BYTES` (read by `settings.ts`), `formatMegabytes`, `fitsUploadBudget`, the gate `uploadSizeRefusal` and the document texts. Labels derive from the constant ("PDF, JPG or PNG · up to 3.3 MB"; branding "Up to 2.0 MB"). MB is the repo's 1024 × 1024 (every server cap is written `N * 1024 * 1024`). A limit is printed rounded DOWN and a refused size rounded UP, so a refused file always reads larger than its limit. The gate enforces `min(limit, budget)`: a form's larger promise cannot lift the ceiling.
+- **One submit path for file forms:** `lib/services/client-upload.ts` `submitUpload` — the gate first (nothing over the limit is sent), then the action; a rejected call is an UNKNOWN outcome ("Could not confirm whether the document was saved — reload the page and check the list before uploading it again."), never a throw; an answer that claims neither saved nor refused is unconfirmed too. `components/features/shared/use-upload-form.ts` wraps it in the house idiom (`outcome-actions.tsx:47-100`: `onSubmit` + `preventDefault` + a transition; the size refusal said when the file is chosen; an unknown outcome kept until dismissed and the page re-read; a server refusal inline; a save toasted). Used by both document tabs, the mandate upload dialog and the branding form. Documents are NEVER re-encoded — they are evidence.
+- **Verify a report posts a digest:** `lib/services/client-hash.ts` hashes in the browser (Web Crypto; byte-for-byte `sha256Hex`) and sends a body holding ONLY `sha256` (a chosen PDF wins over a paste, as in the action). The PDF never leaves the device and has no size limit. A dropped call says "The check did not complete — nothing was changed. Reload the page and try again." (`verifyInBrowser`, the server action injected, so all of it is unit-tested).
+- **Photos:** a white `fillRect` before `drawImage`; a blob still over the budget refused by name; an over-budget file of a type the server refuses refused for its type; the loop moved to `uploadOneByOne` (one request per photo, never throws) inside try/catch/finally, which always resets the button.
+- **Lost requests are reported (review round):** caught, a rejection no longer reaches `app/(app)/error.tsx`'s `Sentry.captureException`, so the hook, `media-tab` and verify-report pass one with a `lost_request` tag. A platform 413 never reaches the server's logs, so this is the one signal that the budget is set too high.
+- **A server-flagged unknown outcome (review round):** `UploadActionState.unconfirmed` — `submitUpload` maps `error` + `unconfirmed: true` to the unknown-outcome path. No action sets it yet: it is the client half for `T-document-insert-outcome`'s answers (BACKLOG, merge-time).
+- `next.config.ts`: the comment says what `bodySizeLimit` is and where the real ceiling is enforced; the value is unchanged.
+- **Unchanged on purpose** (a concurrent session owns them, below): the three document actions, `reports.ts`, `viewing-documents.ts`, `messages/*.json` — and the concurrent session's new `lib/services/document-insert.ts`, which is untracked in its worktree and not on main or on this branch. Their 15 MB / 20 MB checks still answer a direct caller.
+
+**Tests (unit; vitest runs in node, so behaviour lives in pure modules and the components are pinned by comment-stripped source guards, plus three `renderToStaticMarkup` label tests).** `lib/constants/upload.test.ts` (15), `lib/services/client-image.test.ts` (12, a fake canvas recording the 2D calls), `lib/services/client-hash.test.ts` (13), `lib/services/client-upload.test.ts` (18), `tests/unit/upload-forms-guard.test.ts` (16, including a tripwire: the six `type="file"` forms are exactly the gated ones), `tests/unit/upload-form-labels.test.ts` (3). +71 in all.
+
+**Verified (unit only: no DB, no local browser, nothing hosted).**
+- RED on the unchanged code: three files absent (0 tests); `client-image` 3 failed / 9 passed (12) — the white fill, the over-budget re-encode, the over-budget HEIC; the guard 11 failed / 2 passed (13). Review round, on `50f8107`: `client-upload` 3 failed of 18, `client-hash` 5 of 13, `client-image` 1 of 12, the guard 3 of 16 (the new label test pins code that was already right; its RED is the two mutants the old guard let through).
+- GREEN: all.
+- Mutants: 21 of 21 killed, then 23 of 23 in the review round, each anchor asserted to match once and restored.
+- Unit 3,736/3,736 at `e7221fb` (241 files; re-run sequentially on a quiet machine); `typecheck`, `lint`.
+- Branch CI green: run 38600613920 (checks, rls, e2e). CI's e2e serves the app on localhost, so `tests/e2e/event-typed-text.spec.ts`'s document upload (`#doc_file`) and photo upload run there; no local browser run was made.
+
+**Review round (two reviews, nine low findings, all confirmed).** Fixed: lost requests reported (#1); the trade-off stated in these records (#2); an over-budget HEIC told the right thing (#3); verify's text says "reload" (#4: an expired session or a retired action id fails the same way on every retry); `prepare: downscaleForUpload` pinned (#6); verify-report's catch tested (#7); the label and handler guards scoped to their markup (#8). #5 / #9: the client half fixed, the server half deferred to `T-document-insert-outcome` (merge-time BACKLOG note).
+
+**Rollback.** Revert the merge. Application only.
+
+**Left open (BACKLOG "External audit — 2026-10-14").** Documents over ~3.3 MB need direct-to-storage (the interim limit was the operator's decision, accepted by "land it" on 2026-10-14 — Landing below); a document upload stores the object as the service role before RLS decides the row (latent); the verify form's description and two English strings (i18n); `T-document-insert-outcome`'s "not confirmed" answers must carry `unconfirmed: true`; no e2e covers a refused upload; the 3.0–4.5 MB band is unmeasured (a production probe is optional now that the limit is accepted, and the operator's call). After the deploy (HANDOFF, What next, not BACKLOG): no `lost_request` event has been seen arriving in Sentry; the DSN is inlined at build, so it can be checked only then.
+
+**Landing (2026-10-14, on the operator's "land it"; last of the four merges, after #159).**
+- **The document limit is accepted.** The operator's "land it" covered #158, and HANDOFF had recorded that merging #158 is the acceptance. A document over 3,500,000 bytes ("3.3 MB") is now refused in the browser until documents go direct to storage (BACKLOG). The 3.0–4.5 MB band stays unmeasured. A production probe of it is now optional, not a pending decision: it is the operator's call if a higher limit is wanted before direct-to-storage lands.
+- **Branch CI** green on the head `e7221fb`: run 38600613920 (checks, rls, e2e).
+- **Merge.** PR [#158](https://github.com/KALAITSIDIS/gnk-crm/pull/158) merged at 18:27:10Z, pinned to `e7221fb`, giving main `3fe15d2` over `8ecb772` (#159).
+  - One file was changed by both #159 and #158: `lib/actions/settings.ts`, where #159 adds the area rename's knock and #158 the branding limit.
+  - The merge's tree is the clean three-way merge of the two (`git merge-tree`: both `3aa8a934…`).
+  - Every other file of #158 is byte-identical to the head's.
+- **Production.** Vercel `dpl_DCv6ZB3yUNB9myWuvzUfFrTKBvee` READY 18:29:34Z, aliased to gnk-crm.vercel.app; no runtime errors since 18:21Z. Signed out, `/login` answers 200, and `/properties`, `/deals/x`, `/settings` and `/reports/commission-evidence` answer 307 to `/login`.
+- **Merge CI** on `3fe15d2`: run 38615279928 green (checks, rls, e2e — read by the orchestrator 2026-10-14 before #161 merged).
+- **Not yet done:** seeing a `lost_request` event arrive in Sentry, which waits for one to happen (HANDOFF, What next).
+- **The concurrent session.** `T-document-insert-outcome` in `.worktrees/gnk-crm/document-insert-outcome` is still uncommitted (unchanged). This change avoided its files, and its merge-time item stands: its `documentNotConfirmed` answers must carry `unconfirmed: true` (BACKLOG). #158's client half is on main.
+- The remote `fix/upload-size-honest` is deleted (the local branch is kept), and its worktree is removed.
+- **Rollback.** Revert the merge (application only). Reverting it brings back the error page for documents over ~4.5 MB.
+
+## T-site-knock-order — a committed write tells the site before any follow-up that can throw; the inherited-field sync and the area rename tell it at all (2026-10-14; no migration; LANDED 2026-10-14 — PR #159, main `8ecb772`, deployed)
+
+Item 7b of `T-external-audit-2026-10-14`: the staleness that was real (the webhook exists; mandates are not in the feed).
+
+**The rule this enforces.** `notifySiteAfter` (`lib/services/site-revalidate.ts:137-141`) says to schedule the knock straight after the commit is confirmed, before any follow-up: Next runs an `after()` callback even when the action throws later, but only one already scheduled. Nine places broke it.
+
+**The defect (from code; reproduced through the real actions below).**
+- **Seven actions scheduled the knock only after an await that can throw** (`logEvent` / `logEvents` throw `EventWriteError`; `recomputeQualityScore` throws on a failed read; `completeListingStatusChecks` re-throws an unrecorded superseded line; `recomputeDealsFor` can throw): `archiveProperty`, `restoreProperty` (`properties.ts:991`, `:1051`); `updatePropertySection` (the knock at the end, `:947-949`); `setMediaCover`, `setMediaAlt`, `moveMedia`; `deleteMediaBulk` — by then the files are removed, so the site rendered broken photographs for up to an hour.
+- **Two actions never knocked:** `syncInheritedField` (`unit-inheritance.ts:66-113`) writes up to eleven feed columns onto units (0088; BACKLOG had it); `renameArea` (`settings.ts:539-581`) changes `areas.name`, the feed's `area`, which gnk-web renders and builds its area filter from (not on BACKLOG).
+
+**What changed (no migration; events, refusals and return values unchanged).**
+- Each knock moved to straight after its row-count proof: before `logEvent` in archive and restore; in `updatePropertySection` straight after the zero-row refusal (the condition unchanged, using only values known there); `setMediaAlt` after its proof; `moveMedia` after BOTH halves of the swap are proven; `deleteMediaBulk` after the delete's proof, before `createAdminClient()`, the file removal, the cover promotion and the event loop.
+- `setMediaCover`: after the old cover's clear — set and clear stay back to back, as before — and before `if (clearErr) return`, so a failed clear still knocks (the set committed); then the event and the recompute.
+- `syncInheritedField` selects `visibility` in the UPDATE's own RETURNING and calls `notifySiteAfter(EVERY_LISTING)` when any written unit is public, before `logEvents`. `public_listings` returns one row per listing filtered by its OWN visibility and status, so a private unit's write reaches no page; units are rarely public; one request covers a bulk change, as the reprice and the stamp do.
+- `renameArea` calls `notifySiteAfter(EVERY_LISTING)` straight after its refusal check, unconditionally: knowing which listings in the area are public would cost a read, a rename is rare, and the list page's area filter changes too.
+- **`notifySiteIfPublic` bounds its listing lookup** at `LOOKUP_TIMEOUT_MS = 5_000` (`.abortSignal(AbortSignal.timeout(…))`, review round): four media actions now await it before their event, and unbounded a stalled read held that event back with nothing to end it (MEASURED: still pending after 3 s against a silent local server; bounded at 300 ms it resolved in 313 ms as `{ error }` with code `""`, one request sent). A timeout is reported as a failed lookup and the event is written.
+
+**Tests.**
+- `lib/actions/site-revalidate-callsites.test.ts` (the source guard), extended: the two new actions; comments removed by the TypeScript printer (a trailing `// notifySiteAfter(…)` used to count as a knock); and "the knock is scheduled before any follow-up that can throw" — since the review round `throwingFollowUps()` walks the syntax tree, so a `THROWS` call counts wherever it stands (`Promise.all`, `.then`, try/finally, a rethrowing catch), and a `try` excuses it only with a catch that does not throw again; a classifier test feeds it 16 snippets.
+- `lib/actions/site-knock-before-follow-ups.test.ts` (new, behavioural): the REAL actions with the REAL `logEvent` and notifier; the event insert answers XX000 (or the deal-health refresh throws); each action still throws, its write happened, and exactly ONE knock arrived with the expected body. Negative cases: a sync over private / coming-soon units never knocks; a rename refused by RLS neither knocks nor writes an event. Review round: set and clear back to back; a failed clear still knocks; a publish by an admin's override told, a private save not; the admin client unbuildable after the delete — told; a sold save whose superseded line fails — told; the stalled lookup abandoned at its bound (`lib/testing/stalled-client.ts`: the REAL supabase-js, whose fetch settles only when its signal aborts).
+
+**Verified (unit only: no DB, no stack, nothing hosted).**
+- RED on the base: the guard 11 failed / 17 passed (28); the behavioural file 9 failed / 2 passed (11) — the two negative cases pass by design. GREEN 28/28, 11/11. Review round on `5b0d319`: 4 failed / 60 passed (64) across the four touched files → GREEN 64/64.
+- Mutants: 14 of 14 killed (each knock moved back; the condition narrowed; the gate dropped; `visibility` dropped from the select; the rename's knock moved or removed; a commented-out knock left behind). Review round: six SURVIVED on `5b0d319` (the publish half of the condition, the whole condition, the cover knock below the clear's refusal, the delete knock below `createAdminClient()`, the gate reading only the last row, a knock gated on `legal`); on `8bf0a83` 14 of 14 killed, and the original 14 re-run (13 killed, the 14th re-anchored and killed).
+- Unit 3,701/3,701 at `8bf0a83` (237 files) at the default timeout; `typecheck`, `lint`. Branch CI green: run 38600619298 (checks, rls, e2e).
+- The DB tests that drive these actions (`unit-site-revalidate-actions`, `unit-status-actions`, `shared-photo-references`) were read, not run locally; CI's rls job ran them green.
+
+**Review round (two reviewers, eight low findings; seven fixed, one fixed with its residual written down; none refuted).** (1) `setMediaCover` awaited the lookup between set and clear, widening a pre-existing two-covers window — moved after the clear. (2) The lookup had no timeout — bounded. (3) The publish half of the condition was unpinned. (4) Two deliberate placements (a failed clear; an unbuildable admin client) were untested. (5) The sync's gate passed a last-row mutant — the fixture is `[private, public, coming_soon]`. (6) The guard was a regex, blind to `Promise.all` and try/finally — it reads the syntax tree; its residual heuristics are a BACKLOG NOTE. (7) The sold/rented scenario had no behavioural case. (8) The guard's header understated the behavioural coverage.
+
+**Rollback.** Revert the merge. Application only.
+
+**Left open (BACKLOG).** Each of these actions STILL throws after its committed write when a follow-up fails, so the user sees the error page — only the site refresh is fixed here ("Throws after a commit — 2026-10-13", amended). The operator scripts change the feed without a knock; `moveMedia`'s half-swap path neither knocks nor checks its restore; the ordering guard recognises throwing follow-ups by name (NOTE).
+
+**Landing (2026-10-14, on the operator's "land it"; third of the four merges, after #157).**
+- **Branch CI** green on the head `8bf0a83`: run 38600619298 (checks, rls, e2e).
+- **Merge.** PR [#159](https://github.com/KALAITSIDIS/gnk-crm/pull/159) merged at 18:25:20Z, pinned to `8bf0a83`, giving main `8ecb772` over `f074e7f` (#157). The merge's change over `f074e7f` is exactly the head's change over `489c507` (equal patch-ids), and its tree is the clean three-way merge (`git merge-tree`).
+- **Production.** Vercel `dpl_5bfhMx1ryV38Zj7LqvUXgHiDBjxB` READY 18:26:46Z, aliased to gnk-crm.vercel.app; no runtime errors since 18:21Z. Signed out, `/login` answers 200, and `/properties`, `/deals/x`, `/settings` and `/reports/commission-evidence` answer 307 to `/login`.
+- **Merge CI** on `8ecb772`: run 38615017720 green (checks, rls, e2e — read by the orchestrator 2026-10-14 before #161 merged).
+- **BACKLOG, struck on landing:**
+  - "The inherited-field sync moves public unit fields and tells nobody";
+  - "Three property actions schedule their knock after a step that can throw";
+  - the half-fix line under "A committed photo delete, archive or sold/rented save …".
+
+  Each VERIFY was re-run on origin/main `3fe15d2` and is quoted there.
+- The remote `fix/site-knock-order` is deleted (the local branch is kept), and its worktree is removed.
+- **Rollback.** Revert the merge (application only).
