@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 146::bigint as migrations,
+    2::bigint as auth_users, 147::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -971,6 +971,20 @@ misc as (
                 where p.polrelid = 'public.share_links'::regclass and p.polname in ('share_links_insert', 'share_links_update')
                   and pg_get_expr(p.polwithcheck, p.polrelid)
                         ~ '\(price_list_id IS NULL\) OR \(EXISTS \( SELECT 1\s+FROM (public\.)?price_lists pl\s+WHERE \(\(pl\.id = share_links\.price_list_id\) AND \(pl\.org_id = \( SELECT (public\.)?current_org_id\(\) AS current_org_id\)\)') = 2)::text
+  union all
+  -- 0147: no RLS policy in public calls current_org_id() / current_role_gnk()
+  -- bare (once per row): every helper call in every predicate sits in a
+  -- `(select …)` wrapper. Counted WITHOUT rls_bare_helper_calls() — a restore
+  -- that brought back 0030's seven-table guard would answer empty over bare
+  -- policies; this compares each predicate's helper calls with its wrapped
+  -- ones. A restore that brought back any pre-0147 policy text reads > 0.
+  select 'PERFORMANCE: no RLS policy in public calls current_org_id() / current_role_gnk() bare (0147)', '0',
+         (select count(*)::text from pg_policies p
+           where p.schemaname = 'public'
+             and (select count(*) from regexp_matches(coalesce(p.qual, '') || ' ' || coalesce(p.with_check, ''),
+                                                      '(current_org_id|current_role_gnk)\(\)', 'g'))
+                 <> (select count(*) from regexp_matches(coalesce(p.qual, '') || ' ' || coalesce(p.with_check, ''),
+                                                         '\( SELECT (public\.)?(current_org_id|current_role_gnk)\(\) AS (current_org_id|current_role_gnk)\)', 'g')))
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.

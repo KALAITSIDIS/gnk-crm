@@ -24,10 +24,15 @@ Implement in `supabase/migrations/0002_rls_policies.sql`. Every row below has an
 > `tasks`, `viewings` — the helper calls are written `(select current_org_id())`
 > rather than `current_org_id()`. Same predicate, same meaning; the wrapper makes
 > Postgres evaluate it once per statement instead of once per row. **Do not
-> "tidy" it away.** The other 62 permissive policies are deliberately still bare.
+> "tidy" it away.** 0100 hoisted twelve more policies and **0147 the last 51**
+> (19 small tables), so since 0147 **no policy in the schema calls either helper
+> bare** — write every new one `(select current_org_id())` /
+> `(select current_role_gnk())`.
 >
 > Both migrations carry guard functions that fail CI if a future policy regresses:
-> `rls_aal2_coverage()` and `rls_bare_helper_calls()` / `rls_hoisted_policy_count()`.
+> `rls_aal2_coverage()` and `rls_bare_helper_calls()` (schema-wide since 0147,
+> permissive and restrictive) / `rls_hoisted_policy_count()` (the seven list
+> tables' presence check, 21).
 >
 > **Definer surfaces (migration 0127).** A SECURITY DEFINER function or a view
 > without `security_invoker` runs as its owner, so `require_aal2` is not between
