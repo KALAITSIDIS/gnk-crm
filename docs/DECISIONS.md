@@ -10228,7 +10228,7 @@ Item 7b of `T-external-audit-2026-10-14`: the staleness that was real (the webho
 - The remote `fix/site-knock-order` is deleted (the local branch is kept), and its worktree is removed.
 - **Rollback.** Revert the merge (application only).
 
-## T-kanban-drop-settle + T-malformed-ids — the pipeline board settles every drop inside its transition, and only the roles `deals_update` admits can pick a card up; a malformed id is a 404, a dropped filter or a refusal in words, never the error page or Postgres' text (2026-10-14; no migration; NOT LANDED — PR #KANBAN_PR (branch `fix/kanban-drop-and-ids`, code head `e94c443`, its records commit on top); landing on the operator's word)
+## T-kanban-drop-settle + T-malformed-ids — the pipeline board settles every drop inside its transition, and only the roles `deals_update` admits can pick a card up; a malformed id is a 404, a dropped filter or a refusal in words, never the error page or Postgres' text (2026-10-14; no migration; NOT LANDED — PR #162 (branch `fix/kanban-drop-and-ids`, code head `e94c443`, its records commit on top); landing on the operator's word)
 
 The residuals of items 5 and 4 of `T-external-audit-2026-10-14` (the first two entries of BACKLOG "External audit — 2026-10-14"), built on the operator's "go with 1 and 2". Application only: no migration, nothing on hosted, no RLS change.
 - **Commits.** `8e6d5aa` (T-kanban-drop-settle) and `06432f3` (T-malformed-ids); review round `8118cbe`, `78336cd`, `5d6f3d0`, `e94c443`.
@@ -10368,4 +10368,4 @@ The residuals of items 5 and 4 of `T-external-audit-2026-10-14` (the first two e
 - `/properties/new?similar=<non-uuid>` still sends one query. Its error is ignored and the form comes up blank, as for an unknown id, so nobody sees an effect.
 - `reports/commission-evidence/page.tsx:14` keeps its own guid regex (equivalent to `z.guid()`), and `lib/services/export-audit.ts:46` keeps `vet.uuid`. Both are left as they are.
 
-**Status.** NOT LANDED — PR #KANBAN_PR (branch `fix/kanban-drop-and-ids`, code head `e94c443`, its records commit on top); landing on the operator's word. BACKLOG keeps both entries OPEN, each with a dated NOT LANDED parenthetical; they are struck in the landing update, not before.
+**Status.** NOT LANDED — PR #162 (branch `fix/kanban-drop-and-ids`, code head `e94c443`, its records commit on top); landing on the operator's word. BACKLOG keeps both entries OPEN, each with a dated NOT LANDED parenthetical; they are struck in the landing update, not before.

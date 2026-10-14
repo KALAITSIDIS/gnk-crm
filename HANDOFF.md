@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-08
 
-**2026-10-14, latest (pipeline drop + malformed ids, NOT LANDED): the first two entries of BACKLOG "External audit — 2026-10-14", built on the operator's "go with 1 and 2". The pipeline board settles every drop inside its transition, and only the roles `deals_update` admits can pick a card up. A malformed id is a 404, a dropped filter or a refusal in words, never the error page or Postgres' text. No migration, nothing on hosted. PR #KANBAN_PR (branch `fix/kanban-drop-and-ids`, rebased onto origin/main `c486856`, code head `e94c443`, its records commit on top); nothing is merged. DECISIONS `T-kanban-drop-settle + T-malformed-ids`.**
+**2026-10-14, latest (pipeline drop + malformed ids, NOT LANDED): the first two entries of BACKLOG "External audit — 2026-10-14", built on the operator's "go with 1 and 2". The pipeline board settles every drop inside its transition, and only the roles `deals_update` admits can pick a card up. A malformed id is a 404, a dropped filter or a refusal in words, never the error page or Postgres' text. No migration, nothing on hosted. PR #162 (branch `fix/kanban-drop-and-ids`, rebased onto origin/main `c486856`, code head `e94c443`, its records commit on top); nothing is merged. DECISIONS `T-kanban-drop-settle + T-malformed-ids`.**
 - **What.**
   - **The board (`T-kanban-drop-settle`, `8e6d5aa`, review `5d6f3d0`).** The drop awaited `moveDealToStage` in a transition with no try/catch:
     - a rejected call reached `app/(app)/error.tsx`;
@@ -23,7 +23,7 @@
   - The rebase onto `c486856` kept every commit's patch-id and code tree, so what was measured before it holds.
 - **Next (each on the operator's word).**
   1. Push the records commit (not pushed at writing), and read branch CI green on the new head: checks, rls, e2e.
-  2. Open the PR and replace `#KANBAN_PR` in DECISIONS, BACKLOG and HANDOFF.
+  2. Open the PR and replace `#162` in DECISIONS, BACKLOG and HANDOFF.
   3. Merge, pinned with `--match-head-commit`. Then verify the production deployment READY with no runtime errors, and read the merge CI.
   4. Landing records: strike the two BACKLOG entries, with their VERIFYs re-run on the merge (each entry's note says which checks to read: two of the original three misread the branch), and mark the contacts-filter note landed. That entry stays open for `?temperature=` and `?source=`.
 - **Left open (BACKLOG).**
