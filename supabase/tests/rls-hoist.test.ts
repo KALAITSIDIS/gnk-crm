@@ -165,12 +165,13 @@ describe("0030 / 0147 — RLS helpers stay hoisted, schema-wide", () => {
 });
 
 describe("0147 itself (rolled back)", () => {
-  // Whether service_role holds EXECUTE on rls_bare_auth_calls is the IMAGE's doing (default privileges), not a
-  // migration's: hosted and the 17.11 image grant it, CI's 17.6.1.159 image does not (measured 2026-10-14 — a
-  // preflight that pinned the ACL as text refused CI's fresh stack). The file must apply either way.
+  // Whether service_role holds EXECUTE on rls_bare_auth_calls is the environment's doing (default privileges), not
+  // a migration's: hosted and fresh local stacks grant it, the shared local stack built migration by migration does
+  // not, and a preflight that pinned the ACL as text refused CI's fresh stack (run 38600602984, 2026-10-14). The
+  // file must apply either way.
   for (const [what, toggle] of [
-    ["service_role's EXECUTE on the auth-call check taken away (CI's image)", "revoke execute on function public.rls_bare_auth_calls() from service_role"],
-    ["service_role granted EXECUTE on the auth-call check (hosted's image)", "grant execute on function public.rls_bare_auth_calls() to service_role"],
+    ["service_role's EXECUTE on the auth-call check taken away", "revoke execute on function public.rls_bare_auth_calls() from service_role"],
+    ["service_role granted EXECUTE on the auth-call check", "grant execute on function public.rls_bare_auth_calls() to service_role"],
   ] as const) {
     it(`applies whatever the image grants service_role: ${what}`, async () => {
       await rolledBack(async (notices) => {

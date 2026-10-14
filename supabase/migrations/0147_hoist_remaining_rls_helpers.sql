@@ -222,11 +222,12 @@ begin
   -- 2. the three guards are 0030 / 0100's, with their grants. The grants are
   --    read as PRIVILEGES, never as ACL text: whether service_role holds
   --    EXECUTE on rls_bare_auth_calls depends on the image's default
-  --    privileges, not on any migration — MEASURED 2026-10-14: hosted and the
-  --    17.11 image read {postgres=X/postgres,authenticated=X/postgres,
-  --    service_role=X/postgres}, CI's 17.6.1.159 image reads it without
-  --    service_role, and this preflight pinned as text refused CI's fresh
-  --    stack. What a guard's grants decide is who may CALL it: never anon (nor
+  --    privileges, not on any migration — MEASURED 2026-10-14: hosted and
+  --    fresh local stacks read {postgres=X/postgres,authenticated=X/postgres,
+  --    service_role=X/postgres}, the shared local stack (built migration by
+  --    migration) reads it without service_role, and pinned as text this
+  --    preflight refused CI's fresh stack (run 38600602984). What a guard's
+  --    grants decide is who may CALL it: never anon (nor
   --    PUBLIC, whose grant is anon's), and authenticated for
   --    rls_bare_auth_calls only.
   select string_agg(x.proname, ', ' order by x.proname) into v_diag
