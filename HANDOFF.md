@@ -47,7 +47,7 @@
     - #157 (`b3f763b`) merged 18:23:51Z → main `f074e7f`; `dpl_GJd5b25kESk4CmPhamSwPSUBpQea` READY 18:24:58Z; merge CI run 38614807370.
     - #159 (`8bf0a83`) merged 18:25:20Z → main `8ecb772`; `dpl_5bfhMx1ryV38Zj7LqvUXgHiDBjxB` READY 18:26:46Z; merge CI run 38615017720.
     - #158 (`e7221fb`) merged 18:27:10Z → main `3fe15d2`; `dpl_DCv6ZB3yUNB9myWuvzUfFrTKBvee` READY 18:29:34Z; merge CI run 38615279928.
-  - **The four merge CI runs were IN PROGRESS when these records were written.** The orchestrator confirms them before #161 merges.
+  - **The four merge CI runs are green** (checks, rls, e2e): 38614497698 (`4735777`), 38614807370 (`f074e7f`), 38615017720 (`8ecb772`), 38615279928 (`3fe15d2`) — read before #161 merged.
   - **Signed out on production:** `/login` 200; `/properties`, `/deals/x`, `/settings` and `/reports/commission-evidence` 307 → `/login`.
   - **A slip:** one GET of `/p/<all-zeros token>` on production at ≈18:23Z, against the rule never to probe `/p/` there (each request notes a miss against the caller's IP hash; 20 per 15 minutes refuses that IP, 0081). It was one miss, against the operator's own IP: harmless, and it expires.
   - **The operator's "land it" accepted the document limit:** merging #158 was the acceptance. A document over 3,500,000 bytes ("3.3 MB") is refused in the browser until documents go direct to storage.

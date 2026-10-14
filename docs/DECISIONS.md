@@ -9907,7 +9907,7 @@ The operator pasted an external architectural audit on 2026-10-14: seven items, 
    - #157 at 18:23:51Z → `f074e7f`;
    - #159 at 18:25:20Z → `8ecb772`;
    - #158 at 18:27:10Z → `3fe15d2`. Merging #158 was the operator's acceptance of the document limit (`T-upload-size-honest`).
-4. These records (PR #161) last. The four merge CI runs were in progress when they were written; the orchestrator confirms them before #161 merges.
+4. These records (PR #161) last, after the four merge CI runs were read green (checks, rls, e2e on `4735777`, `f074e7f`, `8ecb772` and `3fe15d2`).
 
 ## T-share-link-tenant — a share link names, pins and shows only its own organisation's properties, price list and agent (2026-10-14; migration 0146; LANDED 2026-10-14 — hosted 0146 first, PR #160, main `4735777`, deployed)
 
@@ -9995,7 +9995,7 @@ Item 1 of `T-external-audit-2026-10-14`: the gap beside the audit's claim. The l
 - **From outside,** through PostgREST with the publishable key: POST `/rpc/resolve_share_link` with an all-zeros token answered 200 `null`.
 - **Merge.** PR [#160](https://github.com/KALAITSIDIS/gnk-crm/pull/160) merged at 18:21:42Z, pinned to `59d8d0e`, giving main `4735777` (main unmoved at `489c507`; the merge's tree is byte-identical to the head's). Branch CI run 38611522514 on `59d8d0e` was green (checks, rls, e2e).
 - **Production.** Vercel `dpl_949UXmyfnf2CYEuE26JW32YXhAon` READY 18:22:56Z, aliased to gnk-crm.vercel.app; no runtime errors since 18:21Z. Signed out, `/login` answers 200, and `/properties`, `/deals/x`, `/settings` and `/reports/commission-evidence` answer 307 to `/login`.
-- **Merge CI** on `4735777`: run 38614497698, IN PROGRESS when this was written. The orchestrator confirms it before the records PR (#161) merges.
+- **Merge CI** on `4735777`: run 38614497698 green (checks, rls, e2e — read by the orchestrator 2026-10-14 before #161 merged).
 - **A slip.** At ≈18:23Z one GET of `/p/<all-zeros token>` was made on production. The standing rule is never to probe `/p/` there: every request notes a miss against the caller's IP hash, and 20 in 15 minutes refuses that IP (0081). This was ONE miss, against the operator's own IP. It is harmless and it expires.
 - The writes to production in this landing were the two migrations, their two ledger rows and that one miss. The reads were catalog values, the migration ledger, counts and the advisors.
 - The remote `fix/share-link-tenant` is deleted (the local branch is kept). Its worktree is removed, and the disposable stack `.iso/audit1014` is stopped (`--no-backup`) and its directory removed.
@@ -10072,7 +10072,7 @@ Item 1b of `T-external-audit-2026-10-14`, done as hygiene: immaterial at today's
 - **From outside,** through PostgREST with the publishable key: POST `/rpc/rls_bare_helper_calls` answered 401 / 42501 (no API role but service_role executes it).
 - **Merge, production and merge CI** are #160's (`T-share-link-tenant`):
   - main `4735777`, `dpl_949UXmyfnf2CYEuE26JW32YXhAon` READY 18:22:56Z, no runtime errors;
-  - merge CI run 38614497698, in progress at writing.
+  - merge CI run 38614497698 green (checks, rls, e2e).
 - **BACKLOG, struck on landing:** "`property_media_select` evaluates `current_org_id()` once per row" (0147 hoists all three `property_media` policies). The 2026-08-11 RLS entry's "Superseded" note now says landed. `mandates_safe` (a view) stays open, as above.
 - **Rollback, now.** The forward migration carrying `supabase/tests/revert-0147.ts`'s text, guarded (above), and before 0146's. Meaning is unchanged either way.
 
@@ -10125,7 +10125,7 @@ Item 2 of `T-external-audit-2026-10-14`, narrowed to the one column it is true f
 - **Branch CI** green on the head `b3f763b`: run 38600609217 (checks, rls, e2e).
 - **Merge.** PR [#157](https://github.com/KALAITSIDIS/gnk-crm/pull/157) merged at 18:23:51Z, pinned to `b3f763b`, giving main `f074e7f` over `4735777` (#160). The merge's change over `4735777` is exactly the head's change over `489c507` (equal patch-ids), and its tree is the clean three-way merge (`git merge-tree`).
 - **Production.** Vercel `dpl_GJd5b25kESk4CmPhamSwPSUBpQea` READY 18:24:58Z, aliased to gnk-crm.vercel.app; no runtime errors since 18:21Z. Signed out, `/login` answers 200, and `/properties`, `/deals/x`, `/settings` and `/reports/commission-evidence` answer 307 to `/login`.
-- **Merge CI** on `f074e7f`: run 38614807370, IN PROGRESS when this was written. The orchestrator confirms it before the records PR (#161) merges.
+- **Merge CI** on `f074e7f`: run 38614807370 green (checks, rls, e2e — read by the orchestrator 2026-10-14 before #161 merged).
 - **Not yet done:** the post-deploy read above (`computed_at` against `updated_at`), which waits until agents or admins have saved deals (HANDOFF, What next).
 - The remote `fix/deal-health-race` is deleted (the local branch is kept), and its worktree is removed.
 - **Rollback.** Revert the merge (application only).
@@ -10175,7 +10175,7 @@ Item 6 of `T-external-audit-2026-10-14`: the real gap the audit's wording covere
   - The merge's tree is the clean three-way merge of the two (`git merge-tree`: both `3aa8a934…`).
   - Every other file of #158 is byte-identical to the head's.
 - **Production.** Vercel `dpl_DCv6ZB3yUNB9myWuvzUfFrTKBvee` READY 18:29:34Z, aliased to gnk-crm.vercel.app; no runtime errors since 18:21Z. Signed out, `/login` answers 200, and `/properties`, `/deals/x`, `/settings` and `/reports/commission-evidence` answer 307 to `/login`.
-- **Merge CI** on `3fe15d2`: run 38615279928, IN PROGRESS when this was written. The orchestrator confirms it before the records PR (#161) merges.
+- **Merge CI** on `3fe15d2`: run 38615279928 green (checks, rls, e2e — read by the orchestrator 2026-10-14 before #161 merged).
 - **Not yet done:** seeing a `lost_request` event arrive in Sentry, which waits for one to happen (HANDOFF, What next).
 - **The concurrent session.** `T-document-insert-outcome` in `.worktrees/gnk-crm/document-insert-outcome` is still uncommitted (unchanged). This change avoided its files, and its merge-time item stands: its `documentNotConfirmed` answers must carry `unconfirmed: true` (BACKLOG). #158's client half is on main.
 - The remote `fix/upload-size-honest` is deleted (the local branch is kept), and its worktree is removed.
@@ -10218,7 +10218,7 @@ Item 7b of `T-external-audit-2026-10-14`: the staleness that was real (the webho
 - **Branch CI** green on the head `8bf0a83`: run 38600619298 (checks, rls, e2e).
 - **Merge.** PR [#159](https://github.com/KALAITSIDIS/gnk-crm/pull/159) merged at 18:25:20Z, pinned to `8bf0a83`, giving main `8ecb772` over `f074e7f` (#157). The merge's change over `f074e7f` is exactly the head's change over `489c507` (equal patch-ids), and its tree is the clean three-way merge (`git merge-tree`).
 - **Production.** Vercel `dpl_5bfhMx1ryV38Zj7LqvUXgHiDBjxB` READY 18:26:46Z, aliased to gnk-crm.vercel.app; no runtime errors since 18:21Z. Signed out, `/login` answers 200, and `/properties`, `/deals/x`, `/settings` and `/reports/commission-evidence` answer 307 to `/login`.
-- **Merge CI** on `8ecb772`: run 38615017720, IN PROGRESS when this was written. The orchestrator confirms it before the records PR (#161) merges.
+- **Merge CI** on `8ecb772`: run 38615017720 green (checks, rls, e2e — read by the orchestrator 2026-10-14 before #161 merged).
 - **BACKLOG, struck on landing:**
   - "The inherited-field sync moves public unit fields and tells nobody";
   - "Three property actions schedule their knock after a step that can throw";
