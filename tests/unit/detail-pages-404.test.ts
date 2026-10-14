@@ -42,14 +42,33 @@ const VALID = "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c01";
 type PageProps = { params: Promise<{ id: string }>; searchParams?: Promise<Record<string, string>> };
 type PageFn = (props: PageProps) => Promise<unknown>;
 
-const PAGES: { route: string; load: () => Promise<{ default: unknown }>; withSearch?: boolean }[] = [
-  { route: "/contacts/[id]", load: () => import("@/app/(app)/contacts/[id]/page") },
-  { route: "/deals/[id]", load: () => import("@/app/(app)/deals/[id]/page") },
-  { route: "/properties/[id]", load: () => import("@/app/(app)/properties/[id]/page"), withSearch: true },
-  { route: "/properties/[id]/units", load: () => import("@/app/(app)/properties/[id]/units/page"), withSearch: true },
-  { route: "/viewings/[id]", load: () => import("@/app/(app)/viewings/[id]/page") },
-  { route: "/viewings/[id]/sign", load: () => import("@/app/(app)/viewings/[id]/sign/page") },
+/*
+ * Imported HERE, while the file is collected — never inside a test body. A
+ * test's 5 s budget (vitest's default; vitest.config.mts sets none) covers
+ * everything its body awaits, and the contact page's module graph alone took
+ * 4.6 s of it under the full suite's load (2.3 s run alone): one slow worker
+ * from a red CI. Collection has no such budget, and the tests then time only
+ * the page call.
+ */
+const [contactPage, dealPage, propertyPage, unitsPage, viewingPage, signPage, icsRoute] = await Promise.all([
+  import("@/app/(app)/contacts/[id]/page"),
+  import("@/app/(app)/deals/[id]/page"),
+  import("@/app/(app)/properties/[id]/page"),
+  import("@/app/(app)/properties/[id]/units/page"),
+  import("@/app/(app)/viewings/[id]/page"),
+  import("@/app/(app)/viewings/[id]/sign/page"),
+  import("@/app/(app)/viewings/[id]/ics/route"),
+]);
+
+const PAGES: { route: string; Page: PageFn; withSearch?: boolean }[] = [
+  { route: "/contacts/[id]", Page: contactPage.default as PageFn },
+  { route: "/deals/[id]", Page: dealPage.default as PageFn },
+  { route: "/properties/[id]", Page: propertyPage.default as PageFn, withSearch: true },
+  { route: "/properties/[id]/units", Page: unitsPage.default as PageFn, withSearch: true },
+  { route: "/viewings/[id]", Page: viewingPage.default as PageFn },
+  { route: "/viewings/[id]/sign", Page: signPage.default as PageFn },
 ];
+const { GET } = icsRoute;
 
 const props = (id: string, withSearch?: boolean): PageProps => ({
   params: Promise.resolve({ id }),
@@ -62,9 +81,8 @@ beforeEach(() => {
 });
 
 describe("a dynamic [id] page 404s on a segment that is not an id, before any query", () => {
-  for (const { route, load, withSearch } of PAGES) {
+  for (const { route, Page, withSearch } of PAGES) {
     it(`${route}: notFound() for each malformed id, and the database is never asked`, async () => {
-      const Page = (await load()).default as PageFn;
       for (const id of MALFORMED) {
         const thrown = await Page(props(id, withSearch)).then(
           () => new Error("resolved"),
@@ -76,7 +94,6 @@ describe("a dynamic [id] page 404s on a segment that is not an id, before any qu
     });
 
     it(`${route}: a well-formed id still goes to the database, as before`, async () => {
-      const Page = (await load()).default as PageFn;
       await expect(Page(props(VALID, withSearch))).rejects.toThrow("REACHED THE DATABASE");
       expect(createClient).toHaveBeenCalledTimes(1);
     });
@@ -85,7 +102,6 @@ describe("a dynamic [id] page 404s on a segment that is not an id, before any qu
 
 describe("the viewing calendar file (a route handler) answers 404 on a malformed id", () => {
   it("404, not the 400 it used to give — and no query", async () => {
-    const { GET } = await import("@/app/(app)/viewings/[id]/ics/route");
     for (const id of MALFORMED) {
       const res = await GET(new Request("http://localhost/viewings/x/ics"), { params: Promise.resolve({ id }) });
       expect(res.status, id).toBe(404);
@@ -94,7 +110,6 @@ describe("the viewing calendar file (a route handler) answers 404 on a malformed
   });
 
   it("a well-formed id still goes to the database", async () => {
-    const { GET } = await import("@/app/(app)/viewings/[id]/ics/route");
     await expect(
       GET(new Request("http://localhost/viewings/x/ics"), { params: Promise.resolve({ id: VALID }) }),
     ).rejects.toThrow("REACHED THE DATABASE");
