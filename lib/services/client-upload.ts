@@ -15,6 +15,10 @@
  *    UNKNOWN outcome — the write may have committed before the answer was
  *    lost, and none of these uploads is idempotent — worded as such, the
  *    house idiom of components/features/deals/outcome-actions.tsx.
+ *    The rejection itself goes to the caller's `onRejected` (the forms pass
+ *    Sentry.captureException): the error boundary used to report it, and a
+ *    platform 413 never reaches the server's logs — this report is the one
+ *    signal that the request budget is set too high.
  *
  * Pure of React and of any browser-only API, so the decisions are unit-tested;
  * the forms (components/features/shared/use-upload-form.ts, media-tab.tsx)
@@ -23,7 +27,30 @@
 
 import { UPLOAD_REQUEST_BUDGET_BYTES, uploadSizeRefusal } from "@/lib/constants/upload";
 
-export type UploadActionState = { error: string | null; savedAt: number | null };
+export type UploadActionState = {
+  error: string | null;
+  savedAt: number | null;
+  /**
+   * Set by an action that answered but cannot say whether the upload
+   * committed (its `error` then says what to check). Shown as an UNKNOWN
+   * outcome — kept until dismissed, the page re-read — not as a plain
+   * refusal. No action sets it yet: T-document-insert-outcome's
+   * `documentNotConfirmed` answers are meant to carry it.
+   */
+  unconfirmed?: boolean;
+};
+
+/**
+ * Hand a lost request to the caller's reporter. A reporter that throws must
+ * not turn an answer on the form back into a throw (the error boundary).
+ */
+export function reportRejection(onRejected: ((error: unknown) => void) | undefined, error: unknown): void {
+  try {
+    onRejected?.(error);
+  } catch {
+    // the report is best-effort; the user's message is not
+  }
+}
 
 export type UploadOutcome =
   /** never sent: over the limit */
@@ -47,6 +74,8 @@ export async function submitUpload<S extends UploadActionState>(
     limit?: number;
     tooLargeAdvice: string;
     unconfirmedText: string;
+    /** told of a call that rejected (never of an answered refusal) */
+    onRejected?: (error: unknown) => void;
   },
 ): Promise<UploadOutcome> {
   const refusal = uploadSizeRefusal(
@@ -59,9 +88,12 @@ export async function submitUpload<S extends UploadActionState>(
   let state: S;
   try {
     state = await action(options.initialState, formData);
-  } catch {
+  } catch (error) {
+    reportRejection(options.onRejected, error);
     return { kind: "unconfirmed", text: options.unconfirmedText };
   }
+  // the server's own "could not confirm": an unknown outcome, in its words
+  if (state.error && state.unconfirmed) return { kind: "unconfirmed", text: state.error };
   if (state.error) return { kind: "error", text: state.error };
   if (state.savedAt) return { kind: "saved" };
   // an answer that claims neither: not a success the user should trust
@@ -90,6 +122,8 @@ export async function uploadOneByOne(
     send: (file: File) => Promise<{ error: string | null; warning?: string | null }>;
     onProgress?: (position: number, total: number) => void;
     onWarning?: (text: string) => void;
+    /** told of a send that rejected (never of a refused preparation or answer) */
+    onRejected?: (error: unknown) => void;
   },
 ): Promise<{ done: number; failed: string | null; unconfirmed: boolean }> {
   let done = 0;
@@ -105,7 +139,8 @@ export async function uploadOneByOne(
     let answer: { error: string | null; warning?: string | null };
     try {
       answer = await steps.send(file);
-    } catch {
+    } catch (error) {
+      reportRejection(steps.onRejected, error);
       return { done, failed: photoUploadUnconfirmedText(original.name), unconfirmed: true };
     }
     // saved, with a follow-up that did not complete — said, not hidden

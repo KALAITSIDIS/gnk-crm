@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { extractSha256Hex, sha256Hex } from "./hash";
-import { sha256HexInBrowser, verifyRequestBody } from "./client-hash";
+import {
+  VERIFY_HASH_FAILED_TEXT,
+  VERIFY_NO_ANSWER_TEXT,
+  sha256HexInBrowser,
+  verifyInBrowser,
+  verifyRequestBody,
+} from "./client-hash";
+import type { VerifyReportState } from "@/lib/actions/reports";
 
 /**
  * The verify-a-report form hashes the chosen PDF in the browser and posts ONLY
@@ -82,5 +89,89 @@ describe("verifyRequestBody — what the verify form sends", () => {
   it("with neither, the body is empty and the action answers in its own words (noInput)", async () => {
     const body = await verifyRequestBody(new FormData());
     expect([...body.keys()]).toEqual([]);
+  });
+});
+
+/**
+ * The verify form's action, run in the browser (verify-report.tsx passes it to
+ * useActionState with the real server action as `verify`). Every way it can
+ * end is an answer on the form — a throw here would land on the route's error
+ * boundary, which is what the form was changed to stop.
+ */
+describe("verifyInBrowser — the verify form's action", () => {
+  const initial: VerifyReportState = { error: null, result: null };
+  const matched: VerifyReportState = {
+    error: null,
+    result: { matched: true, sha256: "x", generatedAt: "2026-10-01T09:00:00Z", reportHash: null, rows: 3 },
+  };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("the server action receives only the digest — never the PDF — and its answer is shown as given", async () => {
+    const file = pdf("%PDF-1.4 the report");
+    const form = new FormData();
+    form.set("file", file);
+    form.set("sha256", "");
+    const verify = vi.fn<(prev: VerifyReportState, body: FormData) => Promise<VerifyReportState>>(async () => matched);
+    expect(await verifyInBrowser(initial, form, { verify })).toBe(matched);
+    expect(verify).toHaveBeenCalledTimes(1);
+    const [prev, body] = verify.mock.calls[0]!;
+    expect(prev).toBe(initial);
+    expect([...body.keys()]).toEqual(["sha256"]);
+    expect(body.get("sha256")).toBe(sha256Hex(new Uint8Array(await file.arrayBuffer())));
+  });
+
+  it("a server action that REJECTS is an answer on the form, not a throw — and it is reported", async () => {
+    const lost = new Error("An unexpected response was received from the server.");
+    const onRejected = vi.fn();
+    const form = new FormData();
+    form.set("sha256", "a".repeat(64));
+    const state = await verifyInBrowser(initial, form, {
+      verify: async () => {
+        throw lost;
+      },
+      onRejected,
+    });
+    expect(state).toEqual({ error: VERIFY_NO_ANSWER_TEXT, result: null });
+    expect(onRejected).toHaveBeenCalledWith(lost);
+  });
+
+  it("a rejection says to RELOAD — an expired session or a stale deploy fails the same way on every retry", () => {
+    // 'Not authenticated' from getCurrentProfile, or Next's
+    // UnrecognizedActionError after a deploy: a plain "try again" loops
+    expect(VERIFY_NO_ANSWER_TEXT).toMatch(/reload the page/i);
+    expect(VERIFY_NO_ANSWER_TEXT).toMatch(/nothing was changed/i);
+  });
+
+  it("a reporter that throws does not make the action throw", async () => {
+    const form = new FormData();
+    form.set("sha256", "a".repeat(64));
+    const state = await verifyInBrowser(initial, form, {
+      verify: async () => {
+        throw new Error("lost");
+      },
+      onRejected: () => {
+        throw new Error("reporter down");
+      },
+    });
+    expect(state).toEqual({ error: VERIFY_NO_ANSWER_TEXT, result: null });
+  });
+
+  it("a PDF this browser cannot hash is an answer that says to paste the digest — nothing is sent", async () => {
+    vi.stubGlobal("crypto", undefined);
+    const form = new FormData();
+    form.set("file", pdf("%PDF-1.4 the report"));
+    const verify = vi.fn(async () => matched);
+    const onRejected = vi.fn();
+    expect(await verifyInBrowser(initial, form, { verify, onRejected })).toEqual({
+      error: VERIFY_HASH_FAILED_TEXT,
+      result: null,
+    });
+    expect(VERIFY_HASH_FAILED_TEXT).toMatch(/paste/i);
+    expect(verify).not.toHaveBeenCalled();
+    // a local limitation, not a lost request: not reported
+    expect(onRejected).not.toHaveBeenCalled();
   });
 });

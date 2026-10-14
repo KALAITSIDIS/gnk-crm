@@ -60,6 +60,58 @@ describe("submitUpload", () => {
     });
   });
 
+  it("the rejection is handed to onRejected — the error boundary used to report it to Sentry", async () => {
+    // a platform 413 never reaches the server's logs: this report is the one
+    // signal that the request budget is set too high
+    const lost = new Error("An unexpected response was received from the server.");
+    const onRejected = vi.fn();
+    const action = vi.fn(async (): Promise<State> => {
+      throw lost;
+    });
+    const outcome = await submitUpload(formWith(fileOf(10)), action, { ...options, onRejected });
+    expect(outcome.kind).toBe("unconfirmed");
+    expect(onRejected).toHaveBeenCalledTimes(1);
+    expect(onRejected).toHaveBeenCalledWith(lost);
+  });
+
+  it("a reporter that throws does not turn the unknown outcome into a throw", async () => {
+    const action = vi.fn(async (): Promise<State> => {
+      throw new Error("lost");
+    });
+    const onRejected = vi.fn(() => {
+      throw new Error("reporter down");
+    });
+    await expect(submitUpload(formWith(fileOf(10)), action, { ...options, onRejected })).resolves.toEqual({
+      kind: "unconfirmed",
+      text: "UNCONFIRMED",
+    });
+  });
+
+  it("an answered refusal or a save is not reported as a rejection", async () => {
+    const onRejected = vi.fn();
+    await submitUpload(formWith(fileOf(10)), async () => ({ error: "PDF, JPG or PNG only", savedAt: null }), {
+      ...options,
+      onRejected,
+    });
+    await submitUpload(formWith(fileOf(10)), async () => ({ error: null, savedAt: 1 }), { ...options, onRejected });
+    expect(onRejected).not.toHaveBeenCalled();
+  });
+
+  it("the server's own 'could not confirm' answer (flagged unconfirmed) is an UNKNOWN outcome in its words", async () => {
+    // T-document-insert-outcome: the action itself may not know whether the
+    // row committed. Its text must get the unknown-outcome treatment (kept
+    // until dismissed, page re-read), not a plain inline refusal.
+    const action = vi.fn(async () => ({
+      error: "Could not confirm the document was recorded — check the list.",
+      savedAt: null,
+      unconfirmed: true,
+    }));
+    expect(await submitUpload(formWith(fileOf(10)), action, options)).toEqual({
+      kind: "unconfirmed",
+      text: "Could not confirm the document was recorded — check the list.",
+    });
+  });
+
   it("the server's own refusal is passed on in its words", async () => {
     const action = vi.fn(async () => ({ error: "PDF, JPG or PNG only", savedAt: null }));
     expect(await submitUpload(formWith(fileOf(10)), action, options)).toEqual({
@@ -114,6 +166,42 @@ describe("uploadOneByOne — the media tab's photo loop", () => {
     expect(send).toHaveBeenCalledTimes(2);
     expect(result).toEqual({ done: 1, failed: photoUploadUnconfirmedText("b.jpg"), unconfirmed: true });
     expect(photoUploadUnconfirmedText("b.jpg")).toMatch(/could not confirm whether b\.jpg was saved/i);
+  });
+
+  it("the rejected send is handed to onRejected; a refused preparation is not", async () => {
+    const lost = new Error("An unexpected response was received from the server.");
+    const onRejected = vi.fn();
+    await uploadOneByOne(photos("a.jpg"), {
+      prepare: async () => {
+        throw new Error("a.jpg is still 3.6 MB after resizing");
+      },
+      send: async () => ({ error: null }),
+      onRejected,
+    });
+    expect(onRejected).not.toHaveBeenCalled();
+    const result = await uploadOneByOne(photos("b.jpg"), {
+      prepare,
+      send: async () => {
+        throw lost;
+      },
+      onRejected,
+    });
+    expect(result.unconfirmed).toBe(true);
+    expect(onRejected).toHaveBeenCalledTimes(1);
+    expect(onRejected).toHaveBeenCalledWith(lost);
+  });
+
+  it("a reporter that throws does not make the photo loop throw", async () => {
+    const result = await uploadOneByOne(photos("b.jpg"), {
+      prepare,
+      send: async () => {
+        throw new Error("lost");
+      },
+      onRejected: () => {
+        throw new Error("reporter down");
+      },
+    });
+    expect(result).toEqual({ done: 0, failed: photoUploadUnconfirmedText("b.jpg"), unconfirmed: true });
   });
 
   it("a photo that cannot be prepared (too large, unreadable) stops the run and is never sent", async () => {

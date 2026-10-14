@@ -136,12 +136,26 @@ describe("downscaleForUpload in the browser (T-upload-size-honest)", () => {
     expect(browser.calls.some((c) => c.op === "toBlob")).toBe(true);
   });
 
-  it("an over-budget file the browser cannot resize is refused before anything is decoded or sent", async () => {
-    const browser = fakeBrowser({ blobBytes: 1 });
-    const refusal = downscaleForUpload(photo(5_000_000, "scan.heic", "image/heic"));
-    await expect(refusal).rejects.toThrow(/scan\.heic/);
-    await expect(refusal).rejects.toThrow(/3\.3 MB/);
-    expect(browser.createImageBitmap).not.toHaveBeenCalled();
+  it("an over-budget file of a type the server refuses is told its TYPE is the problem — not its size", async () => {
+    // picked through "All files": a smaller HEIC would only meet the server's
+    // "only JPEG/PNG/WebP accepted" (lib/actions/media.ts) — so "use a smaller
+    // photo" would send the user the wrong way
+    for (const [name, type] of [
+      ["scan.heic", "image/heic"],
+      ["IMG_0001.dng", ""], // a type the OS could not name
+    ] as const) {
+      const browser = fakeBrowser({ blobBytes: 1 });
+      const message = await downscaleForUpload(photo(5_000_000, name, type)).then(
+        () => "RESOLVED — the file would have been sent",
+        (err: unknown) => (err instanceof Error ? err.message : String(err)),
+      );
+      expect(message.startsWith(name)).toBe(true);
+      expect(message).toMatch(/only JPEG, PNG or WebP/);
+      expect(message).toMatch(/nothing was uploaded/i);
+      expect(message).not.toMatch(/smaller photo|cannot resize/i);
+      expect(browser.createImageBitmap).not.toHaveBeenCalled();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("an over-budget photo that does not decode is refused by name", async () => {

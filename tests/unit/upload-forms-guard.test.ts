@@ -11,8 +11,10 @@ import { describe, expect, it } from "vitest";
  * that hands a server action straight to useActionState lands the user on the
  * error boundary. The behaviour lives in tested modules (the gate and the
  * submit in lib/services/client-upload.ts, the photo resize in
- * client-image.ts, the digest in client-hash.ts); this file pins that the
- * forms USE them — no jsdom here, so the components are read as source.
+ * client-image.ts, the digest and the verify form's action in client-hash.ts);
+ * this file pins that the forms USE them — no jsdom here, so the components
+ * are read as source, each pattern scoped to the element it is about. What
+ * the forms PRINT as their limit is rendered in upload-form-labels.test.ts.
  */
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const read = (...parts: string[]) => readFileSync(join(root, ...parts), "utf-8");
@@ -30,14 +32,37 @@ function filesUnder(dir: string, pattern: RegExp): string[] {
   });
 }
 
+/**
+ * Scoped to ONE element, so a handler on some other element of the file (or
+ * the name in an import) does not satisfy it: the <form> tag whose submit is
+ * the hook's handler, and the file input whose own onChange is the hook's size
+ * check. `[^>]*` stays inside the tag (these tags hold no arrow function).
+ */
+const FORM_SUBMITS_THROUGH_HOOK = /<form\b[^>]*\bonSubmit=\{\w+\.onSubmit\}/;
+const FILE_INPUT_CHECKS_SIZE = /<(?:input|Input)\b(?=[^>]*\btype="file")[^>]*\bonChange=\{\w+\.onFileChange\}/;
+/** A lost request is reported where the error boundary used to report it. */
+const REPORTS_TO_SENTRY = /onRejected:\s*\(\w+\)\s*=>\s*\{?\s*Sentry\.captureException\(\w+/;
+
 const DOCUMENT_FORMS = [
-  { file: ["components", "features", "properties", "documents-tab.tsx"], action: "uploadPropertyDocument" },
-  { file: ["components", "features", "contacts", "documents-tab.tsx"], action: "uploadContactDocument" },
-  { file: ["components", "features", "properties", "mandate-panel.tsx"], action: "uploadMandateDocument" },
+  {
+    file: ["components", "features", "properties", "documents-tab.tsx"],
+    action: "uploadPropertyDocument",
+    label: /<Label htmlFor="doc_file">File \(\{DOCUMENT_FILE_HINT\}\)<\/Label>/,
+  },
+  {
+    file: ["components", "features", "contacts", "documents-tab.tsx"],
+    action: "uploadContactDocument",
+    label: /<Label htmlFor="doc_file">File \(\{DOCUMENT_FILE_HINT\}\)<\/Label>/,
+  },
+  {
+    file: ["components", "features", "properties", "mandate-panel.tsx"],
+    action: "uploadMandateDocument",
+    label: />\{DOCUMENT_FILE_HINT\} · private bucket\.<\/p>/,
+  },
 ] as const;
 
 describe("the document upload forms gate the size and catch a lost answer", () => {
-  for (const { file, action } of DOCUMENT_FORMS) {
+  for (const { file, action, label } of DOCUMENT_FORMS) {
     const name = file.join("/");
 
     it(`${name}: submits ${action} through useUploadForm, never straight through useActionState`, () => {
@@ -45,13 +70,14 @@ describe("the document upload forms gate the size and catch a lost answer", () =
       expect(src).toMatch(new RegExp(`useUploadForm\\(\\{[\\s\\S]*?action:\\s*${action}\\b`));
       expect(src).not.toMatch(new RegExp(`useActionState\\(\\s*${action}\\b`));
       // the form is submitted by the hook's handler, and the file is checked when chosen
-      expect(src).toMatch(/onSubmit=\{\w+\.onSubmit\}/);
-      expect(src).toMatch(/onChange=\{\w+\.onFileChange\}/);
+      expect(src).toMatch(FORM_SUBMITS_THROUGH_HOOK);
+      expect(src).toMatch(FILE_INPUT_CHECKS_SIZE);
     });
 
     it(`${name}: states the REAL limit, derived from the budget — no undeliverable 15 MB`, () => {
       const src = code(...file);
-      expect(src).toContain("DOCUMENT_FILE_HINT");
+      // in the MARKUP, not merely imported (an unused import is only a lint warning)
+      expect(src).toMatch(label);
       expect(src).not.toMatch(/15\s*MB/i);
     });
   }
@@ -64,6 +90,14 @@ describe("the document upload forms gate the size and catch a lost answer", () =
     // an unknown outcome stays on screen and the page is re-read (the outcome-actions idiom)
     expect(src).toMatch(/case "unconfirmed"[\s\S]*?router\.refresh\(\)/);
   });
+
+  it("the hook reports a lost request, as the error boundary it no longer reaches did", () => {
+    // a platform 413 never reaches the server's logs — this is the one signal
+    // that the request budget is set too high
+    const src = code("components", "features", "shared", "use-upload-form.ts");
+    expect(src).toMatch(/submitUpload\([\s\S]*?onRejected:/);
+    expect(src).toMatch(REPORTS_TO_SENTRY);
+  });
 });
 
 describe("the branding upload is gated at its own cap", () => {
@@ -71,6 +105,8 @@ describe("the branding upload is gated at its own cap", () => {
     const src = code("components", "features", "settings", "org-forms.tsx");
     expect(src).toMatch(/useUploadForm\(\{[\s\S]*?action:\s*uploadBranding\b[\s\S]*?limit:\s*BRANDING_MAX_BYTES/);
     expect(src).not.toMatch(/useActionState\(\s*uploadBranding\b/);
+    expect(src).toMatch(FORM_SUBMITS_THROUGH_HOOK);
+    expect(src).toMatch(FILE_INPUT_CHECKS_SIZE);
   });
 
   it("settings.ts refuses at the same constant — one cap, not two literals", () => {
@@ -81,11 +117,15 @@ describe("the branding upload is gated at its own cap", () => {
 });
 
 describe("verify-a-report posts a digest, never the PDF", () => {
-  it("verify-report.tsx hashes in the browser and sends only verifyRequestBody's result", () => {
+  it("verify-report.tsx runs verifyInBrowser (hash, digest-only body, every failure an answer) and never calls the action itself", () => {
+    // the behaviour is unit-tested in lib/services/client-hash.test.ts; this
+    // pins that the form uses it, with the real action as its `verify` step
     const src = code("components", "features", "reports", "verify-report.tsx");
-    expect(src).toMatch(/verifyRequestBody\(/);
-    expect(src).toMatch(/verifyEvidenceReport\(\s*\w+\s*,\s*body\s*\)/);
+    expect(src).toMatch(/verifyInBrowser\(\s*\w+\s*,\s*\w+\s*,\s*\{[\s\S]*?verify:\s*verifyEvidenceReport\b/);
+    expect(src).toMatch(/useActionState\(\s*\w+\s*,\s*initialState\s*\)/);
+    expect(src).not.toMatch(/verifyEvidenceReport\(/);
     expect(src).not.toMatch(/useActionState\(\s*verifyEvidenceReport\b/);
+    expect(src).toMatch(REPORTS_TO_SENTRY);
   });
 });
 
@@ -98,6 +138,20 @@ describe("the media tab never sticks on 'Uploading'", () => {
     const calls = src.match(/uploadPropertyMedia\(/g) ?? [];
     expect(calls).toHaveLength(1);
     expect(src).toMatch(/send:\s*\(\w+\)\s*=>\s*\{[\s\S]*?uploadPropertyMedia\(/);
+  });
+
+  it("media-tab.tsx brings every photo under the budget before it is sent", () => {
+    // without this step every phone photo over the budget is posted whole and
+    // meets the platform's 413 — and the small JPEG of the e2e photo case
+    // never needs the resize, so nothing else would notice
+    const src = code("components", "features", "properties", "media-tab.tsx");
+    expect(src).toMatch(/uploadOneByOne\([\s\S]*?prepare:\s*downscaleForUpload\b/);
+  });
+
+  it("media-tab.tsx reports a lost request, as the error boundary it no longer reaches did", () => {
+    const src = code("components", "features", "properties", "media-tab.tsx");
+    expect(src).toMatch(/uploadOneByOne\([\s\S]*?onRejected:/);
+    expect(src).toMatch(REPORTS_TO_SENTRY);
   });
 });
 

@@ -2,6 +2,7 @@
 
 import { useState, useTransition, type ChangeEvent, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import * as Sentry from "@sentry/nextjs";
 import { toast } from "sonner";
 import { UPLOAD_REQUEST_BUDGET_BYTES, uploadSizeRefusal } from "@/lib/constants/upload";
 import { submitUpload, type UploadActionState } from "@/lib/services/client-upload";
@@ -23,9 +24,12 @@ const UNTIL_DISMISSED = { duration: Infinity, closeButton: true } as const;
  * - over the limit: refused on the spot, nothing sent (also said the moment
  *   the file is chosen, through `onFileChange`);
  * - the server's refusal: inline, in its words;
- * - no usable answer: an UNKNOWN outcome — the upload may have committed —
- *   kept on screen until dismissed, and the page re-read so the list shows
- *   what is really there;
+ * - no usable answer, or the server's own "could not confirm" (a state
+ *   flagged `unconfirmed`): an UNKNOWN outcome — the upload may have
+ *   committed — kept on screen until dismissed, and the page re-read so the
+ *   list shows what is really there. A request that never came back is also
+ *   reported to Sentry, as the error boundary it no longer reaches did: a
+ *   platform 413 never reaches the server's logs;
  * - saved: a toast, the form reset, `onSaved`.
  *
  * onSubmit, not a form `action`, also means React 19 does not reset the form
@@ -78,6 +82,7 @@ export function useUploadForm<S extends UploadActionState>({
         limit,
         tooLargeAdvice,
         unconfirmedText,
+        onRejected: (error) => Sentry.captureException(error, { tags: { lost_request: "upload" } }),
       });
       switch (outcome.kind) {
         case "saved":

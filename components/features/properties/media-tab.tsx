@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
+import * as Sentry from "@sentry/nextjs";
 import { ArrowDown, ArrowUp, Star, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -92,7 +93,9 @@ export function MediaTab({
    * error page, a dropped connection) rejects the action call. The loop
    * (uploadOneByOne) turns that into an unknown-outcome message naming the
    * photo, and `finally` puts the button back — it used to stay on
-   * "Uploading n/N" for good, with nothing said.
+   * "Uploading n/N" for good, with nothing said. The lost request is reported
+   * to Sentry, as the error boundary it no longer reaches did: a platform 413
+   * never reaches the server's logs.
    */
   async function handleUpload(e: React.FormEvent) {
     e.preventDefault();
@@ -117,6 +120,7 @@ export function MediaTab({
         },
         onProgress: (position, total) => setProgress(`${position}/${total}`),
         onWarning: (text) => toast.warning(text),
+        onRejected: (error) => Sentry.captureException(error, { tags: { lost_request: "photo-upload" } }),
       });
       if (failed) {
         setUploadError(done > 0 ? `${done}/${files.length} uploaded, then: ${failed}` : failed);
@@ -133,8 +137,10 @@ export function MediaTab({
         );
         if (fileInput.current) fileInput.current.value = "";
       }
-    } catch {
-      // uploadOneByOne never throws; this keeps any other surprise off the error boundary
+    } catch (error) {
+      // uploadOneByOne never throws; this keeps any other surprise off the
+      // error boundary — and reported, as the boundary would have
+      Sentry.captureException(error, { tags: { lost_request: "photo-upload" } });
       const text = "The upload stopped unexpectedly — reload the page and check the photos before uploading again.";
       setUploadError(text);
       toast.error(text, UNTIL_DISMISSED);

@@ -21,10 +21,13 @@
  * ceiling applies to the whole body, so even downscaled photos batched into
  * one FormData could crest it together.
  *
- * NOTHING OVER THE BUDGET IS RETURNED (T-upload-size-honest): a file the
- * browser cannot resize, or whose re-encode is still too large, is refused
- * here with a message naming it — the platform's 413 would otherwise surface
- * as an unexplained failure.
+ * NOTHING OVER THE BUDGET IS RETURNED (T-upload-size-honest): a photo whose
+ * re-encode is still too large is refused here with a message naming it — the
+ * platform's 413 would otherwise surface as an unexplained failure. A file
+ * over the budget of a type the server refuses anyway (a HEIC picked through
+ * "All files", a type the OS could not name) is refused for its TYPE: "use a
+ * smaller photo" would only lead to the server's "only JPEG/PNG/WebP
+ * accepted" (lib/actions/media.ts).
  *
  * Canvas re-encode strips EXIF (orientation applied first via
  * createImageBitmap) — consistent with the server pipeline, which strips it
@@ -61,27 +64,34 @@ export function fitWithin(
   };
 }
 
-/** Why a photo is not sent: it is over the budget and cannot be brought under it. */
-function tooLargeText(name: string, bytes: number, resized: boolean): string {
+/** Why a resized photo is not sent: its re-encode is still over the budget. */
+function tooLargeText(name: string, bytes: number): string {
   const size = formatMegabytes(bytes, "up");
   const limit = formatMegabytes(UPLOAD_REQUEST_BUDGET_BYTES, "down");
-  const why = resized
-    ? `is still ${size} after resizing — over the ${limit} limit for one upload`
-    : `is ${size} — over the ${limit} limit for one upload, and this browser cannot resize it`;
-  return `${name} ${why}. Nothing was uploaded. Use a smaller photo.`;
+  return `${name} is still ${size} after resizing — over the ${limit} limit for one upload. Nothing was uploaded. Use a smaller photo.`;
+}
+
+/**
+ * Why an over-budget file of another type is not sent: its type, which the
+ * server refuses at any size (`ACCEPTED_MIME`, lib/services/media.ts — checked
+ * by uploadPropertyMedia, lib/actions/media.ts).
+ */
+function unsupportedTypeText(name: string): string {
+  return `${name}: only JPEG, PNG or WebP images can be uploaded. Nothing was uploaded.`;
 }
 
 /**
  * Returns a file that fits the request budget: the file itself when it
  * already does, otherwise a JPEG re-encode at MAX_EDGE_PX. Throws a message
- * naming the file when it cannot be brought under the budget — not decodable,
- * not a type the browser can re-encode, or still too large after re-encoding
- * — so the caller says why instead of letting the platform answer 413.
+ * naming the file when it cannot be brought under the budget — not a type the
+ * server accepts, not decodable, or still too large after re-encoding — so
+ * the caller says why instead of letting the platform answer 413.
  */
 export async function downscaleForUpload(file: File): Promise<File> {
   if (!needsClientDownscale(file.size, file.type)) {
     if (fitsUploadBudget(file.size)) return file;
-    throw new Error(tooLargeText(file.name, file.size, false));
+    // over the budget and not one of DECODABLE: the type is the problem
+    throw new Error(unsupportedTypeText(file.name));
   }
 
   let bitmap: ImageBitmap;
@@ -115,7 +125,7 @@ export async function downscaleForUpload(file: File): Promise<File> {
   if (!blob) throw new Error(`${file.name}: could not be re-encoded`);
   // a 2000px JPEG is normally a fraction of the budget; a noisy panorama can
   // still crest it, and then it is refused here rather than by the platform
-  if (!fitsUploadBudget(blob.size)) throw new Error(tooLargeText(file.name, blob.size, true));
+  if (!fitsUploadBudget(blob.size)) throw new Error(tooLargeText(file.name, blob.size));
 
   const stem = file.name.replace(/\.[^.]+$/, "");
   return new File([blob], `${stem}.jpg`, { type: "image/jpeg" });

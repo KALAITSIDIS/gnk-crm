@@ -2,9 +2,10 @@
 
 import { useActionState } from "react";
 import { useTranslations } from "next-intl";
+import * as Sentry from "@sentry/nextjs";
 import { BadgeCheck, BadgeX, ShieldQuestion } from "lucide-react";
 import { verifyEvidenceReport, type VerifyReportState } from "@/lib/actions/reports";
-import { verifyRequestBody } from "@/lib/services/client-hash";
+import { verifyInBrowser } from "@/lib/services/client-hash";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,39 +14,20 @@ import { formatDateTime } from "@/lib/utils/format";
 const initialState: VerifyReportState = { error: null, result: null };
 
 /**
- * English for now: reports.verify in messages/ has no key for either, and
- * both are rare (an insecure context or an unreadable file; a dropped
- * connection).
- */
-const HASH_FAILED_TEXT = "This browser could not read the PDF to check it — paste its SHA-256 instead.";
-const NO_ANSWER_TEXT = "The check did not complete — nothing was changed. Try again.";
-
-/**
- * Runs in the BROWSER, as the form's action (T-upload-size-honest): a chosen
+ * The form's action runs in the BROWSER (T-upload-size-honest —
+ * lib/services/client-hash.ts `verifyInBrowser`, unit-tested there): a chosen
  * PDF is hashed here (Web Crypto) and only its digest goes to the server
  * action, through the action's existing `sha256` path. The PDF itself is
  * never posted — a report over ~4.5 MB used to die at Vercel's platform 413
- * before the action ran, and the client threw into the error boundary.
- * Verifying is read-only, so a request that never came back is simply "try
- * again", and it is said here rather than thrown.
+ * before the action ran, and the client threw into the error boundary. Every
+ * failure is an answer on the form; a request that never came back is also
+ * reported to Sentry, as the error boundary did.
  */
-async function verifyInBrowser(
-  prev: VerifyReportState,
-  formData: FormData,
-): Promise<VerifyReportState> {
-  let body: FormData;
-  try {
-    body = await verifyRequestBody(formData);
-  } catch {
-    // no Web Crypto (an insecure context), or the file could not be read
-    return { error: HASH_FAILED_TEXT, result: null };
-  }
-  try {
-    return await verifyEvidenceReport(prev, body);
-  } catch {
-    return { error: NO_ANSWER_TEXT, result: null };
-  }
-}
+const verifyAction = (prev: VerifyReportState, formData: FormData) =>
+  verifyInBrowser(prev, formData, {
+    verify: verifyEvidenceReport,
+    onRejected: (error) => Sentry.captureException(error, { tags: { lost_request: "verify-report" } }),
+  });
 
 /**
  * Prove a commission evidence PDF untampered: choose the file (its SHA-256 is
@@ -55,7 +37,7 @@ async function verifyInBrowser(
  */
 export function VerifyReport() {
   const t = useTranslations("reports.verify");
-  const [state, formAction, pending] = useActionState(verifyInBrowser, initialState);
+  const [state, formAction, pending] = useActionState(verifyAction, initialState);
 
   return (
     <section className="flex max-w-2xl flex-col gap-3 rounded-[10px] border border-border bg-surface p-5">
