@@ -24,13 +24,13 @@ import {
  * overlap whenever two people work one deal.
  *
  * THE RACE, FORCED — no sleeps, no timing. Each recompute here runs on a
- * client whose fetch can HOLD its first `PATCH /rest/v1/deals` until the test
- * releases it (the gate of deal-close-actions.test.ts and
+ * client whose fetch can HOLD its first `PATCH /rest/v1/deals` (or its first
+ * two) until the test releases it (the gate of deal-close-actions.test.ts and
  * unit-status-actions.test.ts). By the time the PATCH reaches the gate the
  * recompute has READ the deal; the database has not seen the write. Between
  * the two the test changes the flag — through the real budget save
  * (scenario 2) or a direct PATCH as the deal's own agent, with no trailing
- * recompute to tidy up after it (scenario 3) — then releases.
+ * recompute to tidy up after it (scenarios 3 and 5) — then releases.
  *
  * On the unguarded recompute (489c507) the held PATCH lands last and writes
  * the health object it read before the save: `budget_confirmed` gone for good
@@ -47,6 +47,11 @@ import {
  * (the unit tests cannot see that; they script the answer). Scenario 4 pins
  * that a listing manager's recompute (deals_update has no listing-manager
  * arm) stays the silent no-op it was: one re-read, no retry, no throw.
+ * Scenario 5 pins the bound (HEALTH_WRITE_ATTEMPTS = 2): the row moves under
+ * BOTH writes, and the recompute gives up without throwing and without a
+ * third attempt — and its retry, computed from a flag that has since turned
+ * off, never lands. Giving up leaves the newest row standing; it cannot put
+ * an old value back.
  *
  * Nothing below the service is stubbed except the Next.js request plumbing
  * (`createClient` hands updateDealSection a signed-in aal2 client; only
@@ -88,29 +93,34 @@ import {
 
 // ---------------------------------------------------------------------------
 // The probe: a session client that logs its requests on deals and can hold
-// its FIRST PATCH of deals at the gate until released.
+// its first `holdWrites` PATCHes of deals at the gate, each until released.
 // ---------------------------------------------------------------------------
-type Probe = {
-  client: SupabaseClient;
-  /** the method of every PostgREST request on deals, in order */
-  deals: string[];
-  /** resolves when the first PATCH of deals is held at the gate */
-  arrived: Promise<void>;
-  /** lets the held PATCH go on to the database */
-  release: () => void;
-};
+type Gate = { arrived: Promise<void>; arrive: () => void; released: Promise<void>; release: () => void };
 
-const opened: Probe[] = [];
-
-async function probe(user: TestUser, opts: { holdFirstWrite: boolean }): Promise<Probe> {
-  const { data } = await user.client.auth.getSession();
-  const session = data.session;
-  if (!session) throw new Error(`no session for ${user.email}`);
+function gate(): Gate {
   let arrive!: () => void;
   let release!: () => void;
   const arrived = new Promise<void>((r) => (arrive = r));
   const released = new Promise<void>((r) => (release = r));
-  let holding = opts.holdFirstWrite;
+  return { arrived, arrive, released, release };
+}
+
+type Probe = {
+  client: SupabaseClient;
+  /** the method of every PostgREST request on deals, in order */
+  deals: string[];
+  /** one gate per held PATCH of deals: gates[0] holds the first, gates[1] the second */
+  gates: Gate[];
+};
+
+const opened: Probe[] = [];
+
+async function probe(user: TestUser, opts: { holdWrites: number }): Promise<Probe> {
+  const { data } = await user.client.auth.getSession();
+  const session = data.session;
+  if (!session) throw new Error(`no session for ${user.email}`);
+  const gates = Array.from({ length: opts.holdWrites }, gate);
+  let patches = 0;
   const deals: string[] = [];
   const client = createClient(SUPABASE_URL, ANON_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -120,10 +130,13 @@ async function probe(user: TestUser, opts: { holdFirstWrite: boolean }): Promise
         const method = (init?.method ?? "GET").toUpperCase();
         if (/\/rest\/v1\/deals(\?|$)/.test(url)) {
           deals.push(method);
-          if (method === "PATCH" && holding) {
-            holding = false;
-            arrive();
-            await released;
+          if (method === "PATCH") {
+            const g = gates[patches];
+            patches += 1;
+            if (g) {
+              g.arrive();
+              await g.released;
+            }
           }
         }
         return fetch(input, init);
@@ -135,25 +148,34 @@ async function probe(user: TestUser, opts: { holdFirstWrite: boolean }): Promise
     refresh_token: session.refresh_token,
   });
   if (error) throw new Error(`setSession ${user.email}: ${error.message}`);
-  const p: Probe = { client, deals, arrived, release };
+  const p: Probe = { client, deals, gates };
   opened.push(p);
   return p;
 }
 
 /**
- * Wait until the recompute's write is held — or fail if it finished without
- * writing. The losing branch never rejects: a rejection raised after the race
- * has settled would be nobody's, and vitest fails a run on an unhandled one.
+ * Which comes first: the recompute's write number `n` (from 0) held at the
+ * gate, or the recompute finishing. The losing branch never rejects: a
+ * rejection raised after the race has settled would be nobody's, and vitest
+ * fails a run on an unhandled one.
  */
-async function heldAtTheGate(p: Probe, running: Promise<void>): Promise<void> {
-  const first = await Promise.race([
-    p.arrived.then(() => "held" as const),
+async function reached(p: Probe, running: Promise<void>, n: number): Promise<"held" | "finished"> {
+  const g = p.gates[n];
+  if (!g) throw new Error(`test harness: the probe holds no write number ${n}`);
+  return Promise.race([
+    g.arrived.then(() => "held" as const),
     running.then(
       () => "finished" as const,
       () => "finished" as const,
     ),
   ]);
-  if (first !== "held") throw new Error("the recompute finished without reaching its write");
+}
+
+/** Wait until the recompute's write number `n` is held — or fail if it finished without reaching it. */
+async function heldAtTheGate(p: Probe, running: Promise<void>, n = 0): Promise<void> {
+  if ((await reached(p, running, n)) !== "held") {
+    throw new Error(`the recompute finished without reaching write number ${n}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -208,9 +230,24 @@ async function updatedEvents(dealId: string) {
   return rows.map((r) => r.payload);
 }
 
+/**
+ * The deal's own agent PATCHes `health` to just the flag, directly — no
+ * trailing recompute, so `health_score` is left as it was. Returns the row.
+ */
+async function patchFlag(dealId: string, flag: boolean): Promise<HealthRow> {
+  const { data, error } = await agent.client
+    .from("deals")
+    .update({ health: { budget_confirmed: flag } })
+    .eq("id", dealId)
+    .select("id");
+  expect(error).toBeNull();
+  expect(data, "the agent's PATCH wrote the row").toHaveLength(1);
+  return healthRow(dealId);
+}
+
 /** The real budget save, as `user`: updateDealSection(section = 'health'). */
 async function saveBudget(user: TestUser, dealId: string, confirmed: boolean) {
-  const p = await probe(user, { holdFirstWrite: false });
+  const p = await probe(user, { holdWrites: 0 });
   state.queue.push(p.client);
   const fd = new FormData();
   fd.set("deal_id", dealId);
@@ -254,7 +291,7 @@ beforeAll(async () => {
 
 afterEach(() => {
   // a failed scenario must not leave a write parked at the gate
-  for (const p of opened) p.release();
+  for (const p of opened) for (const g of p.gates) g.release();
   opened.length = 0;
   state.queue.length = 0;
 });
@@ -278,7 +315,7 @@ describe("a deal-health recompute writes only over the row it read", () => {
   it("1. an uncontended recompute writes, once — the guard matches the timestamp PostgREST served", async () => {
     const dealId = await newDeal();
     const before = await healthRow(dealId);
-    const r = await probe(agent, { holdFirstWrite: false });
+    const r = await probe(agent, { holdWrites: 0 });
 
     await expect(recomputeDealHealth(r.client, dealId)).resolves.toBeUndefined();
 
@@ -293,7 +330,7 @@ describe("a deal-health recompute writes only over the row it read", () => {
 
   it("2. a recompute that read before the REAL budget save cannot put the old flag back", async () => {
     const dealId = await newDeal();
-    const r = await probe(agent, { holdFirstWrite: true });
+    const r = await probe(agent, { holdWrites: 1 });
     const running = recomputeDealHealth(r.client, dealId);
     await heldAtTheGate(r, running);
 
@@ -302,7 +339,7 @@ describe("a deal-health recompute writes only over the row it read", () => {
     expect(saved.error, "the budget save itself succeeds").toBeNull();
     const afterSave = await healthRow(dealId);
 
-    r.release();
+    r.gates[0]!.release();
     await expect(running, "the recompute never throws into its caller").resolves.toBeUndefined();
 
     const after = await healthRow(dealId);
@@ -335,21 +372,14 @@ describe("a deal-health recompute writes only over the row it read", () => {
 
   it("3. with no trailing recompute to tidy up, the held recompute computes FROM the new flag itself", async () => {
     const dealId = await newDeal();
-    const r = await probe(agent, { holdFirstWrite: true });
+    const r = await probe(agent, { holdWrites: 1 });
     const running = recomputeDealHealth(r.client, dealId);
     await heldAtTheGate(r, running);
 
     // the deal's own agent PATCHes the flag directly: health_score stays 0
-    const { data: patchedRows, error } = await agent.client
-      .from("deals")
-      .update({ health: { budget_confirmed: true } })
-      .eq("id", dealId)
-      .select("id");
-    expect(error).toBeNull();
-    expect(patchedRows, "the agent's PATCH wrote the row").toHaveLength(1);
-    const patched = await healthRow(dealId);
+    const patched = await patchFlag(dealId, true);
 
-    r.release();
+    r.gates[0]!.release();
     await expect(running).resolves.toBeUndefined();
 
     const after = await healthRow(dealId);
@@ -369,11 +399,11 @@ describe("a deal-health recompute writes only over the row it read", () => {
   it("4. a listing manager's recompute (no UPDATE on deals) stays a silent no-op: one re-read, no retry", async () => {
     const dealId = await newDeal();
     // a score on the row first, by someone who may write it
-    const seed = await probe(agent, { holdFirstWrite: false });
+    const seed = await probe(agent, { holdWrites: 0 });
     await recomputeDealHealth(seed.client, dealId);
     const before = await healthRow(dealId);
 
-    const lm = await probe(manager, { holdFirstWrite: false });
+    const lm = await probe(manager, { holdWrites: 0 });
     await expect(recomputeDealHealth(lm.client, dealId)).resolves.toBeUndefined();
 
     const after = await healthRow(dealId);
@@ -385,11 +415,48 @@ describe("a deal-health recompute writes only over the row it read", () => {
       "GET",
     ]);
   });
+
+  it("5. losing BOTH writes, it gives up: nothing stale lands, nothing throws, no third attempt", async () => {
+    const dealId = await newDeal();
+    const r = await probe(agent, { holdWrites: 2 });
+    const running = recomputeDealHealth(r.client, dealId);
+    await heldAtTheGate(r, running, 0);
+
+    // the row moves under the first write: the flag goes on
+    const firstMove = await patchFlag(dealId, true);
+    r.gates[0]!.release();
+    const second = await reached(r, running, 1);
+    expect(
+      await healthRow(dealId),
+      "the first write, predicated on the row it read, matched nothing: the flag just set still stands",
+    ).toEqual(firstMove);
+    // the re-read saw the flag on, the retry computed 55 from it — and is held in its turn
+    expect(second, "the recompute re-read and came back with a retry").toBe("held");
+
+    // the row moves again under the retry: the flag goes off
+    const lastMove = await patchFlag(dealId, false);
+    r.gates[1]!.release();
+    await expect(running, "giving up is not an error its callers would see").resolves.toBeUndefined();
+
+    const after = await healthRow(dealId);
+    evidence("5. both writes lost", {
+      requests: r.deals,
+      lastMove: { flag: lastMove.health.budget_confirmed, score: lastMove.health_score },
+      after: { flag: after.health.budget_confirmed, score: after.health_score },
+    });
+    expect(
+      after,
+      "the last move stands byte for byte: the retry's 55, computed from a flag since turned off, never landed",
+    ).toEqual(lastMove);
+    expect(after.health.budget_confirmed).toBe(false);
+    expect(after.health_score).toBe(0);
+    expect(r.deals, "two attempts, and no third").toEqual(["GET", "PATCH", "GET", "PATCH"]);
+  });
 });
 
 // ---------------------------------------------------------------------------
 describe("the chain", () => {
-  it("5. verifies for the organisation after everything above", async () => {
+  it("6. verifies for the organisation after everything above", async () => {
     const { rows } = await pg.query("select ok, reason from verify_events_chain($1::uuid, null::bigint)", [ORG]);
     expect(rows[0]).toMatchObject({ ok: true });
   });
