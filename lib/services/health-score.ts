@@ -142,13 +142,28 @@ type DealForHealth = Pick<
  * attempt, and one retry after a write that found the row moved (see
  * recomputeDealHealth).
  *
- * WHY TWO IS ENOUGH. Giving up cannot put an old value back — the write that
- * is not made is the only one that could have. And whoever moved the row
- * after the second read is either another recompute, whose own write is
- * predicated on the row IT read, or a mutation that runs its own recompute
- * once it has committed (the in-action rule in the header). What no bound
- * covers is a mutation whose trailing recompute never runs (BACKLOG "Throws
- * after a commit").
+ * WHY TWO, AND WHAT GIVING UP LEAVES. Giving up cannot put an old value back —
+ * the write that is not made is the only one that could have. What it can
+ * leave is a score and factor snapshot OLDER than this recompute's inputs:
+ * whoever moved the row after the second read wrote last, and the derived
+ * keys are as fresh as that writer leaves them.
+ *   - Another recompute: its write is predicated on the row IT read, which is
+ *     no older than our second read, so what it stores is at least as fresh.
+ *   - A mutation that runs its own recompute once it has committed (the
+ *     in-action rule in the header): that recompute reads after the move.
+ *   - A writer that runs NO recompute after it: mergeContacts' repoint of
+ *     buyer_contact_id / seller_contact_id (admin client, no recompute at
+ *     all); a direct PATCH through PostgREST (`authenticated` holds UPDATE on
+ *     deals with no column list, 0002, and deals_update scopes rows, not
+ *     columns); and a mutation that throws or returns between its commit and
+ *     its recompute (BACKLOG "Throws after a commit"). If one of these is the
+ *     last mover in a double miss, health_score and health.factors stay as
+ *     the last successful recompute left them — which may predate the
+ *     mutation that started this one — until the next deal-side recompute.
+ * That needs two moves inside one recompute's read-to-write gap. The blind
+ * write it replaces would have stored fresher numbers there, but over a
+ * `health` it read before both moves — the defect this guard exists for. A
+ * third attempt would narrow the window, not close it.
  */
 export const HEALTH_WRITE_ATTEMPTS = 2;
 

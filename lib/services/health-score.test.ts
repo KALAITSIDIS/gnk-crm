@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { computeHealth, type HealthInputs } from "./health-score";
+import { HEALTH_WEIGHTS, computeHealth, type HealthInputs } from "./health-score";
+import { KYC_ITEMS } from "@/lib/constants/checklists";
 import { fakeClient } from "@/lib/testing/fake-client";
 
 const admin = vi.hoisted(() => ({ client: null as unknown }));
@@ -198,7 +199,9 @@ describe("recomputeDealHealth writes only over the row it read (T-deal-health-ra
    * already committed and logged) and writes no event (derived state, T3.3).
    *
    * These deals carry no property and no buyer, so `deals` is the only table
-   * the recompute touches and its pages are, in order: read, write, read, write.
+   * the recompute touches and its pages are, in order: read, write, read, write
+   * — except the one case that pins that a retry reads the buyer's KYC, the
+   * title deed and the mandate AGAIN, rather than scoring the first attempt's.
    * supabase/tests/deal-health-race.test.ts forces the same race on the real
    * stack, through PostgREST and the trigger.
    */
@@ -218,12 +221,37 @@ describe("recomputeDealHealth writes only over the row it read (T-deal-health-ra
     caller
       .argsOf("deals", "update")
       .map(([row]) => row as { health_score: number; health: Record<string, unknown> });
+  /**
+   * Each PATCH's OWN builder calls, from its `update` to the `select` that
+   * ends it. The flat `eq` list of the table cannot say which chain a filter
+   * belongs to: the READ filters on the id too, so a write that lost its id
+   * filter passed an assertion made over both (review, 2026-10-14). Predicated
+   * on a timestamp alone, the write would land this deal's `health` — its
+   * budget flag included — and score on every deal the caller may update that
+   * shares the timestamp, and one multi-row UPDATE (mergeContacts' repoint)
+   * stamps one now() on all of its rows.
+   */
+  const writeChains = (caller: ReturnType<typeof fakeClient>) => {
+    const chains: { method: string; args: unknown[] }[][] = [];
+    let open: { method: string; args: unknown[] }[] | null = null;
+    for (const c of caller.calls) {
+      if (c.table !== "deals") continue;
+      if (c.method === "update") {
+        open = [];
+        chains.push(open);
+      }
+      if (!open) continue;
+      open.push({ method: c.method, args: c.args });
+      if (c.method === "select") open = null;
+    }
+    return chains;
+  };
+  /** the filters chained onto each write, in order */
+  const writeFilters = (caller: ReturnType<typeof fakeClient>) =>
+    writeChains(caller).map((chain) => chain.filter((c) => c.method === "eq").map((c) => c.args));
   /** the `updated_at` each write was predicated on, in order */
   const guards = (caller: ReturnType<typeof fakeClient>) =>
-    caller
-      .argsOf("deals", "eq")
-      .filter(([col]) => col === "updated_at")
-      .map(([, v]) => v);
+    writeFilters(caller).map((eqs) => eqs.find(([col]) => col === "updated_at")?.[1]);
 
   it("the write carries the guard: id AND the updated_at it read, and selects the written id", async () => {
     const caller = fakeClient({ deals: [dealAt(T1), WROTE] });
@@ -231,11 +259,20 @@ describe("recomputeDealHealth writes only over the row it read (T-deal-health-ra
     await recomputeDealHealth(caller.client as never, "d1");
 
     expect(guards(caller), "predicated on the timestamp PostgREST served, verbatim").toEqual([T1]);
-    expect(caller.argsOf("deals", "eq")).toContainEqual(["id", "d1"]);
+    const [write] = writeChains(caller);
     expect(
-      caller.argsOf("deals", "select"),
+      write?.filter((c) => c.method === "eq").map((c) => c.args),
+      "the PATCH itself names THIS deal — not only the read before it — and the updated_at it read",
+    ).toEqual(
+      expect.arrayContaining([
+        ["id", "d1"],
+        ["updated_at", T1],
+      ]),
+    );
+    expect(
+      write?.find((c) => c.method === "select")?.args,
       "select=id on the PATCH — without it the answer cannot say whether a row was written",
-    ).toContainEqual(["id"]);
+    ).toEqual(["id"]);
     expect(String(caller.argsOf("deals", "select")[0]?.[0]), "the read takes updated_at").toContain(
       "updated_at",
     );
@@ -263,6 +300,10 @@ describe("recomputeDealHealth writes only over the row it read (T-deal-health-ra
 
     expect(caller.served.deals, "read, write, re-read, write — and nothing after").toBe(4);
     expect(guards(caller), "each write predicated on its own read").toEqual([T1, T2]);
+    expect(
+      writeFilters(caller).map((eqs) => eqs.filter(([col]) => col === "id")),
+      "and each names this deal",
+    ).toEqual([[["id", "d1"]], [["id", "d1"]]]);
     const [, retry] = updates(caller);
     expect(retry?.health.budget_confirmed, "the flag the budget save wrote survives").toBe(true);
     expect(retry?.health_score, "and the score is computed FROM it, not from the first read").toBe(
@@ -272,6 +313,64 @@ describe("recomputeDealHealth writes only over the row it read (T-deal-health-ra
       (f) => f.key === "budget",
     );
     expect(budget?.points).toBe(25);
+  });
+
+  it("a retry reads the OTHER tables again: buyer KYC, title deed and mandate come from the second attempt", async () => {
+    // The row moved because something changed; it may have been the buyer's
+    // KYC, the title deed or the mandate, saved by a mutation whose own
+    // recompute this one is now racing. A retry that re-read the deal but
+    // scored the first attempt's other-table inputs would write, over a fresh
+    // updated_at, a factor older than the save that moved the row.
+    const svc = fakeClient({
+      mandates: [
+        { data: [], error: null },
+        { data: [{ id: "m1" }], error: null },
+      ],
+    });
+    admin.client = svc.client;
+    const linked = (updatedAt: string) => ({
+      data: { ...dealAt(updatedAt).data, buyer_contact_id: "c1", property_id: "p1" },
+      error: null,
+    });
+    /** a buyer with the first `done` KYC items ticked (3 of 6 = 50%, the bar) */
+    const buyer = (done: number) => ({
+      data: {
+        kyc: Object.fromEntries(KYC_ITEMS.slice(0, done).map(([key]) => [key, { done: true }])),
+      },
+      error: null,
+    });
+    const caller = fakeClient({
+      deals: [linked(T1), ZERO_ROWS, linked(T2), WROTE],
+      contacts: [buyer(0), buyer(3)],
+      properties: [
+        { data: { title_deed_status: "unknown" }, error: null },
+        { data: { title_deed_status: "separate" }, error: null },
+      ],
+    });
+
+    await recomputeDealHealth(caller.client as never, "d1");
+
+    expect(caller.served.contacts, "the buyer's KYC, read again for the retry").toBe(2);
+    expect(caller.served.properties, "the title deed, read again").toBe(2);
+    expect(svc.served.mandates, "the mandate, asked again").toBe(2);
+    const points = (w: { health: Record<string, unknown> } | undefined) =>
+      Object.fromEntries(
+        (w?.health.factors as { key: string; points: number }[]).map((f) => [f.key, f.points]),
+      );
+    const [first, retry] = updates(caller);
+    expect(points(first), "what the first attempt read").toMatchObject({
+      kyc: 0,
+      title_deed: 0,
+      mandate: 0,
+    });
+    expect(points(retry), "the retry scores what IT read").toMatchObject({
+      kyc: HEALTH_WEIGHTS.kyc,
+      title_deed: HEALTH_WEIGHTS.title_deed,
+      mandate: HEALTH_WEIGHTS.mandate,
+    });
+    expect(retry?.health_score).toBe(
+      HEALTH_WEIGHTS.kyc + HEALTH_WEIGHTS.title_deed + HEALTH_WEIGHTS.mandate,
+    );
   });
 
   it("a second zero-row answer stops without throwing: two attempts, no third read", async () => {

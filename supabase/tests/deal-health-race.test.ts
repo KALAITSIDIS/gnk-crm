@@ -51,7 +51,13 @@ import {
  * BOTH writes, and the recompute gives up without throwing and without a
  * third attempt — and its retry, computed from a flag that has since turned
  * off, never lands. Giving up leaves the newest row standing; it cannot put
- * an old value back.
+ * an old value back. Scenario 6 pins that the write names the deal as well as
+ * the timestamp: two deals stamped by one statement share one now() (as every
+ * row of a multi-row UPDATE does), and a write predicated on `updated_at`
+ * alone would land one deal's health and score on the other. Every other
+ * fixture here is inserted on its own, with its own now(), so no other
+ * scenario can tell the two predicates apart; the unit file pins the filter on
+ * the write's own builder chain, this pins what it means on the real stack.
  *
  * Nothing below the service is stubbed except the Next.js request plumbing
  * (`createClient` hands updateDealSection a signed-in aal2 client; only
@@ -206,6 +212,38 @@ async function newDeal(): Promise<string> {
     .single();
   if (error) throw new Error(`deal fixture: ${error.message}`);
   return (data as { id: string }).id;
+}
+
+/**
+ * Two open sale deals of the agent's in ONE insert, so one now() stamps both
+ * `updated_at`s — as one multi-row UPDATE does (mergeContacts' repoint of
+ * buyer_contact_id). The twin carries a budget flag the target does not, so a
+ * write meant for the target that lands on the twin shows.
+ */
+async function newDealPair(): Promise<{ target: string; twin: string }> {
+  fixtureN += 1;
+  const title = (role: string) => `ZZTEST health race ${RUN} ${fixtureN} ${role}`;
+  const row = (role: string, health: Record<string, unknown>) => ({
+    org_id: ORG,
+    deal_type: "sale" as const,
+    stage_id: openStageId,
+    title: title(role),
+    agent_id: agent.id,
+    created_by: agent.id,
+    health,
+  });
+  const { data, error } = await svc
+    .from("deals")
+    .insert([row("target", {}), row("twin", { budget_confirmed: true })])
+    .select("id, title");
+  if (error) throw new Error(`deal pair fixture: ${error.message}`);
+  const rows = data as { id: string; title: string }[];
+  const idOf = (role: string) => {
+    const hit = rows.find((r) => r.title === title(role));
+    if (!hit) throw new Error(`deal pair fixture: no ${role} row`);
+    return hit.id;
+  };
+  return { target: idOf("target"), twin: idOf("twin") };
 }
 
 type HealthRow = { health: Record<string, unknown>; health_score: number; updated_at: string };
@@ -452,11 +490,41 @@ describe("a deal-health recompute writes only over the row it read", () => {
     expect(after.health_score).toBe(0);
     expect(r.deals, "two attempts, and no third").toEqual(["GET", "PATCH", "GET", "PATCH"]);
   });
+
+  it("6. the write names THIS deal: a deal stamped by the same statement is left byte for byte", async () => {
+    const { target, twin } = await newDealPair();
+    const targetBefore = await healthRow(target);
+    const twinBefore = await healthRow(twin);
+    expect(
+      twinBefore.updated_at,
+      "precondition: one statement, one now() — the two rows share the timestamp the write is predicated on",
+    ).toBe(targetBefore.updated_at);
+
+    const r = await probe(agent, { holdWrites: 0 });
+    await expect(recomputeDealHealth(r.client, target)).resolves.toBeUndefined();
+
+    const targetAfter = await healthRow(target);
+    const twinAfter = await healthRow(twin);
+    evidence("6. two deals, one timestamp", {
+      requests: r.deals,
+      shared: targetBefore.updated_at,
+      target: { score: targetAfter.health_score, flag: targetAfter.health.budget_confirmed },
+      twin: { score: twinAfter.health_score, flag: twinAfter.health.budget_confirmed },
+    });
+    expect(targetAfter.health_score, "the target was written: activity 30, no budget").toBe(
+      WITHOUT_BUDGET,
+    );
+    expect(
+      twinAfter,
+      "the twin is untouched — a write predicated on updated_at alone would have put the target's health (no flag) and score on it",
+    ).toEqual(twinBefore);
+    expect(r.deals).toEqual(["GET", "PATCH"]);
+  });
 });
 
 // ---------------------------------------------------------------------------
 describe("the chain", () => {
-  it("6. verifies for the organisation after everything above", async () => {
+  it("7. verifies for the organisation after everything above", async () => {
     const { rows } = await pg.query("select ok, reason from verify_events_chain($1::uuid, null::bigint)", [ORG]);
     expect(rows[0]).toMatchObject({ ok: true });
   });
