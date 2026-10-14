@@ -25,8 +25,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { contactLinkError } from "@/lib/services/contact-reread";
 // did a failed close certainly not commit — shared with the price-list actions (0141)
 import { certainlyRolledBack } from "@/lib/services/rpc-outcome";
+import type { MoveDealResult } from "@/lib/services/pipeline-move";
 
-export type MoveDealResult = { error: string | null };
+// the board's answer type lives beside the board's decisions (T-kanban-drop-settle)
+export type { MoveDealResult };
 
 /**
  * Drag-and-drop stage change (T3.1). Delegates to the move_deal_to_stage RPC
