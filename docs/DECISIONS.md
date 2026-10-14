@@ -9760,6 +9760,7 @@ From BACKLOG "Null answers — 2026-10-13": "`logEvent` takes a hollow insert an
 - No production page was loaded signed in, and no production row was read or written.
 - The remote and local `fix/log-event-hollow` are deleted; their commits are in main.
 - The worktree carried these records and is removed after them.
+- **Records.** #154 merged at 2026-10-14 07:30:06Z, pinned to `7eaeabe`, giving main `a8152f4`; its tree is byte-identical to the head's. It is docs only, so Vercel's `ignoreCommand` skipped its deploy (`dpl_6hm18Q6Uxyjx7fLp4nCtXRJx6BdJ` CANCELED). Merge CI on `a8152f4`: run 38528727856 green (checks, rls, e2e).
 - The disposable stack `.iso/nullguard` stays up for the next item, the refusal allowlist.
 
 **Left open.**
@@ -9769,7 +9770,7 @@ From BACKLOG "Null answers — 2026-10-13": "`logEvent` takes a hollow insert an
   - two it had called borderline (`portals.ts:208`, `reservations.ts:359`);
   - two more event lines inside listed actions (`leads.ts:1225`, `contacts.ts:397`).
 
-## T-refusal-allowlist — an event line or a slip row counts as refused only on a code `certainlyRolledBack` understands, and a slip's 23505 is read back first (2026-10-14; no migration; PR #155)
+## T-refusal-allowlist — an event line or a slip row counts as refused only on a code `certainlyRolledBack` understands, and a slip's 23505 is read back first (2026-10-14; no migration; LANDED 2026-10-14 — PR #155, main `aa1f765`, deployed)
 
 This is the first item of BACKLOG "Throws after a commit — 2026-10-13". T-log-event-hollow's records check (#154) found it in my own two landed changes. I chose it next under the standing agreement to navigate and choose. The branch is stacked on #154 (T-log-event-hollow's records), which merges first. The merge waits for the operator's word.
 
@@ -9824,3 +9825,19 @@ The review then found a second instance in the same function. The slip's 23505 b
   3. Five document actions delete their just-uploaded file on ANY failed `documents` insert, though the row may have committed. These are `uploadContactDocument`, `uploadPropertyDocument`, `uploadMandateDocument`, `generateEvidenceReport` and `generateViewingConfirmation`. The error can be a code-less 502, a reset, PGRST111/112, XX000 or 57014. This is pre-existing and outside this change; it is on the BACKLOG ("Throws after a commit — 2026-10-13").
 
 **Rollback.** Revert the merge. This is application only: no migration, nothing on hosted.
+
+**Landing (2026-10-14, on the operator's "merge #155").**
+- **Branch CI** green on the head `cf6fb73` (run 38479704913):
+  - checks;
+  - rls: 82 files, 1,733/1,733 on CI's fresh PostgREST v16.1 stack, printing the same evidence as locally:
+    - the confirmation and the report after XX000 with the line landed were kept, with one line naming each;
+    - a slip insert answered 57014 that landed later kept its files ("rows 1, objects 2");
+    - a slip insert that landed and was answered 23505 was recorded, intact;
+  - e2e.
+- **Merge order.** #154 (T-log-event-hollow's records) merged first, at 07:30:06Z, giving main `a8152f4`. That main carries #155's base `7eaeabe`, so the merge took only this change.
+- **Merge.** PR [#155](https://github.com/KALAITSIDIS/gnk-crm/pull/155) merged at 07:32:31Z, pinned to `cf6fb73`, giving main `aa1f765`. The merge's tree is byte-identical to the head's.
+- **Production.** Vercel `dpl_DRxS5p36RHRygE2GSf4wkfGwWfu9` READY 07:34:10Z, aliased to gnk-crm.vercel.app (fra1); no runtime errors since the merge; signed out, `/login` 200 and `/viewings`, `/reports/commission-evidence`, `/contacts/export` 307 to `/login`.
+- **Merge CI** on `aa1f765`: run 38529001951 green (checks, rls, e2e).
+- No production page was loaded signed in, and no production row was read or written.
+- The remote and local `fix/refusal-allowlist` are deleted; their commits are in main.
+- The worktree carried these records and is removed after them. The disposable stack `.iso/nullguard` stays up for the next item.
