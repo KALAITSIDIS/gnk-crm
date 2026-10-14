@@ -17,7 +17,8 @@ import { kycCompletion, type KycState } from "@/lib/constants/checklists";
  * The score and a factor snapshot are stored on the deal (health_score +
  * health.factors) so kanban cards and the deal page render breakdowns without
  * per-card joins. Derived state only — recomputes write NO event; the
- * triggering mutation is already evented (DECISIONS T3.3).
+ * triggering mutation is already evented (DECISIONS T3.3). A recompute writes
+ * only over the row it read (T-deal-health-race, see recomputeDealHealth).
  */
 
 export const HEALTH_WEIGHTS = {
@@ -128,18 +129,97 @@ export function computeHealth(inputs: HealthInputs, now: Date = new Date()): Hea
 }
 
 type Client = SupabaseClient<Database>;
+type DealRow = Database["public"]["Tables"]["deals"]["Row"];
 
-/** Gather live inputs for one deal, compute, and persist score + snapshot. */
+/** The columns one recompute reads; `updated_at` is what its write is predicated on. */
+type DealForHealth = Pick<
+  DealRow,
+  "id" | "org_id" | "health" | "buyer_contact_id" | "property_id" | "last_activity_at" | "updated_at"
+>;
+
+/**
+ * How many times one recompute may read, compute and write: the first
+ * attempt, and one retry after a write that found the row moved (see
+ * recomputeDealHealth).
+ *
+ * WHY TWO IS ENOUGH. Giving up cannot put an old value back — the write that
+ * is not made is the only one that could have. And whoever moved the row
+ * after the second read is either another recompute, whose own write is
+ * predicated on the row IT read, or a mutation that runs its own recompute
+ * once it has committed (the in-action rule in the header). What no bound
+ * covers is a mutation whose trailing recompute never runs (BACKLOG "Throws
+ * after a commit").
+ */
+export const HEALTH_WRITE_ATTEMPTS = 2;
+
+/**
+ * Gather live inputs for one deal, compute, and persist score + snapshot —
+ * ONLY over the row it read (T-deal-health-race).
+ *
+ * `health` holds one key a person enters (`budget_confirmed`, saved by
+ * updateDealSection's health section) beside the two derived here
+ * (`factors`, `computed_at`), and the write carries the whole object. Without
+ * a guard, a recompute that read before a budget save and wrote after it put
+ * the old flag back for good — 25 points gone while the event log said the
+ * flag had changed — and even a preserved flag would have sat under a score
+ * and a budget factor computed from the old one.
+ *
+ * So the write is predicated on the row's own `updated_at` exactly as
+ * PostgREST served it (the T-optimistic-save idiom; never through `new
+ * Date()`). `deals_updated` (0001, BEFORE UPDATE, `set_updated_at()`) stamps
+ * now() on EVERY update of deals — any column, any role, definer bodies
+ * included — and `deals_closed_guard`, the only other BEFORE UPDATE trigger,
+ * raises or returns the row, never skips it. `select("id")` says whether a
+ * row was written. Zero rows — or an error, or no rows array at all (a code
+ * is not a refusal: an answer lost after the commit looks the same) — is
+ * decided by the next read:
+ *   - the deal is not visible any more ⇒ stop;
+ *   - the same `updated_at` ⇒ the row did not move, so RLS refused the UPDATE
+ *     (a listing manager, an agent on someone else's deal) ⇒ stop — the silent
+ *     no-op it always was, now at the cost of that one read;
+ *   - it moved ⇒ compute again from what was read and write over THAT, within
+ *     HEALTH_WRITE_ATTEMPTS.
+ *
+ * Never throws for a write it could not make: its ten callers have already
+ * committed and logged their own mutation and ignore the result. Writes no
+ * event (derived state, DECISIONS T3.3). supabase/tests/deal-health-race.test.ts
+ * forces the race on the real stack.
+ */
 export async function recomputeDealHealth(supabase: Client, dealId: string): Promise<void> {
-  const { data: deal } = await supabase
-    .from("deals")
-    // org_id comes back so the mandate read below (which runs as the system)
-    // has an explicit boundary taken from a row RLS already returned
-    .select("id, org_id, health, buyer_contact_id, property_id, last_activity_at")
-    .eq("id", dealId)
-    .maybeSingle();
-  if (!deal) return;
+  /** the `updated_at` the previous attempt's write was predicated on, and did not match */
+  let missedAt: string | null = null;
 
+  for (let attempt = 1; attempt <= HEALTH_WRITE_ATTEMPTS; attempt += 1) {
+    const { data: deal } = await supabase
+      .from("deals")
+      // org_id comes back so the mandate read (which runs as the system) has
+      // an explicit boundary taken from a row RLS already returned
+      .select("id, org_id, health, buyer_contact_id, property_id, last_activity_at, updated_at")
+      .eq("id", dealId)
+      .maybeSingle();
+    // not visible (RLS), or gone
+    if (!deal) return;
+    // not moved since the write that matched nothing: RLS refused that write
+    if (missedAt !== null && deal.updated_at === missedAt) return;
+
+    const update = await healthUpdateFor(supabase, deal);
+
+    const { data: written } = await supabase
+      .from("deals")
+      .update(update)
+      .eq("id", dealId)
+      .eq("updated_at", deal.updated_at)
+      .select("id");
+    if (written && written.length > 0) return;
+    missedAt = deal.updated_at;
+  }
+}
+
+/** The score and the `health` object to store, computed from one read of the deal. */
+async function healthUpdateFor(
+  supabase: Client,
+  deal: DealForHealth,
+): Promise<Pick<Database["public"]["Tables"]["deals"]["Update"], "health_score" | "health">> {
   const [buyerRes, propertyRes, mandateRes] = await Promise.all([
     deal.buyer_contact_id
       ? supabase.from("contacts").select("kyc").eq("id", deal.buyer_contact_id).maybeSingle()
@@ -200,19 +280,16 @@ export async function recomputeDealHealth(supabase: Client, dealId: string): Pro
     lastActivityAt: deal.last_activity_at,
   });
 
-  await supabase
-    .from("deals")
-    .update({
-      health_score: result.score,
-      health: JSON.parse(
-        JSON.stringify({
-          ...health,
-          factors: result.factors,
-          computed_at: new Date().toISOString(),
-        }),
-      ),
-    })
-    .eq("id", dealId);
+  return {
+    health_score: result.score,
+    health: JSON.parse(
+      JSON.stringify({
+        ...health,
+        factors: result.factors,
+        computed_at: new Date().toISOString(),
+      }),
+    ),
+  };
 }
 
 /** Fan-out recompute for open deals touching a contact (buyer) or property. */
