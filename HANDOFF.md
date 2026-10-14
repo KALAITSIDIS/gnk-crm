@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-08
 
-**2026-10-14, latest (first item of BACKLOG "Throws after a commit — 2026-10-13", found by T-log-event-hollow's records check): an event line or a slip row counts as refused only on a code `certainlyRolledBack` understands, and a slip's 23505 is read back before its files are taken. No migration, nothing on hosted. PR #155, stacked on #154 (which merges first); the merge waits for the operator's word. DECISIONS `T-refusal-allowlist`.**
+**2026-10-14, latest (first item of BACKLOG "Throws after a commit — 2026-10-13", found by T-log-event-hollow's records check): an event line or a slip row counts as refused only on a code `certainlyRolledBack` understands, and a slip's 23505 is read back before its files are taken. No migration, nothing on hosted. LANDED 2026-10-14 on the operator's "merge #155": PR #155 merged 07:32:31Z pinned to `cf6fb73` → main `aa1f765`, deployed (#154 merged first, 07:30:06Z → `a8152f4`). DECISIONS `T-refusal-allowlist`.**
 - **What.** `EventWriteError.refused` (#153) and the slip take-back (#151) took ANY code as a refusal. DECISIONS `T-media-insert-outcome` records that 57014 / 53 / 58 / XX / 08 and PGRST111 / 112 can follow a commit. REPRODUCED at `7eaeabe` on the real stack:
   - XX000 after the line landed destroyed the confirmation or report its line names;
   - a slip insert answered 57014 that landed later was left with an empty bucket;
@@ -9,8 +9,13 @@
 - **Verified (locally, `.iso/nullguard` = v14.5; not production).**
   - RED: unit 15/101, DB 6/57. GREEN.
   - 11 of 11 mutants killed.
-  - Unit 3,665/3,665; full DB suite 82 files, 1,733/1,733; `typecheck` and `lint` pass.
+  - Unit 3,665/3,665; full DB suite 82 files, 1,733/1,733; `typecheck`, `lint`, `build` and `check:static-routes` pass.
   - Review: 3 confirmed, 0 refuted. Two were fixed here (the numeric-code test, the slip's 23505) and one was recorded.
+- **Landed.**
+  - Branch CI green on `cf6fb73` (run 38479704913): checks; rls 82 files, 1,733/1,733 on CI's v16.1 stack with the same evidence as locally; e2e.
+  - Vercel production `dpl_DRxS5p36RHRygE2GSf4wkfGwWfu9` READY 07:34:10Z, aliased to gnk-crm.vercel.app (fra1); no runtime errors since the merge; signed out, `/login` 200 and `/viewings`, `/reports/commission-evidence`, `/contacts/export` 307 to `/login`.
+  - Merge CI on `aa1f765`: run 38529001951 green (checks, rls, e2e).
+  - Rollback: revert the merge (application only).
 - **Left open.** First the new BACKLOG item: five document actions delete their just-uploaded file on ANY failed `documents` insert. Then the 38 sites of "Throws after a commit — 2026-10-13".
 
 **2026-10-13 (chosen after T-signed-slip-kept: BACKLOG "Null answers — 2026-10-13", "`logEvent` takes a hollow insert answer as written"): an event write is believed only when PostgREST confirms it with a 201. The two actions that undo their own document when its event fails now undo it only on an answer that carries an error code, not on a hollow or code-less one. No migration, nothing on hosted. LANDED 2026-10-13 on the operator's "merge #153": PR #153 merged 20:54:09Z, pinned to `f7ce4e3` → main `3e62e38`, deployed. DECISIONS `T-log-event-hollow`. Its records came after the merge, in one PR, because the code PR carried none.**
@@ -35,6 +40,7 @@
   - Vercel production `dpl_CdmNsek8YKQhAs5LtADNF5T3oQaZ` READY 20:57:16Z, aliased (fra1). No runtime errors. `/login` answers 200; `/contacts/export`, `/reports/commission-evidence` and `/viewings` answer 307 signed out.
   - Merge CI on `3e62e38`: run 38466481036 green (checks, rls, e2e).
   - Rollback: revert the merge (application only).
+  - Records: #154 merged 2026-10-14 07:30:06Z → main `a8152f4` (docs only, deploy skipped); merge CI run 38528727856 green (checks, rls, e2e).
 - **Left open (BACKLOG "Throws after a commit — 2026-10-13").**
   - FIRST, found by the records' own check: `EventWriteError.refused` and #151's slip-insert take-back count ANY code as the database's refusal. That is wider than the measured allowlist `certainlyRolledBack` (DECISIONS `T-media-insert-outcome`). So after a 57014 / 53 / 58 / XX000 / 08 answer to a write that committed, the two document actions still destroy the document its line names. The slip action re-reads first, so it is exposed only to a coded answer to a request still in flight.
   - Then 38 sites, one per VERIFY hit, where a `logEvent` throw after a committed write lands worse than silent success. Ranked:
