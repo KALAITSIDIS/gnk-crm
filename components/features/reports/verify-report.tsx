@@ -4,6 +4,7 @@ import { useActionState } from "react";
 import { useTranslations } from "next-intl";
 import { BadgeCheck, BadgeX, ShieldQuestion } from "lucide-react";
 import { verifyEvidenceReport, type VerifyReportState } from "@/lib/actions/reports";
+import { verifyRequestBody } from "@/lib/services/client-hash";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,13 +13,49 @@ import { formatDateTime } from "@/lib/utils/format";
 const initialState: VerifyReportState = { error: null, result: null };
 
 /**
- * Prove a commission evidence PDF untampered: upload the file (its SHA-256 is
- * recomputed server-side) or paste a digest, and match it against the
- * append-only evidence_report_generated event log.
+ * English for now: reports.verify in messages/ has no key for either, and
+ * both are rare (an insecure context or an unreadable file; a dropped
+ * connection).
+ */
+const HASH_FAILED_TEXT = "This browser could not read the PDF to check it — paste its SHA-256 instead.";
+const NO_ANSWER_TEXT = "The check did not complete — nothing was changed. Try again.";
+
+/**
+ * Runs in the BROWSER, as the form's action (T-upload-size-honest): a chosen
+ * PDF is hashed here (Web Crypto) and only its digest goes to the server
+ * action, through the action's existing `sha256` path. The PDF itself is
+ * never posted — a report over ~4.5 MB used to die at Vercel's platform 413
+ * before the action ran, and the client threw into the error boundary.
+ * Verifying is read-only, so a request that never came back is simply "try
+ * again", and it is said here rather than thrown.
+ */
+async function verifyInBrowser(
+  prev: VerifyReportState,
+  formData: FormData,
+): Promise<VerifyReportState> {
+  let body: FormData;
+  try {
+    body = await verifyRequestBody(formData);
+  } catch {
+    // no Web Crypto (an insecure context), or the file could not be read
+    return { error: HASH_FAILED_TEXT, result: null };
+  }
+  try {
+    return await verifyEvidenceReport(prev, body);
+  } catch {
+    return { error: NO_ANSWER_TEXT, result: null };
+  }
+}
+
+/**
+ * Prove a commission evidence PDF untampered: choose the file (its SHA-256 is
+ * computed in the browser — the PDF never leaves this device, whatever its
+ * size) or paste a digest, and match it against the append-only
+ * evidence_report_generated event log.
  */
 export function VerifyReport() {
   const t = useTranslations("reports.verify");
-  const [state, formAction, pending] = useActionState(verifyEvidenceReport, initialState);
+  const [state, formAction, pending] = useActionState(verifyInBrowser, initialState);
 
   return (
     <section className="flex max-w-2xl flex-col gap-3 rounded-[10px] border border-border bg-surface p-5">

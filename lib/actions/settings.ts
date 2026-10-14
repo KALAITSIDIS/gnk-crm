@@ -9,6 +9,7 @@ import {
   parseTransferFeesConfig,
 } from "@/lib/services/calculators";
 import { getCurrentProfile, type CurrentProfile } from "@/lib/services/auth";
+import { BRANDING_MAX_BYTES } from "@/lib/constants/upload";
 import { logEvent } from "@/lib/services/events";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -115,7 +116,7 @@ export async function uploadBranding(
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) return fail("Choose a PNG file");
   if (file.type !== "image/png") return fail("PNG only — transparency is required");
-  if (file.size > 2 * 1024 * 1024) return fail("File is over 2 MB");
+  if (file.size > BRANDING_MAX_BYTES) return fail("File is over 2 MB");
 
   // decode-verify the bytes: the MIME type above is client-supplied, and a
   // corrupt watermark would break EVERY later public-photo upload inside the

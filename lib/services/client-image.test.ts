@@ -1,15 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { UPLOAD_REQUEST_BUDGET_BYTES } from "@/lib/constants/upload";
 import {
   MAX_EDGE_PX,
-  UPLOAD_REQUEST_BUDGET_BYTES,
+  downscaleForUpload,
   fitWithin,
   needsClientDownscale,
 } from "./client-image";
 
 /**
- * REL-05: the browser half (createImageBitmap/canvas) cannot run under node;
- * these pin the DECISION logic — the parts a wrong constant or a flipped
- * comparison would silently break — against the measured platform reality.
+ * REL-05: the decision logic is pinned directly; the browser half
+ * (createImageBitmap / canvas) is driven through a fake canvas below, which
+ * records the order of the 2D context's calls.
  */
 describe("client downscale decisions (REL-05)", () => {
   it("the budget sits under the measured ~4.5 MB platform 413", () => {
@@ -44,5 +45,116 @@ describe("client downscale decisions (REL-05)", () => {
     const { width, height } = fitWithin(10000, 3, 2000);
     expect(width).toBe(2000);
     expect(height).toBeGreaterThanOrEqual(1);
+  });
+});
+
+type Call = { op: "fillStyle" | "fillRect" | "drawImage" | "toBlob"; fillStyle?: string; args?: unknown[] };
+
+/**
+ * A fake browser: createImageBitmap answers a 4000×3000 bitmap (or fails),
+ * document.createElement("canvas") a canvas whose 2D context records every
+ * call in order, and toBlob a blob of `blobBytes`.
+ */
+function fakeBrowser({ blobBytes, decodeFails = false }: { blobBytes: number; decodeFails?: boolean }) {
+  const calls: Call[] = [];
+  let fillStyle = "#000000"; // the 2D context's initial fillStyle
+  const ctx = {
+    get fillStyle() {
+      return fillStyle;
+    },
+    set fillStyle(value: string) {
+      fillStyle = value;
+      calls.push({ op: "fillStyle", fillStyle: value });
+    },
+    fillRect: (...args: unknown[]) => calls.push({ op: "fillRect", fillStyle, args }),
+    drawImage: (...args: unknown[]) => calls.push({ op: "drawImage", args: args.slice(1) }),
+  };
+  const canvas = {
+    width: 0,
+    height: 0,
+    getContext: (kind: string) => (kind === "2d" ? ctx : null),
+    toBlob: (done: (blob: Blob | null) => void, type: string, quality: number) => {
+      calls.push({ op: "toBlob", args: [type, quality] });
+      done(new Blob([new Uint8Array(blobBytes)], { type }));
+    },
+  };
+  const bitmap = { width: 4000, height: 3000, close: vi.fn() };
+  const createImageBitmap = vi.fn(async () => {
+    if (decodeFails) throw new Error("decode failed");
+    return bitmap;
+  });
+  vi.stubGlobal("createImageBitmap", createImageBitmap);
+  vi.stubGlobal("document", {
+    createElement: (tag: string) => {
+      if (tag !== "canvas") throw new Error(`unexpected element ${tag}`);
+      return canvas;
+    },
+  });
+  return { calls, createImageBitmap, canvas };
+}
+
+const photo = (bytes: number, name: string, type: string) =>
+  new File([new Uint8Array(bytes)], name, { type });
+
+describe("downscaleForUpload in the browser (T-upload-size-honest)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("a transparent PNG over the budget is laid on WHITE before it is drawn — never JPEG's black", async () => {
+    // HTML canvas spec: serializing to a format without alpha composites the
+    // pixels onto an opaque BLACK background. The server flattens to white on
+    // purpose (lib/services/media.ts encode()); the browser must not pre-empt it.
+    const browser = fakeBrowser({ blobBytes: 900_000 });
+    await downscaleForUpload(photo(4_000_000, "pool.png", "image/png"));
+    const fill = browser.calls.findIndex((c) => c.op === "fillRect");
+    const draw = browser.calls.findIndex((c) => c.op === "drawImage");
+    expect(fill, "the canvas is filled").toBeGreaterThanOrEqual(0);
+    expect(draw).toBeGreaterThanOrEqual(0);
+    expect(fill, "fill BEFORE draw").toBeLessThan(draw);
+    expect(browser.calls[fill].fillStyle).toMatch(/^(#fff(fff)?|white)$/i);
+    // the whole canvas, not a corner of it
+    expect(browser.calls[fill].args).toEqual([0, 0, 2000, 1500]);
+    expect(browser.calls[draw].args).toEqual([0, 0, 2000, 1500]);
+  });
+
+  it("the re-encode comes back as a JPEG under the photo's own name", async () => {
+    fakeBrowser({ blobBytes: 900_000 });
+    const out = await downscaleForUpload(photo(4_000_000, "pool.png", "image/png"));
+    expect(out.type).toBe("image/jpeg");
+    expect(out.name).toBe("pool.jpg");
+    expect(out.size).toBe(900_000);
+  });
+
+  it("a re-encode STILL over the budget is refused, never posted", async () => {
+    const browser = fakeBrowser({ blobBytes: UPLOAD_REQUEST_BUDGET_BYTES + 1 });
+    const refusal = downscaleForUpload(photo(9_000_000, "panorama.jpg", "image/jpeg"));
+    await expect(refusal).rejects.toThrow(/panorama\.jpg/);
+    await expect(refusal).rejects.toThrow(/3\.3 MB/);
+    await expect(refusal).rejects.toThrow(/nothing was uploaded/i);
+    await expect(refusal).rejects.toThrow(/smaller photo/i);
+    expect(browser.calls.some((c) => c.op === "toBlob")).toBe(true);
+  });
+
+  it("an over-budget file the browser cannot resize is refused before anything is decoded or sent", async () => {
+    const browser = fakeBrowser({ blobBytes: 1 });
+    const refusal = downscaleForUpload(photo(5_000_000, "scan.heic", "image/heic"));
+    await expect(refusal).rejects.toThrow(/scan\.heic/);
+    await expect(refusal).rejects.toThrow(/3\.3 MB/);
+    expect(browser.createImageBitmap).not.toHaveBeenCalled();
+  });
+
+  it("an over-budget photo that does not decode is refused by name", async () => {
+    fakeBrowser({ blobBytes: 1, decodeFails: true });
+    await expect(downscaleForUpload(photo(5_000_000, "broken.jpg", "image/jpeg"))).rejects.toThrow(
+      /broken\.jpg: could not be read as an image/,
+    );
+  });
+
+  it("a photo within the budget is sent exactly as chosen — not decoded, not re-encoded", async () => {
+    const browser = fakeBrowser({ blobBytes: 1 });
+    const small = photo(1_000_000, "kitchen.png", "image/png");
+    expect(await downscaleForUpload(small)).toBe(small);
+    expect(browser.createImageBitmap).not.toHaveBeenCalled();
   });
 });

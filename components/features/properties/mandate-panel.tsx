@@ -4,6 +4,7 @@ import { useActionState, useEffect, useRef, useState, useTransition } from "reac
 import { FileText, Pencil, Plus, RefreshCw, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { EntityPicker } from "@/components/features/shared/entity-picker";
+import { useUploadForm } from "@/components/features/shared/use-upload-form";
 import { getPartyDefaults } from "@/lib/actions/party-defaults";
 import { getDocumentDownloadUrl } from "@/lib/actions/documents";
 import {
@@ -13,6 +14,11 @@ import {
   uploadMandateDocument,
   type MandateActionState,
 } from "@/lib/actions/mandates";
+import {
+  DOCUMENT_FILE_HINT,
+  DOCUMENT_TOO_LARGE_ADVICE,
+  DOCUMENT_UPLOAD_UNCONFIRMED_TEXT,
+} from "@/lib/constants/upload";
 import { canRenew } from "@/lib/services/mandate-renewal";
 import type { EntityOption } from "@/lib/actions/entity-search";
 import { Button } from "@/components/ui/button";
@@ -267,34 +273,47 @@ function UploadDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const [state, formAction, pending] = useActionState(uploadMandateDocument, initialState);
-  const lastToasted = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (state.savedAt && state.savedAt !== lastToasted.current) {
-      lastToasted.current = state.savedAt;
-      toast.success("Document uploaded");
-      onOpenChange(false);
-    }
-  }, [state.savedAt, onOpenChange]);
+  // size gate before sending, and a lost answer said rather than thrown into
+  // the error boundary (T-upload-size-honest — use-upload-form.ts)
+  const upload = useUploadForm({
+    action: uploadMandateDocument,
+    initialState,
+    tooLargeAdvice: DOCUMENT_TOO_LARGE_ADVICE,
+    unconfirmedText: DOCUMENT_UPLOAD_UNCONFIRMED_TEXT,
+    savedText: "Document uploaded",
+    onSaved: () => onOpenChange(false),
+  });
+  const changeOpen = (next: boolean) => {
+    if (upload.pending) return;
+    // cleared on CLOSE: a refusal must not greet the next attempt (an
+    // unknown outcome is also a toast that stays until dismissed)
+    if (!next) upload.clearError();
+    onOpenChange(next);
+  };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={changeOpen}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
           <DialogTitle>Upload signed mandate</DialogTitle>
         </DialogHeader>
-        <form action={formAction} className="flex flex-col gap-3">
+        <form onSubmit={upload.onSubmit} className="flex flex-col gap-3">
           <input type="hidden" name="mandate_id" value={mandateId} />
-          <Input name="file" type="file" accept="application/pdf,image/jpeg,image/png" required />
-          <p className="text-xs text-text-3">PDF, JPG or PNG · up to 15 MB · private bucket.</p>
-          {state.error ? (
+          <Input
+            name="file"
+            type="file"
+            accept="application/pdf,image/jpeg,image/png"
+            required
+            onChange={upload.onFileChange}
+          />
+          <p className="text-xs text-text-3">{DOCUMENT_FILE_HINT} · private bucket.</p>
+          {upload.error ? (
             <p role="alert" className="text-sm text-danger">
-              {state.error}
+              {upload.error}
             </p>
           ) : null}
-          <Button type="submit" disabled={pending}>
-            {pending ? "Uploading…" : "Upload"}
+          <Button type="submit" disabled={upload.pending}>
+            {upload.pending ? "Uploading…" : "Upload"}
           </Button>
         </form>
       </DialogContent>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { FileText, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -8,8 +8,14 @@ import {
   uploadContactDocument,
   type ContactDocActionState,
 } from "@/lib/actions/contact-documents";
+import {
+  DOCUMENT_FILE_HINT,
+  DOCUMENT_TOO_LARGE_ADVICE,
+  DOCUMENT_UPLOAD_UNCONFIRMED_TEXT,
+} from "@/lib/constants/upload";
 import { CONTACT_DOC_TYPES } from "@/lib/validators/documents";
 import { DocumentDownloadButton } from "@/components/features/shared/document-download-button";
+import { useUploadForm } from "@/components/features/shared/use-upload-form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -47,19 +53,17 @@ export function ContactDocumentsTab({
   isAdmin?: boolean;
   canUpload?: boolean;
 }) {
-  const [state, formAction, uploading] = useActionState(uploadContactDocument, initialState);
+  // size gate before sending, and a lost answer said rather than thrown into
+  // the error boundary (T-upload-size-honest — use-upload-form.ts)
+  const upload = useUploadForm({
+    action: uploadContactDocument,
+    initialState,
+    tooLargeAdvice: DOCUMENT_TOO_LARGE_ADVICE,
+    unconfirmedText: DOCUMENT_UPLOAD_UNCONFIRMED_TEXT,
+    savedText: "Document uploaded",
+  });
   const [isPending, startTransition] = useTransition();
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const formRef = useRef<HTMLFormElement>(null);
-  const lastToasted = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (state.savedAt && state.savedAt !== lastToasted.current) {
-      lastToasted.current = state.savedAt;
-      toast.success("Document uploaded");
-      formRef.current?.reset();
-    }
-  }, [state.savedAt]);
 
   function handleDelete(id: string, title: string) {
     if (!confirm(`Delete “${title}”? This removes the file permanently.`)) return;
@@ -76,8 +80,7 @@ export function ContactDocumentsTab({
     <div className="flex flex-col gap-4">
       {canUpload ? (
         <form
-          ref={formRef}
-          action={formAction}
+          onSubmit={upload.onSubmit}
           className="flex flex-col gap-3 rounded-[10px] border border-border bg-surface-2 p-4 sm:flex-row sm:flex-wrap sm:items-end"
         >
           <input type="hidden" name="contact_id" value={contactId} />
@@ -101,21 +104,22 @@ export function ContactDocumentsTab({
             </Select>
           </div>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="doc_file">File (PDF, JPG, PNG · ≤ 15 MB)</Label>
+            <Label htmlFor="doc_file">File ({DOCUMENT_FILE_HINT})</Label>
             <input
               id="doc_file"
               type="file"
               name="file"
               accept="application/pdf,image/jpeg,image/png"
+              onChange={upload.onFileChange}
               className="text-sm text-text-2 file:mr-3 file:rounded-lg file:border file:border-border file:bg-surface file:px-3 file:py-1.5 file:text-sm file:text-text-1"
             />
           </div>
-          <Button type="submit" disabled={uploading} size="sm">
-            <Upload className="size-4" /> {uploading ? "Uploading…" : "Upload"}
+          <Button type="submit" disabled={upload.pending} size="sm">
+            <Upload className="size-4" /> {upload.pending ? "Uploading…" : "Upload"}
           </Button>
-          {state.error ? (
+          {upload.error ? (
             <p role="alert" className="w-full text-sm text-danger">
-              {state.error}
+              {upload.error}
             </p>
           ) : null}
         </form>
