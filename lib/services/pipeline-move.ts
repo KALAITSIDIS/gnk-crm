@@ -14,12 +14,13 @@
  *   and some refusals mean the BOARD is stale (the deal was closed, reassigned
  *   or deleted elsewhere), so the card stayed draggable until a reload.
  *
- * This module says what to do with each answer; the board does exactly that,
- * and does it inside the same transition, so the optimistic revert and the
- * fresh props land together (the house idiom of
- * components/features/deals/outcome-actions.tsx). Pure of React and of any
- * browser API, so every branch is unit-tested (pipeline-move.test.ts); the
- * board's use of it is pinned by tests/unit/kanban-drop-guard.test.ts.
+ * This module says what to do with each answer (`settleMove`) and does it
+ * (`settleDrop`, given the board's effects); the board awaits that inside the
+ * same transition, so the optimistic revert and the fresh props land together
+ * (the house idiom of components/features/deals/outcome-actions.tsx). Pure of
+ * React and of any browser API, so every branch is RUN by unit tests
+ * (pipeline-move.test.ts); the board's transition is pinned word for word by
+ * tests/unit/kanban-drop-guard.test.ts.
  *
  * NOT here, on purpose (DECISIONS T-external-audit-2026-10-14, item 5): a
  * snapshot of the board, a deep comparison, or a copy of the stage-transition
@@ -124,6 +125,48 @@ export function settleMove(attempt: MoveAttempt): MoveOutcome {
   // an answer that claims neither a move nor a refusal: not a success the
   // user should trust — but it was answered, so there is nothing to report
   return lost(null);
+}
+
+/** What the board does with an outcome — its own effects, handed in. */
+export interface DropEffects {
+  /** the server action's call, made here so a rejection is settled here */
+  move: () => Promise<MoveDealResult>;
+  /** a lost request, for Sentry (the board's goes through `reportRejection`) */
+  report: (error: unknown) => void;
+  /** say it; `sticky`: keep it until dismissed */
+  toast: (message: string, sticky: boolean) => void;
+  /** re-read the board (`router.refresh()`) */
+  refresh: () => void;
+}
+
+/**
+ * One drop, from the call to the board's last word. The board AWAITS this
+ * inside its transition, so everything it does — the refresh above all —
+ * happens before the transition ends.
+ *
+ * Never rejects for the call: a call that rejected or threw is settled here
+ * as an unknown outcome (React 19 would otherwise rethrow it into
+ * app/(app)/error.tsx). Nothing is said or re-read before the answer is in.
+ * The effects are the board's and must not throw (its report is wrapped).
+ *
+ * The control flow lives HERE rather than inline in the board so that it is
+ * run by tests, not read by them: a source scan of the inline version could
+ * not tell a catch that rethrew, or a refresh behind a condition or a timer,
+ * from the real thing (T-malformed-ids review).
+ */
+export async function settleDrop(effects: DropEffects): Promise<MoveOutcome> {
+  let attempt: MoveAttempt;
+  try {
+    attempt = { answer: await effects.move() };
+  } catch (thrown) {
+    // the request never came back: the move may or may not have committed
+    attempt = { thrown };
+  }
+  const outcome = settleMove(attempt);
+  if (outcome.report) effects.report(outcome.report.error);
+  if (outcome.toast) effects.toast(outcome.toast, outcome.sticky);
+  if (outcome.refresh) effects.refresh();
+  return outcome;
 }
 
 /**

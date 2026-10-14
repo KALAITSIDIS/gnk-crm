@@ -3,7 +3,9 @@ import {
   DEAL_MOVER_ROLES,
   MOVE_UNCONFIRMED_TEXT,
   mayMoveDeals,
+  settleDrop,
   settleMove,
+  type MoveDealResult,
 } from "@/lib/services/pipeline-move";
 
 /**
@@ -90,6 +92,99 @@ describe("settleMove", () => {
 
   it("only an explicit `unconfirmed: true` makes an answered error sticky", () => {
     expect(settleMove({ answer: { error: "x", unconfirmed: false } }).kind).toBe("refused");
+  });
+});
+
+/**
+ * One drop, RUN — not read (T-malformed-ids review). The board's transition
+ * is `applyMove` then `await settleDrop({ move, report, toast, refresh })`,
+ * pinned word for word in tests/unit/kanban-drop-guard.test.ts; everything
+ * that decides whether a rejected call reaches app/(app)/error.tsx, and
+ * whether the board is re-read, happens in here. A source scan of the old
+ * inline handler let four edits through (a catch that rethrew, a catch that
+ * returned, a refresh only on refusals, a refresh deferred by setTimeout):
+ * each fails a case below.
+ */
+describe("settleDrop", () => {
+  /** The board's effects, recorded in the order they happen. */
+  function board(move: () => Promise<MoveDealResult>) {
+    const log: string[] = [];
+    const reported: unknown[] = [];
+    const toasts: { message: string; sticky: boolean }[] = [];
+    const effects = {
+      move: () => {
+        log.push("move");
+        return move();
+      },
+      report: (error: unknown) => {
+        log.push("report");
+        reported.push(error);
+      },
+      toast: (message: string, sticky: boolean) => {
+        log.push("toast");
+        toasts.push({ message, sticky });
+      },
+      refresh: () => {
+        log.push("refresh");
+      },
+    };
+    return { effects, log, reported, toasts };
+  }
+
+  it("a call that REJECTS is settled, not rethrown: reported, said as unknown and kept, and the board re-read", async () => {
+    const lost = new Error("An unexpected response was received from the server.");
+    const b = board(() => Promise.reject(lost));
+    // resolves — a rejection here is the error boundary the fix removed
+    const outcome = await settleDrop(b.effects);
+    // all of it by the time the promise the transition awaits has settled: a
+    // refresh deferred past that (a timer, a chain of .then) is not in this
+    // list yet. (One .then queued before the return still runs first — still
+    // inside the transition, so not a defect this needs to catch.)
+    expect(b.log).toEqual(["move", "report", "toast", "refresh"]);
+    expect(b.reported).toEqual([lost]);
+    expect(b.toasts).toEqual([{ message: MOVE_UNCONFIRMED_TEXT, sticky: true }]);
+    expect(outcome.kind).toBe("unconfirmed");
+  });
+
+  it("a call that throws before it returns a promise is settled the same way", async () => {
+    const b = board(() => {
+      throw new TypeError("Failed to fetch");
+    });
+    await expect(settleDrop(b.effects)).resolves.toMatchObject({ kind: "unconfirmed" });
+    expect(b.log).toEqual(["move", "report", "toast", "refresh"]);
+  });
+
+  it("an answered refusal: the action's words, not kept, the board re-read — nothing for Sentry", async () => {
+    const words = "You do not have permission to move this deal";
+    const b = board(async () => ({ error: words }));
+    expect((await settleDrop(b.effects)).kind).toBe("refused");
+    expect(b.log).toEqual(["move", "toast", "refresh"]);
+    expect(b.toasts).toEqual([{ message: words, sticky: false }]);
+    expect(b.reported).toEqual([]);
+  });
+
+  it("the server's own 'could not confirm': kept until dismissed, the board re-read, nothing for Sentry", async () => {
+    const b = board(async () => ({ error: MOVE_UNCONFIRMED_TEXT, unconfirmed: true }));
+    await settleDrop(b.effects);
+    expect(b.log).toEqual(["move", "toast", "refresh"]);
+    expect(b.toasts).toEqual([{ message: MOVE_UNCONFIRMED_TEXT, sticky: true }]);
+  });
+
+  it("a move that landed: silent — the action revalidated the board, and its answer carried it", async () => {
+    const b = board(async () => ({ error: null }));
+    expect((await settleDrop(b.effects)).kind).toBe("moved");
+    expect(b.log).toEqual(["move"]);
+  });
+
+  it("nothing is said or re-read before the answer is in", async () => {
+    let answer!: (r: MoveDealResult) => void;
+    const b = board(() => new Promise<MoveDealResult>((resolve) => (answer = resolve)));
+    const settling = settleDrop(b.effects);
+    await Promise.resolve();
+    expect(b.log).toEqual(["move"]);
+    answer({ error: "Deal not found" });
+    await settling;
+    expect(b.log).toEqual(["move", "toast", "refresh"]);
   });
 });
 

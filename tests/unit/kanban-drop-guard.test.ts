@@ -14,11 +14,19 @@ const { KanbanBoard } = await import("@/components/features/pipeline/kanban");
 const { MOVE_READ_ONLY_TEXT } = await import("@/lib/services/pipeline-move");
 
 /**
- * The pipeline board's drop (T-kanban-drop-settle). The decisions live in
- * lib/services/pipeline-move.ts (`settleMove`, `mayMoveDeals`) and are
- * unit-tested there; this file pins that the board and its page USE them —
- * no jsdom here, so the component is read as source (comments stripped) for
- * the transition, and rendered on the server for the role gate.
+ * The pipeline board's drop (T-kanban-drop-settle). The decisions and the
+ * drop itself live in lib/services/pipeline-move.ts (`settleDrop`,
+ * `settleMove`, `mayMoveDeals`) and are RUN there; this file pins that the
+ * board and its page use them — no jsdom here, so the component is read as
+ * source (comments stripped) for the transition, and rendered on the server
+ * for the role gate.
+ *
+ * The transition is pinned WORD FOR WORD, not by the presence of lines: the
+ * first version of this file matched each line on its own, and a catch that
+ * rethrew, a catch that returned, a refresh only on refusals and a refresh
+ * deferred by setTimeout all passed it (T-malformed-ids review). Control
+ * flow now lives in `settleDrop`, whose cases run it; what is left here is
+ * one statement order with nothing around it.
  */
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const read = (...parts: string[]) => readFileSync(join(root, ...parts), "utf-8");
@@ -27,6 +35,8 @@ const read = (...parts: string[]) => readFileSync(join(root, ...parts), "utf-8")
 const stripComments = (src: string) =>
   src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/\{\s*\}/g, "{}");
 const code = (...parts: string[]) => stripComments(read(...parts));
+/** One space for any run of whitespace, none at the ends: layout is not under test. */
+const squash = (src: string) => src.replace(/\s+/g, " ").trim();
 
 /** The body of the first `opener … {` block, braces balanced (no braces in this file's strings). */
 function blockAfter(src: string, opener: RegExp): string {
@@ -51,39 +61,42 @@ describe("the board's drop settles every answer inside its transition", () => {
   const src = code(...BOARD);
   const transition = blockAfter(src, /startTransition\(async \(\) => \{/);
 
-  it("the action is called once, and only inside the transition's try", () => {
+  it("the transition is exactly: the optimistic move, then the AWAITED drop with the board's four effects", () => {
     expect(transition, "no startTransition(async () => { … }) block found").not.toBe("");
-    // the import, and the one call — a second, unguarded call would bypass all of this
+    /*
+     * Every word fixed: `await` keeps the drop — and so its refresh — inside
+     * the transition (a refresh landing on its own shows the stale column
+     * first); each effect is the bare call, with no condition, timer or
+     * wrapper of its own. Whether to report, say or re-read is settleDrop's
+     * answer, run by its cases in lib/services/pipeline-move.test.ts.
+     */
+    expect(squash(transition)).toBe(
+      squash(`
+        applyMove({ dealId, stageId });
+        await settleDrop({
+          move: () => moveDealToStage(dealId, stageId),
+          report: (error) => reportRejection(reportLostMove, error),
+          toast: (message, sticky) => toast.error(message, sticky ? UNTIL_DISMISSED : undefined),
+          refresh: () => router.refresh(),
+        });
+      `),
+    );
+  });
+
+  it("one transition, one call of the action, one drop, one refresh — all of them that one", () => {
+    // a second, unguarded call or refresh would bypass all of this
+    expect(src.match(/startTransition\(/g) ?? []).toHaveLength(1);
     expect(src.match(/moveDealToStage\(/g) ?? []).toHaveLength(1);
-    const tryBody = blockAfter(transition, /\btry \{/);
-    expect(tryBody).toMatch(/await moveDealToStage\(dealId, stageId\)/);
-    // a rejection is caught HERE — React 19 would rethrow it to app/(app)/error.tsx
-    expect(transition).toMatch(/\btry \{[\s\S]*?await moveDealToStage\([\s\S]*?\}\s*catch\s*\(\s*thrown\s*\)\s*\{/);
-  });
-
-  it("both an answer and a rejection go to settleMove, and the board obeys it", () => {
-    expect(transition).toMatch(/\{\s*answer:\s*await moveDealToStage\(dealId, stageId\)\s*\}/);
-    expect(blockAfter(transition, /catch\s*\(\s*thrown\s*\)\s*\{/)).toMatch(/\{\s*thrown\s*\}/);
-    expect(transition).toMatch(/const outcome = settleMove\(attempt\)/);
-    expect(transition).toMatch(/if \(outcome\.toast\) toast\.error\(outcome\.toast,\s*outcome\.sticky \? UNTIL_DISMISSED : undefined\)/);
-  });
-
-  it("the refresh runs INSIDE the transition, after the answer — on a refusal and on a throw alike", () => {
-    // in the transition, so the optimistic revert and the fresh props land together
-    expect(transition).toMatch(/if \(outcome\.refresh\) router\.refresh\(\)/);
-    const settled = transition.indexOf("settleMove(attempt)");
-    const refreshed = transition.indexOf("router.refresh()");
-    expect(settled).toBeGreaterThan(-1);
-    expect(refreshed).toBeGreaterThan(settled);
-    // and nowhere else: a refresh outside the transition would land on its own
+    expect(src.match(/settleDrop\(/g) ?? []).toHaveLength(1);
     expect(src.match(/router\.refresh\(\)/g) ?? []).toHaveLength(1);
   });
 
   it("a lost request is reported to Sentry, tagged lost_request, the way the upload forms do (#158)", () => {
-    expect(transition).toMatch(/if \(outcome\.report\) reportRejection\(reportLostMove, outcome\.report\.error\)/);
     expect(src).toMatch(
       /const reportLostMove = \(error: unknown\) =>\s*Sentry\.captureException\(error, \{ tags: \{ lost_request: "pipeline_move" \} \}\)/,
     );
+    // an unknown outcome stays on screen until dismissed
+    expect(src).toMatch(/const UNTIL_DISMISSED = \{ duration: Infinity, closeButton: true \} as const;/);
   });
 });
 

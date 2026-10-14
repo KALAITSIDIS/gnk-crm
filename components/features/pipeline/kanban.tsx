@@ -24,11 +24,7 @@ import { HealthDot } from "@/components/features/shared/health-dot";
 import { moveDealToStage } from "@/lib/actions/deals";
 import { reportRejection } from "@/lib/services/client-upload";
 import type { HealthFactor } from "@/lib/services/health-score";
-import {
-  MOVE_READ_ONLY_TEXT,
-  settleMove,
-  type MoveAttempt,
-} from "@/lib/services/pipeline-move";
+import { MOVE_READ_ONLY_TEXT, settleDrop } from "@/lib/services/pipeline-move";
 import { formatMoney } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 
@@ -318,26 +314,24 @@ export function KanbanBoard({
     if (!deal || deal.stage_id === stageId) return;
 
     /*
-     * Every answer is settled HERE, inside the transition (settleMove decides;
-     * the board obeys): a rejected call is caught rather than rethrown into
-     * app/(app)/error.tsx, and a refusal or an unknown outcome re-reads the
-     * board in the same transition, so the optimistic revert and the fresh
-     * props land together — a card made stale elsewhere (closed, reassigned,
-     * deleted) lands where the server has it, not back in its old column.
+     * Every answer is settled INSIDE the transition: `settleDrop` makes the
+     * call, catches a rejection rather than letting React rethrow it into
+     * app/(app)/error.tsx, and — awaited here — re-reads the board for a
+     * refusal or an unknown outcome before the transition ends, so the
+     * optimistic revert and the fresh props land together: a card made stale
+     * elsewhere (closed, reassigned, deleted) lands where the server has it,
+     * not back in its old column. This body is pinned word for word
+     * (tests/unit/kanban-drop-guard.test.ts); the control flow is run by
+     * lib/services/pipeline-move.test.ts.
      */
     startTransition(async () => {
       applyMove({ dealId, stageId });
-      let attempt: MoveAttempt;
-      try {
-        attempt = { answer: await moveDealToStage(dealId, stageId) };
-      } catch (thrown) {
-        // the request never came back: the move may or may not have committed
-        attempt = { thrown };
-      }
-      const outcome = settleMove(attempt);
-      if (outcome.report) reportRejection(reportLostMove, outcome.report.error);
-      if (outcome.toast) toast.error(outcome.toast, outcome.sticky ? UNTIL_DISMISSED : undefined);
-      if (outcome.refresh) router.refresh();
+      await settleDrop({
+        move: () => moveDealToStage(dealId, stageId),
+        report: (error) => reportRejection(reportLostMove, error),
+        toast: (message, sticky) => toast.error(message, sticky ? UNTIL_DISMISSED : undefined),
+        refresh: () => router.refresh(),
+      });
     });
   };
 
