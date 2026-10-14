@@ -1587,7 +1587,8 @@ explicit direction.
   `ls supabase/migrations/0147_hoist_remaining_rls_helpers.sql` — present on
   origin/main `3fe15d2` (it was absent at `489c507`). On hosted after the apply,
   `rls_bare_helper_calls()` returned 0 rows and an independent scan found 0 bare
-  policies of 155 (2026-10-14).)*
+  policies of 155 (2026-10-14). The restore pack's 0147 row, which this note's
+  VERIFY named before the landing, was NOT read at landing.)*
 
   **Verified, and the meaning-preservation twice over:** the migration's own
   equivalence check (0 changed on an untouched database, exactly 1 when a policy
@@ -4120,7 +4121,7 @@ Its first item is not a site: it is the refusal rule this change added, which is
   - **Shape:** catch at each site, still call `revalidatePath`, and return the secret WITH a notice. Add a `notice` to `SettingsActionState`, `PortalActionState` and `ShareLinkActionState`. Render it in InviteFlow's credentials branch (`state.error` renders only in the form branch) and toast it beside the URL. Never revoke on an unsettled failure; `inviteUser` may call `deleteUser` only when `e.refused`.
   - **VERIFY:** `grep -n -A5 "^  await logEvent(" lib/actions/settings.ts lib/actions/portals.ts lib/actions/share-links.ts | grep -E '"invited"|portal_enabled|portal_token_regenerated|"created"'` gives five hits today, one per open site.
 
-- **A committed photo delete, archive or sold/rented save shows the error page and skips the site refresh, the score and the rest of its lines, M.**
+- **A committed photo delete, archive or sold/rented save shows the error page and skips the score and the rest of its lines (the site refresh: fixed by #159), M.**
   - **The site refresh: FIXED 2026-10-14 by `T-site-knock-order` (LANDED — PR #159, main `8ecb772`, deployed).** All three paths (and `restoreProperty`) schedule the knock straight after the proven write, so `notifySiteIfPublic` / `notifySiteAfter` / "the site knock" have left the skipped lists below, and the site no longer keeps a deleted photo or an archived listing for an hour. The throw, the error page and every other skipped step stand. (The lists below are the original finding at `489c507`; on `3fe15d2` the knocks are at `media.ts:570`, `properties.ts:998` and `properties.ts:786`.)
   - **Photo delete.** `deleteMediaBulk` (`lib/actions/media.ts:592`, also reached by `deleteMedia`) writes one `media_deleted` line per photo AFTER the rows are deleted and the files are permanently removed from both buckets (:538-581).
     - A throw at photo k leaves photos k+1…N with no line and skips `recomputeQualityScore`, `notifySiteIfPublic` and `revalidatePath` (:607-610).
@@ -4296,7 +4297,7 @@ Recorded in their own sections, not repeated here:
 - the evidence report's sequential slip downloads (item 6) → a note on "The commission-evidence report ignores the error …";
 - a deal section save whose line throws skips the health recompute, and `logDealContact`'s return after its commit (`T-deal-health-race`) → "Throws after a commit — 2026-10-13";
 - the struck "A reprice of public units does not knock the website" (stale since #116) → in place;
-- the three entries and one sub-bullet the PRs fixed, struck in place on landing (2026-10-14), each with its VERIFY re-run on origin/main `3fe15d2`:
+- the three entries and one sub-bullet the PRs fixed, struck in place on landing (2026-10-14), each with its repository check re-run on origin/main `3fe15d2`. `property_media_select`'s own VERIFY is a hosted `pg_policies` read, which was NOT run; its strike rests on the repository grep and the schema-wide hosted scan (0 bare of 155, `rls_bare_helper_calls()` 0 rows):
   - "The inherited-field sync moves public unit fields and tells nobody" (#159);
   - "Three property actions schedule their knock after a step that can throw" (#159);
   - "`property_media_select` evaluates `current_org_id()` once per row" (0147);
@@ -4355,7 +4356,7 @@ Recorded in their own sections, not repeated here:
 **From `T-deal-health-race`**
 
 - **A listing manager's (or a non-owner agent's) legal save fans out a deal-health recompute that RLS silently refuses, so a stored score depends on who saved — NEEDS AN OPERATOR DECISION.**
-  - **The path.** `updatePropertySection` with `section === "legal"` runs `recomputeDealsFor(supabase, { propertyId })` on the caller's session client (`lib/actions/properties.ts:867-871`). `title_deed_status` is a 15-point health factor.
+  - **The path.** `updatePropertySection` with `section === "legal"` runs `recomputeDealsFor(supabase, { propertyId })` on the caller's session client (`lib/actions/properties.ts:867-871` at `489c507`, :879-882 on origin/main `3fe15d2`). `title_deed_status` is a 15-point health factor.
   - **Who is refused.** `deals_update` (`supabase/migrations/0100_advisor_lints.sql:174-184`) admits an admin, or an agent on `agent_id` / `created_by`; it has NO listing-manager arm. `properties_update` admits a listing manager AND the property's assigned agent.
   - **The effect.** When a listing manager saves a title-deed status, or the assigned agent does on a deal another agent owns, every open deal on the property keeps its old title-deed factor and score, and the PATCH matches zero rows without an error (the mechanism is measured by `supabase/tests/listing-manager-silent-writes.test.ts`). It stays stale until a deal-side mutation by someone who may update the deal — the class DECISIONS `T-reader` (2026-09-08, "a stored number must not vary by who saved it") fixed for the mandate read.
   - **Since `T-deal-health-race`** (LANDED 2026-10-14, PR #157 → main `f074e7f`) each refused recompute costs one more GET of deals — the re-read that finds the row unmoved — and `supabase/tests/deal-health-race.test.ts` scenario 4 pins exactly that.
@@ -4390,7 +4391,7 @@ Recorded in their own sections, not repeated here:
 
 - **No e2e covers a refused upload or an unknown outcome, S.** The refusal and the "Could not confirm" path are on main since #158 (LANDED 2026-10-14, `3fe15d2`). A local-only Playwright case: set a 4 MB file on `#doc_file`, assert the inline refusal names "3.3 MB" and that no POST left the page (`page.on("request")`); and one with the action route aborted (`page.route`), asserting the "Could not confirm" toast and a reset button. **VERIFY:** `grep -rln "3.3 MB\|Could not confirm whether the document" tests/e2e` — nothing means open (nothing at `489c507` or on origin/main `3fe15d2`).
 
-- **The 3.0–4.5 MB band is unmeasured — NEEDS AN OPERATOR DECISION (a production probe).** The budget (3,500,000 bytes plus framing) sits between the measured 3 MB → 200 and 5 MB → 413 (DECISIONS `T-media-import`). A re-probe the same way — unauthenticated POSTs of 3.5, 4.0 and 4.4 MB to production — would pin it and might lift the documents' limit; only the operator decides on a production probe. **VERIFY:** none — a measurement.
+- **The 3.0–4.5 MB band is unmeasured — optional now that the limit is accepted (2026-10-14); a production probe stays the operator's call if a higher limit is wanted.** The budget (3,500,000 bytes plus framing) sits between the measured 3 MB → 200 and 5 MB → 413 (DECISIONS `T-media-import`). A re-probe the same way — unauthenticated POSTs of 3.5, 4.0 and 4.4 MB to production — would pin it and might lift the documents' limit; only the operator decides on a production probe. **VERIFY:** none — a measurement.
 
 **From `T-site-knock-order`**
 
@@ -4401,6 +4402,6 @@ Recorded in their own sections, not repeated here:
   - **Shape:** one `notifySite(EVERY_LISTING)` per run that changed a public row, awaited at the end, its outcome printed (`sent` / `skipped` / `failed`).
   - **VERIFY:** `grep -ln "notifySite" scripts/maintenance/archive-records.mts scripts/import/properties.mts scripts/import/media.mts` — nothing means open (nothing on 2026-10-14).
 
-- **`moveMedia`'s half-swap path does not knock, and its restore is unchecked, S.** When the second leg's update fails or returns no row (`lib/actions/media.ts`, the `bErr || !bRows` branch, "half-swapped" at :501), the action restores the first photo's slot with an unchecked `await supabase…update(…)` and returns an error before the knock. If the restore also fails, the first photo keeps the second's `sort_order`: the public gallery order has changed with no knock and no event. A double failure, and it predates `T-site-knock-order`. **Shape:** check the restore's row count; on a failed restore, knock (`notifySiteIfPublic`) and say so in the error. **VERIFY:** `grep -n -A1 "half-swapped" lib/actions/media.ts | grep -c "const {"` — 0 means the restore is still unchecked (0 at `489c507`, at `8bf0a83` and on origin/main `3fe15d2`).
+- **`moveMedia`'s half-swap path does not knock, and its restore is unchecked, S.** When the second leg's update fails or returns no row (`lib/actions/media.ts`, the `bErr || !bRows` branch, "half-swapped" at :501 at `489c507`, :510 on origin/main `3fe15d2`), the action restores the first photo's slot with an unchecked `await supabase…update(…)` and returns an error before the knock. If the restore also fails, the first photo keeps the second's `sort_order`: the public gallery order has changed with no knock and no event. A double failure, and it predates `T-site-knock-order`. **Shape:** check the restore's row count; on a failed restore, knock (`notifySiteIfPublic`) and say so in the error. **VERIFY:** `grep -n -A1 "half-swapped" lib/actions/media.ts | grep -c "const {"` — 0 means the restore is still unchecked (0 at `489c507`, at `8bf0a83` and on origin/main `3fe15d2`).
 
 - **NOTE — since #159 (LANDED 2026-10-14, main `8ecb772`), the ordering guard names the follow-ups that can throw.** `lib/actions/site-revalidate-callsites.test.ts` finds them in the syntax tree wherever they stand (`Promise.all`, `.then`, try/finally and a rethrowing catch all count), but recognises them BY NAME (`THROWS`: `logEvent(s)`, `recompute*` except `recomputeQuietly`, `completeListingStatusChecks`). A new follow-up that can throw must be added to `THROWS`. Two heuristics remain: a `try` whose catch CALLS something that throws (rather than a `throw` statement) is treated as catching; a follow-up called through a property (`services.logEvent(…)`) is not seen. `uploadPropertyMedia` is the one knocking action with neither a behavioural placement test nor database-side events — its knock follows its per-file (caught) events by design, after the batch settles.

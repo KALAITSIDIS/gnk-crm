@@ -9945,7 +9945,7 @@ Item 1 of `T-external-audit-2026-10-14`: the gap beside the audit's claim. The l
   - Postgres 17.11.0.004, fresh at origin/main's 145: this file and `rls-hoist.test.ts` RED, 31 failed / 57 passed of 88; after `migration up` of 0146 + 0147 (`83bc9a4`'s files, md5 `e82bb8dc…` / `52cb92aa…`), the full DB suite 83 files, 1,819/1,819.
   - Postgres 17.6.1.159 (CI's image), fresh from the branch's 147 migrations with 0147 as at `b47f927` (the final `59d8d0e` differs in comments only): 83 files, 1,824/1,824.
 - Unit 3,665/3,665 at `83bc9a4` (re-run sequentially on a quiet machine), `typecheck`, `lint`; types regenerated at 0147: identical.
-- Branch CI: run 38600602984 on `83bc9a4` failed at `supabase start` on 0147's preflight (`T-rls-hoist-rest`); run 38604283010 on `b47f927` green (checks, unit 3,665; rls 83 files, 1,824/1,824 on CI's stack — Postgres 17.6.1.159, PostgREST v16.1; e2e), finished 2026-10-14 17:25:30Z. No PR is open for `fix/share-link-tenant` yet (#160).
+- Branch CI: run 38600602984 on `83bc9a4` failed at `supabase start` on 0147's preflight (`T-rls-hoist-rest`); run 38604283010 on `b47f927` green (checks, unit 3,665; rls 83 files, 1,824/1,824 on CI's stack — Postgres 17.6.1.159, PostgREST v16.1; e2e), finished 2026-10-14 17:25:30Z. PR #160 was opened later, and landed from `59d8d0e` (Landing below).
 
 **Review round (two adversarial reviews, nine findings, all fixed in `83bc9a4`).**
 - #1 / #4: `share_links.created_by` was a third route (above): bound in both layers; the claim narrowed everywhere it is made to properties, price list and agent — the district / area NAMES are not bound (composite-key series).
@@ -9979,7 +9979,7 @@ Item 1 of `T-external-audit-2026-10-14`: the gap beside the audit's claim. The l
   - the four diagnostic counts 0: `link_rows`, `pinned_lists`, `rows_under_foreign_parent`, `creators`;
   - one permissive policy for each bound command (1 / 1 / 1).
 - **The advisors' baseline:**
-  - security: 2 ERROR (`mandates_safe` and `spatial_ref_sys`, both by design) and 38 WARN (`extension_in_public` 1, anon definer 12, authenticated definer 23, leaked-password protection 1);
+  - security: 2 ERROR (`mandates_safe` and `spatial_ref_sys`, both by design) and 37 WARN (`extension_in_public` 1, anon definer 12, authenticated definer 23, leaked-password protection 1) — the count the earlier landings recorded, 0145's included;
   - performance: INFO only (47 unindexed foreign keys, 42 unused indexes).
 - **Rehearsal first,** on the disposable stack `.iso/audit1014` (Postgres 17.6.1.159 with PostgREST v14.5), reset to origin/main's 145 migrations. The exact guarded wrappers were run:
   - a corrupted copy of each was refused with "guard: the text sent is not the file", and nothing changed;
@@ -9990,7 +9990,7 @@ Item 1 of `T-external-audit-2026-10-14`: the gap beside the audit's claim. The l
   - WITH CHECK md5s: `share_link_properties_insert` `7c5f9dda6ff454c709dff81a4142be00`, `share_links_insert` `b4ba72fdb94d0b9d19a9051dc609c4f1`, `share_links_update` `1f673344c1bdc2e77e598bd824a24388`; `share_links_update`'s USING unchanged, `b3a1023c8088a1ed078ff358a2d5612c`;
   - 155 policies, 51 bare.
 
-  One verification read first failed on a `"char" || text` cast; it was a read, and the corrected re-run gave the values above. The ledger row `('0146', 'share_link_tenant_binding')` was inserted by hand → 146 rows.
+  One verification read first failed on a `"char" || text` cast; it was a read, and the corrected re-run gave the values above. The ledger row `('0146', 'share_link_tenant_binding')` was inserted by hand → 146 rows. The restore pack's 0146 row (step 4 of the plan above) was NOT read at landing; it is read-only and can be read at any time.
 - **Hosted 0147** followed (`T-rls-hoist-rest`); the advisors after both were identical to the baseline.
 - **From outside,** through PostgREST with the publishable key: POST `/rpc/resolve_share_link` with an all-zeros token answered 200 `null`.
 - **Merge.** PR [#160](https://github.com/KALAITSIDIS/gnk-crm/pull/160) merged at 18:21:42Z, pinned to `59d8d0e`, giving main `4735777` (main unmoved at `489c507`; the merge's tree is byte-identical to the head's). Branch CI run 38611522514 on `59d8d0e` was green (checks, rls, e2e).
@@ -10065,9 +10065,9 @@ Item 1b of `T-external-audit-2026-10-14`, done as hygiene: immaterial at today's
   - 155 policies, 0 bare by an independent scan;
   - the resolver unchanged.
 
-  The ledger row `('0147', 'hoist_remaining_rls_helpers')` was inserted by hand → 147 rows.
+  The ledger row `('0147', 'hoist_remaining_rls_helpers')` was inserted by hand → 147 rows. The restore pack's 0147 row (step 4 of the plan above) was NOT read at landing; it is read-only and can be read at any time.
 - **Advisors after both,** identical to the baseline:
-  - security: 2 ERROR and 38 WARN, the same findings;
+  - security: 2 ERROR and 37 WARN, the same findings (read again at 18:58:56Z: `extension_in_public` 1, anon definer 12, authenticated definer 23, leaked-password protection 1 — 37; a first draft of these records said 38, an addition slip);
   - performance: INFO only, 47 + 42.
 - **From outside,** through PostgREST with the publishable key: POST `/rpc/rls_bare_helper_calls` answered 401 / 42501 (no API role but service_role executes it).
 - **Merge, production and merge CI** are #160's (`T-share-link-tenant`):
@@ -10140,7 +10140,7 @@ Item 6 of `T-external-audit-2026-10-14`: the real gap the audit's wording covere
 - **Branding** (found by the `type="file"` sweep): capped at 2 MB, a check a larger file never reached.
 - **Photos** (the 413 already handled by REL-05): (1) the canvas was never filled before `drawImage`, so a transparent PNG over the budget went up as a JPEG on BLACK (the canvas spec composites a format without alpha onto opaque black), defeating the server's deliberate white flatten; (2) the re-encoded blob was never re-checked, and an over-budget file the browser cannot decode was passed through whole; (3) `media-tab.tsx` awaited the action with no try/finally, so a rejected call left "Uploading n/N" for good; (4) the `next.config.ts` comment was stale.
 
-**The trade-off, plainly.** The gate is the photos' measured budget, `UPLOAD_REQUEST_BUDGET_BYTES = 3,500,000` bytes — 3.34 MiB, shown "3.3 MB". A document from 3,500,000 bytes up to the platform's ~4.5 MB would have saved under Vercel's documented limit (under the 413, under `bodySizeLimit: "25mb"`, under the 15 MB — inferred; the band is unmeasured) and is now REFUSED in the browser, with its size and the advice. The band between the measured 3 MB → 200 and 5 MB → 413 was never measured, so the gate holds documents to the budget the photos already used. Such a document has no way in until the direct-to-storage follow-up lands (BACKLOG) — the operator decides whether that limit stands until then.
+**The trade-off, plainly.** The gate is the photos' measured budget, `UPLOAD_REQUEST_BUDGET_BYTES = 3,500,000` bytes — 3.34 MiB, shown "3.3 MB". A document from 3,500,000 bytes up to the platform's ~4.5 MB would have saved under Vercel's documented limit (under the 413, under `bodySizeLimit: "25mb"`, under the 15 MB — inferred; the band is unmeasured) and is now REFUSED in the browser, with its size and the advice. The band between the measured 3 MB → 200 and 5 MB → 413 was never measured, so the gate holds documents to the budget the photos already used. Such a document has no way in until the direct-to-storage follow-up lands (BACKLOG) — the operator decides whether that limit stands until then. Accepted by the operator's "land it" on 2026-10-14 (Landing below).
 
 **What changed.**
 - **One limit, one module:** `lib/constants/upload.ts` — the budget (moved from `client-image.ts`, value unchanged), `BRANDING_MAX_BYTES` (read by `settings.ts`), `formatMegabytes`, `fitsUploadBudget`, the gate `uploadSizeRefusal` and the document texts. Labels derive from the constant ("PDF, JPG or PNG · up to 3.3 MB"; branding "Up to 2.0 MB"). MB is the repo's 1024 × 1024 (every server cap is written `N * 1024 * 1024`). A limit is printed rounded DOWN and a refused size rounded UP, so a refused file always reads larger than its limit. The gate enforces `min(limit, budget)`: a form's larger promise cannot lift the ceiling.
@@ -10165,10 +10165,10 @@ Item 6 of `T-external-audit-2026-10-14`: the real gap the audit's wording covere
 
 **Rollback.** Revert the merge. Application only.
 
-**Left open (BACKLOG "External audit — 2026-10-14").** Documents over ~3.3 MB need direct-to-storage (the interim limit was the operator's decision, accepted by "land it" on 2026-10-14 — Landing below); a document upload stores the object as the service role before RLS decides the row (latent); the verify form's description and two English strings (i18n); `T-document-insert-outcome`'s "not confirmed" answers must carry `unconfirmed: true`; no e2e covers a refused upload; the 3.0–4.5 MB band is unmeasured (a production probe is the operator's call). After the deploy (HANDOFF, the landing step for #158, not BACKLOG): no `lost_request` event has been seen arriving in Sentry; the DSN is inlined at build, so it can be checked only then.
+**Left open (BACKLOG "External audit — 2026-10-14").** Documents over ~3.3 MB need direct-to-storage (the interim limit was the operator's decision, accepted by "land it" on 2026-10-14 — Landing below); a document upload stores the object as the service role before RLS decides the row (latent); the verify form's description and two English strings (i18n); `T-document-insert-outcome`'s "not confirmed" answers must carry `unconfirmed: true`; no e2e covers a refused upload; the 3.0–4.5 MB band is unmeasured (a production probe is optional now that the limit is accepted, and the operator's call). After the deploy (HANDOFF, What next, not BACKLOG): no `lost_request` event has been seen arriving in Sentry; the DSN is inlined at build, so it can be checked only then.
 
 **Landing (2026-10-14, on the operator's "land it"; last of the four merges, after #159).**
-- **The document limit is accepted.** The operator's "land it" covered #158, and HANDOFF had recorded that merging #158 is the acceptance. A document over 3,500,000 bytes ("3.3 MB") is now refused in the browser until documents go direct to storage (BACKLOG). The 3.0–4.5 MB band stays unmeasured; a production probe of it is still the operator's call.
+- **The document limit is accepted.** The operator's "land it" covered #158, and HANDOFF had recorded that merging #158 is the acceptance. A document over 3,500,000 bytes ("3.3 MB") is now refused in the browser until documents go direct to storage (BACKLOG). The 3.0–4.5 MB band stays unmeasured. A production probe of it is now optional, not a pending decision: it is the operator's call if a higher limit is wanted before direct-to-storage lands.
 - **Branch CI** green on the head `e7221fb`: run 38600613920 (checks, rls, e2e).
 - **Merge.** PR [#158](https://github.com/KALAITSIDIS/gnk-crm/pull/158) merged at 18:27:10Z, pinned to `e7221fb`, giving main `3fe15d2` over `8ecb772` (#159).
   - One file was changed by both #159 and #158: `lib/actions/settings.ts`, where #159 adds the area rename's knock and #158 the branding limit.

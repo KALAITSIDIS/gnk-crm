@@ -24,7 +24,7 @@
     - 155 policies, 52 bare; guards `90aac6a2…` / `57e24dda…` / `edfd09ff…`; hoisted 21;
     - the four cross-org counts 0; one permissive policy per bound command.
 
-    Advisors baseline: security 2 ERROR (`mandates_safe`, `spatial_ref_sys`; both by design) and 38 WARN; performance INFO only (47 unindexed foreign keys, 42 unused indexes).
+    Advisors baseline: security 2 ERROR (`mandates_safe`, `spatial_ref_sys`; both by design) and 37 WARN (1 + 12 + 23 + 1); performance INFO only (47 unindexed foreign keys, 42 unused indexes).
   - **Rehearsal first** on `.iso/audit1014` (Postgres 17.6.1.159 with PostgREST v14.5, reset to 145), with the exact guarded wrappers:
     - a corrupted copy of each was refused ("guard: the text sent is not the file");
     - 0147 before 0146 was refused;
@@ -56,7 +56,7 @@
     - `property_media_select` (0147);
     - the half-fix sub-bullet under "A committed photo delete, archive or sold/rented save …" (#159).
 
-    Each VERIFY was re-run on origin/main `3fe15d2`.
+    Each repository check was re-run on origin/main `3fe15d2`. `property_media_select`'s hosted `pg_policies` VERIFY was not run; its strike rests on the schema-wide scan (0 bare of 155, `rls_bare_helper_calls()` 0 rows). Neither restore-pack row (0146, 0147) was read at landing.
   - **Rollback:**
     - hosted: 0147's forward revert first, then 0146's (`revert-0147.ts` / `revert-0146.ts`, each guarded);
     - each PR: revert its merge (application only).
@@ -64,6 +64,7 @@
   - **The operator's two open decisions.**
     - The listing-manager recompute: a listing manager's (or a non-owner agent's) legal save fans out a deal-health recompute that RLS refuses, so a stored score depends on who saved. Recompute as the system, use a definer RPC, or accept it and say so.
     - `SENTRY_AUTH_TOKEN` on Vercel project gnk-crm is stored as readable (encrypted), not sensitive, and flagged `readable-secret` (measured; value not read). Re-create it as sensitive?
+  - **Optional, not a pending decision:** a production probe of the 3.0–4.5 MB band. Since the document limit was accepted it is needed only if a higher limit is wanted, and it stays the operator's call (BACKLOG).
   - **The concurrent session's merge-time item.** `T-document-insert-outcome` (`.worktrees/gnk-crm/document-insert-outcome`) is still uncommitted. When it lands, its `documentNotConfirmed` answers must carry `unconfirmed: true` (BACKLOG, merge-time); #158's client half is on main.
   - **Reads waiting on traffic.**
     - After #157: the read-only `computed_at` against `updated_at` aggregate (DECISIONS `T-deal-health-race`), once deals have been saved.
