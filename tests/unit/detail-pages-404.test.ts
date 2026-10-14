@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { GUID_SHAPES } from "@/lib/testing/guid-shapes";
 
 /**
  * Every dynamic [id] page and route under app/ answers 404 for a segment that
@@ -37,7 +38,11 @@ const MALFORMED = [
   "00000000-0000-0000-0000-000000000001,owner_contact_id.not.is.null",
   "00000000-0000-0000-0000-00000000000", // one digit short
 ];
-const VALID = "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c01";
+/*
+ * The good path runs once per shape in GUID_SHAPES: a page checked with the
+ * strict z.uuid() would 404 the hosted organisation's and the seed ids
+ * (DECISIONS T3.2), and an RFC v4 id alone would not show it.
+ */
 
 type PageProps = { params: Promise<{ id: string }>; searchParams?: Promise<Record<string, string>> };
 type PageFn = (props: PageProps) => Promise<unknown>;
@@ -93,9 +98,11 @@ describe("a dynamic [id] page 404s on a segment that is not an id, before any qu
       expect(createClient).not.toHaveBeenCalled();
     });
 
-    it(`${route}: a well-formed id still goes to the database, as before`, async () => {
-      await expect(Page(props(VALID, withSearch))).rejects.toThrow("REACHED THE DATABASE");
-      expect(createClient).toHaveBeenCalledTimes(1);
+    it(`${route}: a well-formed id of every shape still goes to the database, as before`, async () => {
+      for (const [i, id] of GUID_SHAPES.entries()) {
+        await expect(Page(props(id, withSearch)), `${route} with ${id}`).rejects.toThrow("REACHED THE DATABASE");
+        expect(createClient).toHaveBeenCalledTimes(i + 1);
+      }
     });
   }
 });
@@ -109,10 +116,13 @@ describe("the viewing calendar file (a route handler) answers 404 on a malformed
     expect(createClient).not.toHaveBeenCalled();
   });
 
-  it("a well-formed id still goes to the database", async () => {
-    await expect(
-      GET(new Request("http://localhost/viewings/x/ics"), { params: Promise.resolve({ id: VALID }) }),
-    ).rejects.toThrow("REACHED THE DATABASE");
-    expect(createClient).toHaveBeenCalledTimes(1);
+  it("a well-formed id of every shape still goes to the database", async () => {
+    for (const [i, id] of GUID_SHAPES.entries()) {
+      await expect(
+        GET(new Request("http://localhost/viewings/x/ics"), { params: Promise.resolve({ id }) }),
+        id,
+      ).rejects.toThrow("REACHED THE DATABASE");
+      expect(createClient).toHaveBeenCalledTimes(i + 1);
+    }
   });
 });

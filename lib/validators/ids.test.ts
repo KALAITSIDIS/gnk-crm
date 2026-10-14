@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
+import { GUID_SHAPES } from "@/lib/testing/guid-shapes";
 import { guidOrNull, isGuid } from "@/lib/validators/ids";
 
 /**
@@ -42,6 +44,14 @@ describe("isGuid", () => {
     for (const bad of [undefined, null, 1, {}, ["00000000-0000-0000-0000-000000000001"]]) {
       expect(isGuid(bad)).toBe(false);
     }
+  });
+});
+
+describe("GUID_SHAPES — the good-path ids every call-site test loops over", () => {
+  it("are all ids to isGuid, and two of them are exactly what strict z.uuid() refuses", () => {
+    for (const id of GUID_SHAPES) expect(isGuid(id), id).toBe(true);
+    // if these stop being refused, the call-site tests no longer tell guid from uuid
+    expect(GUID_SHAPES.map((id) => z.uuid().safeParse(id).success)).toEqual([true, false, false]);
   });
 });
 

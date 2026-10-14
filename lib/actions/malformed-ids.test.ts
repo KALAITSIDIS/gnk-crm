@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { GUID_SHAPES } from "@/lib/testing/guid-shapes";
 
 /**
  * Server actions that take a raw id string check it with z.guid() at entry,
@@ -11,7 +12,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * `moveDealToStage` handed Postgres' own "invalid input syntax for type uuid"
  * back to the toast. The database is a tripwire here: every client factory
  * throws, so an action that reaches one fails with that error instead of its
- * refusal, and a well-formed id must still reach it, as before.
+ * refusal, and a well-formed id must still reach it, as before — an id of
+ * EVERY shape in GUID_SHAPES, in every argument: the hosted organisation's id
+ * and the seed ids are what a call site that slipped to the strict z.uuid()
+ * would refuse (DECISIONS T3.2), and an RFC v4 id alone cannot show that.
  *
  * `renewMandate` (lib/actions/mandates.ts) is the fourteenth such action and
  * is deferred: that file is being changed by another branch.
@@ -63,8 +67,8 @@ type Case = {
   bad: (bad: string) => Promise<unknown>;
   /** what the refusal looks like, in the action's own shape */
   refusal: { value?: unknown; thrown?: string };
-  /** the same call with well-formed ids */
-  good: () => Promise<unknown>;
+  /** the same call with EVERY id argument `id` — run once per shape in GUID_SHAPES */
+  good: (id: string) => Promise<unknown>;
 };
 
 const CASES: Case[] = [
@@ -72,111 +76,111 @@ const CASES: Case[] = [
     name: "moveDealToStage — the deal id",
     bad: (bad) => moveDealToStage(bad, ID),
     refusal: { value: { error: "Deal not found" } },
-    good: () => moveDealToStage(ID, ID2),
+    good: (id) => moveDealToStage(id, id),
   },
   {
     name: "moveDealToStage — the stage id",
     bad: (bad) => moveDealToStage(ID, bad),
     refusal: { value: { error: "Stage not found" } },
-    good: () => moveDealToStage(ID, ID2),
+    good: (id) => moveDealToStage(id, id),
   },
   {
     name: "claimLead",
     bad: (bad) => leads.claimLead(bad),
     refusal: { thrown: "Lead not found" },
-    good: () => leads.claimLead(ID),
+    good: (id) => leads.claimLead(id),
   },
   {
     name: "markContacted",
     bad: (bad) => leads.markContacted(bad),
     refusal: { thrown: "Lead not found" },
-    good: () => leads.markContacted(ID),
+    good: (id) => leads.markContacted(id),
   },
   {
     name: "markCalled",
     bad: (bad) => leads.markCalled(bad),
     refusal: { thrown: "Lead not found" },
-    good: () => leads.markCalled(ID),
+    good: (id) => leads.markCalled(id),
   },
   {
     name: "reassignLead — the lead id",
     bad: (bad) => leads.reassignLead(bad, ID2),
     refusal: { thrown: "Lead not found" },
-    good: () => leads.reassignLead(ID, ID2),
+    good: (id) => leads.reassignLead(id, id),
   },
   {
     name: "reassignLead — the agent id",
     bad: (bad) => leads.reassignLead(ID, bad),
     refusal: { thrown: "Pick an active agent." },
-    good: () => leads.reassignLead(ID, ID2),
+    good: (id) => leads.reassignLead(id, id),
   },
   {
     name: "redactLead",
     bad: (bad) => leads.redactLead(bad),
     refusal: { value: { error: "Lead not found" } },
-    good: () => leads.redactLead(ID),
+    good: (id) => leads.redactLead(id),
   },
   {
     name: "retryEnquiryAlert",
     bad: (bad) => leads.retryEnquiryAlert(bad),
     refusal: { thrown: "Lead not found" },
-    good: () => leads.retryEnquiryAlert(ID),
+    good: (id) => leads.retryEnquiryAlert(id),
   },
   {
     name: "createContactFromEnquiry",
     bad: (bad) => leads.createContactFromEnquiry(bad),
     refusal: { value: { error: "Lead not found", savedAt: null } },
-    good: () => leads.createContactFromEnquiry(ID),
+    good: (id) => leads.createContactFromEnquiry(id),
   },
   {
     name: "deleteMedia — the property id",
     bad: (bad) => deleteMedia(bad, ID2),
     refusal: { value: { error: "Photo not found" } },
-    good: () => deleteMedia(ID, ID2),
+    good: (id) => deleteMedia(id, id),
   },
   {
     name: "deleteMedia — the photo id",
     bad: (bad) => deleteMedia(ID, bad),
     refusal: { value: { error: "Photo not found" } },
-    good: () => deleteMedia(ID, ID2),
+    good: (id) => deleteMedia(id, id),
   },
   {
     name: "deleteMediaBulk — the property id",
     bad: (bad) => deleteMediaBulk(bad, [ID2]),
     refusal: { value: { error: "Photo not found", deleted: 0 } },
-    good: () => deleteMediaBulk(ID, [ID2]),
+    good: (id) => deleteMediaBulk(id, [id]),
   },
   {
     name: "deleteMediaBulk — one photo id among good ones",
     bad: (bad) => deleteMediaBulk(ID, [ID2, bad]),
     refusal: { value: { error: "Photo not found", deleted: 0 } },
-    good: () => deleteMediaBulk(ID, [ID2, ID]),
+    good: (id) => deleteMediaBulk(id, [ID, id]),
   },
   {
     name: "archiveProperty",
     bad: (bad) => archiveProperty(bad),
     refusal: { value: { error: "Property not found" } },
-    good: () => archiveProperty(ID),
+    good: (id) => archiveProperty(id),
   },
   {
     name: "restoreProperty",
     bad: (bad) => restoreProperty(bad),
     refusal: { value: { error: "Property not found" } },
-    good: () => restoreProperty(ID),
+    good: (id) => restoreProperty(id),
   },
   {
     name: "listKeyMovements",
     bad: (bad) => listKeyMovements(bad),
     // its "nothing to show" is an empty trail
     refusal: { value: [] },
-    good: () => listKeyMovements(ID),
+    good: (id) => listKeyMovements(id),
   },
   {
     name: "getPartyDefaults",
     bad: (bad) => getPartyDefaults(bad),
     // no prefill at all: not a party, and not worth the office read either
     refusal: { value: { defaults: {}, source: {}, partyName: null } },
-    good: () => getPartyDefaults(ID),
+    good: (id) => getPartyDefaults(id),
   },
 ];
 
@@ -198,9 +202,11 @@ describe("an action refuses a malformed id before it reaches the database", () =
       expect(createAdminClient).not.toHaveBeenCalled();
     });
 
-    it(`${c.name}: a well-formed id still goes to the database`, async () => {
-      await settle(c.good);
-      expect(createClient).toHaveBeenCalledTimes(1);
+    it(`${c.name}: a well-formed id of every shape still goes to the database`, async () => {
+      for (const [i, id] of GUID_SHAPES.entries()) {
+        await settle(() => c.good(id));
+        expect(createClient, `${c.name} with ${id}`).toHaveBeenCalledTimes(i + 1);
+      }
     });
   }
 

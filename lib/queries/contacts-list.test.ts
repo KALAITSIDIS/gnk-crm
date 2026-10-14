@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { GUID_SHAPES } from "@/lib/testing/guid-shapes";
 import { applyContactListFilters, parseContactListFilters } from "./contacts-list";
 
 const AGENT = "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c01";
@@ -62,9 +63,12 @@ describe("parseContactListFilters", () => {
     expect(parseContactListFilters({ agent: ["notauuid", AGENT] }).agent).toBeUndefined();
   });
 
-  it("keeps a well-formed agent id — trimmed, as before", () => {
-    expect(parseContactListFilters({ agent: ` ${AGENT} ` }).agent).toBe(AGENT);
-    expect(parseContactListFilters({ agent: [AGENT, "notauuid"] }).agent).toBe(AGENT);
+  it("keeps a well-formed agent id of every shape — trimmed, as before", () => {
+    // the hosted organisation's and the seed ids too: strict z.uuid() would drop them
+    for (const id of GUID_SHAPES) {
+      expect(parseContactListFilters({ agent: ` ${id} ` }).agent, id).toBe(id);
+      expect(parseContactListFilters({ agent: [id, "notauuid"] }).agent, id).toBe(id);
+    }
   });
 
   it("a dropped agent filter never reaches the query; a kept one does", () => {
@@ -83,9 +87,11 @@ describe("parseContactListFilters", () => {
       return calls;
     };
     expect(eqs({ agent: "notauuid" })).toEqual([["is_archived", false]]);
-    expect(eqs({ agent: AGENT })).toEqual([
-      ["is_archived", false],
-      ["assigned_agent_id", AGENT],
-    ]);
+    for (const id of GUID_SHAPES) {
+      expect(eqs({ agent: id }), id).toEqual([
+        ["is_archived", false],
+        ["assigned_agent_id", id],
+      ]);
+    }
   });
 });
