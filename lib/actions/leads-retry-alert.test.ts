@@ -32,6 +32,9 @@ vi.mock("next/server", async (importOriginal) => {
 
 const { retryEnquiryAlert } = await import("@/lib/actions/leads");
 
+// guid-shaped: the action refuses a malformed id before any read (T-malformed-ids)
+const LEAD = "11111111-1111-4111-8111-111111111111";
+
 const reset = () => {
   state.rpc.mockReset();
   state.afters = [];
@@ -42,16 +45,16 @@ const reset = () => {
 describe("retryEnquiryAlert", () => {
   it("asks the database through the caller's session, then sends at once for that lead", async () => {
     reset();
-    state.rpc.mockResolvedValue({ data: [{ id: "job-7", lead_id: "lead-1", state: "pending" }], error: null });
-    await expect(retryEnquiryAlert("lead-1")).resolves.toBeUndefined();
-    expect(state.rpc).toHaveBeenCalledWith("request_enquiry_alert_retry", { p_lead_id: "lead-1" });
+    state.rpc.mockResolvedValue({ data: [{ id: "job-7", lead_id: LEAD, state: "pending" }], error: null });
+    await expect(retryEnquiryAlert(LEAD)).resolves.toBeUndefined();
+    expect(state.rpc).toHaveBeenCalledWith("request_enquiry_alert_retry", { p_lead_id: LEAD });
     expect(state.afters, "the send is scheduled after the answer, like the route's").toHaveLength(1);
     await state.afters[0]!();
     expect(runEnquiryAlertWorker).toHaveBeenCalledTimes(1);
     const [client, opts] = runEnquiryAlertWorker.mock.calls[0]!;
     expect(client).toEqual({ marker: "admin" });
     expect(opts, "the lead AND the job it was told about (0111): a lead carrying both kinds must not have the other claimed").toMatchObject({
-      leadId: "lead-1",
+      leadId: LEAD,
       jobId: "job-7",
       limit: 1,
     });
@@ -67,7 +70,7 @@ describe("retryEnquiryAlert", () => {
       data: null,
       error: { code: "P0001", message: "The alert is being sent right now — try again in a minute." },
     });
-    await expect(retryEnquiryAlert("lead-1")).rejects.toThrow(/being sent right now/);
+    await expect(retryEnquiryAlert(LEAD)).rejects.toThrow(/being sent right now/);
     expect(state.afters).toHaveLength(0);
     expect(revalidatePath).not.toHaveBeenCalled();
   });
@@ -78,15 +81,15 @@ describe("retryEnquiryAlert", () => {
       data: null,
       error: { code: "42P01", message: 'relation "notification_jobs" does not exist' },
     });
-    await expect(retryEnquiryAlert("lead-1")).rejects.toThrow(/could not queue/i);
-    await expect(retryEnquiryAlert("lead-1")).rejects.not.toThrow(/notification_jobs/);
+    await expect(retryEnquiryAlert(LEAD)).rejects.toThrow(/could not queue/i);
+    await expect(retryEnquiryAlert(LEAD)).rejects.not.toThrow(/notification_jobs/);
     expect(state.afters).toHaveLength(0);
   });
 
   it("treats no row back as no job, not as success", async () => {
     reset();
     state.rpc.mockResolvedValue({ data: [], error: null });
-    await expect(retryEnquiryAlert("lead-1")).rejects.toThrow(/no desk alert/i);
+    await expect(retryEnquiryAlert(LEAD)).rejects.toThrow(/no desk alert/i);
     expect(state.afters).toHaveLength(0);
   });
 });

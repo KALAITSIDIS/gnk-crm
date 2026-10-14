@@ -6,6 +6,8 @@
  * which is the part that must stay identical for "export = the list you see".
  */
 
+import { guidOrNull } from "@/lib/validators/ids";
+
 type ParamValue = string | string[] | undefined;
 export type ContactSearchParams = Record<string, ParamValue>;
 
@@ -35,7 +37,10 @@ export function parseContactListFilters(sp: ContactSearchParams): ContactListFil
     type: clean(sp.type),
     temperature: clean(sp.temperature),
     source: clean(sp.source),
-    agent: clean(sp.agent),
+    // an id filter that is not an id is no filter (T-malformed-ids): `.eq` on
+    // the uuid column answered 22P02 — the page's error boundary, the
+    // export's "failed". Dropped as if absent, like properties' optionalUuid.
+    agent: guidOrNull(clean(sp.agent)) ?? undefined,
     nationality: clean(sp.nationality),
     language: clean(sp.language),
     // archived is a strict flag, not a free value: only "1" opens the archive.

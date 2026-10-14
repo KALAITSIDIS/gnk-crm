@@ -6,6 +6,7 @@ import { logEvent } from "@/lib/services/events";
 import { createClient } from "@/lib/supabase/server";
 import { changesForChain, isNoteField } from "@/lib/services/event-changes";
 import { changedValue } from "@/lib/utils/diff";
+import { isGuid } from "@/lib/validators/ids";
 import {
   partyDefaultsSchema,
   resolvePartyDefaults,
@@ -40,12 +41,19 @@ async function readOfficeDefaults(
  *
  * A missing contact returns the office defaults rather than nothing: the form
  * is still better off with them than blank.
+ *
+ * A contact id that is not an id is no party, and no form of ours posts one
+ * (the pickers hand over row ids): it gets no prefill at all, without a query
+ * (T-malformed-ids). `null` — no party chosen — still reads the office's.
  */
 export async function getPartyDefaults(contactId: string | null): Promise<{
   defaults: PartyDefaults;
   source: Record<string, "party" | "office">;
   partyName: string | null;
 }> {
+  if (contactId !== null && !isGuid(contactId)) {
+    return { defaults: resolvePartyDefaults(null, null), source: {}, partyName: null };
+  }
   const supabase = await createClient();
   const office = await readOfficeDefaults(supabase);
 

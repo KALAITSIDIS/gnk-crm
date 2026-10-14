@@ -28,6 +28,7 @@ import {
 } from "@/lib/services/media-upload";
 import { recomputeQualityScore, recomputeQuietly } from "@/lib/services/quality-score";
 import { UPLOADABLE_MEDIA_KINDS } from "@/lib/validators/media";
+import { isGuid } from "@/lib/validators/ids";
 import { binaryBody } from "@/lib/services/storage-upload";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -538,11 +539,18 @@ export async function deleteMedia(propertyId: string, mediaId: string): Promise<
  * what was actually deleted — so a permission-denied delete can't strand rows
  * pointing at removed files), then the site's knock, storage objects, cover
  * promotion, events.
+ *
+ * The property id and every photo id are checked first (T-malformed-ids;
+ * deleteMedia comes through here): one that is not an id names no photo, and
+ * PostgREST would answer the whole delete with 22P02.
  */
 export async function deleteMediaBulk(
   propertyId: string,
   mediaIds: string[],
 ): Promise<{ error: string | null; deleted: number }> {
+  if (!isGuid(propertyId) || !Array.isArray(mediaIds) || !mediaIds.every(isGuid)) {
+    return { error: "Photo not found", deleted: 0 };
+  }
   if (mediaIds.length === 0) return { error: null, deleted: 0 };
 
   const supabase = await createClient();

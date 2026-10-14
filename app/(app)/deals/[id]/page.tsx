@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import type { EntityOption } from "@/lib/actions/entity-search";
 import type { HealthFactor } from "@/lib/services/health-score";
 import { getCurrentProfile } from "@/lib/services/auth";
+import { isGuid } from "@/lib/validators/ids";
 import { dealValue, dealValueIsFinal } from "@/lib/services/deal-value";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTime, formatMoney } from "@/lib/utils/format";
@@ -38,6 +39,8 @@ export default async function DealDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  // a segment that is not an id names nothing: 404 before any query (T-malformed-ids)
+  if (!isGuid(id)) notFound();
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
 

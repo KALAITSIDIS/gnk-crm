@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { buildViewingIcs } from "@/lib/services/viewing-ics";
 import { createClient } from "@/lib/supabase/server";
+import { isGuid } from "@/lib/validators/ids";
 
 /**
  * Per-viewing calendar file (audit ICS-1). RLS scopes the select to the
@@ -12,8 +12,10 @@ import { createClient } from "@/lib/supabase/server";
  */
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  if (!z.guid().safeParse(id).success) {
-    return NextResponse.json({ error: "Invalid viewing" }, { status: 400 });
+  // a segment that is not an id names no viewing: the same 404 as a missing
+  // one, before any query (T-malformed-ids; it answered 400 before)
+  if (!isGuid(id)) {
+    return NextResponse.json({ error: "Viewing not found" }, { status: 404 });
   }
 
   const supabase = await createClient();

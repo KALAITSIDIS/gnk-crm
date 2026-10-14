@@ -83,15 +83,23 @@ describe("each export records the shape of its filters, never their text", () =>
     });
   });
 
-  it("contacts: an off-vocabulary type, temperature, language or a malformed agent id are recorded only as used", async () => {
+  it("contacts: an off-vocabulary type, temperature or language is recorded only as used", async () => {
     const payload = await exportOf("contacts", {
       type: "Maria",
       temperature: "Georgiou",
       language: "Forged",
-      agent: "Maria Georgiou",
     });
     expectNoTypedText(payload);
-    expect(payload.filters).toEqual({ type: true, temperature: true, language: true, agent: true });
+    expect(payload.filters).toEqual({ type: true, temperature: true, language: true });
+  });
+
+  it("contacts: a malformed agent id is no filter at all — dropped by the shared parser, so not recorded", async () => {
+    // T-malformed-ids: `.eq` on the uuid column answered 22P02 (the export's
+    // handled 500); the parser now drops it as if absent, so the CSV is not
+    // filtered by it and the record does not claim it was
+    const payload = await exportOf("contacts", { type: "buyer", agent: "Maria Georgiou" });
+    expectNoTypedText(payload);
+    expect(payload.filters).toEqual({ type: "buyer" });
   });
 
   it("keys: the holder search becomes 'used'; the status scope is kept", async () => {

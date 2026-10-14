@@ -35,6 +35,7 @@ import { normalizePhone } from "@/lib/services/phone";
 import { zonedWallClockToUtc } from "@/lib/utils/tz";
 import { COMM_CHANNELS, LEAD_OPEN_STATUSES } from "@/lib/validators/contacts";
 import { createLeadSchema } from "@/lib/validators/leads";
+import { isGuid } from "@/lib/validators/ids";
 import { contactLinkError } from "@/lib/services/contact-reread";
 
 // `duplicate` is set when creating a NEW contact from the lead hits an existing
@@ -390,6 +391,8 @@ export async function linkLeadContact(
  * the UI must not offer it to non-admins. (Agents self-assign via claimLead.)
  */
 export async function reassignLead(leadId: string, agentId: string): Promise<void> {
+  if (!isGuid(leadId)) throw new Error("Lead not found");
+  if (!isGuid(agentId)) throw new Error("Pick an active agent.");
   const { supabase, profile, lead } = await getLead(leadId);
   if (profile.role !== "admin") throw new Error("Admins only.");
 
@@ -501,6 +504,7 @@ export async function correctLead(
  * sentences are written for the admin.
  */
 export async function redactLead(leadId: string): Promise<{ error: string | null }> {
+  if (!isGuid(leadId)) return { error: "Lead not found" };
   const { supabase, profile, lead } = await getLead(leadId);
   if (profile.role !== "admin") return { error: "Admins only." };
   if (lead.contact_id) {
@@ -586,6 +590,7 @@ export async function redactLead(leadId: string): Promise<{ error: string | null
  * exactly as the enquiry route does — the sweep would get to it anyway.
  */
 export async function retryEnquiryAlert(leadId: string): Promise<void> {
+  if (!isGuid(leadId)) throw new Error("Lead not found");
   const supabase = await createClient();
   await getCurrentProfile(supabase);
 
@@ -668,6 +673,7 @@ export async function recoverLeadEscalation(input: RecoverEscalationInput): Prom
 }
 
 export async function claimLead(leadId: string): Promise<void> {
+  if (!isGuid(leadId)) throw new Error("Lead not found");
   const { supabase, profile, lead } = await getLead(leadId);
   if (!isOpen(lead)) throw new Error("Only an open lead can be claimed.");
   if (lead.assigned_agent_id === profile.id) return; // already mine
@@ -722,6 +728,7 @@ async function stampLandedElsewhere(
 
 /** Stamps first_response_at exactly once (doc 02 §C4). */
 export async function markContacted(leadId: string): Promise<void> {
+  if (!isGuid(leadId)) throw new Error("Lead not found");
   const { supabase, profile, lead } = await getLead(leadId);
   if (!isOpen(lead)) throw new Error("Lead is closed — reopen it first.");
   const guardErr = canWorkError(profile, lead);
@@ -757,6 +764,7 @@ export async function markContacted(leadId: string): Promise<void> {
 }
 
 export async function markCalled(leadId: string): Promise<void> {
+  if (!isGuid(leadId)) throw new Error("Lead not found");
   const { supabase, profile, lead } = await getLead(leadId);
   if (!isOpen(lead)) throw new Error("Lead is closed — reopen it first.");
   const guardErr = canWorkError(profile, lead);
@@ -968,6 +976,7 @@ function duplicateRefusal(duplicate: DuplicateMatch): LeadActionState {
  * the desk adds it on the contact.
  */
 export async function createContactFromEnquiry(leadId: string): Promise<LeadActionState> {
+  if (!isGuid(leadId)) return { error: "Lead not found", savedAt: null };
   const { supabase, profile, lead } = await getLead(leadId);
   if (!isOpen(lead)) return { error: "Only an open lead can be worked.", savedAt: null };
   // A listing manager may insert a contact but never update a lead

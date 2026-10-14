@@ -33,6 +33,7 @@ import { buildProgress } from "@/lib/services/construction";
 import { fetchSharedPhotoReferences } from "@/lib/services/shared-photos";
 import { countContainerUnits, EMPTY_CONTAINER_FACTS } from "@/lib/services/container-units";
 import { getCurrentProfile } from "@/lib/services/auth";
+import { isGuid } from "@/lib/validators/ids";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { mediaBucketFor } from "@/lib/services/media-bucket";
 import { publicMediaUrl } from "@/lib/utils/storage";
@@ -68,6 +69,9 @@ export default async function PropertyDetailPage({
   searchParams: Promise<{ recorded?: string }>;
 }) {
   const { id } = await params;
+  // a segment that is not an id names nothing: 404 before any query (T-malformed-ids) —
+  // PostgREST's 22P02 used to reach the throw below and render the error boundary
+  if (!isGuid(id)) notFound();
   const notRecorded = (await searchParams).recorded === "failed";
   const supabase = await createClient();
 

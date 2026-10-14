@@ -26,6 +26,7 @@
  * rules. `useOptimistic` with a pure reducer already reverts to the server's
  * props; what the client cannot know, only fresh server state decides.
  */
+import { certainlyRolledBack } from "@/lib/services/rpc-outcome";
 import type { Database } from "@/lib/supabase/database.types";
 
 type Role = Database["public"]["Enums"]["user_role"];
@@ -44,6 +45,33 @@ export type MoveDealResult = { error: string | null; unconfirmed?: boolean };
  */
 export const MOVE_UNCONFIRMED_TEXT =
   "Could not confirm the move — it may have been saved. The board has been reloaded: check the deal's stage before moving it again.";
+
+/**
+ * Said by the action when the RPC failed with a code that certainly rolled
+ * back (`certainlyRolledBack`) and is not the function's own words.
+ */
+export const MOVE_NOT_MOVED_TEXT = "The deal was not moved.";
+
+/**
+ * What `moveDealToStage` answers for a failed move_deal_to_stage call
+ * (T-malformed-ids). Postgres' and PostgREST's own text is never shown:
+ *
+ * - P0001 is the function's `raise exception` (0131: "Deal not found", "Deal
+ *   is already won — closed deals do not move stages", "You do not have
+ *   permission to move this deal", …) — written for the person, and the
+ *   board's user-facing contract, so shown as written;
+ * - any other code that certainly rolled back: the deal was not moved;
+ * - anything else (no code, a connection class, a code nobody classified, a
+ *   gateway's number) may follow a commit: UNKNOWN, flagged `unconfirmed`,
+ *   and never "not moved" (the house rule, lib/services/rpc-outcome.ts).
+ */
+export function moveFailureAnswer(error: { code?: unknown; message?: unknown }): MoveDealResult {
+  if (error.code === "P0001" && typeof error.message === "string" && error.message !== "") {
+    return { error: error.message };
+  }
+  if (certainlyRolledBack(error.code)) return { error: MOVE_NOT_MOVED_TEXT };
+  return { error: MOVE_UNCONFIRMED_TEXT, unconfirmed: true };
+}
 
 /** Said on a board the viewer's role may read but not change. */
 export const MOVE_READ_ONLY_TEXT =

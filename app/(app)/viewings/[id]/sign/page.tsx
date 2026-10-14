@@ -6,6 +6,7 @@ import { SlipDownloadButton } from "@/components/features/viewings/slip-download
 import { getCurrentProfile } from "@/lib/services/auth";
 import { SLIP_GDPR_LINE } from "@/lib/services/viewings";
 import { createClient } from "@/lib/supabase/server";
+import { isGuid } from "@/lib/validators/ids";
 import { unwrapRows } from "@/lib/supabase/unwrap";
 import { formatDateTime } from "@/lib/utils/format";
 
@@ -17,6 +18,8 @@ export const maxDuration = 60;
 
 export default async function SignSlipPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  // a segment that is not an id names nothing: 404 before any query (T-malformed-ids)
+  if (!isGuid(id)) notFound();
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
 
