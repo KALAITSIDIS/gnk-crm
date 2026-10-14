@@ -10,6 +10,7 @@ import {
 } from "@/lib/services/calculators";
 import { getCurrentProfile, type CurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
+import { EVERY_LISTING, notifySiteAfter } from "@/lib/services/site-revalidate";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -563,6 +564,14 @@ export async function renameArea(
     .select("id");
   if (error) return { error: error.message };
   if (!updated?.length) return { error: "You do not have permission to rename areas." };
+
+  // The public feed's `area` IS this name (0088 joins areas.name), on every
+  // listing in the area, and the site's list builds its area filter from the
+  // feed — so every listing page, the list and the home page are rebuilt
+  // (T-site-knock-order). ONE knock, with no read of which listings are
+  // public: a rename is rare. FIRST, before the event: logEvent throws on a
+  // failed insert, and only an after() already scheduled survives that.
+  notifySiteAfter(EVERY_LISTING);
 
   await logEvent(supabase, {
     orgId: profile.orgId,

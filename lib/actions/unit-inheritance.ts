@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { hasValue, isNoteField } from "@/lib/services/event-changes";
 import { logEvents } from "@/lib/services/events";
+import { EVERY_LISTING, notifySiteAfter } from "@/lib/services/site-revalidate";
 import type { Database } from "@/lib/supabase/database.types";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -71,13 +72,27 @@ export async function syncInheritedField(
     .eq("parent_id", projectId)
     .eq("kind", "unit")
     .contains("inherited_fields", [column])
-    .select("id, reference");
+    // visibility rides on the write's own answer: whether any unit it changed
+    // is on the public site, as the row stood when it was written
+    .select("id, reference, visibility");
   if (error) return { error: error.message, savedAt: null, synced: 0 };
 
   const rows = updated ?? [];
   if (rows.length === 0) {
     return { error: null, savedAt: Date.now(), synced: 0 };
   }
+
+  // The site (T-site-knock-order). Eleven of the columns this can write are
+  // in the public feed (0088), and every write moves the row's updated_at,
+  // which the feed carries too (the site's sitemap dates). The feed lists a
+  // unit only while its OWN visibility is public — one row per listing, never
+  // a parent's aggregate — so a sync that touched no public unit changed
+  // nothing the site shows. ONE knock for every listing page: a sync is a
+  // bulk change, and naming each unit would be a request per reference.
+  // FIRST, before the events below: logEvents throws on a failed insert, and
+  // Next runs an after() callback even when the action throws later — but
+  // only one already scheduled.
+  if (rows.some((u) => u.visibility === "public")) notifySiteAfter(EVERY_LISTING);
 
   // Each unit is its own entity and owes its own event — a single project-level
   // "synced 58 units" row would leave 58 timelines with an unexplained change.

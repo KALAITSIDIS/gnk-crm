@@ -5,18 +5,20 @@ import { fakeClient, type FakePage } from "@/lib/testing/fake-client";
 /**
  * A committed media save stays saved when the site cannot be told.
  *
- * Each media action ends by asking the database whether the listing is public
- * and, if so, knocking on the marketing site. Both steps come AFTER the row is
- * written, and neither may turn that write into a failure the desk sees: the
- * photograph IS on the listing, whatever the database, the site or Sentry did
- * next. lib/services/site-revalidate.test.ts proves the helper's own outcomes;
- * this proves them from the action's side with the REAL helper in the chain —
- * a mocked notifier (media-upload-renditions.test.ts) cannot fail, so it
- * cannot prove that the save survives one that does.
+ * Each media action asks the database whether the listing is public and, if
+ * so, knocks on the marketing site. Both steps come AFTER the row is written —
+ * straight after it, before the event (T-site-knock-order), except the upload,
+ * which knocks once its batch has settled — and neither may turn that write
+ * into a failure the desk sees: the photograph IS on the listing, whatever the
+ * database, the site or Sentry did next. lib/services/site-revalidate.test.ts
+ * proves the helper's own outcomes; this proves them from the action's side
+ * with the REAL helper in the chain — a mocked notifier
+ * (media-upload-renditions.test.ts) cannot fail, so it cannot prove that the
+ * save survives one that does.
  *
  * setMediaAlt is the action under test because it is the lightest: no
- * storage, no admin client, no score — a read, a row-count-proved update, an
- * event, then the notifier.
+ * storage, no admin client, no score — a read, a row-count-proved update, the
+ * notifier, then an event.
  */
 const state = vi.hoisted(() => ({ caller: null as unknown }));
 

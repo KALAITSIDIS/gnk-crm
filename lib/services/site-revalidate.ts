@@ -50,8 +50,10 @@ export type SiteRevalidateOutcome = "sent" | "skipped" | "failed";
 
 /**
  * A bulk change — many units' prices or layouts at once (applyPriceUplift,
- * applyUnitType). The site rebuilds the home page, the list and EVERY listing
- * page, each on its own next visit, from ONE request (gnk-web
+ * applyUnitType), a project field synced onto its units (syncInheritedField),
+ * or an area's name, which every listing in the area shows (renameArea;
+ * T-site-knock-order). The site rebuilds the home page, the list and EVERY
+ * listing page, each on its own next visit, from ONE request (gnk-web
  * lib/revalidate.ts readKnock; T-unit-site-revalidate). Chosen over sending
  * the affected references in batches: no read of which units are public, no
  * page of references to drop at a batch boundary, no unit the site does not

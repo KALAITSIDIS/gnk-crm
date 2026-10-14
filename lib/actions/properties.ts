@@ -775,6 +775,17 @@ export async function updatePropertySection(
     };
   }
 
+  // The public site rebuilds the pages this row can have moved — after the
+  // response, never failing it. Before OR after: a listing that just went
+  // private has to vanish as promptly as one that just went public appears.
+  // FIRST, straight after the row-count proof (T-site-knock-order): the
+  // follow-ups below can throw (completeListingStatusChecks, the deal-health
+  // refresh), and Next runs an after() callback even when the action throws
+  // later — but only one already scheduled.
+  if (current.visibility === "public" || updates.visibility === "public") {
+    notifySiteAfter(current.reference);
+  }
+
   // From here the write has committed. An event insert that fails now is the
   // shape DECISIONS T-event-integrity describes — a write with no record —
   // and this action is its fifteenth accepted instance, accepted because it
@@ -941,12 +952,6 @@ export async function updatePropertySection(
 
   revalidatePath(`/properties/${propertyId}`);
   revalidatePath("/properties");
-  // The public site rebuilds the pages this row can have moved — after the
-  // response, never failing it. Before OR after: a listing that just went
-  // private has to vanish as promptly as one that just went public appears.
-  if (current.visibility === "public" || updates.visibility === "public") {
-    notifySiteAfter(current.reference);
-  }
   return { error: null, savedAt: Date.now(), notice: recorded ? null : NOT_RECORDED_NOTICE };
 }
 
@@ -988,6 +993,10 @@ export async function archiveProperty(propertyId: string): Promise<PropertyActio
     return { error: "You don't have permission to archive this property." };
   }
 
+  // FIRST, before the event that can throw (T-site-knock-order): an archived
+  // listing must leave the site even when its timeline line fails
+  notifySiteAfter(current.reference);
+
   await logEvent(supabase, {
     orgId: profile.orgId,
     actorId: profile.id,
@@ -1002,7 +1011,6 @@ export async function archiveProperty(propertyId: string): Promise<PropertyActio
   const { refreshContainerScores } = await import("@/lib/services/quality-score");
   await refreshContainerScores(supabase, current.parent_id);
 
-  notifySiteAfter(current.reference);
   revalidatePath(`/properties/${propertyId}`);
   revalidatePath("/properties");
   return { error: null };
@@ -1048,6 +1056,10 @@ export async function restoreProperty(propertyId: string): Promise<PropertyActio
     return { error: "You don't have permission to restore this property." };
   }
 
+  // FIRST, before the event that can throw (T-site-knock-order) — a restore
+  // that clears `withdrawn` on a public listing puts it back on the site
+  notifySiteAfter(current.reference);
+
   await logEvent(supabase, {
     orgId: profile.orgId,
     actorId: profile.id,
@@ -1071,7 +1083,6 @@ export async function restoreProperty(propertyId: string): Promise<PropertyActio
   await recomputeQuietly(supabase, propertyId);
   await refreshContainerScores(supabase, current.parent_id);
 
-  notifySiteAfter(current.reference);
   revalidatePath(`/properties/${propertyId}`);
   revalidatePath("/properties");
   return { error: null };
