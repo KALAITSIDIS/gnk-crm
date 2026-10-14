@@ -344,18 +344,20 @@ export async function setMediaCover(
     return { error: "Cover not changed — only admins and listing managers manage photos." };
   }
 
-  // The site, FIRST (T-site-knock-order): the new cover has committed, and the
-  // event and the score below can throw. The knock itself runs after the
-  // response, so the page it rebuilds reads the gallery as this action left
-  // it — the old cover cleared, or not, below.
-  await notifySiteIfPublic(supabase, propertyId);
-
   const { error: clearErr } = await supabase
     .from("property_media")
     .update({ is_cover: false })
     .eq("property_id", propertyId)
     .eq("is_cover", true)
     .neq("id", mediaId);
+
+  // The site (T-site-knock-order): the new cover has committed whether or not
+  // the old one was cleared, so the site is told on both paths — and before
+  // the event and the score below, which can throw. AFTER the clear, never
+  // between it and the set: a read there would widen the window in which the
+  // listing has two covers, and in which two people setting different covers
+  // at once each clear the other's (T-site-knock-order review).
+  await notifySiteIfPublic(supabase, propertyId);
   if (clearErr) return { error: clearErr.message };
 
   await logEvent(supabase, {

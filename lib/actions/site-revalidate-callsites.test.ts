@@ -21,11 +21,15 @@ import { describe, expect, it } from "vitest";
  * on the site in its old form until the timers (lib/services/site-revalidate.ts,
  * notifySiteAfter). The second describe below pins that order.
  *
- * Source scan by design — the actions are exercised elsewhere; this pins
- * placement, which no behavioural test of a mocked client can. The unit
- * actions' knocks are ALSO proved by behaviour, through the real notifier, in
- * unit-site-revalidate.test.ts (T-unit-site-revalidate) — this list is where a
- * new action is remembered, that file is where a knock is seen.
+ * A source scan, so that it covers EVERY action that knocks, including one
+ * added tomorrow: this list is where a new action is remembered. Placement is
+ * also seen by behaviour, through the real notifier, for the actions those
+ * files drive: site-knock-before-follow-ups.test.ts fails the follow-up after
+ * the write in nine of them and watches the knock arrive anyway
+ * (T-site-knock-order), and unit-site-revalidate.test.ts does the same for the
+ * unit actions (T-unit-site-revalidate), whose events are written inside their
+ * database functions. The scan is the only placement check for an action
+ * neither file drives.
  */
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -67,11 +71,49 @@ const WRITE = /\.(update|insert|delete|rpc)\(|recordPriceList\(/;
  *    it catches, by name and by body (pinned below);
  *  - completeListingStatusChecks, which re-throws an unrecorded superseded line
  *    (lib/services/followup-tasks.ts).
- * An event write that opens its own `try {` is caught where it stands and is
- * not counted: the upload's per-file line, updatePropertySection's `record`.
  */
-const THROWING_FOLLOW_UP =
-  /(?<!\btry\s*\{\s*)\bawait\s+(?:logEvents?|recompute(?!Quietly\b)\w*|completeListingStatusChecks)\(/;
+const THROWS = /^(?:logEvents?|recompute(?!Quietly$)\w*|completeListingStatusChecks)$/;
+
+/**
+ * Where, in a function's source, a THROWS follow-up is called and nothing
+ * catches it. Read from the syntax tree, not by a pattern over the text
+ * (T-site-knock-order review): a call counts wherever it stands — after
+ * `await`, inside `Promise.all([…])`, in a `.then(() => …)` — and a `try`
+ * excuses it only when that `try` has a catch which does not throw again. A
+ * `try … finally` catches nothing. So the upload's per-file line and
+ * updatePropertySection's `record`, each caught where it stands, do not count.
+ */
+function throwingFollowUps(fnSource: string): number[] {
+  const file = ts.createSourceFile("fn.ts", fnSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const at: number[] = [];
+  const visit = (node: ts.Node, caught: boolean): void => {
+    if (ts.isTryStatement(node)) {
+      const catches = node.catchClause !== undefined && !throwsAgain(node.catchClause.block);
+      visit(node.tryBlock, caught || catches);
+      if (node.catchClause) visit(node.catchClause, caught);
+      if (node.finallyBlock) visit(node.finallyBlock, caught);
+      return;
+    }
+    if (!caught && ts.isCallExpression(node) && ts.isIdentifier(node.expression) && THROWS.test(node.expression.text)) {
+      at.push(node.getStart(file));
+    }
+    ts.forEachChild(node, (child) => visit(child, caught));
+  };
+  visit(file, false);
+  return at;
+}
+
+/** A catch block that throws (outside a function declared within it) catches nothing. */
+function throwsAgain(block: ts.Block): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found || ts.isFunctionLike(node)) return;
+    if (ts.isThrowStatement(node)) found = true;
+    else ts.forEachChild(node, visit);
+  };
+  visit(block);
+  return found;
+}
 
 /**
  * [file, action, why it matters, and — only where the action has one — why it
@@ -128,29 +170,40 @@ describe("the knock is scheduled before any follow-up that can throw", () => {
       const b = body(SOURCES[file]!, fn);
       const write = b.search(WRITE);
       expect(write, `${fn} writes`).toBeGreaterThanOrEqual(0);
-      const afterWrite = b.slice(write);
-      const knock = afterWrite.search(NOTIFY);
-      expect(knock, `${fn} calls the notifier after its write`).toBeGreaterThanOrEqual(0);
-      const followUp = afterWrite.search(THROWING_FOLLOW_UP);
-      if (followUp === -1) return; // nothing after the write can swallow the knock
-      const what = afterWrite.slice(followUp, followUp + 48).replace(/\s+/g, " ");
+      const knockAfter = b.slice(write).search(NOTIFY);
+      expect(knockAfter, `${fn} calls the notifier after its write`).toBeGreaterThanOrEqual(0);
+      const knock = write + knockAfter;
+      const followUps = throwingFollowUps(b).filter((at) => at > write);
+      if (followUps.length === 0) return; // nothing after the write can swallow the knock
+      const followUp = Math.min(...followUps);
+      const what = b.slice(followUp, followUp + 48).replace(/\s+/g, " ");
       expect(knock, `${fn}: "${what}" runs before the knock and can throw`).toBeLessThan(followUp);
     });
   }
 
   it("the classifier: what can throw counts, what catches does not", () => {
-    for (const [snippet, throws] of [
-      ["await logEvent(supabase, {", true],
-      ["await logEvents(supabase, rows)", true],
-      ["await recomputeQualityScore(supabase, id)", true],
-      ["await recomputeDealsFor(supabase, { propertyId })", true],
-      ["const closed = await completeListingStatusChecks(supabase, {", true],
-      ["try {\n    await logEvent(supabase, {", false],
-      ["await recomputeQuietly(supabase, id)", false],
-      ["await refreshContainerScores(supabase, parent)", false],
-      ["await record({", false],
+    const counts = (statements: string) => throwingFollowUps(`async function f() {\n${statements}\n}`).length > 0;
+    for (const [statements, throws] of [
+      ["await logEvent(supabase, {});", true],
+      ["await logEvents(supabase, rows);", true],
+      ["await recomputeQualityScore(supabase, id);", true],
+      ["await recomputeDealsFor(supabase, { propertyId });", true],
+      ["const closed = await completeListingStatusChecks(supabase, {});", true],
+      // review round: a follow-up throws wherever it stands, not only after `await`
+      ["await Promise.all([logEvent(supabase, {})]);", true],
+      ["await done.then(() => recomputeQualityScore(supabase, id));", true],
+      // …and a `try` catches only with a catch that does not throw again
+      ["try {\n  await logEvent(supabase, {});\n} finally {\n  release();\n}", true],
+      ["try {\n  await logEvent(supabase, {});\n} catch (err) {\n  report(err);\n  throw err;\n}", true],
+      ["try {\n  await logEvent(supabase, {});\n} catch {\n  recorded = false;\n}", false],
+      ["try {\n  prepare();\n  await logEvent(supabase, {});\n} catch (err) {\n  report(err);\n}", false],
+      ["const record = async (p) => {\n  try {\n    await logEvent(supabase, p);\n  } catch {\n    recorded = false;\n  }\n};", false],
+      ["await recomputeQuietly(supabase, id);", false],
+      ["await refreshContainerScores(supabase, parent);", false],
+      ["await record({});", false],
+      ["type Params = Parameters<typeof logEvent>[1];", false],
     ] as const) {
-      expect(THROWING_FOLLOW_UP.test(snippet), snippet).toBe(throws);
+      expect(counts(statements), statements).toBe(throws);
     }
   });
 

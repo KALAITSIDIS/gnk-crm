@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeClient, type FakePage } from "@/lib/testing/fake-client";
+import { stalledClient } from "@/lib/testing/stalled-client";
 
 /**
  * A committed media save stays saved when the site cannot be told.
@@ -39,6 +40,7 @@ vi.mock("@sentry/nextjs", () => ({ captureMessage: vi.fn() }));
 // Deliberately NOT mocked: @/lib/services/site-revalidate. That is the point.
 
 const { setMediaAlt } = await import("@/lib/actions/media");
+const { logEvent } = await import("@/lib/services/events");
 
 const OLD = { ...process.env };
 const DB_ERROR = { code: "XX000", message: "Fixture database error" };
@@ -101,5 +103,34 @@ describe("a media save outlives a failed site notification", () => {
     await settle();
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(Sentry.captureMessage, "a lookup that worked is not a lookup failure").not.toHaveBeenCalled();
+  });
+
+  it("the lookup never answers: abandoned at its bound, reported, and the alt's event is still written", async () => {
+    // The lookup now runs BEFORE the event (T-site-knock-order). Unbounded, a
+    // stalled read would hold the event back until the platform killed the
+    // function: the alt saved, its line never written. The REAL postgrest-js
+    // over a connection that never answers; the bound is shortened, not waited.
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 200 }));
+    const realTimeout = AbortSignal.timeout.bind(AbortSignal);
+    vi.spyOn(AbortSignal, "timeout").mockImplementation(() => realTimeout(20));
+    vi.mocked(logEvent).mockClear();
+    const stalled = stalledClient();
+    const media = fakeClient({
+      property_media: [
+        { data: { alt: {} }, error: null },
+        { data: [{ id: "m-1" }], error: null },
+      ],
+    });
+    state.caller = { from: (t: string) => (t === "properties" ? stalled.from("properties") : media.client.from(t)) };
+    const outcome = await Promise.race([
+      setMediaAlt("prop-1", "m-1", "A villa at dusk"),
+      new Promise((r) => setTimeout(() => r("still waiting on the lookup"), 2_000)),
+    ]);
+    expect(outcome).toEqual({ error: null });
+    expect(media.argsOf("property_media", "update"), "the write happened").toHaveLength(1);
+    expect(logEvent, "the event is written once the lookup is abandoned").toHaveBeenCalledTimes(1);
+    await settle();
+    expect(fetchSpy, "no knock on a lookup that never answered").not.toHaveBeenCalled();
+    expect(Sentry.captureMessage, "reported once").toHaveBeenCalledTimes(1);
   });
 });
