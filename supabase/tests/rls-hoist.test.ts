@@ -165,6 +165,27 @@ describe("0030 / 0147 — RLS helpers stay hoisted, schema-wide", () => {
 });
 
 describe("0147 itself (rolled back)", () => {
+  // Whether service_role holds EXECUTE on rls_bare_auth_calls is the IMAGE's doing (default privileges), not a
+  // migration's: hosted and the 17.11 image grant it, CI's 17.6.1.159 image does not (measured 2026-10-14 — a
+  // preflight that pinned the ACL as text refused CI's fresh stack). The file must apply either way.
+  for (const [what, toggle] of [
+    ["service_role's EXECUTE on the auth-call check taken away (CI's image)", "revoke execute on function public.rls_bare_auth_calls() from service_role"],
+    ["service_role granted EXECUTE on the auth-call check (hosted's image)", "grant execute on function public.rls_bare_auth_calls() to service_role"],
+  ] as const) {
+    it(`applies whatever the image grants service_role: ${what}`, async () => {
+      await rolledBack(async (notices) => {
+        await o.query(REVERT_0147_SQL());
+        await o.query(toggle);
+        const res = await o.query(readMigration0147());
+        const results = Array.isArray(res) ? res : [res];
+        expect(results[results.length - 1]!.rows[0].summary).toBe(
+          "0147 applied — 51 policies hoisted on 19 tables; bare helper calls schema-wide: 0; list-table hoisted count: 21",
+        );
+        expect(notices.some((m) => m.startsWith("0147: self-check passed"))).toBe(true);
+      });
+    });
+  }
+
   it("replays over its rollback text: preflight, self-check, the summary row — and the schema it leaves is the live one", async () => {
     let live = "";
     await rolledBack(async () => {
@@ -278,6 +299,21 @@ describe("0147 itself (rolled back)", () => {
       "the guard granted to authenticated",
       "grant execute on function public.rls_bare_helper_calls() to authenticated",
       /0147 aborted: a guard function is not 0030 \/ 0100's \(rls_bare_helper_calls\)/,
+    ],
+    [
+      "the auth-call check granted to anon",
+      "grant execute on function public.rls_bare_auth_calls() to anon",
+      /0147 aborted: a guard function is not 0030 \/ 0100's \(rls_bare_auth_calls\)/,
+    ],
+    [
+      "the auth-call check taken from authenticated",
+      "revoke execute on function public.rls_bare_auth_calls() from authenticated",
+      /0147 aborted: a guard function is not 0030 \/ 0100's \(rls_bare_auth_calls\)/,
+    ],
+    [
+      "the presence count granted to PUBLIC",
+      "grant execute on function public.rls_hoisted_policy_count() to public",
+      /0147 aborted: a guard function is not 0030 \/ 0100's \(rls_hoisted_policy_count\)/,
     ],
   ];
   for (const [what, drift, refusal] of drifts) {

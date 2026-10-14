@@ -219,22 +219,38 @@ begin
               '( SELECT current_role_gnk() AS current_role_gnk)', '')
             like any (array['%current_org_id()%', '%current_role_gnk()%'])), true);
 
-  -- 2. the three guards are 0030 / 0100's, with their ACLs
+  -- 2. the three guards are 0030 / 0100's, with their grants. The grants are
+  --    read as PRIVILEGES, never as ACL text: whether service_role holds
+  --    EXECUTE on rls_bare_auth_calls depends on the image's default
+  --    privileges, not on any migration — MEASURED 2026-10-14: hosted and the
+  --    17.11 image read {postgres=X/postgres,authenticated=X/postgres,
+  --    service_role=X/postgres}, CI's 17.6.1.159 image reads it without
+  --    service_role, and this preflight pinned as text refused CI's fresh
+  --    stack. What a guard's grants decide is who may CALL it: never anon (nor
+  --    PUBLIC, whose grant is anon's), and authenticated for
+  --    rls_bare_auth_calls only.
   select string_agg(x.proname, ', ' order by x.proname) into v_diag
-    from (values ('rls_bare_helper_calls', '90aac6a256ba53f176f169e0d6dd14ee', '{postgres=X/postgres,service_role=X/postgres}', '{search_path=pg_catalog}'),
-                 ('rls_hoisted_policy_count', '57e24ddac9d536d8ba9304e3f40ac0df', '{postgres=X/postgres,service_role=X/postgres}', '{search_path=pg_catalog}'),
-                 ('rls_bare_auth_calls', 'edfd09ffbd87320e5b08edb574a8bdf8', '{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}', '{"search_path=public, pg_catalog"}'))
-         x(proname, src_md5, acl, config)
+    from (values ('rls_bare_helper_calls', '90aac6a256ba53f176f169e0d6dd14ee', false, '{search_path=pg_catalog}'),
+                 ('rls_hoisted_policy_count', '57e24ddac9d536d8ba9304e3f40ac0df', false, '{search_path=pg_catalog}'),
+                 ('rls_bare_auth_calls', 'edfd09ffbd87320e5b08edb574a8bdf8', true, '{"search_path=public, pg_catalog"}'))
+         x(proname, src_md5, for_authenticated, config)
    where not exists (select 1 from pg_proc p
                       where p.pronamespace = 'public'::regnamespace and p.proname = x.proname
                         and p.pronargs = 0 and p.prosecdef and p.provolatile = 's'
                         and pg_get_userbyid(p.proowner) = 'postgres'
                         and md5(replace(p.prosrc, E'\r', '')) = x.src_md5
-                        and p.proacl::text = x.acl and p.proconfig::text = x.config)
+                        -- PUBLIC's EXECUTE (a NULL ACL means it) is anon's too
+                        and not has_function_privilege('anon', p.oid, 'execute')
+                        and has_function_privilege('authenticated', p.oid, 'execute') = x.for_authenticated
+                        and p.proconfig::text = x.config)
       or (select count(*) from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname = x.proname) <> 1;
   if v_diag is not null then
     raise exception '0147 aborted: a guard function is not 0030 / 0100''s (%) — nothing was changed', v_diag;
   end if;
+  -- the guard's ACL as this database holds it: the self-check below proves
+  -- CREATE OR REPLACE kept it, without pinning text that varies by image
+  perform set_config('gnk.m0147_guard_acl',
+    (select p.proacl::text from pg_proc p where p.oid = 'public.rls_bare_helper_calls()'::regprocedure), true);
 
   -- 3. the presence check reads what 0100 left
   if public.rls_hoisted_policy_count() <> 21 then
@@ -583,7 +599,9 @@ begin
                     and p.prosecdef and p.provolatile = 's' and pg_get_userbyid(p.proowner) = 'postgres'
                     and p.proconfig = array['search_path=pg_catalog']
                     and pg_get_function_result(p.oid) = 'TABLE(tablename text, policyname text)'
-                    and p.proacl::text = '{postgres=X/postgres,service_role=X/postgres}'
+                    and p.proacl::text = current_setting('gnk.m0147_guard_acl', true)
+                    and not has_function_privilege('anon', p.oid, 'execute')
+                    and not has_function_privilege('authenticated', p.oid, 'execute')
                     and md5(replace(p.prosrc, E'\r', '')) = 'bbf45e18e481985b9d6491045388da68') then
     raise exception '0147 self-check: rls_bare_helper_calls() is not this file''s body, or lost its shape or its grants';
   end if;
