@@ -16,18 +16,25 @@ import { MOVE_NOT_MOVED_TEXT, MOVE_UNCONFIRMED_TEXT } from "@/lib/services/pipel
  * - any other code that certainly rolled back (`certainlyRolledBack`, the
  *   house allowlist) says plainly that the deal was not moved;
  * - everything else — no code, a connection class, a code nobody classified,
- *   a number from a gateway, a throw — is an UNKNOWN outcome: it may have
- *   committed, so it is never "nothing changed", and it is flagged
- *   `unconfirmed` so the board keeps it on screen (lib/services/pipeline-move.ts).
+ *   a number from a gateway, a throw before the RPC answered — is an UNKNOWN
+ *   outcome: it may have committed, so it is never "nothing changed", and it
+ *   is flagged `unconfirmed` so the board keeps it on screen
+ *   (lib/services/pipeline-move.ts);
+ * - once the RPC has answered WITHOUT an error the move is known to have
+ *   committed: a throw from what follows (the health recompute, the
+ *   revalidation) is paged, never put to the user as an unknown move — the
+ *   house idiom of the Won close's follow-ups (deal-won-close.test.ts).
  */
 
 const state = vi.hoisted(() => ({
   rpc: null as null | { error: { code?: unknown; message: string } | null },
   createThrows: false,
+  rpcThrows: false,
   rpcCalls: [] as unknown[][],
 }));
 const recomputeDealHealth = vi.hoisted(() => vi.fn(async () => {}));
 const revalidatePath = vi.hoisted(() => vi.fn());
+const captureMessage = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => {
@@ -35,6 +42,7 @@ vi.mock("@/lib/supabase/server", () => ({
     return {
       rpc: async (...args: unknown[]) => {
         state.rpcCalls.push(args);
+        if (state.rpcThrows) throw new TypeError("fetch failed");
         return { data: null, ...state.rpc };
       },
     };
@@ -42,6 +50,7 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 vi.mock("@/lib/services/health-score", () => ({ recomputeDealHealth }));
 vi.mock("next/cache", () => ({ revalidatePath }));
+vi.mock("@sentry/nextjs", () => ({ captureMessage }));
 
 const { moveDealToStage } = await import("@/lib/actions/deals");
 
@@ -54,9 +63,11 @@ beforeEach(() => {
   consoleError.mockClear();
   state.rpc = { error: null };
   state.createThrows = false;
+  state.rpcThrows = false;
   state.rpcCalls = [];
-  recomputeDealHealth.mockClear();
-  revalidatePath.mockClear();
+  recomputeDealHealth.mockReset();
+  revalidatePath.mockReset();
+  captureMessage.mockClear();
 });
 
 const fail = (code: unknown, message: string) => {
@@ -124,16 +135,47 @@ describe("moveDealToStage answers in the RPC's own words, or in ours — never i
     expect(MOVE_UNCONFIRMED_TEXT).not.toMatch(/not (been )?moved|nothing (was )?changed/i);
   });
 
-  it("a throw is UNKNOWN too — the RPC may have run — and its message is not shown, only logged", async () => {
+  it("a throw before the RPC answered is UNKNOWN too — the RPC may have run — and its message is not shown, only logged", async () => {
     state.createThrows = true;
     expect(await moveDealToStage(DEAL, STAGE)).toEqual({ error: MOVE_UNCONFIRMED_TEXT, unconfirmed: true });
     expect(consoleError).toHaveBeenCalledTimes(1);
+
+    // the RPC call itself rejecting: sent, and never answered
+    consoleError.mockClear();
+    state.createThrows = false;
+    state.rpcThrows = true;
+    expect(await moveDealToStage(DEAL, STAGE)).toEqual({ error: MOVE_UNCONFIRMED_TEXT, unconfirmed: true });
+    expect(state.rpcCalls).toHaveLength(1);
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    expect(recomputeDealHealth).not.toHaveBeenCalled();
   });
 
-  it("a throw AFTER the move committed (the health recompute) is not 'not moved' either", async () => {
+  it("the RPC answered, so the move COMMITTED: a health recompute that throws is paged, and the move is done", async () => {
     recomputeDealHealth.mockImplementationOnce(async () => {
       throw new Error("supabaseKey is required.");
     });
-    expect(await moveDealToStage(DEAL, STAGE)).toEqual({ error: MOVE_UNCONFIRMED_TEXT, unconfirmed: true });
+    // not "could not confirm": the RPC's answer already said the move landed
+    expect(await moveDealToStage(DEAL, STAGE)).toEqual({ error: null });
+    // the board still gets its fresh props
+    expect(revalidatePath).toHaveBeenCalledWith("/pipeline");
+    // paged in shape only — the error's name, never its words
+    expect(captureMessage).toHaveBeenCalledTimes(1);
+    expect(captureMessage).toHaveBeenCalledWith(
+      "[deals] stage move follow-up failed",
+      expect.objectContaining({
+        level: "error",
+        tags: { operation: "deals.move_followup", step: "health", code: "Error" },
+        extra: { dealId: DEAL },
+      }),
+    );
+    expect(JSON.stringify(captureMessage.mock.calls)).not.toContain("supabaseKey");
+  });
+
+  it("a revalidation that throws after the commit does not turn the move into an error either", async () => {
+    revalidatePath.mockImplementation(() => {
+      throw new Error("static generation store missing");
+    });
+    expect(await moveDealToStage(DEAL, STAGE)).toEqual({ error: null });
+    expect(recomputeDealHealth).toHaveBeenCalledTimes(1);
   });
 });
