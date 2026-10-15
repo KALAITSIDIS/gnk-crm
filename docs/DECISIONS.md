@@ -10538,7 +10538,7 @@ From BACKLOG "Throws after a commit — 2026-10-13": "A one-time secret is creat
 
 **Left open (BACKLOG).**
 - An unknown answer to the write that STORES the secret still refuses as before: `createUser`, the `share_links` insert, the `portal_connections` write. The secret may have committed. New ("Throws after a commit — 2026-10-13").
-- The refused curation's husk delete removes nothing: `authenticated` holds no DELETE on `share_links`. New, from the schema (`0023:88-92`), not measured by a run.
+- The refused curation's husk delete removes nothing: `authenticated` holds no DELETE on `share_links` (`0023:88-92`). Not new: it is the open BACKLOG entry "`createShareLink` / `createAvailabilityLink`'s cleanup of a link left with no properties is a silent no-op" ("Data integrity audit — 2026-09-15"), found by `T-primary-key-immutable`'s critic (0132), now with a fixture that answers 42501. This change's evidence is folded in there, and that entry's service-role DELETE option is withdrawn (0023: "revoked, never deleted"). At records time the grant read `f` on the shared local stack (at 0140, read-only); PostgREST's answer to the DELETE was still not measured by a run.
 - `createPaymentPlan`'s insert, the fourth of "Four writes …", stays open (with `applyPaymentPlan`'s instalments insert).
 - The rest of "Throws after a commit — 2026-10-13".
 - The LM recompute, the other half of the operator's word, is `T-lm-health-recompute` (PR #165), landed right after this.
@@ -10553,7 +10553,8 @@ From BACKLOG "Throws after a commit — 2026-10-13": "A one-time secret is creat
   - struck: "A one-time secret is created and never shown …";
   - three of four struck, the entry kept open for `createPaymentPlan`: "Four writes on these paths take a hollow answer as written";
   - the NOTE "a failed `logEvent` does not say whether its line was written" names `NOT_CONFIRMED_NOTICE`;
-  - added: "An unknown answer to the write that STORES a one-time secret still refuses …" and "A refused curation's "husk delete" removes nothing …".
+  - added: "An unknown answer to the write that STORES a one-time secret still refuses …";
+  - the husk delete NOT added as a new entry (the first draft of these records did, and review caught the duplicate): it is the open 0132 entry "`createShareLink` / `createAvailabilityLink`'s cleanup of a link left with no properties is a silent no-op", which now carries this change's evidence and one reconciled shape (retire by UPDATE or one RPC; never a DELETE). A pointer under the struck one-time-secret entry keeps the name the code comment at `share-links.ts:170` uses.
 - The remote `fix/one-time-secrets` is deleted (the local branch is kept), and its worktree `.worktrees/gnk-crm/one-time-secrets` is removed.
 - **Rollback.** Revert the merge (application only: no migration, nothing on hosted).
 
@@ -10713,7 +10714,7 @@ The operator's decision on the BACKLOG entry "A listing manager's (or a non-owne
 **After the deploy (read-only, aggregates only; the operator's step — NOT run at landing).**
 - `begin read only; select count(*) as open_scored_on_a_property, count(*) filter (where (p.title_deed_status <> 'unknown') is distinct from (f.detail = 'known')) as title_factor_disagrees from deals d join properties p on p.id = d.property_id and p.org_id = d.org_id cross join lateral (select x->>'detail' as detail from jsonb_array_elements(d.health->'factors') x where x->>'key' = 'title_deed') f where d.status = 'open'; rollback;`
 - **Measured locally:** 0 / 0 on the stack after the suite. In a rolled-back transaction with one stale and one fresh deal planted on a titled property: 2 / 1.
-- A non-zero second count after the deploy is a deal whose stored title-deed factor disagrees with its property: a save from before the deploy, or a writer with no fan-out (BACKLOG "Health inputs written with no fan-out"). Or: one legal save by a listing manager on an operator test property must move its open deal's `health->>'computed_at'`.
+- A non-zero second count after the deploy is a deal whose stored title-deed factor disagrees with its property: a save from before the deploy, or a writer with no fan-out (BACKLOG "Health inputs written with no fan-out"). A direct check would be one legal save by a listing manager on an operator test property, which must move its open deal's `health->>'computed_at'`; but hosted held no listing manager on 2026-10-14 (above, NOT run), so that needs the operator to add one first. Otherwise rely on the aggregate.
 
 **Residuals.**
 - The selection is one request, not paged: open deals per property or buyer are far below `max_rows`.
@@ -10729,7 +10730,7 @@ The operator's decision on the BACKLOG entry "A listing manager's (or a non-owne
 - **Merge.** PR [#165](https://github.com/KALAITSIDIS/gnk-crm/pull/165) merged at 16:18:18Z, pinned to `a9b074f7681fbba68c71f68c84b43ecf8efd2f59`, giving main `447c5bc` over `96aba61` (#164).
   - The branch was cut from `115bedc`, so this is a three-way merge. A local `git merge-tree` onto `96aba61` was clean before it.
   - #164 and #165 change disjoint files (18 paths and 6, none shared), and the merge's tree is that clean three-way merge: `git merge-tree --write-tree 96aba61 a9b074f` and `447c5bc^{tree}` are both `d1bb63d4…` (re-read at records time).
-- **Production.** Vercel `dpl_9xJBccipmeBdib929Mq5VULd3rak` READY 16:19:18Z; `get_runtime_errors` since 16:15Z: none. Signed out, `/login` answers 200, and `/properties` and `/contacts` answer 307 to `/login`.
+- **Production.** Vercel `dpl_9xJBccipmeBdib929Mq5VULd3rak` READY 16:19:18Z, aliased to gnk-crm.vercel.app (read from the Vercel API at records time: `githubCommitSha` `447c5bc…`, `aliasError` null); `get_runtime_errors` since 16:15Z: none. Signed out, `/login` answers 200, and `/properties` and `/contacts` answer 307 to `/login`.
 - **Merge CI** on `447c5bc`: run 38767865800 green, read after it completed (16:30:06Z) — checks `success` (16:21:16Z), rls `success` (16:26:49Z), e2e `success` (16:30:05Z). It is the first CI run of the two changes together.
 - **Not yet done:** the read-only hosted aggregate under "After the deploy" (HANDOFF, What next).
 - **BACKLOG, on landing** (each VERIFY re-run on origin/main `447c5bc` and quoted there):

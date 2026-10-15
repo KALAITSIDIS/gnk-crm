@@ -3414,9 +3414,34 @@ VERIFY, run before starting.
   (pre-existing).** On a failed `share_link_properties` insert, `lib/actions/share-links.ts` deletes the new link
   through the SESSION client ("don't leave the husk"), but `authenticated` holds no DELETE on `share_links` and no
   delete policy exists, so the error is ignored and the propertyless link stays (it resolves to nothing). Found by
-  T-primary-key-immutable's critic. Fix: delete it through the service role bounded by org and id, or insert link and
-  properties in one RPC. **VERIFY:** `select has_table_privilege('authenticated', 'public.share_links', 'DELETE')` —
-  false while `grep -c 'from("share_links").delete()' lib/actions/share-links.ts` is non-zero means open.
+  T-primary-key-immutable's critic. Fix: insert link and properties in one RPC, or retire the husk by UPDATE (below;
+  the service-role DELETE first proposed here is withdrawn, below). **VERIFY:**
+  `select has_table_privilege('authenticated', 'public.share_links', 'DELETE')` — false while
+  `grep -c 'from("share_links").delete()' lib/actions/share-links.ts` is non-zero means open.
+  - **Since `T-one-time-secrets` (LANDED 2026-10-15 — PR #164, main `96aba61`), which kept the husk delete by its
+    brief.** That change's records first listed this as a new entry, "A refused curation's husk delete removes
+    nothing" (the name the comment at `share-links.ts:170` still uses); it is this one, and its evidence is folded in
+    here.
+    - **Where, on origin/main `447c5bc`.** `createShareLink` `:171` and `createAvailabilityLink` `:297`, each
+      `await supabase.from("share_links").delete().eq("id", link.id)` under a comment saying it removes nothing
+      (`:167-170`, `:294-295`); `:109` and `:247` on `115bedc`. The answer is still not read, and the action refuses
+      without the token, so the husk stays "live" on `/share-links`, unopenable and unexplained, until it expires.
+    - **The grant's history.** `0023_share_links.sql:88` revokes all from `anon` and `authenticated`, `:92` grants
+      `select, insert, update`, and `:103-105` says why: "No DELETE for anyone — revoked, never deleted, like every
+      other retire in this schema." `git grep -n "share_links" 447c5bc -- supabase/migrations | grep -i grant` gives
+      only `0023:92` and the comment at `0041:475`; `0106`'s `delete from share_links` (`:282`) is its self-test, run as
+      the migration owner.
+    - **The fixture.** Review `9af9b1a` made the unit test answer the delete as production does, 42501
+      `permission denied for table share_links` (`lib/actions/one-time-secrets.test.ts:519`), and pins that the
+      refusal neither replaces the curation's words nor escapes as a throw.
+    - **Shape, reconciled.** The service-role DELETE is withdrawn: 0023 retires a link by revoking it, never by
+      deleting it, and gave no role a DELETE for that reason. Retire the husk with the creator's UPDATE (`revoked_at`,
+      `revoked_by`), which `share_links_update` admits (`created_by = auth.uid()` or an admin, `0023:115-120`), with
+      its own `revoked` line; or move the link and its curation into one RPC.
+    - VERIFY run 2026-10-15: the grep half gives `2` on origin/main `447c5bc`. The SQL half gives `f` on the shared
+      local stack (at 0140, read-only; no later migration grants on `share_links`), which also has no permissive
+      DELETE policy on the table (`pg_policy`: `share_links_insert` / `_select` / `_update` and the restrictive
+      `require_aal2`). Still open. Hosted's grants were not read.
 - **History keyed by an event PAYLOAD can still be adopted by delete-then-insert, S (pre-existing; 0133 covers
   `entity_id` only).** Payload ids that a reader resolves to the CURRENT row have no index and no guard: a document
   re-inserted at a deleted document's id takes over its `document_uploaded` lines (the timeline prints the current
@@ -4126,7 +4151,8 @@ Its first item is not a site: it is the refusal rule this change added, which is
   - VERIFY (fixed), re-run on origin/main `447c5bc` (2026-10-15).
     - The entry's own check, `grep -n -A5 "^  await logEvent(" lib/actions/settings.ts lib/actions/portals.ts lib/actions/share-links.ts | grep -E '"invited"|portal_enabled|portal_token_regenerated|"created"'`, gives no hit (grep exit 1). The same `git grep` on `115bedc`, before the merges, gives the five: `portals.ts-132` `portal_enabled`, `portals.ts-213` `portal_token_regenerated`, `settings.ts-206` `"invited"`, `share-links.ts-118` `"created"`, `share-links.ts-256` `"created"`.
     - Sharper (each 0 or no hit on `115bedc`): `grep -c "notice: joinNotices(notices)" lib/actions/settings.ts lib/actions/share-links.ts` gives `1` and `2`; `grep -c "okWithToken(token, notice)" lib/actions/portals.ts` gives `2`; `grep -n "deleteUser" lib/actions/settings.ts` gives one call, `281:`, inside `removeAccount`, whose two callers (`grep -n "removeAccount(" lib/actions/settings.ts`) are `:227`, under `:225` `if (prof.error && certainlyRolledBack(prof.error.code))`, and `:256`, the `else if` after `:253` `if (!eventRefused(err))`.
-  - Left open by the fix, each its own entry below: an unknown answer to the write that STORES the secret, and the refused curation's husk delete. `createPaymentPlan`'s hollow insert stays in "Four writes on these paths take a hollow answer as written".
+  - Left open by the fix: an unknown answer to the write that STORES the secret (its own entry, below), and the refused curation's husk delete (an entry that was already open, next bullet). `createPaymentPlan`'s hollow insert stays in "Four writes on these paths take a hollow answer as written".
+    - **A refused curation's husk delete removes nothing** — the name the comment at `share-links.ts:170` uses (and `:294-295` points to it) — is NOT a new entry. It is "`createShareLink` / `createAvailabilityLink`'s cleanup of a link left with no properties is a silent no-op" in "Data integrity audit — 2026-09-15" (found by T-primary-key-immutable's critic, `aaacd76`, 0132), still open. This change's evidence (the 42501 fixture, the two call sites on `447c5bc`, the grant's history) and its shape (retire by UPDATE, never delete) are folded in there, and that entry's service-role DELETE is withdrawn. One entry, so it is closed once.
   - (original, below)
     - **inviteUser.** `inviteUser` (`lib/actions/settings.ts:199`, `user.invited`) throws after the service role created the auth user with a one-time password (:177-185) and the session inserted the profile (:187-197). `useActionState` (`components/features/settings/users-panel.tsx:71`) rethrows to `app/(app)/error.tsx`, so InviteFlow's credentials branch (:73-107) never renders, and the password exists nowhere else.
     - **The retry is refused.** MEASURED by the scope on the local stack: `createUser` with the same email answers 422 `email_exists`, shown as GoTrue's "already been registered" (:184), backed by `auth.users` `users_email_partial_key` (MEASURED, local catalog). The colleague stays active with a password nobody knows, and the app has no way back: apart from `createUser` (:179) and the 2FA reset (`resetUserTwoFactor`, `mfa.listFactors` / `deleteFactor`, :341-347), its only `auth.admin` calls are the orphan cleanup `deleteUser` (:195) and the ban (:284), and none of them is a way back. `deleteUser` runs only when the profile insert fails (:194-197), which a retry never reaches, because `createUser`'s refusal returns first (:184). The ban (`updateUserById`, :284-286) sets only `ban_duration`. The operator has to delete the auth user in the Supabase dashboard (`profiles_id_fkey` cascades) and invite again.
@@ -4145,21 +4171,15 @@ Its first item is not a site: it is the refusal rule this change added, which is
     - Any error refuses, while the row may be committed: a live link with no curation, and its token lost.
     - A hollow 2xx gives `link` null and a TypeError on `link.id`, which is the error page.
     - Shape: read back by `token_sha256`, this attempt's unique digest (the T-media-insert-outcome read-back by a unique key). Found: carry on with that id.
-  - **The `portal_connections` write** (`portals.ts:150-160` in `setPortalEnabled` and `:237-242` in `regeneratePortalToken`).
+  - **The `portal_connections` write** (`portals.ts:150-161` in `setPortalEnabled` and `:237-243` in `regeneratePortalToken`).
     - Any error refuses. For Regenerate, the old URL may already be dead while the new one was never shown.
-    - Shape: read back `feed_token_sha256` and compare it with `hashPortalToken(token)`. Equal: carry on.
+    - A hollow answer (`written` null, no error) refuses too, after a write that may have committed the minted digest: "Nothing changed — your role may not manage portals." (`:161`) and "No connection to rotate — enable the portal first." (`:243`). Only an empty array is a certain 0 rows; `!written?.length` takes both alike. (Added in review of these records, 2026-10-15.)
+    - Shape: on an error or a hollow answer alike, whenever the write carried a minted digest, read back `feed_token_sha256` and compare it with `hashPortalToken(token)`. Equal: carry on.
   - **VERIFY:** three checks; any one still matching means that write is open. All three run on origin/main `447c5bc` (2026-10-15):
     - `grep -n "if (created.error) return fail(created.error.message);" lib/actions/settings.ts` — a hit means open (`206:`; `:186` on `115bedc`).
     - `grep -c "if (error) return refuse(error.message);" lib/actions/share-links.ts` — `2` means open (`2`: `:157` and `:286`).
-    - `grep -n -B12 "if (error) return fail(error.message);" lib/actions/portals.ts | grep -c "feed_token_sha256"` — `2` means open (`2`: the digest at `:148` before the refusal at `:160`, and `:239` before `:242`; `2` on `115bedc` too). `savePortalSettings`' refusal (`:208`) names no digest and is not counted.
-
-- **A refused curation's "husk delete" removes nothing: `authenticated` holds no DELETE on `share_links`, so the link stays live and listed, S (from the schema; not measured by a run).** Added 2026-10-15 by `T-one-time-secrets` (LANDED — PR #164, main `96aba61`).
-  - **Where.** `createShareLink` and `createAvailabilityLink` call `supabase.from("share_links").delete().eq("id", link.id)` on a refused curation (`share-links.ts:171` and `:297` on origin/main `447c5bc`, each under a comment saying it removes nothing; `:109` and `:247` on `115bedc`).
-  - **Why it is a no-op.** `0023_share_links.sql:88-92` revokes everything and grants `select, insert, update` on `share_links` to `authenticated`, and its own comment (:104) says "No DELETE for anyone". No migration grants DELETE: `git grep -n "share_links" 447c5bc -- supabase/migrations | grep -i grant` gives only `0023_share_links.sql:92` and the comment at `0041_availability_share_links.sql:475` ("no table grant moved"). `0106`'s `delete from share_links` (:282) is its self-test, run as the migration owner.
-  - **The effect.** The session's DELETE should answer 42501, and the action ignores that answer. A link with no properties stays "live", unopenable (its token is never shown) and unexplained on `/share-links` until it expires.
-  - **Not measured.** No DB test was run. Hosted's grants were not read; 0023 revokes before it grants, so hosted's default privileges should not apply. The unit test answers the delete as the grant makes PostgREST answer it (42501 `permission denied for table share_links`), and pins that its refusal neither replaces the curation's words nor escapes as a throw (review `9af9b1a`).
-  - **Shape:** retire the husk instead. Use the creator's UPDATE (`revoked_at`, `revoked_by`), which `share_links_update` admits, with its own `revoked` line. Or move the link and its curation into one RPC. Never the service role's DELETE: the row is part of the evidence record.
-  - **VERIFY:** `grep -c 'await supabase.from("share_links").delete()' lib/actions/share-links.ts` — `2` means open (`2` on origin/main `447c5bc`, 2026-10-15: `:171`, `:297`).
+    - `awk '/^export async function (setPortalEnabled|regeneratePortalToken)\(/{f=1} /^}/{f=0} f && /if \(error\) return fail\(error\.message\);|if \(!written\?\.length\) return fail\(/' lib/actions/portals.ts | wc -l` — `4` means open: the error refusal and the hollow-answer refusal of each of the two writes, counted only inside those two functions. Any count above `0` means one of them still refuses straight off the write's answer: read that function. `4` on origin/main `447c5bc` (`:160`, `:161`, `:242`, `:243`) and `4` on `115bedc` (`:124`, `:125`, `:205`, `:206`).
+    - (Review of these records, 2026-10-15: the first draft's check, `grep -n -B12 "if (error) return fail(error.message);" lib/actions/portals.ts | grep -c "feed_token_sha256"`, counted `setPortalEnabled` only because its digest (`:148`) sat exactly 12 lines above the refusal (`:160`). With one comment line inserted at `:150` of a copy it printed `1`, a false "fixed", while the check above still printed `4`. It also never looked at the hollow-answer refusals.)
 
 - **A committed photo delete, archive or sold/rented save shows the error page and skips the score and the rest of its lines (the site refresh: fixed by #159), M.**
   - **The site refresh: FIXED 2026-10-14 by `T-site-knock-order` (LANDED — PR #159, main `8ecb772`, deployed).** All three paths (and `restoreProperty`) schedule the knock straight after the proven write, so `notifySiteIfPublic` / `notifySiteAfter` / "the site knock" have left the skipped lists below, and the site no longer keeps a deleted photo or an archived listing for an hour. The throw, the error page and every other skipped step stand. (The lists below are the original finding at `489c507`; on `3fe15d2` the knocks are at `media.ts:570`, `properties.ts:998` and `properties.ts:786`.)

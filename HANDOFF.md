@@ -22,7 +22,7 @@
     - Vercel `dpl_8gVh4KYGT2R2N1rFJQFuys5nRp7p` READY 16:17:49Z, aliased to gnk-crm.vercel.app.
     - Signed out: `/login` 200; `/settings` and `/share-links` 307 → `/login`.
   - **#165.** Merged 16:18:18Z, pinned to `a9b074f7681fbba68c71f68c84b43ecf8efd2f59`; main `96aba61` → `447c5bc`. A local `git merge-tree` onto `96aba61` was clean first: the two PRs change disjoint files, and the merge's tree is that clean merge (`d1bb63d4…`).
-    - Vercel `dpl_9xJBccipmeBdib929Mq5VULd3rak` READY 16:19:18Z.
+    - Vercel `dpl_9xJBccipmeBdib929Mq5VULd3rak` READY 16:19:18Z, aliased to gnk-crm.vercel.app (read from the Vercel API at records time).
     - Signed out: `/login` 200; `/properties` and `/contacts` 307 → `/login`.
   - `get_runtime_errors` since 16:15Z: none, read after each deploy.
   - **Merge CI, read after each run completed:**
@@ -33,12 +33,12 @@
     - struck: "A one-time secret is created and never shown …" and "A listing manager's (or a non-owner agent's) legal save …". The second's own VERIFY misreads the fix (the call in `properties.ts` is unchanged), and the strike says which checks to read instead;
     - "Four writes on these paths take a hollow answer as written": three of four fixed, open for `createPaymentPlan`;
     - the merge entry corrected and given its one-line shape; "Deal health persists a score computed from a failed or missing mandate read" amended;
-    - added: five entries and two NOTEs. The outstanding-work recipe went from 156 lines to 159 (two struck, five added).
+    - added: four entries and two NOTEs. The husk delete is NOT a new entry: it is the open 0132 entry "`createShareLink` / `createAvailabilityLink`'s cleanup of a link left with no properties is a silent no-op" ("Data integrity audit — 2026-09-15"), which now carries #164's evidence and one shape (its service-role DELETE withdrawn); a pointer under the secrets strike keeps the name the code comment uses. The outstanding-work recipe went from 156 lines to 158 (two struck, four added).
   - **Rollback:** revert either merge (application only: no migration, nothing on hosted).
   - **These records:** `npm run typecheck` and `npm run lint` exit 0 on their tree (`447c5bc` plus these three files).
 - **What next.**
-  - **These records.** Push `land/secrets-and-lm`, open its PR, read its CI, merge it; then remove `.worktrees/gnk-crm/land-secrets-lm` and the remote branch.
-  - **The read-only hosted health check (after #165; NOT run).** The aggregate in DECISIONS `T-lm-health-recompute` → "After the deploy" compares each open deal's stored title-deed factor with its property (`open_scored_on_a_property`, `title_factor_disagrees`). A non-zero second count is a deal saved before the deploy, or a writer with no fan-out (BACKLOG "Health inputs written with no fan-out"). Alternatively, one listing manager's legal save on an operator test property must move its open deal's `health->>'computed_at'`.
+  - **These records.** Push `land/secrets-and-lm` and open its PR. Then one more commit naming the PR in this block's heading line, in place of "not yet pushed" (as `7154c7e` did for #163). Read CI on that head and merge pinned to it (`--match-head-commit`); then remove `.worktrees/gnk-crm/land-secrets-lm` and the remote branch.
+  - **The read-only hosted health check (after #165; NOT run).** The aggregate in DECISIONS `T-lm-health-recompute` → "After the deploy" compares each open deal's stored title-deed factor with its property (`open_scored_on_a_property`, `title_factor_disagrees`). A non-zero second count is a deal saved before the deploy, or a writer with no fan-out (BACKLOG "Health inputs written with no fan-out"). A direct check (one listing manager's legal save on an operator test property moving its open deal's `health->>'computed_at'`) is not available as things stand: hosted held no listing manager on 2026-10-14, so it needs the operator to add one first. Otherwise rely on the aggregate.
   - **The operator's open decision.** `SENTRY_AUTH_TOKEN` on Vercel project gnk-crm is stored as readable (encrypted), not sensitive, and flagged `readable-secret` (measured 2026-10-14; value not read). Re-create it as sensitive? (The other decision, the listing-manager recompute, is made and landed.)
   - **The concurrent session.** `T-document-insert-outcome` (`.worktrees/gnk-crm/document-insert-outcome`, branch `fix/document-insert-outcome`) is still uncommitted: HEAD `489c507`, 12 changed paths (read 2026-10-15, not touched). When it lands:
     - its merge-time item: each `documentNotConfirmed` answer must carry `unconfirmed: true` (BACKLOG, merge-time); #158's client half is on main;
@@ -46,7 +46,7 @@
     - the `mandates.ts` row-count item: `saveMandate`'s edit and `setMandateStatus` fan out a recompute — now as the system — after an UPDATE whose row count they never check (latent; "From `T-lm-health-recompute`").
   - **Reads waiting on traffic** (after #157, #158): as in the 2026-10-14 external-audit block below.
   - **Then pick from BACKLOG.**
-    - "Throws after a commit — 2026-10-13": the storing write's unknown answer and the husk delete (both new); `createPaymentPlan`'s hollow insert; the photo delete, archive and sold save; the duplicates on retry; the lost follow-ups.
+    - "Throws after a commit — 2026-10-13": the storing write's unknown answer (new); `createPaymentPlan`'s hollow insert; the photo delete, archive and sold save; the duplicates on retry; the lost follow-ups. With the first, the husk delete: the existing 0132 entry in "Data integrity audit — 2026-09-15" (`createShareLink` / `createAvailabilityLink`'s cleanup …).
     - "External audit — 2026-10-14":
       - the contact merge's recompute (now a one-liner) and the health inputs with no fan-out; `logConversation`'s deal touch (decide);
       - "More server actions take a raw id string unchecked" (13 outside the concurrent session's files), and `?temperature=` / `?source=` on contacts;
@@ -57,7 +57,7 @@
       - gnk-web's `crypto.randomUUID()`; the enquiries route comment;
       - composite keys for `area_id` / `district_id` / `stage_id`.
 - **Left open by these changes (BACKLOG).**
-  - **Secrets.** An unknown answer to the write that STORES the secret (`createUser`, the `share_links` insert, the `portal_connections` write) still refuses, though the secret may have committed. The refused curation's husk delete removes nothing (`authenticated` holds no DELETE on `share_links`). `createPaymentPlan`'s hollow insert.
+  - **Secrets.** An unknown answer to the write that STORES the secret (`createUser`, the `share_links` insert, the `portal_connections` write, on an error and, for the portal write, on a hollow answer too) still refuses, though the secret may have committed. The refused curation's husk delete removes nothing (`authenticated` holds no DELETE on `share_links`; the existing 0132 entry, not a new one). `createPaymentPlan`'s hollow insert.
   - **LM.** The merge's missing recompute; `mandates.ts`'s two unproven UPDATEs; `logConversation`'s unchecked deal touch; `syncInheritedField`'s title deed and the merge's KYC backfill, which recompute nothing; an errored input read still scores as not linked.
 - **Where things are (cleanup done, 2026-10-15).**
   - **Branches.** The remote `fix/one-time-secrets` and `fix/lm-health-recompute` are deleted (`git ls-remote` finds neither); the local branches are kept.
