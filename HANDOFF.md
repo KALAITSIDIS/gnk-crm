@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-08
 
-**2026-10-14, latest (pipeline drop + malformed ids, NOT LANDED): the first two entries of BACKLOG "External audit — 2026-10-14", built on the operator's "go with 1 and 2". The pipeline board settles every drop inside its transition, and only the roles `deals_update` admits can pick a card up. A malformed id is a 404, a dropped filter or a refusal in words, never the error page or Postgres' text. No migration, nothing on hosted. PR #162 (branch `fix/kanban-drop-and-ids`, rebased onto origin/main `c486856`, code head `e94c443`, its records commit on top); nothing is merged. DECISIONS `T-kanban-drop-settle + T-malformed-ids`.**
+**2026-10-14, latest (pipeline drop + malformed ids; LANDED 2026-10-15 — PR #162): the first two entries of BACKLOG "External audit — 2026-10-14", built on the operator's "go with 1 and 2". The pipeline board settles every drop inside its transition, and only the roles `deals_update` admits can pick a card up. A malformed id is a 404, a dropped filter or a refusal in words, never the error page or Postgres' text. No migration, nothing on hosted. LANDED 2026-10-15 on the operator's "merge #162 when CI is green": PR #162 merged 04:41:18Z pinned to `a9d317d` → main `b4f7e2f`, deployed. These landing records are branch `land/kanban-drop-and-ids` (not pushed at writing). DECISIONS `T-kanban-drop-settle + T-malformed-ids`.**
 - **What.**
   - **The board (`T-kanban-drop-settle`, `8e6d5aa`, review `5d6f3d0`).** The drop awaited `moveDealToStage` in a transition with no try/catch:
     - a rejected call reached `app/(app)/error.tsx`;
@@ -13,24 +13,47 @@
     - `/contacts?agent=` drops a malformed id, on the page and in the export.
     - 13 of the audit's 14 actions refuse one at entry, in their own shape; `renewMandate` is deferred.
     - `moveDealToStage` answers P0001 as written, "The deal was not moved." on a certain rollback, and an unconfirmed unknown otherwise. Once the RPC has answered without an error, a recompute throw is paged and the move is reported done.
-- **Verified (unit only, plus branch CI's e2e).**
+- **Verified (before landing; unit only, plus CI's e2e).**
   - RED first on the unchanged code, then GREEN. At records time the seven new or extended test files ran 94/94 on `e94c443`.
   - Mutants: the first pass killed 14 of 14 (the board) and 35 of 35 (the ids); the review round installed 56 distinct, 55 killed, 1 equivalent.
   - Unit: five full runs on the final tree, each 248 files / 3,872 tests (baseline 242 / 3,781). `typecheck` and `lint` exit 0, re-run at records time.
   - Review: four findings, all confirmed (one with a corrected mechanism), one commit each.
-  - Branch CI on `e94c443`: run 38633087263 green (checks, rls, e2e).
+  - Branch CI green (checks, rls, e2e): run 38633087263 on the code head `e94c443`, and run 38635595378 on the PR head `a9d317d` (two records commits on top).
   - NOT run: no local browser check (the machine had ~330 MB free); no DB test (application only); hosted not read.
   - The rebase onto `c486856` kept every commit's patch-id and code tree, so what was measured before it holds.
-- **Next (each on the operator's word).**
-  1. Push the records commit (not pushed at writing), and read branch CI green on the new head: checks, rls, e2e.
-  2. Open the PR and replace `#162` in DECISIONS, BACKLOG and HANDOFF.
-  3. Merge, pinned with `--match-head-commit`. Then verify the production deployment READY with no runtime errors, and read the merge CI.
-  4. Landing records: strike the two BACKLOG entries, with their VERIFYs re-run on the merge (each entry's note says which checks to read: two of the original three misread the branch), and mark the contacts-filter note landed. That entry stays open for `?temperature=` and `?source=`.
-- **Left open (BACKLOG).**
-  - `renewMandate`, deferred because the concurrent session `T-document-insert-outcome` holds `mandates.ts`, and 16 more actions that take an unchecked id: the new entry "More server actions take a raw id string unchecked". FormData ids are checked only with `typeof`.
+- **Landed (2026-10-15, on the operator's "merge #162 when CI is green"; DECISIONS has each step).**
+  - **Merge.** PR #162 merged 04:41:18Z, pinned with `--match-head-commit a9d317d2d42e8967cb8b4bd20459c003f039af01`; main moved `c486856` → `b4f7e2f` and had not moved before the merge. The merge's tree is the head's tree.
+  - **Production.** Vercel `dpl_3KNSCK9fDaHdhnPNzP6PhQevVmQD` READY 04:42:27Z, aliased to gnk-crm.vercel.app; `get_runtime_errors` since 04:40Z: none.
+  - **Signed out on production:** `/login` 200; `/pipeline`, `/properties/not-a-uuid` and `/contacts` 307 → `/login`. The new 404 sits behind sign-in, so it was not seen there; nor was the board.
+  - **Merge CI** on `b4f7e2f`: run 38682773020 green — checks, rls and e2e each `success` (e2e last, 04:53:48Z), read after the run completed.
+  - **BACKLOG, struck:** "The pipeline board's drop does not survive a lost request …" and "Malformed ids from URLs and action arguments reach queries unchecked …", each VERIFY re-run on origin/main `b4f7e2f` (the malformed-ids strike says which two original checks misread the fix). The malformed-ids entry is struck whole: its one unfixed action, `renewMandate`, is carried by "More server actions take a raw id string unchecked", which stays open. The `?agent=` note under "A hand-typed contacts filter value crashes the page" now says landed; that entry stays open.
+  - **Rollback:** revert the merge (application only).
+  - **These records:** `npm run typecheck` and `npm run lint` exit 0 on their tree (`b4f7e2f` plus these three files).
+- **What next.**
+  - **The operator's two open decisions** (unchanged by this landing).
+    - The listing-manager recompute: a listing manager's (or a non-owner agent's) legal save fans out a deal-health recompute that RLS refuses, so a stored score depends on who saved. Recompute as the system, use a definer RPC, or accept it and say so (BACKLOG "From `T-deal-health-race`").
+    - `SENTRY_AUTH_TOKEN` on Vercel project gnk-crm is stored as readable (encrypted), not sensitive, and flagged `readable-secret` (measured 2026-10-14; value not read). Re-create it as sensitive?
+  - **The concurrent session's merge-time item.** `T-document-insert-outcome` (`.worktrees/gnk-crm/document-insert-outcome`, branch `fix/document-insert-outcome`) is still uncommitted (HEAD `489c507`, read 2026-10-15). When it lands, each `documentNotConfirmed` answer must carry `unconfirmed: true` (BACKLOG, merge-time); #158's client half is on main. Its four files (`mandates.ts`, `contact-documents.ts`, `property-documents.ts`, `viewing-documents.ts`) also hold four of the unchecked-id actions, which wait for it.
+  - **Reads waiting on traffic** (after #157, #158): as in the block below.
+  - **Then pick from BACKLOG "External audit — 2026-10-14":**
+    - "More server actions take a raw id string unchecked" (`renewMandate` and 16 more; FormData ids by hand), and `?temperature=` / `?source=` on contacts ("Search and filter URLs — 2026-10-12");
+    - document direct-to-storage (after `T-document-insert-outcome`), the verify form's i18n, the refused-upload e2e;
+    - the operator scripts' knock and `moveMedia`'s half-swap;
+    - the five strict `.uuid()` sites;
+    - the contact merge's missing health recompute; a document upload storing as the service role before RLS decides;
+    - the mandates base-table commission arm (decide) and `mandates_safe` not `security_barrier`;
+    - gnk-web's `crypto.randomUUID()`; the enquiries route comment;
+    - composite keys for `area_id` / `district_id` / `stage_id`.
+
+    Or from "Throws after a commit — 2026-10-13".
+- **Left open by this change (BACKLOG).**
+  - `renewMandate`, deferred because the concurrent session holds `mandates.ts`, and 16 more actions that take an unchecked id: "More server actions take a raw id string unchecked". FormData ids are checked only with `typeof`.
   - `?temperature=` and `?source=` on contacts still 22P02.
   - `/properties/new?similar=<non-uuid>` still sends one query; nobody sees an effect.
   - The commission-evidence page's own guid regex and `export-audit`'s `vet.uuid` are left as they are.
+- **Where things are (cleanup done, 2026-10-15).**
+  - **Branches.** The remote `fix/kanban-drop-and-ids` is deleted; the local branch is kept.
+  - **Worktrees.** `.worktrees/gnk-crm/kanban-and-ids` is removed. This records worktree, `.worktrees/gnk-crm/land-kanban` (branch `land/kanban-drop-and-ids`, from `b4f7e2f`), stays until its records merge.
 
 **2026-10-14 (external audit verified; five changes LANDED — hosted 0146 + 0147, PRs #160, #157, #159, #158): the external architectural audit the operator pasted (7 items) was verified item by item before anything changed — three DISAGREE / ALREADY RESOLVED, four AGREE WITH MODIFICATIONS — and the real gaps beside it became five changes: `T-share-link-tenant` (0146) and `T-rls-hoist-rest` (0147) on PR #160, `T-deal-health-race` (#157), `T-upload-size-honest` (#158), `T-site-knock-order` (#159). LANDED 2026-10-14 on the operator's "land it": hosted 0146 (≈18:16Z) and 0147 (≈18:20Z) first, then #160 → main `4735777`, #157 → `f074e7f`, #159 → `8ecb772`, #158 → `3fe15d2`, each deployed. These records are PR #161. DECISIONS `T-external-audit-2026-10-14` and the five entries after it.**
 - **What.**

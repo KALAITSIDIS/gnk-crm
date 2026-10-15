@@ -10228,7 +10228,7 @@ Item 7b of `T-external-audit-2026-10-14`: the staleness that was real (the webho
 - The remote `fix/site-knock-order` is deleted (the local branch is kept), and its worktree is removed.
 - **Rollback.** Revert the merge (application only).
 
-## T-kanban-drop-settle + T-malformed-ids — the pipeline board settles every drop inside its transition, and only the roles `deals_update` admits can pick a card up; a malformed id is a 404, a dropped filter or a refusal in words, never the error page or Postgres' text (2026-10-14; no migration; NOT LANDED — PR #162 (branch `fix/kanban-drop-and-ids`, code head `e94c443`, its records commit on top); landing on the operator's word)
+## T-kanban-drop-settle + T-malformed-ids — the pipeline board settles every drop inside its transition, and only the roles `deals_update` admits can pick a card up; a malformed id is a 404, a dropped filter or a refusal in words, never the error page or Postgres' text (2026-10-14; no migration; LANDED 2026-10-15 — PR #162, main `b4f7e2f`, deployed)
 
 The residuals of items 5 and 4 of `T-external-audit-2026-10-14` (the first two entries of BACKLOG "External audit — 2026-10-14"), built on the operator's "go with 1 and 2". Application only: no migration, nothing on hosted, no RLS change.
 - **Commits.** `8e6d5aa` (T-kanban-drop-settle) and `06432f3` (T-malformed-ids); review round `8118cbe`, `78336cd`, `5d6f3d0`, `e94c443`.
@@ -10368,4 +10368,15 @@ The residuals of items 5 and 4 of `T-external-audit-2026-10-14` (the first two e
 - `/properties/new?similar=<non-uuid>` still sends one query. Its error is ignored and the form comes up blank, as for an unknown id, so nobody sees an effect.
 - `reports/commission-evidence/page.tsx:14` keeps its own guid regex (equivalent to `z.guid()`), and `lib/services/export-audit.ts:46` keeps `vet.uuid`. Both are left as they are.
 
-**Status.** NOT LANDED — PR #162 (branch `fix/kanban-drop-and-ids`, code head `e94c443`, its records commit on top); landing on the operator's word. BACKLOG keeps both entries OPEN, each with a dated NOT LANDED parenthetical; they are struck in the landing update, not before.
+**Landing (2026-10-15, on the operator's "merge #162 when CI is green").**
+- **Branch CI** green on the head `a9d317d` (two records commits, `6070be3` and `a9d317d`, on top of the code head `e94c443`): run 38635595378 (checks, rls, e2e). Run 38633087263 on `e94c443` was green before it.
+- **Merge.** PR [#162](https://github.com/KALAITSIDIS/gnk-crm/pull/162) merged at 04:41:18Z, pinned with `--match-head-commit` to `a9d317d`, giving main `b4f7e2f` over `c486856` (#161). Main had not moved since the rebase: `c486856` is an ancestor of the head, and the merge's tree is the head's tree (`77b35e2a…` for both).
+- **Production.** Vercel `dpl_3KNSCK9fDaHdhnPNzP6PhQevVmQD` READY 04:42:27Z, aliased to gnk-crm.vercel.app; `get_runtime_errors` since 04:40Z: none. Signed out, `/login` answers 200, and `/pipeline`, `/properties/not-a-uuid` and `/contacts` answer 307 to `/login`. The new 404 sits behind sign-in, so it was not seen on production; nor were the board's drop or its read-only line.
+- **Merge CI** on `b4f7e2f`: run 38682773020 green, read after it completed (04:53:48Z) — checks `success` (04:44:04Z), rls `success` (04:49:34Z), e2e `success` (04:53:48Z).
+- **BACKLOG, struck on landing:**
+  - "The pipeline board's drop does not survive a lost request, and does not refresh after a refusal";
+  - "Malformed ids from URLs and action arguments reach queries unchecked …", struck whole: the one action of the audit's 14 not fixed, `renewMandate`, is carried by "More server actions take a raw id string unchecked", which stays open with its own VERIFY.
+
+  Each VERIFY was re-run on origin/main `b4f7e2f` and is quoted there; two of the malformed-ids entry's three original checks misread the fix, and the strike says which to read instead. The `?agent=` note under "A hand-typed contacts filter value crashes the page" now says landed; that entry stays open for `?temperature=` and `?source=`.
+- The remote `fix/kanban-drop-and-ids` is deleted (the local branch is kept), and its worktree `.worktrees/gnk-crm/kanban-and-ids` is removed.
+- **Rollback.** Revert the merge (application only: no migration, nothing on hosted).
