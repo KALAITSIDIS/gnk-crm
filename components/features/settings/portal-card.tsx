@@ -69,6 +69,76 @@ function listOr(items: readonly string[]): string {
   return `${items.slice(0, -1).join(", ")} or ${items[items.length - 1]}`;
 }
 
+/**
+ * The feed URL an action just minted, shown once. Exported so its markup can
+ * be rendered in a test (tests/unit/one-time-secret-notices.test.ts).
+ *
+ * `notice` is the action's "saved, but …" (T-one-time-secrets): the URL is
+ * live and this is its only copy, but the enable's or the rotation's timeline
+ * line could not be written or confirmed. It sits under the URL it is about;
+ * the card also toasts it.
+ */
+export function IssuedFeedUrl({
+  portalId,
+  url,
+  notice,
+  rotating,
+  onRegenerate,
+}: {
+  portalId: string;
+  url: string;
+  notice: string | null;
+  rotating: boolean;
+  onRegenerate: () => void;
+}) {
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          id={`feed-url-${portalId}`}
+          data-testid={`portal-feed-url-${portalId}`}
+          readOnly
+          value={url}
+          className="h-9 min-w-0 flex-1 font-mono text-xs"
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          // While a rotation is in flight the field still shows the OLD
+          // token; copying it would hand the portal a URL that is about
+          // to stop answering.
+          disabled={rotating}
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(url);
+              toast.success("Feed URL copied");
+            } catch {
+              toast.error("Could not copy — select the field and copy it by hand");
+            }
+          }}
+        >
+          <Copy className="size-4" />
+          Copy
+        </Button>
+        <Button type="button" variant="secondary" size="sm" disabled={rotating} onClick={onRegenerate}>
+          <RefreshCw className="size-4" />
+          Regenerate
+        </Button>
+      </div>
+      {notice ? (
+        <p role="status" className="text-sm text-warning" data-testid={`portal-feed-url-notice-${portalId}`}>
+          {notice}
+        </p>
+      ) : null}
+      <p className="text-xs text-warning" data-testid={`portal-feed-url-once-${portalId}`}>
+        Copy it now — it is shown once. The CRM keeps only a fingerprint of it; leave this
+        page and the URL is gone until you regenerate.
+      </p>
+    </>
+  );
+}
+
 export function PortalCard({
   portal,
   connection,
@@ -94,10 +164,12 @@ export function PortalCard({
   const [rotating, startRotate] = useTransition();
 
   const origin = useSyncExternalStore(subscribeToNothing, readOrigin, noOrigin);
-  // The token this card was handed by the action that minted it, if any. Set
-  // only after a client action, so the origin is always known by then.
-  const [issued, setIssued] = useState<string | null>(null);
-  const issuedUrl = issued ? `${origin}/api/portals/${portal.id}/${issued}` : "";
+  // The token this card was handed by the action that minted it, if any, with
+  // that action's notice when its timeline line could not be written or
+  // confirmed (T-one-time-secrets). Set only after a client action, so the
+  // origin is always known by then.
+  const [issued, setIssued] = useState<{ token: string; notice: string | null } | null>(null);
+  const issuedUrl = issued ? `${origin}/api/portals/${portal.id}/${issued.token}` : "";
 
   // `setPortalEnabled` refuses an enable while a required setting is blank.
   // Saying so here — and declining to send the click — is what makes the
@@ -125,12 +197,17 @@ export function PortalCard({
   const toggle = () => {
     startToggle(async () => {
       const r = await setPortalEnabled(portal.id, !enabled);
-      if (r.error) toast.error(r.error);
-      else if (enabled) toast.success(`${portal.name} disabled — its feed now empties`);
+      if (r.error) {
+        toast.error(r.error);
+        return;
+      }
+      if (enabled) toast.success(`${portal.name} disabled — its feed now empties`);
       else if (r.token) {
-        setIssued(r.token);
+        setIssued({ token: r.token, notice: r.notice ?? null });
         toast.success(`${portal.name} enabled — copy the feed URL now, it is shown once`);
       } else toast.success(`${portal.name} enabled`);
+      // the switch took, but its timeline line could not be written or confirmed
+      if (r.notice) toast.warning(r.notice);
     });
   };
 
@@ -144,11 +221,13 @@ export function PortalCard({
     }
     startRotate(async () => {
       const r = await regeneratePortalToken(portal.id);
-      if (r.error) toast.error(r.error);
-      else {
-        if (r.token) setIssued(r.token);
-        toast.success("New feed URL minted — copy it now and give it to the portal; it is shown once");
+      if (r.error) {
+        toast.error(r.error);
+        return;
       }
+      if (r.token) setIssued({ token: r.token, notice: r.notice ?? null });
+      toast.success("New feed URL minted — copy it now and give it to the portal; it is shown once");
+      if (r.notice) toast.warning(r.notice);
     });
   };
 
@@ -207,51 +286,13 @@ export function PortalCard({
         <div className="mt-4 flex flex-col gap-1.5">
           <Label htmlFor={`feed-url-${portal.id}`}>Feed URL</Label>
           {issued ? (
-            <>
-              <div className="flex flex-wrap items-center gap-2">
-                <Input
-                  id={`feed-url-${portal.id}`}
-                  data-testid={`portal-feed-url-${portal.id}`}
-                  readOnly
-                  value={issuedUrl}
-                  className="h-9 min-w-0 flex-1 font-mono text-xs"
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  // While a rotation is in flight the field still shows the OLD
-                  // token; copying it would hand the portal a URL that is about
-                  // to stop answering.
-                  disabled={rotating}
-                  onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(issuedUrl);
-                      toast.success("Feed URL copied");
-                    } catch {
-                      toast.error("Could not copy — select the field and copy it by hand");
-                    }
-                  }}
-                >
-                  <Copy className="size-4" />
-                  Copy
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  disabled={rotating}
-                  onClick={regenerate}
-                >
-                  <RefreshCw className="size-4" />
-                  Regenerate
-                </Button>
-              </div>
-              <p className="text-xs text-warning" data-testid={`portal-feed-url-once-${portal.id}`}>
-                Copy it now — it is shown once. The CRM keeps only a fingerprint of it; leave this
-                page and the URL is gone until you regenerate.
-              </p>
-            </>
+            <IssuedFeedUrl
+              portalId={portal.id}
+              url={issuedUrl}
+              notice={issued.notice}
+              rotating={rotating}
+              onRegenerate={regenerate}
+            />
           ) : (
             <div className="flex flex-wrap items-center gap-2">
               <p

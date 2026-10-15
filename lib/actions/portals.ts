@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getCurrentProfile, type CurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
+import { eventNotice, eventRefused } from "@/lib/services/one-time-secrets";
 import { DIALECT_RENDERERS } from "@/lib/services/portals/dialects";
 import { portalById } from "@/lib/services/portals/registry";
 import { hashPortalToken, mintPortalToken } from "@/lib/services/portals/token";
@@ -33,10 +34,21 @@ export type PortalActionState = {
   savedAt: number | null;
   /** The plaintext feed token, present only on the call that minted it. Shown once. */
   token?: string | null;
+  /**
+   * The connection's write committed but its timeline line could not be
+   * written or confirmed (T-one-time-secrets). The card shows it beside the
+   * feed URL and toasts it; the token, if any, is still shown.
+   */
+  notice?: string | null;
 };
 
-const ok = (): PortalActionState => ({ error: null, savedAt: Date.now() });
-const okWithToken = (token: string): PortalActionState => ({ error: null, savedAt: Date.now(), token });
+const ok = (notice: string | null = null): PortalActionState => ({ error: null, savedAt: Date.now(), notice });
+const okWithToken = (token: string, notice: string | null = null): PortalActionState => ({
+  error: null,
+  savedAt: Date.now(),
+  token,
+  notice,
+});
 const fail = (error: string): PortalActionState => ({ error, savedAt: null });
 
 const PORTAL_SETTINGS_PATH = "/settings/portals";
@@ -53,6 +65,30 @@ async function requireAdmin(): Promise<Session | { denied: string }> {
   const s = await session();
   if (s.profile.role !== "admin") return { denied: "Admins only." };
   return s;
+}
+
+/**
+ * A connection's timeline line, written AFTER its write committed. A failure
+ * is reported, never thrown (T-one-time-secrets): the write may have minted a
+ * feed URL that exists only in this action's return value, so an error page
+ * would lose it — and the URL is never revoked over its line. Null when the
+ * line was written; otherwise the notice that says it could not be recorded
+ * (refused) or confirmed (unknown).
+ */
+async function recordConnection(
+  supabase: Session["supabase"],
+  params: Parameters<typeof logEvent>[1],
+): Promise<string | null> {
+  try {
+    await logEvent(supabase, params);
+    return null;
+  } catch (err) {
+    console.error("[portals] connection saved, its timeline line not written", {
+      eventType: params.eventType,
+      refused: eventRefused(err),
+    });
+    return eventNotice(err);
+  }
 }
 
 /** `settings` is jsonb, so anything could be in the column; only an object has keys. */
@@ -124,7 +160,8 @@ export async function setPortalEnabled(
   if (error) return fail(error.message);
   if (!written?.length) return fail("Nothing changed — your role may not manage portals.");
 
-  await logEvent(supabase, {
+  // committed: a first enable's URL now exists only in `token`
+  const notice = await recordConnection(supabase, {
     orgId: profile.orgId,
     actorId: profile.id,
     entityType: "organization",
@@ -133,7 +170,7 @@ export async function setPortalEnabled(
     payload: { portal: id.data },
   });
   revalidatePath(PORTAL_SETTINGS_PATH);
-  return token ? okWithToken(token) : ok();
+  return token ? okWithToken(token, notice) : ok(notice);
 }
 
 export async function savePortalSettings(
@@ -205,7 +242,8 @@ export async function regeneratePortalToken(portalId: string): Promise<PortalAct
   if (error) return fail(error.message);
   if (!written?.length) return fail("No connection to rotate — enable the portal first.");
 
-  await logEvent(supabase, {
+  // committed: the old URL is dead, and the only live one is `token`
+  const notice = await recordConnection(supabase, {
     orgId: profile.orgId,
     actorId: profile.id,
     entityType: "organization",
@@ -214,7 +252,7 @@ export async function regeneratePortalToken(portalId: string): Promise<PortalAct
     payload: { portal: id.data },
   });
   revalidatePath(PORTAL_SETTINGS_PATH);
-  return okWithToken(token);
+  return okWithToken(token, notice);
 }
 
 /* ---------------- the selection (property page, whoever may edit it) ---------------- */

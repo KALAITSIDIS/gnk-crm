@@ -297,7 +297,7 @@ describe("createShareLink and createAvailabilityLink re-read the link's contact"
   it("a proposal: refuses a contact the caller cannot see, and mints nothing", async () => {
     const fake = use({ properties: [{ data: [{ id: PROPERTY }], error: null }], contacts: [unseen] });
     const res = await createShareLink({ property_ids: [PROPERTY], contact_id: CONTACT });
-    expect(res).toEqual({ error: UNAVAILABLE, path: null, savedAt: null });
+    expect(res).toEqual({ error: UNAVAILABLE, path: null, savedAt: null, notice: null });
     expect(fake.argsOf("contacts", "eq")).toEqual([["id", CONTACT]]);
     expect(fake.argsOf("share_links", "insert")).toHaveLength(0);
   });
@@ -308,7 +308,7 @@ describe("createShareLink and createAvailabilityLink re-read the link's contact"
       contacts: [unseen],
     });
     const res = await createAvailabilityLink({ project_id: PROPERTY, contact_id: CONTACT });
-    expect(res).toEqual({ error: UNAVAILABLE, path: null, savedAt: null });
+    expect(res).toEqual({ error: UNAVAILABLE, path: null, savedAt: null, notice: null });
     expect(fake.argsOf("contacts", "eq")).toEqual([["id", CONTACT]]);
     expect(fake.argsOf("share_links", "insert")).toHaveLength(0);
   });
@@ -316,7 +316,7 @@ describe("createShareLink and createAvailabilityLink re-read the link's contact"
   it("a failed contact read is reported as a failure, and nothing is minted", async () => {
     const fake = use({ properties: [{ data: [{ id: PROPERTY }], error: null }], contacts: [failed] });
     const res = await createShareLink({ property_ids: [PROPERTY], contact_id: CONTACT });
-    expect(res).toEqual({ error: CHECK_FAILED, path: null, savedAt: null });
+    expect(res).toEqual({ error: CHECK_FAILED, path: null, savedAt: null, notice: null });
     expect(fake.argsOf("share_links", "insert")).toHaveLength(0);
   });
 
