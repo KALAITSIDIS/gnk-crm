@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-08
 
-**2026-10-14, latest (pipeline drop + malformed ids; LANDED 2026-10-15 — PR #162): the first two entries of BACKLOG "External audit — 2026-10-14", built on the operator's "go with 1 and 2". The pipeline board settles every drop inside its transition, and only the roles `deals_update` admits can pick a card up. A malformed id is a 404, a dropped filter or a refusal in words, never the error page or Postgres' text. No migration, nothing on hosted. LANDED 2026-10-15 on the operator's "merge #162 when CI is green": PR #162 merged 04:41:18Z pinned to `a9d317d` → main `b4f7e2f`, deployed. These landing records are branch `land/kanban-drop-and-ids` (not pushed at writing). DECISIONS `T-kanban-drop-settle + T-malformed-ids`.**
+**2026-10-14, latest (pipeline drop + malformed ids; LANDED 2026-10-15 — PR #162): the first two entries of BACKLOG "External audit — 2026-10-14", built on the operator's "go with 1 and 2". The pipeline board settles every drop inside its transition, and only the roles `deals_update` admits can pick a card up. A malformed id is a 404, a dropped filter or a refusal in words, never the error page or Postgres' text. No migration, nothing on hosted. LANDED 2026-10-15 on the operator's "merge #162 when CI is green": PR #162 merged 04:41:18Z pinned to `a9d317d` → main `b4f7e2f`, deployed. These landing records are PR #163 (branch `land/kanban-drop-and-ids`). DECISIONS `T-kanban-drop-settle + T-malformed-ids`.**
 - **What.**
   - **The board (`T-kanban-drop-settle`, `8e6d5aa`, review `5d6f3d0`).** The drop awaited `moveDealToStage` in a transition with no try/catch:
     - a rejected call reached `app/(app)/error.tsx`;
@@ -30,7 +30,7 @@
   - **Rollback:** revert the merge (application only).
   - **These records:** `npm run typecheck` and `npm run lint` exit 0 on their tree (`b4f7e2f` plus these three files).
 - **What next.**
-  - **These records.** Push `land/kanban-drop-and-ids`, open the records PR and, in the top block, replace "These landing records are branch `land/kanban-drop-and-ids` (not pushed at writing)" with "These records are PR #<n>"; read its CI, merge it, then remove the `.worktrees/gnk-crm/land-kanban` worktree.
+  - **These records.** PR #163: read its CI, merge it, then remove the `.worktrees/gnk-crm/land-kanban` worktree and the remote branch.
   - **The operator's two open decisions** (unchanged by this landing).
     - The listing-manager recompute: a listing manager's (or a non-owner agent's) legal save fans out a deal-health recompute that RLS refuses, so a stored score depends on who saved. Recompute as the system, use a definer RPC, or accept it and say so (BACKLOG "From `T-deal-health-race`").
     - `SENTRY_AUTH_TOKEN` on Vercel project gnk-crm is stored as readable (encrypted), not sensitive, and flagged `readable-secret` (measured 2026-10-14; value not read). Re-create it as sensitive?
