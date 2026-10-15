@@ -18,6 +18,7 @@ const initialState: SettingsActionState = {
   savedAt: null,
   tempPassword: null,
   invitedEmail: null,
+  notice: null,
 };
 
 function useSavedToast(state: SettingsActionState, message: string) {

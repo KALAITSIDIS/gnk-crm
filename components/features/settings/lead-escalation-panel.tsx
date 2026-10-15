@@ -61,6 +61,7 @@ const initialState: SettingsActionState = {
   savedAt: null,
   tempPassword: null,
   invitedEmail: null,
+  notice: null,
 };
 
 export function LeadEscalationPanel({ value, members }: { value: LeadEscalationConfig; members: RoutableMember[] }) {

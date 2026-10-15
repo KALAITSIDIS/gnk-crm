@@ -11,8 +11,18 @@ import {
 import { getCurrentProfile, type CurrentProfile } from "@/lib/services/auth";
 import { BRANDING_MAX_BYTES } from "@/lib/constants/upload";
 import { logEvent } from "@/lib/services/events";
+import {
+  INVITE_UNDONE,
+  accountMayRemain,
+  eventNotice,
+  eventRefused,
+  joinNotices,
+  profileUnconfirmedNotice,
+} from "@/lib/services/one-time-secrets";
+import { certainlyRolledBack } from "@/lib/services/rpc-outcome";
 import { EVERY_LISTING, notifySiteAfter } from "@/lib/services/site-revalidate";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { rowsOf } from "@/lib/supabase/rows";
 import { createClient } from "@/lib/supabase/server";
 import {
   DEAL_TYPES,
@@ -48,6 +58,13 @@ export type SettingsActionState = {
   tempPassword: string | null;
   /** invite only: shown next to the password so the admin hands over both */
   invitedEmail: string | null;
+  /**
+   * invite only: the account exists and its password is shown, but a step
+   * after it was not confirmed — its profile, its `invited` line
+   * (T-one-time-secrets). InviteFlow renders it beside the password, because
+   * `error` renders only in the form branch.
+   */
+  notice: string | null;
 };
 
 const ok = (): SettingsActionState => ({
@@ -55,12 +72,14 @@ const ok = (): SettingsActionState => ({
   savedAt: Date.now(),
   tempPassword: null,
   invitedEmail: null,
+  notice: null,
 });
 const fail = (error: string): SettingsActionState => ({
   error,
   savedAt: null,
   tempPassword: null,
   invitedEmail: null,
+  notice: null,
 });
 
 async function requireAdmin(): Promise<
@@ -186,28 +205,79 @@ export async function inviteUser(
   if (created.error) return fail(created.error.message);
   const userId = created.data.user.id;
 
-  const { error: profErr } = await supabase.from("profiles").insert({
+  // ---- committed: the account exists, and its password is in this function
+  // alone (T-one-time-secrets). A later failure must not lose it: an error
+  // page shows nothing, and the retry is refused as "already registered". So
+  // from here the password is shown, with a notice for whatever could not be
+  // confirmed — unless a step was CERTAINLY refused (`certainlyRolledBack`,
+  // T-refusal-allowlist), when the account is removed and the invitation
+  // refused, so the retry starts clean. Never removed on an unknown outcome.
+  const notices: string[] = [];
+
+  const prof = await supabase.from("profiles").insert({
     id: userId,
     org_id: profile.orgId,
     role: d.role,
     full_name: d.full_name,
     email: d.email,
   });
-  if (profErr) {
-    await admin.auth.admin.deleteUser(userId); // don't leave an orphan login
-    return fail(profErr.message);
+  if (prof.error && certainlyRolledBack(prof.error.code)) {
+    // no profile was written: the account is an orphan login — remove it
+    if (await removeAccount(admin, userId)) return fail(prof.error.message);
+    return fail(`${prof.error.message} ${accountMayRemain(d.email)}`);
+  }
+  // Anything else — a code that can follow a commit, no code, an answer that
+  // is not 201 Created (an insert's only success, T-log-event-hollow) — may
+  // have written the profile, or may yet. Read it back as the system.
+  if ((prof.error || prof.status !== 201) && (await profileWritten(admin, userId)) !== true) {
+    notices.push(profileUnconfirmedNotice(d.email));
   }
 
-  await logEvent(supabase, {
-    orgId: profile.orgId,
-    actorId: profile.id,
-    entityType: "user",
-    entityId: userId,
-    eventType: "invited",
-    payload: { email: d.email, role: d.role },
-  });
+  try {
+    await logEvent(supabase, {
+      orgId: profile.orgId,
+      actorId: profile.id,
+      entityType: "user",
+      entityId: userId,
+      eventType: "invited",
+      payload: { email: d.email, role: d.role },
+    });
+  } catch (err) {
+    // shape only: a database's words can echo the row, and this row is an e-mail
+    console.error("[inviteUser] account created, its invited line not written", { refused: eventRefused(err) });
+    // Certainly not written: undo, so no account exists without its line.
+    // Unknown: the line may name this user — keep the account.
+    if (eventRefused(err) && (await removeAccount(admin, userId))) return fail(INVITE_UNDONE);
+    notices.push(eventNotice(err));
+  }
   revalidatePath("/settings/users");
-  return { error: null, savedAt: Date.now(), tempPassword, invitedEmail: d.email };
+  return { error: null, savedAt: Date.now(), tempPassword, invitedEmail: d.email, notice: joinNotices(notices) };
+}
+
+/**
+ * Delete an account `inviteUser` just created. True only when GoTrue
+ * confirmed it; an error or a throw leaves the account where it may be.
+ * `profiles_id_fkey` cascades, so a profile that did land goes with it, and
+ * one still in flight can no longer land.
+ */
+async function removeAccount(admin: ReturnType<typeof createAdminClient>, userId: string): Promise<boolean> {
+  try {
+    const { error } = await admin.auth.admin.deleteUser(userId);
+    if (!error) return true;
+  } catch {
+    // not confirmed — below
+  }
+  console.error("[inviteUser] the new account could not be removed", { userId });
+  return false;
+}
+
+/** Is the new account's profile there? Read as the system; null when the read did not answer. */
+async function profileWritten(admin: ReturnType<typeof createAdminClient>, userId: string): Promise<boolean | null> {
+  try {
+    return rowsOf(await admin.from("profiles").select("id").eq("id", userId), "profile read-back").length > 0;
+  } catch {
+    return null;
+  }
 }
 
 export async function setUserRole(

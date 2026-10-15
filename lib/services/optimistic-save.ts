@@ -52,3 +52,15 @@ export function staleMessage(
  */
 export const NOT_RECORDED_NOTICE =
   "Saved — but the change could not be recorded in the timeline. Tell an admin so the record can be completed.";
+
+/**
+ * NOT_RECORDED_NOTICE's twin for an event write whose outcome is UNKNOWN: a
+ * hollow answer, a gateway's words, a code that can follow a commit, a
+ * request that never came back. Such a line may be written, or be written
+ * yet (PostgREST finishes a request whose client has gone), so the notice
+ * says it could not be CONFIRMED, not that it is missing (BACKLOG "Throws
+ * after a commit — 2026-10-13", the NOTE on a failed logEvent). The refused
+ * case — `EventWriteError.refused` — keeps NOT_RECORDED_NOTICE.
+ */
+export const NOT_CONFIRMED_NOTICE =
+  "Saved — but its timeline entry could not be confirmed, so the record may be missing. Tell an admin so the record can be checked.";

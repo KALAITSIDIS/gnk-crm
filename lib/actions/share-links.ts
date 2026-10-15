@@ -5,6 +5,13 @@ import { z } from "zod";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
 import {
+  LINK_CONTENT_UNCONFIRMED_NOTICE,
+  eventNotice,
+  eventRefused,
+  joinNotices,
+} from "@/lib/services/one-time-secrets";
+import { certainlyRolledBack } from "@/lib/services/rpc-outcome";
+import {
   AVAILABILITY_EXPIRY_DAYS,
   DEFAULT_EXPIRY_DAYS,
   MAX_EXPIRY_DAYS,
@@ -13,6 +20,7 @@ import {
   shareLinkPath,
 } from "@/lib/services/share-links";
 import { generateShareToken, hashShareToken } from "@/lib/services/share-links-token";
+import { rowsOf } from "@/lib/supabase/rows";
 import { createClient } from "@/lib/supabase/server";
 import { contactLinkError } from "@/lib/services/contact-reread";
 
@@ -21,7 +29,68 @@ export type ShareLinkActionState = {
   /** The token is returned ONCE and never again — only its hash is stored. */
   path: string | null;
   savedAt: number | null;
+  /**
+   * The link exists and `path` carries it, but a step after it was not
+   * confirmed — its curation, its `created` line (T-one-time-secrets). Shown
+   * beside the link and toasted; never a reason to withhold the link.
+   */
+  notice: string | null;
 };
+
+const refuse = (error: string): ShareLinkActionState => ({ error, path: null, savedAt: null, notice: null });
+
+type Client = Awaited<ReturnType<typeof createClient>>;
+
+/**
+ * A link's curation — the rows that say what it shows — inserted AFTER the
+ * link committed, whose token now exists only in the calling action.
+ *
+ * Only a certain refusal (`certainlyRolledBack`, T-refusal-allowlist) says no
+ * row was written. Anything else — a code that can follow a commit, no code,
+ * an answer that is not 201 Created (an insert's only success,
+ * T-log-event-hollow) — may have written them, or may yet, so they are read
+ * back by the link's id: `confirmed` is false when they are not all there or
+ * the read did not answer, and the link is handed back with a notice rather
+ * than lost (T-one-time-secrets).
+ */
+async function curate(
+  supabase: Client,
+  linkId: string,
+  rows: { property_id: string; sort_order: number }[],
+): Promise<{ refused: string } | { confirmed: boolean }> {
+  const res = await supabase
+    .from("share_link_properties")
+    .insert(rows.map((row) => ({ share_link_id: linkId, ...row })));
+  if (res.error && certainlyRolledBack(res.error.code)) return { refused: res.error.message };
+  if (!res.error && res.status === 201) return { confirmed: true };
+  try {
+    const found = rowsOf(
+      await supabase.from("share_link_properties").select("property_id").eq("share_link_id", linkId),
+      "curation read-back",
+    );
+    return { confirmed: found.length === rows.length };
+  } catch {
+    return { confirmed: false };
+  }
+}
+
+/**
+ * A link's `created` line, written after the link committed. A failure is
+ * reported, never thrown: the token exists only in the action's return value,
+ * so an error page would lose it and a resubmit would mint a second link. The
+ * link is never revoked over its line (T-one-time-secrets). Null when the
+ * line was written; otherwise the notice that says it could not be recorded
+ * (refused) or confirmed (unknown).
+ */
+async function recordLink(supabase: Client, params: Parameters<typeof logEvent>[1]): Promise<string | null> {
+  try {
+    await logEvent(supabase, params);
+    return null;
+  } catch (err) {
+    console.error("[share-links] link created, its created line not written", { refused: eventRefused(err) });
+    return eventNotice(err);
+  }
+}
 
 const createSchema = z.object({
   property_ids: z
@@ -47,13 +116,7 @@ export async function createShareLink(
   input: CreateShareLinkInput,
 ): Promise<ShareLinkActionState> {
   const parsed = createSchema.safeParse(input);
-  if (!parsed.success) {
-    return {
-      error: parsed.error.issues[0]?.message ?? "Invalid input",
-      path: null,
-      savedAt: null,
-    };
-  }
+  if (!parsed.success) return refuse(parsed.error.issues[0]?.message ?? "Invalid input");
   const d = parsed.data;
 
   const supabase = await createClient();
@@ -66,17 +129,13 @@ export async function createShareLink(
     .from("properties")
     .select("id")
     .in("id", d.property_ids);
-  if (visibleErr) return { error: visibleErr.message, path: null, savedAt: null };
+  if (visibleErr) return refuse(visibleErr.message);
   if ((visible ?? []).length !== d.property_ids.length) {
-    return {
-      error: "Some of those properties are no longer available to you.",
-      path: null,
-      savedAt: null,
-    };
+    return refuse("Some of those properties are no longer available to you.");
   }
   // the recipient, read the same way (0139 binds the link to the organisation)
   const contactErr = await contactLinkError(supabase, [d.contact_id]);
-  if (contactErr) return { error: contactErr, path: null, savedAt: null };
+  if (contactErr) return refuse(contactErr);
 
   const token = generateShareToken();
 
@@ -95,22 +154,23 @@ export async function createShareLink(
     })
     .select("id")
     .single();
-  if (error) return { error: error.message, path: null, savedAt: null };
+  if (error) return refuse(error.message);
 
-  const { error: propsErr } = await supabase.from("share_link_properties").insert(
-    d.property_ids.map((property_id, i) => ({
-      share_link_id: link.id,
-      property_id,
-      sort_order: i,
-    })),
+  // ---- committed: the link exists, and its token is in this function alone ----
+  const notices: string[] = [];
+  const curation = await curate(
+    supabase,
+    link.id,
+    d.property_ids.map((property_id, i) => ({ property_id, sort_order: i })),
   );
-  if (propsErr) {
+  if ("refused" in curation) {
     // A proposal with no properties is not a proposal — don't leave the husk.
     await supabase.from("share_links").delete().eq("id", link.id);
-    return { error: propsErr.message, path: null, savedAt: null };
+    return refuse(curation.refused);
   }
+  if (!curation.confirmed) notices.push(LINK_CONTENT_UNCONFIRMED_NOTICE);
 
-  await logEvent(supabase, {
+  const notRecorded = await recordLink(supabase, {
     orgId: profile.orgId,
     actorId: profile.id,
     entityType: "share_link",
@@ -123,9 +183,10 @@ export async function createShareLink(
       contact_id: d.contact_id ?? null,
     },
   });
+  if (notRecorded) notices.push(notRecorded);
 
   revalidatePath("/share-links");
-  return { error: null, path: shareLinkPath(token), savedAt: Date.now() };
+  return { error: null, path: shareLinkPath(token), savedAt: Date.now(), notice: joinNotices(notices) };
 }
 
 const availabilitySchema = z.object({
@@ -160,13 +221,7 @@ export async function createAvailabilityLink(
   input: CreateAvailabilityLinkInput,
 ): Promise<ShareLinkActionState> {
   const parsed = availabilitySchema.safeParse(input);
-  if (!parsed.success) {
-    return {
-      error: parsed.error.issues[0]?.message ?? "Invalid input",
-      path: null,
-      savedAt: null,
-    };
-  }
+  if (!parsed.success) return refuse(parsed.error.issues[0]?.message ?? "Invalid input");
   const d = parsed.data;
 
   const supabase = await createClient();
@@ -180,19 +235,13 @@ export async function createAvailabilityLink(
     .select("id, kind, reference")
     .eq("id", d.project_id)
     .maybeSingle();
-  if (targetErr) return { error: targetErr.message, path: null, savedAt: null };
-  if (!target) {
-    return { error: "That project is no longer available to you.", path: null, savedAt: null };
-  }
+  if (targetErr) return refuse(targetErr.message);
+  if (!target) return refuse("That project is no longer available to you.");
 
   // A standalone listing has no units, so an availability matrix over one would
   // always render empty. Refused here rather than shipped as a blank page.
   if (target.kind !== "project" && target.kind !== "phase") {
-    return {
-      error: "An availability link needs a project or a phase — that record is neither.",
-      path: null,
-      savedAt: null,
-    };
+    return refuse("An availability link needs a project or a phase — that record is neither.");
   }
 
   // A pinned version must belong to the property being shared. Pinning another
@@ -204,18 +253,14 @@ export async function createAvailabilityLink(
       .select("id, version, project_id")
       .eq("id", d.price_list_id)
       .maybeSingle();
-    if (plErr) return { error: plErr.message, path: null, savedAt: null };
+    if (plErr) return refuse(plErr.message);
     if (!priceList || priceList.project_id !== target.id) {
-      return {
-        error: "That price list belongs to a different project.",
-        path: null,
-        savedAt: null,
-      };
+      return refuse("That price list belongs to a different project.");
     }
   }
   // the recipient, read the same way (0139 binds the link to the organisation)
   const contactErr = await contactLinkError(supabase, [d.contact_id]);
-  if (contactErr) return { error: contactErr, path: null, savedAt: null };
+  if (contactErr) return refuse(contactErr);
 
   const token = generateShareToken();
 
@@ -235,20 +280,21 @@ export async function createAvailabilityLink(
     })
     .select("id")
     .single();
-  if (error) return { error: error.message, path: null, savedAt: null };
+  if (error) return refuse(error.message);
 
+  // ---- committed: the link exists, and its token is in this function alone ----
   // One row, in the table 0023 already built. `share_link_properties` is what
   // makes this need no new table at all.
-  const { error: joinErr } = await supabase
-    .from("share_link_properties")
-    .insert({ share_link_id: link.id, property_id: target.id, sort_order: 0 });
-  if (joinErr) {
+  const notices: string[] = [];
+  const curation = await curate(supabase, link.id, [{ property_id: target.id, sort_order: 0 }]);
+  if ("refused" in curation) {
     // A link pointing at nothing resolves to nothing — don't leave the husk.
     await supabase.from("share_links").delete().eq("id", link.id);
-    return { error: joinErr.message, path: null, savedAt: null };
+    return refuse(curation.refused);
   }
+  if (!curation.confirmed) notices.push(LINK_CONTENT_UNCONFIRMED_NOTICE);
 
-  await logEvent(supabase, {
+  const notRecorded = await recordLink(supabase, {
     orgId: profile.orgId,
     actorId: profile.id,
     entityType: "share_link",
@@ -265,10 +311,11 @@ export async function createAvailabilityLink(
       contact_id: d.contact_id ?? null,
     },
   });
+  if (notRecorded) notices.push(notRecorded);
 
   revalidatePath("/share-links");
   revalidatePath(`/properties/${target.id}/units`);
-  return { error: null, path: shareLinkPath(token), savedAt: Date.now() };
+  return { error: null, path: shareLinkPath(token), savedAt: Date.now(), notice: joinNotices(notices) };
 }
 
 /**
