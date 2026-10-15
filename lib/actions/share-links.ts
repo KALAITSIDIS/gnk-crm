@@ -165,6 +165,9 @@ export async function createShareLink(
   );
   if ("refused" in curation) {
     // A proposal with no properties is not a proposal — don't leave the husk.
+    // NB this removes nothing: sessions hold no DELETE on share_links
+    // (0023_share_links.sql:88-92), so the empty link stays listed until it
+    // expires — BACKLOG "A refused curation's husk delete removes nothing".
     await supabase.from("share_links").delete().eq("id", link.id);
     return refuse(curation.refused);
   }
@@ -289,6 +292,8 @@ export async function createAvailabilityLink(
   const curation = await curate(supabase, link.id, [{ property_id: target.id, sort_order: 0 }]);
   if ("refused" in curation) {
     // A link pointing at nothing resolves to nothing — don't leave the husk.
+    // NB this removes nothing (no DELETE grant on share_links, 0023:88-92);
+    // see createShareLink.
     await supabase.from("share_links").delete().eq("id", link.id);
     return refuse(curation.refused);
   }

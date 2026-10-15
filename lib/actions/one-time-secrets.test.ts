@@ -499,18 +499,32 @@ describe.each(LINK_ACTIONS)("$name — the link's only plaintext token", (action
     expect(linesWritten(session)).toEqual([]);
   });
 
+  /**
+   * The husk's delete is answered as production answers it: REFUSED.
+   * `authenticated` holds select, insert and update on `share_links` and no
+   * DELETE (0023_share_links.sql:88-92, "No DELETE for anyone"; no later
+   * migration grants it), so a session's DELETE is a permission error and
+   * removes nothing — the empty link stays listed until it expires (BACKLOG
+   * "A refused curation's husk delete removes nothing"). Kept as today by the
+   * brief; what this pins is that the attempt is made and that its refusal
+   * neither replaces the curation's words nor escapes as a throw.
+   */
   it.each(["23503", "42501"])(
-    "a REFUSED curation insert (%s) refuses as today: the husk's delete is attempted, no link and no line",
+    "a REFUSED curation insert (%s) refuses as today: the husk's delete is attempted (and refused), no link and no line",
     async (code) => {
       const { session } = use({
         ...action.reads,
-        share_links: [{ data: { id: LINK_ID }, error: null }],
+        share_links: [
+          { data: { id: LINK_ID }, error: null },
+          { data: null, error: { message: "permission denied for table share_links", code: "42501" } },
+        ],
         share_link_properties: [{ data: null, error: { message: `Fixture: refused ${code}`, code } }],
       });
       const res = await action.run();
-      expect(res.error).toBe(`Fixture: refused ${code}`);
+      expect(res.error, "the curation's refusal, not the delete's").toBe(`Fixture: refused ${code}`);
       expect(res.path).toBeNull();
-      expect(session.argsOf("share_links", "delete"), "a refusal is the only failure that removes it").toHaveLength(1);
+      expect(session.argsOf("share_links", "delete"), "attempted once — sessions hold no DELETE, so it removes nothing").toHaveLength(1);
+      expect(session.argsOf("share_links", "eq"), "aimed at this link").toContainEqual(["id", LINK_ID]);
       expect(linesWritten(session)).toEqual([]);
     },
   );
