@@ -67,8 +67,12 @@ export function accountMayRemain(email: string): string {
 /**
  * The profile insert's answer was not a refusal, and reading the row back
  * did not find it (or could not ask). The account exists and its password is
- * shown; the profile may be there, or land yet — or not, and then the account
- * cannot use the CRM.
+ * shown; the profile may be there — or not, and then the account cannot use
+ * the CRM. It will not "land yet": `inviteUser` writes the `invited` line
+ * next, and once that line names this id, 0133's `profiles_id_without_history`
+ * refuses (42501) a session's profile insert at it — one still in flight that
+ * reaches its AFTER trigger too. So the reload this notice asks for is the
+ * answer, and "delete it, then invite again" the only way back.
  */
 export function profileUnconfirmedNotice(email: string): string {
   return `The account was created, but its profile could not be confirmed. Reload Users before handing these over: if ${email} is not listed, the account cannot use the CRM — delete it in Supabase (Authentication → Users), then invite again.`;

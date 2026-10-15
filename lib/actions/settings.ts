@@ -234,6 +234,10 @@ export async function inviteUser(
     notices.push(profileUnconfirmedNotice(d.email));
   }
 
+  // The line is written even when the profile is unconfirmed: the account
+  // exists. Once the line names this id, 0133's `profiles_id_without_history`
+  // refuses a session's profile insert at it (42501), so a profile still in
+  // flight can no longer land — the notice's reload is then the answer.
   try {
     await logEvent(supabase, {
       orgId: profile.orgId,

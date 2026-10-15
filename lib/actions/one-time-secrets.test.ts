@@ -276,6 +276,14 @@ describe("inviteUser — the one-time password", () => {
     },
   );
 
+  /**
+   * The line is written although the profile is unconfirmed. In the database
+   * that has a consequence this fake cannot show: once an `invited` line
+   * names the id, 0133's `profiles_id_without_history` refuses (42501) any
+   * session's profile insert at it, one still in flight included. So nothing
+   * "lands yet" — the notice's reload is the answer, and "delete the account,
+   * then invite again" the only way back.
+   */
   it.each([
     ["finds no row", { data: [], error: null }],
     ["fails", { data: null, error: { message: "Fixture: read failed" } }],
