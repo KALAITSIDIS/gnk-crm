@@ -571,6 +571,45 @@ describe("recomputeDealsFor fans out AS THE SYSTEM, inside the saved row's organ
     expect(reports()).toEqual([]);
   });
 
+  it("the mandate factor on the system path: asked once on the fan-out's own client, inside the deal's org, and an active mandate scores", async () => {
+    // The factor setMandateStatus / saveMandate fan out to refresh
+    // (mandates.ts recomputeScores). Every other fan-out case here scripts no
+    // mandate, so a system path that never scored one — or asked with a
+    // filter or a limit that finds none — passed them all (review, 2026-10-15).
+    const session = fakeClient({ properties: [anchor(ORG)] });
+    const svc = fakeClient({
+      deals: [ids("d1"), systemDeal("d1", { property_id: "p1" }), wrote("d1")],
+      properties: [{ data: { title_deed_status: "unknown" }, error: null }],
+      mandates: [{ data: [{ id: "m1" }], error: null }],
+    });
+    admin.client = svc.client;
+
+    await recomputeDealsFor(session.client as never, { propertyId: "p1" });
+
+    expect(admin.built, "the fan-out's own system client, not a second one").toBe(1);
+    expect(svc.served.mandates, "asked once, as the system").toBe(1);
+    expect(session.served.mandates ?? 0, "never on the caller's client").toBe(0);
+    expect(svc.argsOf("mandates", "eq"), "this org's ACTIVE mandates on this property — nothing else").toEqual([
+      ["org_id", ORG],
+      ["property_id", "p1"],
+      ["status", "active"],
+    ]);
+    expect(svc.argsOf("mandates", "limit"), "one row answers the question").toEqual([[1]]);
+    const [write] = writesOf(svc);
+    const payload = write?.[0]?.args[0] as {
+      health_score: number;
+      health: { factors: { key: string; points: number; detail: string }[] };
+    };
+    expect(payload.health.factors.find((f) => f.key === "mandate")).toMatchObject({
+      points: HEALTH_WEIGHTS.mandate,
+      detail: "active",
+    });
+    expect(payload.health_score, "the mandate alone: no budget, title deed unknown, no activity").toBe(
+      HEALTH_WEIGHTS.mandate,
+    );
+    expect(reports()).toEqual([]);
+  });
+
   it("a buyer anchor: the contact's org on the caller's client, the buyer's deals and KYC read as the system inside it", async () => {
     const session = fakeClient({ contacts: [anchor(ORG)] });
     const svc = fakeClient({

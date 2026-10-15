@@ -15,8 +15,9 @@ import {
 /**
  * The deal-health fan-out runs AS THE SYSTEM, inside the saved row's own
  * organisation (T-lm-health-recompute) — the REAL property legal save, the
- * REAL contact KYC save and the REAL recomputeDealsFor, against the REAL local
- * stack, with two throwaway organisations.
+ * REAL contact KYC save, the REAL mandate activation and the REAL
+ * recomputeDealsFor, against the REAL local stack, with two throwaway
+ * organisations.
  *
  * THE DEFECT (operator decision, BACKLOG "External audit — 2026-10-14"). A
  * property's title-deed status and a buyer's KYC are deal-health factors, so
@@ -99,6 +100,7 @@ vi.mock("@sentry/nextjs", async (importOriginal) => ({
 
 import { updatePropertySection } from "@/lib/actions/properties";
 import { updateContactSection } from "@/lib/actions/contacts";
+import { setMandateStatus } from "@/lib/actions/mandates";
 import { HEALTH_WEIGHTS, recomputeDealsFor, type HealthFactor } from "@/lib/services/health-score";
 import { KYC_ITEMS } from "@/lib/constants/checklists";
 
@@ -195,6 +197,8 @@ async function saveKyc(user: TestUser, contactId: string, done: number) {
 // ---------------------------------------------------------------------------
 let svc: SupabaseClient;
 let pg: Client;
+/** B's admin: mandates are admin-only (setMandateStatus) */
+let adminB: TestUser;
 /** B's listing manager */
 let lmB: TestUser;
 /** B's agent assigned to the saved properties and contacts — never the deals' owner */
@@ -333,6 +337,8 @@ function evidence(label: string, data: Record<string, unknown>) {
 const TITLE_AND_ACTIVITY = HEALTH_WEIGHTS.title_deed + HEALTH_WEIGHTS.activity;
 /** buyer KYC ≥ 50% (15) + activity (30) */
 const KYC_AND_ACTIVITY = HEALTH_WEIGHTS.kyc + HEALTH_WEIGHTS.activity;
+/** an active mandate on the deal's property (15) + activity (30) */
+const MANDATE_AND_ACTIVITY = HEALTH_WEIGHTS.mandate + HEALTH_WEIGHTS.activity;
 
 async function stage(org: string): Promise<string> {
   const { data, error } = await svc
@@ -355,12 +361,13 @@ beforeAll(async () => {
   stageOf[ORG_A] = await stage(ORG_A);
   stageOf[ORG_B] = await stage(ORG_B);
   // one at a time: parallel TOTP enrolment draws GoTrue 502/504s
+  adminB = await createTestUser(svc, `fo-admin-b-${RUN}@test.local`, "admin", ORG_B);
   lmB = await createTestUser(svc, `fo-lm-b-${RUN}@test.local`, "listing_manager", ORG_B);
   saverB = await createTestUser(svc, `fo-saver-b-${RUN}@test.local`, "agent", ORG_B);
   ownerB = await createTestUser(svc, `fo-owner-b-${RUN}@test.local`, "agent", ORG_B);
   strangerB = await createTestUser(svc, `fo-stranger-b-${RUN}@test.local`, "agent", ORG_B);
   ownerA = await createTestUser(svc, `fo-owner-a-${RUN}@test.local`, "agent", ORG_A);
-  userIds.push(lmB.id, saverB.id, ownerB.id, strangerB.id, ownerA.id);
+  userIds.push(adminB.id, lmB.id, saverB.id, ownerB.id, strangerB.id, ownerA.id);
 });
 
 afterEach(() => {
@@ -469,6 +476,49 @@ describe("a save fans out its deal-health recompute as the system", () => {
     expect(healthReports()).toEqual([]);
   });
 
+  it("3b. an admin's mandate activation (setMandateStatus → recomputeScores) moves the mandate factor of an agent's open deal", async () => {
+    // mandates.ts' way into the fan-out, and the factor it is there to
+    // refresh. mandates.ts is not changed by T-lm-health-recompute: its
+    // recomputeScores hands the helper the admin's session, and the helper
+    // reads the property's org on it and recomputes as the system. Until this
+    // scenario no test, unit or DB, showed the system path FINDING an active
+    // mandate (review, 2026-10-15).
+    state.admin = adminProbe;
+    const propertyId = await property(ORG_B);
+    const owner = await contact(ORG_B);
+    const mandateId = await ins("mandates", {
+      org_id: ORG_B,
+      property_id: propertyId,
+      owner_contact_id: owner,
+      type: "exclusive",
+      status: "draft",
+    });
+    const dealId = await deal(ORG_B, { owner: ownerB.id, propertyId });
+    const before = await healthRow(dealId);
+
+    const s = await sessionProbe(adminB);
+    state.queue.push(s.client);
+    expect(await setMandateStatus(mandateId, "active"), "the activation itself").toEqual({ error: null });
+
+    const after = await healthRow(dealId);
+    evidence("3b. admin, mandate activation", {
+      session: s.log.deals,
+      system: systemLog.deals,
+      before: before.health_score,
+      after: { score: after.health_score, mandate: factor(after, "mandate") },
+    });
+    expect(factor(after, "mandate"), "the mandate the admin just activated").toMatchObject({
+      points: HEALTH_WEIGHTS.mandate,
+      detail: "active",
+    });
+    expect(after.health_score).toBe(MANDATE_AND_ACTIVITY);
+    expect(after.updated_at).not.toBe(before.updated_at);
+    expect(s.log.deals, "the admin's session never touched deals").toEqual([]);
+    expect(systemLog.deals, "the system: the selection, the read, the write").toEqual(["GET", "GET", "PATCH"]);
+    expect(await dealEvents(dealId), "derived state: no event for the deal (T3.3)").toBe(0);
+    expect(healthReports()).toEqual([]);
+  });
+
   it("4. a REFUSED save fans out nothing: the deal stays byte for byte, stale score and all", async () => {
     state.admin = adminProbe;
     // stale on purpose: a recompute now WOULD change these rows (title deed
@@ -502,8 +552,11 @@ describe("the system recomputes inside the saved row's organisation, and nowhere
     const propertyA = await property(ORG_A, { titleDeed: "separate" });
     await ins("mandates", { org_id: ORG_A, property_id: propertyA, type: "exclusive", status: "active" });
     const buyerA = await contact(ORG_A, { kycDone: 6 });
-    // ---- B: what B's saver works on
+    // ---- B: what B's saver works on — B's property mandated too, the
+    // positive control for the mandate factor: without it, "none active" on
+    // A's property below could only say that no mandate is ever read
     const propertyB = await property(ORG_B, { assigned: saverB.id });
+    await ins("mandates", { org_id: ORG_B, property_id: propertyB, type: "exclusive", status: "active" });
     const buyerB = await contact(ORG_B, { assigned: saverB.id });
 
     // B's deals: the positive controls, two of them linking OUT to A
@@ -545,7 +598,11 @@ describe("the system recomputes inside the saved row's organisation, and nowhere
 
     const aAfter = await healthRows(aDeals);
     evidence("5. two organisations", {
-      bOnProperty: { score: afterLegal.bOnProperty.health_score, title: factor(afterLegal.bOnProperty, "title_deed")?.detail },
+      bOnProperty: {
+        score: afterLegal.bOnProperty.health_score,
+        title: factor(afterLegal.bOnProperty, "title_deed")?.detail,
+        mandate: factor(afterLegal.bOnProperty, "mandate")?.detail,
+      },
       bOnPropertyBuyerA: {
         score: afterLegal.bOnPropertyBuyerA.health_score,
         title: factor(afterLegal.bOnPropertyBuyerA, "title_deed")?.detail,
@@ -563,20 +620,29 @@ describe("the system recomputes inside the saved row's organisation, and nowhere
 
     // B's deals moved (the positive controls — none moves on a session-client fan-out)
     expect(factor(afterLegal.bOnProperty, "title_deed")).toMatchObject({ points: HEALTH_WEIGHTS.title_deed, detail: "known" });
-    expect(afterLegal.bOnProperty.health_score).toBe(TITLE_AND_ACTIVITY);
+    expect(
+      factor(afterLegal.bOnProperty, "mandate"),
+      "B's own active mandate IS read, as the system: the control for 'none active' below",
+    ).toMatchObject({ points: HEALTH_WEIGHTS.mandate, detail: "active" });
+    expect(afterLegal.bOnProperty.health_score).toBe(TITLE_AND_ACTIVITY + HEALTH_WEIGHTS.mandate);
     expect(factor(afterLegal.bOnPropertyBuyerA, "title_deed")).toMatchObject({ detail: "known" });
     // …and read nothing of A's: A's contact is 100% KYC'd, its property's title deed is known and mandated
     expect(
       factor(afterLegal.bOnPropertyBuyerA, "kyc"),
       "A's buyer, planted on B's deal, is not read: no KYC points from another organisation",
     ).toMatchObject({ points: 0, detail: "no buyer linked" });
-    expect(afterLegal.bOnPropertyBuyerA.health_score).toBe(TITLE_AND_ACTIVITY);
+    expect(afterLegal.bOnPropertyBuyerA.health_score, "title deed + B's mandate + activity, no KYC").toBe(
+      TITLE_AND_ACTIVITY + HEALTH_WEIGHTS.mandate,
+    );
     expect(factor(afterKyc, "kyc"), "B's own buyer was read").toMatchObject({ points: HEALTH_WEIGHTS.kyc, detail: "50% complete" });
     expect(
       factor(afterKyc, "title_deed"),
       "A's property, planted on B's deal, is not read: its known title deed scores nothing here",
     ).toMatchObject({ points: 0, detail: "no property linked" });
-    expect(factor(afterKyc, "mandate"), "nor A's active mandate").toMatchObject({ points: 0, detail: "none active" });
+    expect(
+      factor(afterKyc, "mandate"),
+      "nor A's active mandate — while B's own, above, is found by the same read",
+    ).toMatchObject({ points: 0, detail: "none active" });
     expect(afterKyc.health_score).toBe(KYC_AND_ACTIVITY);
 
     // A's deals: byte for byte — the two planted INTO B's rows, and the two
