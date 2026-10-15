@@ -876,7 +876,12 @@ export async function updatePropertySection(
     await refreshContainerScores(supabase, current.parent_id);
   }
 
-  // title deed status is a deal-health factor (doc 02 §C5) — refresh open deals
+  // title deed status is a deal-health factor (doc 02 §C5) — refresh every
+  // open deal on the property AS THE SYSTEM, inside this property's
+  // organisation: a listing manager may save legal but update no deal, and
+  // the assigned agent cannot see a deal another agent owns
+  // (T-lm-health-recompute). Only here, after the row-count proof above —
+  // never on a refused save. It never throws (a failure is paged).
   if (section === "legal") {
     const { recomputeDealsFor } = await import("@/lib/services/health-score");
     await recomputeDealsFor(supabase, { propertyId });

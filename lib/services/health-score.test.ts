@@ -1,12 +1,28 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { HEALTH_WEIGHTS, computeHealth, type HealthInputs } from "./health-score";
 import { KYC_ITEMS } from "@/lib/constants/checklists";
 import { fakeClient } from "@/lib/testing/fake-client";
 
-const admin = vi.hoisted(() => ({ client: null as unknown }));
-vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => admin.client }));
+/** the service-role client createAdminClient hands out, how many were built, and an optional throw */
+const admin = vi.hoisted(() => ({ client: null as unknown, built: 0, throws: null as Error | null }));
+vi.mock("@/lib/supabase/admin", () => ({
+  createAdminClient: () => {
+    admin.built += 1;
+    if (admin.throws) throw admin.throws;
+    return admin.client;
+  },
+}));
+const sentry = vi.hoisted(() => ({ captureMessage: vi.fn() }));
+vi.mock("@sentry/nextjs", () => sentry);
 
-const { recomputeDealHealth } = await import("./health-score");
+beforeEach(() => {
+  admin.client = null;
+  admin.built = 0;
+  admin.throws = null;
+  sentry.captureMessage.mockReset();
+});
+
+const { recomputeDealHealth, recomputeDealsFor } = await import("./health-score");
 
 const NOW = new Date("2026-07-11T12:00:00Z");
 
@@ -425,5 +441,325 @@ describe("recomputeDealHealth writes only over the row it read (T-deal-health-ra
 
     expect(caller.served.deals).toBe(1);
     expect(updates(caller)).toHaveLength(0);
+  });
+});
+
+describe("recomputeDealsFor fans out AS THE SYSTEM, inside the saved row's organisation (T-lm-health-recompute)", () => {
+  /*
+   * A property's title deed and a buyer's KYC are deal-health factors, so a
+   * legal save, a KYC save and a mandate change recompute every open deal on
+   * the property / of the buyer. On the caller's session that depended on who
+   * saved: a listing manager may update the property but no deal (deals_update
+   * has no listing-manager arm, so the PATCH matched 0 rows silently), and the
+   * property's assigned agent never even selected a deal another agent owns.
+   *
+   * The operator's decision (BACKLOG "External audit — 2026-10-14"): recompute
+   * as the system, with an explicit organisation boundary. The boundary is the
+   * org of the row the caller just saved, read on the CALLER'S client (RLS),
+   * never on the admin one; every query the system then sends — the selection,
+   * each deal's read, its other-table reads and its write — carries it, because
+   * the service role has no RLS to do it. supabase/tests/deal-health-fan-out.test.ts
+   * runs it on the real stack, with a second organisation and planted links.
+   */
+  const ORG = "org-b";
+  const T1x = "2026-10-15T09:00:00.123456+00:00";
+  const T2x = "2026-10-15T09:00:00.654321+00:00";
+
+  const systemDeal = (id: string, extra: Record<string, unknown> = {}, updatedAt = T1x) => ({
+    data: {
+      id,
+      org_id: ORG,
+      health: {},
+      buyer_contact_id: null,
+      property_id: null,
+      last_activity_at: null,
+      updated_at: updatedAt,
+      ...extra,
+    },
+    error: null,
+  });
+  const ids = (...list: string[]) => ({ data: list.map((id) => ({ id })), error: null });
+  const wrote = (id: string) => ({ data: [{ id }], error: null });
+  const anchor = (org: string | null) => ({ data: org === null ? null : { org_id: org }, error: null });
+
+  type Call = { method: string; args: unknown[] };
+  /** The builder calls of each query on `table`, one array per query (a write ends at its own `select`). */
+  const chains = (fake: ReturnType<typeof fakeClient>, table: string) => {
+    const out: Call[][] = [];
+    let inWrite = false;
+    for (const c of fake.calls) {
+      if (c.table !== table) continue;
+      if (c.method === "select" && inWrite) {
+        out[out.length - 1]!.push({ method: c.method, args: c.args });
+        inWrite = false;
+        continue;
+      }
+      if (c.method === "select" || c.method === "update") {
+        out.push([]);
+        inWrite = c.method === "update";
+      }
+      out[out.length - 1]?.push({ method: c.method, args: c.args });
+    }
+    return out;
+  };
+  const eqs = (chain: Call[] | undefined) =>
+    (chain ?? []).filter((c) => c.method === "eq").map((c) => c.args);
+  const writesOf = (fake: ReturnType<typeof fakeClient>) =>
+    chains(fake, "deals").filter((c) => c[0]?.method === "update");
+  const reports = () =>
+    sentry.captureMessage.mock.calls.map(
+      ([message, ctx]) => [message, (ctx as { tags: Record<string, string> }).tags] as const,
+    );
+  const failed = (step: string, code: string) =>
+    ["[health] deal fan-out failed", { operation: "health.fan_out", step, code }] as const;
+
+  it("reads the anchor's org on the CALLER'S client, then selects, reads and writes on ONE system client, every query bound to that org", async () => {
+    const session = fakeClient({ properties: [anchor(ORG)] });
+    const svc = fakeClient({
+      deals: [ids("d1"), systemDeal("d1", { property_id: "p1" }), wrote("d1")],
+      properties: [{ data: { title_deed_status: "separate" }, error: null }],
+      mandates: [{ data: [], error: null }],
+    });
+    admin.client = svc.client;
+
+    await recomputeDealsFor(session.client as never, { propertyId: "p1" });
+
+    // the caller's client: the anchor's org, under RLS — and nothing on deals
+    expect(session.argsOf("properties", "select")).toEqual([["org_id"]]);
+    expect(session.argsOf("properties", "eq")).toEqual([["id", "p1"]]);
+    expect(session.served.deals ?? 0, "the caller's session never touches deals").toBe(0);
+    expect(session.served.mandates ?? 0).toBe(0);
+    // the system: built once, for the whole fan-out
+    expect(admin.built, "one service-role client").toBe(1);
+    const [selection, read, write] = chains(svc, "deals");
+    expect(eqs(selection), "the selection: this org's OPEN deals on this property").toEqual(
+      expect.arrayContaining([
+        ["org_id", ORG],
+        ["status", "open"],
+        ["property_id", "p1"],
+      ]),
+    );
+    expect(eqs(read), "each deal's read names it AND the org").toEqual(
+      expect.arrayContaining([
+        ["id", "d1"],
+        ["org_id", ORG],
+      ]),
+    );
+    expect(eqs(write), "the write: the deal, the org, and the updated_at it read").toEqual(
+      expect.arrayContaining([
+        ["id", "d1"],
+        ["org_id", ORG],
+        ["updated_at", T1x],
+      ]),
+    );
+    expect(write?.at(-1), "select=id: the answer says whether a row was written").toEqual({
+      method: "select",
+      args: ["id"],
+    });
+    const payload = write?.[0]?.args[0] as Record<string, unknown>;
+    expect(Object.keys(payload).sort(), "derived columns only").toEqual(["health", "health_score"]);
+    // the other tables, on the same system client, bound to the deal's org
+    expect(svc.argsOf("properties", "eq")).toEqual(
+      expect.arrayContaining([
+        ["id", "p1"],
+        ["org_id", ORG],
+      ]),
+    );
+    expect(svc.argsOf("mandates", "eq")).toEqual(expect.arrayContaining([["org_id", ORG]]));
+    const factors = (payload.health as { factors: { key: string; points: number }[] }).factors;
+    expect(factors.find((f) => f.key === "title_deed")?.points).toBe(HEALTH_WEIGHTS.title_deed);
+    expect(reports()).toEqual([]);
+  });
+
+  it("a buyer anchor: the contact's org on the caller's client, the buyer's deals and KYC read as the system inside it", async () => {
+    const session = fakeClient({ contacts: [anchor(ORG)] });
+    const svc = fakeClient({
+      deals: [
+        ids("d1", "d2"),
+        systemDeal("d1", { buyer_contact_id: "c1" }),
+        wrote("d1"),
+        systemDeal("d2", { buyer_contact_id: "c1" }),
+        wrote("d2"),
+      ],
+      contacts: [
+        { data: { kyc: {} }, error: null },
+        { data: { kyc: {} }, error: null },
+      ],
+    });
+    admin.client = svc.client;
+
+    await recomputeDealsFor(session.client as never, { buyerContactId: "c1" });
+
+    expect(session.argsOf("contacts", "eq")).toEqual([["id", "c1"]]);
+    expect(session.served.deals ?? 0).toBe(0);
+    expect(eqs(chains(svc, "deals")[0])).toEqual(
+      expect.arrayContaining([
+        ["org_id", ORG],
+        ["status", "open"],
+        ["buyer_contact_id", "c1"],
+      ]),
+    );
+    expect(writesOf(svc), "both deals written").toHaveLength(2);
+    expect(svc.argsOf("contacts", "eq"), "the buyer's KYC, bound to the deal's org").toEqual([
+      ["id", "c1"],
+      ["org_id", ORG],
+      ["id", "c1"],
+      ["org_id", ORG],
+    ]);
+    expect(admin.built).toBe(1);
+  });
+
+  it("an anchor the caller cannot see fans out NOTHING: no system client, reported", async () => {
+    const session = fakeClient({ properties: [anchor(null)] });
+
+    await expect(
+      recomputeDealsFor(session.client as never, { propertyId: "p-other-org" }),
+    ).resolves.toBeUndefined();
+
+    expect(admin.built, "the service role is never reached").toBe(0);
+    expect(reports()).toEqual([failed("anchor", "not_visible")]);
+  });
+
+  it("an anchor read that errors fans out nothing, and is reported in shape only", async () => {
+    const session = fakeClient({
+      contacts: [{ data: null, error: { message: "secret detail", code: "PGRST301" } }],
+    });
+
+    await expect(
+      recomputeDealsFor(session.client as never, { buyerContactId: "c1" }),
+    ).resolves.toBeUndefined();
+
+    expect(admin.built).toBe(0);
+    expect(reports()).toEqual([failed("anchor", "PGRST301")]);
+    expect(JSON.stringify(sentry.captureMessage.mock.calls), "never the database's words").not.toContain(
+      "secret",
+    );
+  });
+
+  it("never throws into its caller: a service-role client that cannot be built is reported", async () => {
+    const session = fakeClient({ properties: [anchor(ORG)] });
+    admin.throws = new TypeError("supabaseKey is required.");
+
+    await expect(
+      recomputeDealsFor(session.client as never, { propertyId: "p1" }),
+    ).resolves.toBeUndefined();
+
+    expect(reports()).toEqual([failed("client", "TypeError")]);
+  });
+
+  it("a selection that errors, or answers with no rows array, recomputes nothing and is reported", async () => {
+    for (const [page, code] of [
+      [{ data: null, error: { message: "x", code: "57014" } }, "57014"],
+      [{ data: null, error: null }, "no_rows_array"],
+    ] as const) {
+      sentry.captureMessage.mockReset();
+      const session = fakeClient({ properties: [anchor(ORG)] });
+      const svc = fakeClient({ deals: [page] });
+      admin.client = svc.client;
+
+      await expect(
+        recomputeDealsFor(session.client as never, { propertyId: "p1" }),
+      ).resolves.toBeUndefined();
+
+      expect(svc.served.deals, code).toBe(1);
+      expect(reports(), code).toEqual([failed("select", code)]);
+    }
+  });
+
+  it("keeps the race guard: a zero-row answer on a MOVED row is retried once from the re-read, and nothing is reported", async () => {
+    const session = fakeClient({ properties: [anchor(ORG)] });
+    const svc = fakeClient({
+      deals: [
+        ids("d1"),
+        systemDeal("d1"),
+        { data: [], error: null },
+        systemDeal("d1", { health: { budget_confirmed: true } }, T2x),
+        wrote("d1"),
+      ],
+    });
+    admin.client = svc.client;
+
+    await recomputeDealsFor(session.client as never, { propertyId: "p1" });
+
+    const writes = writesOf(svc);
+    expect(writes.map((w) => eqs(w).find(([col]) => col === "updated_at")?.[1])).toEqual([T1x, T2x]);
+    const retry = writes[1]?.[0]?.args[0] as { health_score: number; health: Record<string, unknown> };
+    expect(retry.health.budget_confirmed).toBe(true);
+    expect(retry.health_score).toBe(HEALTH_WEIGHTS.budget);
+    expect(reports()).toEqual([]);
+  });
+
+  it("a write that lands nowhere on an UNMOVED row is not RLS here — reported, and the next deal is still recomputed", async () => {
+    const session = fakeClient({ properties: [anchor(ORG)] });
+    const svc = fakeClient({
+      deals: [
+        ids("d1", "d2"),
+        systemDeal("d1"),
+        { data: null, error: { message: "boom", code: "08006" } },
+        systemDeal("d1"),
+        systemDeal("d2"),
+        wrote("d2"),
+      ],
+    });
+    admin.client = svc.client;
+
+    await expect(
+      recomputeDealsFor(session.client as never, { propertyId: "p1" }),
+    ).resolves.toBeUndefined();
+
+    expect(reports()).toEqual([failed("write", "08006")]);
+    expect(
+      writesOf(svc).map((w) => eqs(w).find(([col]) => col === "id")?.[1]),
+      "d1 once (no retry of an unmoved row), then d2",
+    ).toEqual(["d1", "d2"]);
+  });
+
+  it("one deal's recompute throwing does not stop the others, and is reported", async () => {
+    const session = fakeClient({ properties: [anchor(ORG)] });
+    const svc = fakeClient({
+      deals: [ids("d1", "d2"), systemDeal("d1", { buyer_contact_id: "c1" }), systemDeal("d2"), wrote("d2")],
+    });
+    let thrown = false;
+    admin.client = {
+      from: (table: string) => {
+        if (table === "contacts" && !thrown) {
+          thrown = true;
+          throw new RangeError("fixture: the buyer read threw");
+        }
+        return svc.client.from(table);
+      },
+    };
+
+    await expect(
+      recomputeDealsFor(session.client as never, { propertyId: "p1" }),
+    ).resolves.toBeUndefined();
+
+    expect(reports()).toEqual([failed("recompute", "RangeError")]);
+    expect(writesOf(svc).map((w) => eqs(w).find(([col]) => col === "id")?.[1])).toEqual(["d2"]);
+  });
+
+  it("the SESSION path (a deal action on its own deal) keeps RLS as its bound and stays silent on a refusal; its other-table reads now carry the deal's org too", async () => {
+    const svc = fakeClient({ mandates: [{ data: [], error: null }] });
+    admin.client = svc.client;
+    const caller = fakeClient({
+      deals: [
+        systemDeal("d1", { property_id: "p1" }),
+        { data: [], error: null },
+        systemDeal("d1", { property_id: "p1" }),
+      ],
+      properties: [{ data: { title_deed_status: "unknown" }, error: null }],
+    });
+
+    await recomputeDealHealth(caller.client as never, "d1");
+
+    const [read, write] = chains(caller, "deals");
+    expect(eqs(read), "RLS bounds the session's read").toEqual([["id", "d1"]]);
+    expect(eqs(write).map(([col]) => col)).toEqual(["id", "updated_at"]);
+    expect(caller.argsOf("properties", "eq"), "its other-table reads carry the deal's org").toEqual([
+      ["id", "p1"],
+      ["org_id", ORG],
+    ]);
+    expect(admin.built, "the mandate read only").toBe(1);
+    expect(reports(), "a refused session write is the silent no-op it always was").toEqual([]);
   });
 });
