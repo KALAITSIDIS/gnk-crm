@@ -48,7 +48,9 @@ import {
  * since 0139, so it is planted PAST the keys, in replica mode, as
  * contact-merge-org-isolation.test.ts does) — and B's deals are planted to
  * link OUT to A's property and contact. B's saves must recompute B's deals and
- * read nothing of A's, and must leave A's deals byte for byte.
+ * read nothing of A's, and must leave A's deals byte for byte — and no request
+ * the system sends, nor any answer it gets, may name A's organisation, A's
+ * deals or A's mandate (its traffic is logged, not inferred from the rows).
  *
  * Every scenario that could pass by doing NOTHING carries a positive control:
  * a deal of B owned by someone other than the saver, which must move. On
@@ -117,9 +119,24 @@ function gate(): Gate {
   return { arrived, arrive, released, release };
 }
 
-type Log = { deals: string[]; gates: Gate[] };
+/**
+ * `deals`: the METHOD of every request on deals, in order. `seen`: every
+ * PostgREST exchange, any table — the request line and the answer's body —
+ * so a test can ask whether a client was ever asked for, or answered with,
+ * a row it should never touch.
+ */
+type Log = { deals: string[]; gates: Gate[]; seen: string[] };
 
-/** A fetch that logs `METHOD` for every request on /rest/v1/deals and holds the first `gates.length` PATCHes. */
+const emptyLog = (gates: Gate[] = []): Log => ({ deals: [], gates, seen: [] });
+
+/** "GET deals", "PATCH deals", "GET mandates", … — the method and table of each exchange in `log` */
+const exchanges = (log: Log) =>
+  log.seen.map((s) => {
+    const [method, url] = s.split(/[ \n]/, 2);
+    return `${method} ${new URL(url!).pathname.replace("/rest/v1/", "")}`;
+  });
+
+/** A fetch that logs every PostgREST exchange, the METHOD of every request on /rest/v1/deals, and holds the first `gates.length` PATCHes on deals. */
 function loggingFetch(log: Log): typeof fetch {
   let patches = 0;
   return async (input, init) => {
@@ -136,12 +153,14 @@ function loggingFetch(log: Log): typeof fetch {
         }
       }
     }
-    return fetch(input, init);
+    const res = await fetch(input, init);
+    if (url.includes("/rest/v1/")) log.seen.push(`${method} ${url}\n${await res.clone().text()}`);
+    return res;
   };
 }
 
-/** What the "system" sent on deals in this scenario — every client createAdminClient built shares it. */
-let systemLog: Log = { deals: [], gates: [] };
+/** What the "system" sent and got in this scenario — every client createAdminClient built shares it. */
+let systemLog: Log = emptyLog();
 
 function adminProbe(): SupabaseClient {
   return createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
@@ -155,7 +174,7 @@ async function sessionProbe(user: TestUser): Promise<{ client: SupabaseClient; l
   const { data } = await user.client.auth.getSession();
   const s = data.session;
   if (!s) throw new Error(`no session for ${user.email}`);
-  const log: Log = { deals: [], gates: [] };
+  const log = emptyLog();
   const client = createClient(SUPABASE_URL, ANON_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
     global: { fetch: loggingFetch(log) },
@@ -373,7 +392,7 @@ beforeAll(async () => {
 afterEach(() => {
   // a failed scenario must not leave a write parked at the gate
   for (const g of systemLog.gates) g.release();
-  systemLog = { deals: [], gates: [] };
+  systemLog = emptyLog();
   state.admin = null;
   state.queue.length = 0;
   state.reports.length = 0;
@@ -550,7 +569,7 @@ describe("the system recomputes inside the saved row's organisation, and nowhere
     state.admin = adminProbe;
     // ---- A: a known title deed with an active mandate, a fully-KYC'd buyer
     const propertyA = await property(ORG_A, { titleDeed: "separate" });
-    await ins("mandates", { org_id: ORG_A, property_id: propertyA, type: "exclusive", status: "active" });
+    const mandateA = await ins("mandates", { org_id: ORG_A, property_id: propertyA, type: "exclusive", status: "active" });
     const buyerA = await contact(ORG_A, { kycDone: 6 });
     // ---- B: what B's saver works on — B's property mandated too, the
     // positive control for the mandate factor: without it, "none active" on
@@ -616,6 +635,7 @@ describe("the system recomputes inside the saved row's organisation, and nowhere
       },
       aScores: aAfter.map((r) => r.health_score),
       reports: healthReports(),
+      systemExchanges: exchanges(systemLog),
     });
 
     // B's deals moved (the positive controls — none moves on a session-client fan-out)
@@ -645,6 +665,25 @@ describe("the system recomputes inside the saved row's organisation, and nowhere
     ).toMatchObject({ points: 0, detail: "none active" });
     expect(afterKyc.health_score).toBe(KYC_AND_ACTIVITY);
 
+    // The system's own traffic never touched A: no request it sent and no
+    // answer it got carries A's organisation id, one of A's deals or A's
+    // mandate. A's deals staying byte for byte (below) cannot say this alone:
+    // a selection and a deal read without their org filters SELECT and READ
+    // A's deal on B's property and A's deal of B's buyer, and the write's own
+    // filter then matches 0 rows — nothing written, so only the report list
+    // used to fail (review, 2026-10-15). The URLs DO name A's property and
+    // contact — B's planted deals point at them — and the answers about them
+    // are empty: the factors above say so.
+    const aIds = [ORG_A, ...aDeals, mandateA];
+    expect(
+      systemLog.seen.filter((s) => s.includes(bOnProperty)).length,
+      "the log saw the fan-out (it is not empty by accident)",
+    ).toBeGreaterThan(0);
+    expect(
+      systemLog.seen.filter((s) => aIds.some((id) => s.includes(id))),
+      "nothing the system asked for or was answered with names A's organisation, deals or mandate",
+    ).toEqual([]);
+
     // A's deals: byte for byte — the two planted INTO B's rows, and the two
     // that B's session named directly
     expect(aAfter, "not one of A's deals was written").toEqual(aBefore);
@@ -660,7 +699,7 @@ describe("the system recomputes inside the saved row's organisation, and nowhere
 // ---------------------------------------------------------------------------
 describe("the system path keeps T-deal-health-race's guard", () => {
   it("6. hold the system's write, move the row, release: the retry computes from the moved row", async () => {
-    systemLog = { deals: [], gates: [gate()] };
+    systemLog = emptyLog([gate()]);
     state.admin = adminProbe;
     const propertyId = await property(ORG_B);
     const dealId = await deal(ORG_B, { owner: ownerB.id, propertyId });
