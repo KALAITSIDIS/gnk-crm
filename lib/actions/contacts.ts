@@ -408,7 +408,11 @@ export async function updateContactSection(
     });
   }
 
-  // KYC completion is a deal-health factor (doc 02 §C5) — refresh buyer deals
+  // KYC completion is a deal-health factor (doc 02 §C5) — refresh the
+  // buyer's open deals AS THE SYSTEM, inside this contact's organisation:
+  // the contact's assigned agent cannot see a deal another agent owns
+  // (T-lm-health-recompute). Only after the row-count proof above — never on
+  // a refused save. It never throws (a failure is paged).
   if (section === "kyc_banking") {
     await recomputeDealsFor(supabase, { buyerContactId: contactId });
   }
