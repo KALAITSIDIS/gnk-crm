@@ -54,7 +54,9 @@ export function ShareLinksClient({
   properties: CurationProperty[];
 }) {
   const [open, setOpen] = useState(false);
-  const [minted, setMinted] = useState<string | null>(null);
+  // the link just minted, shown once — with the action's notice when its
+  // curation or its timeline line could not be confirmed (T-one-time-secrets)
+  const [minted, setMinted] = useState<{ path: string; notice: string | null } | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [locale, setLocale] = useState<string>("en");
   const [title, setTitle] = useState("");
@@ -88,7 +90,8 @@ export function ShareLinksClient({
         toast.error(res.error);
         return;
       }
-      setMinted(res.path);
+      if (res.path) setMinted({ path: res.path, notice: res.notice });
+      if (res.notice) toast.warning(res.notice);
       setOpen(false);
       setSelected([]);
       setTitle("");
@@ -121,8 +124,9 @@ export function ShareLinksClient({
 
       {minted ? (
         <MintedLink
-          path={minted}
+          path={minted.path}
           heading="Proposal link ready"
+          notice={minted.notice}
           onDone={() => setMinted(null)}
         />
       ) : null}

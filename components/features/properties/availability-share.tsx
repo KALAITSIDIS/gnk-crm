@@ -50,7 +50,9 @@ export function AvailabilityShare({
   hasPhases: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const [minted, setMinted] = useState<string | null>(null);
+  // the link just minted, shown once — with the action's notice when its
+  // project row or its timeline line could not be confirmed (T-one-time-secrets)
+  const [minted, setMinted] = useState<{ path: string; notice: string | null } | null>(null);
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState("");
   const [locale, setLocale] = useState<string>("en");
@@ -72,7 +74,8 @@ export function AvailabilityShare({
         toast.error(res.error);
         return;
       }
-      setMinted(res.path);
+      if (res.path) setMinted({ path: res.path, notice: res.notice });
+      if (res.notice) toast.warning(res.notice);
       setOpen(false);
       setTitle("");
       setMessage("");
@@ -96,8 +99,9 @@ export function AvailabilityShare({
 
       {minted ? (
         <MintedLink
-          path={minted}
+          path={minted.path}
           heading="Availability link ready"
+          notice={minted.notice}
           onDone={() => setMinted(null)}
         />
       ) : null}

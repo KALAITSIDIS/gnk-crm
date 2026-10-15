@@ -62,6 +62,68 @@ function labelize(v: string) {
 }
 
 /**
+ * The credentials branch: the one-time password, shown once. Exported so its
+ * markup can be rendered in a test (tests/unit/one-time-secret-notices.test.ts).
+ *
+ * `notice` is the invitation's "created, but …" (T-one-time-secrets): the
+ * account exists and this password is its only copy, but its profile or its
+ * timeline line could not be confirmed. It sits beside the password, which is
+ * what the admin is reading — `state.error` renders only in the form branch,
+ * which this one replaces.
+ */
+export function InviteCredentials({
+  email,
+  password,
+  notice,
+  onDone,
+}: {
+  email: string;
+  password: string;
+  notice: string | null;
+  onDone: () => void;
+}) {
+  const credentials = `${email}\n${password}`;
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-sm text-text-2">
+        Account created. Hand these credentials over — the password is shown{" "}
+        <span className="font-semibold text-text-1">only once</span>:
+      </p>
+      <div className="rounded-lg bg-surface-2 p-3 font-mono text-sm text-text-1">
+        <div className="text-xs text-text-3">{email}</div>
+        {password}
+      </div>
+      {notice ? (
+        <p role="status" className="text-sm text-warning" data-testid="invite-notice">
+          {notice}
+        </p>
+      ) : null}
+      <div className="flex gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            navigator.clipboard?.writeText(credentials).then(
+              () => toast.success("Credentials copied"),
+              () => toast.error("Copy manually"),
+            );
+          }}
+        >
+          <Copy className="size-4" /> Copy credentials
+        </Button>
+        <Button size="sm" onClick={onDone}>
+          Done
+        </Button>
+      </div>
+      <p className="text-xs text-text-3">
+        The user should change it after first login (self-service reset ships with the
+        Phase 2 email integration).
+      </p>
+    </div>
+  );
+}
+
+/**
  * Inner flow keyed by the parent: "Done" remounts it so the NEXT invite gets a
  * fresh form (useActionState keeps the credentials forever otherwise — the
  * dialog used to be stuck on the first invite's password until a full page
@@ -72,39 +134,13 @@ function InviteFlow({ onDone }: { onDone: () => void }) {
   const [state, formAction, pending] = useActionState(inviteUser, initialState);
 
   if (state.tempPassword) {
-    const credentials = `${state.invitedEmail ?? ""}\n${state.tempPassword}`;
     return (
-      <div className="flex flex-col gap-3">
-        <p className="text-sm text-text-2">
-          Account created. Hand these credentials over — the password is shown{" "}
-          <span className="font-semibold text-text-1">only once</span>:
-        </p>
-        <div className="rounded-lg bg-surface-2 p-3 font-mono text-sm text-text-1">
-          <div className="text-xs text-text-3">{state.invitedEmail}</div>
-          {state.tempPassword}
-        </div>
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              navigator.clipboard?.writeText(credentials).then(
-                () => toast.success("Credentials copied"),
-                () => toast.error("Copy manually"),
-              );
-            }}
-          >
-            <Copy className="size-4" /> Copy credentials
-          </Button>
-          <Button size="sm" onClick={onDone}>
-            Done
-          </Button>
-        </div>
-        <p className="text-xs text-text-3">
-          The user should change it after first login (self-service reset ships with the
-          Phase 2 email integration).
-        </p>
-      </div>
+      <InviteCredentials
+        email={state.invitedEmail ?? ""}
+        password={state.tempPassword}
+        notice={state.notice}
+        onDone={onDone}
+      />
     );
   }
 

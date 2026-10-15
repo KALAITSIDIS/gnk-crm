@@ -14,15 +14,22 @@ import { Input } from "@/components/ui/input";
  * Lifted out of `share-links-client.tsx` when 0041 added a second place to mint
  * from (the project units page). Importing it from that file instead would have
  * dragged the whole proposal curation UI into the properties bundle.
+ *
+ * `notice` is the action's "created, but …" (T-one-time-secrets): the link
+ * exists and this is its only copy, but what it shows or its timeline line
+ * could not be confirmed. It sits under the link it is about; the caller also
+ * toasts it.
  */
 export function MintedLink({
   path,
   heading = "Link ready",
   onDone,
+  notice = null,
 }: {
   path: string;
   heading?: string;
   onDone: () => void;
+  notice?: string | null;
 }) {
   const [copied, setCopied] = useState(false);
   const url = typeof window === "undefined" ? path : `${window.location.origin}${path}`;
@@ -54,6 +61,11 @@ export function MintedLink({
           Done
         </Button>
       </div>
+      {notice ? (
+        <p role="status" className="text-sm text-warning" data-testid="minted-link-notice">
+          {notice}
+        </p>
+      ) : null}
     </div>
   );
 }
