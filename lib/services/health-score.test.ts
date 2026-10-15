@@ -647,6 +647,21 @@ describe("recomputeDealsFor fans out AS THE SYSTEM, inside the saved row's organ
     expect(reports()).toEqual([failed("client", "TypeError")]);
   });
 
+  it("never throws into its caller: a throw on the caller's own client is reported, nothing fans out", async () => {
+    const session = {
+      from: () => {
+        throw new SyntaxError("fixture: the anchor read threw");
+      },
+    };
+
+    await expect(
+      recomputeDealsFor(session as never, { buyerContactId: "c1" }),
+    ).resolves.toBeUndefined();
+
+    expect(admin.built).toBe(0);
+    expect(reports()).toEqual([failed("threw", "SyntaxError")]);
+  });
+
   it("a selection that errors, or answers with no rows array, recomputes nothing and is reported", async () => {
     for (const [page, code] of [
       [{ data: null, error: { message: "x", code: "57014" } }, "57014"],
@@ -712,6 +727,26 @@ describe("recomputeDealsFor fans out AS THE SYSTEM, inside the saved row's organ
       writesOf(svc).map((w) => eqs(w).find(([col]) => col === "id")?.[1]),
       "d1 once (no retry of an unmoved row), then d2",
     ).toEqual(["d1", "d2"]);
+  });
+
+  it("a deal read that errors writes nothing for that deal, is reported, and the next deal is still recomputed", async () => {
+    const session = fakeClient({ properties: [anchor(ORG)] });
+    const svc = fakeClient({
+      deals: [
+        ids("d1", "d2"),
+        { data: null, error: { message: "canceling statement", code: "57014" } },
+        systemDeal("d2"),
+        wrote("d2"),
+      ],
+    });
+    admin.client = svc.client;
+
+    await expect(
+      recomputeDealsFor(session.client as never, { propertyId: "p1" }),
+    ).resolves.toBeUndefined();
+
+    expect(reports()).toEqual([failed("deal_read", "57014")]);
+    expect(writesOf(svc).map((w) => eqs(w).find(([col]) => col === "id")?.[1])).toEqual(["d2"]);
   });
 
   it("one deal's recompute throwing does not stop the others, and is reported", async () => {
