@@ -168,11 +168,24 @@ describe("inviteUser — the one-time password", () => {
     expect(res.error, "the database's words are not the sentence").not.toMatch(/row-level security/);
   });
 
+  /**
+   * An undo that GoTrue does not confirm is UNKNOWN, not "kept": auth-js
+   * answers a gateway 5xx, or a connection that dropped after the request
+   * went out, as AuthRetryableFetchError — and the delete may have gone
+   * through. So the password is shown (it may still work), but never with the
+   * bare NOT_RECORDED_NOTICE ("Saved"): the notice says the account may be
+   * gone, and how to tell (Users lists profiles; the profile cascades with
+   * its account). Review finding, 2026-10-15.
+   */
   it.each([
     ["answers an error", async () => ({ data: null, error: { message: "fetch failed" } })],
+    [
+      "answers a gateway 504 (AuthRetryableFetchError) after the delete may have gone through",
+      async () => ({ data: { user: null }, error: { name: "AuthRetryableFetchError", message: "Gateway Timeout", status: 504 } }),
+    ],
     ["throws", async () => Promise.reject(new Error("socket hang up"))],
   ] as const)(
-    "a refused line whose undo %s keeps the account — and shows its password WITH the notice",
+    "a refused line whose undo %s is not confirmed: the password WITH a notice that the account may be gone",
     async (_label, deleteAnswer) => {
       auth.deleteUser.mockImplementation(deleteAnswer);
       use({ profiles: [{ data: null, error: null }], events: [REFUSED] });
@@ -180,10 +193,28 @@ describe("inviteUser — the one-time password", () => {
       expect(auth.deleteUser).toHaveBeenCalledTimes(1);
       expect(res.error).toBeNull();
       expect(res.tempPassword).toBe(passwordGiven());
-      expect(res.notice).toBe(NOT_RECORDED_NOTICE);
+      expect(res.notice, "not 'Saved': the account may have been removed").not.toBe(NOT_RECORDED_NOTICE);
+      expect(res.notice).toMatch(/could not be recorded in the timeline/i);
+      expect(res.notice, "the undo's outcome is unknown").toMatch(/removing its account again could not be confirmed/i);
+      expect(res.notice).toMatch(/may already be gone/i);
+      expect(res.notice, "how to tell: reload Users, look for the address").toMatch(/Reload Users/);
+      expect(res.notice).toContain(EMAIL);
       expect(revalidatePath).toHaveBeenCalledWith("/settings/users");
     },
   );
+
+  it("an unconfirmed profile, a refused line and an unconfirmed undo: the password, with BOTH notices", async () => {
+    auth.deleteUser.mockResolvedValue({ data: null, error: { message: "fetch failed" } });
+    use(
+      { profiles: [{ data: null, error: { message: "Fixture: internal error", code: "XX000" } }], events: [REFUSED] },
+      { profiles: [{ data: [], error: null }] },
+    );
+    const res = await inviteUser(BLANK, inviteForm());
+    expect(auth.deleteUser).toHaveBeenCalledTimes(1);
+    expect(res.tempPassword).toBe(passwordGiven());
+    expect(res.notice).toMatch(/profile could not be confirmed/i);
+    expect(res.notice, "neither notice hides the other").toMatch(/removing its account again could not be confirmed/i);
+  });
 
   it("an account GoTrue refuses (email_exists) refuses as today: nothing else runs", async () => {
     auth.createUser.mockResolvedValue({

@@ -43,6 +43,19 @@ export const INVITE_UNDONE =
   "The invitation could not be recorded in the timeline, so its account was removed again — nothing was kept. Try again.";
 
 /**
+ * The invitation's `invited` line was REFUSED, and deleting its account again
+ * was NOT confirmed. Not confirmed is not "still there": auth-js answers a
+ * gateway 5xx, or a connection that dropped after the request went out, as
+ * AuthRetryableFetchError, and the delete may have gone through. So the
+ * password is shown — the account may still work — with both outcomes said,
+ * and how to tell them apart: Users lists profiles, and `profiles_id_fkey`
+ * cascades, so the address is listed only while its account exists.
+ */
+export function undoUnconfirmedNotice(email: string): string {
+  return `The invitation could not be recorded in the timeline, and removing its account again could not be confirmed, so the account may already be gone. Reload Users before handing these over: if ${email} is listed, the account works and only its timeline entry is missing; if not, these credentials will not work — invite again.`;
+}
+
+/**
  * After a refused profile insert, the orphan login's delete was not
  * confirmed. It may still exist, and then a new invitation of the same
  * address is refused as "already registered".

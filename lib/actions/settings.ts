@@ -18,6 +18,7 @@ import {
   eventRefused,
   joinNotices,
   profileUnconfirmedNotice,
+  undoUnconfirmedNotice,
 } from "@/lib/services/one-time-secrets";
 import { certainlyRolledBack } from "@/lib/services/rpc-outcome";
 import { EVERY_LISTING, notifySiteAfter } from "@/lib/services/site-revalidate";
@@ -245,10 +246,19 @@ export async function inviteUser(
   } catch (err) {
     // shape only: a database's words can echo the row, and this row is an e-mail
     console.error("[inviteUser] account created, its invited line not written", { refused: eventRefused(err) });
-    // Certainly not written: undo, so no account exists without its line.
-    // Unknown: the line may name this user — keep the account.
-    if (eventRefused(err) && (await removeAccount(admin, userId))) return fail(INVITE_UNDONE);
-    notices.push(eventNotice(err));
+    if (!eventRefused(err)) {
+      // Unknown: the line may name this user — keep the account.
+      notices.push(eventNotice(err));
+    } else if (await removeAccount(admin, userId)) {
+      // Certainly not written, and the account certainly removed: undone, so
+      // no account exists without its line and the address is free to retry.
+      return fail(INVITE_UNDONE);
+    } else {
+      // Certainly not written, and the undo NOT confirmed — which may still
+      // have deleted the account (see removeAccount). Show the password, and
+      // say both outcomes, not a bare "Saved".
+      notices.push(undoUnconfirmedNotice(d.email));
+    }
   }
   revalidatePath("/settings/users");
   return { error: null, savedAt: Date.now(), tempPassword, invitedEmail: d.email, notice: joinNotices(notices) };
@@ -256,9 +266,11 @@ export async function inviteUser(
 
 /**
  * Delete an account `inviteUser` just created. True only when GoTrue
- * confirmed it; an error or a throw leaves the account where it may be.
- * `profiles_id_fkey` cascades, so a profile that did land goes with it, and
- * one still in flight can no longer land.
+ * confirmed it. False is UNKNOWN, not "still there": auth-js answers a gateway
+ * 5xx (500-504, 520-530) or a dropped connection as AuthRetryableFetchError,
+ * and the delete may have gone through behind it — so a caller that goes on
+ * must say the account may be gone. `profiles_id_fkey` cascades, so a profile
+ * that did land goes with it, and one still in flight can no longer land.
  */
 async function removeAccount(admin: ReturnType<typeof createAdminClient>, userId: string): Promise<boolean> {
   try {
