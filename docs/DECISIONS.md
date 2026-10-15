@@ -10380,3 +10380,361 @@ The residuals of items 5 and 4 of `T-external-audit-2026-10-14` (the first two e
   Each VERIFY was re-run on origin/main `b4f7e2f` and is quoted there; two of the malformed-ids entry's three original checks misread the fix, and the strike says which to read instead. The `?agent=` note under "A hand-typed contacts filter value crashes the page" now says landed; that entry stays open for `?temperature=` and `?source=`.
 - The remote `fix/kanban-drop-and-ids` is deleted (the local branch is kept), and its worktree `.worktrees/gnk-crm/kanban-and-ids` is removed.
 - **Rollback.** Revert the merge (application only: no migration, nothing on hosted).
+
+## T-one-time-secrets — a committed one-time secret is handed back with a notice and never lost to the error page; only a certain refusal deletes an invited account (2026-10-15; no migration; LANDED 2026-10-15 — PR #164, main `96aba61`, deployed)
+
+From BACKLOG "Throws after a commit — 2026-10-13": "A one-time secret is created and never shown: an invited colleague's password, a portal feed URL, a share link, M". Built on the operator's "go with the one-time secrets and the LM recompute". This entry is the first half; the LM recompute is its own change, `T-lm-health-recompute` (the next entry, PR #165).
+- Application only: no migration, nothing on hosted, no RLS change.
+- Branched from origin/main `115bedc` (#163).
+- **Commits.** `982c2a1` (the actions) and `5a64851` (where the notice is shown). Review round: `21437f9` (an unconfirmed undo says the account may be gone), `857306f` (comments: 0133 and an unconfirmed profile), `9af9b1a` (the husk delete's test answer).
+
+**The defect (from code; line numbers re-checked at `115bedc`, after #157–#162 moved some).**
+- Five actions return a secret that exists nowhere else, and each then awaited a step that can throw. `logEvent` throws `EventWriteError` on any answer that is not 201 Created (T-log-event-hollow). `useActionState` and `startTransition` rethrow it to `app/(app)/error.tsx`, or `app/(app)/properties/error.tsx` for the units page, so the secret is never shown.
+  - **`inviteUser`** (`lib/actions/settings.ts`). `createUser` with the one-time password is at :181-186, the profile insert at :189-199, and the `user.invited` line at :201 (the BACKLOG's :199). InviteFlow's `useActionState` is at `components/features/settings/users-panel.tsx:71` and its credentials branch at :73-108. A retry answers `email_exists` (measured by the scope, BACKLOG).
+  - **`setPortalEnabled`** (`lib/actions/portals.ts:127`). The digest is written at :111-125. The card calls it at `portal-card.tsx:127`, inside `startToggle` (:126).
+  - **`regeneratePortalToken`** (:208).
+  - **`createShareLink`** (`lib/actions/share-links.ts:113`) and **`createAvailabilityLink`** (:251). A resubmit mints a second link.
+- **The step between the commit and the line deleted on ANY failure.**
+  - `inviteUser` called `deleteUser` on any profile error (:196-198) and ignored its answer.
+  - Both link actions called a husk delete on any curation error (:107-111, :245-249).
+  - A code-less 502, XX000 or 57014 can follow a committed row (T-media-insert-outcome).
+  - A hollow answer was believed as written. That is BACKLOG "Four writes on these paths take a hollow answer as written"; three of its four writes are these.
+- **The sweep.**
+  - In the three files, only these five actions return a raw secret. `revokeShareLink`, `savePortalSettings`, `selectPortal` and `deselectPortal` return none.
+  - No other action in `lib/actions/*.ts` mints a token: `grep -n "randomBytes\|mintPortalToken\|generateShareToken"` finds only these three files (`auth.ts:40` is a comment).
+
+**What changed: the actions (`982c2a1`; review `21437f9`, `857306f`).**
+1. **From the commit on, nothing throws.**
+   - Each line is caught at its site: inline in `inviteUser`, through `recordConnection` in `portals.ts` and through `recordLink` in `share-links.ts`.
+   - `revalidatePath` still runs, and the secret comes back WITH a `notice`.
+   - Nothing is revoked, rotated or deleted on an unsettled failure.
+2. **The wording depends on certainty.**
+   - A REFUSED line gets the house `NOT_RECORDED_NOTICE`. That is `EventWriteError.refused`: a code `certainlyRolledBack` understands.
+   - Any other failure gets `NOT_CONFIRMED_NOTICE`, new and placed beside it in `lib/services/optimistic-save.ts`: "Saved — but its timeline entry could not be confirmed, so the record may be missing. Tell an admin so the record can be checked." It follows the BACKLOG NOTE "a failed `logEvent` does not say whether its line was written": say could not be CONFIRMED, not missing.
+   - `eventRefused`, `eventNotice`, `joinNotices` and the other texts live in `lib/services/one-time-secrets.ts`, because a "use server" file may export async functions only.
+3. **`inviteUser`.**
+   - **A refused profile insert** (a `certainlyRolledBack` code) deletes the account, as before. The delete's answer is now read: when GoTrue does not confirm it, the refusal adds "Its sign-in account may still exist: if inviting <e-mail> again says it is already registered, delete that account in Supabase (Authentication → Users) first."
+   - **Any other profile failure**, or an answer that is not 201 Created, reads the profile back as the system (by id, through `rowsOf`).
+     - Found: the invitation carries on.
+     - Not found, or the read fails: the account is KEPT, and the password is shown with "The account was created, but its profile could not be confirmed. Reload Users before handing these over: if <e-mail> is not listed, the account cannot use the CRM — delete it in Supabase (Authentication → Users), then invite again."
+   - **The `invited` line, refused.** The account is deleted and the invitation refused with `INVITE_UNDONE`: "The invitation could not be recorded in the timeline, so its account was removed again — nothing was kept. Try again." So no account exists without its line, and the address is free for the retry. When that delete is not confirmed (an error answer or a throw), its outcome is UNKNOWN: auth-js 2.110.2 answers a gateway 5xx (500-504, 520-530) or a dropped connection as `AuthRetryableFetchError`, and the delete may have gone through. So the password is shown with `undoUnconfirmedNotice`: "The invitation could not be recorded in the timeline, and removing its account again could not be confirmed, so the account may already be gone. Reload Users before handing these over: if <e-mail> is listed, the account works and only its timeline entry is missing; if not, these credentials will not work — invite again." Users lists profiles and the profile cascades with its account, so the reload tells the two apart (review `21437f9`; it was the bare `NOT_RECORDED_NOTICE`, "Saved — …").
+   - **The `invited` line, unknown.** The account is kept, and the password is shown with `NOT_CONFIRMED_NOTICE`.
+   - **The cascade.** `profiles_id_fkey` (`0001_foundations.sql:50`) cascades, so a delete also removes a profile that landed, and a profile insert still in flight can no longer land.
+   - The line is written whether or not the profile was confirmed: the account exists. Once it names the id, 0133's `profiles_id_without_history` (AFTER INSERT, argument `'user'`) refuses a session's profile insert at that id with 42501 — one still in flight that reaches its trigger after the line included. So an unconfirmed profile will not "land yet": the notice's reload is the final answer, and "delete it, then invite again" the only way back (review `857306f`).
+   - The log names only `refused`, because a database's words can echo the row and this row holds an e-mail.
+4. **`setPortalEnabled` and `regeneratePortalToken`.** Each returns its token with the notice; a disable or a re-enable returns no token. The digest is written once and never again.
+5. **The two link actions.** `curate()` inserts the curation after the link committed.
+   - A `certainlyRolledBack` code refuses as before, and its husk delete is kept (it removes nothing; see Left open).
+   - Any other failure, or an answer that is not 201, reads the rows back by the link's id.
+     - All there: the action carries on.
+     - Otherwise the link is handed back with `LINK_CONTENT_UNCONFIRMED_NOTICE`: "The link was created, but what it shows could not be confirmed. Open it before sending it — if it is empty, revoke it under Share links and create another."
+   - The `created` line comes next, and its failure is a notice too. Notices join in that order.
+6. **State types.**
+   - `SettingsActionState` gets `notice: string | null`, required like its other fields. The six settings forms' initial states carry it.
+   - `PortalActionState` gets `notice?: string | null`, optional like `token`.
+   - `ShareLinkActionState` gets `notice: string | null`, required. A local `refuse()` builds every refusal.
+
+**What changed: where the notice is shown (`5a64851`).**
+- **InviteFlow.** Its credentials branch is now `InviteCredentials`. The notice sits under the password, before Copy and Done, in the house's notice element (`<p role="status" className="text-sm text-warning">`). `state.error` renders only in the form branch.
+- **The portal card.** Its issued URL is now `IssuedFeedUrl`. The notice sits under the URL, above the shown-once warning. The card keeps `{ token, notice }`, and the switch and Regenerate each toast the notice (`toast.warning`) after their success toast.
+- **`MintedLink`** takes `notice` and shows it under the link. The proposals page and the units page keep `{ path, notice }` and toast it.
+- English literals only: `messages/*.json` are held by the concurrent session.
+
+**Options weighed.**
+1. **A refused `invited` line: undo (chosen), or keep the account with `NOT_RECORDED_NOTICE`.**
+   - Undo is the document actions' rule (T-log-event-hollow: delete only when `refused`) and the guardrail (no mutation without its event).
+   - The BACKLOG allowed it: "`inviteUser` may call `deleteUser` only when `e.refused`".
+   - The cascade makes the undo complete, and no line names the account yet.
+   - **The operator's accepted choice.** It was named to the operator before the merge as a choice they could reverse, and the operator merged #164 with it (Landing).
+2. **An unknown profile answer whose read-back finds nothing: keep the account and say so (chosen), or delete it.**
+   - Deleting would be clean here, thanks to the cascade and the dead in-flight insert.
+   - But the rule is never to delete on an unknown outcome: the profile may well be there, when only its answer was lost (the read-back that could not ask). A profile still in flight does NOT complete the account on its own: the `invited` line written next makes 0133 refuse it (review `857306f`; the draft said the opposite).
+3. **Links and feed URLs whose line was refused: keep them, with the notice (chosen). Never revoke.**
+   - A revoke is a second write that needs its own line, and a revoked fresh link is a lost one. Only `inviteUser` was given an undo.
+4. **One wording for every failure, or two (chosen).** The BACKLOG NOTE asks for "could not be confirmed" when the line may be there.
+5. **Reading the line back to turn an unknown into a clean success: not built.**
+   - That is `documentEventWritten`'s idea.
+   - The portal lines carry no per-attempt key: an organisation collects several `portal_enabled` lines over time.
+   - The notice is honest either way.
+6. **Settling an unconfirmed undo with `auth.admin.getUserById`: not built (review round).** It would turn only a positive find into a certainty. GoTrue's not-found answer is unmeasured here, and a wrong reading would refuse with `INVITE_UNDONE` while the account remains, so the retry answers `email_exists`. The admin's reload of Users gives the same certainty without that risk.
+
+**Tests (unit).**
+- **`lib/actions/one-time-secrets.test.ts` (63; 61 before the review round).** It runs the REAL actions and the REAL `logEvent` through `lib/testing/fake-client.ts`, with the `events` insert answered as PostgREST would answer it.
+  - **`inviteUser` (22; 20 before the review round):**
+    - a control;
+    - the line unsettled ×3 (XX000, a code-less 502, a hollow 204): the password, `NOT_CONFIRMED_NOTICE`, the page revalidated, no delete;
+    - the line refused: deleted, and refused with `INVITE_UNDONE`;
+    - refused, with a delete that answers an error, answers a gateway 504 (`AuthRetryableFetchError`) or throws: the password with `undoUnconfirmedNotice` (review `21437f9`; it asserted `NOT_RECORDED_NOTICE`);
+    - an unconfirmed profile, a refused line and an unconfirmed undo: the password, with both notices (review `21437f9`);
+    - `email_exists`: refused, and nothing else runs;
+    - a refused profile insert ×4 (42501, 23505, 23503, PGRST204): deleted, and refused as before;
+    - a refused profile insert whose delete is unconfirmed: the refusal says the account may remain;
+    - an unknown profile answer ×4 (XX000, 57014, a code-less 502, a hollow 204): read back by id, never deleted;
+    - the read-back empty or failed: the password with the profile notice;
+    - both notices together.
+  - **`setPortalEnabled` (7) and `regeneratePortalToken` (5):**
+    - every line failure ×4: the token whose digest the row holds, the notice for its certainty, the page revalidated, exactly one write;
+    - a disable whose line failed;
+    - a control;
+    - a refused write: refused as before.
+  - **`createShareLink` and `createAvailabilityLink` (14 each, plus 1):**
+    - every line failure ×4: the link whose digest the row holds, the notice for its certainty, both pages revalidated, no update or delete of the link;
+    - a control;
+    - a refused link insert: refused;
+    - a refused curation ×2: refused, with the husk delete attempted — and answered as production answers it, 42501 `permission denied for table share_links` (review `9af9b1a`; the fake answered it as a success);
+    - an unknown curation ×3: read back by the link's id;
+    - the read-back empty or failed: the link with the notice;
+    - both notices together;
+    - a proposal read-back that finds only some of its rows.
+- **`tests/unit/one-time-secret-notices.test.ts` (10).**
+  - `InviteCredentials`, `MintedLink` and `IssuedFeedUrl` are rendered with `renderToStaticMarkup` (the precedent is `upload-form-labels.test.ts`). The notice appears in its `role="status"` element AFTER the secret, and before the invite's buttons. Without a notice there is none.
+  - Source guards, with comments stripped and each scoped to its one JSX element: the callers pass the notice in and toast it, and the portal card does so from both the switch and Regenerate.
+- **Changed to keep its meaning:** in `lib/actions/contact-link-reread.test.ts`, the three exact refusals now carry `notice: null`.
+
+**Verified: unit only, plus branch CI.**
+- **RED on `115bedc`'s sources.** The final two test files (before the review round) were run with the nine changed source files swapped back to `115bedc` in the working tree (restored with `git checkout --`, tree clean): 53 failed | 18 passed (71).
+  - The 18 that pass pin existing behaviour: the four controls; the 13 refusals at or before the commit (`email_exists`, the refused profile ×4, the two portal writes, the two link inserts, the refused curation ×4); and `MintedLink` without a notice.
+  - The first RED run, before four later cases were added, gave 49 | 18 of 67, on the untouched tree.
+- **GREEN:** 71/71 on `5a64851`; 73/73 on `9af9b1a`, after the review round.
+- **Mutants: 45 of 45 killed** on `5a64851`, none equivalent (`scratchpad/mutate.py`). Each was one exact-string edit of a committed file, its installation checked (the edit occurs exactly where intended; `git diff --numstat` non-empty), the two test files run, and the file restored with `git checkout --` and the tree checked clean:
+  - `inviteUser` (13): any profile error deletes; a hollow profile answer believed; an unread read-back taken as found; any line failure undoes; a refused line never undoes; the delete's answer not read; a throwing delete escapes; an unconfirmed delete not said; any read-back answer counts as found; no revalidation; no notice for an unsettled line; the notices dropped; the read-back on the session instead of the system.
+  - The shared texts (3): any `EventWriteError` refused; every failure "could not be recorded"; only the first notice kept.
+  - The portals (5): the line's failure rethrown; an enable's, a disable's and a rotation's notice dropped; a rotation not revalidated.
+  - The links (12): any curation error a refusal; a hollow curation believed; some rows confirm; an unread read-back confirms; the line's failure rethrown; the refused proposal's husk delete removed; each action's curation notice and line notice dropped (×2 each); the units page not revalidated; the proposal not revalidated.
+  - The components (12): the credentials, minted-link and feed-URL notices hidden; the minted link's notice moved ABOVE its link; InviteFlow, the card and the units page not passing the notice; the switch and Regenerate not toasting or not keeping it (×2 each); the proposals page not toasting.
+  - Re-run on `9af9b1a` (review round): 43 killed, 2 not installed — S4 and S5 anchored on the one-line condition finding 1 replaced; their intent is F1d and F1e (below), both killed.
+- **Gates** (each read by its exit code):
+  - Baseline at `115bedc`: vitest 248 files / 3,872 tests, exit 0.
+  - Commit `982c2a1`'s tree: typecheck 0, lint 0, vitest 249 files / 3,933 tests, exit 0.
+  - Commit `5a64851`'s tree: typecheck 0, lint 0, vitest 250 files / 3,943 tests, exit 0.
+  - `21437f9`, `857306f` and `9af9b1a` (each before its commit), and `9af9b1a` again after every mutation run with the tree clean: typecheck 0, lint 0, vitest 250 files / 3,945 tests, exit 0. The count is 3,943 + 2: the old undo test had two variants and now has three, plus the combined case.
+- **Branch CI** on the head `9af9b1a`: run 38751774953 green (checks, rls, e2e). `tests/e2e/portals.spec.ts:201` reads `portal-feed-url-<id>`, which `IssuedFeedUrl` keeps.
+- **NOT run:**
+  - No local DB test and no Docker. The change is application only (no migration, no RLS change), and another agent owned the local stack. CI's rls job ran the DB suite green.
+  - No browser.
+  - Neither GoTrue's `deleteUser` answers nor PostgREST's answer to a session DELETE on `share_links` were measured. The DELETE's refusal is read from the grant (`0023_share_links.sql:88-92`), not from a run; GoTrue's error mapping is read from auth-js 2.110.2's `lib/fetch.js`.
+  - Hosted was not read.
+
+**Review round (one review of `5a64851`: four findings, all low, all REAL; three commits, one per disposition; RED before GREEN where there was behaviour to fail; the sections above already read as after the round).**
+
+| # | Finding | Verdict | Disposition | Commit |
+|---|---|---|---|---|
+| 1 | A refused `invited` line whose undo is unconfirmed shows the password with a bare "not recorded" notice, though the account may already be deleted | REAL | FIXED: a dedicated notice says both outcomes and how to tell them apart | `21437f9` |
+| 3 | Same branch: the test asserts "keeps the account", but the delete's outcome is unknown | REAL — the same defect as 1 | FIXED by the same change; the test renamed, asserting the new notice | `21437f9` |
+| 2 | "The profile may still land" is wrong: once the `invited` line is written, 0133 refuses any later profile at that id | REAL — records and comments only | FIXED: the docstring, a code comment, the test comment and the records; behaviour kept | `857306f` |
+| 4 | The refused-curation test fakes the husk delete as a success; production refuses it (no DELETE on `share_links`) | REAL — fixture and records | FIXED: the fixture answers 42501, the assertion text is honest, comments added, the BACKLOG entry cites the grant; behaviour kept by the brief | `9af9b1a` |
+
+- **1 and 3, an unconfirmed undo is unknown, not "kept".**
+  - Verified: `settings.ts` at `5a64851`:250 read `if (eventRefused(err) && (await removeAccount(admin, userId))) return fail(INVITE_UNDONE);` followed by `notices.push(eventNotice(err));`, which is `NOT_RECORDED_NOTICE` for a refusal. `removeAccount` returns false on any `error` answer or any throw. auth-js 2.110.2 (`node_modules/@supabase/auth-js/dist/main/lib/fetch.js`) answers a failed `fetch` (`_handleRequest`, :124) and any status in `NETWORK_ERROR_CODES` (500-504 and 520-530, :32-42) as `AuthRetryableFetchError`, and `GoTrueAdminApi.deleteUser` (:734-751) RETURNS that error rather than throwing it. A gateway 504 or 524 can follow a delete GoTrue completed, so the account and its profile (cascade) may be gone while the admin is handed its password.
+  - Fix: `undoUnconfirmedNotice(email)` (`lib/services/one-time-secrets.ts`). The reload is a certain read-back: `app/(app)/settings/users/page.tsx:19` lists `profiles`, and a profile exists only while its account does. `inviteUser`'s catch has three explicit branches: unknown line → `eventNotice(err)`; refused line, undo confirmed → `INVITE_UNDONE`; refused line, undo NOT confirmed → `undoUnconfirmedNotice`. `removeAccount`'s docstring says false means unknown.
+  - Tests: the old "a refused line whose undo %s keeps the account" now runs over three delete answers (`{ error: { message: "fetch failed" } }`; a gateway 504 `AuthRetryableFetchError`; a throw) and asserts the password, `not.toBe(NOT_RECORDED_NOTICE)`, "could not be recorded in the timeline", "removing its account again could not be confirmed", "may already be gone", "Reload Users", the e-mail and `revalidatePath`. New case: an unconfirmed profile, a refused line and an unconfirmed undo give both notices.
+  - RED: the two source files at `5a64851` checked out into the working tree and the new test file run against them: **4 failed | 59 passed (63)**, exit 1 — the three undo variants and the combined case. First failure: `AssertionError: not 'Saved': the account may have been removed`. Restored with `git checkout HEAD --`, tree clean. GREEN: **73/73**, exit 0, over both test files.
+  - Mutants: **10 of 10 killed**, each one exact-string edit checked installed, run against both test files, restored and the tree checked clean. `settings.ts`: the unconfirmed undo says the bare `eventNotice` again (4 failed); says nothing (4); the undo's answer inverted (5); `if (!eventRefused(err))` → `if (false)`, any line failure undoes (F1d, 4); → `if (true)`, a refused line never undoes (F1e, 5); an unsettled line gets the undo notice (4); the delete's answer not read (4). `one-time-secrets.ts`: the notice names no address (3); it does not say "may already be gone" (3); it says "its account was kept" (4).
+- **2, 0133 and an unconfirmed profile.** `0133_insert_id_without_history.sql:298`: `profiles_id_without_history` is an AFTER INSERT row trigger with the argument `'user'`; its body (:266-284) returns early unless the role GUC is `authenticated` or `anon`, and otherwise raises 42501 when an event of that organisation, entity type and id exists. `inviteUser`'s profile insert is a session insert, and its `invited` line has `entityType: "user"`, `entityId: userId` and the same org. So once the line is visible, any later session insert of that profile is refused, including one in flight whose trigger has not run. Before the fix, `one-time-secrets.ts:57` said the profile "may be there, or land yet". The fake client has no trigger, so the unit tests could not show it; the user-facing notice was already right, and with 0133 it is the final answer. Behaviour kept: the line is still written when the profile is unconfirmed (the account exists, and every mutation gets its event; skipping it would leave a profile that does land with no `invited` line). Comments and records only (`git diff -U0` shows no changed non-comment line), so no RED; gates on that tree typecheck 0, lint 0, vitest 250 / 3,945. VERIFY: `git grep -n "or land yet" <rev> -- lib/services/one-time-secrets.ts` hits `:57` on `5a64851` and nothing on `9af9b1a` (exit 1; nothing on `447c5bc` either).
+- **4, the husk delete is refused in production.** `0023_share_links.sql:88` revokes all on `share_links` from anon and authenticated, :92 grants `select, insert, update` to authenticated, and :104 says "No DELETE for anyone". `git grep -n "share_links" 9af9b1a -- supabase/migrations | grep -i grant` gives only `0023:92` and the comment at `0041:475`; `0106`'s `delete from share_links` (:282) is its self-test, run as the migration owner; `0002:46-47` grants and default-grants `service_role` only. So a session's DELETE gets 42501. `lib/testing/fake-client.ts` `answer()` had resolved the unscripted delete as `{ data: [], error: null }`, and the test's message ("a refusal is the only failure that removes it") described something production cannot do. Fix: the delete is answered `{ data: null, error: { message: "permission denied for table share_links", code: "42501" } }`; the test asserts the curation's words (not the delete's), the delete attempted once at `["id", LINK_ID]`, and no line; both husk deletes in `share-links.ts` carry a comment saying they remove nothing. The fixture's teeth: two mutants installed in BOTH link actions — H1 (the delete's refusal replaces the curation's words) and H2 (it escapes as a throw, `rowsOf` on its answer) — were each KILLED by the new fixture (4 failed | 59 passed) and SURVIVED the old one (63 passed, `857306f`). The working files were restored byte for byte. No RED on the code: its behaviour is unchanged by design. Gates: typecheck 0, lint 0, vitest 250 / 3,945.
+- **This round's VERIFYs, re-run on origin/main `447c5bc` at landing:** `grep -n "undoUnconfirmedNotice(d.email)" lib/actions/settings.ts` gives `264:` (none on `115bedc` or `5a64851`); `grep -c "permission denied for table share_links" lib/actions/one-time-secrets.test.ts` gives `1` (none before `9af9b1a`).
+
+**Rollback.** Revert the merge. Application only.
+
+**Left open (BACKLOG).**
+- An unknown answer to the write that STORES the secret still refuses as before: `createUser`, the `share_links` insert, the `portal_connections` write. The secret may have committed. New ("Throws after a commit — 2026-10-13").
+- The refused curation's husk delete removes nothing: `authenticated` holds no DELETE on `share_links`. New, from the schema (`0023:88-92`), not measured by a run.
+- `createPaymentPlan`'s insert, the fourth of "Four writes …", stays open (with `applyPaymentPlan`'s instalments insert).
+- The rest of "Throws after a commit — 2026-10-13".
+- The LM recompute, the other half of the operator's word, is `T-lm-health-recompute` (PR #165), landed right after this.
+
+**Landing (2026-10-15, on the operator's "merge #164 and #165"; first of the two merges).**
+- **Branch CI** green on the head `9af9b1a`: run 38751774953 (checks, rls, e2e).
+- **Merge.** PR [#164](https://github.com/KALAITSIDIS/gnk-crm/pull/164) merged at 16:16:49Z, pinned to `9af9b1a4b9768c2a38647b653eb75f559b8215e0`, giving main `96aba61` over `115bedc` (#163). Main had not moved since the branch was cut: `115bedc` is an ancestor of the head, and the merge's tree is the head's tree (`1735feb2…` for both, re-read at records time).
+- **Production.** Vercel `dpl_8gVh4KYGT2R2N1rFJQFuys5nRp7p` READY 16:17:49Z, aliased to gnk-crm.vercel.app; `get_runtime_errors` since 16:15Z: none, read after each of the two deploys. Signed out, `/login` answers 200, and `/settings` and `/share-links` answer 307 to `/login`. The notices sit behind sign-in, so none was seen on production.
+- **Merge CI** on `96aba61`: run 38767654595 green, read after it completed (16:31:32Z) — checks `success` (16:19:52Z), rls `success` (16:23:52Z), e2e `success` (16:31:31Z).
+- **The operator's choice.** The invite undo — when the `invited` line is certainly refused, the new account is deleted so a retry starts clean — was named to the operator as a choice they could reverse, and the operator merged #164 with it. It stands as the operator's accepted choice (Options weighed, 1). Reversing it would keep the account and show the password with `NOT_RECORDED_NOTICE`.
+- **BACKLOG, on landing** (each VERIFY re-run on origin/main `447c5bc` and quoted there):
+  - struck: "A one-time secret is created and never shown …";
+  - three of four struck, the entry kept open for `createPaymentPlan`: "Four writes on these paths take a hollow answer as written";
+  - the NOTE "a failed `logEvent` does not say whether its line was written" names `NOT_CONFIRMED_NOTICE`;
+  - added: "An unknown answer to the write that STORES a one-time secret still refuses …" and "A refused curation's "husk delete" removes nothing …".
+- The remote `fix/one-time-secrets` is deleted (the local branch is kept), and its worktree `.worktrees/gnk-crm/one-time-secrets` is removed.
+- **Rollback.** Revert the merge (application only: no migration, nothing on hosted).
+
+## T-lm-health-recompute — a property, contact or mandate save recomputes every open deal it touches as the system, inside the saved row's organisation: who saved no longer decides a stored score (2026-10-15; no migration; LANDED 2026-10-15 — PR #165, main `447c5bc`, deployed)
+
+The operator's decision on the BACKLOG entry "A listing manager's (or a non-owner agent's) legal save fans out a deal-health recompute that RLS silently refuses … NEEDS AN OPERATOR DECISION" ("External audit — 2026-10-14", from `T-deal-health-race`): recompute as the system, with an explicit organisation boundary. It was decided before the build, and relayed as "go with the one-time secrets and the LM recompute"; the one-time secrets are `T-one-time-secrets`, the entry above. Application only: no migration, no policy change, nothing on hosted.
+- **Commits.** `7c4fb6e` (the service, the two callers' comments, doc 04, both test files), `968d13b` (two unit cases the mutation round asked for), `503f4dc` and `a9b074f` (review round, tests only), on `fix/lm-health-recompute` from origin/main `115bedc`.
+
+**The defect (re-checked in the code and on the stack first, at `115bedc`).**
+- `updatePropertySection` with `section === "legal"` ran `recomputeDealsFor(supabase, { propertyId })` on the caller's session (`lib/actions/properties.ts:879-883`). `updateContactSection` with `kyc_banking` ran `recomputeDealsFor(supabase, { buyerContactId })` the same way (`contacts.ts:411-414`). `title_deed_status` and buyer KYC ≥ 50% are 15-point health factors.
+- **Who may write what** (read live, `pg_policy` on the stack at 0147):
+  - `deals_update`: an admin of the organisation, or an agent on `agent_id` / `created_by` — no listing-manager arm.
+  - `deals_select`: admin and listing manager organisation-wide; anyone else, their own or created deals.
+  - `properties_update`: admin, listing manager, or the agent on `assigned_agent_id`.
+  - `contacts_update`: admin, or the agent on `assigned_agent_id` / `created_by` (no listing manager).
+- **Measured on `115bedc`** by the new DB file's RED run (the session's requests on deals; the system's; the deal's score after):
+  - a listing manager's legal save: `["GET","GET","PATCH","GET"]` — the selection, the read, the PATCH RLS matched to 0 rows, the re-read that found it unmoved (`T-deal-health-race`) — and the score stayed 0;
+  - the assigned agent's legal save on a deal another agent owns: `["GET"]` — the selection found nothing;
+  - the contact's assigned agent's KYC save: `["GET"]`, likewise.
+- **Every caller** (`grep -rn "recomputeDealsFor\|recomputeDealHealth" lib app`):
+  - `recomputeDealsFor` — the fan-out: `properties.ts:882` (legal), `contacts.ts:413` (KYC), `mandates.ts:33` (`recomputeScores`, from `saveMandate` :206 after its UPDATE and :245 after its INSERT, and `setMandateStatus` :424).
+  - `recomputeDealHealth` — a deal action on its own deal: `deals.ts:83` `moveDealToStage`, :241 `updateDealSection`, :363 `saveOffer`, :439 `updateOfferStatus`, :697 `raiseWonFollowUps`, :949 `logDealContact`; `leads.ts:864` `logConversation` (the converted deal).
+  - `mergeContacts` repoints deals and calls neither (BACKLOG, unchanged here).
+
+**Which links bind the organisation (read live, `pg_constraint` on the stack at 0147).**
+- `deals_buyer_contact_id_fkey` / `deals_seller_contact_id_fkey`: `(org_id, x) → contacts (org_id, id)` since 0139.
+- `deals_property_id_fkey`: `FOREIGN KEY (property_id) REFERENCES properties(id)` — single column. 0124, 0129 and 0139 each list `deals.property_id` under "NOT CHANGED HERE", so a service-role insert can store a deal on another organisation's property.
+- The service role meets the deal triggers as follows: `deals_updated` stamps `updated_at` for every role, so `T-deal-health-race`'s predicate means the same; `deals_closed_guard` returns early for any role but `authenticated` / `anon` (and `health` / `health_score` are not among the columns it guards anyway); `deals_stage_changed_event` and `deals_supersede_nudges` fire on columns this write does not touch.
+
+**What changed (`lib/services/health-score.ts`).**
+1. **`recomputeDealsFor(session, anchor)`**, `anchor: FanOutAnchor` = `{ propertyId }` or `{ buyerContactId }` (exactly one; a hand-built call with neither or both returns). The three callers' code is unchanged: `mandates.ts` (held by the concurrent session) reaches the system path through its own `recomputeScores`.
+   - **The boundary.** The anchor's `org_id` is read on the CALLER'S client (`properties` or `contacts`, `select("org_id")`, by id) — under RLS, the row the caller has just written. An error is paged (`anchor`, its code); an anchor the caller cannot see is paged (`anchor`, `not_visible`) and fans out nothing — no service-role client is built.
+   - **One service-role client** per fan-out (`createAdminClient()`, a throw paged as `client`).
+   - **The selection:** `org_id = <anchor's org>`, `status = 'open'` (as before), and `property_id` or `buyer_contact_id`. An error or an answer with no rows array is paged (`select`).
+   - **Each deal** goes through `recompute({ db: system, orgId })`: the read is `.eq("id").eq("org_id")`; the write is `.update({ health, health_score }).eq("id").eq("org_id").eq("updated_at", <as read>).select("id")`, keeping `T-deal-health-race`'s guard and its one retry. No event (derived state, T3.3).
+   - **Never throws.** Each deal runs in its own try: a deal read that errors (`deal_read`), a missed write over an UNMOVED row (`write`; the system has no RLS to explain it, unlike the session path) and a throw (`recompute`) are paged, and the next deal still runs. Contention that exhausts `HEALTH_WRITE_ATTEMPTS` is not paged (`T-deal-health-race` decided it is not a failure). An outer catch pages anything else (`threw`).
+   - **The page:** `[health] deal fan-out failed`, tags `{ operation: "health.fan_out", step, code }`, extra = opaque ids (`propertyId` / `contactId`, `dealId`), plus a console line — shape only, never a database message (the `reportDealClose` / site-revalidate convention).
+2. **`recompute(run, dealId)`** is `T-deal-health-race`'s loop, unchanged in logic, generalised over a `Runner` (`{ db, orgId }`; `orgId: null` = the session, RLS bounds it). It returns an outcome (`written`, `gone`, `unmoved`, `contended`, `read_failed`), which only the fan-out reads.
+3. **`healthUpdateFor`:** the buyer's KYC and the title deed are now read with `.eq("org_id", deal.org_id)` on BOTH paths: the property link is single-column, and a row loaded past the keys can name another organisation's contact. On the system path the mandate read reuses the same service-role client (the session path builds one, as before).
+4. **`recomputeDealHealth(supabase, dealId)`** = `recompute({ db: supabase, orgId: null }, …)`. Its seven call sites keep the caller's session, deliberately. Each has just written that very deal through the same session (the RPC, the section update, the offer's deal touch, `close_deal`'s answer, `logDealContact`'s and `logConversation`'s updates), so RLS admits the derived write exactly where it admitted the action's own. Recomputing as the system there would change nothing for the roles that reach those actions (admin, the deal's agent). The one real gap, `logConversation`'s unchecked deal update, is a separate BACKLOG entry: its recompute follows a write that may itself have been refused. The two new org predicates are no-ops under RLS (`properties_select` / `contacts_select` are organisation-scoped).
+5. **Comments** at the two callers (`properties.ts:879-888`, `contacts.ts:411-418`), and one paragraph on the deals row of `docs/04_RLS_POLICY_MATRIX.md` saying what the service role writes and why.
+- **Why the anchor is read inside the helper, on the session.** It serves all three callers alike, including `mandates.ts`, whose call could not change here. It costs one GET per fan-out. The profile's org would not do: that would fan out even for an id the session cannot read.
+
+**What the service role can and cannot do here.**
+- **Nothing flows back to the caller:** the helper returns `void`.
+- **The only write** is `health` / `health_score` on OPEN deals of the anchor's organisation, computed from that organisation's own rows.
+- **Three layers carry the organisation:** the selection, each deal's read, and its write.
+  - **The selection's filter keeps A's deals out of reach on the real stack.** Without it (M1), the selection answers with A's deal ids and the read asks for one by id. Scenario 5's traffic assertion kills M1: nothing the system sends or receives may name A's organisation, A's deals or A's mandate.
+  - **The read's and the write's filters (M2, M3) are defence in depth** behind the selection's. On the stack the selection's filter masks them, so only the unit file kills them.
+  - **Removing the selection and read filters together (M1+M2) reads A's deals but writes none of them.** The write's own filter matches 0 rows. It is killed by the same traffic assertion.
+  - The other-table reads carry the deal's organisation. M4, M5 and the mandate read without its org predicate are killed by the DB file through planted rows.
+
+**Tests.**
+- `lib/services/health-score.test.ts` (+13, 30 in the file):
+  - the anchor is read on the caller's client (`select org_id`, `eq id`) and the session sends nothing on deals;
+  - an active mandate on the system path (review, `503f4dc`): the fan-out's own client asks once, with exactly `org_id` / `property_id` / `status` and `limit(1)`, and the written factor is 15, "active";
+  - ONE service-role client;
+  - the selection carries `org_id`, `status`, `property_id` / `buyer_contact_id`;
+  - each read carries `id` + `org_id`, and each write `id` + `org_id` + `updated_at` with `select=id`;
+  - the payload is exactly `health`, `health_score`;
+  - the other-table reads carry the deal's org;
+  - an invisible anchor → no client built, paged; an anchor error → paged in shape only (the database's words absent);
+  - an unbuildable client → paged; a throw on the caller's client → paged, nothing built;
+  - a failed or hollow selection → paged;
+  - the race guard kept (a moved row retried from the re-read);
+  - an unmoved system miss → paged, the next deal still runs;
+  - a deal read error → paged, the next deal still runs;
+  - one deal's throw → paged, the next still runs;
+  - the session path: RLS still its bound, a refusal silent.
+- `supabase/tests/deal-health-fan-out.test.ts` (DB, 8):
+  - **Harness.** The REAL `updatePropertySection` / `updateContactSection` / `setMandateStatus` / `recomputeDealsFor`, two throwaway organisations, six aal2 users (B's admin added in review). `createAdminClient` is the real service client behind a probe. The probe logs its requests on deals (and in scenario 6 holds them). Since `a9b074f` it also logs every PostgREST exchange, the request line plus the answer body. Sentry's `captureMessage` is spied, not silenced.
+  - **1.** A listing manager's legal save: the agent's deal gets title deed `known`, 15, score 45. The session sends `[]` on deals; the system sends `["GET","GET","PATCH"]`. No event for the deal, nothing paged.
+  - **2.** The property's assigned agent's legal save moves a deal another agent owns, and a LOST deal on the same property stays byte for byte.
+  - **3.** The contact's assigned agent's KYC save (3 of 6) moves the KYC factor ("50% complete", 15) of a deal another agent owns.
+  - **3b** (review, `503f4dc`). An aal2 admin's REAL `setMandateStatus(draft → active)` moves an agent's open deal to mandate "active", 15, score 45. The session sends `[]` on deals and the system sends `["GET","GET","PATCH"]`. This is the `mandates.ts` way into the fan-out (unchanged by this branch), and the factor that path exists to refresh.
+  - **4.** Refused saves fan out nothing: an unassigned agent's legal save ("Nothing was saved…") and a listing manager's KYC save ("…permission…"). The deals are stale on purpose, so a recompute WOULD change them; they stay byte for byte, and the system sends nothing.
+  - **5.** Organisation B's saves vs organisation A:
+    - Planted links: A's deal on B's property (a plain service-role insert: single-column key); A's deal whose buyer is B's contact (replica mode, past the keys); B's deal whose buyer is A's 100%-KYC contact (past the keys); B's deal on A's titled, mandated property.
+    - B's property carries B's own active mandate (review, `503f4dc`). It is the positive control: B's deals on it score mandate "active" (60 each).
+    - B's deals move and read nothing of A's. On the deals planted out to A, the KYC factor reads "no buyer linked", the title deed "no property linked", and the mandate "none active" (45). The same read found B's own mandate.
+    - **The system's traffic** (review, `a9b074f`): no request it sent and no answer it got names A's org id, A's four deals or A's mandate. A guard checks that the log saw the fan-out (16 exchanges).
+    - All four of A's deals stay byte for byte, the two A deals on A's own rows included.
+    - B's session handing the helper A's property id and A's contact id directly gets two `anchor:not_visible` pages and writes nothing.
+  - **6.** The race on the system path: the system's first PATCH is held; the deal's owner sets `budget_confirmed` directly; on release the retry writes 70 (budget 25 + title deed 15 + activity 30). The system sends `["GET","GET","PATCH","GET","PATCH"]`.
+  - **7.** `verify_events_chain` is ok for both organisations.
+
+**Verified (locally: `.iso/lmrecompute`, Postgres 17.6.1.159 + PostgREST v14.5, origin/main's 147 migrations + seed — `schema_migrations` 147 rows, max `0147`; then branch CI; not hosted).**
+- **RED on `115bedc`'s code** (each new file run before the service changed):
+  - DB file: 5 failed | 2 passed (7). The passes are scenario 4, which pins behaviour `115bedc` already had (a refused save never fanned out), and 7. Evidence as in "The defect"; scenario 6 failed with "expected 'finished' to be 'held'".
+  - Unit: 10 failed | 17 passed (27). The 17 are the file's existing cases.
+  - The two cases added in `968d13b` each failed alone against `115bedc`'s service: it rejects "SyntaxError: fixture: the anchor read threw", and it pages nothing for a failed deal read.
+  - The DB file at `a9b074f` against `115bedc`'s service: 6 failed | 2 passed (8). 3b fails on "the admin's session never touched deals": the session sent `["GET","GET","PATCH"]` and the system nothing. An admin's session could always write the deal, so on `115bedc` the score moved there too (45); 3b's RED is on who wrote it, not on the number.
+- **GREEN:** DB file 7/7 on `968d13b`, 8/8 on `a9b074f`. Evidence (`a9b074f`):
+  - 1–3 and 3b: the session `[]`, the system `["GET","GET","PATCH"]`, scores 45;
+  - 5: B's deals 60 / 60 (title deed + B's mandate + activity) / 45; A's four `[0,0,0,0]`; 16 system exchanges, none naming A;
+  - 6: the flag true, score 70.
+  - Unit file 29/29 on `968d13b`, 30/30 on `a9b074f`.
+- **Mutants:** 25 distinct in the first round, each applied ALONE, both files run, the file restored byte for byte from a copy and the tree checked after each. 24 were killed in the first pass. M23 survived both files, so a case was added (`968d13b`), and on re-run M23 was killed: **25 of 25 killed.** The review round added four (MM1, MM2, MM3, MO) and re-ran M1, M2, M3 and M1+M2: **29 of 29 killed.**
+
+  | # | Mutant | Killed by |
+  |---|---|---|
+  | M1 | selection without `org_id` | unit + DB. The DB kill is since `a9b074f`: the traffic assertion, 4 exchanges naming A's deals. Before it the DB file passed. |
+  | M2 | deal read without `org_id` | unit (DB masked by the selection's filter) |
+  | M1+M2 | both | unit + DB. The DB kill is since `a9b074f`: the traffic assertion, 11 exchanges. Before it, only the report list failed (`write:no_row_written` twice). A's deals were NOT written: the write's own filter matched 0 rows (review, re-run 2026-10-15; the first draft said "A's deals written"). |
+  | M3 | write without `org_id` | unit (DB masked by the selection's filter) |
+  | M4 | title-deed read without the org predicate | unit + DB |
+  | M5 | buyer-KYC read without the org predicate | unit + DB |
+  | M6a / M6b | anchor read as the system (property / contact) | unit + DB |
+  | M7 | fan-out on the caller's session (the old behaviour) | unit + DB |
+  | M8 | write without `updated_at` | unit + DB |
+  | M9 | `HEALTH_WRITE_ATTEMPTS = 1` | unit + DB |
+  | M10 | selection without `status = open` | unit + DB |
+  | M11 | `properties.ts`: the legal fan-out moved BEFORE the row-count proof | DB |
+  | M12 | `contacts.ts`: the KYC fan-out moved BEFORE the row-count proof | DB |
+  | M13 | anchor read error ignored | unit |
+  | M14 | invisible anchor not stopped | unit + DB |
+  | M15 | client build not caught on its own | unit |
+  | M16 | outer catch removed | unit (case added before the run) |
+  | M17 | per-deal catch removed | unit |
+  | M18 | unmoved system write not paged | unit |
+  | M19 | unmoved row retried | unit |
+  | M20 | page carries the database's message | unit |
+  | M21 | mandate read on a second service-role client | unit |
+  | M22 | hollow selection not paged | unit |
+  | M23 | failed deal read not paged | unit, after `968d13b` |
+  | MM1 | the system path ignores the mandate answer | unit + DB, since `503f4dc`. Before it, it survived both files (29/29, 7/7). |
+  | MM2 | mandate read `.limit(1)` → `.limit(0)` (both paths) | unit + DB, since `503f4dc`. Before it, it survived both files (29/29, 7/7). |
+  | MM3 | the system path's mandate read through `mandates_safe` (answers the service role nothing) | unit (already) + DB, since `503f4dc` |
+  | MO | mandate read without its org predicate | unit + DB (DB: the "none active" factor assertion) |
+
+- **Full DB suite** (`npm run test:rls`): on `968d13b` 85 files, 1,838/1,838, exit 0; on `a9b074f` 85 files, 1,839/1,839 (+3b), exit 0, 404 s. On `7c4fb6e`, `deal-health-race`, `listing-manager-silent-writes` and `erasure-lifecycle` were also run alone: 65/65.
+- **Gates on `a9b074f`:** `npm run typecheck` exit 0; `npm run lint` exit 0; `npx vitest run` exit 0, 248 files / 3,885 tests (3,884 on `968d13b`, 3,882 on `7c4fb6e`; the last landing recorded 3,872).
+- **Branch CI** on the head `a9b074f`: run 38751780662 green (checks, rls, e2e).
+- **NOT run:**
+  - no e2e locally, no browser;
+  - hosted not read: it held 0 listing managers and 2 admins on 2026-10-14, so the defect is latent there — an admin's session could always update every deal.
+
+**Review round (three findings, all low, each verified on the branch first; two commits, tests only — `lib/services/health-score.ts` and every action are byte for byte as at `968d13b`, `git diff 968d13b --stat` showing the two test files only; the sections above already read as after the round).**
+- **F1. `mandates.ts` fans out as the system after an UPDATE whose row count it never checks: CONFIRMED (latent); not fixed here.**
+  - `saveMandate` :182 and `setMandateStatus` :373 read only `error` before the event and `recomputeScores` (:206, :424).
+  - Latency, measured (`pg_policy` at 0147): for an admin, `mandates_select` (its admin arm) and `mandates_update` share the predicate `org_id = current_org_id() AND current_role_gnk() = 'admin'`, both under the restrictive `require_aal2`; both actions read the mandate on the same session first and stop at "Mandate not found" (:150, :358). So a 0-row UPDATE needs the row removed (no `authenticated` DELETE policy on mandates) or the caller demoted, deactivated or downgraded between two statements; at aal1 the action stops at its own read (the first draft's reasoning corrected).
+  - Impact if hit: a recompute of the caller's own organisation's open deals from that organisation's own rows — a correct value, an extra write and an `updated_at` bump; nothing crosses organisations.
+  - Deferred: the task forbade editing `mandates.ts`, held by the concurrent session `T-document-insert-outcome`, and the helper cannot tell whether its caller's write landed. BACKLOG entry added ("From `T-lm-health-recompute`").
+- **F2. No test showed the fan-out's mandate read FINDING an active mandate: CONFIRMED; fixed (`503f4dc`, tests only).**
+  - RED: MM1 (the system path ignoring the mandate answer) and MM2 (`.limit(1)` → `.limit(0)` on both paths) each survived both files (unit 29/29, DB 7/7). No DB test anywhere asserted a mandate factor of "active".
+  - Fix: one unit case (one read on the fan-out's own client, the exact `eq` list `org_id` / `property_id` / `status`, `limit(1)`, the factor 15 "active"); DB scenario 5's B property carries B's active mandate (60), so "none active" on A's mandated property is read against a control; DB scenario 3b runs the REAL `setMandateStatus` (the `mandates.ts` entry the finding named as untested).
+  - GREEN: unit 30/30, DB 8/8. After: MM1 killed by unit and DB (3b at :510, scenario 5 at :626, as at `503f4dc`); MM2 by unit (`limit` → `[[0]]`) and DB (3b, 5); MM3 by unit (two cases) and DB (3b, 5); MO by unit (three cases) and DB.
+  - VERIFY re-run on origin/main `447c5bc` at landing: `grep -n 'it("3b\.' supabase/tests/deal-health-fan-out.test.ts` gives `498:`; `grep -n 'svc.argsOf("mandates", "limit")' lib/services/health-score.test.ts` gives `597:`; `grep -n 'org_id: ORG_B, property_id: propertyB, type: "exclusive", status: "active"' supabase/tests/deal-health-fan-out.test.ts` gives `578:` (each `0` on `968d13b`).
+- **F3. The mutant record "M1+M2 killed by the DB file (A's deals written)" was false: CONFIRMED; records corrected, test strengthened (`a9b074f`, tests only).**
+  - Re-run exactly as described (the selection's `org_id` and the read filter removed, the write's kept): on the DB file at `968d13b` A's deals stayed byte for byte (`aScores [0,0,0,0]`); the only failure was the report list (`['write:no_row_written', 'write:no_row_written', 'anchor:not_visible', 'anchor:not_visible']`), the same at `503f4dc`. The system SELECTED and READ A's deal on B's property and A's deal of B's buyer; the write's own filter matched 0 rows. M1 alone passed the DB file (8/8 at `503f4dc`).
+  - Fix: the probe logs every PostgREST exchange of the clients it builds, and scenario 5 asserts that nothing the system asked for or was answered with names A's org id, A's four deals or A's mandate (`:684`), with a guard that the log saw the fan-out (`:680`). URLs naming A's property and contact are expected (B's planted deals point at them); the factor assertions show their answers are empty. Stronger than the reviewer's suggestion (no report naming an A deal): it also catches M1 alone, which reports nothing.
+  - After: M1 killed by the traffic assertion (4 exchanges), M1+M2 by it (11); M2 alone and M3 alone still pass the DB file, masked by the selection's filter, and the unit file kills both (re-run on `a9b074f`).
+  - VERIFY re-run on origin/main `447c5bc` at landing: `grep -n "nothing the system asked for or was answered with" supabase/tests/deal-health-fan-out.test.ts` gives `684:` (`0` on `968d13b`).
+- **This round's mutants:** MM1, MM2, MM3, MO, M1, M2, M3 and M1+M2, each applied alone through a byte-exact replace script that refuses a non-unique target, each source restored from a saved copy and `git status` checked after every one. All 8 are killed by at least one file.
+- **The local stack after the run:** 3 organisations (the seed's); no `fo-%` auth users; no orphaned mandates. The deals table holds 22 rows, all in the persistent `Test Org A`, titled by other suite files (`Nudge …`, `C4-…`, `stage-ids-…`, `Test deal …`) and left across runs (13 before this round's run); none came from the fan-out file, whose throwaway organisations are gone.
+
+**After the deploy (read-only, aggregates only; the operator's step — NOT run at landing).**
+- `begin read only; select count(*) as open_scored_on_a_property, count(*) filter (where (p.title_deed_status <> 'unknown') is distinct from (f.detail = 'known')) as title_factor_disagrees from deals d join properties p on p.id = d.property_id and p.org_id = d.org_id cross join lateral (select x->>'detail' as detail from jsonb_array_elements(d.health->'factors') x where x->>'key' = 'title_deed') f where d.status = 'open'; rollback;`
+- **Measured locally:** 0 / 0 on the stack after the suite. In a rolled-back transaction with one stale and one fresh deal planted on a titled property: 2 / 1.
+- A non-zero second count after the deploy is a deal whose stored title-deed factor disagrees with its property: a save from before the deploy, or a writer with no fan-out (BACKLOG "Health inputs written with no fan-out"). Or: one legal save by a listing manager on an operator test property must move its open deal's `health->>'computed_at'`.
+
+**Residuals.**
+- The selection is one request, not paged: open deals per property or buyer are far below `max_rows`.
+- Input reads that ERROR still score as "not linked" ("Deal health persists a score computed from a failed or missing mandate read", still open; the system path inherits it).
+- `site-revalidate-callsites.test.ts`'s classifier still counts `recomputeDealsFor` as a follow-up that can throw. That is conservative and true of nothing now; left alone (a BACKLOG NOTE).
+
+**Rollback.** Revert the merge. Application only.
+
+**Left open (BACKLOG).** The merge's missing recompute (now a one-liner); `mandates.ts`'s two unproven UPDATEs before its fan-out; `logConversation`'s unchecked deal update; health inputs written with no fan-out (`syncInheritedField`'s title deed, the merge's KYC backfill); the failed-input-read item.
+
+**Landing (2026-10-15, on the operator's "merge #164 and #165"; second of the two merges, after #164).**
+- **Branch CI** green on the head `a9b074f`: run 38751780662 (checks, rls, e2e). That run had `115bedc` under it, without #164.
+- **Merge.** PR [#165](https://github.com/KALAITSIDIS/gnk-crm/pull/165) merged at 16:18:18Z, pinned to `a9b074f7681fbba68c71f68c84b43ecf8efd2f59`, giving main `447c5bc` over `96aba61` (#164).
+  - The branch was cut from `115bedc`, so this is a three-way merge. A local `git merge-tree` onto `96aba61` was clean before it.
+  - #164 and #165 change disjoint files (18 paths and 6, none shared), and the merge's tree is that clean three-way merge: `git merge-tree --write-tree 96aba61 a9b074f` and `447c5bc^{tree}` are both `d1bb63d4…` (re-read at records time).
+- **Production.** Vercel `dpl_9xJBccipmeBdib929Mq5VULd3rak` READY 16:19:18Z; `get_runtime_errors` since 16:15Z: none. Signed out, `/login` answers 200, and `/properties` and `/contacts` answer 307 to `/login`.
+- **Merge CI** on `447c5bc`: run 38767865800 green, read after it completed (16:30:06Z) — checks `success` (16:21:16Z), rls `success` (16:26:49Z), e2e `success` (16:30:05Z). It is the first CI run of the two changes together.
+- **Not yet done:** the read-only hosted aggregate under "After the deploy" (HANDOFF, What next).
+- **BACKLOG, on landing** (each VERIFY re-run on origin/main `447c5bc` and quoted there):
+  - struck: "A listing manager's (or a non-owner agent's) legal save fans out a deal-health recompute …". Its own VERIFY MISREADS the fix (the call in `properties.ts` is unchanged, `887:`), and the strike says which two checks to read instead;
+  - amended: the merge entry (the shape is now one session-client call, and "the merge does not combine `kyc`" is corrected); "Deal health persists a score computed from a failed or missing mandate read" (its fan-out half no longer holds); the `updateContactSection` line number under "Enquiry and contact follow-ups that no retry redoes";
+  - added: the group "From `T-lm-health-recompute`" — three entries and two NOTEs.
+- The remote `fix/lm-health-recompute` is deleted (the local branch is kept), its worktree `.worktrees/gnk-crm/lm-recompute` is removed, and the disposable stack `.iso/lmrecompute` is stopped and deleted.
+- **Rollback.** Revert the merge (application only: no migration, nothing on hosted).

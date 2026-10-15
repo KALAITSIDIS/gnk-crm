@@ -1,6 +1,71 @@
 # HANDOFF — 2026-08-08
 
-**2026-10-14, latest (pipeline drop + malformed ids; LANDED 2026-10-15 — PR #162): the first two entries of BACKLOG "External audit — 2026-10-14", built on the operator's "go with 1 and 2". The pipeline board settles every drop inside its transition, and only the roles `deals_update` admits can pick a card up. A malformed id is a 404, a dropped filter or a refusal in words, never the error page or Postgres' text. No migration, nothing on hosted. LANDED 2026-10-15 on the operator's "merge #162 when CI is green": PR #162 merged 04:41:18Z pinned to `a9d317d` → main `b4f7e2f`, deployed. These landing records are PR #163 (branch `land/kanban-drop-and-ids`). DECISIONS `T-kanban-drop-settle + T-malformed-ids`.**
+**2026-10-15, latest (one-time secrets + listing-manager recompute; LANDED — PRs #164, #165): two changes built on the operator's "go with the one-time secrets and the LM recompute", landed on the operator's "merge #164 and #165". A committed one-time secret (an invited colleague's password, a portal feed URL, a share link) is handed back with a notice and never lost to the error page. A property, contact or mandate save recomputes every open deal it touches as the system, inside the saved row's organisation, so who saved no longer decides a stored score. No migration, nothing on hosted. #164 merged 16:16:49Z → main `96aba61`, #165 merged 16:18:18Z → `447c5bc`, both deployed, both merge CI runs green. These landing records are on branch `land/secrets-and-lm` (from `447c5bc`), not yet pushed. DECISIONS `T-one-time-secrets` and `T-lm-health-recompute`.**
+- **What.**
+  - **One-time secrets (`T-one-time-secrets`, `982c2a1` + `5a64851`, review `21437f9` `857306f` `9af9b1a`).** Five actions (`inviteUser`, `setPortalEnabled`, `regeneratePortalToken`, `createShareLink`, `createAvailabilityLink`) return a secret that exists nowhere else, and each then awaited a `logEvent` that can throw, so the error page swallowed the secret. Now:
+    - from the commit on, each catches its line, still revalidates, and returns the secret WITH a notice: `NOT_CONFIRMED_NOTICE` (new) for an unknown failure, `NOT_RECORDED_NOTICE` for a refusal;
+    - nothing is revoked or deleted on an unsettled failure, and an unknown profile or curation answer is read back;
+    - `inviteUser` deletes the account only on a certain profile refusal or a refused `invited` line, and reads `deleteUser`'s answer: an unconfirmed undo shows the password with a notice that the account may already be gone;
+    - the notice renders beside the password, the feed URL and the link, and the portal card and both link pages also toast it.
+  - **Listing-manager recompute (`T-lm-health-recompute`, `7c4fb6e` + `968d13b`, review `503f4dc` `a9b074f`).** A listing manager's (or a non-owner agent's) legal or KYC save fanned out a deal-health recompute that RLS refused, silently. The operator decided before the build: recompute as the system, inside an explicit organisation boundary. Now:
+    - `recomputeDealsFor` reads the saved row's `org_id` on the caller's session; an anchor the session cannot see fans out nothing;
+    - it selects, reads and writes the open deals with the service-role client, every query filtered to that organisation, `health` / `health_score` only, still predicated on `updated_at`;
+    - it never throws: a failure is paged as `[health] deal fan-out failed`, in shape only;
+    - the three callers (the legal save, the KYC save, `mandates.ts`' `recomputeScores`) are unchanged.
+- **Verified (before landing).**
+  - **Secrets, unit only.** RED 53 failed | 18 passed (71) on `115bedc`'s sources; GREEN 73/73 after the review round. Mutants 45 of 45 killed, then 10 of 10 in the review round (the 45 re-run on `9af9b1a`: 43 killed, 2 not installed, their intent killed as F1d / F1e). `typecheck`, `lint` and vitest (250 files / 3,945 tests) exit 0 on `9af9b1a`. Review: four low findings, all real, three commits.
+  - **LM, on `.iso/lmrecompute` (Postgres 17.6.1.159 + PostgREST v14.5, at 0147).** RED on `115bedc`'s code: DB 5 failed | 2 passed (7), unit 10 | 17 (27). GREEN: DB 8/8, unit 30/30. Mutants 29 of 29 killed. Full DB suite 85 files, 1,839/1,839; vitest 248 files / 3,885; `typecheck`, `lint` exit 0 on `a9b074f`. Review: three low findings; two fixed in tests, one deferred (latent, in `mandates.ts`).
+  - **Branch CI** green (checks, rls, e2e): #164 run 38751774953 on `9af9b1a`; #165 run 38751780662 on `a9b074f`.
+  - NOT run: no browser; hosted not read; the secrets change ran no local DB test (CI's rls job ran the suite).
+- **Landed (2026-10-15, on the operator's "merge #164 and #165"; DECISIONS has each step).**
+  - **#164.** Merged 16:16:49Z, pinned to `9af9b1a4b9768c2a38647b653eb75f559b8215e0`; main `115bedc` → `96aba61`. The merge's tree is the head's tree.
+    - Vercel `dpl_8gVh4KYGT2R2N1rFJQFuys5nRp7p` READY 16:17:49Z, aliased to gnk-crm.vercel.app.
+    - Signed out: `/login` 200; `/settings` and `/share-links` 307 → `/login`.
+  - **#165.** Merged 16:18:18Z, pinned to `a9b074f7681fbba68c71f68c84b43ecf8efd2f59`; main `96aba61` → `447c5bc`. A local `git merge-tree` onto `96aba61` was clean first: the two PRs change disjoint files, and the merge's tree is that clean merge (`d1bb63d4…`).
+    - Vercel `dpl_9xJBccipmeBdib929Mq5VULd3rak` READY 16:19:18Z.
+    - Signed out: `/login` 200; `/properties` and `/contacts` 307 → `/login`.
+  - `get_runtime_errors` since 16:15Z: none, read after each deploy.
+  - **Merge CI, read after each run completed:**
+    - run 38767654595 on `96aba61` green — checks (16:19:52Z), rls (16:23:52Z) and e2e (16:31:31Z) each `success`;
+    - run 38767865800 on `447c5bc` green — checks (16:21:16Z), rls (16:26:49Z) and e2e (16:30:05Z) each `success`. It is the first CI run of the two changes together.
+  - **The operator's choice.** The invite undo — when the `invited` line is certainly refused, the new account is deleted so a retry starts clean — was named to the operator as a choice they could reverse, and the operator merged #164 with it. It stands as the operator's accepted choice.
+  - **BACKLOG** (each VERIFY re-run on origin/main `447c5bc` and quoted there):
+    - struck: "A one-time secret is created and never shown …" and "A listing manager's (or a non-owner agent's) legal save …". The second's own VERIFY misreads the fix (the call in `properties.ts` is unchanged), and the strike says which checks to read instead;
+    - "Four writes on these paths take a hollow answer as written": three of four fixed, open for `createPaymentPlan`;
+    - the merge entry corrected and given its one-line shape; "Deal health persists a score computed from a failed or missing mandate read" amended;
+    - added: five entries and two NOTEs. The outstanding-work recipe went from 156 lines to 159 (two struck, five added).
+  - **Rollback:** revert either merge (application only: no migration, nothing on hosted).
+  - **These records:** `npm run typecheck` and `npm run lint` exit 0 on their tree (`447c5bc` plus these three files).
+- **What next.**
+  - **These records.** Push `land/secrets-and-lm`, open its PR, read its CI, merge it; then remove `.worktrees/gnk-crm/land-secrets-lm` and the remote branch.
+  - **The read-only hosted health check (after #165; NOT run).** The aggregate in DECISIONS `T-lm-health-recompute` → "After the deploy" compares each open deal's stored title-deed factor with its property (`open_scored_on_a_property`, `title_factor_disagrees`). A non-zero second count is a deal saved before the deploy, or a writer with no fan-out (BACKLOG "Health inputs written with no fan-out"). Alternatively, one listing manager's legal save on an operator test property must move its open deal's `health->>'computed_at'`.
+  - **The operator's open decision.** `SENTRY_AUTH_TOKEN` on Vercel project gnk-crm is stored as readable (encrypted), not sensitive, and flagged `readable-secret` (measured 2026-10-14; value not read). Re-create it as sensitive? (The other decision, the listing-manager recompute, is made and landed.)
+  - **The concurrent session.** `T-document-insert-outcome` (`.worktrees/gnk-crm/document-insert-outcome`, branch `fix/document-insert-outcome`) is still uncommitted: HEAD `489c507`, 12 changed paths (read 2026-10-15, not touched). When it lands:
+    - its merge-time item: each `documentNotConfirmed` answer must carry `unconfirmed: true` (BACKLOG, merge-time); #158's client half is on main;
+    - its held files' unchecked-id actions: `renewMandate`, `deleteContactDocument`, `deletePropertyDocument` and `getViewingConfirmationUrl` ("More server actions take a raw id string unchecked");
+    - the `mandates.ts` row-count item: `saveMandate`'s edit and `setMandateStatus` fan out a recompute — now as the system — after an UPDATE whose row count they never check (latent; "From `T-lm-health-recompute`").
+  - **Reads waiting on traffic** (after #157, #158): as in the 2026-10-14 external-audit block below.
+  - **Then pick from BACKLOG.**
+    - "Throws after a commit — 2026-10-13": the storing write's unknown answer and the husk delete (both new); `createPaymentPlan`'s hollow insert; the photo delete, archive and sold save; the duplicates on retry; the lost follow-ups.
+    - "External audit — 2026-10-14":
+      - the contact merge's recompute (now a one-liner) and the health inputs with no fan-out; `logConversation`'s deal touch (decide);
+      - "More server actions take a raw id string unchecked" (13 outside the concurrent session's files), and `?temperature=` / `?source=` on contacts;
+      - document direct-to-storage (after `T-document-insert-outcome`), the verify form's i18n, the refused-upload e2e;
+      - the operator scripts' knock and `moveMedia`'s half-swap;
+      - the five strict `.uuid()` sites; a document upload storing as the service role before RLS decides;
+      - the mandates base-table commission arm (decide) and `mandates_safe` not `security_barrier`;
+      - gnk-web's `crypto.randomUUID()`; the enquiries route comment;
+      - composite keys for `area_id` / `district_id` / `stage_id`.
+- **Left open by these changes (BACKLOG).**
+  - **Secrets.** An unknown answer to the write that STORES the secret (`createUser`, the `share_links` insert, the `portal_connections` write) still refuses, though the secret may have committed. The refused curation's husk delete removes nothing (`authenticated` holds no DELETE on `share_links`). `createPaymentPlan`'s hollow insert.
+  - **LM.** The merge's missing recompute; `mandates.ts`'s two unproven UPDATEs; `logConversation`'s unchecked deal touch; `syncInheritedField`'s title deed and the merge's KYC backfill, which recompute nothing; an errored input read still scores as not linked.
+- **Where things are (cleanup done, 2026-10-15).**
+  - **Branches.** The remote `fix/one-time-secrets` and `fix/lm-health-recompute` are deleted (`git ls-remote` finds neither); the local branches are kept.
+  - **Worktrees.** `.worktrees/gnk-crm/one-time-secrets` and `.worktrees/gnk-crm/lm-recompute` are removed. This records worktree, `.worktrees/gnk-crm/land-secrets-lm` (branch `land/secrets-and-lm`, from `447c5bc`), stays until its records merge.
+  - **Stacks.** The disposable stack `.iso/lmrecompute` is stopped and deleted.
+  - **The previous records,** PR #163, merged → main `115bedc`; `.worktrees/gnk-crm/land-kanban` is gone from `git worktree list`, and the remote `land/kanban-drop-and-ids` is deleted.
+
+**2026-10-14 (pipeline drop + malformed ids; LANDED 2026-10-15 — PR #162): the first two entries of BACKLOG "External audit — 2026-10-14", built on the operator's "go with 1 and 2". The pipeline board settles every drop inside its transition, and only the roles `deals_update` admits can pick a card up. A malformed id is a 404, a dropped filter or a refusal in words, never the error page or Postgres' text. No migration, nothing on hosted. LANDED 2026-10-15 on the operator's "merge #162 when CI is green": PR #162 merged 04:41:18Z pinned to `a9d317d` → main `b4f7e2f`, deployed. These landing records are PR #163 (branch `land/kanban-drop-and-ids`). DECISIONS `T-kanban-drop-settle + T-malformed-ids`.**
 - **What.**
   - **The board (`T-kanban-drop-settle`, `8e6d5aa`, review `5d6f3d0`).** The drop awaited `moveDealToStage` in a transition with no try/catch:
     - a rejected call reached `app/(app)/error.tsx`;
