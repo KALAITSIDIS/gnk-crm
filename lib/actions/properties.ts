@@ -18,6 +18,7 @@ import { createClient } from "@/lib/supabase/server";
 import { changesForChain, isNoteField } from "@/lib/services/event-changes";
 import { changedValue } from "@/lib/utils/diff";
 import { createPropertySchema } from "@/lib/validators/properties";
+import { isGuid } from "@/lib/validators/ids";
 import type { PropertyDuplicateMatch } from "@/lib/services/property-duplicate";
 import { contactLinkError } from "@/lib/services/contact-reread";
 
@@ -970,6 +971,8 @@ export async function updatePropertySection(
  * alone would not be a control. Retiring a listing is an owner decision.
  */
 export async function archiveProperty(propertyId: string): Promise<PropertyActionState> {
+  // an id that is not one names no property (T-malformed-ids)
+  if (!isGuid(propertyId)) return { error: "Property not found" };
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
   if (profile.role !== "admin") return { error: "Admins only." };
@@ -1029,6 +1032,7 @@ export async function archiveProperty(propertyId: string): Promise<PropertyActio
  * Admin-only, same as archiveProperty — see the note there.
  */
 export async function restoreProperty(propertyId: string): Promise<PropertyActionState> {
+  if (!isGuid(propertyId)) return { error: "Property not found" };
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
   if (profile.role !== "admin") return { error: "Admins only." };

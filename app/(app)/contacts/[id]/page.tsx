@@ -52,6 +52,7 @@ import {
 } from "@/lib/constants/checklists";
 import { formatPhone } from "@/lib/services/phone";
 import { createClient } from "@/lib/supabase/server";
+import { isGuid } from "@/lib/validators/ids";
 import { formatDateTime } from "@/lib/utils/format";
 import { readEntityTimeline } from "@/lib/services/entity-timeline";
 
@@ -69,6 +70,9 @@ export default async function ContactDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  // a segment that is not an id names nothing: 404 before any query (T-malformed-ids) —
+  // and the reads below interpolate it into PostgREST `.or()` filter strings
+  if (!isGuid(id)) notFound();
   const supabase = await createClient();
 
   const [

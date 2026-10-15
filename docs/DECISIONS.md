@@ -10227,3 +10227,145 @@ Item 7b of `T-external-audit-2026-10-14`: the staleness that was real (the webho
   Each VERIFY was re-run on origin/main `3fe15d2` and is quoted there.
 - The remote `fix/site-knock-order` is deleted (the local branch is kept), and its worktree is removed.
 - **Rollback.** Revert the merge (application only).
+
+## T-kanban-drop-settle + T-malformed-ids — the pipeline board settles every drop inside its transition, and only the roles `deals_update` admits can pick a card up; a malformed id is a 404, a dropped filter or a refusal in words, never the error page or Postgres' text (2026-10-14; no migration; NOT LANDED — PR #162 (branch `fix/kanban-drop-and-ids`, code head `e94c443`, its records commit on top); landing on the operator's word)
+
+The residuals of items 5 and 4 of `T-external-audit-2026-10-14` (the first two entries of BACKLOG "External audit — 2026-10-14"), built on the operator's "go with 1 and 2". Application only: no migration, nothing on hosted, no RLS change.
+- **Commits.** `8e6d5aa` (T-kanban-drop-settle) and `06432f3` (T-malformed-ids); review round `8118cbe`, `78336cd`, `5d6f3d0`, `e94c443`.
+- **Rebased** onto origin/main `c486856` (#161, records only over `3fe15d2`). Each commit has the same patch-id and the same code tree as the one it replaced (`a49d911`, `9f7dd58`, `8c4f80b`, `6b757bf`, `c1714d2`, `89fe097`), so everything measured on those holds here. Line numbers "at `3fe15d2`" hold on `c486856`.
+
+**A. The board's drop (T-kanban-drop-settle, `8e6d5aa`; its control flow moved into a tested module in the review round, `5d6f3d0`).**
+
+**The defect (from code, at `3fe15d2`).**
+- `components/features/pipeline/kanban.tsx:289-293` ran `startTransition(async () => { applyMove(…); const { error } = await moveDealToStage(…); if (error) toast.error(error); })`, with no try/catch around it.
+- **A call that rejected** (a dropped connection, a deploy that retired the action id, a platform 5xx or timeout) was rethrown by React 19 into `app/(app)/error.tsx` ("Something went wrong."). `moveDealToStage`'s own try/catch (`lib/actions/deals.ts:43-56`) covers only throws on the server.
+- **A refusal** only toasted. The action returns before `revalidatePath` (`deals.ts:49`), so `useOptimistic` reverted to the board's old props. A card made stale elsewhere (closed, reassigned, deleted) snapped back to its old column and stayed draggable until a reload.
+- **A listing manager** reaches the board (`components/features/shared/sidebar-nav.tsx:25`; the nav has no role gate) and may update no deal, so every drag showed the move and then reverted.
+
+**Who may move a deal (read in the migrations first).**
+- `deals_update` (`0100_advisor_lints.sql:174-185`; no later migration redefines it, and 0147 alters no `deals` policy) has two arms: an admin of the organisation, and an agent on a deal whose `agent_id` or `created_by` is them.
+- `deals_select` (`0032_hoist_auth_uid.sql:49-53`) admits admin and listing_manager organisation-wide, and anyone on their own or created deals.
+- So `listing_manager` and the three portal roles (`owner_portal`, `developer_portal`, `partner_portal`; the enum at `0001_foundations.sql:15`) have no UPDATE arm.
+- An agent's SELECT and UPDATE arms admit the same rows, so for admin and agent the role gate is exact. The server stays the single source of truth for everything else.
+
+**What changed.**
+1. **The decision:** `lib/services/pipeline-move.ts` (new, pure). `settleMove({ answer } | { thrown })` returns `{ kind, toast, sticky, refresh, report }`:
+   - `{error: null}`: moved. Nothing is said and there is no refresh: the action revalidated `/pipeline`.
+   - `{error: text}`: refused. The action's words are toasted and the board refreshes.
+   - `{error: text, unconfirmed: true}`: the server's own "could not confirm". The toast stays until dismissed and the board refreshes; nothing is reported.
+   - A rejection: an UNKNOWN outcome. `MOVE_UNCONFIRMED_TEXT` ("Could not confirm the move — it may have been saved. The board has been reloaded: check the deal's stage before moving it again.") stays until dismissed, the board refreshes, and the rejection is reported.
+   - Any other answer shape (no `error` key, `""`, a number) is unknown, never a success.
+
+   `mayMoveDeals(role)` checks `DEAL_MOVER_ROLES = ["admin", "agent"]`. `MoveDealResult` (now with `unconfirmed?`) moved here, and `deals.ts` re-exports the type.
+2. **The drop:** `settleDrop(effects)`, in the same module. It makes the call inside a try/catch (a rejection or a synchronous throw becomes a `MoveAttempt` too), asks `settleMove`, and does exactly what that says, in this order, before it resolves:
+   - `report`: on the board, `reportRejection(reportLostMove, …)` (#158's helper), which sends `Sentry.captureException` tagged `lost_request: "pipeline_move"`;
+   - `toast`: `toast.error(text, sticky ? UNTIL_DISMISSED : undefined)`;
+   - `refresh`: `router.refresh()`.
+
+   The board's transition (`kanban.tsx:327-335`) is `applyMove({ dealId, stageId }); await settleDrop({ move, report, toast, refresh });` and nothing else. It is awaited, so the refresh happens inside the transition and the optimistic revert and the fresh props land together (the house idiom of `components/features/deals/outcome-actions.tsx:62-75`).
+3. **The role gate.** The pipeline page reads `getCurrentProfile(supabase)` in its existing `Promise.all` and passes `canMove = mayMoveDeals(profile.role)` to `KanbanBoard`. With `canMove` false:
+   - every card renders as the plain `DealCard`, which is still a link to the deal and carries no dnd-kit attributes;
+   - a line on the board says why: "View only — your role can see every deal on the board but cannot move one between stages." (`#kanban-read-only`, `text-xs text-text-3`), and the stage group's `aria-describedby` points at it;
+   - the header drops "— drag between stages".
+- **Not built, as the verification ruled (item 5):** a `structuredClone` snapshot, deep equality, or any client copy of the stage-transition rules.
+
+**B. Malformed ids (T-malformed-ids, `06432f3`; review round `8118cbe`, `78336cd`, `e94c443`).**
+
+**The shared check: `lib/validators/ids.ts`.**
+- `isGuid(value: unknown)` and `guidOrNull`, both on `z.guid()`. NEVER the strict `z.uuid()`, which refuses the hosted organisation id and every seed and fixture id (DECISIONS 2026-07-11 · T3.2; `T-external-audit-2026-10-14`, item 4).
+- guid's 8-4-4-4-12 hex shape is stricter than Postgres' uuid input. So a value that passes cannot raise 22P02, and a brace or bare-hex spelling that Postgres would read now gets a 404. No URL or form of ours writes those spellings.
+
+**The sweep of `app/`.**
+- **Dynamic routes.** Nine routes sit under a dynamic segment. The seven under `[id]` now 404 before any query:
+  - `contacts/[id]`, `deals/[id]`, `properties/[id]`, `properties/[id]/units`, `viewings/[id]` and `viewings/[id]/sign` call `notFound()` straight after `await params`, before `createClient()`;
+  - `viewings/[id]/ics/route.ts` answers `404 {"error":"Viewing not found"}`, the same as a missing viewing. It used to answer 400 "Invalid viewing" (an inline `z.guid()`, `:15-16` at `3fe15d2`);
+  - so the contact page's raw-id `.or()` filters (`page.tsx:93`, `:134` at `3fe15d2`; `:97`, `:138` on the branch) now run only on a guid;
+  - valid ids behave exactly as before.
+- **Token routes.** `p/[token]` and `api/portals/[portal]/[token]` take tokens, not ids, and already gate their shape (`isWellFormedShareToken`, `TOKEN.test`). Unchanged.
+- **List filters.**
+  - `parseContactListFilters` drops a malformed `?agent=` as if absent, through `guidOrNull`. The contacts page and `/contacts/export` share that parser, so the export is no longer filtered by such a value and its audit record no longer claims it.
+  - The other parsers in `lib/queries` and the export routes carry no unchecked id: `properties-list` already used `optionalUuid` for district and area; deals, keys and leads filter on enums only; the tasks, viewings and performance exports take no id.
+- **Server actions.** 13 of the audit's 14 check every raw id argument at entry, before any client is built. Each refuses in its own existing shape, in a sentence its file already uses, and writes no event:
+
+  | Action | Malformed id answer |
+  |---|---|
+  | `moveDealToStage` | `{error: "Deal not found"}` or `{error: "Stage not found"}` (the RPC's own words for a missing row, 0131) |
+  | `claimLead`, `markContacted`, `markCalled`, `retryEnquiryAlert` | throw "Lead not found" (the house shape for these void actions) |
+  | `reassignLead` | throws "Lead not found", or "Pick an active agent." for the agent id |
+  | `redactLead` | `{error: "Lead not found"}` |
+  | `createContactFromEnquiry` | `{error: "Lead not found", savedAt: null}` |
+  | `deleteMediaBulk` (and `deleteMedia`, which goes through it) | `{error: "Photo not found", deleted: 0}` when the property id or ANY photo id is malformed, or `mediaIds` is not an array |
+  | `archiveProperty`, `restoreProperty` | `{error: "Property not found"}` |
+  | `listKeyMovements` | `[]` (its empty trail) |
+  | `getPartyDefaults` | no prefill at all (`{defaults: {}, source: {}, partyName: null}`), without the office read; `null` (no party chosen) still reads the office's terms |
+
+  The fourteenth, `renewMandate` (`lib/actions/mandates.ts:268`), is deferred: a concurrent session holds that file (Left open).
+- **`moveDealToStage`'s answers.**
+  - `if (error) return { error: error.message }` (`deals.ts:49` at `3fe15d2`) became `moveFailureAnswer(error)`: P0001 (0131's `raise exception` sentences) is shown as written; any other code `certainlyRolledBack` admits (22P02, 42501, 40P01, PGRST202, PGRST301, …) gets `MOVE_NOT_MOVED_TEXT`, "The deal was not moved."; anything else (no code, 08…, 57014, 40003, PGRST000, an unclassified code, a gateway's number) is UNKNOWN: `MOVE_UNCONFIRMED_TEXT`, flagged `unconfirmed: true`, so the board keeps it on screen.
+  - **A throw before the RPC answered** (building the client, or the call itself) used to return `e.message`. It now returns the same unknown answer and logs the throw (`console.error`) instead of showing it. The board's refresh then shows where the deal really is.
+  - **After the RPC answered without an error,** the move and its event have committed (review round, `78336cd`). A throw from the health recompute is paged through `reportDealClose` in shape only ("[deals] stage move follow-up failed", `operation: deals.move_followup`, `step: health`, the error's name); a throw from `revalidatePath` is logged; the answer is `{ error: null }`. This is the Won close's follow-up idiom (`raiseWonFollowUps`, `revalidateClosedDeal`).
+
+**Tests (unit).**
+- `lib/services/pipeline-move.test.ts` (15): every `settleMove` branch, and the unknown text never says nothing changed. `settleDrop` is RUN with recorded effects: a rejecting call resolves with report, sticky toast and refresh in that order; a synchronous throw the same; a refusal; the server's unconfirmed; a landed move silent; nothing before the answer. `mayMoveDeals` is exactly admin + agent.
+- `tests/unit/kanban-drop-guard.test.ts` (6):
+  - A source guard on `kanban.tsx` and the page, comments stripped. The transition body is compared WORD FOR WORD (whitespace squashed) with `applyMove(…); await settleDrop({ move, report, toast, refresh });`. The file has one `startTransition(`, one `moveDealToStage(`, one `settleDrop(` and one `router.refresh()`, plus the Sentry report and `UNTIL_DISMISSED`; the page has `canMove = mayMoveDeals(profile.role)`.
+  - A server render of `KanbanBoard`: with `canMove` false there is no `aria-roledescription="draggable"`, the card still links, and the line and its `aria-describedby` are present.
+- `lib/validators/ids.test.ts` (5): the hosted org id, a seed-style id and uppercase are accepted. Malformed values are refused, including a smuggled `,filter`, braces, bare hex and non-strings. The fifth case pins `GUID_SHAPES`.
+- `tests/unit/detail-pages-404.test.ts` (14): the REAL page functions are called with a params promise, and `createClient` is a tripwire.
+  - Each malformed id gives `notFound()`'s digest `NEXT_HTTP_ERROR_FALLBACK;404` with no client built; a guid of every shape in `GUID_SHAPES` still reaches the client.
+  - The ics route answers 404 with no client, and a guid of every shape reaches the client.
+  - The pages and the route are imported once at module scope, while the file is collected, not inside a timed test.
+- `lib/actions/malformed-ids.test.ts` (39): every action above, against five malformed values plus non-strings (null, a number, an object, an array). The refusal comes in its shape with no `createClient` and no `createAdminClient`. A guid of every shape in `GUID_SHAPES`, in every id argument, still reaches `createClient`. `getPartyDefaults(null)` still reads, and `deleteMediaBulk(id, [])` still answers without a query.
+- `lib/actions/move-deal-outcome.test.ts` (8): success; P0001 ×6 as written; five certain rollbacks become "not moved" with no raw text; P0001 with no words becomes "not moved"; eight unknowns become unconfirmed; a throw before the RPC answered (the client, or the RPC call itself) becomes unconfirmed and is logged; after a successful RPC, a recompute throw is paged in shape only and the move is `{ error: null }` with `/pipeline` revalidated, and a revalidation throw is still `{ error: null }`.
+- `lib/queries/contacts-list.test.ts` (+3, 7 in the file): a malformed agent is dropped (including as the first of a repeated key), a guid of every shape is kept and trimmed, and the dropped filter never reaches `.eq`.
+- `lib/testing/guid-shapes.ts` (new): `GUID_SHAPES` — an RFC v4 id, the hosted organisation's id and a seed id — the good-path ids every call-site test loops over.
+- **Changed to keep their meaning:**
+  - `tests/unit/export-routes-audit.test.ts`: a malformed agent is now no filter and is not recorded. The old "recorded as used" expectation described a query that 22P02'd.
+  - Guid-shaped ids replace `"lead-1"` / `"m1"` / `"m-1"` in `leads-refused-writes`, `leads-retry-alert`, `media-event-payload` and `site-knock-before-follow-ups`, because the actions now refuse those values before their fakes are read.
+
+**Verified: unit only, plus branch CI's e2e.**
+- **RED first, on unchanged code:**
+  - `kanban-drop-guard`: 6 failed | 1 passed (the canMove-true render passes on the old board, as it should). `pipeline-move` went GREEN with the module (9/9).
+  - Item 2's five new files: 33 failed | 34 passed, plus `ids.test.ts` unable to import the missing module. The passes are the "a guid still reaches the database" and P0001-as-written cases, which pin existing behaviour.
+  - Each review fix was RED before GREEN too (Review round below).
+- **GREEN.** At records time, on `e94c443`, the seven new or extended files ran 94/94 (15 + 6 + 5 + 14 + 39 + 8 + 7), and `npm run typecheck` and `npm run lint` exited 0 on the tree with these records.
+- **Mutants, every one restored (tree diffed after each run).**
+  - First pass: item 1 14 of 14 killed; item 2 35 of 35 killed. They cover `isGuid` accepting any string; `isGuid` on the strict `z.uuid()` (killed by the hosted-org and seed ids); each of the six page guards and the route guard removed; the route back to 400; the contacts agent filter raw (killed by the parser test AND the export-audit test); each of the 15 action guards removed; `deleteMediaBulk` checking only some photo ids or skipping the property id; `getPartyDefaults` refusing `null`; `moveDealToStage` answering Postgres' text; P0001 words dropped; every failure "not moved"; a certain rollback called unknown; unknown not flagged; and a throw's message shown.
+  - The review round found that item 1's 14 had not exercised the guard's blind spots (finding 3) and that 21 call sites passed a strict-uuid mutant (finding 4). After it: 56 distinct mutants, 55 killed, 1 equivalent (below).
+- **Gates** (measured on the pre-rebase twins, whose code these commits carry unchanged):
+  - after `8e6d5aa`: typecheck 0, lint 0, vitest 244 files / 3,797 tests, exit 0;
+  - after `06432f3`: typecheck 0, lint 0, vitest 248 files / 3,865 tests, exit 0;
+  - after `e94c443`: typecheck 0, lint 0, vitest five full runs, each exit 0, 248 files / 3,872 tests;
+  - baseline at `3fe15d2`: 242 files / 3,781 tests.
+- **Branch CI** on `e94c443`: run 38633087263 green (checks, rls, e2e; e2e finished 20:49:33Z). CI's e2e serves the app on localhost, so the board's success path (`tests/e2e/pipeline-move.spec.ts`: a keyboard drag as the seed admin) and the detail pages with valid ids run there. No e2e spec was added, and none drives a refusal, a lost request or a read-only role.
+- **NOT run:**
+  - No local browser check: the machine had ~330 MB free. The board's drag was not exercised by hand.
+  - No DB test: the change is application only (no migration, no RLS change). None was added, and the DB suite was not run locally (CI's rls job runs it).
+  - The listing-manager toast text stays INFERRED. It is now unreachable from the board.
+  - Hosted was not read.
+
+**Review round (one independent review of `8e6d5aa` + `06432f3`: four findings, all held, one with a corrected mechanism; one commit each, RED before GREEN, mutants restored, tree clean after every run).** The sections above already read as after the round.
+
+| # | Finding (severity as raised) | Verdict | Commit |
+|---|---|---|---|
+| 1 | The 404 page test sits near vitest's 5 s timeout under full-suite load (medium) | CONFIRMED, measured | `8118cbe` |
+| 2 | `moveDealToStage` reports a move it knows committed as "Could not confirm" and skips `revalidatePath` (low) | CONFIRMED; the throw path is supabase-js on a MISSING key, not `assertModernSupabaseKey` (which only reports) | `78336cd` |
+| 3 | The kanban source guard checks that lines exist, not how control flows (medium) | CONFIRMED with the real test files | `5d6f3d0` |
+| 4 | The valid-id controls use an RFC v4 id, so a call site on strict `z.uuid()` would pass (low) | CONFIRMED, measured | `e94c443` |
+
+- **1, the 404 test's timing.** Measured on the full suite with a JSON reporter: the `/contacts/[id]` malformed case took 4,620 ms of its 5,000 (`vitest.config.mts` sets no `testTimeout`), the slowest of 3,865 tests; the next slowest outside the file took 1,090 ms. All of it was the page module graph, imported inside the `it` body. Fix: the six pages and the route are imported once at module scope (`Promise.all` of top-level `await import`, the idiom of `kanban-drop-guard`, `move-deal-outcome` and `malformed-ids`); collection has no per-test budget. RED: the file alone with `--testTimeout=1500` failed the contacts case at 1,508 ms. GREEN 14/14 in 25 ms of test time. After the round, five full runs: this file's slowest test 9–25 ms; the slowest test of any file the branch touched 408–618 ms (`export-routes-audit`, unchanged by the branch). The reviewer's precedent (`performance-page-stage-conversion.test.ts:74`) is an import inside a helper, not at module scope, so the branch's own precedent was used.
+- **2, a committed move called unknown.** One catch wrapped the RPC, `recomputeDealHealth` and `revalidatePath`. After the RPC answered without an error, a throw from the recompute (its mandate read builds the service-role client, and supabase-js throws "supabaseKey is required." when built without a key) came back as the sticky "Could not confirm… it may have been saved" and skipped the revalidation. That was never "nothing changed", and better than `main`'s `e.message`, but wrong about certainty. Fix: the "after the RPC answered" bullet above. RED: the two new cases (the recompute throws → done, paged, revalidated; the revalidation throws → done) failed on the old `deals.ts`; the new "the RPC call itself rejects → unknown" case passes on both (behaviour kept). GREEN 8/8; with `malformed-ids` and `deal-won-close`, 65/65. Mutants 6 of 6 killed: the recompute throw called unknown again; logged, not paged; the page carrying the error's words; the revalidation skipped after a recompute throw; a revalidation throw escaping; a throw before the answer reported as a move.
+- **3, the guard read lines, not control flow.** With the REAL test files, each mutant alone, four survived on the first pass (16/16 green each): a catch that rethrew, a catch that returned, a refresh only on refusals, and a refresh deferred by `setTimeout`. Fix: `settleDrop` (What changed, 2), RUN by six cases with recorded effects, and the board's two-statement transition pinned word for word. RED: 8 failed | 13 passed (six `settleDrop` cases, two guard cases). GREEN 21/21. Mutants: 17, the reviewer's four among them, 16 killed. The survivor is EQUIVALENT: a refresh deferred by ONE microtask (`Promise.resolve().then(refresh)`) is queued before `settleDrop` returns, so it runs before the awaiting transition resumes — still inside the transition. A two-step chain, which lands after the awaiter resumes, is killed.
+- **4, RFC-only good-path ids.** Each call site's `isGuid` was swapped alone for the strict RFC check (version 1-8, variant 8/9/a/b, strings only — what `z.uuid()` enforces): 21 of 24 SURVIVED (all six pages, the ics route, the contacts `?agent=` filter, which the reviewer did not list, and 13 action arguments). Only the three arguments the tests happened to feed the hosted id were caught. Fix: `GUID_SHAPES`; every action case's good path (every id argument), every page, the route and the contacts parser loop over all three, and `ids.test.ts` pins that the list keeps its meaning (`isGuid` accepts all three, `z.uuid()` only the first). After: 24 of 24 killed, plus two mutants that swap a non-RFC entry of `GUID_SHAPES` for an RFC v4 id (killed), plus the seven page and route guard-removal mutants re-checked after finding 1's restructure (killed).
+- **This round's mutants: 56 distinct (6 + 17 + 33), 55 killed, 1 equivalent (finding 3).**
+
+**Rollback.** Revert the merge. Application only.
+
+**Left open (BACKLOG "External audit — 2026-10-14", and "Search and filter URLs — 2026-10-12").**
+- `renewMandate` (`lib/actions/mandates.ts:268`), the audit's fourteenth raw-id action: deferred, because the concurrent session `T-document-insert-outcome` (`.worktrees/gnk-crm/document-insert-outcome`, uncommitted) holds `mandates.ts`.
+- The sweep found more actions taking a raw id string with no shape check, all outside the audit's list and unchanged: `setMediaCover`, `setMediaAlt`, `moveMedia`, `updateOfferStatus`, `getDocumentDownloadUrl`, `fetchLocationFallback`, `correctLead`, `logChatLinkOpened`, `checkPropertyDuplicate` (`districtId`), `reassignTask`, `syncInheritedField`, `getSlipDownloadUrl`, `updateViewingStatus`, and, in the concurrent session's files, `deleteContactDocument`, `deletePropertyDocument` and `getViewingConfirmationUrl`. Ids carried in FormData are checked only with `typeof === "string"` (for example `updateDealSection`'s `deal_id` and `savePartyDefaults`' `contact_id`). The media three hand Postgres' text back (`return { error: error.message }`). One new BACKLOG entry carries all of them, with `renewMandate`.
+- `?temperature=` and `?source=` on contacts still 22P02 ("A hand-typed contacts filter value crashes the page"; only `agent` is fixed — a partial-fix note there).
+- `/properties/new?similar=<non-uuid>` still sends one query. Its error is ignored and the form comes up blank, as for an unknown id, so nobody sees an effect.
+- `reports/commission-evidence/page.tsx:14` keeps its own guid regex (equivalent to `z.guid()`), and `lib/services/export-audit.ts:46` keeps `vet.uuid`. Both are left as they are.
+
+**Status.** NOT LANDED — PR #162 (branch `fix/kanban-drop-and-ids`, code head `e94c443`, its records commit on top); landing on the operator's word. BACKLOG keeps both entries OPEN, each with a dated NOT LANDED parenthetical; they are struck in the landing update, not before.

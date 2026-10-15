@@ -39,9 +39,12 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 const { markContacted, markCalled } = await import("@/lib/actions/leads");
 
+// guid-shaped: the actions refuse a malformed id before any read (T-malformed-ids)
+const LEAD = "11111111-1111-4111-8111-111111111111";
+
 /** An open, unassigned lead — the shape the UI offers to everyone. */
 const lead = (over: Record<string, unknown> = {}) => ({
-  id: "lead-1",
+  id: LEAD,
   org_id: "org-1",
   status: "new",
   assigned_agent_id: null,
@@ -64,7 +67,7 @@ describe("markContacted", () => {
       { data: [], error: null }, // the UPDATE — filtered away
       { data: { first_response_at: null }, error: null }, // the re-read: nobody stamped it
     ]);
-    await expect(markContacted("lead-1")).rejects.toThrow(/refused/i);
+    await expect(markContacted(LEAD)).rejects.toThrow(/refused/i);
     expect(logEvent, "no event for a write that did not happen").not.toHaveBeenCalled();
   });
 
@@ -76,16 +79,16 @@ describe("markContacted", () => {
       { data: [], error: null },
       { data: { first_response_at: "2026-09-07T10:00:00Z" }, error: null }, // someone did
     ]);
-    await expect(markContacted("lead-1")).resolves.toBeUndefined();
+    await expect(markContacted(LEAD)).resolves.toBeUndefined();
     expect(logEvent, "the winner already logged it").not.toHaveBeenCalled();
   });
 
   it("logs when the write lands", async () => {
     setup([
       { data: lead(), error: null },
-      { data: [{ id: "lead-1" }], error: null },
+      { data: [{ id: LEAD }], error: null },
     ]);
-    await markContacted("lead-1");
+    await markContacted(LEAD);
     expect(logEvent).toHaveBeenCalledTimes(1);
     expect(logEvent.mock.calls[0][1]).toMatchObject({ eventType: "contacted" });
   });
@@ -98,7 +101,7 @@ describe("markCalled", () => {
       { data: [], error: null },
       { data: { first_call_at: null }, error: null }, // nobody stamped it
     ]);
-    await expect(markCalled("lead-1")).rejects.toThrow(/refused/i);
+    await expect(markCalled(LEAD)).rejects.toThrow(/refused/i);
     expect(
       logEvent,
       "THE DEFECT: a `called` event against a lead whose first_call_at is still null",
@@ -111,7 +114,7 @@ describe("markCalled", () => {
       { data: [], error: null },
       { data: { first_call_at: "2026-09-07T10:00:00Z" }, error: null },
     ]);
-    await markCalled("lead-1");
+    await markCalled(LEAD);
     expect(logEvent, "the call happened; it just was not the first").toHaveBeenCalledTimes(1);
     expect(logEvent.mock.calls[0][1]).toMatchObject({ eventType: "called" });
   });
@@ -119,9 +122,9 @@ describe("markCalled", () => {
   it("logs when the write lands", async () => {
     setup([
       { data: lead(), error: null },
-      { data: [{ id: "lead-1" }], error: null },
+      { data: [{ id: LEAD }], error: null },
     ]);
-    await markCalled("lead-1");
+    await markCalled(LEAD);
     expect(logEvent).toHaveBeenCalledTimes(1);
   });
 });

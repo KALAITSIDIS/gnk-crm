@@ -92,6 +92,10 @@ const { renameArea } = await import("@/lib/actions/settings");
 const OLD = { ...process.env };
 const DOOR = "https://site.example/api/revalidate";
 const PROPERTY_ID = "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c01";
+// the photo ids posted to deleteMediaBulk: guid-shaped, as the action refuses
+// a malformed one before any read (T-malformed-ids)
+const PHOTO_1 = "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c11";
+const PHOTO_2 = "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c12";
 const AREA_ID = "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c02";
 /** the event insert answers a database error: the real logEvent throws */
 const EVENT_FAILS: FakePage = { data: null, error: { message: "Fixture: the events insert failed", code: "XX000" } };
@@ -424,11 +428,11 @@ describe("a committed write knocks even when the event after it fails", () => {
 
   it("deleteMediaBulk: rows and files gone, the second photo's event throws — told", async () => {
     const fake = use({
-      property_media: [{ data: [photo("m-1"), photo("m-2")], error: null }],
+      property_media: [{ data: [photo(PHOTO_1), photo(PHOTO_2)], error: null }],
       properties: [PUBLIC_LISTING],
       events: [{ data: null, error: null }, EVENT_FAILS], // the first line lands, the second fails
     });
-    await expect(deleteMediaBulk(PROPERTY_ID, ["m-1", "m-2"])).rejects.toBeInstanceOf(EventWriteError);
+    await expect(deleteMediaBulk(PROPERTY_ID, [PHOTO_1, PHOTO_2])).rejects.toBeInstanceOf(EventWriteError);
     await settle();
     expect(fake.argsOf("property_media", "delete")).toHaveLength(1);
     expect(fake.argsOf("events", "insert")).toHaveLength(2);
@@ -442,10 +446,10 @@ describe("a committed write knocks even when the event after it fails", () => {
     delete process.env.NEXT_PUBLIC_SUPABASE_URL;
     delete process.env.SUPABASE_SERVICE_ROLE_KEY;
     const fake = use({
-      property_media: [{ data: [photo("m-1")], error: null }],
+      property_media: [{ data: [photo(PHOTO_1)], error: null }],
       properties: [PUBLIC_LISTING],
     });
-    await expect(deleteMediaBulk(PROPERTY_ID, ["m-1"])).rejects.toThrow(/is required/);
+    await expect(deleteMediaBulk(PROPERTY_ID, [PHOTO_1])).rejects.toThrow(/is required/);
     await settle();
     expect(fake.argsOf("property_media", "delete")).toHaveLength(1);
     expect(knocks()).toEqual([{ reference: "PAF0001" }]);

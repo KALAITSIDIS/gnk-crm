@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMemo, useOptimistic, useState, useTransition } from "react";
+import * as Sentry from "@sentry/nextjs";
 import {
   DndContext,
   DragOverlay,
@@ -20,7 +22,9 @@ import {
 import { toast } from "sonner";
 import { HealthDot } from "@/components/features/shared/health-dot";
 import { moveDealToStage } from "@/lib/actions/deals";
+import { reportRejection } from "@/lib/services/client-upload";
 import type { HealthFactor } from "@/lib/services/health-score";
+import { MOVE_READ_ONLY_TEXT, settleDrop } from "@/lib/services/pipeline-move";
 import { formatMoney } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 
@@ -51,6 +55,17 @@ export interface KanbanDeal {
   daysInStage: number;
   propertyRef: string | null;
 }
+
+/** A toast the user must read: the outcome is unknown and the board has moved under it. */
+const UNTIL_DISMISSED = { duration: Infinity, closeButton: true } as const;
+
+/**
+ * A drop whose request never came back is reported where the error boundary
+ * used to report it (the #158 idiom, components/features/shared/use-upload-form.ts):
+ * a platform 5xx or a retired action id never reaches the server's logs.
+ */
+const reportLostMove = (error: unknown) =>
+  Sentry.captureException(error, { tags: { lost_request: "pipeline_move" } });
 
 /**
  * Keyboard DnD: ←/→ hop between stage columns (doc 06 keyboard rules).
@@ -148,9 +163,12 @@ function DraggableCard({ deal }: { deal: KanbanDeal }) {
 function StageColumn({
   stage,
   deals,
+  canMove,
 }: {
   stage: KanbanStage;
   deals: KanbanDeal[];
+  /** the viewer's role may move deals at all (mayMoveDeals) */
+  canMove: boolean;
 }) {
   // Won/lost are read-only endpoints: closing runs through the guarded flows
   // on the deal page, so their columns never accept a drop.
@@ -207,7 +225,8 @@ function StageColumn({
       >
         {deals.map((deal) => (
           <li key={deal.id}>
-            {deal.status === "open" ? (
+            {/* only an open deal moves, and only for a role deals_update admits */}
+            {canMove && deal.status === "open" ? (
               <DraggableCard deal={deal} />
             ) : (
               <DealCard deal={deal} />
@@ -227,10 +246,18 @@ function StageColumn({
 export function KanbanBoard({
   stages,
   deals,
+  canMove,
 }: {
   stages: KanbanStage[];
   deals: KanbanDeal[];
+  /**
+   * The signed-in role may move deals (lib/services/pipeline-move.ts,
+   * `mayMoveDeals`): false renders every card read-only and says why. ROLE
+   * only — whether THIS deal may move is the server's answer.
+   */
+  canMove: boolean;
 }) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [optimisticDeals, applyMove] = useOptimistic(
     deals,
@@ -286,10 +313,25 @@ export function KanbanBoard({
     const deal = optimisticDeals.find((d) => d.id === dealId);
     if (!deal || deal.stage_id === stageId) return;
 
+    /*
+     * Every answer is settled INSIDE the transition: `settleDrop` makes the
+     * call, catches a rejection rather than letting React rethrow it into
+     * app/(app)/error.tsx, and — awaited here — re-reads the board for a
+     * refusal or an unknown outcome before the transition ends, so the
+     * optimistic revert and the fresh props land together: a card made stale
+     * elsewhere (closed, reassigned, deleted) lands where the server has it,
+     * not back in its old column. This body is pinned word for word
+     * (tests/unit/kanban-drop-guard.test.ts); the control flow is run by
+     * lib/services/pipeline-move.test.ts.
+     */
     startTransition(async () => {
       applyMove({ dealId, stageId });
-      const { error } = await moveDealToStage(dealId, stageId);
-      if (error) toast.error(error);
+      await settleDrop({
+        move: () => moveDealToStage(dealId, stageId),
+        report: (error) => reportRejection(reportLostMove, error),
+        toast: (message, sticky) => toast.error(message, sticky ? UNTIL_DISMISSED : undefined),
+        refresh: () => router.refresh(),
+      });
     });
   };
 
@@ -310,14 +352,25 @@ export function KanbanBoard({
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
     >
+      {canMove ? null : (
+        <p id="kanban-read-only" className="text-xs text-text-3">
+          {MOVE_READ_ONLY_TEXT}
+        </p>
+      )}
       <div
         role="group"
         aria-label="Pipeline stages"
+        aria-describedby={canMove ? undefined : "kanban-read-only"}
         data-testid="kanban-board"
         className={cn("flex gap-3 overflow-x-auto pb-2", isPending && "pointer-events-none opacity-70")}
       >
         {stages.map((stage) => (
-          <StageColumn key={stage.id} stage={stage} deals={byStage.get(stage.id) ?? []} />
+          <StageColumn
+            key={stage.id}
+            stage={stage}
+            deals={byStage.get(stage.id) ?? []}
+            canMove={canMove}
+          />
         ))}
       </div>
       <DragOverlay>{active ? <DealCard deal={active} dragging /> : null}</DragOverlay>

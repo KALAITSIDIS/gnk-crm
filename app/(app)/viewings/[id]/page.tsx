@@ -9,6 +9,7 @@ import { ViewingStatusActions } from "@/components/features/viewings/viewing-sta
 import { Button } from "@/components/ui/button";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
+import { isGuid } from "@/lib/validators/ids";
 import { unwrapRows } from "@/lib/supabase/unwrap";
 import { formatDateTime } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
@@ -35,6 +36,8 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
 
 export default async function ViewingDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  // a segment that is not an id names nothing: 404 before any query (T-malformed-ids)
+  if (!isGuid(id)) notFound();
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
 

@@ -180,43 +180,48 @@ function remove(ids: string[], rows: unknown[]) {
   return { fake, run: () => deleteMediaBulk(PROPERTY_ID, ids) };
 }
 
+// the photo ids posted to deleteMediaBulk: guid-shaped, as the action now
+// refuses a malformed one before any read (T-malformed-ids)
+const M1 = "4d1e2f3a-4b5c-4d6e-8f7a-0b1c2d3e4f11";
+const M2 = "4d1e2f3a-4b5c-4d6e-8f7a-0b1c2d3e4f12";
+
 describe("deleteMediaBulk logs the photo by id and digest, and never reads old events", () => {
   it("one photo: ONE media_deleted with its id and digest — no name, no system read", async () => {
     // the admin stand-in has no `.from`: asking the system for events would throw
-    const { fake, run } = remove(["m1"], [deletedRow("m1")]);
+    const { fake, run } = remove([M1], [deletedRow(M1)]);
     expect(await run()).toEqual({ error: null, deleted: 1 });
     const rows = inserted(fake);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ entity_type: "property", entity_id: PROPERTY_ID, event_type: "media_deleted" });
-    expect(rows[0].payload).toEqual({ media_id: "m1", content_sha256: SOURCE_SHA256 });
+    expect(rows[0].payload).toEqual({ media_id: M1, content_sha256: SOURCE_SHA256 });
     // no read of the chain at all, on the caller's client either
     expect(fake.argsOf("events", "select")).toEqual([]);
     expect(leaked(fake)).toEqual([]);
     // storage behaviour unchanged: a photo's renditions from `media`, its original from `documents`
     expect(state.removed).toEqual([
-      ["media", [`properties/${PROPERTY_ID}/m1_thumb.webp`]],
-      ["documents", [`properties/${PROPERTY_ID}/original/m1.jpg`]],
+      ["media", [`properties/${PROPERTY_ID}/${M1}_thumb.webp`]],
+      ["documents", [`properties/${PROPERTY_ID}/original/${M1}.jpg`]],
     ]);
   });
 
   it("the delete asks the row for its digest (the select names the column)", async () => {
-    const { fake, run } = remove(["m1"], [deletedRow("m1")]);
+    const { fake, run } = remove([M1], [deletedRow(M1)]);
     await run();
     expect(String(fake.argsOf("property_media", "select")[0][0])).toContain("content_sha256");
   });
 
   it("several photos: one event each, flagged bulk", async () => {
-    const { fake, run } = remove(["m1", "m2"], [deletedRow("m1"), deletedRow("m2", { content_sha256: null })]);
+    const { fake, run } = remove([M1, M2], [deletedRow(M1), deletedRow(M2, { content_sha256: null })]);
     expect((await run()).deleted).toBe(2);
     expect(inserted(fake).map((r) => r.payload)).toEqual([
-      { media_id: "m1", content_sha256: SOURCE_SHA256, bulk: true },
+      { media_id: M1, content_sha256: SOURCE_SHA256, bulk: true },
       // an imported photo written before its digest was backfilled: no key, not a null
-      { media_id: "m2", bulk: true },
+      { media_id: M2, bulk: true },
     ]);
   });
 
   it("a refused delete (0 rows) removes nothing and logs nothing", async () => {
-    const { fake, run } = remove(["m1"], []);
+    const { fake, run } = remove([M1], []);
     expect((await run()).error).toMatch(/Nothing was deleted/);
     expect(state.removed).toEqual([]);
     expect(inserted(fake)).toEqual([]);

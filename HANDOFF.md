@@ -1,6 +1,38 @@
 # HANDOFF — 2026-08-08
 
-**2026-10-14, latest (external audit verified; five changes LANDED — hosted 0146 + 0147, PRs #160, #157, #159, #158): the external architectural audit the operator pasted (7 items) was verified item by item before anything changed — three DISAGREE / ALREADY RESOLVED, four AGREE WITH MODIFICATIONS — and the real gaps beside it became five changes: `T-share-link-tenant` (0146) and `T-rls-hoist-rest` (0147) on PR #160, `T-deal-health-race` (#157), `T-upload-size-honest` (#158), `T-site-knock-order` (#159). LANDED 2026-10-14 on the operator's "land it": hosted 0146 (≈18:16Z) and 0147 (≈18:20Z) first, then #160 → main `4735777`, #157 → `f074e7f`, #159 → `8ecb772`, #158 → `3fe15d2`, each deployed. These records are PR #161. DECISIONS `T-external-audit-2026-10-14` and the five entries after it.**
+**2026-10-14, latest (pipeline drop + malformed ids, NOT LANDED): the first two entries of BACKLOG "External audit — 2026-10-14", built on the operator's "go with 1 and 2". The pipeline board settles every drop inside its transition, and only the roles `deals_update` admits can pick a card up. A malformed id is a 404, a dropped filter or a refusal in words, never the error page or Postgres' text. No migration, nothing on hosted. PR #162 (branch `fix/kanban-drop-and-ids`, rebased onto origin/main `c486856`, code head `e94c443`, its records commit on top); nothing is merged. DECISIONS `T-kanban-drop-settle + T-malformed-ids`.**
+- **What.**
+  - **The board (`T-kanban-drop-settle`, `8e6d5aa`, review `5d6f3d0`).** The drop awaited `moveDealToStage` in a transition with no try/catch:
+    - a rejected call reached `app/(app)/error.tsx`;
+    - a refusal only toasted, so a card made stale elsewhere snapped back and stayed draggable;
+    - a listing manager's every drag reverted.
+
+    Now `settleDrop` (`lib/services/pipeline-move.ts`) makes the call and settles a rejection as an UNKNOWN outcome: a sticky toast that never says nothing changed, and a Sentry report tagged `lost_request: "pipeline_move"`. After a refusal or an unknown it re-reads the board inside the transition. The page passes `canMove = mayMoveDeals(profile.role)` (admin, agent); any other role sees the board read-only, with a line that says why.
+  - **Malformed ids (`T-malformed-ids`, `06432f3`, review `8118cbe` `78336cd` `e94c443`).** One check, `isGuid` / `guidOrNull` on `z.guid()` (never `z.uuid()`), in `lib/validators/ids.ts`.
+    - The seven `[id]` routes 404 before any query; the ics route's 400 is now a 404.
+    - `/contacts?agent=` drops a malformed id, on the page and in the export.
+    - 13 of the audit's 14 actions refuse one at entry, in their own shape; `renewMandate` is deferred.
+    - `moveDealToStage` answers P0001 as written, "The deal was not moved." on a certain rollback, and an unconfirmed unknown otherwise. Once the RPC has answered without an error, a recompute throw is paged and the move is reported done.
+- **Verified (unit only, plus branch CI's e2e).**
+  - RED first on the unchanged code, then GREEN. At records time the seven new or extended test files ran 94/94 on `e94c443`.
+  - Mutants: the first pass killed 14 of 14 (the board) and 35 of 35 (the ids); the review round installed 56 distinct, 55 killed, 1 equivalent.
+  - Unit: five full runs on the final tree, each 248 files / 3,872 tests (baseline 242 / 3,781). `typecheck` and `lint` exit 0, re-run at records time.
+  - Review: four findings, all confirmed (one with a corrected mechanism), one commit each.
+  - Branch CI on `e94c443`: run 38633087263 green (checks, rls, e2e).
+  - NOT run: no local browser check (the machine had ~330 MB free); no DB test (application only); hosted not read.
+  - The rebase onto `c486856` kept every commit's patch-id and code tree, so what was measured before it holds.
+- **Next (each on the operator's word).**
+  1. Push the records commit (not pushed at writing), and read branch CI green on the new head: checks, rls, e2e.
+  2. Open the PR and replace `#162` in DECISIONS, BACKLOG and HANDOFF.
+  3. Merge, pinned with `--match-head-commit`. Then verify the production deployment READY with no runtime errors, and read the merge CI.
+  4. Landing records: strike the two BACKLOG entries, with their VERIFYs re-run on the merge (each entry's note says which checks to read: two of the original three misread the branch), and mark the contacts-filter note landed. That entry stays open for `?temperature=` and `?source=`.
+- **Left open (BACKLOG).**
+  - `renewMandate`, deferred because the concurrent session `T-document-insert-outcome` holds `mandates.ts`, and 16 more actions that take an unchecked id: the new entry "More server actions take a raw id string unchecked". FormData ids are checked only with `typeof`.
+  - `?temperature=` and `?source=` on contacts still 22P02.
+  - `/properties/new?similar=<non-uuid>` still sends one query; nobody sees an effect.
+  - The commission-evidence page's own guid regex and `export-audit`'s `vet.uuid` are left as they are.
+
+**2026-10-14 (external audit verified; five changes LANDED — hosted 0146 + 0147, PRs #160, #157, #159, #158): the external architectural audit the operator pasted (7 items) was verified item by item before anything changed — three DISAGREE / ALREADY RESOLVED, four AGREE WITH MODIFICATIONS — and the real gaps beside it became five changes: `T-share-link-tenant` (0146) and `T-rls-hoist-rest` (0147) on PR #160, `T-deal-health-race` (#157), `T-upload-size-honest` (#158), `T-site-knock-order` (#159). LANDED 2026-10-14 on the operator's "land it": hosted 0146 (≈18:16Z) and 0147 (≈18:20Z) first, then #160 → main `4735777`, #157 → `f074e7f`, #159 → `8ecb772`, #158 → `3fe15d2`, each deployed. These records are PR #161. DECISIONS `T-external-audit-2026-10-14` and the five entries after it.**
 - **What.**
   - **Item 1 (RLS).** No leak through the 19 EXISTS policies; the gap was beside them. MEASURED at 0145 on the local stack: a session of organisation B could link, aim, pin and name A's listing, project, price list and admin, and B's anonymous share page then showed them. 0146 binds the three share-link policies and adds organisation predicates to `resolve_share_link`. 0147 hoists the last 51 bare policies and makes `rls_bare_helper_calls()` schema-wide.
   - **Item 2 (JSONB race).** True for `deals.health` only: a recompute that read before a budget save reverted the user's flag for good (MEASURED: score 30 where 55). Now its write is predicated on `updated_at` and re-read once on a miss — no migration.

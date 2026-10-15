@@ -35,6 +35,7 @@ import { getCurrentProfile } from "@/lib/services/auth";
 import { fetchProjectVelocity } from "@/lib/queries/sales-velocity";
 import { NOT_RECORDED_NOTICE } from "@/lib/services/optimistic-save";
 import { createClient } from "@/lib/supabase/server";
+import { isGuid } from "@/lib/validators/ids";
 import { unwrapRows } from "@/lib/supabase/unwrap";
 import { fetchAll } from "@/lib/supabase/fetch-all";
 
@@ -57,6 +58,9 @@ export default async function ProjectUnitsPage({
   searchParams: Promise<{ units?: string; reason?: string; recorded?: string }>;
 }) {
   const { id } = await params;
+  // a segment that is not an id names nothing: 404 before any query (T-malformed-ids) —
+  // PostgREST's 22P02 used to reach the throw below and render the error boundary
+  if (!isGuid(id)) notFound();
   const { units: unitsParam, reason: unitsReason, recorded } = await searchParams;
   const unitsFailed = unitsParam === "failed";
   const notRecorded = recorded === "failed";

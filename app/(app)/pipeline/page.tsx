@@ -7,7 +7,9 @@ import {
 import { createClient } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
 import { DEAL_TYPES, parseDealType } from "@/lib/queries/deals-list";
+import { getCurrentProfile } from "@/lib/services/auth";
 import { dealValue } from "@/lib/services/deal-value";
+import { mayMoveDeals } from "@/lib/services/pipeline-move";
 import { ExportCsvButton } from "@/components/features/shared/export-csv-button";
 
 export const dynamic = "force-dynamic";
@@ -32,7 +34,10 @@ export default async function PipelinePage({
   /* eslint-disable react-hooks/purity -- server component renders per-request; clock reads for the closed-deal window and days-in-stage are intentional */
   const closedCutoff = new Date(Date.now() - CLOSED_WINDOW_DAYS * 86_400_000).toISOString();
 
-  const [stagesRes, openRes, closedRes] = await Promise.all([
+  const [profile, stagesRes, openRes, closedRes] = await Promise.all([
+    // the viewer's role decides whether a card can be picked up at all: a
+    // listing manager reads every deal and may move none (deals_update, 0100)
+    getCurrentProfile(supabase),
     supabase
       .from("deal_stages")
       .select("id, name, sort_order, is_won, is_lost")
@@ -100,6 +105,7 @@ export default async function PipelinePage({
   /* eslint-enable react-hooks/purity */
 
   const openCount = (openRes.data ?? []).length;
+  const canMove = mayMoveDeals(profile.role);
 
   return (
     <div className="flex flex-col gap-4">
@@ -107,7 +113,8 @@ export default async function PipelinePage({
         <div>
           <h1 className="text-xl font-semibold text-text-1">Pipeline</h1>
           <p className="text-sm text-text-2">
-            {openCount} open {dealType} deal{openCount === 1 ? "" : "s"} — drag between stages
+            {openCount} open {dealType} deal{openCount === 1 ? "" : "s"}
+            {canMove ? " — drag between stages" : ""}
           </p>
         </div>
         {/* Exports EVERY deal of this type (all statuses), not just the board's
@@ -145,7 +152,7 @@ export default async function PipelinePage({
           .
         </div>
       ) : (
-        <KanbanBoard stages={stages} deals={deals} />
+        <KanbanBoard stages={stages} deals={deals} canMove={canMove} />
       )}
     </div>
   );

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { logEvent } from "@/lib/services/events";
 import { createClient } from "@/lib/supabase/server";
+import { isGuid } from "@/lib/validators/ids";
 import {
   checkoutKeySchema,
   markLostKeySchema,
@@ -221,8 +222,13 @@ export interface KeyMovementRow {
   actorName: string | null;
 }
 
-/** Full movement trail for one key (history dialog; RLS org-scoped). */
+/**
+ * Full movement trail for one key (history dialog; RLS org-scoped). An id
+ * that is not one names no key: an empty trail, without a query
+ * (T-malformed-ids).
+ */
 export async function listKeyMovements(keyId: string): Promise<KeyMovementRow[]> {
+  if (!isGuid(keyId)) return [];
   const supabase = await createClient();
   const { data } = await supabase
     .from("key_movements")

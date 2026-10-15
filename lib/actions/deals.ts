@@ -25,8 +25,15 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { contactLinkError } from "@/lib/services/contact-reread";
 // did a failed close certainly not commit — shared with the price-list actions (0141)
 import { certainlyRolledBack } from "@/lib/services/rpc-outcome";
+import {
+  MOVE_UNCONFIRMED_TEXT,
+  moveFailureAnswer,
+  type MoveDealResult,
+} from "@/lib/services/pipeline-move";
+import { isGuid } from "@/lib/validators/ids";
 
-export type MoveDealResult = { error: string | null };
+// the board's answer type lives beside the board's decisions (T-kanban-drop-settle)
+export type { MoveDealResult };
 
 /**
  * Drag-and-drop stage change (T3.1). Delegates to the move_deal_to_stage RPC
@@ -38,22 +45,56 @@ export type MoveDealResult = { error: string | null };
  * write one itself.
  * Returns a result object, never throws: Next.js strips thrown Server Action
  * messages in production, which would hide the guard texts from the toast.
+ *
+ * T-malformed-ids: both ids are checked before anything is asked — a crafted
+ * call used to reach PostgREST and come back as Postgres' "invalid input
+ * syntax for type uuid" — and refused in the RPC's own words for an id that
+ * names nothing. A failure is answered by `moveFailureAnswer`: the RPC's
+ * P0001 sentences as written, "not moved" only when the code says the
+ * transaction certainly rolled back, otherwise an UNKNOWN outcome flagged
+ * `unconfirmed`. A throw before the RPC answered is unknown too: the call may
+ * have run. An answer WITHOUT an error means the move and its event
+ * committed, so nothing after it may call the move unknown: a throw from the
+ * health recompute or the revalidation is paged and the move reported done
+ * (the Won close's follow-up idiom, `raiseWonFollowUps` / `revalidateClosedDeal`).
  */
 export async function moveDealToStage(dealId: string, stageId: string): Promise<MoveDealResult> {
+  if (!isGuid(dealId)) return { error: "Deal not found" };
+  if (!isGuid(stageId)) return { error: "Stage not found" };
+
+  let supabase: Awaited<ReturnType<typeof createClient>>;
   try {
-    const supabase = await createClient();
+    supabase = await createClient();
     const { error } = await supabase.rpc("move_deal_to_stage", {
       p_deal_id: dealId,
       p_stage_id: stageId,
     });
-    if (error) return { error: error.message };
-
-    await recomputeDealHealth(supabase, dealId);
-    revalidatePath("/pipeline");
-    return { error: null };
+    if (error) return moveFailureAnswer(error);
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "Move failed" };
+    // no answer from the RPC, so the move may or may not have run; the
+    // throw's words describe the server, not the move: logged, never shown
+    console.error("[deals] moveDealToStage threw before the move was answered", e);
+    return { error: MOVE_UNCONFIRMED_TEXT, unconfirmed: true };
   }
+
+  // COMMITTED from here on. Derived state, no event, nothing for the user to
+  // do: paged, not put to them (DECISIONS T3.3 — the next recompute heals it).
+  try {
+    await recomputeDealHealth(supabase, dealId);
+  } catch (e) {
+    reportDealClose(
+      "[deals] stage move follow-up failed",
+      { operation: "deals.move_followup", step: "health", code: errorName(e) },
+      { dealId },
+    );
+  }
+  try {
+    revalidatePath("/pipeline");
+  } catch (e) {
+    // the move is committed; a stale board must not turn it into an error
+    console.error("[deals] revalidatePath(/pipeline) failed:", e instanceof Error ? e.message : e);
+  }
+  return { error: null };
 }
 
 /**

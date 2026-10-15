@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parseContactListFilters } from "./contacts-list";
+import { GUID_SHAPES } from "@/lib/testing/guid-shapes";
+import { applyContactListFilters, parseContactListFilters } from "./contacts-list";
+
+const AGENT = "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c01";
 
 describe("parseContactListFilters", () => {
   it("reads every filter the list understands", () => {
@@ -8,7 +11,7 @@ describe("parseContactListFilters", () => {
       type: "buyer",
       temperature: "hot",
       source: "referral",
-      agent: "agent-1",
+      agent: AGENT,
       nationality: " GB ",
       language: "el",
       archived: "1",
@@ -18,7 +21,7 @@ describe("parseContactListFilters", () => {
       type: "buyer",
       temperature: "hot",
       source: "referral",
-      agent: "agent-1",
+      agent: AGENT,
       nationality: "GB",
       language: "el",
       archived: true,
@@ -42,5 +45,53 @@ describe("parseContactListFilters", () => {
 
   it("takes the first value when a param repeats", () => {
     expect(parseContactListFilters({ type: ["buyer", "seller"] }).type).toBe("buyer");
+  });
+
+  /*
+   * T-malformed-ids: `agent` is sent as `.eq("assigned_agent_id", …)` on a
+   * uuid column, so a hand-typed or stale `?agent=` that is not an id made
+   * PostgREST answer 22P02 — the contacts page's error boundary, and the
+   * export's "failed… Try again" (MEASURED 2026-10-12). An id filter that is
+   * not an id is no filter: dropped as if absent, like propertyFiltersSchema's
+   * optionalUuid. The page and the export share this parser.
+   */
+  it("drops an agent filter that is not an id, as if it were absent", () => {
+    for (const bad of ["notauuid", "agent-1", "1", `${AGENT},x`, ` ${AGENT}x`]) {
+      expect(parseContactListFilters({ agent: bad }).agent, bad).toBeUndefined();
+    }
+    // the first of a repeated key is the one judged, as for every other filter
+    expect(parseContactListFilters({ agent: ["notauuid", AGENT] }).agent).toBeUndefined();
+  });
+
+  it("keeps a well-formed agent id of every shape — trimmed, as before", () => {
+    // the hosted organisation's and the seed ids too: strict z.uuid() would drop them
+    for (const id of GUID_SHAPES) {
+      expect(parseContactListFilters({ agent: ` ${id} ` }).agent, id).toBe(id);
+      expect(parseContactListFilters({ agent: [id, "notauuid"] }).agent, id).toBe(id);
+    }
+  });
+
+  it("a dropped agent filter never reaches the query; a kept one does", () => {
+    const eqs = (sp: Record<string, string>) => {
+      const calls: unknown[][] = [];
+      const builder = {
+        or: () => builder,
+        eq: (...args: unknown[]) => {
+          calls.push(args);
+          return builder;
+        },
+        contains: () => builder,
+        ilike: () => builder,
+      };
+      applyContactListFilters(builder, parseContactListFilters(sp));
+      return calls;
+    };
+    expect(eqs({ agent: "notauuid" })).toEqual([["is_archived", false]]);
+    for (const id of GUID_SHAPES) {
+      expect(eqs({ agent: id }), id).toEqual([
+        ["is_archived", false],
+        ["assigned_agent_id", id],
+      ]);
+    }
   });
 });
