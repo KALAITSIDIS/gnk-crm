@@ -5,6 +5,7 @@ import { z } from "zod";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { LEAD_MESSAGE_REDACTED } from "@/lib/services/erasure";
 import { runContactErasure, type ErasureSteps } from "@/lib/services/erasure-run";
+import { isEvidenceReportPath } from "@/lib/services/evidence-report-path";
 import { logEvent } from "@/lib/services/events";
 import { removeObjectsOrFail } from "@/lib/services/storage";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -196,6 +197,7 @@ export async function eraseContactPersonalData(
       return rowsOf(r, "saved searches").length;
     },
 
+    // Every contact document: the runner keeps the evidence reports (ERA-1)
     async listDocuments() {
       const r = await supabase
         .from("documents")
@@ -303,8 +305,10 @@ export type RetentionPurgeState = { error: string | null; purgedAt: string | nul
  *
  * Destroys ONLY the retained document rows, their storage objects, and the KYC
  * checklist. The erasure record itself (`erased_at`/`erased_by`), the identity
- * fields, events and viewing slips are untouched — the first three are the audit
- * trail, the last two are immutable commission evidence.
+ * fields, events, viewing slips and commission-evidence reports are untouched —
+ * the first three are the audit trail, the last three commission evidence. A
+ * report is a contact document too, so the listing below sets it aside by its
+ * path and the record counts it kept (ERA-1; the erasure keeps it the same way).
  *
  * Admin-only, enforced here: the contacts UPDATE policy also admits the
  * assigned/creating agent. Irreversible.
@@ -364,11 +368,16 @@ export async function purgeExpiredRetention(contactId: string): Promise<Retentio
   // "Nothing is retained" (measured, T-erasure-null-answers).
   const why = (e: unknown) => (e instanceof Error ? e.message : String(e));
   let docs: { id: string; storage_path: string | null }[];
+  let evidenceReportsKept = 0;
   try {
-    docs = rowsOf(
+    const listed = rowsOf(
       await supabase.from("documents").select("id, storage_path").eq("entity_type", "contact").eq("entity_id", contactId),
       "the retained documents",
     );
+    // The AML duty ending is no reason to destroy a commission-evidence
+    // report: it is not a KYC record, and its hash is in the event log (ERA-1)
+    docs = listed.filter((d) => !isEvidenceReportPath(d.storage_path));
+    evidenceReportsKept = listed.length - docs.length;
   } catch (e) {
     return { error: `Could not list the retained documents — nothing was destroyed: ${why(e)}`, purgedAt: null };
   }
@@ -440,7 +449,7 @@ export async function purgeExpiredRetention(contactId: string): Promise<Retentio
     revalidatePath("/settings/retention");
     revalidatePath(`/contacts/${contactId}`);
     return {
-      error: `The ${documentsDestroyed} retained file(s) and their records are destroyed, but the retention date could not be cleared: ${why(e)}. Nothing is left to destroy — do not run the purge again (it would record 0 destroyed): the record (retention_purged, ${documentsDestroyed} documents, retention until ${contact.retention_until}) must be written by an administrator.`,
+      error: `The ${documentsDestroyed} retained file(s) and their records are destroyed, but the retention date could not be cleared: ${why(e)}. Nothing is left to destroy — do not run the purge again (it would record 0 destroyed): the record (retention_purged, ${documentsDestroyed} documents, ${evidenceReportsKept} evidence reports kept, retention until ${contact.retention_until}) must be written by an administrator.`,
       purgedAt: null,
     };
   };
@@ -479,6 +488,7 @@ export async function purgeExpiredRetention(contactId: string): Promise<Retentio
       // counts and dates only — never the destroyed values
       payload: {
         documents_destroyed: documentsDestroyed,
+        evidence_reports_kept: evidenceReportsKept,
         retention_until: contact.retention_until,
       },
     });
@@ -489,7 +499,7 @@ export async function purgeExpiredRetention(contactId: string): Promise<Retentio
     revalidatePath("/settings/retention");
     revalidatePath(`/contacts/${contactId}`);
     return {
-      error: `Purged — ${documentsDestroyed} retained file(s) and the retention date are gone — but the record of it failed to write: ${why(e)}. The record (retention_purged, ${documentsDestroyed} documents, retention until ${contact.retention_until}) must be written by an administrator.`,
+      error: `Purged — ${documentsDestroyed} retained file(s) and the retention date are gone — but the record of it failed to write: ${why(e)}. The record (retention_purged, ${documentsDestroyed} documents, ${evidenceReportsKept} evidence reports kept, retention until ${contact.retention_until}) must be written by an administrator.`,
       purgedAt,
     };
   }

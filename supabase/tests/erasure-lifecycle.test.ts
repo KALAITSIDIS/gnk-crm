@@ -555,7 +555,7 @@ describe("retention is the erasure's to set and the purge's to clear", () => {
       "select actor_id::text, payload from events where entity_type = 'contact' and entity_id = $1 and event_type = 'retention_purged'",
       [c],
     );
-    expect(ev.rows).toEqual([{ actor_id: admin.id, payload: { documents_destroyed: 1, retention_until: "2020-06-01" } }]);
+    expect(ev.rows).toEqual([{ actor_id: admin.id, payload: { documents_destroyed: 1, evidence_reports_kept: 0, retention_until: "2020-06-01" } }]);
     expect(await purge(admin, c)).toEqual({ error: "Nothing is retained for this contact.", purgedAt: null });
   });
 
@@ -586,7 +586,7 @@ describe("retention is the erasure's to set and the purge's to clear", () => {
     expect(await purge(admin, c)).toEqual({ error: null, purgedAt: expect.any(String) });
     expect((await pg.query("select count(*)::int as c from documents where id = $1", [doc.id])).rows[0].c).toBe(0);
     const ev = await pg.query("select payload from events where entity_type = 'contact' and entity_id = $1 and event_type = 'retention_purged'", [c]);
-    expect(ev.rows).toEqual([{ payload: { documents_destroyed: 1, retention_until: "2020-06-01" } }]);
+    expect(ev.rows).toEqual([{ payload: { documents_destroyed: 1, evidence_reports_kept: 0, retention_until: "2020-06-01" } }]);
   });
 
   it("action: a purge whose record fails to write says so in a sentence — the files and the date are gone, the record is not", async () => {

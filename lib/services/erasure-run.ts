@@ -4,6 +4,7 @@ import {
   planContactErasure,
   type ErasurePatch,
 } from "./erasure";
+import { isEvidenceReportPath } from "./evidence-report-path";
 
 /**
  * The ORDER of a contact erasure, and what each failure means — as a pure
@@ -58,6 +59,7 @@ export interface ErasureSteps {
   /** 0094: blanks the notes on the contact and on its leads; returns how many. */
   redactNotes(): Promise<number>;
   deleteRequirements(): Promise<number>;
+  /** Every contact document — the runner, not the listing, keeps the evidence reports. */
   listDocuments(): Promise<{ id: string; storage_path: string | null }[]>;
   /** Must throw unless every path is absent afterwards. */
   removeObjects(paths: string[]): Promise<void>;
@@ -202,11 +204,17 @@ export async function runContactErasure(input: {
   let requirementsDeleted = 0;
   let documentsDeleted = 0;
   let documentsRetained = 0;
+  let evidenceReportsKept = 0;
   try {
     leadsRedacted = await attempt("redacting lead messages", () => steps.redactLeads());
     notesRedacted = await attempt("redacting notes", () => steps.redactNotes());
     requirementsDeleted = await attempt("deleting saved searches", () => steps.deleteRequirements());
-    const docs = await attempt("listing documents", () => steps.listDocuments());
+    const listed = await attempt("listing documents", () => steps.listDocuments());
+    // A commission-evidence report is never destroyed, whatever the basis
+    // (ERA-1): its hash is recorded in the event log, which the erasure keeps.
+    // Known by its path (evidence-report-path.ts), kept, and counted.
+    const docs = listed.filter((d) => !isEvidenceReportPath(d.storage_path));
+    evidenceReportsKept = listed.length - docs.length;
     if (plan.deleteDocuments && docs.length > 0) {
       // Objects BEFORE rows: a storage failure leaves the rows, and the rows
       // are what the next run uses to find the objects again.
@@ -254,6 +262,7 @@ export async function runContactErasure(input: {
     requirementsDeleted,
     documentsDeleted,
     documentsRetained,
+    evidenceReportsKept,
   });
   try {
     await steps.writeEvent(JSON.parse(JSON.stringify(payload)));

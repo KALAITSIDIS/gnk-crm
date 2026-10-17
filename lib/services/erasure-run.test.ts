@@ -122,6 +122,64 @@ describe("the order: dependants first, the contact last, the record after", () =
   });
 });
 
+describe("a commission-evidence report is never destroyed by an erasure (ERA-1)", () => {
+  // the path generateEvidenceReport writes: <org>/reports/evidence-<contact>-<stamp>.pdf
+  const REPORT = { id: "r1", storage_path: "o1/reports/evidence-c1-1760000000000.pdf" };
+  const KYC = { id: "d1", storage_path: "o1/contacts/c1/passport.pdf" };
+  const removed = (h: ReturnType<typeof harness>) => h.calls.filter((c) => c.startsWith("removeObjects"));
+
+  it("no basis: the KYC document's file and row go, the report's file and row stay, and the record counts it kept", async () => {
+    const h = harness({ docs: [KYC, REPORT] });
+    expect(await run(h)).toEqual({ error: null, erasedAt: NOW });
+    expect(removed(h)).toEqual([`removeObjects:${KYC.storage_path}`]);
+    expect(h.deletedIds).toEqual([["d1"]]);
+    expect(h.payloads[0]).toMatchObject({ documents_deleted: 1, documents_retained: 0, evidence_reports_kept: 1 });
+  });
+
+  it("no basis, a report alone: nothing is removed and no row is deleted", async () => {
+    const h = harness({ docs: [REPORT] });
+    expect(await run(h)).toEqual({ error: null, erasedAt: NOW });
+    expect(removed(h)).toEqual([]);
+    expect(h.calls).not.toContain("deleteDocumentRows");
+    expect(h.payloads[0]).toMatchObject({ documents_deleted: 0, documents_retained: 0, evidence_reports_kept: 1 });
+  });
+
+  it("an AML basis: the KYC document is retained under the duty and the report kept as evidence, each counted on its own", async () => {
+    const h = harness({ basis: AML_BASIS, docs: [KYC, REPORT] });
+    await run(h);
+    expect(removed(h)).toEqual([]);
+    expect(h.payloads[0]).toMatchObject({ documents_deleted: 0, documents_retained: 1, evidence_reports_kept: 1 });
+  });
+
+  it("is identified by the report's own path, nothing looser: a file merely named like one is still destroyed", async () => {
+    const h = harness({
+      docs: [
+        { id: "d2", storage_path: "o1/contacts/c1/evidence-scan.pdf" },
+        { id: "d3", storage_path: "o1/contacts/c1/reports/passport.pdf" },
+        { id: "d4", storage_path: null },
+        REPORT,
+      ],
+    });
+    await run(h);
+    expect(removed(h)).toEqual(["removeObjects:o1/contacts/c1/evidence-scan.pdf,o1/contacts/c1/reports/passport.pdf"]);
+    expect(h.deletedIds).toEqual([["d2", "d3", "d4"]]);
+    expect(h.payloads[0]).toMatchObject({ documents_deleted: 3, evidence_reports_kept: 1 });
+  });
+
+  it("a re-run keeps the report too", async () => {
+    const h = harness({ erasedEventExists: false, docs: [KYC, REPORT] });
+    expect(await run(h, "2026-09-05T09:00:00.000Z", erasedRow(null))).toEqual({ error: null, erasedAt: "2026-09-05T09:00:00.000Z" });
+    expect(h.deletedIds).toEqual([["d1"]]);
+    expect(h.payloads[0]).toMatchObject({ documents_deleted: 1, evidence_reports_kept: 1 });
+  });
+
+  it("a contact with no report records 0 kept", async () => {
+    const h = harness({});
+    await run(h);
+    expect(h.payloads[0]).toMatchObject({ documents_deleted: 1, evidence_reports_kept: 0 });
+  });
+});
+
 describe("a failed basis read is an error, never 'no relationship'", () => {
   it("erases nothing — the old code would have destroyed the AML documents", async () => {
     const h = harness({ failAt: "readBasis" });
