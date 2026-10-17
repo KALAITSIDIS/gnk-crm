@@ -1,6 +1,37 @@
 # HANDOFF — 2026-08-08
 
-**2026-10-17, latest (ERA-1: erasure and the retention purge keep the commission-evidence reports; LANDED — PR #167). This is the six-phase audit's one new HIGH, built on the audit's drop-in under the standing authorization. A report is known by its path (`lib/services/evidence-report-path.ts`). Neither destroyer touches one, whatever the AML basis, and the `erased` and `retention_purged` lines count what they kept (`evidence_reports_kept`). No migration, nothing on hosted. #167 merged 13:23:52Z → main `f5cf6c2`, deployed, merge CI green. These landing records are PR #169 (branch `land/era1-evidence-reports`, from `f5cf6c2`). DECISIONS `T-erasure-keeps-evidence-reports`.**
+**2026-10-17, latest (the four live anonymous-surface findings of the six-phase audit; LANDED — PRs #170 and #168): P3B1-1 (the enquiry door's site ceiling), NOTIF-1 (the CSP report collector), NOTIF-2 (the provider quota, partly) and ANON-2 (the anon rate counters, migration 0149). Built under the standing authorization by a session the audit session started. Hosted 0149 first (~14:21Z, md5-guarded, verified, ledger 148 rows), then #170 merged 14:25:36Z → main `7313999`, then #168 merged 14:42:28Z → `9d9dc9c`. Both deployed, both merge CI runs green. These landing records are PR #LANDPR (branch `land/public-doors`). DECISIONS `T-public-doors` and `T-anon-counter-key-shape`.**
+- **What.**
+  - **P3B1-1.** The proven site's 60-per-15-minutes ceiling is metered on its own key (`callerIpHash("site")`), never on the row a stranger at the same address spends. A honeypot hit is answered after the visitor's budget and before the ceiling. A ceiling refusal is 429 `code: "origin_ceiling"` and one Sentry line per window per instance.
+  - **NOTIF-1.** `/api/csp-report` looks at a report's first 50 violations and sends at most 3 new ones to Sentry per request, under a per-instance bucket of 10 (one back every 6 minutes). Every event has a fixed fingerprint `["csp-violation", <known directive | "other">]` and a message naming only that directive. The log still gets every violation once.
+  - **NOTIF-2.** A Resend 429 `daily_quota_exceeded` / `monthly_quota_exceeded` is named on the send's result, and the worker pages it once per quota per UTC day. The retry schedule is unchanged. **The per-organisation outbound counter is DEFERRED:** it needs a migration and protects quota only from the acknowledgement, which is unarmed. Build it with ANON-3's fixes, before row 1d arms `ENQUIRY_ALERT_FROM`.
+  - **ANON-2 (0149).** `note_share_link_miss` / `note_public_listing_hit` answer "over budget" and store nothing for a key that is not 32 lowercase hex. The three counter tables carry a validated CHECK on the key's shape and an index on `window_start`.
+- **Verified.**
+  - RED → GREEN for each: app 39 failed | 123 passed (162) → 169/169; 0149 49 failed | 18 passed (67) → 69/69 on `.iso/publicdoors` (Postgres 17.6.1.159, PostgREST v14.5).
+  - Mutants: app 36/36, 0149 9/9 DB-state plus the file's own 7 postflight mutants and 9 preflight refusals.
+  - Full suites: unit 3,997/4,001 (4 load timeouts in untouched files, green alone); DB 1,905/1,906 (a clock race in `enquiry-alert-key-lifetime`, green alone).
+  - `typecheck`, `lint` exit 0. Two independent reviews, acted on.
+  - The guarded apply was rehearsed from hosted's exact pre-state, with a corrupted copy refused.
+- **Found on the way.**
+  - **Hosted drift:** hosted's `note_share_link_miss` was 0023's code without its one comment line (another digest, same behaviour). 0149 accepted both; it is 0149's body now.
+  - **CI flakes:** `deadlock detected` inside migration-replay tests' own reverts on 2026-10-17 (`reservation-lead-property-org-isolation`, `rls-hoist`, and ERA-1's `unit-type-apply-actions`). Re-run on a fresh push went green.
+- **Landed.**
+  - **#170:** Vercel `dpl_4wKhxc63iYBo8PGyHZ4N3PWqmVq1` READY 14:27:06Z; merge CI run 39040702676 green.
+  - **#168:** `dpl_33sS2WF9Z1X46keFXD5XBtkgzz8M` READY 14:44:33Z; merge CI run 39041894335 green.
+  - `get_runtime_errors` clean after each. Signed out: `/login` 200, `/leads` 307. No request that writes was sent to production.
+- **BACKLOG.** The four entries are in the audit's records commit `d139a34` (section "Six-phase audit — 2026-10-17"), not on main. Their strikes are the audit session's to make when it lands `d139a34`, citing #168 / `9d9dc9c` and #170 / `7313999`. NOTIF-2 is partly fixed: the counter stays open.
+- **What next.**
+  - **These records:** PR #LANDPR, read CI and merge pinned to its head. Then remove the worktrees `public-doors`, `public-doors-0149`, `land-public-doors` and the three remote branches, and stop `.iso/publicdoors`.
+  - **The audit's records commit `d139a34`:** the operator's word, now that the four live anonymous findings are fixed.
+  - **MEDIA-1 (0148)** rebases on main; its restore-pack migrations pin becomes 149.
+  - **Follow-ups for BACKLOG** (when `d139a34` lands):
+    - gnk-web reads `code: "origin_ceiling"` (`gnk-web/lib/crm.ts:493`);
+    - `hashIp` groups IPv6 by /64 (every public counter);
+    - the NOTIF-2 counter (with ANON-3);
+    - a per-key rate limit on the Sentry DSN (operator, docs/10 §4);
+    - the CI deadlock flakes and the key-lifetime clock race.
+
+**2026-10-17 (ERA-1: erasure and the retention purge keep the commission-evidence reports; LANDED — PR #167). This is the six-phase audit's one new HIGH, built on the audit's drop-in under the standing authorization. A report is known by its path (`lib/services/evidence-report-path.ts`). Neither destroyer touches one, whatever the AML basis, and the `erased` and `retention_purged` lines count what they kept (`evidence_reports_kept`). No migration, nothing on hosted. #167 merged 13:23:52Z → main `f5cf6c2`, deployed, merge CI green. These landing records are PR #169 (branch `land/era1-evidence-reports`, from `f5cf6c2`). DECISIONS `T-erasure-keeps-evidence-reports`.**
 - **What.**
   - **The defect.** `generateEvidenceReport` stores the PDF as an ordinary contact document, at `<org>/reports/evidence-<contact>-<stamp>.pdf`. An erasure with no AML basis and every retention purge listed every contact document, and destroyed the report with the rest. The spec, the erase dialog, the contact banner and the `erased` line's own `untouched` list all promise the opposite.
   - **The fix.** The pure runner (`erasure-run.ts`) and the purge's listing (`contact-erasure.ts`) set reports aside by their path, never by `doc_type` (a session may relabel it).
