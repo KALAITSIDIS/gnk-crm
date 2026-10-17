@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCspReport, violationKey } from "./csp-report";
+import { directiveFamily, parseCspReport, violationKey } from "./csp-report";
 
 /** The shape a browser posts to `report-uri`. */
 const reportUriBody = {
@@ -116,5 +116,30 @@ describe("violationKey", () => {
     const a = parseCspReport(reportUriBody)[0];
     expect(violationKey(a)).not.toBe(violationKey({ ...a, directive: "img-src" }));
     expect(violationKey(a)).not.toBe(violationKey({ ...a, sourceFile: "other.js" }));
+  });
+});
+
+describe("directiveFamily — the fixed part of a Sentry fingerprint (NOTIF-1)", () => {
+  it.each([
+    ["script-src", "script-src"],
+    ["script-src-elem", "script-src-elem"],
+    ["img-src", "img-src"],
+    ["frame-ancestors", "frame-ancestors"],
+    ["require-trusted-types-for", "require-trusted-types-for"],
+    // an older browser's violated-directive carries the source expression
+    ["script-src 'self' 'nonce-abc'", "script-src"],
+    ["  Style-Src-Attr  'unsafe-hashes'", "style-src-attr"],
+  ])("%s → %s", (input, family) => {
+    expect(directiveFamily(input)).toBe(family);
+  });
+
+  it.each([
+    ["an invented directive", "buy-cheap-pills"],
+    ["a sentence", "please page the operator"],
+    ["a directive name glued to junk", "script-srcX"],
+    ["a prototype key", "__proto__"],
+    ["an empty string", ""],
+  ])("%s is 'other'", (_label, input) => {
+    expect(directiveFamily(input)).toBe("other");
   });
 });

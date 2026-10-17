@@ -110,3 +110,132 @@ export function parseCspReport(body: unknown): CspViolation[] {
 export function violationKey(v: CspViolation): string {
   return `${v.directive}|${v.blockedUri}|${v.sourceFile ?? ""}`;
 }
+
+/**
+ * The directives a policy can name (CSP Level 3, plus the fetch directives
+ * browsers still report). A report naming anything else groups as "other":
+ * the endpoint is public, so a directive is caller-written text, and a
+ * fingerprint or a message built from it would let any caller mint a Sentry
+ * issue and choose its title (NOTIF-1, six-phase audit 2026-10-17).
+ */
+const KNOWN_DIRECTIVES: ReadonlySet<string> = new Set([
+  "default-src",
+  "script-src",
+  "script-src-elem",
+  "script-src-attr",
+  "style-src",
+  "style-src-elem",
+  "style-src-attr",
+  "img-src",
+  "font-src",
+  "connect-src",
+  "media-src",
+  "object-src",
+  "frame-src",
+  "child-src",
+  "worker-src",
+  "manifest-src",
+  "prefetch-src",
+  "fenced-frame-src",
+  "base-uri",
+  "form-action",
+  "frame-ancestors",
+  "navigate-to",
+  "sandbox",
+  "require-trusted-types-for",
+  "trusted-types",
+  "upgrade-insecure-requests",
+  "block-all-mixed-content",
+  "webrtc",
+]);
+
+/**
+ * The fixed part of a violation's Sentry fingerprint: its directive NAME when
+ * the policy could have that directive, else "other". An older browser's
+ * `violated-directive` carries the source expression too ("script-src 'self'
+ * …"), so the name is the first token, lowercased.
+ */
+export function directiveFamily(directive: string): string {
+  const name = directive.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
+  return KNOWN_DIRECTIVES.has(name) ? name : "other";
+}
+
+/** A report is read up to this many violations; a browser's batch is ~24 (csp.spec.ts). */
+export const MAX_VIOLATIONS_PER_REPORT = 50;
+/** New violations reported per request, at most. */
+export const MAX_NEW_PER_REQUEST = 3;
+/** The per-instance token bucket: this many events at once … */
+export const REPORT_BUCKET_CAPACITY = 10;
+/** … refilled one token per this many milliseconds (ten an hour). */
+export const REPORT_BUCKET_REFILL_MS = 6 * 60_000;
+/** Distinct violations remembered per instance; the oldest is forgotten first. */
+export const MAX_SEEN = 200;
+
+/**
+ * What one serverless instance may report, and has reported (NOTIF-1).
+ *
+ * Until 2026-10-17 the route sent one Sentry event per distinct violation
+ * key with no cap per request or per window — about eighty crafted requests
+ * made 5,000 events — and cleared its dedupe set whole at 200 entries, so a
+ * run of fresh keys also re-reported every key already seen. Now:
+ *   - at most MAX_NEW_PER_REQUEST new violations per request;
+ *   - a token bucket per instance (REPORT_BUCKET_CAPACITY, one back every
+ *     REPORT_BUCKET_REFILL_MS) bounds a run of requests;
+ *   - a violation held back is NOT remembered, so a later request reports it;
+ *   - the set forgets its OLDEST key when full, never all of them.
+ *
+ * In memory and per instance, deliberately (the route's header): a flood
+ * guard, not a store. A cold start begins with a full bucket and an empty set.
+ */
+export class CspReportLimiter {
+  private readonly seen = new Set<string>();
+  private tokens = REPORT_BUCKET_CAPACITY;
+  private refilledAt: number;
+
+  constructor(private readonly now: () => number = Date.now) {
+    this.refilledAt = now();
+  }
+
+  /** The violations to report now, and how many new ones were held back. */
+  admit(violations: readonly CspViolation[]): { report: CspViolation[]; heldBack: number } {
+    this.refill();
+    const report: CspViolation[] = [];
+    const held = new Set<string>();
+    for (const v of violations) {
+      const key = violationKey(v);
+      if (this.seen.has(key) || held.has(key)) continue;
+      if (report.length >= MAX_NEW_PER_REQUEST || this.tokens < 1) {
+        held.add(key);
+        continue;
+      }
+      this.tokens -= 1;
+      this.remember(key);
+      report.push(v);
+    }
+    return { report, heldBack: held.size };
+  }
+
+  private refill(): void {
+    const t = this.now();
+    // A full bucket earns nothing while it waits: its clock starts when the
+    // first token is spent, so a burst is never REPORT_BUCKET_CAPACITY plus
+    // one already earned.
+    if (this.tokens >= REPORT_BUCKET_CAPACITY) {
+      this.refilledAt = t;
+      return;
+    }
+    const earned = Math.floor((t - this.refilledAt) / REPORT_BUCKET_REFILL_MS);
+    if (earned <= 0) return;
+    this.tokens = Math.min(REPORT_BUCKET_CAPACITY, this.tokens + earned);
+    // a partial bucket keeps the remainder towards its next token
+    this.refilledAt = this.tokens === REPORT_BUCKET_CAPACITY ? t : this.refilledAt + earned * REPORT_BUCKET_REFILL_MS;
+  }
+
+  private remember(key: string): void {
+    if (this.seen.size >= MAX_SEEN) {
+      const oldest = this.seen.values().next().value;
+      if (oldest !== undefined) this.seen.delete(oldest);
+    }
+    this.seen.add(key);
+  }
+}

@@ -1,6 +1,11 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
-import { parseCspReport, violationKey } from "@/lib/services/csp-report";
+import {
+  CspReportLimiter,
+  MAX_VIOLATIONS_PER_REPORT,
+  directiveFamily,
+  parseCspReport,
+} from "@/lib/services/csp-report";
 
 /**
  * Collection point for Content-Security-Policy violation reports
@@ -23,6 +28,17 @@ import { parseCspReport, violationKey } from "@/lib/services/csp-report";
  * - **Reports are de-duplicated per instance.** The operator needs the distinct
  *   set of things the policy would block; one log line per page view would
  *   drown the rare, interesting violation in the common, boring one.
+ * - **What reaches Sentry is bounded and shaped HERE, never by the caller**
+ *   (NOTIF-1, six-phase audit 2026-10-17). Until then any caller could send
+ *   one Sentry event per distinct directive / URL / source it invented, under
+ *   a title it wrote — about eighty requests used up the month's quota and
+ *   buried the alerts. Now a report is read up to its first
+ *   MAX_VIOLATIONS_PER_REPORT violations, at most three new ones are reported
+ *   per request and a per-instance token bucket bounds a run of requests
+ *   (CspReportLimiter, lib/services/csp-report.ts), and every event carries a
+ *   fixed fingerprint and a message naming only a directive the policy could
+ *   have — the caller's text travels as `extra`, scrubbed like any other.
+ *   Operator side (docs/10): a per-key rate limit on the DSN as well.
  */
 
 /**
@@ -49,13 +65,12 @@ import { parseCspReport, violationKey } from "@/lib/services/csp-report";
 const MAX_BODY_BYTES = 131_072;
 
 /**
- * Violations already logged by THIS serverless instance. Deliberately in-memory
- * and per-instance: it is a flood guard, not a store. A cold start re-reports,
- * which is the behaviour we want — it keeps the signal alive over time without
- * ever accumulating unbounded state.
+ * What THIS serverless instance has reported and may still report.
+ * Deliberately in-memory and per-instance: it is a flood guard, not a store. A
+ * cold start re-reports, which is the behaviour we want — it keeps the signal
+ * alive over time without ever accumulating unbounded state.
  */
-const seen = new Set<string>();
-const MAX_SEEN = 200;
+const limiter = new CspReportLimiter();
 
 export async function POST(request: NextRequest) {
   const raw = await request.text();
@@ -77,12 +92,8 @@ export async function POST(request: NextRequest) {
     return new NextResponse(null, { status: 204 });
   }
 
-  for (const violation of parseCspReport(body)) {
-    const key = violationKey(violation);
-    if (seen.has(key)) continue;
-    if (seen.size >= MAX_SEEN) seen.clear();
-    seen.add(key);
-
+  const { report, heldBack } = limiter.admit(parseCspReport(body).slice(0, MAX_VIOLATIONS_PER_REPORT));
+  for (const violation of report) {
     const line =
       `[csp] ${violation.directive} blocked ${violation.blockedUri} ` +
       `on ${violation.documentPath}` +
@@ -93,7 +104,22 @@ export async function POST(request: NextRequest) {
     // logs an operator can actually read. Sentry is env-gated and silent
     // without a DSN, so it cannot be the only sink.
     console.warn(line);
-    Sentry.captureMessage(line, "warning");
+    const family = directiveFamily(violation.directive);
+    Sentry.captureMessage(`[csp] ${family} violation`, {
+      level: "warning",
+      fingerprint: ["csp-violation", family],
+      extra: {
+        directive: violation.directive,
+        blocked: violation.blockedUri,
+        document: violation.documentPath,
+        ...(violation.sourceFile ? { source: `${violation.sourceFile}:${violation.lineNumber ?? 0}` } : {}),
+      },
+    });
+  }
+  if (heldBack > 0) {
+    // Say so, once per request: a held-back violation is not remembered, so
+    // the next request that carries it reports it.
+    console.warn(`[csp] ${heldBack} new violation(s) not reported: the per-request cap or this instance's rate limit`);
   }
 
   // 204 regardless: a reporting endpoint must never give a caller feedback to
