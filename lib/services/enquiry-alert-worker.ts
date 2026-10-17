@@ -90,6 +90,7 @@ import {
   sendEnquiryAlert,
   type AlertSendResult,
   type EnquiryAlert,
+  type ProviderQuota,
 } from "@/lib/services/enquiry-alert";
 import {
   PER_JOB_OVERHEAD_MS,
@@ -492,6 +493,10 @@ async function settle(job: Job, result: AlertSendResult, run: WorkerRun, complet
     return;
   }
 
+  // A spent quota refuses EVERY send until it frees up: said once, now, by
+  // name (NOTIF-2). The row is handled exactly as its category says below.
+  if (result.quota) reportQuotaOnce(job, result.quota, result.result, at());
+
   if (result.category === "transient" || result.category === "timeout") {
     await scheduleRetry(job, result.category, result.result, result.retryAfterSeconds, complete, run, at());
     return;
@@ -553,6 +558,41 @@ function reportTerminal(job: Job, category: string, result: string, exhausted: b
     });
   } catch {
     // Sentry is best-effort; the row and the event carry the outcome.
+  }
+}
+
+/**
+ * The UTC day and the quotas THIS instance has already reported on it
+ * (NOTIF-2). In memory and per instance, like the CSP route's dedupe: the
+ * fixed fingerprint folds every instance's line into one issue per quota, so
+ * this only keeps one instance from sending a line per refused job.
+ */
+let quotaPagedDay = "";
+const quotaPaged = new Set<ProviderQuota>();
+
+/**
+ * The provider said a quota is spent: every desk alert and escalation fails
+ * until it frees up (the daily one) or the plan changes (the monthly one).
+ * Once per quota per UTC day per instance. SHAPE ONLY: the quota, the
+ * provider's error name and the kind — never the person or the address.
+ */
+function reportQuotaOnce(job: Job, quota: ProviderQuota, result: string, now: Date): void {
+  const day = now.toISOString().slice(0, 10);
+  if (day !== quotaPagedDay) {
+    quotaPagedDay = day;
+    quotaPaged.clear();
+  }
+  if (quotaPaged.has(quota)) return;
+  quotaPaged.add(quota);
+  try {
+    Sentry.captureMessage(`[enquiry-alert] the provider's ${quota} sending quota is spent — alerts fail until it frees up`, {
+      level: "error",
+      fingerprint: ["resend-quota", quota],
+      tags: { quota, result: result.slice(0, 40), kind: job.kind },
+      extra: { jobId: job.id },
+    });
+  } catch {
+    // best-effort; the rows carry the provider's word
   }
 }
 

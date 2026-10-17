@@ -893,3 +893,86 @@ describe("a lead escalation (0107)", () => {
     });
   });
 });
+
+/**
+ * NOTIF-2 (six-phase audit, 2026-10-17): a spent provider quota refuses EVERY
+ * send until it frees up — the desk alerts and the escalations alike — and
+ * until now the only signal was each job's "failed for good" about two hours
+ * later. The worker keeps the retry schedule exactly as it was and tells
+ * Sentry at once, by name, ONCE per quota per day per instance (a fixed
+ * fingerprint, so every instance's line lands in one issue).
+ */
+describe("a spent provider quota (NOTIF-2)", () => {
+  const spent = (quota: "daily" | "monthly"): AlertSendResult => ({
+    outcome: "failed",
+    category: "transient",
+    result: `${quota}_quota_exceeded`,
+    retryAfterSeconds: null,
+    quota,
+  });
+  const at = (iso: string) => {
+    const t = new Date(iso).getTime();
+    vi.setSystemTime(t);
+    return (id: string, over: Partial<Job> = {}) => job({ id, first_attempted_at: new Date(t).toISOString(), ...over });
+  };
+  const pages = () => vi.mocked(Sentry.captureMessage).mock.calls;
+
+  it("is retried on the schedule as before, and Sentry is told ONCE, by name, however many jobs it refuses", async () => {
+    const fresh = at("2026-10-01T09:00:00Z");
+    const { client, rpcCalls } = makeClient({ claim: [fresh("job-a"), fresh("job-b"), fresh("job-c")] });
+    const run = await runEnquiryAlertWorker(client, { workerId: "w1" }, { send: sender(spent("daily")) });
+    expect(run).toMatchObject({ claimed: 3, retried: 3, failed: 0 });
+    for (const c of completions(rpcCalls)) {
+      expect(c).toMatchObject({ p_outcome: "retry", p_category: "transient", p_result: "daily_quota_exceeded" });
+    }
+    expect(pages()).toHaveLength(1);
+    const [message, hint] = pages()[0]! as unknown as [string, Record<string, unknown>];
+    expect(message).toMatch(/daily/i);
+    expect(message).toMatch(/quota/i);
+    expect(hint).toMatchObject({
+      level: "error",
+      fingerprint: ["resend-quota", "daily"],
+      tags: { quota: "daily", result: "daily_quota_exceeded", kind: "enquiry_desk_alert" },
+    });
+    // shape only: never the person, the address or the message
+    const ctx = JSON.stringify(pages()[0]);
+    expect(ctx).not.toContain("buyer@example.invalid");
+    expect(ctx).not.toContain("A Buyer");
+  });
+
+  it("a later run the same day pages no more; the next day pages again, and so does the other quota", async () => {
+    let fresh = at("2026-10-02T08:00:00Z");
+    await runEnquiryAlertWorker(makeClient({ claim: [fresh("job-a")] }).client, { workerId: "w1" }, { send: sender(spent("daily")) });
+    expect(pages()).toHaveLength(1);
+
+    fresh = at("2026-10-02T23:59:00Z");
+    await runEnquiryAlertWorker(makeClient({ claim: [fresh("job-b")] }).client, { workerId: "w1" }, { send: sender(spent("daily")) });
+    expect(pages(), "the same quota, the same day").toHaveLength(1);
+
+    await runEnquiryAlertWorker(makeClient({ claim: [fresh("job-c")] }).client, { workerId: "w1" }, { send: sender(spent("monthly")) });
+    expect(pages(), "the other quota is its own page").toHaveLength(2);
+    expect(pages()[1]![1]).toMatchObject({ fingerprint: ["resend-quota", "monthly"] });
+
+    fresh = at("2026-10-03T00:00:00Z");
+    await runEnquiryAlertWorker(makeClient({ claim: [fresh("job-d")] }).client, { workerId: "w1" }, { send: sender(spent("daily")) });
+    expect(pages(), "a new day").toHaveLength(3);
+  });
+
+  it("the job that spends its last attempt on a spent quota is still paged as failed for good", async () => {
+    const fresh = at("2026-10-04T12:00:00Z");
+    const { client, rpcCalls } = makeClient({ claim: [fresh("job-last", { attempts: 8, max_attempts: 8 })] });
+    await runEnquiryAlertWorker(client, { workerId: "w1" }, { send: sender(spent("daily")) });
+    expect(completions(rpcCalls)[0]).toMatchObject({ p_outcome: "retry", p_result: "daily_quota_exceeded" });
+    const messages = pages().map((c) => String(c[0]));
+    expect(messages.filter((m) => /quota/i.test(m) && !/failed for good/.test(m))).toHaveLength(1);
+    expect(messages.filter((m) => /failed for good: daily_quota_exceeded/.test(m))).toHaveLength(1);
+  });
+
+  it("a passing rate limit names no quota and pages nothing", async () => {
+    const fresh = at("2026-10-05T12:00:00Z");
+    await runEnquiryAlertWorker(makeClient({ claim: [fresh("job-a")] }).client, { workerId: "w1" }, {
+      send: sender({ outcome: "failed", category: "transient", result: "rate_limit_exceeded", retryAfterSeconds: 30 }),
+    });
+    expect(pages()).toHaveLength(0);
+  });
+});
