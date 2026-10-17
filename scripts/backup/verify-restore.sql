@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 148::bigint as migrations,
+    2::bigint as auth_users, 149::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -1014,6 +1014,31 @@ misc as (
                    where c.conrelid = to_regclass('public.property_media') and c.conname = 'property_media_paths_own_property'
                      and c.contype = 'c' and c.convalidated
                      and pg_get_constraintdef(c.oid) = 'CHECK ((((storage_path_original IS NULL) OR (starts_with(storage_path_original, ((''properties/''::text || (property_id)::text) || ''/''::text)) AND (storage_path_original ~ ''^properties/[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+$''::text) AND (strpos(storage_path_original, ''..''::text) = 0))) AND ((path_thumb IS NULL) OR (starts_with(path_thumb, ((''properties/''::text || (property_id)::text) || ''/''::text)) AND (path_thumb ~ ''^properties/[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+$''::text) AND (strpos(path_thumb, ''..''::text) = 0))) AND ((path_card IS NULL) OR (starts_with(path_card, ((''properties/''::text || (property_id)::text) || ''/''::text)) AND (path_card ~ ''^properties/[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+$''::text) AND (strpos(path_card, ''..''::text) = 0))) AND ((path_full IS NULL) OR (starts_with(path_full, ((''properties/''::text || (property_id)::text) || ''/''::text)) AND (path_full ~ ''^properties/[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+$''::text) AND (strpos(path_full, ''..''::text) = 0))) AND ((path_jpeg IS NULL) OR (starts_with(path_jpeg, ((''properties/''::text || (property_id)::text) || ''/''::text)) AND (path_jpeg ~ ''^properties/[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+$''::text) AND (strpos(path_jpeg, ''..''::text) = 0)))))'))::text
+  union all
+  -- 0149: the two anon-callable rate counters store only the application's
+  -- 32-hex key — a NULL or any other key answers "over budget" BEFORE the
+  -- insert, so nothing is stored — and each of the three counter tables
+  -- carries a validated CHECK on the key's shape (every writer) and an index
+  -- on window_start for the prune. A restore that brought back a pre-0149
+  -- body, or lost a CHECK, its validation or an index, reads otherwise.
+  select 'SECURITY: the anon rate counters store only a 32-hex key — guarded bodies, validated CHECKs, window_start indexes (0149)', '3 3 2',
+         (select count(*) from pg_constraint c
+           where c.contype = 'c' and c.convalidated
+             and pg_get_constraintdef(c.oid) = 'CHECK ((ip_hash ~ ''^[0-9a-f]{32}$''::text))'
+             and ((c.conrelid = to_regclass('public.share_link_attempts') and c.conname = 'share_link_attempts_ip_hash_shape')
+               or (c.conrelid = to_regclass('public.public_listing_attempts') and c.conname = 'public_listing_attempts_ip_hash_shape')
+               or (c.conrelid = to_regclass('public.public_enquiry_attempts') and c.conname = 'public_enquiry_attempts_ip_hash_shape')))::text || ' ' ||
+         (select count(*) from (values ('share_link_attempts'), ('public_listing_attempts'), ('public_enquiry_attempts')) t(name)
+           where (select pg_get_indexdef(i.indexrelid) from pg_index i
+                   where i.indexrelid = to_regclass('public.' || t.name || '_window_start_idx') and i.indisvalid)
+                 = format('CREATE INDEX %s_window_start_idx ON public.%s USING btree (window_start)', t.name, t.name))::text || ' ' ||
+         (select count(*) from pg_proc p
+           where p.oid in (to_regprocedure('public.note_share_link_miss(text, integer)'),
+                           to_regprocedure('public.note_public_listing_hit(text, integer)'))
+             and p.prosecdef
+             and position('if p_ip_hash is null or p_ip_hash !~ ''^[0-9a-f]{32}$'' then' in p.prosrc) > 0
+             and position('if p_ip_hash is null or p_ip_hash !~ ''^[0-9a-f]{32}$'' then' in p.prosrc)
+                 < position('insert into' in p.prosrc))::text
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.

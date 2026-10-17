@@ -12,13 +12,15 @@
  * hand-built `or=(…,and(…))` string carrying quoted timestamps, and only the
  * real server can say it parses and compares them the way the ORDER BY does.
  */
+import { createHash } from "node:crypto";
 import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PRIMARY_KEYS, TABLES, readAllRows } from "../../scripts/backup/export-tables.mjs";
 import { serviceClient } from "./helpers";
 
 const DB_URL = process.env.DB_URL ?? "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
-const PROBE_HASH = "backup-export-keys-probe";
+// a counter key is the application's 32-hex hash: 0149's CHECK refuses anything else
+const PROBE_HASH = createHash("md5").update("backup-export-keys-probe").digest("hex");
 
 let db: Client;
 

@@ -4493,7 +4493,9 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     // 0066. The 0023 idiom with a SEPARATE table: sharing share_link_attempts
     // would let marketing-site polling exhaust a buyer's proposal-link budget.
     const anon = anonClient();
-    const ip = `c3-${run}`;
+    // a counter key is the application's 32-hex hash (0149 refuses anything else)
+    const hex = (label: string) => createHash("md5").update(`${label}-${run}`).digest("hex");
+    const ip = hex("c3");
 
     const first = await anon.rpc("note_public_listing_hit", { p_ip_hash: ip, p_limit: 3 });
     expect(first.error).toBeNull();
@@ -4505,7 +4507,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
 
     // a different IP has its own budget
     const other = await anon.rpc("note_public_listing_hit", {
-      p_ip_hash: `${ip}-other`,
+      p_ip_hash: hex("c3-other"),
       p_limit: 3,
     });
     expect(other.data, "another caller is unaffected").toBe(false);
@@ -4543,10 +4545,10 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     // unreadable by design). If the peek inserted, a legitimate buyer's page
     // opens would eat the miss budget — the exact corruption 0081 refuses.
     for (let i = 0; i < 10; i++) {
-      await anon.rpc("share_link_over_budget", { p_ip_hash: `${ip}-peekonly`, p_limit: 3 });
+      await anon.rpc("share_link_over_budget", { p_ip_hash: hex("c3-peekonly"), p_limit: 3 });
     }
     const peekVirgin = await anon.rpc("share_link_over_budget", {
-      p_ip_hash: `${ip}-peekonly`,
+      p_ip_hash: hex("c3-peekonly"),
       p_limit: 0,
     });
     expect(
@@ -5389,7 +5391,8 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     // Its budget is its OWN — a flood here must not spend the feed's. The feed's
     // counter stays anon-callable (a READ surface); the enquiry counter is the
     // route's alone since 0087.
-    const ip = `enqrate-${run}`;
+    // a counter key is the application's 32-hex hash (0149's CHECK refuses anything else)
+    const ip = createHash("md5").update(`enqrate-${run}`).digest("hex");
     expect((await svc.rpc("note_public_enquiry_hit", { p_ip_hash: ip, p_limit: 2 })).data).toBe(false);
     await svc.rpc("note_public_enquiry_hit", { p_ip_hash: ip, p_limit: 2 });
     expect(
