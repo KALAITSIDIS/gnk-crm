@@ -10740,6 +10740,79 @@ The operator's decision on the BACKLOG entry "A listing manager's (or a non-owne
 - The remote `fix/lm-health-recompute` is deleted (the local branch is kept), its worktree `.worktrees/gnk-crm/lm-recompute` is removed, and the disposable stack `.iso/lmrecompute` is stopped and deleted.
 - **Rollback.** Revert the merge (application only: no migration, nothing on hosted).
 
+## T-six-phase-audit-2026-10-17 — a six-phase full-stack audit, read-only: the prompt's checklist comes back PASS, and the 31 new findings sit beside it (2026-10-17; no code, no migration; records only)
+
+The operator pasted a "Master system prompt" on 2026-10-17: a six-phase audit of gnk-crm and gnk-web (architecture and secrets, Supabase/RLS, the full stack, Sentry/Vercel/CI, PropTech add-ons, a deliverable). As on 2026-10-14, every checklist item was treated as a hypothesis and no remedy was applied as written. The report is `docs/AUDIT_2026-10-17_SIX_PHASE.md`; the findings are BACKLOG "Six-phase audit — 2026-10-17".
+
+**Method.**
+- **124 agents.** 14 dimension auditors, one per checklist group plus two free hunts (the CRM's anonymous surface; the whole of gnk-web).
+  - Each finding was attacked by independent lenses: evidence (does the code at that line do it?), consequence (who can reach it, what happens?) and history (decided, open or fixed here?). HIGH and CRITICAL got three, MEDIUM two, already-recorded items and OPTIMIZATION one.
+  - A finding survived with fewer than half its lenses refuting.
+  - A completeness critic re-checked the six riskiest PASS verdicts (all held) and named four uncovered areas, which a second round audited: sign-in and account lifecycle, the 12 pg_cron sweeps, notification amplification, erasure completeness.
+- **Code** at gnk-crm `99c3bad` (origin/main), read from a detached worktree; gnk-web `08b508b`.
+- **Hosted, READ-ONLY.** Catalog SELECTs and the advisors through the Supabase connector. One aggregate count for the HIGH fixes (2026-10-17): 0 `property_media` rows, 0 evidence-report documents, 1 erased contact.
+- **GitHub settings were read with GET only.** No production HTTP request was made (nothing under `/p/`).
+
+**Verdict.**
+- 64 findings raised, 63 confirmed, 1 refuted: 0 CRITICAL, 2 HIGH, 44 MEDIUM, 17 OPTIMIZATION. Two pairs are duplicates across dimensions (ANON-3 = P3B1-2, P2-2 = RLS-6), so there are 61 distinct issues.
+- **NEW: 31** (1 HIGH, 30 MEDIUM). **Already open: 14**, re-confirmed in place; four entries gained a sub-bullet. The rest are OPTIMIZATION.
+- The prompt's own checklist is PASS almost throughout:
+  - 155 policies hold the org in USING and WITH CHECK;
+  - all 357 helper calls are hoisted (hosted);
+  - all 60 definers set a search_path;
+  - anon EXECUTE is exactly the 9 pinned functions;
+  - hosted = repo, 147/147;
+  - the advisors equal the documented baseline;
+  - every upload input is held to 3,500,000 bytes;
+  - JSON-LD escapes `<`;
+  - source maps are deleted after upload;
+  - Noto Sans covers Greek (121/144, every assigned modern letter) and Cyrillic (256/256), measured with fontTools.
+- The real gaps sit beside the checklist:
+  - **erasure destroys the commission-evidence reports it promises to keep (ERA-1, HIGH, NEW)**;
+  - free-text storage paths are trusted by a service-role remover and a signer (MEDIA-1 HIGH, known class widened; RLS-3);
+  - the stored token digest is the bearer credential (ANON-1);
+  - public endpoints can spend the Sentry and Resend quotas the alarms rely on (NOTIF-1, NOTIF-2, P3B1-1);
+  - nothing requires CI before Vercel promotes `main` (CICD-1), and `ignoreCommand` can cancel a production deploy (CICD-2).
+
+**What the prompt assumes that does not exist** (searched; answered N/A, not a finding):
+- next-intl, a locale `middleware.ts`, `alternates.languages` / `x-default` on gnk-web (English-only; no proxy or middleware file);
+- a Supabase client or `/s/[token]` on gnk-web;
+- tables `units`, `routes`, `route_stops` (units are `properties.kind = 'unit'`; routes are `viewings.route_date` / `route_order`);
+- `merge_deal_health` (deliberately not built, `T-external-audit-2026-10-14` item 2);
+- `sentry.*.config.ts` and `hideSourceMaps` (instrumentation files; removed in @sentry/nextjs v9; `deleteSourcemapsAfterUpload` is set);
+- an in-memory rate limiter (the counters are database rows);
+- Framer Motion, maps or calculators on gnk-web;
+- pgTAP (the DB suite is vitest on a fresh stack).
+
+**Remedies re-confirmed as rejected — do not re-apply them** (`T-external-audit-2026-10-14`):
+- `security_invoker` on `mandates_safe`;
+- `protect_profile_columns` rewrites;
+- strict `z.uuid()`;
+- kanban `structuredClone`, JSON.stringify and client stage guards;
+- `createSignedUrls` for the PDFs;
+- a content-derived enquiry key;
+- `(org_id, id)` indexes;
+- `org_id` inside EXISTS.
+
+**Decisions taken here.**
+- **ERA-1's fix keeps the reports, identified by PATH (`%/reports/evidence-%`), not by `doc_type`.**
+  - The path is NOT NULL and immutable for a session (0002 `protect_document_columns`); `doc_type` is admin-editable. This is the rule `T-audit-reports-2` chose.
+  - The purge half (keep reports past the AML duty, as the spec and UI promise, or destroy them and reword `retention-panel.tsx`) is the operator's, recorded on the BACKLOG entry.
+- **MEDIA-1 / RLS-3's fix is a CHECK, not a trigger.** It binds every `property_media` path under `properties/<property_id>/` with no `..`, and it binds every writer, the service role included. `deleteMediaBulk` also removes only own-prefix paths no surviving row names.
+- **Sentry tenant context (prompt 4.2): tag `org_id` and `role` at most; never `user.id`.** A user id is pseudonymous personal data, and the CRM's scrub posture (`T-sentry-*`) is deliberate. At one organisation the tag is cosmetic today, so nothing is built.
+- **Cron monitoring stays pull-only (`cron_health()` card), as REL-03 decided.** A pushed alert for a failed sweep is listed under the radar proposal, not as a defect.
+- **The five PropTech add-ons are BACKLOG proposals, not work** (the standing "build nothing new — stabilise and let the desk use it"; CLAUDE.md "never invent scope").
+  - Ranked by effort against impact: #1 matching pitch (S/M), #2 commission radar (M), #3 AI listing copy (M → XL), #4 whisper link (L), #5 route optimiser / live tracker (XL).
+  - About half of what the prompt proposes already exists.
+  - #1's reviewed draft (migration `match_pitches` + `pitchMatchedBuyer`) is `docs/blueprints/T-match-pitch-0148.md`, unrun, waiting for the operator's go-ahead and its four decisions.
+  - Not to be built as pasted: the ">5% drop" threshold and the "mandate goes active" trigger (both contradict `match-alerts.ts` design notes), WhatsApp API sending (Do-Not-Build), and photo-dwell and live-location tracking (new GDPR processing, contradicting gnk-web's privacy page).
+
+**Not done here.** No fix was built. Each finding lands as its own change with this repo's recipe (RED → GREEN, mutants, suites, CI, hosted first for a migration). The two HIGH drop-ins are in the report §3.
+
+**Records.** BACKLOG gains the section "Six-phase audit — 2026-10-17": 49 outstanding lines, so the recipe goes from 158 to 207. Four existing entries gained sub-bullets. HANDOFF gains a top block.
+
+**Rollback.** Nothing to roll back: documentation only.
+
 ## T-erasure-keeps-evidence-reports — erasure and the retention purge keep the contact's commission-evidence reports, known by their path, and each record counts what it kept (2026-10-17; no migration; LANDED 2026-10-17 — PR #167, main `f5cf6c2`, deployed)
 
 This is the six-phase audit's one new HIGH (ERA-1). It was built on the audit's drop-in (`docs/AUDIT_2026-10-17_SIX_PHASE.md` §3.1, in the audit's records commit `d139a34`, not yet on main) and landed under the standing authorization as a correctness fix.

@@ -3389,6 +3389,12 @@ VERIFY, run before starting.
   Candidates: a CHECK / trigger that `storage_path` starts with `org_id || '/<entity>s/'` plus a refusal of a path
   another row names. The same class as the slip-path entry above. **VERIFY:** `grep -rn "removeObjects" lib/actions`
   — any call passing a row's `storage_path` / `storage_path_original` without a derived prefix means open.
+  - **From the six-phase audit (2026-10-17, MEDIA-1 HIGH and RLS-3; `docs/AUDIT_2026-10-17_SIX_PHASE.md` §3.2).** The class is wider than this entry says.
+    - `deleteMediaBulk` also removes the MEDIA-bucket renditions a row names, so another listing's public photographs can go too.
+    - A listing manager needs no accomplice: `property_media_update` (0147:442-444) lets them rewrite `storage_path_original` on any row of the organisation, then delete it.
+    - The property page SIGNS a session-written `path_card` from the private bucket (RLS-3, its own entry in "Six-phase audit — 2026-10-17").
+    - Shape for the media half: a CHECK binding all five `property_media` path columns under `properties/<property_id>/` with no `..` (hosted held 0 rows on 2026-10-17, so VALIDATE is instant; test fixtures writing `${ORG_A}/originals/…` move with it), plus `deleteMediaBulk` removing only own-prefix paths that no surviving row of the property still names.
+    - The documents half (`storage_path` bound to `org_id || '/<entity>s/'`) stays as above.
   - **The media half is FIXED (T-media-path-bound, migration 0148, 2026-10-17 — LANDED: hosted 0148 first, PR #171 → main `d1a8362`; audit 2026-10-17 MEDIA-1 and RLS-3,
     which widened it to the media-bucket renditions, a listing manager's PATCH and the property page's signer).**
     `property_media_paths_own_property` binds all five path columns under `properties/<property_id>/`, in letters,
@@ -3917,6 +3923,11 @@ Found while making the unit actions tell the site (DECISIONS `T-unit-site-revali
 - **A `{ reference }` knock does not rebuild the "Other properties" cards on OTHER listing pages, decision.** Measured on a production build of gnk-web (2026-10-08): after a sold unit's knock its own page answered 404 and the home page and list dropped it, but a sibling unit's cached page still linked to it until that page's own 60-second rebuild (on a quiet page: served once more, then rebuilt — within `expireTime`, an hour). The same holds for every single-listing knock since 2026-09-13. Shape if wanted: a status change sends `EVERY_LISTING` (one request, every listing page re-rendered lazily on its next visit). Decide the cost first.
 - **The CRM's edge cache on the feed was not measured, S.** `/api/public/listings` answers `Cache-Control: public, max-age=60`; whether Vercel's CDN holds that body (no `s-maxage`) decides whether a page the site rebuilds right after a knock can be handed a body up to 60 s old. Locally there is no CDN. Read-only check: two GETs of the production feed a second apart and their `x-vercel-cache` headers (or the Vercel request log) — then decide whether the feed should say `s-maxage=0` / `Vercel-CDN-Cache-Control` for the site's forwarded reads. **VERIFY:** `x-vercel-cache: HIT` on a repeated production feed GET means the window is real.
 - **References outside the site's path shape, S.** A unit reference ends in a label the desk typed (block + number, free text up to 20 + 20 characters); the site's door accepts only `^[A-Z0-9][A-Z0-9-]{0,39}$`. The CRM now widens such a knock to `EVERY_LISTING` (never a 400), but whether the site can serve a page for such a reference at all (a space, a `/`, lower case in the URL) was not checked. **VERIFY:** a read-only `select count(*) from properties where visibility = 'public' and reference !~ '^[A-Z0-9][A-Z0-9-]{0,39}$'` on hosted — 0 means nothing published is affected today.
+  - **From the six-phase audit (2026-10-17, CONTRACT-2 + SEO-1): three more symptoms of the same shape.**
+    - A published unit whose label carries `&` makes the whole `sitemap.xml` malformed: Next 16.3.8 writes `<loc>${item.url}</loc>` with no XML escaping (`resolve-route-data.js:112`), and gnk-web's `app/sitemap.ts:64` does not encode the reference.
+    - A block plus number of 33–40 characters gives a 41–48-character reference that the feed's `?reference=` ignores and every enquiry cap (40) refuses with a 400 that nothing reports.
+    - `unique (org_id, reference)` is case-sensitive while the site's lookup is not, so `…-a1` and `…-A1` redirect to each other.
+    - Shape: refuse a label outside `[A-Za-z0-9-]`, uppercase it, and cap the reference at 40 in `createUnit` and the generator; once the VERIFY is 0, add a `properties_reference_shape` CHECK (NOT VALID, then VALIDATE); on gnk-web, `encodeURIComponent` wherever a reference becomes a path (card, sitemap, page, JSON-LD).
 - **NOTE — the site answers a knock before Next has recorded the invalidation.** Measured: a request in the same few milliseconds still got the old render (the revalidation is written in a waitUntil after the response). Harmless for a visitor; a test that knocks and reads must wait a moment.
 - **NOTE — a knock while the feed is down is refused with 503, by design.** gnk-web's door reads the feed once first (`feedAnswers`): an expired listing page that cannot read the feed answers 500, where an untouched one keeps its last good copy. The CRM logs `[site-revalidate] the site answered 503` and the change shows when the site's timers next rebuild. Do not "fix" the 503.
 
@@ -3949,6 +3960,7 @@ Found while diagnosing the 2026-10-09 false alarm and fixing the row check (DECI
 
 - **The export's Storage walk truncates a folder past 1000 objects, S.** `scripts/backup/export.mjs` lists each prefix with `sb.storage.from(bucket).list(prefix, { limit: 1000 })` and never pages, so object 1001 onward in one folder is silently absent from the only capture of Storage bytes there is (BACKUP_RESTORE §1.2). Nothing near that today (one object in production). Shape: page with `offset` until a short page, or better until an empty one, and pin it with a fake client the way `export-tables.test.ts` pins table paging. **VERIFY:** `grep -n "limit: 1000" scripts/backup/export.mjs`
 - **gnk-web's contract test writes to PRODUCTION on every CI run, S.** `gnk-web/lib/contract.test.ts` fetches `https://gnk-crm.vercel.app/api/public/listings` without `CRM_FORWARD_KEY`, so each push, PR and Dependabot run is an untrusted hit that `note_public_listing_hit` records in `public_listing_attempts` (0066) — and its comment says nothing in it writes. Found by the 2026-10-09 exposure audit: that table's count moved across sets (10, 7, 1, 2, 8) with bursts at CI times. Harmless to the backup now (the snapshot check cannot race), but it is test traffic in production data and it spends the anonymous budget. Shape: point it at a local or preview target, or send the forward key from CI secrets. **VERIFY:** `grep -n "gnk-crm.vercel.app" ../gnk-web/lib/contract.test.ts`
+  - **From the six-phase audit (2026-10-17, CICD-3):** the CI BUILD does it too: `generateStaticParams` (`app/properties/[reference]/page.tsx:41-43`) calls `getListings()` against the production default (`lib/crm.ts:28`) with no forward key, so each build writes `public_listing_attempts` rows. Set `CRM_API_URL: http://127.0.0.1:9` on the CI build step (the build tolerates an unreachable feed, `ci.yml:60-63`), and fix the test's "Nothing here writes" comment. Never add `CRM_FORWARD_KEY` to the public repo's CI.
 - **capture's `supabase_admin` check counts comment text, S.** It counts every occurrence of the word in the schema dump. A fresh local stack's dump carries 0099's comment inside `forbid_srs_api_writes` ("postgres (migrations), supabase_admin (platform) and service_role…") and fails `schema: 1 supabase_admin ownership statements — wrong --schema flag (§4b.2)`; hosted's copy of that body lacks the comment, so the nightly passes. A project restored from the migrations — the disaster case — would fail every night on it. Shape: match the ownership statements (`OWNER TO "supabase_admin"`, `GRANT … TO "supabase_admin"`) instead of the bare word, with a test that a comment does not count. **VERIFY:** `grep -n 'match(/supabase_admin/g)' scripts/backup/capture.mjs`
 - **A failed night's evidence is deleted by the next run's start, S.** capture.mjs sweeps every `.staging-*` folder when it starts, so the 17:40 rerun on 2026-10-09 deleted the failed run's `data.sql`, JSON and mtimes before anyone had finished reading them. The new `timing:` line in `backup.log` keeps the timeline; the manifest (now carrying the snapshot's counts) still goes with the folder. Shape: copy a failed run's `manifest.json` to `~/.gnk-crm/failed/<stamp>-<pid>.json` before exiting 1.
 - **NOTE — a drift warning is not a failure, and a count problem is never a race any more.** Since `T-dump-snapshot-counts` every COPY block is compared with a count taken in the SAME snapshot the dump read, so `has N row(s) in the dump, M in the dump's own snapshot` means the dump really disagrees with its own database — do NOT rerun it away. `export: public.<t> json N, dump snapshot M` is the expected trace of crons writing during the run (`enquiry_alert_sweep_runs` on any night a tick lands between the snapshot and the export).
@@ -4520,6 +4532,13 @@ Recorded in their own sections, not repeated here:
   - **FormData ids** checked only with `typeof … !== "string"`: for example `updateDealSection`'s `deal_id` (`deals.ts:148`) and `savePartyDefaults`' `contact_id` (`party-defaults.ts:110`).
   - **Shape:** `isGuid` (`lib/validators/ids.ts`) at entry, refused in the action's own shape and in a sentence its file already uses, as `T-malformed-ids` did; the good path tested over `GUID_SHAPES` (`lib/testing/guid-shapes.ts`), never only an RFC v4 id. Their tests use ids like `"m-1"`, `"viewing-1"` and `"proj-1"`, which must become guid-shaped. The four actions in the concurrent session's files (`renewMandate`, `deleteContactDocument`, `deletePropertyDocument`, `getViewingConfirmationUrl`) wait until it lands.
   - **VERIFY:** `for n in renewMandate setMediaCover setMediaAlt moveMedia updateOfferStatus getDocumentDownloadUrl fetchLocationFallback correctLead logChatLinkOpened checkPropertyDuplicate reassignTask syncInheritedField getSlipDownloadUrl updateViewingStatus deleteContactDocument deletePropertyDocument getViewingConfirmationUrl; do echo "$n $(grep -h -A8 "export async function $n(" lib/actions/*.ts | grep -c "isGuid(")"; done` — a 0 means that action is open. All 17 printed 0 on the branch tree `e94c443` (2026-10-14), and again on origin/main `b4f7e2f` after the landing (2026-10-15). `-A8` because the longest of these signatures runs five lines (`setMediaAlt`, `moveMedia`, `logChatLinkOpened`), so `-A4` would miss a guard. The same loop over the fixed `moveDealToStage`, `deleteMediaBulk` and `getPartyDefaults` prints 2, 1 and 1, so it does see a guard. The FormData ids have no VERIFY: check by hand.
+  - **From the six-phase audit (2026-10-17, VAL-2 and VAL-1): six more, none on the list above or in its VERIFY loop.**
+    - `setMandateStatus` (`mandates.ts:345-357`);
+    - `searchContactsForMerge`'s `excludeId` (`merge-contacts.ts:35`);
+    - `unenrollMfa`'s `factorId` (`mfa.ts:174`);
+    - FormData ids checked only for presence: `mergeContacts` (`merge-contacts.ts:63-66`), `updatePropertySection` (`properties.ts:375-377`), `generateViewingConfirmation` (`viewing-documents.ts:50-51`);
+    - plus `checkViewingConflicts`, which pastes `agent_id.eq.${input.agentId}` into a PostgREST `.or()` string (`viewings.ts:64-66`).
+    - `mandates.ts` and `viewing-documents.ts` are the concurrent session's files, so those wait as above.
 
 **From `T-lm-health-recompute`** (PR #165, LANDED 2026-10-15 — main `447c5bc`, deployed)
 
@@ -4554,6 +4573,334 @@ Every VERIFY below was run on origin/main `447c5bc` on 2026-10-15; the branch fi
 
 - **NOTE — `site-revalidate-callsites.test.ts`'s throwing-follow-up classifier still counts `recomputeDealsFor`**, which no longer throws. That is conservative: it can only demand a knock earlier than needed. Leave it unless that test's comment is touched for another reason.
   - **VERIFY:** `grep -n "recomputeDealsFor is counted with it" lib/actions/site-revalidate-callsites.test.ts` gives `70:` on origin/main `447c5bc`.
+
+## Six-phase audit — 2026-10-17 (T-six-phase-audit-2026-10-17)
+
+Found by the read-only six-phase audit of gnk-crm `99c3bad` and gnk-web `08b508b` (DECISIONS `T-six-phase-audit-2026-10-17`; the report, with the scorecard and the drop-in fixes, is `docs/AUDIT_2026-10-17_SIX_PHASE.md`).
+- 124 agents; every finding survived independent evidence, consequence and history lenses.
+- Hosted was read with SELECTs only. Nothing was changed anywhere.
+- Every VERIFY below was run on `99c3bad` (gnk-web `08b508b`) on 2026-10-17. The output quoted is what "open" looks like.
+- Findings that restate an open entry are NOT repeated here: they were re-confirmed in place, and four entries gained a sub-bullet. Those four are "Service-role storage removals trust a session-written path", "References outside the site's path shape", "More server actions take a raw id string unchecked" and "gnk-web's contract test writes to PRODUCTION on every CI run".
+- gnk-web keeps no BACKLOG of its own, so its items are here, marked **gnk-web**.
+
+**HIGH**
+
+- **Erasure (no AML basis) and the retention purge destroy the contact's commission-evidence report PDFs, S (latent: hosted holds 0 report rows).** (ERA-1)
+  - `generateEvidenceReport` stores the PDF as an ordinary contact document: `lib/actions/reports.ts:99-111`, `entity_type: "contact"`, `doc_type: "evidence_report"`, path `<org>/reports/evidence-<contact>-<stamp>.pdf`.
+  - Both destructive listings take every contact document: erasure `listDocuments` at `lib/actions/contact-erasure.ts:199-205` (removed when `deleteDocuments: !amlBasis`, `lib/services/erasure-run.ts:210-216`), and the purge at `contact-erasure.ts:368-378`.
+  - The contract says the opposite:
+    - the spec table: "generated evidence PDFs … **no** — the hash is the point" (`docs/superpowers/specs/2026-07-21-gdpr-contact-erasure-design.md:25`);
+    - the `erased` payload lists `evidence_reports` under `untouched` (`lib/services/erasure.ts:204`) while counting them in `documents_deleted`;
+    - the dialog and the banner say reports are never altered (`erase-dialog.tsx:87`, `contacts/[id]/page.tsx:345`).
+  - No test drives a report through either path.
+  - **Shape:**
+    - identify a report by PATH (`%/reports/evidence-%`: NOT NULL and immutable for a session), not by `doc_type` (admin-editable, 0002 `protect_document_columns`);
+    - filter reports out in the pure runner and in the purge listing;
+    - count `evidence_reports_kept` in both payloads.
+    - The drop-in is in the report §3.1.
+  - **Decide:** the purge half. The patch keeps reports through the purge, as the spec and the UI promise. The alternative is to destroy them at the end of the AML duty, reword `retention-panel.tsx:127`, and record that in DECISIONS.
+  - **VERIFY:** `grep -n 'reports/evidence-' lib/services/erasure-run.ts lib/actions/contact-erasure.ts`. No output means open.
+
+**Security and public surface**
+
+- **The stored token digest is the bearer credential for share links and portal feeds, M (migration).** (ANON-1)
+  - Next hashes the token; `resolve_share_link` (`0146:358`, anon EXECUTE `:644`), `submit_proposal_interest` (0114) and `portal_connection_by_token` / `portal_supplement` / `note_portal_pull` (`0097:65,104,120`, anon `:125-129`) compare their argument straight to the stored column.
+  - So anyone holding a copy of `share_links` or `portal_connections` opens every live link or feed with the public anon key. Copies include the nightly export (`scripts/backup/export-tables.mjs:21,25`), a restore drill and a dashboard read.
+  - Each call also writes the null-actor `opened` line, which reads as the buyer's view. This contradicts `share-links-token.ts:40-41` ("A database leak therefore yields no working links").
+  - The open entry "A staff session can write a share link's day `opened` line itself …" covers only the staff route.
+  - **Shape:** a double hash.
+    - The stored value becomes `encode(sha256(decode(<digest>,'hex')),'hex')` (pg_catalog `sha256`, not pgcrypto, under `search_path = public`).
+    - Each resolver checks `p !~ '^[0-9a-f]{64}$'` BEFORE `decode()`, then compares the second digest.
+    - Writers store the second digest. Portals write it by UPDATE too (`portals.ts:150-154, 239`), so a trigger must be `BEFORE INSERT OR UPDATE OF …` and transform only when the value changed.
+    - Signatures stay the same.
+  - **VERIFY:** `grep -n 'where token_sha256 = p_token_sha256' supabase/migrations/0146_share_link_tenant_binding.sql` gives `358:` while 0146 is the last migration naming `resolve_share_link`. That means open.
+
+- **The anon rate counters accept any `p_ip_hash`, and prune with a full scan on every call, S (migration).** (ANON-2)
+  - `note_share_link_miss` (`0023:265-283`) and `note_public_listing_hit` (`0066:119-137`) are anon-executable (pinned anon=true in `verify-restore.sql`).
+  - They store whatever key the caller sends, up to the btree row limit, with no CHECK on either table. The prune filters on `window_start`, while the only index is the PK `(ip_hash, window_start)`.
+  - A direct PostgREST loop bloats both tables on the Free-plan database.
+  - **Shape:**
+    - in both functions, `if p_ip_hash is null or p_ip_hash !~ '^[0-9a-f]{32}$' then return true; end if;` before the insert;
+    - `check (ip_hash ~ '^[0-9a-f]{32}$') not valid` + validate on `share_link_attempts`, `public_listing_attempts` and `public_enquiry_attempts`;
+    - an index on `window_start` (or a sampled prune).
+  - **VERIFY:** `grep -ln 'p_ip_hash !~' supabase/migrations/*.sql`. No output means open.
+
+- **The website acknowledgement echoes caller-typed text from the firm's domain to any address, S (latent until `ENQUIRY_ALERT_FROM` is set).** (ANON-3 = P3B1-2)
+  - `app/api/public/enquiries/route.ts:184-196` passes `name: input.name` and `propertyReference: input.property_reference` to the ack (`lib/services/enquiry-ack.ts:42-55`).
+  - The first name-token can be a 200-character URL, and the reference is typed text. The door knows the resolved reference (`0136:229-236`) but the ack does not use it.
+  - The address is unverified, and the only bound is 5 posts per IP per 15 minutes. That makes it a phishing or mail-bomb relay that would burn the sending domain the desk alerts share.
+  - **Shape:**
+    - name a reference only when the door resolved it to a published listing;
+    - drop the typed name, or allow only `/^[\p{L}\p{M}' .-]{1,60}$/u`;
+    - cap acks per recipient (a hashed-address counter).
+    - Do this BEFORE arming `ENQUIRY_ALERT_FROM` (HANDOFF row 1d).
+  - **VERIFY:** `grep -n 'propertyReference: input.property_reference' app/api/public/enquiries/route.ts` gives `194:`. That means open.
+
+- **The enquiry door's origin ceiling is one shared counter row: a silent kill switch for every site enquiry, S.** (P3B1-1)
+  - With the forward key proven, `budgetsFor` returns [visitor 5, origin 60] (`lib/services/enquiry-budget.ts:65-68`). The origin budget is metered on the unscoped `callerIpHash()` of gnk-web's egress (`route.ts:92`), not on a `site:` scope as the feed's is (`caller-ip.ts:22-24`).
+  - Honeypot hits are answered only after both budgets are spent (`route.ts:118-120`), and an untrusted caller at the same egress raises the same row.
+  - About 60 posts from 12 IPs per 15 minutes refuse every genuine buyer with 429, and nothing pages.
+  - **Shape:**
+    - answer the honeypot after metering the visitor budget only;
+    - meter the proven forwarder on `callerIpHash("site")`;
+    - when the origin budget refuses, page once per window and return a distinct code that gnk-web reports.
+  - **VERIFY:** `grep -n 'callerIpHash(' app/api/public/enquiries/route.ts` gives `92:    await callerIpHash(),` (no scope argument). That means open.
+
+- **The public `/api/csp-report` can flood Sentry with attacker-titled issues, S.** (NOTIF-1)
+  - It is sessionless (`proxy.ts:11-13`) and accepts 128 KB bodies.
+  - `route.ts:80-96` sends one `Sentry.captureMessage` per distinct directive / blocked-URL / source key, with no per-request or per-window cap. The dedupe Set is cleared at 200 entries (`:83`).
+  - Only the SDK's 64-slot buffer bounds a request: about 80 requests make 5,000 events, which uses up the quota and noises the alerts (rule 738321).
+  - **Shape:**
+    - `parseCspReport(body).slice(0, 50)`;
+    - at most 3 new keys per request plus a per-instance token bucket;
+    - a fixed fingerprint `["csp-violation", <known directive | "other">]`;
+    - oldest-first eviction instead of `clear()`.
+    - Operator side: a per-key rate limit on both DSNs.
+  - **VERIFY:** `grep -n 'seen.clear()\|parseCspReport(' app/api/csp-report/route.ts` gives `80:` (no `.slice`) and `83:`. That means open.
+
+- **Public enquiries can use up the shared Resend quota, so genuine desk alerts and escalations fail that day, S.** (NOTIF-2)
+  - Every fresh enquiry spends quota: the desk alert, plus the ack once armed (`route.ts:168-196`, `proposals/interest/route.ts:125-148`).
+  - Resend's free tier is 100 a day (HANDOFF:946; published limit). The only bound is per address.
+  - A quota 429 is classified as transient (`enquiry-alert.ts:227`), retried for about 2 h and then dropped, and quota exhaustion is never named.
+  - **Shape:**
+    - a per-organisation daily outbound counter (modelled on `note_public_enquiry_hit`, keyed by Cyprus day) that skips the ack beyond about 30 a day, so the rest of the quota stays with alerts and escalations;
+    - map `daily_quota_exceeded` / `monthly_quota_exceeded` to their own result and page once;
+    - record the plan and limit in docs/10.
+  - **VERIFY:** `grep -rln 'daily_quota_exceeded' lib app`. No output means open.
+
+- **Second-factor guessing has no per-account bound and no signal, S.** (AUTH-1)
+  - `verifyMfaLogin` (`lib/actions/mfa.ts:191-223`) keeps no counter, sends nothing to Sentry, writes no event, and gives a wrong code, a 429 and a 5xx the same sentence.
+  - GoTrue's Free-plan limit is per IP (docs: 15/min for challenge and verify); the per-account MFA hook is Teams-plan only.
+  - App calls start on Vercel and send no `sb-forwarded-for`, so they are limited on Vercel's egress IPs.
+  - **Shape:**
+    - a service-role failure counter per user (refuse past N in 15 minutes, before `challenge`);
+    - a hashed-user Sentry event on each refusal and on every verify 429/5xx;
+    - optionally forward the client IP.
+    - Record the direct-GoTrue residual as accepted.
+  - **VERIFY:** `grep -c 'Sentry' lib/actions/mfa.ts` gives `0`. That means open.
+
+- **`setUserActive` can end with the flag off, the login un-banned and no event, while the retry says "User deactivated", S.** (ACCT-1)
+  - The flag commits first (`lib/actions/settings.ts:361-367`), then the GoTrue ban (`:372-374`).
+  - On a ban error, the revert at `:378` is awaited but its answer is unread.
+  - The admin's retry then hits the no-op return at `:359` (`if (target.is_active === active) return { error: null };`): no ban, no `deactivated` line, no revalidate. The mirror case leaves a reactivated user still banned.
+  - **Shape:** ban before flag (`ban_duration` is idempotent), or read the revert with `.select("id")` and say the two may disagree. Either way, the `:359` no-op still re-applies the ban for the requested state.
+  - **VERIFY:** `sed -n '378p' lib/actions/settings.ts` shows `await supabase.from("profiles").update({ is_active: !active }).eq("id", userId);` (no `.select`). That means open.
+
+- **`service_role` can still UPDATE and DELETE `events`, and the nightly chain check stays green after a suffix delete, M (migration).** (P22-1)
+  - `0063:309` revokes only from `public, anon, authenticated`. `service_role` keeps ALL from 0002's default privileges, and there is no BEFORE UPDATE / DELETE / TRUNCATE trigger.
+  - A deleted suffix leaves a prefix that verifies. `advance_chain_checkpoint` sees the anchor missing, raises only a WARNING, falls back to a full walk and re-anchors (0062:135-183), and `chain_checks.ok` stays true.
+  - The suites tamper as the service role themselves (`supabase/tests/rls.test.ts:448…`; the open entry "Two e2e specs delete `events` rows").
+  - **Shape:**
+    - `revoke update, delete, truncate on public.events from service_role;` (restores run as postgres);
+    - `chain_checks` records the anchor signal so the badge goes amber or red;
+    - the tamper tests move to the postgres connection.
+    - Check `BACKUP_RESTORE.md:1437` with it.
+  - **VERIFY:** `grep -ln 'events from service_role' supabase/migrations/*.sql`. No output means open.
+
+- **The property page signs a session-written `path_card` out of the private `documents` bucket for every viewer, S (migration with T-media-path-bound).** (RLS-3)
+  - `app/(app)/properties/[id]/page.tsx:136-140` signs `m.path_card` for an hour for any non-photo kind.
+  - The column is free text, and an admin, a listing manager (UPDATE) or the assigned agent (INSERT) can aim a floor-plan row at an admin-only KYC object.
+  - Same class as "Service-role storage removals trust a session-written path" and "A slip row's stored file paths are free text"; neither names this reader.
+  - **Shape:**
+    - sign only `path_card?.startsWith(`properties/${id}/`)`;
+    - plus the 0148 CHECK in the report §3.2 (every `property_media` path under `properties/<property_id>/`, no `..`), which also closes the media half of the removal entry.
+  - **VERIFY:** `grep -n 'createSignedUrl(m.path_card' 'app/(app)/properties/[id]/page.tsx'` gives `140:` with no `startsWith` guard above it. That means open.
+
+**Data integrity**
+
+- **Contact section saves write the render-time form over the row, so a withdrawn marketing consent can be re-granted silently, S.** (RACE-1)
+  - The A06 idiom (`expected_updated_at`) exists only on the property SectionForm (`section-form.tsx:105`).
+  - `updateContactSection` reads `current` at submit (`lib/actions/contacts.ts:212-216`) and diffs the stale form against it (`:274`), so a colleague's later edit of the phone re-ticks consent and records `consent_changed`.
+  - Deal details and the mandate edit have the same shape.
+  - **Shape:** the hidden `EXPECTED_UPDATED_AT` input plus `staleMessage` plus `.eq("updated_at", expected)` and a 0-row "changed under you", as in `properties.ts:756`.
+  - **VERIFY:** `grep -c 'EXPECTED_UPDATED_AT\|expectedUpdatedAt' lib/actions/contacts.ts` gives `0`. That means open.
+
+- **`setMandateStatus` and `extendReservation` check the state they read but do not put it in the UPDATE, so a terminated mandate can be revived, S.** (RACE-2)
+  - `lib/actions/mandates.ts:373` updates by id alone after checking `MANDATE_TRANSITIONS[m.status]` on a read.
+  - `reservations.ts:180-184` writes `expires_at` by id with no status predicate.
+  - Two admins (or the 03:00 `expire_mandates`) inside one request's gap can both pass. Everywhere else uses compare-and-set (viewings, leads, tasks, reservations' own status flip).
+  - **Shape:**
+    - `.eq("status", m.status).select("id")`, with 0 rows → "The mandate changed under you — refresh and retry." before the event;
+    - `.eq("status", existing.status)` on the extension.
+    - It overlaps the row-count entry "`saveMandate`'s edit and `setMandateStatus` fan out …" (fix both in one change; `mandates.ts` is held by T-document-insert-outcome).
+  - **VERIFY:** `grep -n 'update({ status: next }).eq("id", mandateId)' lib/actions/mandates.ts` gives `373:`. That means open.
+
+- **User-initiated photo and document deletes report success when the file removal failed, S.** (MEDIA-2)
+  - `removeObjectsBestEffort` is documented for cleanup after a failed insert (`lib/services/storage.ts:19-21`) and only console.errors (`:69-71`).
+  - It is the primary removal in `deleteMediaBulk` (`media.ts:589,595`), `deleteContactDocument` (`contact-documents.ts:164`) and `deletePropertyDocument` (`property-documents.ts:131`).
+  - A failed removal leaves a deleted public photo world-readable, or a deleted KYC scan in storage with no row to find it; the user is told it was deleted.
+  - **Shape:** `removeObjectsOrFail` in try/catch, then report (the `reportMediaUpload` shape: paths and opaque ids only) and return success with "its files could not be removed — this has been reported". Optionally queue the paths for a retry sweep (the open entry "Orphaned objects are found by a query, not swept").
+  - **VERIFY:** `grep -n 'removeObjectsBestEffort(' lib/actions/media.ts lib/actions/contact-documents.ts lib/actions/property-documents.ts` lists `media.ts:589`, `:595`, `contact-documents.ts:164` and `property-documents.ts:131` (the `:91` / `:79` cleanups are correct uses). That means open.
+
+- **A failed watermark download is treated as "no watermark configured", so a public photo publishes unwatermarked, S.** (MEDIA-3)
+  - `lib/actions/media.ts:139-146` downloads `branding/watermark.png` and never reads the download's `error`, so a transient storage failure equals "none uploaded". `processPropertyImage` then returns `watermarked:false` and the upload reports success.
+  - The comment "org watermark is optional until Settings ships it" is stale (`uploadBranding` shipped).
+  - **Shape:** treat only a not-found answer as "no watermark" (check storage-js 2.110's not-found shape); on any other error refuse before writing anything ("Could not read the watermark — nothing was uploaded").
+  - **VERIFY:** `grep -n 'optional until Settings ships it' lib/actions/media.ts` gives `139:`. That means open.
+
+- **`ensure_events_partitions` can never catch up once `events_default` holds a row for a month it must create, S (migration).** (CRON-1)
+  - `CREATE TABLE … PARTITION OF` scans DEFAULT and raises 23514 for a row in range; it never moves rows.
+  - The function (`0063:193-239`, never redefined) has no exception handler and walks oldest first. One blocked month aborts the call, no later month is created, every new event lands in DEFAULT too, and this repeats monthly.
+  - Precondition: the scheduler absent for longer than the look-ahead (the post-restore state), or a writer setting `occurred_at` beyond it.
+  - **Shape:**
+    - skip a month whose rows sit in DEFAULT with a WARNING and continue (`begin … exception when check_violation`);
+    - surface `row_in_default_partition` on the cron-health card;
+    - a one-transaction runbook for moving the rows (the hash trigger and partition key in mind).
+  - **VERIFY:** `grep -ln 'function public.ensure_events_partitions' supabase/migrations/*.sql` gives only `0063_partition_events.sql`. That means open.
+
+- **Three sweeps assign tasks to deactivated profiles, against `T-nudge-active-assignee`, S (migration).** (CRON-2)
+  - `warn_expiring_reservations` (`0126:703-708`), `remind_due_installments` (`0126:807-812`) and `raise_lead_sla_tasks` (`0125:542-545`) take a raw `created_by` / `assigned_agent_id` arm with no `is_active` check.
+  - The task is invisible to agent surfaces until the next 03:15 re-home. `raise_key_recall_tasks`' comment (`0122:259`) claims the active three-arm shape is shared.
+  - **Shape:** the 0024 arms, each `and pr.org_id = d.org_id and pr.is_active`. Pin the assignee AS MINTED from the event payload (step 5 hides it in the final row). It shares the org-binding half with the open entry "The remaining parent links of mandates, keys and properties point by id alone".
+  - **VERIFY:** `sed -n '704,705p' supabase/migrations/0126_task_contact_property_org_isolation.sql` shows the bare `d.created_by,` / `d.assigned_agent_id,` while 0126 is the latest definition. That means open.
+
+**GDPR erasure**
+
+- **Erasure reaches only leads linked by `contact_id`, M.** (ERA-2)
+  - A website enquiry's identity lives in `leads.message` (0092), and both doors write `contact_id null`. "I'm interested" leads carry `criteria->>share_link_id` (0114:434-436).
+  - `redactLeads` / `redactNotes` match `contact_id` only (`lib/actions/contact-erasure.ts:142-185`), so the person's unlinked enquiries keep name, e-mail, phone, message and notes. After erasure nothing points back (the suggestion panel drops erased contacts).
+  - **Shape:**
+    - list the org's unlinked, un-redacted leads that name the contact: `share_link_id` in the contact's links, or the normalised e-mail/phone match `enquiry-contact-match.ts` already does;
+    - show them in the dialog for confirmation, redact them as `redactLead` does, and count them.
+  - **VERIFY:** `grep -c 'share_link' lib/actions/contact-erasure.ts` gives `0`. That means open.
+
+- **Erasing a contact leaves every merged duplicate's profile on the duplicate's row, S.** (ERA-3)
+  - The merge archives the duplicate whole (`merge-contacts.ts:123-125`), and its backfill copies only fields empty on the primary.
+  - Erasure patches one row (`contact-erasure.ts:245-251`) and never follows `merged_into_id`, so notes, psychology, telegram, nationality, KYC notes, banking readiness and consent survive on the duplicate.
+  - Fix it together with the open entry "A merge leaves contact-level `interaction_notes` on the duplicate".
+  - **Shape:** apply `plan.patch` as the system to `org_id = <org> and merged_into_id = <contact> and erased_at is null`, and extend `redactNotes` to those ids. Or blank the duplicate's profile at merge time.
+  - **VERIFY:** `grep -c 'merged_into_id' lib/actions/contact-erasure.ts` gives `0`. That means open.
+
+- **Conversation notes logged on the contact's deals are not blanked by erasure — NEEDS AN OPERATOR DECISION.** (ERA-4)
+  - 0094 admits `interaction_notes` on `('lead','contact','deal')`, and `logDealContact` writes deal notes (`deals.ts:927-933`).
+  - `redactNotes` blanks `contact` and `lead` only (`contact-erasure.ts:164-181`), so "her husband lost his job" stays on `/deals/<id>`.
+  - **Decide:**
+    - either blank deal notes where the contact is buyer or seller (a deal note may concern the counterparty);
+    - or record that deal notes are business records, and reword the dialog and `deals.ts:928`.
+  - **VERIFY:** `grep -n '.eq("entity_type", "lead")' lib/actions/contact-erasure.ts` gives `178:`, and no `"deal"` arm. That means open.
+
+**PDFs and field tools**
+
+- **PDFs print names outside Latin, Greek and Cyrillic as wrong Latin-1 characters, silently, S.** (FONT-1)
+  - One family is registered (`lib/services/pdf-fonts.ts:22-28`, Noto Sans LGC: Greek and Cyrillic are measured complete).
+  - react-pdf appends Helvetica to every stack, and textkit hands any missing code point to it. Measured: "דוד כהן" renders and extracts as "ßÔÛ ÓÕÓ"; Arabic, CJK and arrows are likewise wrong, with no error.
+  - **Shape:**
+    - register Noto Sans Hebrew and Noto Sans Arabic (and a CJK subset if wanted) and set `fontFamily: [PDF_FONT, …]`;
+    - as a backstop, refuse or warn when a rendered buffer contains `/BaseFont /Helvetica`.
+  - **VERIFY:** `grep -c 'Font.register' lib/services/pdf-fonts.ts` gives `1`. That means open.
+
+- **The signature pad sizes its canvas once, so after a rotation the ink lands away from the finger and Clear leaves old strokes in the signed PNG, S.** (SIG-1)
+  - The canvas size and transform come from a mount-only effect (`components/features/viewings/signature-pad.tsx:18-34`); pointer positions use the current rect.
+  - `clear()` fills only the current rect at the old scale (`:67-76`).
+  - The pad is `w-full` in a `max-w-md` box, so rotating a phone changes its width.
+  - **Shape:** a `resize()` called from a `ResizeObserver`. It resets width/height to rect × DPR, `setTransform`, repaints white and clears the signature (`onChange("")`). `clear()` paints the full backing store. Add a viewport-change e2e.
+  - **VERIFY:** `grep -c 'ResizeObserver\|orientationchange' components/features/viewings/signature-pad.tsx` gives `0`. That means open.
+
+**Observability**
+
+- **Server actions return DB/storage failures without reporting them, M.** (OBS-1)
+  - About 130 `return` sites in `lib/actions` hand a raw `error.message` to the user, and none is reported. 29 of the 32 non-test action files have no `Sentry.` call (`media.ts` reports through `reportMediaUpload`).
+  - `onRequestError` sees only throws, and "Server Actions RETURN errors" is the decided rule. So a migration or RLS drift that fails one write for every user is invisible.
+  - **Shape:** one `lib/services/report-action-failure.ts`:
+    - `reportActionFailure(operation, error, extra)`, skipping expected codes (P0001, 23505, 23514, refusals);
+    - shape-only tags `{operation, code}` and ids-only extras;
+    - called beside each raw return, starting with legal, evidence, payment and erasure paths.
+  - **VERIFY:** `grep -L 'Sentry\.' $(ls lib/actions/*.ts | grep -v '\.test\.ts') | wc -l` gives `29`. Falling toward 0 means fixed.
+
+- **An erasure or purge that committed but whose hash-chained record failed is told only in a 4-second toast, S.** (OBS-2)
+  - `contact-erasure.ts:439-446` (marker), `:485-494` (`retention_purged`) and `lib/services/erasure-run.ts:260-265` (`erased`) return a sentence, and nothing pages. The counts an administrator needs to write the missing line exist only in the toast.
+  - **Shape:** page before returning (`[erasure] record not written`, tags `operation`, `code`; extras `contactId`, counts, `retention_until`) plus a console line. Pairs with the open entry "An erased contact with no `erased` event has no way to finish".
+  - **VERIFY:** `grep -c 'Sentry' lib/actions/contact-erasure.ts lib/services/erasure-run.ts` gives `0` / `0`. That means open.
+
+- **A stored evidence report or viewing confirmation whose ledger line is unconfirmed is not paged, and the rollback delete's answer is unchecked, S.** (OBS-3)
+  - `lib/actions/reports.ts:153-161` and `lib/actions/viewing-documents.ts:178-182` keep the document when `written !== true` (decided, `T-log-event-hollow`) but tell only the clicking user. Media's identical case is paged (`media.ts:298-302`).
+  - **Shape:** mirror `reportMediaUpload`, and read the rollback delete with `.select("id")`.
+  - **VERIFY:** `grep -c 'Sentry' lib/actions/reports.ts lib/actions/viewing-documents.ts` gives `0` / `0`. That means open.
+
+- **The proposal-interest door's failure and both doors' fail-open meters are console-only, S.** (OBS-4)
+  - `app/api/public/proposals/interest/route.ts:104-110`: a failed `submit_proposal_interest` (lead rolled back, the buyer told to retry) writes one console line. Its client (`interest-form.tsx`) reports nothing.
+  - The meters "fail open, loudly" with console.error only (`interest/route.ts:84-88`, `enquiries/route.ts:113-115`), and Vercel keeps runtime logs about an hour.
+  - **Shape:** `Sentry.captureMessage` with an `operation` / `code` tag at each site (warning level for a fail-open meter).
+  - **VERIFY:** `grep -c 'Sentry' app/api/public/proposals/interest/route.ts` gives `0`. That means open.
+
+**CI/CD**
+
+- **Neither repo requires a green CI run to land on `main`, and Vercel promotes every push — NEEDS AN OPERATOR DECISION (a repository setting).** (CICD-1)
+  - Read 2026-10-17 (GET only): `branches/main/protection` holds `enforce_admins`, no force-push and no deletion, but no `required_status_checks`; rulesets `[]` on both repos.
+  - Vercel builds and aliases the merge about a minute later (HANDOFF:424). The operator declined required PRs on 2026-09-18, a choice recorded nowhere in DECISIONS. HANDOFF:758 still lists "branch protection".
+  - **Shape:**
+    - require `checks`, `rls` and `e2e` (gnk-web: `checks`), strict;
+    - first make sure a skipped same-repo `pull_request` run cannot satisfy them (the `if:` at `ci.yml:23/76/139` — GitHub reports a skipped job as Success under the same name);
+    - record the decision either way.
+  - **VERIFY:** `gh api repos/KALAITSIDIS/gnk-crm/branches/main/protection --jq '.required_status_checks // "none"'` gives `none` (and the same for gnk-web). That means open.
+
+- **`ignoreCommand` can cancel a production deploy, because rebase merges are enabled and fast-forward pushes are allowed, S (plus a repository setting).** (CICD-2)
+  - `vercel.json:4` judges a push by `HEAD^..HEAD` only. `T-vercel-ignored-build-step` assumes every production commit is a merge commit.
+  - `gh api repos/KALAITSIDIS/gnk-crm` gives `allow_rebase_merge: true`, and a fast-forward or direct push of [code, docs] lands with the deploy CANCELED, after hosted has moved.
+  - **Shape:**
+    - turn rebase merges off (operator: a repository setting);
+    - in production never skip a non-merge commit: `[ "$VERCEL_ENV" != production ] || git rev-parse -q --verify HEAD^2 >/dev/null || exit 1; git diff --quiet HEAD^ HEAD -- . ':!docs' ':!*.md'`, with the harness running it via `sh -c` and a fast-forward case.
+  - **VERIFY:** `gh api repos/KALAITSIDIS/gnk-crm --jq .allow_rebase_merge` gives `true`. That means open.
+
+- **No migration lint in CI, S.** (CICD-4) The first advisor reading of a migration is on hosted, after it is applied.
+  - **Shape:** a `supabase db lint --level error` step on the `rls` job's stack, and an advisor diff against the documented baseline (DECISIONS `T-advisor-lints`).
+  - **VERIFY:** `grep -c 'db lint\|advisors' .github/workflows/ci.yml` gives `0`. That means open.
+
+- **Workflows set no `permissions:` block and no `timeout-minutes`, and pin actions by major tag, S (hygiene).** (CICD-5)
+  - Default `GITHUB_TOKEN` scope is read at repository level (measured), so the exposure is low.
+  - The workflow file needs the upload-page route (no `workflow` scope locally).
+  - **VERIFY:** `grep -c 'permissions:\|timeout-minutes' .github/workflows/ci.yml` gives `0` in both repos. That means open.
+
+**gnk-web**
+
+- **gnk-web: the enquiry route lets through an e-mail the CRM refuses, and lets a malformed form body throw, so crafted posts fire the lost-client alarm unmetered, S.** (P3B1-3)
+  - `app/api/enquiry/route.ts:70` has no `.max(320)` (the CRM has one, `public-enquiry.ts:27`), and `request.formData()` at `:172` is unguarded.
+  - The CRM's 400 then raises `crm.enquiry.refused` and `enquiry.refused` at error level, with no rate limit on either side.
+  - DECISIONS `T-enquiry-identity-single-line` noted the cap as "still open" and it never reached BACKLOG.
+  - **Shape:** `z.email(…).max(320)` (a pinned constant shared with the CRM), a try/catch on `formData()` → 400, and report a CRM 400 once, as a contract mismatch.
+  - **VERIFY (gnk-web):** `grep -n 'z.email(' app/api/enquiry/route.ts` gives `70:` with no `.max(`. That means open.
+
+- **gnk-web: the Sentry scrub is a 6-name header denylist, so the visitor IP, geolocation, TLS fingerprint and OIDC token reach Sentry, S.** (WEB-1)
+  - `lib/scrub-event.ts:38-45`. @sentry/core 10.75 copies every incoming header onto events, except cookie and its own IP list, on every in-request event (`report()` included).
+  - That includes `x-vercel-proxied-for`, `x-vercel-ip-city` / `-latitude` / `-longitude` / `-postal-code`, `x-vercel-ja4-digest` and `x-vercel-oidc-token`.
+  - The CRM fixed this class with an allowlist (DECISIONS `T-sentry-span-header-scrub`).
+  - **Shape:** port `HEADERS_KEPT` (names kept, other values REDACTED) and `delete event.request.cookies`.
+  - **VERIFY (gnk-web):** `grep -c 'HEADERS_KEPT' lib/scrub-event.ts` gives `0`. That means open.
+
+- **gnk-web: an ISR regeneration during a feed failure caches the "briefly unavailable" render over the last good `/` and `/properties`, S (decide the cold-cache trade-off).** (WEB-2)
+  - `app/page.tsx:30` / `app/properties/page.tsx:33` render `{ok:false}` as a 200 with zero cards, and Next commits it. A regeneration does not fall back to stale fetch data (`patch-fetch.js:799-802`).
+  - The listing page (`page.tsx:131`) and the sitemap (`:61`) already throw on purpose to keep their last copy.
+  - **Shape (recommended):** `if (!feed.ok) throw` on both pages. The cost is Next's 500 on a cold cache during an outage, and a failed build keeps the previous deployment live.
+  - **VERIFY (gnk-web):** `grep -n 'throw' app/page.tsx app/properties/page.tsx`. No output means open.
+
+**OPTIMIZATION / hygiene** (each S; VERIFY on the line named)
+
+- **An unknown org slug answers 200 with an empty book; the site shows "no properties" and 404s every listing.** (CONTRACT-3) `app/api/public/listings/route.ts` answers the RPC's empty set the same for an unknown slug as for an empty book. Refuse an unknown slug with 404 (or a distinct code the site reports). Adjacent to the open "The public listings route answers a missing RPC answer with an empty book".
+- **53 of 60 definers pin `search_path = public` without `pg_temp` last, the nine anon-callable ones included (`resolve_share_link` was rewritten in 0146 without it).** (P22-2) This is defence in depth: `pg_temp` is searched first when it is not named. Add `, pg_temp` whenever a definer is next replaced, and pin it in the restore pack.
+- **Erasure leaves the contact's live proposal links serving the agent-typed title and message, and taking "I'm interested", for up to 90 days.** (ERA-5)
+  - **Shape:** revoke the contact's live links as the system (bounded by org and contact), blank title/message (if typed text is ruled erasable), and count them.
+  - **VERIFY:** `grep -c 'share_links' lib/actions/contact-erasure.ts` gives `0`.
+- **Three hosted function bodies lack their migration's comments.** (P2-1) Cosmetic. `md5(prosrc)` differs from the file, so an md5-guarded replacement must pin hosted's body, not the file's.
+- **`signViewingSlip` checks only the signature's data-URL prefix, not that the bytes are a PNG.** (SIG-2) `lib/actions/viewing-slips.ts:96`: non-PNG bytes give a signed slip with an empty signature box. Check the 8-byte PNG signature and a minimum size.
+- **`checkViewingConflicts` puts unchecked ids into a PostgREST `.or()` string.** (VAL-1) `lib/actions/viewings.ts:64-66` (`agent_id.eq.${input.agentId}`). Recorded under "More server actions take a raw id string unchecked" (sub-bullet added there).
+- **docs/04 is stale: it says "all 29 RLS-enabled tables" (there are 43), has no rows for seven tables, and says feed tokens are readable.** (RLS-7) **VERIFY:** `grep -n 'all 29 RLS-enabled' docs/04_RLS_POLICY_MATRIX.md` gives `11:`.
+- **The `RESEND_API_KEY` readers lack `import "server-only"` and sit in three client module graphs.** (ENV-1) `lib/services/lead-escalation.ts`, `enquiry-alert.ts` (via `lead-escalation-panel.tsx:12`). Not inlined (Next inlines only `NEXT_PUBLIC_`): hygiene. Move the shared constants out and add `server-only`. **VERIFY:** `grep -c 'server-only' lib/services/lead-escalation.ts lib/services/enquiry-alert.ts` gives `0` / `0`.
+- **`instrumentation-client.ts`'s header says source maps are not uploaded; `next.config.ts` uploads and deletes them.** (OBS-6) Doc drift.
+- **gnk-web: every page preloads 8 font files (281 KB), 6 of them (197 KB) latin-ext, Greek and Cyrillic faces English pages never render.** (CWV-1) `app/layout.tsx:43-53` (`subsets: ["latin","latin-ext","greek","cyrillic"]`, with next/font preload on). Keep the subsets, and set `preload: false` on the non-Latin faces (or preload `latin` only). `lib/type.test.ts` pins the lists.
+- **gnk-web: `/` and `/properties` ship every listing's full feed row, `{en,el,ru}` descriptions included, to a client component that never reads them.** (CWV-2) `app/page.tsx:55`. Map to the card's fields before the client boundary.
+- **The merge guard reads only inline `references contacts`, so a table-constraint key onto contacts is invisible to it.** `tests/unit/merge-repoints-every-fk.test.ts:49-58` matches column lines inside `create table (…)`. A composite `foreign key (org_id, contact_id) references contacts (org_id, id)` would escape the "every FK is repointed" guarantee. Widen the regex before the next table with such a key (the blueprint's `match_pitches` is the first).
+
+**Proposals — PropTech add-ons (nothing here gets built without explicit direction).** Ranked and evidenced in the report §4. About half of what was proposed already exists. Each conflicts with the standing "build nothing new — stabilise and let the desk use it" until the operator names it.
+- **Matching pitch (add-on #1, S/M).** A "Pitch" action on the matching-buyers card: a prefilled `wa.me` / `mailto:` link plus a proposal link for that buyer, optionally recorded in a `match_pitches` ledger.
+  - The reviewed draft is `docs/blueprints/T-match-pitch-0148.md`.
+  - Its decisions: the go-ahead; the ledger or no-migration version; whether `consent_marketing` gates a pitch; EL/RU templates.
+  - Do not build the pasted prompt's ">5% drop" threshold or its "mandate goes active" trigger: both contradict `match-alerts.ts` design notes.
+- **Commission radar (add-on #4, M).** A stale-listing nudge (zero viewings in N days), a 30/14/7 renewal countdown, "slip signed, no offer in N days", and a pushed alert when a sweep fails. It would be noise until viewings exist (hosted: 0).
+- **AI listing copy (add-on #5, M → XL).** Draft → human review → `saveProperty`: Phase 3 M12, "nothing AI-drafted is sent or published automatically". Property fields only. Showing RU/EL needs gnk-web i18n.
+- **Whisper link (add-on #2, L) and route optimiser / live tracker (add-on #3, XL).** Not recommended:
+  - most of the whisper link exists (expiring hashed links, per-link locale, open evidence, interest door);
+  - photo-dwell and live-location tracking are new GDPR/ePrivacy processing that contradicts gnk-web's privacy page;
+  - routing needs a metered API, and hosted has never held a viewing.
 
 ## Media paths — 2026-10-17 (T-media-path-bound)
 
