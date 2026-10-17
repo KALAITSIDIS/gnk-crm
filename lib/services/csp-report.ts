@@ -160,7 +160,11 @@ export function directiveFamily(directive: string): string {
   return KNOWN_DIRECTIVES.has(name) ? name : "other";
 }
 
-/** A report is read up to this many violations; a browser's batch is ~24 (csp.spec.ts). */
+/**
+ * A report's first this-many violations are looked at; a browser's batch is
+ * ~24 (csp.spec.ts). The parse itself walks the whole body, which the route's
+ * 128 KB cap bounds.
+ */
 export const MAX_VIOLATIONS_PER_REPORT = 50;
 /** New violations reported per request, at most. */
 export const MAX_NEW_PER_REQUEST = 3;
@@ -168,7 +172,7 @@ export const MAX_NEW_PER_REQUEST = 3;
 export const REPORT_BUCKET_CAPACITY = 10;
 /** … refilled one token per this many milliseconds (ten an hour). */
 export const REPORT_BUCKET_REFILL_MS = 6 * 60_000;
-/** Distinct violations remembered per instance; the oldest is forgotten first. */
+/** Distinct violations remembered per instance (reported, and logged); the oldest is forgotten first. */
 export const MAX_SEEN = 200;
 
 /**
@@ -181,14 +185,21 @@ export const MAX_SEEN = 200;
  *   - at most MAX_NEW_PER_REQUEST new violations per request;
  *   - a token bucket per instance (REPORT_BUCKET_CAPACITY, one back every
  *     REPORT_BUCKET_REFILL_MS) bounds a run of requests;
- *   - a violation held back is NOT remembered, so a later request reports it;
- *   - the set forgets its OLDEST key when full, never all of them.
+ *   - a violation held back is NOT remembered as reported, so a later
+ *     request reports it;
+ *   - THE LOG IS NOT RATIONED: every violation this instance has not logged
+ *     yet is logged once, reported or held back. stdout is the sink that
+ *     works without a DSN (the route's header), so the Sentry budget must not
+ *     decide what reaches it; a request still logs at most
+ *     MAX_VIOLATIONS_PER_REPORT lines;
+ *   - both sets forget their OLDEST key when full, never all of them.
  *
  * In memory and per instance, deliberately (the route's header): a flood
- * guard, not a store. A cold start begins with a full bucket and an empty set.
+ * guard, not a store. A cold start begins with a full bucket and empty sets.
  */
 export class CspReportLimiter {
-  private readonly seen = new Set<string>();
+  private readonly reported = new Set<string>();
+  private readonly logged = new Set<string>();
   private tokens = REPORT_BUCKET_CAPACITY;
   private refilledAt: number;
 
@@ -196,23 +207,32 @@ export class CspReportLimiter {
     this.refilledAt = now();
   }
 
-  /** The violations to report now, and how many new ones were held back. */
-  admit(violations: readonly CspViolation[]): { report: CspViolation[]; heldBack: number } {
+  /**
+   * `log`: the violations to write to the log now (each once per instance).
+   * `report`: those to send to Sentry now. `heldBack`: how many new ones
+   * Sentry's budget held back this time.
+   */
+  admit(violations: readonly CspViolation[]): { log: CspViolation[]; report: CspViolation[]; heldBack: number } {
     this.refill();
+    const log: CspViolation[] = [];
     const report: CspViolation[] = [];
     const held = new Set<string>();
     for (const v of violations) {
       const key = violationKey(v);
-      if (this.seen.has(key) || held.has(key)) continue;
+      if (!this.logged.has(key)) {
+        remember(this.logged, key);
+        log.push(v);
+      }
+      if (this.reported.has(key) || held.has(key)) continue;
       if (report.length >= MAX_NEW_PER_REQUEST || this.tokens < 1) {
         held.add(key);
         continue;
       }
       this.tokens -= 1;
-      this.remember(key);
+      remember(this.reported, key);
       report.push(v);
     }
-    return { report, heldBack: held.size };
+    return { log, report, heldBack: held.size };
   }
 
   private refill(): void {
@@ -231,11 +251,13 @@ export class CspReportLimiter {
     this.refilledAt = this.tokens === REPORT_BUCKET_CAPACITY ? t : this.refilledAt + earned * REPORT_BUCKET_REFILL_MS;
   }
 
-  private remember(key: string): void {
-    if (this.seen.size >= MAX_SEEN) {
-      const oldest = this.seen.values().next().value;
-      if (oldest !== undefined) this.seen.delete(oldest);
-    }
-    this.seen.add(key);
+}
+
+/** Add a key to a bounded set, forgetting its OLDEST key first when full. */
+function remember(set: Set<string>, key: string): void {
+  if (set.size >= MAX_SEEN) {
+    const oldest = set.values().next().value;
+    if (oldest !== undefined) set.delete(oldest);
   }
+  set.add(key);
 }

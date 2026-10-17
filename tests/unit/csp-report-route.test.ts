@@ -65,6 +65,38 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+/** The violation lines the route logged (not its "held back" summary). */
+const lines = () => warn.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith("[csp] ") && l.includes(" blocked "));
+
+describe("the log is not rationed by Sentry's budget", () => {
+  it("every new violation reaches the log once, reported or held back", async () => {
+    await send(keys(10));
+    expect(capture).toHaveBeenCalledTimes(3);
+    expect(lines()).toHaveLength(10);
+    await send(keys(10));
+    expect(lines(), "each is logged once per instance").toHaveLength(10);
+    expect(capture, "and the held-back ones still reach Sentry later").toHaveBeenCalledTimes(6);
+  });
+
+  it("with Sentry's bucket empty, a fresh violation is still logged", async () => {
+    for (let i = 0; i < 4; i++) await send(keys(3, `spend${i}-`));
+    expect(capture).toHaveBeenCalledTimes(10);
+    await send([envelope("https://after-the-bucket.example/x.png")]);
+    expect(capture).toHaveBeenCalledTimes(10);
+    expect(lines().some((l) => l.includes("after-the-bucket.example"))).toBe(true);
+  });
+
+  it("the log's memory forgets its oldest key when full, never all of them", async () => {
+    // 250 distinct violations in five reports of fifty: the first fifty are forgotten to make room
+    for (let r = 0; r < 5; r++) await send(keys(50, `log${r}-`));
+    expect(lines()).toHaveLength(250);
+    await send([envelope("https://log4-49.example/x.png")]);
+    expect(lines(), "a recent key is still known").toHaveLength(250);
+    await send([envelope("https://log0-0.example/x.png")]);
+    expect(lines(), "the oldest was forgotten: logged again").toHaveLength(251);
+  });
+});
+
 describe("one request cannot flood Sentry", () => {
   it("reports at most three new violations from a batch of two hundred, and still answers 204", async () => {
     const res = await send(keys(200));
@@ -74,7 +106,7 @@ describe("one request cannot flood Sentry", () => {
 
   it("says in the log how many it held back — a dropped report is never silent", async () => {
     await send(keys(10));
-    expect(warn.mock.calls.map((c) => String(c[0])).some((l) => /7\b.*not reported/.test(l))).toBe(true);
+    expect(warn.mock.calls.map((c) => String(c[0])).some((l) => /7\b.*not sent to Sentry yet/.test(l))).toBe(true);
   });
 
   it("reads only the first fifty violations of a report", async () => {
@@ -85,6 +117,16 @@ describe("one request cannot flood Sentry", () => {
     const padded = [...Array.from({ length: 50 }, () => envelope("https://seen.example/x.png")), ...keys(10, "late")];
     await send(padded);
     expect(capture).toHaveBeenCalledTimes(1);
+    expect(lines().filter((l) => l.includes("late")), "past the cut, not even the log").toEqual([]);
+  });
+
+  it("a Sentry call that throws still answers 204 and keeps the log line", async () => {
+    capture.mockImplementationOnce(() => {
+      throw new Error("sentry down");
+    });
+    const res = await send([envelope("https://throws.example/x.png")]);
+    expect(res.status).toBe(204);
+    expect(lines().some((l) => l.includes("throws.example"))).toBe(true);
   });
 
   it("a violation held back by the cap is reported on a later request, not forgotten", async () => {

@@ -577,14 +577,14 @@ const quotaPaged = new Set<ProviderQuota>();
  * provider's error name and the kind — never the person or the address.
  */
 function reportQuotaOnce(job: Job, quota: ProviderQuota, result: string, now: Date): void {
-  const day = now.toISOString().slice(0, 10);
-  if (day !== quotaPagedDay) {
-    quotaPagedDay = day;
-    quotaPaged.clear();
-  }
-  if (quotaPaged.has(quota)) return;
-  quotaPaged.add(quota);
   try {
+    const day = now.toISOString().slice(0, 10);
+    if (day !== quotaPagedDay) {
+      quotaPagedDay = day;
+      quotaPaged.clear();
+    }
+    if (quotaPaged.has(quota)) return;
+    quotaPaged.add(quota);
     Sentry.captureMessage(`[enquiry-alert] the provider's ${quota} sending quota is spent — alerts fail until it frees up`, {
       level: "error",
       fingerprint: ["resend-quota", quota],

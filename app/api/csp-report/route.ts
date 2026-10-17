@@ -32,8 +32,8 @@ import {
  *   (NOTIF-1, six-phase audit 2026-10-17). Until then any caller could send
  *   one Sentry event per distinct directive / URL / source it invented, under
  *   a title it wrote — about eighty requests used up the month's quota and
- *   buried the alerts. Now a report is read up to its first
- *   MAX_VIOLATIONS_PER_REPORT violations, at most three new ones are reported
+ *   buried the alerts. Now a report's first MAX_VIOLATIONS_PER_REPORT
+ *   violations are looked at, at most three new ones are reported
  *   per request and a per-instance token bucket bounds a run of requests
  *   (CspReportLimiter, lib/services/csp-report.ts), and every event carries a
  *   fixed fingerprint and a message naming only a directive the policy could
@@ -92,34 +92,40 @@ export async function POST(request: NextRequest) {
     return new NextResponse(null, { status: 204 });
   }
 
-  const { report, heldBack } = limiter.admit(parseCspReport(body).slice(0, MAX_VIOLATIONS_PER_REPORT));
-  for (const violation of report) {
-    const line =
-      `[csp] ${violation.directive} blocked ${violation.blockedUri} ` +
-      `on ${violation.documentPath}` +
-      (violation.sourceFile ? ` (${violation.sourceFile}:${violation.lineNumber ?? 0})` : "");
-
+  const { log, report, heldBack } = limiter.admit(parseCspReport(body).slice(0, MAX_VIOLATIONS_PER_REPORT));
+  for (const violation of log) {
     // The one deliberate console.* in application code: this route exists to
     // make violations visible, and stdout is what reaches the Vercel runtime
     // logs an operator can actually read. Sentry is env-gated and silent
-    // without a DSN, so it cannot be the only sink.
-    console.warn(line);
+    // without a DSN, so it cannot be the only sink — and its budget does not
+    // ration this one (CspReportLimiter).
+    console.warn(
+      `[csp] ${violation.directive} blocked ${violation.blockedUri} ` +
+        `on ${violation.documentPath}` +
+        (violation.sourceFile ? ` (${violation.sourceFile}:${violation.lineNumber ?? 0})` : ""),
+    );
+  }
+  for (const violation of report) {
     const family = directiveFamily(violation.directive);
-    Sentry.captureMessage(`[csp] ${family} violation`, {
-      level: "warning",
-      fingerprint: ["csp-violation", family],
-      extra: {
-        directive: violation.directive,
-        blocked: violation.blockedUri,
-        document: violation.documentPath,
-        ...(violation.sourceFile ? { source: `${violation.sourceFile}:${violation.lineNumber ?? 0}` } : {}),
-      },
-    });
+    try {
+      Sentry.captureMessage(`[csp] ${family} violation`, {
+        level: "warning",
+        fingerprint: ["csp-violation", family],
+        extra: {
+          directive: violation.directive,
+          blocked: violation.blockedUri,
+          document: violation.documentPath,
+          ...(violation.sourceFile ? { source: `${violation.sourceFile}:${violation.lineNumber ?? 0}` } : {}),
+        },
+      });
+    } catch {
+      // best-effort: the log line above stands, and the answer stays 204
+    }
   }
   if (heldBack > 0) {
-    // Say so, once per request: a held-back violation is not remembered, so
-    // the next request that carries it reports it.
-    console.warn(`[csp] ${heldBack} new violation(s) not reported: the per-request cap or this instance's rate limit`);
+    // Say so, once per request: a held-back violation is not remembered as
+    // reported, so the next request that carries it reports it.
+    console.warn(`[csp] ${heldBack} new violation(s) not sent to Sentry yet: the per-request cap or this instance's rate limit`);
   }
 
   // 204 regardless: a reporting endpoint must never give a caller feedback to
