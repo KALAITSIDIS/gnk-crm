@@ -225,7 +225,7 @@ beforeAll(async () => {
   const photos = (org: string, like: string, per: number) =>
     pg.query(
       `insert into property_media (org_id, property_id, kind, path_thumb, is_cover, sort_order, content_sha256)
-       select $1::uuid, p.id, 'photo', format('t/%s/%s.jpg', p.id, s), s = $3::int, s,
+       select $1::uuid, p.id, 'photo', format('properties/%s/%s.jpg', p.id, s), s = $3::int, s,
               encode(sha256(convert_to(p.id::text || '-' || s, 'UTF8')), 'hex')
          from (select id, reference from properties where org_id = $1 and reference like $2 order by reference) p,
               generate_series(1, $3::int) s
@@ -238,7 +238,7 @@ beforeAll(async () => {
   await listings(BIG, "WB", N_BIG, true);
   await pg.query(
     `insert into property_media (org_id, property_id, kind, path_thumb, is_cover, sort_order, content_sha256)
-     select $1::uuid, p.id, 'photo', format('t/%s/%s.jpg', p.id, s), (p.n <= $2 and s = 6), s,
+     select $1::uuid, p.id, 'photo', format('properties/%s/%s.jpg', p.id, s), (p.n <= $2 and s = 6), s,
             encode(sha256(convert_to(p.id::text || '-' || s, 'UTF8')), 'hex')
        from (select id, row_number() over (order by reference) as n from properties where org_id = $1) p,
             generate_series(1, 6) s
@@ -266,7 +266,7 @@ beforeAll(async () => {
   const nth = (n: number) => `WB${TAG}-${String(n).padStart(4, "0")}`;
   await pg.query(
     `insert into property_media (org_id, property_id, kind, path_thumb, sort_order)
-     select $1::uuid, p.id, 'floor_plan', format('t/%s/plan-%s.jpg', p.id, s), 10 + s
+     select $1::uuid, p.id, 'floor_plan', format('properties/%s/plan-%s.jpg', p.id, s), 10 + s
        from properties p, generate_series(1, 5) s
       where p.org_id = $1 and p.reference = any($2::text[])`,
     [BIG, [200, 201, 202, 203, 204].map(nth)],
@@ -292,12 +292,12 @@ beforeAll(async () => {
   );
   await pg.query(
     `insert into property_media (org_id, property_id, kind, path_thumb, sort_order, content_sha256)
-     values ($1, $2, 'photo', 't/sold.jpg', 1, $3)`,
+     values ($1, $2::uuid, 'photo', format('properties/%s/sold.jpg', $2::uuid), 1, $3)`,
     [BIG, sold[0]!.id, await hashOf(nth(1))],
   );
   await pg.query(
     `insert into property_media (org_id, property_id, kind, path_thumb, sort_order, content_sha256)
-     select $1, p.id, 'photo', 't/shared.jpg', 7, $3 from properties p where p.org_id = $1 and p.reference = $2`,
+     select $1, p.id, 'photo', format('properties/%s/shared.jpg', p.id), 7, $3 from properties p where p.org_id = $1 and p.reference = $2`,
     [BIG, nth(5), await hashOf(nth(3))],
   );
 

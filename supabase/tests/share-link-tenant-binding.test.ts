@@ -499,6 +499,8 @@ async function deterministicFixture() {
     return rows[0]!.id;
   };
   const p1 = await prop("V1", {
+    // a fixed id: the photos' paths name it (0148), and the expected answer below is byte-exact
+    id: "dddddddd-0148-4000-8000-000000000001",
     property_type: "villa", visibility: "public", status: "available", transaction_type: "sale",
     title: { en: "Villa One", el: "Βίλα Ένα" }, short_description: { en: "Sea view" }, public_description: { en: "Three bedrooms by the sea." },
     asking_price: 500000, covered_area_sqm: 180, plot_area_sqm: 600, bedrooms: 3, bathrooms: 2, parking_spaces: 2,
@@ -509,7 +511,7 @@ async function deterministicFixture() {
     title: { en: "Flat Two" }, rent_price_month: 1500, bedrooms: 2, district_id: district,
   });
   const p3 = await prop("X3", { property_type: "house", visibility: "archived", title: { en: "Retired" }, asking_price: 1 });
-  for (const [kind, card, cover, sort] of [["photo", "properties/x/card-b.webp", false, 1], ["photo", "properties/x/card-a.webp", true, 2], ["floor_plan", "properties/x/plan.webp", false, 0]] as const) {
+  for (const [kind, card, cover, sort] of [["photo", "properties/dddddddd-0148-4000-8000-000000000001/card-b.webp", false, 1], ["photo", "properties/dddddddd-0148-4000-8000-000000000001/card-a.webp", true, 2], ["floor_plan", "properties/dddddddd-0148-4000-8000-000000000001/plan.webp", false, 0]] as const) {
     await o.query(
       `insert into property_media (org_id, property_id, kind, path_card, path_full, is_cover, sort_order, alt)
        values ($1, $2, $3, $4, $5, $6, $7, '{"en": "A view"}'::jsonb)`,
@@ -575,13 +577,13 @@ const SNAPSHOT_0137: Record<"proposal" | "live" | "pinned", unknown> = {
         "media": [
           {
             "alt": "A view",
-            "card": "properties/x/card-a.webp",
-            "full": "properties/x/full-a.webp"
+            "card": "properties/dddddddd-0148-4000-8000-000000000001/card-a.webp",
+            "full": "properties/dddddddd-0148-4000-8000-000000000001/full-a.webp"
           },
           {
             "alt": "A view",
-            "card": "properties/x/card-b.webp",
-            "full": "properties/x/full-b.webp"
+            "card": "properties/dddddddd-0148-4000-8000-000000000001/card-b.webp",
+            "full": "properties/dddddddd-0148-4000-8000-000000000001/full-b.webp"
           }
         ],
         "title": "Βίλα Ένα",
