@@ -23,7 +23,7 @@
 - **What next.**
   - **These records:** PR #172, read CI and merge pinned to its head. Then remove the worktrees `public-doors`, `public-doors-0149`, `land-public-doors` and the three remote branches, and stop `.iso/publicdoors`.
   - **The audit's records commit `d139a34`:** the operator's word, now that the four live anonymous findings are fixed.
-  - **MEDIA-1 (0148)** rebases on main; its restore-pack migrations pin becomes 149.
+  - **MEDIA-1 (0148)** landed after these: #171 → main `d1a8362`. Main reads 149 migrations and pin 149; hosted ledger 149 rows (0147, 0148, 0149 read 2026-10-17 after #171). Its own records are its session's.
   - **Follow-ups for BACKLOG** (when `d139a34` lands):
     - gnk-web reads `code: "origin_ceiling"` (`gnk-web/lib/crm.ts:493`);
     - `hashIp` groups IPv6 by /64 (every public counter);
