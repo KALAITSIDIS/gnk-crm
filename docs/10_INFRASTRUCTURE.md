@@ -385,6 +385,15 @@ Live feed: `https://gnk-crm.vercel.app/api/public/listings?org=gnk`
 
 Anything placed under those prefixes is public by construction.
 
+**What bounds each public door (2026-10-17, DECISIONS `T-public-doors`, `T-anon-counter-key-shape`).**
+- **Counter keys** are the salted 32-hex `hashIp()` and nothing else. The anon counters answer "over budget" to any other key, and the three counter tables CHECK it (0149).
+- **The enquiry door:** 5 per visitor per 15 minutes. The proven site has its own ceiling of 60 per 15 minutes on `site:<ip>`. A ceiling refusal is 429 `code: "origin_ceiling"` and one Sentry line per window per instance (fingerprint `enquiry-origin-ceiling`): it means every buyer on the site is being refused.
+- **`/api/csp-report`** is sessionless too (`proxy.ts`) and is not listed above. It looks at a report's first 50 violations, logs each new one once per instance, and sends at most 3 new ones to Sentry per request, under 10 per instance plus one every 6 minutes. Each event's fingerprint is `["csp-violation", <directive | "other">]`.
+  - **Operator item, not done:** a per-key rate limit on the Sentry DSN (Sentry → Project Settings → Client Keys → Rate Limits) bounds what any number of instances can send.
+- **Resend** (free plan: 100 e-mails a day, 3,000 a month — resend.com/pricing, read 2026-10-17). Every fresh public enquiry spends one, the desk alert; the acknowledgement spends another once `ENQUIRY_ALERT_FROM` is set.
+  - A spent quota is named on the outbox row (`daily_quota_exceeded` / `monthly_quota_exceeded`) and paged once per quota per UTC day per instance (fingerprint `["resend-quota", "daily" | "monthly"]`). The rows keep retrying on the schedule.
+  - Before arming the acknowledgement, build the per-organisation outbound counter (DECISIONS `T-public-doors`, NOTIF-2).
+
 ---
 
 ## 5. Backups

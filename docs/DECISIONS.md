@@ -10855,6 +10855,132 @@ This is the six-phase audit's one new HIGH (ERA-1). It was built on the audit's 
   - The worktree `.worktrees/gnk-crm/era1-evidence-reports` now holds these records and stays until they merge.
 - **These records** are PR #169 (branch `land/era1-evidence-reports`, from `f5cf6c2`).
 
+## T-public-doors — the enquiry door's site ceiling is the site's own row and never silent; the CSP report collector is bounded and shaped by the route; a spent provider quota is named and paged once (2026-10-17; no migration; LANDED 2026-10-17 — PR #168, main `9d9dc9c`, deployed)
+
+Three of the four live anonymous-surface findings of the six-phase audit (`T-six-phase-audit-2026-10-17`, whose records commit `d139a34` is held local until these fixes land). The BACKLOG entries, by title, in its "Six-phase audit — 2026-10-17" section:
+- P3B1-1, "The enquiry door's origin ceiling is one shared counter row: a silent kill switch for every site enquiry";
+- NOTIF-1, "The public `/api/csp-report` can flood Sentry with attacker-titled issues";
+- NOTIF-2, "Public enquiries can use up the shared Resend quota, so genuine desk alerts and escalations fail that day" — **partly fixed:** the quota is named and paged; the per-organisation outbound counter is deferred (below).
+
+The audit session started this session to build them, under the standing authorization. Application only: no migration, nothing on hosted. The fourth finding, ANON-2, is `T-anon-counter-key-shape` (migration 0149), the next entry; it landed first.
+- **Commits** on `fix/public-doors` from origin/main `99c3bad`: `74f32ff` (P3B1-1), `76d60cc` (NOTIF-1), `88595d5` (NOTIF-2), `c8ec8d9` and `def591b` (tests the mutation round asked for), `2bda79e` (review round), `0700a88` (origin/main `8483916`, ERA-1, merged in; no overlapping file).
+
+**P3B1-1 — the enquiry door's site ceiling.**
+- **The defect (re-read at `99c3bad`).** With the forward key proven, `budgetsFor` returned [visitor 5, origin 60]. The origin budget was keyed on the unscoped `callerIpHash()` of the site's egress (`route.ts:92`): the row any caller at that address spends, proven or not. The honeypot was answered only after both budgets were metered (`route.ts:118-120`). A full ceiling refused every buyer on the site with the visitor's sentence, and nothing paged.
+- **What changed.**
+  - `budgetsFor(transport, header, trusted, siteHash)` keys the proven site's ceiling on `siteHash` (the route passes `callerIpHash("site")`) and labels each budget `visitor` / `origin`. The visitor's budget is always first.
+  - The route meters the visitor's budget, answers a honeypot hit, then meters the ceiling.
+  - A ceiling refusal answers 429 `{ error: "The enquiry service is busy. Try again shortly.", code: "origin_ceiling" }` (Retry-After 900) and logs at error level. It tells Sentry once per 15-minute window per instance: `[public enquiry] the site's origin ceiling refused an enquiry`, level error, tag `code: origin_ceiling`, fingerprint `["enquiry-origin-ceiling"]`, no address and no hash.
+  - The visitor's 429 is unchanged. The counter's fail-open on an error is unchanged, now in one helper (`overBudget`) and unit-tested (it had no test; mutant P9 found that).
+  - `caller-ip.ts`'s comment said the FEED meters `site:<ip>`. The feed meters no proven forwarder at all (`listings/route.ts`). Corrected.
+- **Not done (follow-ups, both pre-existing in kind):**
+  - gnk-web turns every CRM 429 into "Too many enquiries from this address" without reading the body (`gnk-web/lib/crm.ts:493`). Reading `code: "origin_ceiling"` is a gnk-web change.
+  - A forwarded IPv6 visitor is hashed whole, not by /64 (`enquiry-budget.ts`, `hashIp(claimed)`). One host with a /64 can be twelve visitors and still fill the ceiling through the site's own form; now it pages. Grouping IPv6 by /64 belongs in `ip-hash.ts`, for every public counter.
+
+**NOTIF-1 — the CSP report collector.**
+- **The defect.** `/api/csp-report` is sessionless (`proxy.ts`) and accepts 128 KB. It sent one `Sentry.captureMessage(line)` per distinct directive / blocked-URL / source key, with no cap per request or per window, under a title the caller wrote, and cleared its dedupe Set whole at 200 entries.
+- **What changed** (`lib/services/csp-report.ts` `CspReportLimiter` and `directiveFamily`; the route):
+  - a report's first 50 violations are looked at (`MAX_VIOLATIONS_PER_REPORT`; the parse itself is bounded by the 128 KB cap);
+  - at most 3 NEW violations go to Sentry per request; a per-instance token bucket holds 10 and earns one back every 6 minutes; a full bucket earns nothing while it waits;
+  - a violation held back is not remembered as reported, so a later request reports it; one console line per request says how many were held back;
+  - **the log is not rationed** (review round, `2bda79e`): every violation the instance has not logged yet is logged once, reported or held back, because stdout is the sink that works without a DSN;
+  - each Sentry event has message `[csp] <family> violation`, level warning, fingerprint `["csp-violation", <family>]`. The family is the directive NAME when the policy could have it (CSP3 list) and `other` otherwise. The details (directive, blocked, document path, source) travel as `extra`, which `scrubEvent` scrubs like the message. The call sits in try/catch;
+  - both memories (reported, logged) forget their OLDEST key when full.
+- **Operator side, not done here:** a per-key rate limit on the Sentry DSN (docs/10 §4).
+
+**NOTIF-2 — the provider quota.**
+- **The defect.** Every fresh public enquiry spends the account's shared Resend quota: the desk alert, and the acknowledgement too once armed. A 429 for a SPENT quota was classified transient like a passing rate limit, retried for about two hours, then failed. The word "quota" was never said.
+- **What changed.**
+  - `providerQuota(status, name)` maps a 429 `daily_quota_exceeded` to `daily`, `monthly_quota_exceeded` to `monthly`, and anything else to none.
+  - `postProviderEmail` puts `quota` on the failed result only when set. The desk alert and the escalation share it.
+  - The worker's `settle` pages once per quota per UTC day per instance: `[enquiry-alert] the provider's <quota> sending quota is spent — alerts fail until it frees up`, level error, fingerprint `["resend-quota", <quota>]`, tags quota / result / kind, extra job id. Then it handles the row exactly as its category says.
+  - **The category stays transient, by decision.** A daily quota frees up as the day rolls on, and an upgraded plan lets the scheduled retries through, so nothing gives a row up sooner. A job that spends its last attempt on a spent quota is still paged "failed for good", as before.
+- **Deferred, with a reason: the per-organisation daily outbound counter** that would cap the visitor acknowledgement.
+  - The acknowledgement is not armed (`ENQUIRY_ALERT_FROM` unset). Today every send is a desk alert or an escalation, which is exactly what the counter would protect.
+  - The counter needs its own migration.
+  - It belongs with ANON-3's acknowledgement fixes, before HANDOFF row 1d arms `ENQUIRY_ALERT_FROM`.
+
+**Verified.**
+- RED on `99c3bad`'s sources: 39 failed | 123 passed (162) across the six touched test files.
+- GREEN: 169/169 on the head. Full unit suite on `88595d5`: 4,001 tests, 3,997 passed in a loaded run. The 4 failures were 5-second timeouts in `evidence-pdf` and `due-at-is-a-cyprus-day` (untouched); they ran 17/17 alone with a longer timeout.
+- Mutants: 36 of 36 killed on the head. P9 (a counter error fails closed) and C10 (the bucket without its cap) survived the first run; `def591b` added the tests that kill them.
+- Review (one independent agent): no correctness bug in the diff. Acted on, in `2bda79e`: the log rationed by Sentry's budget, the unguarded CSP Sentry call, a date call outside the worker's try, and the 50-cut wording. Left as follow-ups: IPv6 /64, gnk-web's `code`.
+- `typecheck`, `lint` exit 0.
+- **Branch CI:**
+  - run 39036642395 on `def591b`: green;
+  - on `2bda79e` the `rls` job failed twice with `deadlock detected`, each time inside a migration-replay test's own revert (`reservation-lead-property-org-isolation` revert-to-0123, then `rls-hoist` `REVERT_0147_SQL`). The database code was main's; ERA-1's branch hit the same class that day (`unit-type-apply-actions`, concurrent stamps). A CI flake class, recorded for BACKLOG;
+  - run 39040670450 on `0700a88` (with ERA-1 merged in): checks, rls, e2e `success`.
+- Not run: no browser; nothing probed in production but `/login` and one protected route.
+
+**Landed (2026-10-17, under the standing authorization).**
+- **Merge.** #168 merged 14:42:28Z, pinned to `0700a881b2c4405d1aae9b14a3c20aadf47e1ce2`; main `7313999` → `9d9dc9c` (a clean `git merge-tree` first).
+- **Production.** Vercel `dpl_33sS2WF9Z1X46keFXD5XBtkgzz8M` READY 14:44:33Z, aliased to gnk-crm.vercel.app. `get_runtime_errors` since 14:40Z: none. Signed out: `/login` 200, `/leads` 307 → `/login`, `OPTIONS /api/public/enquiries` 204 (no request that writes was sent).
+- **Merge CI** run 39041894335 on `9d9dc9c` green: checks, rls, e2e each `success` (e2e last, 14:58:15Z).
+- **Rollback:** revert the merge (application only).
+
+## T-anon-counter-key-shape — the anonymous rate counters take only the application's 32-hex key; each counter table checks it for every writer and indexes its prune (2026-10-17; migration 0149; LANDED 2026-10-17 — hosted 0149 first, PR #170, main `7313999`, deployed)
+
+ANON-2 of the six-phase audit, the fourth live anonymous-surface finding: BACKLOG "The anon rate counters accept any `p_ip_hash`, and prune with a full scan on every call" ("Six-phase audit — 2026-10-17", in `d139a34`). The other three are `T-public-doors`, above. Migration only, no application change: the deployed application sends `hashIp()` (32 lowercase hex) and nothing else.
+- **Commits** on `fix/anon-counter-key-shape` from origin/main `99c3bad`: `2aa0145`, `b5f4cc8` (review round).
+
+**The defect (read at `99c3bad`; hosted read with SELECTs on 2026-10-17).**
+- `note_share_link_miss` (0023) and `note_public_listing_hit` (0066) are anon-executable SECURITY DEFINERs, pinned anon = true in verify-restore.
+- Each stored any `p_ip_hash` as a counter key.
+- None of `share_link_attempts`, `public_listing_attempts`, `public_enquiry_attempts` checked a key.
+- Every call's two-hour prune filtered on `window_start`, with only the PK `(ip_hash, window_start)` to use.
+- Hosted held 1 / 2 / 5 rows, all 32-hex.
+
+**Hosted drift found on the way.** Hosted's `note_share_link_miss` is 0023's statements without the file's one comment line (`-- opportunistic prune so the table cannot grow forever`). `md5(replace(prosrc, chr(13), ''))` reads `b6364a70…` on hosted and `607eeade…` on a database built from the files. Behaviour identical. 0149's preflight accepts both and nothing else. `HOSTED_SHARE_LINK_MISS_0023` in `revert-0149.ts` carries hosted's text for the test.
+
+**What changed (0149).**
+1. Both counters answer TRUE ("over budget") for a NULL key or one not matching `^[0-9a-f]{32}$`, before their insert: nothing is stored. Unchanged: signatures, defaults (20 / 120), return type, owner, SECURITY DEFINER, `search_path=public`, grants and comments. `note_public_enquiry_hit` (service_role only since 0087; its two callers send `hashIp()`) is unchanged.
+2. One CHECK per counter table, `<table>_ip_hash_shape check (ip_hash ~ '^[0-9a-f]{32}$')`. Each is added NOT VALID and VALIDATEd in the same transaction, so it ends validated, after the malformed rows are deleted and counted (hosted: 0 / 0 / 0). These are 15-minute counters, not records: a deleted row only forgets a key the application never sends.
+3. `<table>_window_start_idx` on `(window_start)` per table: the prune's range filter reads it.
+- **Preflight:**
+  - ACCESS EXCLUSIVE on the three tables, in one statement, before anything else;
+  - each table's columns and PK, and no unknown CHECK;
+  - both bodies by digest (repo or hosted, or 0149's own on a replay), with signature and defaults, owner, SECURITY DEFINER, search_path;
+  - grants anon + authenticated + service_role, without PUBLIC.
+- **Postflight:**
+  - the three validated CHECKs and three valid indexes, by definition;
+  - a behaviour self-test of both counters inside an exception block that undoes what it writes; a body without its guard is named in words when it meets the CHECK;
+  - then both bodies by digest, with owner and search_path, and grants unchanged.
+- **Pins moved:**
+  - verify-restore migrations 147 → 148 (it counts files; MEDIA-1's 0148 bumps it to 149);
+  - one 0149 SECURITY row, `3 3 2` (validated CHECKs, valid indexes, guarded bodies);
+  - `rls.test.ts` and `backup-export-keys.test.ts` now use 32-hex counter keys.
+- No signature, return shape or grant change, so no release-compat entry. `database.types.ts` was regenerated from the stack at 0149 and is unchanged. The release-compat report read on branch CI: every supported enquiry contract COMPATIBLE.
+- **A backup holding a malformed counter key** (none existed: hosted held 0) no longer restores at 0149 (`restore.mjs` stops on the first error). Delete those rows from the export.
+
+**Verified** (`.iso/publicdoors`: Postgres 17.6.1.159, PostgREST v14.5).
+- RED at 0147: `anon-counter-key-shape.test.ts` 49 failed | 18 passed (67). Malformed keys were stored and answered under budget, malformed inserts accepted, there was no index, and there was no 0149 to replay. The controls passed.
+- GREEN at 0149: 69/69 on the head.
+- **Full DB suite at 0149:** 86 files, 1,905 of 1,906. The one failure, `enquiry-alert-key-lifetime` "explicit rotation → claim → release", passed 3/3 alone. It is a clock race: the test stamps `next_attempt_at` with Node's clock, and the Docker VM's clock trails it. That file touches no object 0149 changes. A test flake, recorded for BACKLOG.
+- **Mutants:** 9 of 9 DB-state mutants killed (committed on the disposable stack and restored, each restore verified by fingerprint): guard removed, guard admits uppercase, guard answers under budget, guard after the insert, NULL admitted, enquiry CHECK dropped, share CHECK loosened, listing index dropped, anon's grant revoked. The test file also carries 7 postflight mutants and 9 preflight refusals.
+- One test bug was found on the way: a `$'` inside a `String.replace` replacement string, which JavaScript reads as "the text after the match". The mutated SQL came out syntactically broken, so the test failed for the wrong reason. Replacer functions are used now.
+- **The md5-guarded single-call apply was rehearsed** in rolled-back transactions on the disposable stack, from hosted's exact pre-state. It applied with no rows, with the CHECKs, indexes, bodies and ACLs as pinned. A one-character-corrupted copy was refused ("0149 guard: the text is not the file") with nothing changed.
+- **Review** (one independent agent): nothing Critical or High. Acted on, in `b5f4cc8`:
+  - the self-test runs before the digest and is proven by its own mutants;
+  - the owner is pinned in the preflight;
+  - `indisvalid` is required;
+  - the first CREATE is schema-qualified;
+  - the header names both callers and the old-backup case;
+  - two tests stay off a 15-minute window edge, and the vacuous NULL assertion was dropped.
+- `typecheck`, `lint` exit 0. Branch CI: run 39037808370 on `2aa0145` and run 39039276650 on `b5f4cc8`, checks, rls, e2e `success`.
+
+**Landed (2026-10-17, under the standing authorization).**
+- **Hosted 0149 first** (~14:21Z):
+  - preflight read: ledger 147, 0 malformed rows, bodies `ec4f1019…` / `b6364a70…` owned by postgres, no CHECKs, PK indexes only;
+  - one `execute_sql` of the md5-guarded DO (file md5 `aae72d193225b7bcbce57b0ce7b3bbb9`), which returned no rows;
+  - verified in a separate call: three validated CHECKs and three valid indexes by definition, bodies `f6469530…` / `0668fb40…`, ACLs and comment unchanged, `note_public_enquiry_hit` and `share_link_over_budget` untouched, rows 1 / 2 / 5, no self-test residue;
+  - ledger row `('0149', 'anon_counter_key_shape')` by hand, so 148 rows (0148 is MEDIA-1's, out of order);
+  - security advisors unchanged at 2 ERR + 37 WARN; performance shows the three new indexes as INFO "unused" (minutes old).
+- **Merge.** #170 merged 14:25:36Z, pinned to `b5f4cc8557667a5726a50548b09e1f84e640d2f2`; main `8483916` → `7313999` (a clean `git merge-tree` first).
+- **Production.** Vercel `dpl_4wKhxc63iYBo8PGyHZ4N3PWqmVq1` READY 14:27:06Z, aliased to gnk-crm.vercel.app. `get_runtime_errors` since 14:20Z: none. Signed out: `/login` 200, `/leads` 307 → `/login`.
+- **Merge CI** run 39040702676 on `7313999` green: checks, rls, e2e each `success` (e2e last, 14:41:32Z).
+
+**Rollback:** a FORWARD migration with `REVERT_0149_SQL` (`supabase/tests/revert-0149.ts`). It puts 0023's / 0066's bodies back and drops the three CHECKs and indexes, under the same bounded lock. Then move the verify-restore pin forward and remove the 0149 row. No data moves.
+
 ## T-media-path-bound — a `property_media` row names only objects under its own property, and the photo delete and the property page's signer trust nothing else (2026-10-17; migration 0148; LANDED 2026-10-17 — hosted 0148 first, PR #171, main `d1a8362`, deployed)
 
 The 2026-10-17 six-phase audit's MEDIA-1 (HIGH; it widens the open BACKLOG entry "Service-role storage removals trust a session-written path") and RLS-3 (MEDIUM), built from the audit's drop-in (its §3.2, in the audit's records, which are not yet published) and then strengthened where a measurement showed the drop-in was not enough. Branch `fix/media-path-bound` in its own worktree (`D:/dev/TSOPOZIDIS/.worktrees/gnk-crm/media-path-bound`), cut from origin/main `99c3bad`; the disposable stack `.iso/media-path` (ports 583xx, Postgres 17.6.1.159 — CI's image — with PostgREST v14.5 — hosted's — and storage-api v1.82.1).
