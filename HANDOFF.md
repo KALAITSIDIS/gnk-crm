@@ -1,6 +1,47 @@
 # HANDOFF — 2026-08-08
 
-**2026-10-15, latest (one-time secrets + listing-manager recompute; LANDED — PRs #164, #165): two changes built on the operator's "go with the one-time secrets and the LM recompute", landed on the operator's "merge #164 and #165". A committed one-time secret (an invited colleague's password, a portal feed URL, a share link) is handed back with a notice and never lost to the error page. A property, contact or mandate save recomputes every open deal it touches as the system, inside the saved row's organisation, so who saved no longer decides a stored score. No migration, nothing on hosted. #164 merged 16:16:49Z → main `96aba61`, #165 merged 16:18:18Z → `447c5bc`, both deployed, both merge CI runs green. These landing records are PR #166 (branch `land/secrets-and-lm`, from `447c5bc`). DECISIONS `T-one-time-secrets` and `T-lm-health-recompute`.**
+**2026-10-17, latest (ERA-1: erasure and the retention purge keep the commission-evidence reports; LANDED — PR #167). This is the six-phase audit's one new HIGH, built on the audit's drop-in under the standing authorization. A report is known by its path (`lib/services/evidence-report-path.ts`). Neither destroyer touches one, whatever the AML basis, and the `erased` and `retention_purged` lines count what they kept (`evidence_reports_kept`). No migration, nothing on hosted. #167 merged 13:23:52Z → main `f5cf6c2`, deployed, merge CI green. These landing records are PR #169 (branch `land/era1-evidence-reports`, from `f5cf6c2`). DECISIONS `T-erasure-keeps-evidence-reports`.**
+- **What.**
+  - **The defect.** `generateEvidenceReport` stores the PDF as an ordinary contact document, at `<org>/reports/evidence-<contact>-<stamp>.pdf`. An erasure with no AML basis and every retention purge listed every contact document, and destroyed the report with the rest. The spec, the erase dialog, the contact banner and the `erased` line's own `untouched` list all promise the opposite.
+  - **The fix.** The pure runner (`erasure-run.ts`) and the purge's listing (`contact-erasure.ts`) set reports aside by their path, never by `doc_type` (a session may relabel it).
+  - **The counts.** Both payloads count `evidence_reports_kept`; `documents_deleted` and `documents_retained` now count the other documents only.
+  - **The UI and the reports page.** The purge dialog names the reports among what it does not affect, and the reports page queries with the shared constant.
+- **Verified (before landing).**
+  - **On `.iso/era1`** (Postgres 17.6.1.159 + PostgREST v14.5, at 0147). The DB test's report is made by the real `generateEvidenceReport`.
+    - RED on `99c3bad`'s code: unit 6 failed | 29 passed (35); DB 3 failed | 1 passed (4), each "the report's row: expected 0 to be 1".
+    - GREEN: unit 68/68; DB 90/90 (the three erasure files).
+  - **Mutants:** 15 distinct mutations in 16 runs, all killed.
+  - **Gates.** `typecheck` and `lint` exit 0. vitest 251 files / 3,972 exit 0 with `--testTimeout=30000`: the default-timeout run timed out five tests in three untouched files at 100% CPU and 668 MB free; CI's `checks` ran them at default timeouts, green.
+  - **Branch CI** green: run 39035267204 on `c41c243`.
+  - **Hosted (read-only aggregates).** There are 3 report events, from 2026-07-21/22. Each report was removed by the Documents tab's Delete (`document_deleted`); none was on an erased contact, and there were 0 purges. **ERA-1 never fired in production.**
+- **Landed (2026-10-17, under the standing authorization).**
+  - **Merge.** #167 merged 13:23:52Z, pinned to `c41c2437baabe9ba51c12e94ea0bbfcfcdbcc822`; main `99c3bad` → `f5cf6c2`. The merge's tree is the head's tree.
+  - **Production.** Vercel `dpl_HQLTqDTqgzoebHxpi1k21VqfAKXh` READY 13:25:02Z, aliased to gnk-crm.vercel.app. `get_runtime_errors` since 13:20Z: none. Signed out: `/login` 200; `/contacts`, `/settings/retention` and `/reports` 307 → `/login`.
+  - **Merge CI** run 39036387283 on `f5cf6c2` green: checks, rls and e2e each `success` (e2e last, 13:37:04Z).
+  - **Rollback:** revert the merge (application only).
+- **The operator's decision: the purge half.**
+  - **Built:** reports outlive the AML duty, as the spec and every UI string promise.
+  - **The alternative** is to destroy them when the duty ends: one line in `purgeExpiredRetention`, plus the dialog's wording. DECISIONS `T-erasure-keeps-evidence-reports` says exactly what changes. Say if you want it.
+- **BACKLOG.** The ERA-1 entry is in the audit's records commit `d139a34`, not on main. Its strike is therefore in DECISIONS `T-erasure-keeps-evidence-reports` → Landing, which also corrects the entry's VERIFY (it misreads the fix).
+- **What next.**
+  - **These records.** PR #169: read its CI and merge it pinned to its head. Then remove `.worktrees/gnk-crm/era1-evidence-reports` and the remote `land/era1-evidence-reports`.
+  - **Another session's PR #168** (`fix/public-doors`, "Harden three public routes") was open at records time; not touched here.
+  - **The audit's records commit `d139a34`** (`.worktrees/gnk-crm/audit-1017`) is still local, waiting on the operator's publication decision. When it lands:
+    - it adds at the same three places as these records (the HANDOFF top block, the DECISIONS tail, BACKLOG); keep both;
+    - strike ERA-1 there with the note above;
+    - its HANDOFF block's ERA-1 lines are then history.
+  - **The other HIGH, MEDIA-1 / RLS-3** (media paths, migration 0148, the drop-in in the audit report §3.2), is the next build.
+  - **The concurrent session.** `T-document-insert-outcome` (`.worktrees/gnk-crm/document-insert-outcome`) is still uncommitted: HEAD `489c507`, 12 changed paths (read 2026-10-17, not touched). None of its paths overlaps #167.
+  - **Earlier items stand** (the 2026-10-15 block below): the read-only hosted title-deed check after #165, `SENTRY_AUTH_TOKEN` as sensitive, then BACKLOG.
+- **Left open.**
+  - A session-written document whose path matches the report pattern is kept through erasure and the purge. That fails toward keeping, and it is the existing class "Service-role storage removals trust a session-written path".
+  - A report is still deletable one at a time through the Documents tab (evented). That is the operator's question if it ever matters.
+- **Where things are (cleanup done, 2026-10-17).**
+  - **Branches.** The remote `fix/erasure-keeps-evidence-reports` is deleted; the local branch is kept.
+  - **Stacks.** The stack `.iso/era1` is stopped and its folder deleted.
+  - **Worktrees.** `.worktrees/gnk-crm/era1-evidence-reports` (now on `land/era1-evidence-reports`) stays until these records merge.
+
+**2026-10-15 (one-time secrets + listing-manager recompute; LANDED — PRs #164, #165): two changes built on the operator's "go with the one-time secrets and the LM recompute", landed on the operator's "merge #164 and #165". A committed one-time secret (an invited colleague's password, a portal feed URL, a share link) is handed back with a notice and never lost to the error page. A property, contact or mandate save recomputes every open deal it touches as the system, inside the saved row's organisation, so who saved no longer decides a stored score. No migration, nothing on hosted. #164 merged 16:16:49Z → main `96aba61`, #165 merged 16:18:18Z → `447c5bc`, both deployed, both merge CI runs green. These landing records are PR #166 (branch `land/secrets-and-lm`, from `447c5bc`). DECISIONS `T-one-time-secrets` and `T-lm-health-recompute`.**
 - **What.**
   - **One-time secrets (`T-one-time-secrets`, `982c2a1` + `5a64851`, review `21437f9` `857306f` `9af9b1a`).** Five actions (`inviteUser`, `setPortalEnabled`, `regeneratePortalToken`, `createShareLink`, `createAvailabilityLink`) return a secret that exists nowhere else, and each then awaited a `logEvent` that can throw, so the error page swallowed the secret. Now:
     - from the commit on, each catches its line, still revalidates, and returns the secret WITH a notice: `NOT_CONFIRMED_NOTICE` (new) for an unknown failure, `NOT_RECORDED_NOTICE` for a refusal;

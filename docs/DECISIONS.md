@@ -10739,3 +10739,118 @@ The operator's decision on the BACKLOG entry "A listing manager's (or a non-owne
   - added: the group "From `T-lm-health-recompute`" — three entries and two NOTEs.
 - The remote `fix/lm-health-recompute` is deleted (the local branch is kept), its worktree `.worktrees/gnk-crm/lm-recompute` is removed, and the disposable stack `.iso/lmrecompute` is stopped and deleted.
 - **Rollback.** Revert the merge (application only: no migration, nothing on hosted).
+
+## T-erasure-keeps-evidence-reports — erasure and the retention purge keep the contact's commission-evidence reports, known by their path, and each record counts what it kept (2026-10-17; no migration; LANDED 2026-10-17 — PR #167, main `f5cf6c2`, deployed)
+
+This is the six-phase audit's one new HIGH (ERA-1). It was built on the audit's drop-in (`docs/AUDIT_2026-10-17_SIX_PHASE.md` §3.1, in the audit's records commit `d139a34`, not yet on main) and landed under the standing authorization as a correctness fix.
+- **Commits.** `c41c243` on `fix/erasure-keeps-evidence-reports`, from origin/main `99c3bad`.
+
+**The defect (re-checked in the code and on the stack first, at `99c3bad`).**
+- **Where reports live.** `generateEvidenceReport` (`lib/actions/reports.ts:92-111`) uploads the PDF to `<org>/reports/evidence-<contact>-<stamp>.pdf`. It then inserts it as an ordinary contact document: `entity_type 'contact'`, `doc_type 'evidence_report'`.
+- **Both destroyers list every contact document:**
+  - the erasure's `listDocuments` (`lib/actions/contact-erasure.ts:199-205`), whose files and rows `erasure-run.ts:210-216` removes when there is no AML basis;
+  - the purge's listing (`contact-erasure.ts:368-371`), whose files and rows it removes once the duty has run.
+- **The contract said the opposite, in four places:**
+  - the spec table (`docs/superpowers/specs/2026-07-21-gdpr-contact-erasure-design.md:25`);
+  - the erase dialog (`components/features/contacts/erase-dialog.tsx:87`);
+  - the contact banner (`app/(app)/contacts/[id]/page.tsx:345`);
+  - the `erased` payload's `untouched: [… "evidence_reports" …]` (`lib/services/erasure.ts:204`), which nonetheless counted the report in `documents_deleted`.
+- **Measured** by the new DB file's RED run (below): a no-basis erasure and an expired purge each deleted the report's row and removed its object.
+- **Hosted, read-only aggregates (2026-10-17, after the deploy).**
+  - There are 3 `evidence_report_generated` events, all from 2026-07-21/22 (test data), and 0 report rows.
+  - Each of the 3 documents is named by a `document_deleted` line: they were removed through the Documents tab's Delete, on contacts that still exist and were never erased.
+  - Hosted holds 1 erased contact, 1 `erased` event and 0 `retention_purged` events. No report event is on an erased contact.
+  - **So ERA-1 never fired in production.**
+
+**What changed.**
+- **`lib/services/evidence-report-path.ts` (new):** `EVIDENCE_REPORT_PATH_LIKE` (`%/reports/evidence-%`) and `isEvidenceReportPath(path)`.
+  - A report is known by its PATH. `storage_path` is NOT NULL (0001), and a session cannot change it (0002 `protect_document_columns`). A session may change `title` and `doc_type`.
+  - The reports page (`app/(app)/reports/page.tsx`) now queries with this constant instead of its own literal. 0016's backfill keyed on the same pattern.
+- **`lib/services/erasure-run.ts`:** after the listing and before any removal, the pure runner sets the reports aside, whatever the basis, and counts them. `buildErasureEventPayload` (`erasure.ts`) takes `evidenceReportsKept` (required) and writes `evidence_reports_kept`.
+- **`lib/actions/contact-erasure.ts`:**
+  - the purge's listing sets the reports aside the same way, and `retention_purged` gains `evidence_reports_kept`;
+  - the two "the record (retention_purged, …) must be written by an administrator" sentences name the count, so a record written by hand carries it too;
+  - the listing step's comment and the purge's header say so.
+- **`components/features/settings/retention-panel.tsx`:** the purge dialog names the generated evidence reports among what it does not affect.
+
+**What the counts mean now.**
+- On an `erased` line written from `f5cf6c2` on, `documents_deleted` and `documents_retained` count the contact's other documents only, and `evidence_reports_kept` counts the reports.
+- An older `erased` line counted a report in `documents_deleted` (no basis) or `documents_retained` (a basis). Hosted holds no such line: its one `erased` line is on a contact with no report.
+- The timeline's lines read neither new key.
+
+**The operator's decision is the purge half; this is what was built.**
+- DECISIONS `T-retention-expiry` (2026-07-24) wrote that the purge destroys "document rows, their storage objects and the KYC checklist", with KYC files in mind.
+- **Built:** the default that the spec and every UI string promise. A report outlives the AML duty.
+- **The alternative**, if the operator wants reports destroyed when the duty ends:
+  - drop the purge's filter (one line in `purgeExpiredRetention`, `contact-erasure.ts`);
+  - say "documents, including evidence reports" in `retention-panel.tsx`, and take the reports out of that dialog's "not affected" sentence;
+  - decide whether `retention_purged` keeps `evidence_reports_kept` (it would read 0);
+  - record the choice here.
+- The erasure half is not a decision: the spec rules it.
+
+**Tests.**
+- **`lib/services/erasure-run.test.ts`**, block "a commission-evidence report is never destroyed by an erasure (ERA-1)": six cases with fake steps.
+  - No basis, with a KYC document and a report: only the KYC path is removed and only its id deleted; `documents_deleted: 1`, `evidence_reports_kept: 1`.
+  - A report alone: nothing is removed and no row is deleted.
+  - An AML basis: the KYC document and the report are each counted on their own.
+  - Identity by the exact path: a file named `evidence-scan.pdf`, one under `contacts/…/reports/`, and a null path are still destroyed.
+  - A re-run keeps the report too.
+  - No report: 0 kept.
+- **`lib/services/evidence-report-path.test.ts` (new):** the predicate on six paths and on null and undefined; the LIKE constant agrees with it on every sample.
+- **`lib/services/erasure.test.ts`:** the builder's calls pass the new count, and one case asserts it and `untouched`.
+- **`supabase/tests/erasure-evidence-reports.test.ts` (new).**
+  - **Harness.** The report is made by the REAL `generateEvidenceReport` (with the English catalogue standing in for `next-intl/server`), so it sits at the path production writes. The erasure and the purge are the real actions, run as an aal2 admin.
+  - **Three cases:**
+    - a no-basis erasure;
+    - a report relabelled through the admin's own session (`doc_type 'other'`, title changed; 0002 permits both);
+    - an expired purge (a mandate expiring 2015-06-01 → retention 2020-06-01), checked after the erasure and again after the purge.
+  - **What each case asserts:**
+    - the report's row and object are still there, and the object's bytes still hash to the event's `pdf_sha256`;
+    - the KYC document's row and object are gone (the control);
+    - the `erased` and `retention_purged` payloads.
+  - Then the throwaway organisation's chain verifies.
+- **Pins updated:** `supabase/tests/erasure-lifecycle.test.ts` (2) and `erasure-null-answers.test.ts` (5) — their exact `retention_purged` payloads and sentences now carry the count.
+
+**Verified.** Locally on `.iso/era1`: Postgres 17.6.1.159 + PostgREST v14.5 (both read from the container images and the REST `Server:` header), origin/main's 147 migrations plus the seed. Then branch CI. Hosted was read only, aggregates only.
+- **RED on `99c3bad`'s code** (the new tests, source unchanged):
+  - unit `erasure-run.test.ts`: 6 failed | 29 passed (35). The report was passed to removal and deletion, and the count was absent.
+  - DB `erasure-evidence-reports.test.ts`: 3 failed | 1 passed (4), each "the report's row: expected 0 to be 1". The purge case passed its post-erasure check (test line 279) and failed after the purge (line 284), so each destroyer is reproduced on its own.
+- **GREEN:** unit 68/68 (the three files); DB 90/90 (`erasure-evidence-reports`, `erasure-lifecycle`, `erasure-null-answers`).
+- **Mutants:** 15 distinct mutations in 16 runs (M1 ran against the unit files and again against the DB file).
+  - Method: each was applied alone through an exact-string replace that refuses a non-unique target, confirmed installed, and restored from a saved copy in `finally`, on top of the committed `c41c243`. The tree was clean after (`git diff --quiet`).
+  - **All killed** (failing tests per run):
+    - runner: M1 keeps no report (unit 5; DB 3); M2 filter inverted (12); M3 count lost (5); M4 count not passed (5); M5 builder drops the key (7);
+    - predicate: M6 `evidence-` (2); M7 `/reports/` (3); M8 never matches (6); M9 a null path counts as a report (3); M10 the LIKE constant drifts to `%/reports/%` (1);
+    - purge (DB): M11 keeps no report (1); M12 count lost (1); M13 payload drops the key (1); M14 the marker-failure sentence drops the count (null-answers 2); M15 the record-failure sentence drops it (1).
+- **Gates on `c41c243`:**
+  - `npm run typecheck` exit 0; `npm run lint` exit 0;
+  - `npx vitest run --testTimeout=30000` exit 0, 251 files / 3,972 tests.
+  - The default-timeout run hit five 5 s timeouts in three files this change does not touch (`viewing-confirmation-pdf`, `due-at-is-a-cyprus-day`, `env-names-documented`). The machine was at 100% CPU with 668 MB of 8 GB free, and run alone those files timed out on different tests again. CI's `checks` job ran the suite at default timeouts, green.
+- **Branch CI** on `c41c243`: run 39035267204 green — checks (13:09:40Z), rls (13:15:59Z), e2e (13:22:50Z).
+- **NOT run:** the full DB suite locally (CI's `rls` job ran it on a fresh database, on the branch and on the merge); no browser.
+
+**Known limit (an existing class).** A session could insert a contact document whose path matches the report pattern, and so keep it through erasure and the purge. That fails toward keeping. It is the existing BACKLOG class "Service-role storage removals trust a session-written path" (the audit adds its RLS-2 sub-bullet there).
+
+**Residual, not built (an observation).**
+- A report can still be deleted one at a time with its Documents-tab Delete (`deleteContactDocument`). The delete is evented as `document_deleted`, and that is how hosted's three test reports went.
+- That is a deliberate, attributed act, not ERA-1. Whether a report should be deletable at all is the operator's question, if it ever matters (the concurrent session holds `contact-documents.ts`).
+
+**Rollback.** Revert the merge. Application only: no migration, nothing on hosted.
+
+**Landing (2026-10-17, under the standing authorization).**
+- **Merge.** PR #167 merged at 13:23:52Z, pinned with `--match-head-commit c41c2437baabe9ba51c12e94ea0bbfcfcdbcc822`. Main moved `99c3bad` → `f5cf6c2`; main had not moved before the merge, and the merge's tree is the head's tree.
+- **Production.**
+  - Vercel `dpl_HQLTqDTqgzoebHxpi1k21VqfAKXh` READY 13:25:02Z, `githubCommitSha` `f5cf6c2…`, aliased to gnk-crm.vercel.app, `aliasError` null.
+  - `get_runtime_errors` since 13:20Z: none.
+  - Signed out: `/login` 200; `/contacts`, `/settings/retention` and `/reports` 307 → `/login`.
+- **Merge CI** on `f5cf6c2`: run 39036387283 green, read after it completed — checks (13:26:49Z), rls (13:32:14Z), e2e (13:37:04Z).
+- **BACKLOG: the strike is pending, because the entry is not on main.**
+  - The entry "Erasure (no AML basis) and the retention purge destroy the contact's commission-evidence report PDFs" (ERA-1) lives in the audit's records commit `d139a34`. That commit is on branch `records/six-phase-audit-1017` and held local: the repo is public, and the operator decides how much of the public-surface findings to publish. When it lands, strike the entry with this entry.
+  - **Its own VERIFY misreads the fix.** `grep -n 'reports/evidence-' lib/services/erasure-run.ts lib/actions/contact-erasure.ts` still prints nothing on `f5cf6c2`, because the pattern now lives in `lib/services/evidence-report-path.ts`.
+  - Read this instead: `grep -n "isEvidenceReportPath" lib/services/erasure-run.ts lib/actions/contact-erasure.ts`. On `f5cf6c2` it gives `erasure-run.ts:7` (the import), `erasure-run.ts:216` (the filter), `contact-erasure.ts:8` and `contact-erasure.ts:379`.
+  - Its **Decide** (the purge half) is answered above: the default is built and the alternative stated.
+- **Cleanup.**
+  - The remote `fix/erasure-keeps-evidence-reports` is deleted (`git ls-remote` finds it no more); the local branch is kept.
+  - The stack `.iso/era1` is stopped (0 containers, 0 volumes) and its folder deleted.
+  - The worktree `.worktrees/gnk-crm/era1-evidence-reports` now holds these records and stays until they merge.
+- **These records** are PR #169 (branch `land/era1-evidence-reports`, from `f5cf6c2`).
