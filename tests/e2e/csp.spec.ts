@@ -9,9 +9,13 @@ import { baseUrl, fixtureProfile, isLocal, MODULES, opTimeout, serviceClient } f
  */
 const CSP_FIXTURE_TAG = "csp-detail-fixture";
 const CSP_FIXTURE_REF = "CSP-FIXTURE-";
-/** Folder in the public `media` bucket holding this spec's uploaded fixtures. */
+/**
+ * Names this spec's uploaded fixtures. Since 0148 each cover lives under its
+ * own property (`properties/<id>/csp-fixture-<tag>_thumb.png`); before, they
+ * shared a `csp-fixture/` folder in the public `media` bucket, which the
+ * cleanup still sweeps.
+ */
 const CSP_FIXTURE_MEDIA_DIR = "csp-fixture";
-const CSP_FIXTURE_MEDIA_PREFIX = `${CSP_FIXTURE_MEDIA_DIR}/`;
 
 
 /**
@@ -421,12 +425,6 @@ test.describe("Content-Security-Policy (ENFORCED)", () => {
   async function seedPropertyWithCover(svc: SupabaseClient): Promise<void> {
     const orgId = await fixtureOrgId(svc);
     const tag = Date.now().toString(36);
-    const path = `${CSP_FIXTURE_MEDIA_PREFIX}${tag}/thumb.png`;
-
-    const up = await svc.storage
-      .from("media")
-      .upload(path, ONE_PIXEL_PNG, { contentType: "image/png", upsert: true });
-    expect(up.error, `uploading the fixture image: ${up.error?.message}`).toBeNull();
 
     const { data: property, error: propErr } = await svc
       .from("properties")
@@ -439,6 +437,13 @@ test.describe("Content-Security-Policy (ENFORCED)", () => {
       .select("id")
       .single();
     expect(propErr, `seeding a property: ${propErr?.message}`).toBeNull();
+
+    // 0148: a property_media row names only objects under its own property
+    const path = `properties/${property!.id}/${CSP_FIXTURE_MEDIA_DIR}-${tag}_thumb.png`;
+    const up = await svc.storage
+      .from("media")
+      .upload(path, ONE_PIXEL_PNG, { contentType: "image/png", upsert: true });
+    expect(up.error, `uploading the fixture image: ${up.error?.message}`).toBeNull();
 
     const { error: mediaErr } = await svc.from("property_media").insert({
       org_id: orgId,
@@ -535,9 +540,17 @@ test.describe("Content-Security-Policy (ENFORCED)", () => {
     const propIds = (props ?? []).map((p) => p.id);
     if (propIds.length) await svc.from("viewings").delete().in("property_id", propIds);
 
+    // each fixture's cover lives under its own property (0148)
+    for (const id of propIds) {
+      const { data: files } = await svc.storage.from("media").list(`properties/${id}`);
+      const names = (files ?? []).map((f) => `properties/${id}/${f.name}`);
+      if (names.length) await svc.storage.from("media").remove(names);
+    }
+
     await svc.from("properties").delete().like("reference", `${CSP_FIXTURE_REF}%`);
     await svc.from("contacts").delete().eq("notes", CSP_FIXTURE_TAG);
 
+    // and the folder the covers lived in before 0148, for a run left over from then
     const { data: dirs } = await svc.storage.from("media").list(CSP_FIXTURE_MEDIA_DIR);
     const stale = (dirs ?? []).map((d) => `${CSP_FIXTURE_MEDIA_DIR}/${d.name}/thumb.png`);
     if (stale.length) await svc.storage.from("media").remove(stale);

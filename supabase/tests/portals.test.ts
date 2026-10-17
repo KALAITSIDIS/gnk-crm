@@ -105,10 +105,10 @@ beforeAll(async () => {
   const { data: media, error: mErr } = await svc
     .from("property_media")
     .insert([
-      { org_id: ORG_A, property_id: publicId, kind: "photo", path_full: `t/${run}_1_full.webp`, path_jpeg: `t/${run}_1_jpeg.jpg`, is_cover: true, sort_order: 1, alt: { en: "Front" } },
-      { org_id: ORG_A, property_id: publicId, kind: "photo", path_full: `t/${run}_2_full.webp`, path_jpeg: `t/${run}_2_jpeg.jpg`, is_cover: false, sort_order: 0, alt: { en: "Garden" } },
-      { org_id: ORG_A, property_id: publicId, kind: "photo", path_full: `t/${run}_3_full.webp`, path_jpeg: null, is_cover: false, sort_order: 2, alt: { en: "No JPEG" } },
-      { org_id: ORG_A, property_id: publicId, kind: "floor_plan", path_full: `t/${run}_4_full.webp`, path_jpeg: `t/${run}_4_jpeg.jpg`, is_cover: false, sort_order: 3, alt: { en: "Floor plan" } },
+      { org_id: ORG_A, property_id: publicId, kind: "photo", path_full: `properties/${publicId}/${run}_1_full.webp`, path_jpeg: `properties/${publicId}/${run}_1_jpeg.jpg`, is_cover: true, sort_order: 1, alt: { en: "Front" } },
+      { org_id: ORG_A, property_id: publicId, kind: "photo", path_full: `properties/${publicId}/${run}_2_full.webp`, path_jpeg: `properties/${publicId}/${run}_2_jpeg.jpg`, is_cover: false, sort_order: 0, alt: { en: "Garden" } },
+      { org_id: ORG_A, property_id: publicId, kind: "photo", path_full: `properties/${publicId}/${run}_3_full.webp`, path_jpeg: null, is_cover: false, sort_order: 2, alt: { en: "No JPEG" } },
+      { org_id: ORG_A, property_id: publicId, kind: "floor_plan", path_full: `properties/${publicId}/${run}_4_full.webp`, path_jpeg: `properties/${publicId}/${run}_4_jpeg.jpg`, is_cover: false, sort_order: 3, alt: { en: "Floor plan" } },
     ])
     .select("id");
   if (mErr) throw new Error(mErr.message);
@@ -286,8 +286,8 @@ describe("the token functions (anon)", () => {
     // cover first despite its higher sort_order, then by sort_order; the photo
     // with no JPEG rendition and the floor plan are not photographs a portal gets
     expect(row.images).toEqual([
-      { jpeg: `t/${run}_1_jpeg.jpg`, alt: { en: "Front" } },
-      { jpeg: `t/${run}_2_jpeg.jpg`, alt: { en: "Garden" } },
+      { jpeg: `properties/${publicId}/${run}_1_jpeg.jpg`, alt: { en: "Front" } },
+      { jpeg: `properties/${publicId}/${run}_2_jpeg.jpg`, alt: { en: "Garden" } },
     ]);
 
     // the other direction: an approximate location is flagged as such, so a

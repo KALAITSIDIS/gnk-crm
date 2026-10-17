@@ -192,7 +192,7 @@ beforeAll(async () => {
   // photograph g's hash is sha256("<RUN>-<g>"); the sharers below reuse them
   await pg.query(
     `insert into property_media (org_id, property_id, kind, path_thumb, sort_order, content_sha256)
-     select $1::uuid, $2::uuid, 'photo', format('t/%s.jpg', g), g,
+     select $1::uuid, $2::uuid, 'photo', format('properties/%s/%s.jpg', $2::uuid, g), g,
             encode(sha256(convert_to($4::text || '-' || g, 'UTF8')), 'hex')
        from generate_series(1, $3::int) g`,
     [ORG, listingId, N_PHOTOS, RUN],
@@ -207,7 +207,7 @@ beforeAll(async () => {
   );
   await pg.query(
     `insert into property_media (org_id, property_id, kind, path_thumb, sort_order, content_sha256)
-     select $1::uuid, p.id, 'photo', 't/s.jpg', 1, encode(sha256(convert_to($2::text || '-' || (1 + (p.n - 1) % $3::int), 'UTF8')), 'hex')
+     select $1::uuid, p.id, 'photo', format('properties/%s/s.jpg', p.id), 1, encode(sha256(convert_to($2::text || '-' || (1 + (p.n - 1) % $3::int), 'UTF8')), 'hex')
        from (select id, row_number() over (order by reference) as n from properties where org_id = $1 and reference like 'SS%') p`,
     [ORG, RUN, N_PHOTOS],
   );
@@ -215,7 +215,7 @@ beforeAll(async () => {
   // hashes: named once
   await pg.query(
     `insert into property_media (org_id, property_id, kind, path_thumb, sort_order, content_sha256)
-     select $1::uuid, id, 'photo', 't/s2.jpg', 2, encode(sha256(convert_to($2::text || '-' || $3::int, 'UTF8')), 'hex')
+     select $1::uuid, id, 'photo', format('properties/%s/s2.jpg', id), 2, encode(sha256(convert_to($2::text || '-' || $3::int, 'UTF8')), 'hex')
        from properties where org_id = $1 and reference = $4`,
     [ORG, RUN, N_PHOTOS - 5, `SS${TAG}-0001`],
   );
@@ -226,7 +226,7 @@ beforeAll(async () => {
   );
   await pg.query(
     `insert into property_media (org_id, property_id, kind, path_thumb, sort_order, content_sha256)
-     values ($1, $2, 'photo', 't/x.jpg', 1, encode(sha256(convert_to($3::text || '-1', 'UTF8')), 'hex'))`,
+     values ($1, $2::uuid, 'photo', format('properties/%s/x.jpg', $2::uuid), 1, encode(sha256(convert_to($3::text || '-1', 'UTF8')), 'hex'))`,
     [OTHER, o[0]!.id, RUN],
   );
 

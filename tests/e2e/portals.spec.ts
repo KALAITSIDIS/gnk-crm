@@ -106,8 +106,8 @@ async function seedPublicListing(svc: SupabaseClient, orgId: string, tag: string
       org_id: orgId,
       property_id: prop.id,
       kind: "photo",
-      path_full: `e2e/${tag}_${i + 1}_full.webp`,
-      path_jpeg: i === MIN_PHOTOS ? null : `e2e/${tag}_${i + 1}_jpeg.jpg`,
+      path_full: `properties/${prop.id}/${tag}_${i + 1}_full.webp`,
+      path_jpeg: i === MIN_PHOTOS ? null : `properties/${prop.id}/${tag}_${i + 1}_jpeg.jpg`,
       is_cover: i === 0,
       sort_order: i,
       alt: {},
@@ -229,7 +229,7 @@ test("enable → select → feed → remove → gone", async ({ page }) => {
     expect(res.headers()["content-type"]).toContain("application/xml");
     const xml = await res.text();
     expect(xml).toContain(`<ref>${listing.reference}</ref>`);
-    expect(xml).toContain(`/media/e2e/${tag}_1_jpeg.jpg`);
+    expect(xml).toContain(`/media/properties/${listing.id}/${tag}_1_jpeg.jpg`);
     // …and the photo with no JPEG rendition is invisible to the portal: neither
     // its jpeg (there is none) nor its webp reaches the document.
     expect(xml).not.toContain(listing.unpreparedStem);
