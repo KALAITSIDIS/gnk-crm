@@ -1,6 +1,7 @@
 # HANDOFF — 2026-08-08
 
 **2026-10-17, latest (six-phase audit, read-only; records only — this PR): the operator pasted a six-phase "Master system prompt" audit of both repos. It was verified, not applied: 124 agents, independent evidence / consequence / history lenses per finding, hosted read with SELECTs only, nothing changed anywhere. The report (scorecard, ledger, drop-in fixes for the two HIGH findings, the add-ons ranked) is `docs/AUDIT_2026-10-17_SIX_PHASE.md`; the findings are BACKLOG "Six-phase audit — 2026-10-17"; DECISIONS `T-six-phase-audit-2026-10-17`.**
+- **Since the audit (all LANDED 2026-10-17; each has its own block below):** ERA-1 (#167 → `f5cf6c2`); MEDIA-1 + RLS-3 (hosted 0148, #171 → `d1a8362`); P3B1-1, NOTIF-1 and NOTIF-2's quota naming (#168 → `9d9dc9c`); ANON-2 (hosted 0149, #170 → `7313999`). Their BACKLOG entries are struck in this PR; NOTIF-2's outbound counter stays open (with ANON-3, before arming the acknowledgement). The recommended order below is therefore done through step 4, except NOTIF-2's counter.
 - **What it found** (at gnk-crm `99c3bad`, gnk-web `08b508b`).
   - 0 CRITICAL, 2 HIGH, 44 MEDIUM and 17 OPTIMIZATION (61 distinct); 31 NEW, 14 already open; 1 refuted.
   - The prompt's own checklist is PASS almost throughout:

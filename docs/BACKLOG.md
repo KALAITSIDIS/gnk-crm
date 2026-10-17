@@ -4585,7 +4585,7 @@ Found by the read-only six-phase audit of gnk-crm `99c3bad` and gnk-web `08b508b
 
 **HIGH**
 
-- **Erasure (no AML basis) and the retention purge destroy the contact's commission-evidence report PDFs, S (latent: hosted holds 0 report rows).** (ERA-1)
+- ~~**Erasure (no AML basis) and the retention purge destroy the contact's commission-evidence report PDFs, S (latent: hosted holds 0 report rows).**~~ **FIXED 2026-10-17 — DECISIONS `T-erasure-keeps-evidence-reports` (LANDED 2026-10-17 — PR #167, main `f5cf6c2`, deployed; records PR #169 → `8483916`). Its Decide is answered there: keeping reports through the purge is built, the alternative is recorded.** (ERA-1)
   - `generateEvidenceReport` stores the PDF as an ordinary contact document: `lib/actions/reports.ts:99-111`, `entity_type: "contact"`, `doc_type: "evidence_report"`, path `<org>/reports/evidence-<contact>-<stamp>.pdf`.
   - Both destructive listings take every contact document: erasure `listDocuments` at `lib/actions/contact-erasure.ts:199-205` (removed when `deleteDocuments: !amlBasis`, `lib/services/erasure-run.ts:210-216`), and the purge at `contact-erasure.ts:368-378`.
   - The contract says the opposite:
@@ -4600,6 +4600,7 @@ Found by the read-only six-phase audit of gnk-crm `99c3bad` and gnk-web `08b508b
     - The drop-in is in the report §3.1.
   - **Decide:** the purge half. The patch keeps reports through the purge, as the spec and the UI promise. The alternative is to destroy them at the end of the AML duty, reword `retention-panel.tsx:127`, and record that in DECISIONS.
   - **VERIFY:** `grep -n 'reports/evidence-' lib/services/erasure-run.ts lib/actions/contact-erasure.ts`. No output means open.
+  - **VERIFY (corrected at landing):** the VERIFY above misreads the fix, because the pattern now lives in `lib/services/evidence-report-path.ts`. Read `grep -n "isEvidenceReportPath" lib/services/erasure-run.ts lib/actions/contact-erasure.ts` instead: on origin/main `8a07527` it gives `erasure-run.ts:7`, `:216`, `contact-erasure.ts:8` and `:379`. No output means it regressed.
 
 **Security and public surface**
 
@@ -4615,7 +4616,7 @@ Found by the read-only six-phase audit of gnk-crm `99c3bad` and gnk-web `08b508b
     - Signatures stay the same.
   - **VERIFY:** `grep -n 'where token_sha256 = p_token_sha256' supabase/migrations/0146_share_link_tenant_binding.sql` gives `358:` while 0146 is the last migration naming `resolve_share_link`. That means open.
 
-- **The anon rate counters accept any `p_ip_hash`, and prune with a full scan on every call, S (migration).** (ANON-2)
+- ~~**The anon rate counters accept any `p_ip_hash`, and prune with a full scan on every call, S (migration).**~~ **FIXED 2026-10-17 — DECISIONS `T-anon-counter-key-shape` (LANDED 2026-10-17 — hosted 0149 first, PR #170, main `7313999`, deployed; records PR #172 → `3d11869`).** (ANON-2)
   - `note_share_link_miss` (`0023:265-283`) and `note_public_listing_hit` (`0066:119-137`) are anon-executable (pinned anon=true in `verify-restore.sql`).
   - They store whatever key the caller sends, up to the btree row limit, with no CHECK on either table. The prune filters on `window_start`, while the only index is the PK `(ip_hash, window_start)`.
   - A direct PostgREST loop bloats both tables on the Free-plan database.
@@ -4624,6 +4625,7 @@ Found by the read-only six-phase audit of gnk-crm `99c3bad` and gnk-web `08b508b
     - `check (ip_hash ~ '^[0-9a-f]{32}$') not valid` + validate on `share_link_attempts`, `public_listing_attempts` and `public_enquiry_attempts`;
     - an index on `window_start` (or a sampled prune).
   - **VERIFY:** `grep -ln 'p_ip_hash !~' supabase/migrations/*.sql`. No output means open.
+  - **VERIFY (at landing):** `grep -ln 'p_ip_hash !~' supabase/migrations/*.sql` gives `0149_anon_counter_key_shape.sql` on origin/main `3d11869`. No output means it regressed.
 
 - **The website acknowledgement echoes caller-typed text from the firm's domain to any address, S (latent until `ENQUIRY_ALERT_FROM` is set).** (ANON-3 = P3B1-2)
   - `app/api/public/enquiries/route.ts:184-196` passes `name: input.name` and `propertyReference: input.property_reference` to the ack (`lib/services/enquiry-ack.ts:42-55`).
@@ -4636,7 +4638,7 @@ Found by the read-only six-phase audit of gnk-crm `99c3bad` and gnk-web `08b508b
     - Do this BEFORE arming `ENQUIRY_ALERT_FROM` (HANDOFF row 1d).
   - **VERIFY:** `grep -n 'propertyReference: input.property_reference' app/api/public/enquiries/route.ts` gives `194:`. That means open.
 
-- **The enquiry door's origin ceiling is one shared counter row: a silent kill switch for every site enquiry, S.** (P3B1-1)
+- ~~**The enquiry door's origin ceiling is one shared counter row: a silent kill switch for every site enquiry, S.**~~ **FIXED 2026-10-17 — DECISIONS `T-public-doors` (LANDED 2026-10-17 — PR #168, main `9d9dc9c`, deployed; records PR #172 → `3d11869`).** (P3B1-1)
   - With the forward key proven, `budgetsFor` returns [visitor 5, origin 60] (`lib/services/enquiry-budget.ts:65-68`). The origin budget is metered on the unscoped `callerIpHash()` of gnk-web's egress (`route.ts:92`), not on a `site:` scope as the feed's is (`caller-ip.ts:22-24`).
   - Honeypot hits are answered only after both budgets are spent (`route.ts:118-120`), and an untrusted caller at the same egress raises the same row.
   - About 60 posts from 12 IPs per 15 minutes refuse every genuine buyer with 429, and nothing pages.
@@ -4645,8 +4647,9 @@ Found by the read-only six-phase audit of gnk-crm `99c3bad` and gnk-web `08b508b
     - meter the proven forwarder on `callerIpHash("site")`;
     - when the origin budget refuses, page once per window and return a distinct code that gnk-web reports.
   - **VERIFY:** `grep -n 'callerIpHash(' app/api/public/enquiries/route.ts` gives `92:    await callerIpHash(),` (no scope argument). That means open.
+  - **VERIFY (at landing):** `grep -n 'callerIpHash("site")' app/api/public/enquiries/route.ts` gives `130:` on origin/main `3d11869`. No output means it regressed.
 
-- **The public `/api/csp-report` can flood Sentry with attacker-titled issues, S.** (NOTIF-1)
+- ~~**The public `/api/csp-report` can flood Sentry with attacker-titled issues, S.**~~ **FIXED 2026-10-17 — DECISIONS `T-public-doors` (LANDED 2026-10-17 — PR #168, main `9d9dc9c`, deployed; records PR #172 → `3d11869`).** (NOTIF-1)
   - It is sessionless (`proxy.ts:11-13`) and accepts 128 KB bodies.
   - `route.ts:80-96` sends one `Sentry.captureMessage` per distinct directive / blocked-URL / source key, with no per-request or per-window cap. The dedupe Set is cleared at 200 entries (`:83`).
   - Only the SDK's 64-slot buffer bounds a request: about 80 requests make 5,000 events, which uses up the quota and noises the alerts (rule 738321).
@@ -4657,6 +4660,7 @@ Found by the read-only six-phase audit of gnk-crm `99c3bad` and gnk-web `08b508b
     - oldest-first eviction instead of `clear()`.
     - Operator side: a per-key rate limit on both DSNs.
   - **VERIFY:** `grep -n 'seen.clear()\|parseCspReport(' app/api/csp-report/route.ts` gives `80:` (no `.slice`) and `83:`. That means open.
+  - **VERIFY (at landing):** `grep -n 'slice(0, MAX_VIOLATIONS_PER_REPORT)' app/api/csp-report/route.ts` gives `95:` on origin/main `3d11869`. No output means it regressed.
 
 - **Public enquiries can use up the shared Resend quota, so genuine desk alerts and escalations fail that day, S.** (NOTIF-2)
   - Every fresh enquiry spends quota: the desk alert, plus the ack once armed (`route.ts:168-196`, `proposals/interest/route.ts:125-148`).
@@ -4667,6 +4671,9 @@ Found by the read-only six-phase audit of gnk-crm `99c3bad` and gnk-web `08b508b
     - map `daily_quota_exceeded` / `monthly_quota_exceeded` to their own result and page once;
     - record the plan and limit in docs/10.
   - **VERIFY:** `grep -rln 'daily_quota_exceeded' lib app`. No output means open.
+  - **PARTLY FIXED 2026-10-17 — DECISIONS `T-public-doors` (LANDED 2026-10-17 — PR #168, main `9d9dc9c`, deployed; records PR #172 → `3d11869`).** A spent daily or monthly quota is now named (`quota: "daily" | "monthly"`) and paged once per quota per UTC day; the retry schedule is unchanged.
+    - **Still open:** the per-organisation outbound counter that keeps quota for the desk alert and the escalation. It needs a migration and only protects quota from the visitor acknowledgement, which is not armed, so it goes in with ANON-3's fix, before `ENQUIRY_ALERT_FROM` is set.
+    - **VERIFY (the landed half):** `grep -c 'daily_quota_exceeded' lib/services/enquiry-alert.ts` reads 1 or more on origin/main `3d11869`. **VERIFY (the open half):** `grep -rln 'note_outbound_mail\|outbound_mail' supabase/migrations lib`. No output means open.
 
 - **Second-factor guessing has no per-account bound and no signal, S.** (AUTH-1)
   - `verifyMfaLogin` (`lib/actions/mfa.ts:191-223`) keeps no counter, sends nothing to Sentry, writes no event, and gives a wrong code, a 429 and a 5xx the same sentence.
@@ -4697,7 +4704,7 @@ Found by the read-only six-phase audit of gnk-crm `99c3bad` and gnk-web `08b508b
     - Check `BACKUP_RESTORE.md:1437` with it.
   - **VERIFY:** `grep -ln 'events from service_role' supabase/migrations/*.sql`. No output means open.
 
-- **The property page signs a session-written `path_card` out of the private `documents` bucket for every viewer, S (migration with T-media-path-bound).** (RLS-3)
+- ~~**The property page signs a session-written `path_card` out of the private `documents` bucket for every viewer, S (migration with T-media-path-bound).**~~ **FIXED 2026-10-17 — DECISIONS `T-media-path-bound` (LANDED 2026-10-17 — hosted 0148 first, PR #171, main `d1a8362`, deployed; records PR #173 → `8a07527`). The same change fixed the media half of "Service-role storage removals trust a session-written path" (amended there); the documents half stays open.** (RLS-3)
   - `app/(app)/properties/[id]/page.tsx:136-140` signs `m.path_card` for an hour for any non-photo kind.
   - The column is free text, and an admin, a listing manager (UPDATE) or the assigned agent (INSERT) can aim a floor-plan row at an admin-only KYC object.
   - Same class as "Service-role storage removals trust a session-written path" and "A slip row's stored file paths are free text"; neither names this reader.
@@ -4705,6 +4712,7 @@ Found by the read-only six-phase audit of gnk-crm `99c3bad` and gnk-web `08b508b
     - sign only `path_card?.startsWith(`properties/${id}/`)`;
     - plus the 0148 CHECK in the report §3.2 (every `property_media` path under `properties/<property_id>/`, no `..`), which also closes the media half of the removal entry.
   - **VERIFY:** `grep -n 'createSignedUrl(m.path_card' 'app/(app)/properties/[id]/page.tsx'` gives `140:` with no `startsWith` guard above it. That means open.
+  - **VERIFY (at landing):** `grep -n 'isOwnRenditionPath(p.id, m.path_card)' 'app/(app)/properties/[id]/page.tsx'` gives `142:` on origin/main `8a07527`, the guard before the signer at `:146`. No output means it regressed.
 
 **Data integrity**
 
