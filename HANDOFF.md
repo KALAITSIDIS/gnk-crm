@@ -1,6 +1,40 @@
 # HANDOFF — 2026-08-08
 
-**2026-10-17, latest (media paths bound to their own listing; T-media-path-bound, migration 0148 — audit 2026-10-17 MEDIA-1 (HIGH) and RLS-3; LANDED — hosted 0148 first, PR #171 → main `d1a8362`). A `property_media` row can only name objects under its own property, and the two service-role readers of those names trust nothing else. Before it, a listing manager could aim a photo at a signed mandate PDF and delete the photo, and the service role removed the mandate; a floor plan aimed at a KYC scan was signed for every viewer of the listing. DECISIONS `T-media-path-bound`.**
+**2026-10-17, latest (six-phase audit, read-only; records only — this PR): the operator pasted a six-phase "Master system prompt" audit of both repos. It was verified, not applied: 124 agents, independent evidence / consequence / history lenses per finding, hosted read with SELECTs only, nothing changed anywhere. The report (scorecard, ledger, drop-in fixes for the two HIGH findings, the add-ons ranked) is `docs/AUDIT_2026-10-17_SIX_PHASE.md`; the findings are BACKLOG "Six-phase audit — 2026-10-17"; DECISIONS `T-six-phase-audit-2026-10-17`.**
+- **Since the audit (all LANDED 2026-10-17; each has its own block below):** ERA-1 (#167 → `f5cf6c2`); MEDIA-1 + RLS-3 (hosted 0148, #171 → `d1a8362`); P3B1-1, NOTIF-1 and NOTIF-2's quota naming (#168 → `9d9dc9c`); ANON-2 (hosted 0149, #170 → `7313999`). Their BACKLOG entries are struck in this PR; NOTIF-2's outbound counter stays open (with ANON-3, before arming the acknowledgement). The recommended order below is therefore done through step 4, except NOTIF-2's counter.
+- **What it found** (at gnk-crm `99c3bad`, gnk-web `08b508b`).
+  - 0 CRITICAL, 2 HIGH, 44 MEDIUM and 17 OPTIMIZATION (61 distinct); 31 NEW, 14 already open; 1 refuted.
+  - The prompt's own checklist is PASS almost throughout:
+    - RLS org-scoped in USING and WITH CHECK, all 357 helpers hoisted;
+    - definers pinned, anon EXECUTE = the 9 pinned functions;
+    - hosted = repo, 147/147, advisors unchanged;
+    - uploads gated, JSON-LD escaped, source maps deleted;
+    - Greek and Cyrillic covered in the PDFs.
+  - Its assumptions that do not exist (gnk-web next-intl / middleware / Supabase, `routes` tables, `merge_deal_health`, `hideSourceMaps`) are answered N/A.
+  - The 2026-10-14 rejections (`security_invoker`, strict `z.uuid()`, kanban clones and the rest) were re-confirmed, not re-proposed.
+- **The two HIGH findings, both latent on hosted** (0 evidence-report rows, 0 `property_media` rows, counted 2026-10-17).
+  - **ERA-1 (NEW):** erasure with no AML basis, and every retention purge, deletes the contact's commission-evidence report PDFs, while the dialog, the banner and the `erased` payload say reports are untouched. The fix identifies reports by path; the purge half is an operator decision.
+  - **MEDIA-1 (the open class "Service-role storage removals trust a session-written path", widened):** `deleteMediaBulk` removes whatever paths the rows name, as the service role; a listing manager can aim one at a signed mandate PDF. The fix is a `property_media` path CHECK (migration) plus own-prefix removal. It also closes RLS-3 (the property page signs a session-written path).
+- **Operator decisions it needs** (none blocks the fixes above):
+  1. ERA-1's purge half: keep reports past the AML duty, or destroy them and reword.
+  2. Required status checks on `main` in both repos (CICD-1), and turning rebase merges off (CICD-2): repository settings.
+  3. ERA-4: are deal notes erased with the contact?
+  4. WEB-2's cold-cache trade-off.
+  5. Any PropTech add-on at all (each is a proposal; #1's reviewed draft is `docs/blueprints/T-match-pitch-0148.md`, unrun).
+- **What next.**
+  - **These records.** Read the PR's CI and merge it pinned to its head (`--match-head-commit`). Then remove `.worktrees/gnk-crm/audit-1017` and `.worktrees/gnk-web/audit-1017` (detached audit worktrees; this branch `records/six-phase-audit-1017` lives in the crm one) and the remote branch.
+  - **Then, recommended order:**
+    1. ERA-1 (S, no migration).
+    2. T-media-path-bound: MEDIA-1 + RLS-3 (migration; hosted first).
+    3. ANON-3 BEFORE `ENQUIRY_ALERT_FROM` is ever set (HANDOFF row 1d).
+    4. The public-surface group: P3B1-1, NOTIF-1, NOTIF-2, ANON-2.
+    5. ANON-1 (the double hash, migration).
+    6. The observability group: OBS-1…4, MEDIA-2.
+    7. gnk-web: WEB-1, P3B1-3, WEB-2.
+  - **The concurrent session is unchanged.** `T-document-insert-outcome` (`.worktrees/gnk-crm/document-insert-outcome`) is still uncommitted: HEAD `489c507`, 12 paths, files last written 2026-10-14 16:48 (read 2026-10-17, not touched). RACE-2 and two of VAL-2's actions wait on its `mandates.ts` / `viewing-documents.ts`.
+  - **Still open from before:** the `SENTRY_AUTH_TOKEN` sensitivity decision; the read-only hosted health check after #165.
+
+**2026-10-17 (media paths bound to their own listing; T-media-path-bound, migration 0148 — audit 2026-10-17 MEDIA-1 (HIGH) and RLS-3; LANDED — hosted 0148 first, PR #171 → main `d1a8362`). A `property_media` row can only name objects under its own property, and the two service-role readers of those names trust nothing else. Before it, a listing manager could aim a photo at a signed mandate PDF and delete the photo, and the service role removed the mandate; a floor plan aimed at a KYC scan was signed for every viewer of the listing. DECISIONS `T-media-path-bound`.**
 - **What.**
   - **0148**, `property_media_paths_own_property`: each of the five path columns, when set, starts with `properties/<property_id>/`, is made of letters, digits, `.`, `_`, `-` and `/`, and holds no `..` — for every writer, service_role and restores included. The character rule goes beyond the audit's drop-in: measured, `properties/<id>/%2e%2e/%2e%2e/<org>/mandates/x.pdf` (and `%2E%2E`, `.%2e`, `..\`) is signed as the mandate and serves it.
   - **`deleteMediaBulk`** removes only names under the listing's prefix that no surviving row of the listing still holds (every page of them), and nothing — reported — when it cannot read the survivors.
