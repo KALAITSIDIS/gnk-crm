@@ -115,6 +115,14 @@ describe("a run of requests cannot flood Sentry either", () => {
     expect(capture).toHaveBeenCalledTimes(10);
   });
 
+  it("a bucket spent in part and then left idle refills to ten, never past it", async () => {
+    await send(keys(1, "one-"));
+    expect(capture).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(T0 + 48 * HOUR);
+    for (let i = 0; i < 6; i++) await send(keys(3, `after${i}-`));
+    expect(capture).toHaveBeenCalledTimes(11);
+  });
+
   it("a full bucket earns nothing while it waits: a burst is ten, not ten plus a token already earned", async () => {
     // the instance started at T0 with a full bucket and saw nothing for 5:59
     vi.setSystemTime(T0 + 6 * 60_000 - 1000);

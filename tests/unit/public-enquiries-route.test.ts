@@ -28,6 +28,8 @@ import { POST } from "@/app/api/public/enquiries/route";
 const state = vi.hoisted(() => ({
   hits: [] as Array<{ hash: string; limit: number }>,
   refuseAt: -1,
+  /** every counter call from this index on answers an ERROR, not a verdict */
+  counterErrorFrom: -1,
   submits: [] as Array<Record<string, unknown>>,
   /** 0096: the door answers with the lead; `replayed` says the key was seen before */
   replay: false,
@@ -50,6 +52,9 @@ vi.mock("@/lib/supabase/admin", () => ({
     rpc: async (name: string, args: Record<string, unknown>) => {
       if (name === "note_public_enquiry_hit") {
         state.hits.push({ hash: String(args.p_ip_hash), limit: Number(args.p_limit) });
+        if (state.counterErrorFrom >= 0 && state.hits.length - 1 >= state.counterErrorFrom) {
+          return { data: null, error: { message: "counter unavailable" } };
+        }
         return { data: state.hits.length - 1 === state.refuseAt, error: null };
       }
       if (name === "submit_public_enquiry") {
@@ -133,6 +138,7 @@ const post = async (headers: Record<string, string> = {}, body: Record<string, u
 beforeEach(() => {
   state.hits = [];
   state.refuseAt = -1;
+  state.counterErrorFrom = -1;
   state.submits = [];
   state.replay = false;
   state.writes = [];
@@ -300,6 +306,21 @@ describe("the site's ceiling is the site's alone, and it is never silent", () =>
       vi.setSystemTime(new Date("2026-10-17T10:15:00Z"));
       expect((await post(signed)).status).toBe(429);
       expect(capture).toHaveBeenCalledTimes(2);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("a counter that ERRORS lets the enquiry through and says so — for the visitor's budget and the ceiling alike", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      state.counterErrorFrom = 0;
+      const res = await post(signed);
+      expect(res.status).toBe(202);
+      expect(state.hits).toHaveLength(2);
+      expect(state.submits).toHaveLength(1);
+      expect(error.mock.calls.filter((c) => String(c[0]).includes("rate counter failed, allowing"))).toHaveLength(2);
+      expect(await sentry(), "a counter outage is the console's to report, not the ceiling's page").not.toHaveBeenCalled();
     } finally {
       error.mockRestore();
     }
