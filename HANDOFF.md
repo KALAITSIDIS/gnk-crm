@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-08
 
-**2026-10-17, latest (ERA-1: erasure and the retention purge keep the commission-evidence reports; LANDED — PR #167). This is the six-phase audit's one new HIGH, built on the audit's drop-in under the standing authorization. A report is known by its path (`lib/services/evidence-report-path.ts`). Neither destroyer touches one, whatever the AML basis, and the `erased` and `retention_purged` lines count what they kept (`evidence_reports_kept`). No migration, nothing on hosted. #167 merged 13:23:52Z → main `f5cf6c2`, deployed, merge CI green. These landing records are PR #168 (branch `land/era1-evidence-reports`, from `f5cf6c2`). DECISIONS `T-erasure-keeps-evidence-reports`.**
+**2026-10-17, latest (ERA-1: erasure and the retention purge keep the commission-evidence reports; LANDED — PR #167). This is the six-phase audit's one new HIGH, built on the audit's drop-in under the standing authorization. A report is known by its path (`lib/services/evidence-report-path.ts`). Neither destroyer touches one, whatever the AML basis, and the `erased` and `retention_purged` lines count what they kept (`evidence_reports_kept`). No migration, nothing on hosted. #167 merged 13:23:52Z → main `f5cf6c2`, deployed, merge CI green. These landing records are PR #169 (branch `land/era1-evidence-reports`, from `f5cf6c2`). DECISIONS `T-erasure-keeps-evidence-reports`.**
 - **What.**
   - **The defect.** `generateEvidenceReport` stores the PDF as an ordinary contact document, at `<org>/reports/evidence-<contact>-<stamp>.pdf`. An erasure with no AML basis and every retention purge listed every contact document, and destroyed the report with the rest. The spec, the erase dialog, the contact banner and the `erased` line's own `untouched` list all promise the opposite.
   - **The fix.** The pure runner (`erasure-run.ts`) and the purge's listing (`contact-erasure.ts`) set reports aside by their path, never by `doc_type` (a session may relabel it).
@@ -24,7 +24,8 @@
   - **The alternative** is to destroy them when the duty ends: one line in `purgeExpiredRetention`, plus the dialog's wording. DECISIONS `T-erasure-keeps-evidence-reports` says exactly what changes. Say if you want it.
 - **BACKLOG.** The ERA-1 entry is in the audit's records commit `d139a34`, not on main. Its strike is therefore in DECISIONS `T-erasure-keeps-evidence-reports` → Landing, which also corrects the entry's VERIFY (it misreads the fix).
 - **What next.**
-  - **These records.** PR #168: read its CI and merge it pinned to its head. Then remove `.worktrees/gnk-crm/era1-evidence-reports` and the remote `land/era1-evidence-reports`.
+  - **These records.** PR #169: read its CI and merge it pinned to its head. Then remove `.worktrees/gnk-crm/era1-evidence-reports` and the remote `land/era1-evidence-reports`.
+  - **Another session's PR #168** (`fix/public-doors`, "Harden three public routes") was open at records time; not touched here.
   - **The audit's records commit `d139a34`** (`.worktrees/gnk-crm/audit-1017`) is still local, waiting on the operator's publication decision. When it lands:
     - it adds at the same three places as these records (the HANDOFF top block, the DECISIONS tail, BACKLOG); keep both;
     - strike ERA-1 there with the note above;
