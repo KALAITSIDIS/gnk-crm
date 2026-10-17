@@ -114,6 +114,18 @@ describe("a run of requests cannot flood Sentry either", () => {
     for (let i = 0; i < 6; i++) await send(keys(3, `idle${i}-`));
     expect(capture).toHaveBeenCalledTimes(10);
   });
+
+  it("a full bucket earns nothing while it waits: a burst is ten, not ten plus a token already earned", async () => {
+    // the instance started at T0 with a full bucket and saw nothing for 5:59
+    vi.setSystemTime(T0 + 6 * 60_000 - 1000);
+    for (let i = 0; i < 4; i++) await send(keys(3, `burst${i}-`));
+    expect(capture).toHaveBeenCalledTimes(10);
+    // one second later is six minutes after the instance STARTED, but not
+    // six minutes after the first token was spent
+    vi.setSystemTime(T0 + 6 * 60_000);
+    await send(keys(3, "next-"));
+    expect(capture).toHaveBeenCalledTimes(10);
+  });
 });
 
 describe("what reaches Sentry is shaped by the route, not the caller", () => {
