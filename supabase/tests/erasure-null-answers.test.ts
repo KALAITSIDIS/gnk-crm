@@ -600,10 +600,10 @@ describe("the retention purge never reads a hollow answer as 'nothing retained'"
     expect(again.result).toEqual({ error: null, purgedAt: expect.any(String) });
     expect(await objectExists(doc.path)).toBe(false);
     expect(await docRows(doc.id)).toBe(0);
-    expect(await purged(c)).toEqual([{ documents_destroyed: 1, retention_until: "2020-06-01" }]);
+    expect(await purged(c)).toEqual([{ documents_destroyed: 1, evidence_reports_kept: 0, retention_until: "2020-06-01" }]);
   });
 
-  const DESTROYED_ONE = [{ documents_destroyed: 1, retention_until: "2020-06-01" }];
+  const DESTROYED_ONE = [{ documents_destroyed: 1, evidence_reports_kept: 0, retention_until: "2020-06-01" }];
 
   it("the document delete landed, its answer lost: the purge proves the rows gone and records 1 destroyed", async () => {
     const { c, doc } = await retained();
@@ -657,7 +657,7 @@ describe("the retention purge never reads a hollow answer as 'nothing retained'"
     const r = await run("purge", c, { on: "admin", hollow: hollow(clearOrReread, "200 empty", { forward: false, times: 2 }) });
     expect(r.result).toEqual({
       error:
-        "The 1 retained file(s) and their records are destroyed, but the retention date could not be cleared: the retention date (re-read after an unconfirmed clear): the answer held no rows (HTTP 200). Nothing is left to destroy — do not run the purge again (it would record 0 destroyed): the record (retention_purged, 1 documents, retention until 2020-06-01) must be written by an administrator.",
+        "The 1 retained file(s) and their records are destroyed, but the retention date could not be cleared: the retention date (re-read after an unconfirmed clear): the answer held no rows (HTTP 200). Nothing is left to destroy — do not run the purge again (it would record 0 destroyed): the record (retention_purged, 1 documents, 0 evidence reports kept, retention until 2020-06-01) must be written by an administrator.",
       purgedAt: null,
     });
     expect(r.hits).toHaveLength(2);
@@ -694,7 +694,7 @@ describe("the retention purge never reads a hollow answer as 'nothing retained'"
     expect(vi.mocked(revalidatePath).mock.calls).toEqual([["/settings/retention"], [`/contacts/${c}`]]);
     expect(r.result).toEqual({
       error:
-        "The 1 retained file(s) and their records are destroyed, but the retention date could not be cleared: the retention date: the answer held no rows (HTTP 500). Nothing is left to destroy — do not run the purge again (it would record 0 destroyed): the record (retention_purged, 1 documents, retention until 2020-06-01) must be written by an administrator.",
+        "The 1 retained file(s) and their records are destroyed, but the retention date could not be cleared: the retention date: the answer held no rows (HTTP 500). Nothing is left to destroy — do not run the purge again (it would record 0 destroyed): the record (retention_purged, 1 documents, 0 evidence reports kept, retention until 2020-06-01) must be written by an administrator.",
       purgedAt: null,
     });
     expect(r.hits).toHaveLength(2);
@@ -712,7 +712,7 @@ describe("the retention purge never reads a hollow answer as 'nothing retained'"
     console.log(`[evidence] purge, record write 500 0: ${JSON.stringify(r.result)}`);
     expect(r.result).toEqual({
       error:
-        "Purged — 1 retained file(s) and the retention date are gone — but the record of it failed to write: logEvent failed (contact.retention_purged): the write was not confirmed (HTTP 500). The record (retention_purged, 1 documents, retention until 2020-06-01) must be written by an administrator.",
+        "Purged — 1 retained file(s) and the retention date are gone — but the record of it failed to write: logEvent failed (contact.retention_purged): the write was not confirmed (HTTP 500). The record (retention_purged, 1 documents, 0 evidence reports kept, retention until 2020-06-01) must be written by an administrator.",
       purgedAt: expect.any(String),
     });
     expect(r.hits).toEqual([expect.stringMatching(/^admin POST \/rest\/v1\/events$/)]);

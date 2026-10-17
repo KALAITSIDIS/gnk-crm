@@ -129,8 +129,9 @@ export function RetentionPanel({ rows }: { rows: RetentionRowStatus[] }) {
               their stored files. It cannot be undone.
             </p>
             <p className="text-text-2">
-              The erasure record, the event log and any signed viewing slips are not affected —
-              they are the audit trail and immutable commission evidence.
+              The erasure record, the event log, any signed viewing slips and the generated
+              evidence reports are not affected — they are the audit trail and immutable
+              commission evidence.
             </p>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setTarget(null)} disabled={pending}>
