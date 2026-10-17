@@ -69,6 +69,16 @@ const FUNCTIONS = [
   { fn: "note_public_listing_hit", table: "public_listing_attempts", defaultLimit: 120 },
 ] as const;
 
+/**
+ * Wait out the last two seconds of a 15-minute counter window, so a test that
+ * plants a row and then calls a counter (or calls one four times) never
+ * straddles a window boundary.
+ */
+async function awayFromWindowEdge(): Promise<void> {
+  const left = 15 * 60_000 - (Date.now() % (15 * 60_000));
+  if (left < 2_000) await new Promise((r) => setTimeout(r, left + 250));
+}
+
 async function rowsFor(table: string, ipHash: string): Promise<number> {
   const { rows } = await o.query<{ c: number }>(`select count(*)::int as c from public.${table} where ip_hash = $1`, [ipHash]);
   return rows[0]!.c;
@@ -115,18 +125,18 @@ describe("1. anon, through PostgREST: only a 32-hex key is counted", () => {
         expect(await rowsFor(table, k), "and never becomes a row").toBe(0);
       });
 
-      it("a NULL key answers over budget and stores nothing", async () => {
-        const before = (await o.query<{ c: number }>(`select count(*)::int as c from public.${table}`)).rows[0]!.c;
+      it("a NULL key answers over budget, not an error", async () => {
+        // ip_hash is NOT NULL, so nothing could be stored either way: before
+        // 0149 the insert failed and the caller got the error (23502)
         const res = await anon.rpc(fn, { p_ip_hash: null, p_limit: 5 });
         expect(res.error).toBeNull();
         expect(res.data).toBe(true);
-        const after = (await o.query<{ c: number }>(`select count(*)::int as c from public.${table}`)).rows[0]!.c;
-        expect(after).toBeLessThanOrEqual(before);
       });
 
       it("a 32-hex key is counted exactly as before: under the limit, then over it", async () => {
         const k = key(`${fn}-counted`);
         written.add(k);
+        await awayFromWindowEdge();
         for (let i = 1; i <= 3; i++) {
           const res = await anon.rpc(fn, { p_ip_hash: k, p_limit: 3 });
           expect(res.error).toBeNull();
@@ -141,6 +151,7 @@ describe("1. anon, through PostgREST: only a 32-hex key is counted", () => {
         const { defaultLimit } = FUNCTIONS.find((f) => f.fn === fn)!;
         const k = key(`${fn}-default`);
         written.add(k);
+        await awayFromWindowEdge();
         await o.query(
           `insert into public.${table} (ip_hash, window_start, attempts)
            values ($1, date_trunc('hour', now()) + (floor(extract(minute from now()) / 15) * interval '15 minutes'), $2)`,
@@ -170,7 +181,7 @@ describe("2. every writer is held to the key's shape", () => {
     expect(await rowsFor(table, k)).toBe(1);
   });
 
-  it("service_role's note_public_enquiry_hit is refused a malformed key by the CHECK — its route sends hashIp() and fails open on an error", async () => {
+  it("service_role's note_public_enquiry_hit is refused a malformed key by the CHECK — its two routes send hashIp() and fail open on an error", async () => {
     const res = await svc.rpc("note_public_enquiry_hit", { p_ip_hash: `enquiry-${RUN}`, p_limit: 5 });
     expect(res.error?.code, res.error?.message).toBe("23514");
     expect(res.error?.message).toContain("public_enquiry_attempts_ip_hash_shape");
@@ -179,6 +190,7 @@ describe("2. every writer is held to the key's shape", () => {
   it("service_role's note_public_enquiry_hit counts a 32-hex key as before", async () => {
     const k = key("enquiry-ok");
     written.add(k);
+    await awayFromWindowEdge();
     expect((await svc.rpc("note_public_enquiry_hit", { p_ip_hash: k, p_limit: 1 })).data).toBe(false);
     expect((await svc.rpc("note_public_enquiry_hit", { p_ip_hash: k, p_limit: 1 })).data).toBe(true);
   });
@@ -408,14 +420,21 @@ describe("5. the migration", () => {
     [
       "a note_share_link_miss that is no longer SECURITY DEFINER",
       "alter function public.note_share_link_miss(text, integer) security invoker",
-      /^0149 aborted: public\.note_share_link_miss\(text, integer\) is not the boolean SECURITY DEFINER with search_path=public/,
+      /^0149 aborted: public\.note_share_link_miss\(text, integer\) is not the boolean SECURITY DEFINER owned by postgres with search_path=public/,
+    ],
+    [
+      "a counter owned by someone other than postgres",
+      // a throwaway role, created and dropped with the rolled-back transaction
+      `create role zz_owner_0149; grant create on schema public to zz_owner_0149; grant zz_owner_0149 to postgres;
+       alter function public.note_public_listing_hit(text, integer) owner to zz_owner_0149`,
+      /^0149 aborted: public\.note_public_listing_hit\(text, integer\) is not the boolean SECURITY DEFINER owned by postgres/,
     ],
     [
       "a changed default limit",
       `create or replace function public.note_public_listing_hit(p_ip_hash text, p_limit int default 121)
        returns boolean language plpgsql security definer set search_path = public as $fn$
        begin return false; end $fn$;`,
-      /^0149 aborted: public\.note_public_listing_hit\(text, integer\) is not the boolean SECURITY DEFINER with search_path=public and \(p_ip_hash text, p_limit integer DEFAULT 120\)/,
+      /^0149 aborted: public\.note_public_listing_hit\(text, integer\) is not the boolean SECURITY DEFINER owned by postgres with search_path=public and \(p_ip_hash text, p_limit integer DEFAULT 120\)/,
     ],
     [
       "a counter anon may no longer call",
@@ -514,7 +533,7 @@ describe("5. the migration", () => {
           "  if p_ip_hash is null or p_ip_hash !~ '^[0-9a-f]{32}$' then\n    return true;\n  end if;\n\n  insert into share_link_attempts",
           "  insert into share_link_attempts",
         ),
-      /^0149 postflight: public\.note_share_link_miss\(text, integer\) is not the definer this file wrote/,
+      /^0149 postflight: public\.note_share_link_miss\(text, integer\) has no key guard — a malformed key reached the table's CHECK$/,
     ],
     [
       "a listing body whose guard admits the key",
@@ -523,6 +542,15 @@ describe("5. the migration", () => {
           "  if p_ip_hash is null or p_ip_hash !~ '^[0-9a-f]{32}$' then\n    return true;\n  end if;\n\n  insert into public_listing_attempts",
           // a replacer, not a string: "$'" in a replacement string is the text after the match
           () => "  if p_ip_hash is null or p_ip_hash !~ '^[0-9a-f]{32}$' then\n    return false;\n  end if;\n\n  insert into public_listing_attempts",
+        ),
+      /^0149 postflight: public\.note_public_listing_hit\(text, integer\) stored or admitted a malformed key \(over=f, rows=0\)$/,
+    ],
+    [
+      "a body that behaves but is not the text this file pins",
+      (s) =>
+        s.replace(
+          "  -- opportunistic prune so the table cannot grow forever (0023; 0149: indexed)",
+          () => "  -- prune",
         ),
       /^0149 postflight: public\.note_public_listing_hit\(text, integer\) is not the definer this file wrote/,
     ],
@@ -547,12 +575,12 @@ describe("5. the migration", () => {
           "create index if not exists public_listing_attempts_window_start_idx on public.public_listing_attempts (window_start);",
           "create index if not exists public_listing_attempts_window_start_idx on public.public_listing_attempts (ip_hash);",
         ),
-      /^0149 postflight: public\.public_listing_attempts_window_start_idx is not a plain btree on \(window_start\)/,
+      /^0149 postflight: public\.public_listing_attempts_window_start_idx is not a valid plain btree on \(window_start\)/,
     ],
     [
       "an index that is missing",
       (s) => s.replace("create index if not exists public_enquiry_attempts_window_start_idx on public.public_enquiry_attempts (window_start);\n", ""),
-      /^0149 postflight: public\.public_enquiry_attempts_window_start_idx is not a plain btree on \(window_start\)/,
+      /^0149 postflight: public\.public_enquiry_attempts_window_start_idx is not a valid plain btree on \(window_start\)/,
     ],
   ];
   for (const [label, mutate, refusal] of mutants) {

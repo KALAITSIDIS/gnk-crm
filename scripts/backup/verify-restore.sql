@@ -1017,7 +1017,7 @@ misc as (
                or (c.conrelid = to_regclass('public.public_enquiry_attempts') and c.conname = 'public_enquiry_attempts_ip_hash_shape')))::text || ' ' ||
          (select count(*) from (values ('share_link_attempts'), ('public_listing_attempts'), ('public_enquiry_attempts')) t(name)
            where (select pg_get_indexdef(i.indexrelid) from pg_index i
-                   where i.indexrelid = to_regclass('public.' || t.name || '_window_start_idx'))
+                   where i.indexrelid = to_regclass('public.' || t.name || '_window_start_idx') and i.indisvalid)
                  = format('CREATE INDEX %s_window_start_idx ON public.%s USING btree (window_start)', t.name, t.name))::text || ' ' ||
          (select count(*) from pg_proc p
            where p.oid in (to_regprocedure('public.note_share_link_miss(text, integer)'),

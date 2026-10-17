@@ -21,7 +21,8 @@
 --      SECURITY DEFINER, search_path, comments and grants are unchanged
 --      (CREATE OR REPLACE keeps the OID, so its ACL and comment).
 --      note_public_enquiry_hit (service_role only since 0087) is unchanged:
---      its one caller is the enquiry route, which sends hashIp().
+--      its two callers, the enquiry door and the proposal-interest door, send
+--      hashIp() (and fail open on an error).
 --   2. One CHECK per counter table: ip_hash ~ '^[0-9a-f]{32}$', added NOT
 --      VALID and then VALIDATEd in this same transaction, so each ends
 --      validated (the postflight asserts convalidated). Every writer is bound
@@ -49,7 +50,10 @@
 -- request the deployed application sends is refused (it sends hashIp()). No
 -- function signature, return shape or grant changes — no release-compat
 -- entry; lib/supabase/database.types.ts does not change (regenerated and
--- diffed).
+-- diffed). A backup holding a malformed counter key (one taken before this
+-- file, if any such row existed — hosted held none) no longer restores into a
+-- database at 0149: its load is refused by these CHECKs (restore.mjs stops on
+-- the first error) — delete those counter rows from the export.
 --
 -- ROLLBACK (DECISIONS T-anon-counter-key-shape): a FORWARD migration that
 -- restores 0023's and 0066's bodies and drops the three CHECKs and the three
@@ -144,11 +148,12 @@ begin
     select md5(replace(p.prosrc, chr(13), '')) into v_md5
       from pg_proc p
      where p.oid = to_regprocedure(f.sig) and p.prosecdef
+       and pg_get_userbyid(p.proowner) = 'postgres'
        and p.prorettype = 'boolean'::regtype
        and p.proconfig = array['search_path=public']
        and pg_get_function_arguments(p.oid) = f.args;
     if v_md5 is null then
-      raise exception '0149 aborted: % is not the boolean SECURITY DEFINER with search_path=public and (%) this file replaces — nothing was changed', f.sig, f.args;
+      raise exception '0149 aborted: % is not the boolean SECURITY DEFINER owned by postgres with search_path=public and (%) this file replaces — nothing was changed', f.sig, f.args;
     end if;
     if not (v_md5 = any (f.before_md5) or v_md5 = f.after_md5) then
       raise exception '0149 aborted: the body of % is not 0023''s / 0066''s (md5 %) — read it before replacing it; nothing was changed', f.sig, v_md5;
@@ -179,7 +184,7 @@ end $$;
 -- ---------------------------------------------------------------------------
 -- 1. The two anon-callable counters refuse a key that is not the application's
 -- ---------------------------------------------------------------------------
-create or replace function note_share_link_miss(p_ip_hash text, p_limit int default 20)
+create or replace function public.note_share_link_miss(p_ip_hash text, p_limit int default 20)
 returns boolean
 language plpgsql security definer set search_path = public as $fn$
 declare
@@ -287,9 +292,9 @@ begin
       raise exception '0149 postflight: public.% does not carry the validated CHECK %_ip_hash_shape', t.name, t.name;
     end if;
     if (select pg_get_indexdef(i.indexrelid) from pg_index i
-         where i.indexrelid = to_regclass('public.' || t.name || '_window_start_idx')) is distinct from
+         where i.indexrelid = to_regclass('public.' || t.name || '_window_start_idx') and i.indisvalid) is distinct from
        format('CREATE INDEX %s_window_start_idx ON public.%s USING btree (window_start)', t.name, t.name) then
-      raise exception '0149 postflight: public.%_window_start_idx is not a plain btree on (window_start)', t.name;
+      raise exception '0149 postflight: public.%_window_start_idx is not a valid plain btree on (window_start)', t.name;
     end if;
   end loop;
 
@@ -299,25 +304,16 @@ begin
       ('public.note_public_listing_hit(text, integer)', 'public.note_public_listing_hit', '0668fb401dd5522e9593a22226433340', 'public_listing_attempts')
     ) as x(sig, fn, after_md5, tbl)
   loop
-    if not exists (select 1 from pg_proc p
-                    where p.oid = to_regprocedure(f.sig) and p.prosecdef
-                      and pg_get_userbyid(p.proowner) = 'postgres'
-                      and p.proconfig = array['search_path=public']
-                      and md5(replace(p.prosrc, chr(13), '')) = f.after_md5) then
-      raise exception '0149 postflight: % is not the definer this file wrote (owner postgres, search_path=public, its body)', f.sig;
-    end if;
-    if not (has_function_privilege('anon', f.sig, 'execute')
-            and has_function_privilege('authenticated', f.sig, 'execute')
-            and has_function_privilege('service_role', f.sig, 'execute'))
-       or exists (select 1 from pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
-                   where p.oid = to_regprocedure(f.sig) and a.grantee = 0) then
-      raise exception '0149 postflight: the grants on % changed', f.sig;
-    end if;
-
-    -- behaviour, undone: a malformed key is over budget and stored nowhere; a
-    -- 32-hex key is counted as before
+    -- behaviour FIRST, undone: a malformed key is over budget and stored
+    -- nowhere; a 32-hex key is counted as before. A body without its guard
+    -- meets the table's CHECK, which is said in words here.
     begin
-      execute format('select %s($1, 5)', f.fn) into v_over using probe || 'x';
+      begin
+        execute format('select %s($1, 5)', f.fn) into v_over using probe || 'x';
+      exception
+        when check_violation then
+          raise exception '0149 postflight: % has no key guard — a malformed key reached the table''s CHECK', f.sig;
+      end;
       execute format('select count(*) from public.%I where ip_hash = $1', f.tbl) into v_rows using probe || 'x';
       if v_over is distinct from true or v_rows <> 0 then
         raise exception '0149 postflight: % stored or admitted a malformed key (over=%, rows=%)', f.sig, v_over, v_rows;
@@ -334,6 +330,22 @@ begin
           raise;
         end if;
     end;
+
+    -- then the exact definer: its body by digest, owner, search_path, grants
+    if not exists (select 1 from pg_proc p
+                    where p.oid = to_regprocedure(f.sig) and p.prosecdef
+                      and pg_get_userbyid(p.proowner) = 'postgres'
+                      and p.proconfig = array['search_path=public']
+                      and md5(replace(p.prosrc, chr(13), '')) = f.after_md5) then
+      raise exception '0149 postflight: % is not the definer this file wrote (owner postgres, search_path=public, its body)', f.sig;
+    end if;
+    if not (has_function_privilege('anon', f.sig, 'execute')
+            and has_function_privilege('authenticated', f.sig, 'execute')
+            and has_function_privilege('service_role', f.sig, 'execute'))
+       or exists (select 1 from pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                   where p.oid = to_regprocedure(f.sig) and a.grantee = 0) then
+      raise exception '0149 postflight: the grants on % changed', f.sig;
+    end if;
   end loop;
 
   raise notice '0149: postflight passed — three validated key-shape CHECKs, three window_start indexes, two anon counters that store only a 32-hex key';
