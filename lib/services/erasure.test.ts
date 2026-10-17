@@ -155,10 +155,14 @@ describe("buildErasureEventPayload", () => {
       requirementsDeleted: 0,
       documentsDeleted: 0,
       documentsRetained: 3,
+      evidenceReportsKept: 2,
     });
     expect(payload.aml_basis).toBe(true);
     expect(payload.leads_redacted).toBe(2);
     expect(payload.documents_retained).toBe(3);
+    // ERA-1: the reports are counted apart from the documents, and named untouched
+    expect(payload.evidence_reports_kept).toBe(2);
+    expect(payload.untouched).toContain("evidence_reports");
     // the payload lands in the hash-chained event log — it must never become a
     // copy of the data we just erased
     const serialized = JSON.stringify(payload);
@@ -179,6 +183,7 @@ describe("buildErasureEventPayload", () => {
       requirementsDeleted: 3,
       documentsDeleted: 0,
       documentsRetained: 0,
+      evidenceReportsKept: 0,
     });
     expect(payload.fields_cleared).toContain("saved_searches");
     expect(payload.saved_searches_deleted).toBe(3);
@@ -193,6 +198,7 @@ describe("buildErasureEventPayload", () => {
       requirementsDeleted: 0,
       documentsDeleted: 0,
       documentsRetained: 0,
+      evidenceReportsKept: 0,
     });
     expect(payload.fields_cleared).not.toContain("preferences");
   });
@@ -206,6 +212,7 @@ describe("buildErasureEventPayload", () => {
       requirementsDeleted: 0,
       documentsDeleted: 0,
       documentsRetained: 1,
+      evidenceReportsKept: 0,
     });
     const withoutAml = buildErasureEventPayload({
       amlBasis: false,
@@ -215,6 +222,7 @@ describe("buildErasureEventPayload", () => {
       requirementsDeleted: 0,
       documentsDeleted: 1,
       documentsRetained: 0,
+      evidenceReportsKept: 0,
     });
     expect(withAml.fields_cleared).not.toContain("kyc_checklist");
     expect(withoutAml.fields_cleared).toContain("kyc_checklist");

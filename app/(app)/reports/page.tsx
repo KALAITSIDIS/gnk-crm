@@ -4,6 +4,7 @@ import { FileCheck2, ShieldAlert, ShieldCheck, ShieldX, TrendingUp } from "lucid
 import { DocumentDownloadButton } from "@/components/features/shared/document-download-button";
 import { VerifyReport } from "@/components/features/reports/verify-report";
 import { chainCheckIsStale } from "@/lib/services/cron-health";
+import { EVIDENCE_REPORT_PATH_LIKE } from "@/lib/services/evidence-report-path";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTime } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
@@ -24,12 +25,13 @@ export default async function ReportsPage() {
   // non-admins). Matched on storage_path, not doc_type: the path is written by
   // generation and frozen by the protect_document_columns trigger, so this
   // query is correct even in an environment that has not run migration 0015
-  // yet (and regardless of a later title edit). Uploader names resolved
+  // yet (and regardless of a later title edit). The erasure and the retention
+  // purge keep a report by the same rule. Uploader names resolved
   // separately — no FK embed needed.
   const { data: reports } = await supabase
     .from("documents")
     .select("id, title, created_at, uploaded_by")
-    .like("storage_path", "%/reports/evidence-%")
+    .like("storage_path", EVIDENCE_REPORT_PATH_LIKE)
     .order("created_at", { ascending: false })
     .limit(50);
   const uploaderIds = [...new Set((reports ?? []).map((r) => r.uploaded_by).filter(Boolean))] as string[];

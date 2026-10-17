@@ -187,6 +187,11 @@ export function buildErasureEventPayload(input: {
   requirementsDeleted: number;
   documentsDeleted: number;
   documentsRetained: number;
+  /**
+   * ERA-1: commission-evidence reports — never destroyed, whatever the basis,
+   * and counted apart from the documents above (`untouched` names them)
+   */
+  evidenceReportsKept: number;
 }): Record<string, unknown> {
   return {
     fields_cleared: [
@@ -200,6 +205,7 @@ export function buildErasureEventPayload(input: {
     saved_searches_deleted: input.requirementsDeleted,
     documents_deleted: input.documentsDeleted,
     documents_retained: input.documentsRetained,
+    evidence_reports_kept: input.evidenceReportsKept,
     identity_retained: true,
     untouched: ["events", "viewing_slips", "evidence_reports", "deals"],
   };
