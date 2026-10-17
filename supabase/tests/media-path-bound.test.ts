@@ -511,7 +511,7 @@ describe("3. what every writer produces stays valid; anything else is refused", 
     await pgRefused(insertRow(P1, { path_thumb: `properties/${P1}x/x_thumb.webp` }), "a longer segment");
   });
 
-  it("the application's copy of the rule (isOwnMediaPath) agrees with the CHECK on every path above", async () => {
+  it("the application's copy of the rule (isOwnMediaPath) agrees with the INSTALLED CHECK on every path above", async () => {
     const cases = [
       ...Object.values(ownPaths(P1)),
       ...foreignPaths(P1).map(([, p]) => p),
@@ -519,15 +519,25 @@ describe("3. what every writer produces stays valid; anything else is refused", 
       `properties/${P1}/café.webp`,
       `properties/${P1}/`,
       `properties/${P1.toUpperCase()}/x_thumb.webp`,
+      // inside the prefix whatever a URL parser makes of them
+      `properties/${P1}/./x_thumb.webp`,
+      `properties/${P1}//x_thumb.webp`,
+      `properties/${P1}/x/`,
     ];
     for (const path of cases) {
-      const { rows } = await o.query<{ ok: boolean }>(
-        `select (starts_with($1, 'properties/' || $2::uuid::text || '/')
-                 and $1 ~ '^properties/[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+$'
-                 and strpos($1, '..') = 0) as ok`,
-        [path, P1],
-      );
-      expect(isOwnMediaPath(P1, path), path).toBe(rows[0]!.ok);
+      // the row as postgres, in a rolled-back transaction: what the constraint itself answers
+      let accepted: boolean;
+      await o.query("begin");
+      try {
+        await insertRow(P1, { path_thumb: path });
+        accepted = true;
+      } catch (e) {
+        expect((e as PgError).constraint, `${path}: ${(e as Error).message}`).toBe(CHECK_0148);
+        accepted = false;
+      } finally {
+        await o.query("rollback");
+      }
+      expect(isOwnMediaPath(P1, path), path).toBe(accepted);
     }
   });
 });
@@ -598,14 +608,41 @@ describe("4. the readers: the photo delete (service role) and the page's signer"
     expect(await rowOf(idA)).toMatchObject(A);
   });
 
+  it("a listing with more rows than PostgREST's 1,000-row cap: a survivor past the first page still keeps its object", async () => {
+    const P3 = await newProperty(null);
+    const shared = `properties/${P3}/${RUN}-shared_card.webp`;
+    await put("media", shared, "shared card");
+    // 1,000 other rows first, then the survivor with the largest id there is,
+    // so it sorts last and arrives only on the second page
+    await o.query(
+      `insert into property_media (org_id, property_id, kind, path_thumb, sort_order)
+       select $1, $2, 'photo', format('properties/%s/filler-%s_thumb.webp', $2::uuid, g), g from generate_series(1, 1000) g`,
+      [ORG, P3],
+    );
+    await o.query(
+      `insert into property_media (id, org_id, property_id, kind, path_card, sort_order)
+       values ('ffffffff-ffff-4fff-bfff-ffffffffffff', $1, $2, 'photo', $3, 2000)`,
+      [ORG, P3, shared],
+    );
+    const gone = await insertRow(P3, { path_card: shared }, "photo", 2001);
+    try {
+      const { result } = await act(manager, P3, [gone]);
+      expect(result).toEqual({ error: null, deleted: 1 });
+      expect(await exists("media", shared), "the object the 1,001st row still shows").toBe(true);
+    } finally {
+      await o.query("delete from property_media where property_id = $1", [P3]);
+    }
+  });
+
   for (const step of ["fail500", "hollow"] as const) {
     it(`the survivors cannot be read (${step}): no object is removed, the photo is still deleted with its event, and the failure is reported`, async () => {
       const paths = ownPaths(P1);
       const id = await insertRow(P1, paths);
       await put("media", paths.path_thumb, "thumb");
       await put("documents", paths.storage_path_original, "original");
+      // the survivors read: the only GET of property_media naming the originals
       sessionRule = (method, url) =>
-        method === "GET" && /\/rest\/v1\/property_media\?/.test(url) && url.includes("select=storage_path_original") ? step : "pass";
+        method === "GET" && /\/rest\/v1\/property_media\?/.test(url) && url.includes("storage_path_original") ? step : "pass";
 
       const { result, thrown } = await act(admin, P1, [id]);
       expect(thrown).toBeNull();
@@ -640,6 +677,17 @@ describe("4. the readers: the photo delete (service role) and the page's signer"
       encoded: `properties/${P1}/%2e%2e/%2e%2e/${KYC}`,
       backslashed: `properties/${P1}/..\\..\\${KYC}`,
     };
+    // valid to the CHECK (own prefix), so planted the way it can be today: the
+    // assigned agent's own INSERT of a floor plan whose card is a photograph's
+    // EXIF original — never signed either
+    const original = `properties/${P1}/original/${randomUUID()}.jpg`;
+    await put("documents", original, "jpeg with exif", "image/jpeg");
+    const viaAgent = await agent.client
+      .from("property_media")
+      .insert({ org_id: ORG, property_id: P1, kind: "floor_plan", path_card: original, sort_order: 20 })
+      .select("id")
+      .single();
+    expect(viaAgent.error, viaAgent.error?.message).toBeNull();
     await withLegacyRows(
       async () => [
         await insertRow(P1, { path_card: ownCard }, "floor_plan", 10),
@@ -652,6 +700,7 @@ describe("4. the readers: the photo delete (service role) and the page's signer"
         for (const [i, id] of plantedIds.entries()) {
           expect(byId.get(id!)?.card_url, `${Object.keys(planted)[i]}: signed`).toBeNull();
         }
+        expect(byId.get((viaAgent.data as { id: string }).id)?.card_url, "a photograph's original: signed").toBeNull();
         // control: the listing's own floor plan is signed, and serves its own bytes
         const own = byId.get(ownId!);
         expect(own?.card_url).toMatch(/\/storage\/v1\/object\/sign\/documents\//);

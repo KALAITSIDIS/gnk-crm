@@ -44,3 +44,15 @@ export function isOwnMediaPath(propertyId: string, path: unknown): path is strin
     !path.includes("..")
   );
 }
+
+/**
+ * An own name that is a RENDITION, not a photograph's original: the original
+ * (`properties/<id>/original/…`) is the upload as it arrived, EXIF and all,
+ * kept in the private bucket and never shown. The CHECK cannot tell a
+ * rendition column from an original, so a floor-plan row whose `path_card`
+ * names a photo's original is valid to the database; the page's signer asks
+ * this instead, and signs no original for anyone.
+ */
+export function isOwnRenditionPath(propertyId: string, path: unknown): path is string {
+  return isOwnMediaPath(propertyId, path) && !path.startsWith(`${ownMediaPrefix(propertyId)}original/`);
+}

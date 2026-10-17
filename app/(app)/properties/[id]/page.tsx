@@ -36,7 +36,7 @@ import { getCurrentProfile } from "@/lib/services/auth";
 import { isGuid } from "@/lib/validators/ids";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { mediaBucketFor } from "@/lib/services/media-bucket";
-import { isOwnMediaPath } from "@/lib/services/media-path";
+import { isOwnRenditionPath } from "@/lib/services/media-path";
 import { publicMediaUrl } from "@/lib/utils/storage";
 import { MandateBadge, type MandateBadgeState } from "@/components/features/shared/mandate-badge";
 import { StatusBadge } from "@/components/features/shared/status-badge";
@@ -131,14 +131,15 @@ export default async function PropertyDetailPage({
   // lives in the private bucket and is signed for the hour, the same idiom
   // the documents tab uses. The tab renders what it is given and never
   // spells a bucket (A07, 2026-09-06). The service role signs, so only a
-  // name THIS listing can own is signed or linked (T-media-path-bound,
-  // RLS-3): isOwnMediaPath, the rule 0148's CHECK binds on write, kept here
-  // for rows written before it — a row naming a KYC scan, another listing's
-  // prefix or an encoded `..` renders no card.
+  // RENDITION this listing owns is signed or linked (T-media-path-bound,
+  // RLS-3): isOwnRenditionPath — the rule 0148's CHECK binds on write, kept
+  // here for rows written before it, and never a photo's EXIF original — so a
+  // row naming a KYC scan, another listing's prefix, an encoded `..` or an
+  // original renders no card.
   const admin = createAdminClient();
   const mediaItems = await Promise.all(
     mediaRows.map(async (m) => {
-      if (!isOwnMediaPath(p.id, m.path_card)) return { ...m, card_url: null };
+      if (!isOwnRenditionPath(p.id, m.path_card)) return { ...m, card_url: null };
       if (mediaBucketFor(m.kind) === "media") return { ...m, card_url: publicMediaUrl(m.path_card) };
       const { data: signed } = await admin.storage
         .from("documents")

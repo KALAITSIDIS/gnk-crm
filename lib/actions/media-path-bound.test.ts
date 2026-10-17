@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeClient, type FakePage } from "@/lib/testing/fake-client";
-import { isOwnMediaPath, ownMediaPrefix } from "@/lib/services/media-path";
+import { isOwnMediaPath, isOwnRenditionPath, ownMediaPrefix } from "@/lib/services/media-path";
 
 /**
  * T-media-path-bound (audit 2026-10-17 MEDIA-1): `deleteMediaBulk` removes
@@ -105,6 +105,15 @@ describe("isOwnMediaPath — the CHECK's rule (0148), for the readers", () => {
     expect(isOwnMediaPath(L, p)).toBe(false);
   });
 
+  it("isOwnRenditionPath: an own rendition, never a photograph's original (what the page may sign)", () => {
+    const r = own(M1);
+    for (const p of [r.path_thumb, r.path_card, r.path_full, r.path_jpeg]) expect(isOwnRenditionPath(L, p), String(p)).toBe(true);
+    expect(isOwnRenditionPath(L, r.storage_path_original)).toBe(false);
+    expect(isOwnRenditionPath(L, MANDATE)).toBe(false);
+    expect(isOwnRenditionPath(L, `properties/${L}/%2e%2e/${MANDATE}`)).toBe(false);
+    expect(isOwnRenditionPath(L.toUpperCase(), `properties/${L}/original/${M1}.jpg`)).toBe(false);
+  });
+
   it("compares the listing id as stored (lower case), however the caller spells it", () => {
     expect(ownMediaPrefix(L.toUpperCase())).toBe(`properties/${L}/`);
     expect(isOwnMediaPath(L.toUpperCase(), `properties/${L}/${M1}_card.webp`)).toBe(true);
@@ -147,20 +156,37 @@ describe("deleteMediaBulk removes only the listing's own objects that no survivi
     expect(removedNames().sort()).toEqual([gone.storage_path_original, gone.path_thumb, gone.path_jpeg].sort());
   });
 
+  it("a survivor holding a name in ANY column keeps it: the same original, and a name shared across columns", async () => {
+    const kept = own(M1);
+    // the deleted row names the survivor's original as its own original, and
+    // the survivor's thumbnail as its jpeg
+    const gone = { ...own(M2), storage_path_original: kept.storage_path_original, path_jpeg: kept.path_thumb };
+    const { go } = run([gone], { data: [kept], error: null });
+    expect(await go()).toEqual({ error: null, deleted: 1 });
+    expect(removedNames()).not.toContain(kept.storage_path_original);
+    expect(removedNames()).not.toContain(kept.path_thumb);
+    expect(removedNames().sort()).toEqual([gone.path_thumb, gone.path_card, gone.path_full].sort());
+  });
+
   it("the survivors are read AFTER the delete, from the listing's rows, naming all five path columns", async () => {
-    const { fake, go } = run([own(M1)], { data: [], error: null });
+    const { fake, go } = run([own(M2)], { data: [own(M1)], error: null });
     await go();
-    // two property_media requests (no cover was deleted): the delete, then the survivors
-    expect(fake.served.property_media).toBe(2);
+    // no cover was deleted: the delete, then the survivors PAGED (fetchAll) —
+    // a page with a row, then the empty page that ends the read
+    expect(fake.served.property_media).toBe(3);
     expect(fake.calls.filter((c) => c.table === "property_media" && c.method === "delete")).toHaveLength(1);
-    const [deleteSelect, survivorsSelect] = fake.argsOf("property_media", "select").map((a) => String(a[0]));
+    const [deleteSelect, ...survivorSelects] = fake.argsOf("property_media", "select").map((a) => String(a[0]));
     expect(deleteSelect).toContain("is_cover");
-    expect(survivorsSelect).not.toContain("is_cover");
-    for (const col of ["storage_path_original", "path_thumb", "path_card", "path_full", "path_jpeg"]) {
-      expect(survivorsSelect).toContain(col);
+    expect(survivorSelects).toHaveLength(2);
+    for (const s of survivorSelects) {
+      expect(s).not.toContain("is_cover");
+      for (const col of ["storage_path_original", "path_thumb", "path_card", "path_full", "path_jpeg"]) expect(s).toContain(col);
     }
-    // both bound to the listing
-    expect(fake.argsOf("property_media", "eq").filter(([c, v]) => c === "property_id" && v === L)).toHaveLength(2);
+    // ordered by id and ranged: a page is a page, past PostgREST's 1,000-row cap
+    expect(fake.argsOf("property_media", "order")).toEqual([["id"], ["id"]]);
+    expect(fake.argsOf("property_media", "range")).toEqual([[0, 999], [1, 1000]]);
+    // every request bound to the listing
+    expect(fake.argsOf("property_media", "eq").filter(([c, v]) => c === "property_id" && v === L)).toHaveLength(3);
   });
 
   it.each([

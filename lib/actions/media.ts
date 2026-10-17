@@ -3,6 +3,7 @@
 import { removeObjectsBestEffort } from "@/lib/services/storage";
 import { mediaBucketFor } from "@/lib/services/media-bucket";
 import { isOwnMediaPath } from "@/lib/services/media-path";
+import { fetchAll } from "@/lib/supabase/fetch-all";
 import { createHash, randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -585,25 +586,36 @@ export async function deleteMediaBulk(
   // name a SURVIVING row of the listing still holds (two rows of one listing
   // may name one object, which no CHECK can see; since 0148 no other
   // listing's row can name this prefix). The survivors are read after the
-  // delete, on the caller's session; if that read fails nothing is removed
-  // and it is reported: the rows are gone and their files stay, under the
-  // listing's prefix with no row naming them, rather than removing a file a
-  // live row still shows.
-  const { data: survivors, error: survivorsErr } = await supabase
-    .from("property_media")
-    .select("storage_path_original, path_thumb, path_card, path_full, path_jpeg")
-    .eq("property_id", propertyId);
-  if (survivorsErr || !Array.isArray(survivors)) {
+  // delete, on the caller's session, EVERY page of them (fetchAll: a listing
+  // may hold more rows than PostgREST's silent 1,000-row cap, and an agent
+  // may insert them); if that read fails nothing is removed and it is
+  // reported: the rows are gone and their files stay, under the listing's
+  // prefix with no row naming them, rather than removing a file a live row
+  // still shows.
+  let stillNamed: Set<string | null> | null = null;
+  try {
+    const survivors = await fetchAll(
+      (from, to) =>
+        supabase
+          .from("property_media")
+          .select("id, storage_path_original, path_thumb, path_card, path_full, path_jpeg")
+          .eq("property_id", propertyId)
+          .order("id")
+          .range(from, to),
+      "the listing's remaining photos",
+    );
+    stillNamed = new Set(
+      survivors.flatMap((s) => [s.storage_path_original, s.path_thumb, s.path_card, s.path_full, s.path_jpeg]),
+    );
+  } catch {
     reportMediaUpload("[media delete] survivor read failed — no files removed", "delete_survivors", {
       propertyId,
       deleted: deletedRows.length,
-      ...(survivorsErr?.code ? { code: survivorsErr.code } : {}),
     });
-  } else {
-    const stillNamed = new Set(
-      survivors.flatMap((s) => [s.storage_path_original, s.path_thumb, s.path_card, s.path_full, s.path_jpeg]),
-    );
-    const removable = (p: string | null): p is string => isOwnMediaPath(propertyId, p) && !stillNamed.has(p);
+  }
+  if (stillNamed) {
+    const named = stillNamed;
+    const removable = (p: string | null): p is string => isOwnMediaPath(propertyId, p) && !named.has(p);
     const admin = createAdminClient();
     // Renditions live in the bucket their KIND decides (media-bucket.ts), so a
     // mixed delete removes from each bucket what it holds.

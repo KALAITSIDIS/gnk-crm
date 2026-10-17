@@ -144,11 +144,12 @@ begin
   -- the lock the DDL below needs, at its strongest, BEFORE the count
   lock table public.property_media in access exclusive mode;
 
-  -- 1. the five path columns are text, and property_id is a required uuid
+  -- 1. the five path columns are optional text, and property_id is a
+  --    required uuid (the postflight's predicate, word for word)
   if (select count(*) from pg_attribute
        where attrelid = 'public.property_media'::regclass and not attisdropped
          and ((attname in ('storage_path_original', 'path_thumb', 'path_card', 'path_full', 'path_jpeg')
-               and atttypid = 'text'::regtype)
+               and atttypid = 'text'::regtype and not attnotnull)
            or (attname = 'property_id' and atttypid = 'uuid'::regtype and attnotnull))) <> 6 then
     raise exception '0148 aborted: property_media''s path columns or property_id are not what this file was written against — nothing was changed';
   end if;
