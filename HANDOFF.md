@@ -1,6 +1,6 @@
 # HANDOFF — 2026-08-08
 
-**2026-10-17, latest (the four live anonymous-surface findings of the six-phase audit; LANDED — PRs #170 and #168): P3B1-1 (the enquiry door's site ceiling), NOTIF-1 (the CSP report collector), NOTIF-2 (the provider quota, partly) and ANON-2 (the anon rate counters, migration 0149). Built under the standing authorization by a session the audit session started. Hosted 0149 first (~14:21Z, md5-guarded, verified, ledger 148 rows), then #170 merged 14:25:36Z → main `7313999`, then #168 merged 14:42:28Z → `9d9dc9c`. Both deployed, both merge CI runs green. These landing records are PR #LANDPR (branch `land/public-doors`). DECISIONS `T-public-doors` and `T-anon-counter-key-shape`.**
+**2026-10-17, latest (the four live anonymous-surface findings of the six-phase audit; LANDED — PRs #170 and #168): P3B1-1 (the enquiry door's site ceiling), NOTIF-1 (the CSP report collector), NOTIF-2 (the provider quota, partly) and ANON-2 (the anon rate counters, migration 0149). Built under the standing authorization by a session the audit session started. Hosted 0149 first (~14:21Z, md5-guarded, verified, ledger 148 rows), then #170 merged 14:25:36Z → main `7313999`, then #168 merged 14:42:28Z → `9d9dc9c`. Both deployed, both merge CI runs green. These landing records are PR #172 (branch `land/public-doors`). DECISIONS `T-public-doors` and `T-anon-counter-key-shape`.**
 - **What.**
   - **P3B1-1.** The proven site's 60-per-15-minutes ceiling is metered on its own key (`callerIpHash("site")`), never on the row a stranger at the same address spends. A honeypot hit is answered after the visitor's budget and before the ceiling. A ceiling refusal is 429 `code: "origin_ceiling"` and one Sentry line per window per instance.
   - **NOTIF-1.** `/api/csp-report` looks at a report's first 50 violations and sends at most 3 new ones to Sentry per request, under a per-instance bucket of 10 (one back every 6 minutes). Every event has a fixed fingerprint `["csp-violation", <known directive | "other">]` and a message naming only that directive. The log still gets every violation once.
@@ -21,7 +21,7 @@
   - `get_runtime_errors` clean after each. Signed out: `/login` 200, `/leads` 307. No request that writes was sent to production.
 - **BACKLOG.** The four entries are in the audit's records commit `d139a34` (section "Six-phase audit — 2026-10-17"), not on main. Their strikes are the audit session's to make when it lands `d139a34`, citing #168 / `9d9dc9c` and #170 / `7313999`. NOTIF-2 is partly fixed: the counter stays open.
 - **What next.**
-  - **These records:** PR #LANDPR, read CI and merge pinned to its head. Then remove the worktrees `public-doors`, `public-doors-0149`, `land-public-doors` and the three remote branches, and stop `.iso/publicdoors`.
+  - **These records:** PR #172, read CI and merge pinned to its head. Then remove the worktrees `public-doors`, `public-doors-0149`, `land-public-doors` and the three remote branches, and stop `.iso/publicdoors`.
   - **The audit's records commit `d139a34`:** the operator's word, now that the four live anonymous findings are fixed.
   - **MEDIA-1 (0148)** rebases on main; its restore-pack migrations pin becomes 149.
   - **Follow-ups for BACKLOG** (when `d139a34` lands):
