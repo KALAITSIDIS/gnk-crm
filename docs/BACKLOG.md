@@ -3389,7 +3389,7 @@ VERIFY, run before starting.
   Candidates: a CHECK / trigger that `storage_path` starts with `org_id || '/<entity>s/'` plus a refusal of a path
   another row names. The same class as the slip-path entry above. **VERIFY:** `grep -rn "removeObjects" lib/actions`
   — any call passing a row's `storage_path` / `storage_path_original` without a derived prefix means open.
-  - **The media half is FIXED (T-media-path-bound, migration 0148, 2026-10-17; audit 2026-10-17 MEDIA-1 and RLS-3,
+  - **The media half is FIXED (T-media-path-bound, migration 0148, 2026-10-17 — LANDED: hosted 0148 first, PR #171 → main `d1a8362`; audit 2026-10-17 MEDIA-1 and RLS-3,
     which widened it to the media-bucket renditions, a listing manager's PATCH and the property page's signer).**
     `property_media_paths_own_property` binds all five path columns under `properties/<property_id>/`, in letters,
     digits, `.`, `_`, `-` and `/`, with no `..` (a URL parser reads `%2e%2e` as `..`, measured), for every writer;
