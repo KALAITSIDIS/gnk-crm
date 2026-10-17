@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
+import * as Sentry from "@sentry/nextjs";
 import { after, NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { callerIpHash } from "@/lib/services/caller-ip";
-import { budgetsFor } from "@/lib/services/enquiry-budget";
+import { budgetsFor, type Budget } from "@/lib/services/enquiry-budget";
 import { isTrustedForwarderLoudly } from "@/lib/services/forwarder";
 import { enquiryCompleteness, publicEnquirySchema } from "@/lib/validators/public-enquiry";
 import { runEnquiryAlertWorker } from "@/lib/services/enquiry-alert-worker";
@@ -61,6 +62,39 @@ const CORS = {
 const json = (body: unknown, status: number) =>
   NextResponse.json(body, { status, headers: { ...CORS, "Cache-Control": "no-store" } });
 
+const tooMany = (body: unknown) =>
+  NextResponse.json(body, {
+    status: 429,
+    headers: { ...CORS, "Cache-Control": "no-store", "Retry-After": "900" },
+  });
+
+/** The counters' window (0084): a quarter of an hour. */
+const WINDOW_MS = 15 * 60_000;
+
+/**
+ * The last window in which THIS instance told Sentry the site's ceiling
+ * refused (P3B1-1). Per instance and in memory, like the CSP route's dedupe:
+ * a fixed fingerprint folds every instance's line into one issue, so this
+ * only keeps one instance from sending a line per refused enquiry.
+ */
+let ceilingPagedWindow = -1;
+
+function pageCeilingOnce(): void {
+  const window = Math.floor(Date.now() / WINDOW_MS);
+  if (window === ceilingPagedWindow) return;
+  ceilingPagedWindow = window;
+  try {
+    // SHAPE ONLY: no address and no fingerprint of one — the ceiling is ours.
+    Sentry.captureMessage("[public enquiry] the site's origin ceiling refused an enquiry", {
+      level: "error",
+      tags: { code: "origin_ceiling" },
+      fingerprint: ["enquiry-origin-ceiling"],
+    });
+  } catch {
+    // Sentry is best-effort; the route's console line stands.
+  }
+}
+
 export async function POST(request: NextRequest) {
   if (!request.headers.get("content-type")?.includes("application/json")) {
     return json({ error: "Send application/json." }, 415);
@@ -88,36 +122,33 @@ export async function POST(request: NextRequest) {
   // Rate limit BEFORE anything else touches the database, so a flood costs one
   // counter round trip. Its own counter (0084) — a flood here must not spend a
   // buyer's share-link budget or the feed's.
-  const budgets = budgetsFor(
+  const [visitor, ...ceilings] = budgetsFor(
     await callerIpHash(),
     request.headers.get(VISITOR_IP_HEADER),
     isTrustedForwarderLoudly(request.headers.get(FORWARD_KEY_HEADER), process.env.ENQUIRY_FORWARD_KEY),
+    // the proven site's ceiling is its OWN row (P3B1-1; enquiry-budget.ts)
+    await callerIpHash("site"),
   );
-  for (const b of budgets) {
-    const check = await supabase.rpc("note_public_enquiry_hit", {
-      p_ip_hash: b.hash,
-      p_limit: b.limit,
-    });
-    if (check.data === true) {
-      return NextResponse.json(
-        { error: "Too many enquiries from this address. Try again shortly." },
-        { status: 429, headers: { ...CORS, "Cache-Control": "no-store", "Retry-After": "900" } },
-      );
-    }
-    // DELIBERATELY FAILS OPEN, and says so. If the counter itself errors we let
-    // the enquiry through rather than answer 429, because the two outcomes are
-    // not symmetric: a junk lead is marked spam in one click, while a real
-    // buyer told "too many enquiries" — which would also be a lie about why —
-    // is gone. Logged at error level so a counter that has stopped working is
-    // visible rather than silently permissive, which was the actual defect.
-    if (check.error) {
-      console.error("[public enquiry] rate counter failed, allowing:", check.error.message);
-    }
+  if (await overBudget(supabase, visitor!)) {
+    return tooMany({ error: "Too many enquiries from this address. Try again shortly." });
   }
 
-  // The honeypot is checked AFTER the rate limit and answered like a success:
-  // a bot that learns which shape gets rejected simply changes shape.
+  // The honeypot is checked AFTER the visitor's budget and answered like a
+  // success: a bot that learns which shape gets rejected simply changes
+  // shape. And BEFORE the site's ceiling (P3B1-1): until 2026-10-17 a bot
+  // filling the site's form spent the one row every genuine buyer shares.
   if (input.website) return json({ accepted: true }, 202);
+
+  for (const ceiling of ceilings) {
+    if (await overBudget(supabase, ceiling)) {
+      // Not the visitor's doing, so not the visitor's sentence: the code lets
+      // the site say something true, and Sentry hears of it once per window —
+      // a full ceiling refuses every buyer on the site.
+      console.error("[public enquiry] the site's origin ceiling refused an enquiry");
+      pageCeilingOnce();
+      return tooMany({ error: "The enquiry service is busy. Try again shortly.", code: "origin_ceiling" });
+    }
+  }
 
   const { data, error } = await supabase.rpc("submit_public_enquiry", {
     p_org_slug: input.org,
@@ -203,6 +234,28 @@ export async function POST(request: NextRequest) {
   // 202, not 201: the desk decides what this becomes, and the caller gets no
   // id — there is nothing it could legitimately do with one.
   return json({ accepted: true }, 202);
+}
+
+/**
+ * One counter round trip: true when this budget is spent.
+ *
+ * DELIBERATELY FAILS OPEN, and says so. If the counter itself errors we let
+ * the enquiry through rather than answer 429, because the two outcomes are
+ * not symmetric: a junk lead is marked spam in one click, while a real buyer
+ * told "too many enquiries" — which would also be a lie about why — is gone.
+ * Logged at error level so a counter that has stopped working is visible
+ * rather than silently permissive, which was the actual defect.
+ */
+async function overBudget(supabase: ReturnType<typeof createAdminClient>, budget: Budget): Promise<boolean> {
+  const check = await supabase.rpc("note_public_enquiry_hit", {
+    p_ip_hash: budget.hash,
+    p_limit: budget.limit,
+  });
+  if (check.error) {
+    console.error("[public enquiry] rate counter failed, allowing:", check.error.message);
+    return false;
+  }
+  return check.data === true;
 }
 
 export async function OPTIONS() {

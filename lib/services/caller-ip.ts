@@ -19,9 +19,11 @@ import { hashIp } from "@/lib/services/ip-hash";
 export { hashIp };
 
 /**
- * `scope` keeps two counters apart at the same address: the feed meters a
- * proven forwarder (our marketing site) as "site:<ip>" on its own budget, so a
- * stranger behind the same address cannot spend it, and vice versa (REL-03).
+ * `scope` keeps two counters apart at the same address: the enquiry door
+ * meters a proven forwarder's (our marketing site's) ceiling as "site:<ip>"
+ * on its own row, so a stranger behind the same address cannot spend it, and
+ * vice versa (REL-03, then P3B1-1 on 2026-10-17). The listing feed no longer
+ * meters a proven forwarder at all (app/api/public/listings/route.ts).
  */
 export async function callerIpHash(scope?: string): Promise<string> {
   const h = await headers();

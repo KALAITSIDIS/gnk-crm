@@ -57,13 +57,27 @@ export interface EnquiryAlert {
 
 export type AlertFailureCategory = "transient" | "permanent" | "timeout" | "conflict";
 
+/** A provider quota the answer said is spent (NOTIF-2); see providerQuota. */
+export type ProviderQuota = "daily" | "monthly";
+
 export type AlertSendResult =
   /** The provider accepted the message. Its id is kept for the record; delivery is not confirmed. */
   | { outcome: "accepted"; providerMessageId: string | null }
   /** Not configured on this deployment. The row waits; nothing was attempted. */
   | { outcome: "skipped" }
-  /** One attempt failed. `result` is a status or the provider's error NAME — never its body. */
-  | { outcome: "failed"; category: AlertFailureCategory; result: string; retryAfterSeconds: number | null };
+  /**
+   * One attempt failed. `result` is a status or the provider's error NAME —
+   * never its body. `quota` is present only when the provider said a quota
+   * is spent: every send then fails until it frees up, so the worker says so
+   * once (NOTIF-2) whatever it does with the row.
+   */
+  | {
+      outcome: "failed";
+      category: AlertFailureCategory;
+      result: string;
+      retryAfterSeconds: number | null;
+      quota?: ProviderQuota;
+    };
 
 const FROM = process.env.ENQUIRY_ALERT_FROM ?? DEFAULT_ALERT_FROM;
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://gnk-crm.vercel.app";
@@ -230,6 +244,25 @@ export function classifyProviderFailure(
 }
 
 /**
+ * Whether a refusal says a provider QUOTA is spent (NOTIF-2, six-phase audit
+ * 2026-10-17): 429 with `daily_quota_exceeded` or `monthly_quota_exceeded`
+ * (docs: api-reference/errors). Every public enquiry spends the account's
+ * shared quota (the free tier's is 100 a day — docs/10), so a run of junk
+ * enquiries can spend it and that day's desk alerts and escalations then
+ * fail. The CATEGORY stays transient (classifyProviderFailure): a daily
+ * quota frees up as the day rolls on and an upgraded plan lets the scheduled
+ * retries through, so nothing here gives a row up sooner. What changes is
+ * that the answer NAMES the quota, so it is said at once rather than as each
+ * job's "failed for good" two hours later.
+ */
+export function providerQuota(status: number, errorName: string | null): ProviderQuota | null {
+  if (status !== 429) return null;
+  if (errorName === "daily_quota_exceeded") return "daily";
+  if (errorName === "monthly_quota_exceeded") return "monthly";
+  return null;
+}
+
+/**
  * Long enough for a slow provider, short enough that a stuck one cannot hold
  * the function open (integrations audit 2026-09-15, INT-01). `after()` runs
  * this once the visitor has their 202, so nothing here delays them — but a
@@ -318,6 +351,7 @@ export async function postProviderEmail(
     if (!res.ok) {
       const name = typeof body?.name === "string" ? body.name : null;
       const { category, result } = classifyProviderFailure(res.status, name);
+      const quota = providerQuota(res.status, name);
       // The status and the NAME, never the message: a provider's message can
       // repeat the address it refused.
       console.error(`[${tag}] provider responded ${res.status} (${result}, ${category})`);
@@ -326,6 +360,7 @@ export async function postProviderEmail(
         category,
         result,
         retryAfterSeconds: retryAfterSeconds(res.headers.get("retry-after"), new Date()),
+        ...(quota ? { quota } : {}),
       };
     }
     const id = typeof body?.id === "string" ? body.id.slice(0, 120) : null;

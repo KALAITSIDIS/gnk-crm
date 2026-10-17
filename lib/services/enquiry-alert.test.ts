@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { bodyFor, classifyProviderFailure, sendEnquiryAlert } from "./enquiry-alert";
+import { bodyFor, classifyProviderFailure, providerQuota, sendEnquiryAlert } from "./enquiry-alert";
 
 const base = {
   name: "A Buyer",
@@ -221,6 +221,71 @@ describe("arming and sending", () => {
       category: "timeout",
       result: "timeout",
       retryAfterSeconds: null,
+    });
+  });
+});
+
+/**
+ * NOTIF-2 (six-phase audit, 2026-10-17): every fresh public enquiry spends
+ * the provider's shared quota, and a 429 for a SPENT quota read exactly like
+ * a passing rate limit — retried for about two hours, then failed, and the
+ * word "quota" never reached anyone. The classification is unchanged (a
+ * daily quota frees up as the day rolls on, and an upgraded plan lets the
+ * scheduled retries through); what is new is that the answer NAMES the
+ * quota, so the worker can say so once (enquiry-alert-worker.test.ts).
+ */
+describe("a spent provider quota is named (NOTIF-2)", () => {
+  it("names the daily and the monthly quota, and nothing else", () => {
+    expect(providerQuota(429, "daily_quota_exceeded")).toBe("daily");
+    expect(providerQuota(429, "monthly_quota_exceeded")).toBe("monthly");
+    expect(providerQuota(429, "rate_limit_exceeded")).toBeNull();
+    expect(providerQuota(429, null)).toBeNull();
+    expect(providerQuota(429, "Daily_Quota_Exceeded")).toBeNull();
+    // the name means a quota only on the status the provider gives it
+    expect(providerQuota(500, "daily_quota_exceeded")).toBeNull();
+    expect(providerQuota(403, "monthly_quota_exceeded")).toBeNull();
+  });
+
+  it("is retried like any other 429, under its own name", () => {
+    expect(classifyProviderFailure(429, "daily_quota_exceeded")).toEqual({ category: "transient", result: "daily_quota_exceeded" });
+    expect(classifyProviderFailure(429, "monthly_quota_exceeded")).toEqual({ category: "transient", result: "monthly_quota_exceeded" });
+  });
+
+  describe("on the send's answer", () => {
+    const OLD = { ...process.env };
+    beforeEach(() => {
+      vi.restoreAllMocks();
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      process.env.RESEND_API_KEY = "re_test";
+      process.env.ENQUIRY_ALERT_TO = "info@kalaitsidis.com";
+    });
+    afterEach(() => {
+      process.env = { ...OLD };
+    });
+
+    it.each([
+      ["daily_quota_exceeded", "daily"],
+      ["monthly_quota_exceeded", "monthly"],
+    ] as const)("%s comes back as a transient failure that names the %s quota", async (name, quota) => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ name }), { status: 429 }));
+      await expect(sendEnquiryAlert(base)).resolves.toStrictEqual({
+        outcome: "failed",
+        category: "transient",
+        result: name,
+        retryAfterSeconds: null,
+        quota,
+      });
+    });
+
+    it("a passing rate limit and a server error name no quota", async () => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        new Response(JSON.stringify({ name: "rate_limit_exceeded" }), { status: 429 }),
+      );
+      expect(await sendEnquiryAlert(base)).not.toHaveProperty("quota");
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        new Response(JSON.stringify({ name: "application_error" }), { status: 500 }),
+      );
+      expect(await sendEnquiryAlert(base)).not.toHaveProperty("quota");
     });
   });
 });

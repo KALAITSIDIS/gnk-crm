@@ -28,6 +28,8 @@ import { POST } from "@/app/api/public/enquiries/route";
 const state = vi.hoisted(() => ({
   hits: [] as Array<{ hash: string; limit: number }>,
   refuseAt: -1,
+  /** every counter call from this index on answers an ERROR, not a verdict */
+  counterErrorFrom: -1,
   submits: [] as Array<Record<string, unknown>>,
   /** 0096: the door answers with the lead; `replayed` says the key was seen before */
   replay: false,
@@ -50,6 +52,9 @@ vi.mock("@/lib/supabase/admin", () => ({
     rpc: async (name: string, args: Record<string, unknown>) => {
       if (name === "note_public_enquiry_hit") {
         state.hits.push({ hash: String(args.p_ip_hash), limit: Number(args.p_limit) });
+        if (state.counterErrorFrom >= 0 && state.hits.length - 1 >= state.counterErrorFrom) {
+          return { data: null, error: { message: "counter unavailable" } };
+        }
         return { data: state.hits.length - 1 === state.refuseAt, error: null };
       }
       if (name === "submit_public_enquiry") {
@@ -79,9 +84,11 @@ vi.mock("@/lib/supabase/admin", () => ({
   }),
 }));
 vi.mock("@/lib/services/enquiry-ack", () => ({ sendEnquiryAck: vi.fn(async () => "skipped") }));
+vi.mock("@sentry/nextjs", () => ({ captureMessage: vi.fn() }));
 vi.mock("@/lib/services/caller-ip", async () => {
   const { hashIp } = await import("@/lib/services/ip-hash");
-  return { callerIpHash: async () => hashIp("203.0.113.7") };
+  // caller-ip.ts's own rule: a scope keeps a second counter apart at one address
+  return { callerIpHash: async (scope?: string) => hashIp(scope ? `${scope}:203.0.113.7` : "203.0.113.7") };
 });
 vi.mock("@/lib/services/enquiry-alert-worker", () => ({
   runEnquiryAlertWorker: vi.fn(async () => ({
@@ -106,6 +113,8 @@ vi.mock("next/server", async (importOriginal) => {
 
 const KEY = "0b7d4c6e8a9f0b1c2d3e4f505f1c9e2a";
 const TRANSPORT = hashIp("203.0.113.7");
+/** The site's own ceiling (P3B1-1): callerIpHash("site"), never the row a stranger at that address spends. */
+const SITE = hashIp("site:203.0.113.7");
 const VISITOR = "198.51.100.22";
 
 const post = async (headers: Record<string, string> = {}, body: Record<string, unknown> = {}) => {
@@ -129,6 +138,7 @@ const post = async (headers: Record<string, string> = {}, body: Record<string, u
 beforeEach(() => {
   state.hits = [];
   state.refuseAt = -1;
+  state.counterErrorFrom = -1;
   state.submits = [];
   state.replay = false;
   state.writes = [];
@@ -154,12 +164,12 @@ describe("the door believes the visitor header only from our own site", () => {
     expect(state.hits).toEqual([{ hash: TRANSPORT, limit: RATE_LIMIT }]);
   });
 
-  it("signed: our site's visitor is metered first, then the site's ceiling", async () => {
+  it("signed: our site's visitor is metered first, then the site's own ceiling", async () => {
     const res = await post({ "x-gnk-visitor-ip": VISITOR, "x-gnk-forward-key": KEY });
     expect(res.status).toBe(202);
     expect(state.hits).toEqual([
       { hash: hashIp(VISITOR), limit: RATE_LIMIT },
-      { hash: TRANSPORT, limit: ORIGIN_RATE_LIMIT },
+      { hash: SITE, limit: ORIGIN_RATE_LIMIT },
     ]);
   });
 
@@ -200,6 +210,132 @@ describe("the door believes the visitor header only from our own site", () => {
         p_meta: null,
       },
     ]);
+  });
+});
+
+/**
+ * P3B1-1 (six-phase audit, 2026-10-17): the site's 60-per-15-minutes ceiling
+ * was ONE counter row keyed on the site's egress address — the same row any
+ * caller at that address spends — and a honeypot hit through the site spent
+ * it before being answered. Now the ceiling is the site's own row
+ * (callerIpHash("site")), only a request that is not a honeypot hit reaches
+ * it, and when it refuses the answer says so and Sentry is told once per
+ * window.
+ */
+describe("the site's ceiling is the site's alone, and it is never silent", () => {
+  const sentry = async () => vi.mocked((await import("@sentry/nextjs")).captureMessage);
+  const signed = { "x-gnk-visitor-ip": VISITOR, "x-gnk-forward-key": KEY };
+
+  beforeEach(async () => {
+    (await sentry()).mockClear();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("a honeypot hit through our site spends the visitor's budget and never the site's ceiling", async () => {
+    const res = await post(signed, { website: "http://spam.example" });
+    expect(res.status).toBe(202);
+    expect(state.hits).toEqual([{ hash: hashIp(VISITOR), limit: RATE_LIMIT }]);
+    expect(state.submits).toEqual([]);
+  });
+
+  it("an unsigned honeypot hit still spends the caller's own budget first", async () => {
+    const res = await post({}, { website: "http://spam.example" });
+    expect(res.status).toBe(202);
+    expect(state.hits).toEqual([{ hash: TRANSPORT, limit: RATE_LIMIT }]);
+  });
+
+  it("a honeypot hit over the visitor's budget is refused like any other caller", async () => {
+    state.refuseAt = 0;
+    const res = await post(signed, { website: "http://spam.example" });
+    expect(res.status).toBe(429);
+    expect(state.hits).toHaveLength(1);
+  });
+
+  it("a stranger at the site's address, signed or not, never spends the site's row", async () => {
+    await post({ "x-gnk-visitor-ip": VISITOR });
+    await post({ "x-gnk-visitor-ip": VISITOR, "x-gnk-forward-key": KEY + "0" });
+    await post();
+    expect(state.hits.map((h) => h.hash)).not.toContain(SITE);
+  });
+
+  it("the ceiling's refusal is its own answer, writes nothing, and pages once per window", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-17T10:00:30Z"));
+    const capture = await sentry();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      state.refuseAt = 1;
+      const first = await post(signed);
+      expect(first.status).toBe(429);
+      expect(first.headers.get("retry-after")).toBe("900");
+      const body = (await first.json()) as { error: string; code?: string };
+      expect(body.code).toBe("origin_ceiling");
+      // the visitor did nothing wrong: the visitor's sentence is not this one
+      expect(body.error).not.toMatch(/from this address/i);
+      expect(state.hits).toEqual([
+        { hash: hashIp(VISITOR), limit: RATE_LIMIT },
+        { hash: SITE, limit: ORIGIN_RATE_LIMIT },
+      ]);
+      expect(state.submits).toEqual([]);
+      expect(runEnquiryAlertWorker).not.toHaveBeenCalled();
+
+      expect(capture).toHaveBeenCalledTimes(1);
+      const [message, hint] = capture.mock.calls[0]! as [string, Record<string, unknown>];
+      expect(message).toMatch(/ceiling/i);
+      expect(hint).toMatchObject({
+        level: "error",
+        tags: { code: "origin_ceiling" },
+        fingerprint: ["enquiry-origin-ceiling"],
+      });
+      // shape only: no address, no fingerprint of one
+      expect(JSON.stringify(capture.mock.calls[0])).not.toContain(SITE);
+      expect(JSON.stringify(capture.mock.calls[0])).not.toContain(VISITOR);
+
+      // the same window: refused again, paged no more
+      state.hits = [];
+      state.refuseAt = 1;
+      vi.setSystemTime(new Date("2026-10-17T10:14:59Z"));
+      expect((await post(signed)).status).toBe(429);
+      expect(capture).toHaveBeenCalledTimes(1);
+
+      // the next window: paged again
+      state.hits = [];
+      state.refuseAt = 1;
+      vi.setSystemTime(new Date("2026-10-17T10:15:00Z"));
+      expect((await post(signed)).status).toBe(429);
+      expect(capture).toHaveBeenCalledTimes(2);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("a counter that ERRORS lets the enquiry through and says so — for the visitor's budget and the ceiling alike", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      state.counterErrorFrom = 0;
+      const res = await post(signed);
+      expect(res.status).toBe(202);
+      expect(state.hits).toHaveLength(2);
+      expect(state.submits).toHaveLength(1);
+      expect(error.mock.calls.filter((c) => String(c[0]).includes("rate counter failed, allowing"))).toHaveLength(2);
+      expect(await sentry(), "a counter outage is the console's to report, not the ceiling's page").not.toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("a visitor's own refusal pages nothing and keeps the visitor's answer", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-17T11:00:00Z"));
+    state.refuseAt = 0;
+    const res = await post(signed);
+    expect(res.status).toBe(429);
+    const body = (await res.json()) as { error: string; code?: string };
+    expect(body.error).toMatch(/from this address/i);
+    expect(body.code).toBeUndefined();
+    expect(await sentry()).not.toHaveBeenCalled();
   });
 });
 
