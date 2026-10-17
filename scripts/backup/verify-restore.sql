@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 147::bigint as migrations,
+    2::bigint as auth_users, 148::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -1001,6 +1001,19 @@ misc as (
                                                       '(current_org_id|current_role_gnk)\(\)', 'g'))
                  <> (select count(*) from regexp_matches(coalesce(p.qual, '') || ' ' || coalesce(p.with_check, ''),
                                                          '\( SELECT (public\.)?(current_org_id|current_role_gnk)\(\) AS (current_org_id|current_role_gnk)\)', 'g')))
+  union all
+  -- 0148: a property_media row names only objects under its own property —
+  -- the service-role photo delete (deleteMediaBulk) and the property page's
+  -- signer trust these names. property_media_paths_own_property, exact
+  -- definition, validated (a validated CHECK means no stored row breaks it,
+  -- so the rows need no separate count). A restore that lost it, left it NOT
+  -- VALID, or brought back a weaker rule — the audit's '..'-only drop-in
+  -- (`%2e%2e` passes), no prefix, a column left out — reads false.
+  select 'SECURITY: every property_media path is under its own property, in the writers'' characters, with no ".." (0148)', 'true',
+         (exists (select 1 from pg_constraint c
+                   where c.conrelid = to_regclass('public.property_media') and c.conname = 'property_media_paths_own_property'
+                     and c.contype = 'c' and c.convalidated
+                     and pg_get_constraintdef(c.oid) = 'CHECK ((((storage_path_original IS NULL) OR (starts_with(storage_path_original, ((''properties/''::text || (property_id)::text) || ''/''::text)) AND (storage_path_original ~ ''^properties/[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+$''::text) AND (strpos(storage_path_original, ''..''::text) = 0))) AND ((path_thumb IS NULL) OR (starts_with(path_thumb, ((''properties/''::text || (property_id)::text) || ''/''::text)) AND (path_thumb ~ ''^properties/[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+$''::text) AND (strpos(path_thumb, ''..''::text) = 0))) AND ((path_card IS NULL) OR (starts_with(path_card, ((''properties/''::text || (property_id)::text) || ''/''::text)) AND (path_card ~ ''^properties/[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+$''::text) AND (strpos(path_card, ''..''::text) = 0))) AND ((path_full IS NULL) OR (starts_with(path_full, ((''properties/''::text || (property_id)::text) || ''/''::text)) AND (path_full ~ ''^properties/[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+$''::text) AND (strpos(path_full, ''..''::text) = 0))) AND ((path_jpeg IS NULL) OR (starts_with(path_jpeg, ((''properties/''::text || (property_id)::text) || ''/''::text)) AND (path_jpeg ~ ''^properties/[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+$''::text) AND (strpos(path_jpeg, ''..''::text) = 0)))))'))::text
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.

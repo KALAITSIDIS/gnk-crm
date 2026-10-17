@@ -4816,7 +4816,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
         org_id: ORG_A,
         property_id: newId,
         kind: "photo",
-        storage_path_original: `${ORG_A}/originals/secret-original-${run}.jpg`,
+        storage_path_original: `properties/${newId}/original/secret-original-${run}.jpg`,
         ...over,
       });
       if (error) throw error;
@@ -5447,7 +5447,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
         kind: "photo",
         is_cover: true,
         sort_order: 0,
-        storage_path_original: `${ORG_A}/originals/etag-alt-${run}.jpg`,
+        storage_path_original: `properties/${prop.id}/original/etag-alt-${run}.jpg`,
         path_thumb: `properties/${prop.id}/alt_thumb.webp`,
         path_card: `properties/${prop.id}/alt_card.webp`,
         path_full: `properties/${prop.id}/alt_full.webp`,

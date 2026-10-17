@@ -2,6 +2,7 @@
 
 import { removeObjectsBestEffort } from "@/lib/services/storage";
 import { mediaBucketFor } from "@/lib/services/media-bucket";
+import { isOwnMediaPath } from "@/lib/services/media-path";
 import { createHash, randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -577,22 +578,47 @@ export async function deleteMediaBulk(
   // the response, once the files and the cover below are settled.
   await notifySiteIfPublic(supabase, propertyId);
 
-  const admin = createAdminClient();
-  // Renditions live in the bucket their KIND decides (media-bucket.ts), so a
-  // mixed delete removes from each bucket what it holds.
-  for (const bucket of ["media", "documents"] as const) {
-    const paths = deletedRows
-      .filter((m) => mediaBucketFor(m.kind) === bucket)
-      .flatMap((m) => [m.path_thumb, m.path_card, m.path_full, m.path_jpeg])
-      .filter((p): p is string => Boolean(p));
-    if (paths.length > 0) {
-      await removeObjectsBestEffort(admin.storage, bucket, paths, "media bulk delete: renditions");
+  // The files go AS THE SERVICE ROLE, by the names the rows held — so only
+  // names this listing can own (T-media-path-bound): under its own prefix in
+  // the characters the writers generate (isOwnMediaPath, the rule 0148's
+  // CHECK binds on write, kept here for rows written before it), and never a
+  // name a SURVIVING row of the listing still holds (two rows of one listing
+  // may name one object, which no CHECK can see; since 0148 no other
+  // listing's row can name this prefix). The survivors are read after the
+  // delete, on the caller's session; if that read fails nothing is removed
+  // and it is reported: the rows are gone and their files stay, under the
+  // listing's prefix with no row naming them, rather than removing a file a
+  // live row still shows.
+  const { data: survivors, error: survivorsErr } = await supabase
+    .from("property_media")
+    .select("storage_path_original, path_thumb, path_card, path_full, path_jpeg")
+    .eq("property_id", propertyId);
+  if (survivorsErr || !Array.isArray(survivors)) {
+    reportMediaUpload("[media delete] survivor read failed — no files removed", "delete_survivors", {
+      propertyId,
+      deleted: deletedRows.length,
+      ...(survivorsErr?.code ? { code: survivorsErr.code } : {}),
+    });
+  } else {
+    const stillNamed = new Set(
+      survivors.flatMap((s) => [s.storage_path_original, s.path_thumb, s.path_card, s.path_full, s.path_jpeg]),
+    );
+    const removable = (p: string | null): p is string => isOwnMediaPath(propertyId, p) && !stillNamed.has(p);
+    const admin = createAdminClient();
+    // Renditions live in the bucket their KIND decides (media-bucket.ts), so a
+    // mixed delete removes from each bucket what it holds.
+    for (const bucket of ["media", "documents"] as const) {
+      const paths = deletedRows
+        .filter((m) => mediaBucketFor(m.kind) === bucket)
+        .flatMap((m) => [m.path_thumb, m.path_card, m.path_full, m.path_jpeg])
+        .filter(removable);
+      if (paths.length > 0) {
+        await removeObjectsBestEffort(admin.storage, bucket, paths, "media bulk delete: renditions");
+      }
     }
+    const originalPaths = deletedRows.map((m) => m.storage_path_original).filter(removable);
+    await removeObjectsBestEffort(admin.storage, "documents", originalPaths, "media bulk delete: originals");
   }
-  const originalPaths = deletedRows
-    .map((m) => m.storage_path_original)
-    .filter((p): p is string => Boolean(p));
-  await removeObjectsBestEffort(admin.storage, "documents", originalPaths, "media bulk delete: originals");
 
   // keep a cover: promote the first remaining PHOTO if the cover was deleted
   // (MEDIA-K: a floor plan must never become the cover — see the upload path)

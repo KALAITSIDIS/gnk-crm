@@ -3389,6 +3389,17 @@ VERIFY, run before starting.
   Candidates: a CHECK / trigger that `storage_path` starts with `org_id || '/<entity>s/'` plus a refusal of a path
   another row names. The same class as the slip-path entry above. **VERIFY:** `grep -rn "removeObjects" lib/actions`
   — any call passing a row's `storage_path` / `storage_path_original` without a derived prefix means open.
+  - **The media half is FIXED (T-media-path-bound, migration 0148, 2026-10-17; audit 2026-10-17 MEDIA-1 and RLS-3,
+    which widened it to the media-bucket renditions, a listing manager's PATCH and the property page's signer).**
+    `property_media_paths_own_property` binds all five path columns under `properties/<property_id>/`, in letters,
+    digits, `.`, `_`, `-` and `/`, with no `..` (a URL parser reads `%2e%2e` as `..`, measured), for every writer;
+    `deleteMediaBulk` removes only such names that no surviving row of the listing still holds, and nothing when it
+    cannot read the survivors; the property page signs only such a `path_card`. **Still open: the documents half** —
+    the erasure, the purge, `deleteContactDocument` and `deletePropertyDocument` (`documents.storage_path`), and the
+    slip paths above. **VERIFY (documents half):** `grep -n "removeObjects" lib/actions/contact-documents.ts
+    lib/actions/property-documents.ts lib/actions/contact-erasure.ts` — a call passing a row's `storage_path` with no
+    derived-prefix check means open; `grep -c "isOwnMediaPath" lib/actions/media.ts` reads 1 or more while the
+    media half holds.
 - **Two concurrent re-runs of a half-finished erasure can each write an `erased` event, S (pre-existing; found by
   T-erasure-lifecycle-guard's review, code-traced).** A re-run (marker set, no record) checks `hasErasedEvent` with a
   read and then writes the record unconditionally — the contact patch, the only row-count-guarded write that
@@ -4543,3 +4554,10 @@ Every VERIFY below was run on origin/main `447c5bc` on 2026-10-15; the branch fi
 
 - **NOTE — `site-revalidate-callsites.test.ts`'s throwing-follow-up classifier still counts `recomputeDealsFor`**, which no longer throws. That is conservative: it can only demand a knock earlier than needed. Leave it unless that test's comment is touched for another reason.
   - **VERIFY:** `grep -n "recomputeDealsFor is counted with it" lib/actions/site-revalidate-callsites.test.ts` gives `70:` on origin/main `447c5bc`.
+
+## Media paths — 2026-10-17 (T-media-path-bound)
+
+Left open by T-media-path-bound (migration 0148; audit 2026-10-17 MEDIA-1 and RLS-3). The fix itself is the media half of "Service-role storage removals trust a session-written path" (Data integrity audit — 2026-09-15), amended there.
+
+- **A photo delete whose survivors read fails leaves the photos' files with no row, S.** Since 0148 `deleteMediaBulk` reads which names the listing's other rows still hold before it removes anything, and on a failed or hollow answer removes nothing: the rows are gone, the event is written, the files stay under `properties/<id>/` and one Sentry message (`media_upload.delete_survivors`) says so. Nothing sweeps such files later. Rare (one read after a committed delete has to fail) and it fails toward keeping. Shape: a read-only orphan listing (objects under `properties/<id>/` that no `property_media` row names) the operator can run, then remove through the API. **VERIFY:** `grep -rln "property_media" scripts/media` — no script that lists objects no row names means open.
+- **NOTE — a fixture that writes `property_media` must name `properties/<its property>/…`** in letters, digits, `.`, `_`, `-` and `/` (0148's CHECK refuses anything else for every writer, service_role and postgres included; `t/…`, `e2e/…`, `<org>/originals/…` and `properties/x/…` were the old fixtures' shapes). A deterministic fixture whose expected output contains a path gives its listing a fixed id (`share-link-tenant-binding.test.ts`).
