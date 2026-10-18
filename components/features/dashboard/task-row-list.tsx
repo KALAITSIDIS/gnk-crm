@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { isTaskKind } from "@/lib/services/task-target";
-import { formatDate } from "@/lib/utils/format";
+import { formatTaskDue } from "@/lib/validators/tasks";
 import { cn } from "@/lib/utils";
 
 /**
@@ -54,7 +54,8 @@ export function TaskRowList({ rows, now }: { rows: DashboardTaskRow[]; now: Date
               ) : null}
             </span>
             {/* red means PAST due, not merely due — My day holds both, and a
-                nudge due at 23:59 tonight is not late yet */}
+                nudge due at 23:59 tonight is not late yet. A task with a time
+                of day shows it; an all-day one (Cyprus 23:59) its date (A02) */}
             <span
               className={cn(
                 "shrink-0 tabular-nums text-xs",
@@ -63,7 +64,7 @@ export function TaskRowList({ rows, now }: { rows: DashboardTaskRow[]; now: Date
                   : "text-text-3",
               )}
             >
-              {formatDate(task.dueAt)}
+              {formatTaskDue(task.dueAt)}
             </span>
           </Link>
         </li>

@@ -78,7 +78,7 @@ const REVIEWED: Record<string, Record<string, string>> = {
     "payload: overrideToLog": "declared `{ score: number; threshold: number } | null`",
   },
   "tasks.ts": {
-    "...link": "declared `{ property_id?; contact_id?; deal_id? }` — ids only",
+    "...link": "declared `TaskLink` — `{ property_id?; contact_id?; deal_id?; viewing_id?; lead_id? }`, ids only",
   },
   "unit-inheritance.ts": {
     "[column]": "the name of the unit column whose inheritance changed, never a client's field",
