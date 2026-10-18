@@ -11,6 +11,7 @@ import {
   MAP_SLOW_AFTER_MS,
   mapErrorOutcome,
   mapFailureReason,
+  PINS_SOURCE_ID,
   PRICE_ABSENT,
   startVisibleTimer,
   type MapFailure,
@@ -149,7 +150,7 @@ function buildPopup(features: Feat[], onOpen: (id: string) => void): HTMLElement
 /** The pins: one GeoJSON source and its layers. Circles need no tiles, sprites
  *  or glyphs; only the count and price labels need the style's glyph server. */
 function addPropertyLayers(map: import("maplibre-gl").Map, data: PropertyFeatureCollection) {
-  map.addSource("properties", {
+  map.addSource(PINS_SOURCE_ID, {
     type: "geojson",
     data,
     cluster: true,
@@ -171,7 +172,7 @@ function addPropertyLayers(map: import("maplibre-gl").Map, data: PropertyFeature
   map.addLayer({
     id: "property-clusters",
     type: "circle",
-    source: "properties",
+    source: PINS_SOURCE_ID,
     filter: ["has", "point_count"],
     paint: {
       // Deliberately NEITHER teal nor amber. A cluster can hold a mix of
@@ -202,7 +203,7 @@ function addPropertyLayers(map: import("maplibre-gl").Map, data: PropertyFeature
   map.addLayer({
     id: "property-cluster-count",
     type: "symbol",
-    source: "properties",
+    source: PINS_SOURCE_ID,
     filter: ["has", "point_count"],
     layout: {
       "text-field": ["get", "point_count_abbreviated"],
@@ -215,7 +216,7 @@ function addPropertyLayers(map: import("maplibre-gl").Map, data: PropertyFeature
   map.addLayer({
     id: "property-pins",
     type: "circle",
-    source: "properties",
+    source: PINS_SOURCE_ID,
     filter: ["!", ["has", "point_count"]],
     paint: {
       "circle-radius": 7,
@@ -251,7 +252,7 @@ function addPropertyLayers(map: import("maplibre-gl").Map, data: PropertyFeature
   map.addLayer({
     id: "property-cluster-price",
     type: "symbol",
-    source: "properties",
+    source: PINS_SOURCE_ID,
     // Hidden when NOTHING in the cluster is priced — the aggregate is then
     // still the sentinel, and "from €1.000.000.000.000" is not a price.
     filter: [
@@ -279,7 +280,7 @@ function addPropertyLayers(map: import("maplibre-gl").Map, data: PropertyFeature
   map.addLayer({
     id: "property-pin-price",
     type: "symbol",
-    source: "properties",
+    source: PINS_SOURCE_ID,
     filter: ["all", ["!", ["has", "point_count"]], ["get", "hasPrice"]],
     layout: {
       // The filter already excludes unpriced features; the coalesce keeps
@@ -423,11 +424,19 @@ function MapImpl({ data, listHref, unplaced }: MapProps) {
       }
       mapRef.current = map;
 
+      // The pins' own source failed (F08 review): never "drawn" after this —
+      // MapLibre counts an errored source as loaded, which `idle` would read
+      // as the pins being on the canvas.
+      let pinsFailed = false;
+
       // A listener here switches off MapLibre's own console.error for an error
       // nobody listens to — so what does not stop the map is still logged.
       map.on("error", (e) => {
+        // MapLibre adds `sourceId` to an error a source raised (typed only as ErrorEvent)
+        const pins = (e as { sourceId?: unknown }).sourceId === PINS_SOURCE_ID;
+        if (pins) pinsFailed = true;
         const outcome = mapErrorOutcome(e, readyRef.current);
-        if (outcome) giveUp(outcome, e.error, "style");
+        if (outcome) giveUp(outcome, e.error, pins ? "pins" : "style");
         else console.error(e.error);
       });
 
@@ -448,18 +457,30 @@ function MapImpl({ data, listHref, unplaced }: MapProps) {
         fitToData(map, dataRef.current);
       });
 
+      // the worker has answered the pins' GeoJSON: MapLibre fires this
+      // `metadata` event only on a load that succeeded, never on one that failed
+      let pinsParsed = false;
       const markDrawn = () => {
+        if (pinsFailed) return;
         map.off("sourcedata", onSourceData);
         map.off("idle", onIdle);
         if (!cancelled) setPinsDrawn(true);
       };
       const onSourceData = (e: import("maplibre-gl").MapSourceDataEvent) => {
-        if (e.sourceId === "properties" && e.isSourceLoaded) markDrawn();
+        if (e.sourceId !== PINS_SOURCE_ID) return;
+        if (e.sourceDataType === "metadata") pinsParsed = true;
+        if (pinsParsed && e.isSourceLoaded) markDrawn();
       };
       // the same answer by another road, in case the last tile's event came
-      // before the source counted itself loaded
+      // before the source counted itself loaded — and only once the worker
+      // parsed the pins: an ERRORED source also reads loaded
       const onIdle = () => {
-        if (readyRef.current && map.getSource("properties") && map.isSourceLoaded("properties")) {
+        if (
+          pinsParsed &&
+          readyRef.current &&
+          map.getSource(PINS_SOURCE_ID) &&
+          map.isSourceLoaded(PINS_SOURCE_ID)
+        ) {
           markDrawn();
         }
       };
@@ -491,7 +512,7 @@ function MapImpl({ data, listHref, unplaced }: MapProps) {
         })[0];
         const clusterId = hit?.properties?.cluster_id;
         if (clusterId === undefined) return;
-        const source = map.getSource("properties") as import("maplibre-gl").GeoJSONSource;
+        const source = map.getSource(PINS_SOURCE_ID) as import("maplibre-gl").GeoJSONSource;
 
         void (async () => {
           const leaves = await source.getClusterLeaves(clusterId, 100, 0);
@@ -539,7 +560,7 @@ function MapImpl({ data, listHref, unplaced }: MapProps) {
     dataRef.current = data;
     const map = mapRef.current;
     if (!map || !readyRef.current) return;
-    const source = map.getSource("properties");
+    const source = map.getSource(PINS_SOURCE_ID);
     if (source && "setData" in source) {
       (source as import("maplibre-gl").GeoJSONSource).setData(data);
       fitToData(map, data);

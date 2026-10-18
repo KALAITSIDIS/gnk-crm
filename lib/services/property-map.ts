@@ -193,22 +193,31 @@ export function mapFailureReason(err: unknown): MapFailure {
   return name === "GPUInitializationError" ? "unsupported" : "failed";
 }
 
+/** The id of the pins' GeoJSON source on the map — the one source that is ours. */
+export const PINS_SOURCE_ID = "properties";
+
 /**
  * What one MapLibre `error` event means for the map as a whole — null when it
  * does not stop the map.
  *
  * - A lost WebGL context MapLibre could not get back (`GPUInitializationError`
  *   through the event, any time): the map is gone — `unsupported`.
+ * - An error from the PINS' own source (`PINS_SOURCE_ID`), any time: the worker
+ *   could not cut our GeoJSON into tiles, so the pins will not draw — `failed`
+ *   (F08 review). MapLibre then counts that source as loaded (an errored
+ *   source reads `loaded()` true), so without this the map read "pins drawn"
+ *   over a basemap with no pins: no notice, no list, no report.
  * - Before the style has loaded, an error naming no source is the STYLE itself
  *   (unreachable, refused by the CSP, invalid): nothing will ever draw — `failed`.
- * - After it, errors are tiles, sprites and glyphs: transient, and the pins
- *   are already up. Not a failure — one bad tile must not take the map away.
+ * - After it, errors are basemap tiles, sprites and glyphs: transient, and the
+ *   pins are already up. Not a failure — one bad tile must not take the map away.
  */
 export function mapErrorOutcome(
   event: { error?: unknown; sourceId?: unknown; tile?: unknown },
   styleLoaded: boolean,
 ): MapFailure | null {
   if (mapFailureReason(event.error) === "unsupported") return "unsupported";
+  if (event.sourceId === PINS_SOURCE_ID) return "failed";
   if (styleLoaded) return null;
   if (event.sourceId || event.tile) return null;
   return "failed";

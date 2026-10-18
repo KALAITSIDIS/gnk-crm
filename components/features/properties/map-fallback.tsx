@@ -67,6 +67,11 @@ export function PropertyMapFallback({
   );
 }
 
+/** A row's Google Maps link, named for a screen reader: which property, and that it opens a tab. */
+export function mapsLinkName(reference: string): string {
+  return `Open in Google Maps: ${reference} (opens in a new tab)`;
+}
+
 /**
  * The map's pins as a list: the reference to the record, the title, the price,
  * whether the point is only an area or district centre, and the point in Google
@@ -97,14 +102,19 @@ export function PropertyMapList({ features }: { features: PropertyFeature[] }) {
             {p.precision === "approximate" ? (
               <span className="text-xs text-text-3">Approximate — area/district centre</span>
             ) : null}
+            {/* The whole name on the anchor (F08 review): a visually hidden
+                span is absolutely positioned — display:block — so name
+                computation padded it with spaces and the link was announced
+                "Open in Google Maps : REF". The name starts with the visible
+                text, as a voice-control user says it. */}
             <a
               href={mapsSearchUrl({ lat, lng })}
               target="_blank"
               rel="noopener noreferrer"
+              aria-label={mapsLinkName(p.reference)}
               className="ml-auto inline-flex items-center gap-1 text-xs text-brand-700 hover:underline"
             >
               Open in Google Maps
-              <span className="sr-only">: {p.reference} (opens in a new tab)</span>
               <ExternalLink className="size-3" aria-hidden />
             </a>
           </li>

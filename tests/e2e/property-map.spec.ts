@@ -344,7 +344,12 @@ test("without WebGL the map says so and lists the properties", async ({ page }) 
     );
 
     // and to its point, without the CRM URL travelling as the Referer
-    const maps = list.getByRole("link", { name: new RegExp(`^Open in Google Maps: ${approx.reference}`) });
+    // the whole name is on the anchor: an sr-only span inside it came out as
+    // "Open in Google Maps : REF" and matched nothing (F08 review)
+    const maps = list.getByRole("link", {
+      name: `Open in Google Maps: ${approx.reference} (opens in a new tab)`,
+      exact: true,
+    });
     await expect(maps).toHaveAttribute("href", "https://www.google.com/maps/search/?api=1&query=34.820000%2C32.390000");
     await expect(maps).toHaveAttribute("target", "_blank");
     await expect(maps).toHaveAttribute("rel", /\bnoopener\b/);

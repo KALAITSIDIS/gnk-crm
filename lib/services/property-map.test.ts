@@ -5,6 +5,7 @@ import {
   MAP_SLOW_AFTER_MS,
   mapErrorOutcome,
   mapFailureReason,
+  PINS_SOURCE_ID,
   placementSummary,
   resolvePosition,
   startVisibleTimer,
@@ -287,7 +288,7 @@ describe("mapErrorOutcome", () => {
     expect(mapErrorOutcome(styleError, false)).toBe("failed");
   });
 
-  it("a tile or source error is never a failure — one bad tile must not take the map away", () => {
+  it("a basemap tile or source error is never a failure — one bad tile must not take the map away", () => {
     expect(mapErrorOutcome(tileError, false)).toBeNull();
     expect(mapErrorOutcome(tileError, true)).toBeNull();
     expect(mapErrorOutcome({ error: new Error("x"), sourceId: "openmaptiles" }, false)).toBeNull();
@@ -295,6 +296,18 @@ describe("mapErrorOutcome", () => {
 
   it("after the style loaded the pins are up: sprite, glyph and tile errors do not stop the map", () => {
     expect(mapErrorOutcome(styleError, true)).toBeNull();
+  });
+
+  it("an error from the pins' own source stops the map, before or after the style — the pins will not draw", () => {
+    // MapLibre's GeoJSON worker answered the load with an error: the source then
+    // reads loaded, and the map used to report its pins drawn (F08 review)
+    const pins = { error: new Error("worker: cannot parse"), sourceId: PINS_SOURCE_ID };
+    expect(mapErrorOutcome(pins, true)).toBe("failed");
+    expect(mapErrorOutcome(pins, false)).toBe("failed");
+    // a tile of the pins' source is the pins too
+    expect(mapErrorOutcome({ ...pins, tile: {} }, true)).toBe("failed");
+    // …and a basemap source is still not ours
+    expect(mapErrorOutcome({ error: new Error("x"), sourceId: "openmaptiles", tile: {} }, true)).toBeNull();
   });
 
   it("a WebGL context MapLibre could not get back stops the map at any time", () => {
