@@ -95,7 +95,7 @@ export function LocationsEditor({ districts }: { districts: DistrictGroup[] }) {
     <div className="grid gap-4 lg:grid-cols-2">
       {districts.map((d) => (
         <section key={d.id} className="rounded-[10px] border border-border bg-surface p-5">
-          <h2 className="mb-2 text-sm font-semibold text-text-1">{d.name}</h2>
+          <h3 className="mb-2 text-sm font-semibold text-text-1">{d.name}</h3>
           {d.areas.length === 0 ? (
             <p className="text-sm text-text-3">No areas yet.</p>
           ) : (

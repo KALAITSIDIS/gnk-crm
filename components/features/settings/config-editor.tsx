@@ -37,12 +37,13 @@ export function ConfigCard({ row }: { row: ConfigRow }) {
 
   return (
     <section className="rounded-[10px] border border-border bg-surface p-5">
-      <h2 className="font-mono text-sm font-semibold text-text-1">{row.key}</h2>
+      {/* h3: the section's <h2> is the settings layout's (A08) */}
+      <h3 className="font-mono text-sm font-semibold text-text-1">{row.key}</h3>
       {row.description ? <p className="mt-1 text-xs text-text-3">{row.description}</p> : null}
 
       <form action={formAction} className="mt-3 flex flex-col gap-3">
         <input type="hidden" name="key" value={row.key} />
-        {/* the <h2> above names the section, but the textarea itself had no
+        {/* the <h3> above names the card, but the textarea itself had no
             accessible name — several of these render on one page (A11Y-1) */}
         <Textarea
           id={`value-json-${row.key}`}

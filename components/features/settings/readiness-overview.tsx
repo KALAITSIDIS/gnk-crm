@@ -80,13 +80,12 @@ export function ReadinessOverview({ facts, sender }: { facts: ReadinessFacts; se
 
   return (
     <div data-testid="settings-readiness" className="flex flex-col gap-5">
-      <div className="flex flex-col gap-1">
-        <h2 className="text-base font-semibold text-text-1">Activation readiness</h2>
-        <p className="max-w-3xl text-sm text-text-2">
-          What is switched on in this deployment, what waits on a step outside the CRM, and what is not built yet. This page only
-          reads: nothing here changes a setting — each row links to the page where it is changed.
-        </p>
-      </div>
+      {/* the section's <h2> "Activation readiness" is the settings layout's
+          (SettingsSectionHeading, A08) — it opens every section the same way */}
+      <p className="max-w-3xl text-sm text-text-2">
+        What is switched on in this deployment, what waits on a step outside the CRM, and what is not built yet. This page only
+        reads: nothing here changes a setting — each row links to the page where it is changed.
+      </p>
 
       {GROUP_ORDER.map((group) => {
         const inGroup = rows.filter((r) => r.group === group);

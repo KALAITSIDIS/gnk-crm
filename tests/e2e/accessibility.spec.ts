@@ -111,6 +111,9 @@ const FORM_PAGES = [
   { name: "Tasks (quick add)", path: "/tasks" },
   { name: "Keys (filters)", path: "/keys" },
   { name: "Leads (filters)", path: "/leads" },
+  // A08: the contacts filter bar had a placeholder-only search and Nationality
+  // box and six Select triggers that announced only their value
+  { name: "Contacts (filters)", path: "/contacts" },
   { name: "Settings — organization", path: "/settings/organization" },
   { name: "Settings — users", path: "/settings/users" },
   { name: "Settings — Cyprus config", path: "/settings/cyprus-config" },

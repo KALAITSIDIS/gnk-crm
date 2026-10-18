@@ -58,7 +58,8 @@ test.describe("Settings → Overview (activation readiness)", () => {
     await assertShellRendered(page);
 
     const overview = page.getByTestId("settings-readiness");
-    await expect(overview.getByRole("heading", { name: "Activation readiness" })).toBeVisible();
+    // the section's <h2> is drawn by the settings layout for every section (A08)
+    await expect(page.getByRole("heading", { level: 2, name: "Activation readiness" })).toBeVisible();
     for (const id of ROW_IDS) await expect(overview.getByTestId(`readiness-${id}`), id).toBeVisible();
     // the provider's answer has replaced the Suspense fallback
     await expect(overview.locator('[data-state="checking"]')).toHaveCount(0);

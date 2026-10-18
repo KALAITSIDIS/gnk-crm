@@ -33,12 +33,12 @@ export default async function OrganizationSettingsPage() {
   return (
     <div className="flex flex-col gap-6">
       <section className="rounded-[10px] border border-border bg-surface p-5">
-        <h2 className="mb-3 text-sm font-semibold text-text-1">Profile</h2>
+        <h3 className="mb-3 text-sm font-semibold text-text-1">Profile</h3>
         <OrgNameForm name={org?.name ?? ""} />
       </section>
 
       <section className="flex flex-col gap-5 rounded-[10px] border border-border bg-surface p-5">
-        <h2 className="text-sm font-semibold text-text-1">Branding</h2>
+        <h3 className="text-sm font-semibold text-text-1">Branding</h3>
         <BrandingUpload
           kind="logo"
           title="Logo"

@@ -32,7 +32,7 @@ const TEMP_TONES: Record<string, string> = {
   warm: "text-warning",
   cold: "text-brand-500",
   inactive: "text-text-3",
-  vip: "text-accent-500",
+  vip: "text-accent-700", // bronze TEXT token: accent-500 measures 3.09:1 on white (A08)
 };
 
 export default async function ContactsPage({
