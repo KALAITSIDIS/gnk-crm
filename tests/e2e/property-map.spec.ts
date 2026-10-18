@@ -153,13 +153,26 @@ test("a property with a district resolves to a pin rather than the empty state",
 });
 
 test("the filters survive the trip from list to map", async ({ page }) => {
-  await page.goto("/properties", { waitUntil: "domcontentloaded" });
+  // A REAL filter set (A03): with none, this could not fail on a lost filter.
+  // The map ignores the sort and the view but carries them back to the list.
+  const filters = { type: "villa", transaction: "sale", plot_min: "100", sort: "price_desc", view: "table" };
+  await page.goto(`/properties?${new URLSearchParams(filters)}`, { waitUntil: "domcontentloaded" });
 
   await page.getByRole("link", { name: /^map$/i }).click();
   await expect(page).toHaveURL(/\/properties\/map/);
+  expect(Object.fromEntries(new URL(page.url()).searchParams)).toEqual(filters);
+  // the map names the filters it applies (not the sort: it has no order)
+  await expect(page.getByTestId("properties-view-description")).toHaveText("Villa · For sale · plot ≥ 100 m²");
+  await expect(page).toHaveTitle("Properties map · Villa · For sale · plot ≥ 100 m²");
+  // and the tab remembers the map as the last list view
+  await expect
+    .poll(() => page.evaluate(() => sessionStorage.getItem("gnk:properties:last")))
+    .toBe(`/properties/map?${new URLSearchParams(filters)}`);
 
   await page.getByRole("link", { name: /^list$/i }).click();
   await expect(page).toHaveURL(/\/properties(\?|$)/);
+  expect(new URL(page.url()).pathname).toBe("/properties");
+  expect(Object.fromEntries(new URL(page.url()).searchParams)).toEqual(filters);
 });
 
 test("clicking a pin opens a popup that leads to the property", async ({ page }) => {

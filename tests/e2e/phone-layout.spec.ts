@@ -45,6 +45,35 @@ test.describe("phone layouts (CRM-06)", () => {
     await expect(page.getByRole("table")).toHaveCount(0);
   });
 
+  /**
+   * A03: the table's twelve columns sat in a horizontal scroller from the
+   * tablet breakpoint up, so at 1024 px everything right of the title was off
+   * screen. The columns now appear by priority in a fixed layout; at a small
+   * laptop's width the table fits its container with nothing to scroll —
+   * measured on the table's own scroller, not only the page.
+   */
+  test("the properties table fits a 1024 px window without a sideways scroll", async ({ page }, testInfo) => {
+    test.skip(isPhone(testInfo.project.use.viewport?.width ?? 1280), "desktop widths");
+    for (const width of [1024, 1280]) {
+      await page.setViewportSize({ width, height: 800 });
+      for (const path of ["/properties?view=table", "/properties?view=table&type=land"]) {
+        await page.goto(path, { waitUntil: "networkidle" });
+        await expect(page.getByRole("table").first()).toBeVisible();
+        const scrollers = await page.evaluate(() =>
+          [...document.querySelectorAll('main [data-slot="table-container"]')].map((el) => ({
+            scroll: el.scrollWidth,
+            client: el.clientWidth,
+          })),
+        );
+        expect(scrollers.length, `${path} at ${width}px: a table`).toBeGreaterThan(0);
+        for (const s of scrollers) {
+          expect(s.scroll - s.client, `${path} at ${width}px: the table scrolls sideways (${s.scroll} in ${s.client})`).toBeLessThanOrEqual(1);
+        }
+        await assertNoHorizontalOverflow(page, `${path} at ${width}px`);
+      }
+    }
+  });
+
   test("a lead card folds its secondary actions behind More… on a phone only", async ({ page }, testInfo) => {
     await page.goto("/leads", { waitUntil: "networkidle" });
     const phone = isPhone(testInfo.project.use.viewport?.width ?? 1280);

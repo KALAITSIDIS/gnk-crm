@@ -110,6 +110,8 @@ const FORM_PAGES = [
   { name: "Calculators", path: "/calculators" },
   { name: "Tasks (quick add)", path: "/tasks" },
   { name: "Keys (filters)", path: "/keys" },
+  // A03: every filter, the land bounds and the sort are named controls
+  { name: "Properties (filters)", path: "/properties" },
   { name: "Leads (filters)", path: "/leads" },
   { name: "Settings — organization", path: "/settings/organization" },
   { name: "Settings — users", path: "/settings/users" },
