@@ -64,6 +64,19 @@ export function ackBodyFor(a: EnquiryAck): string {
 }
 
 /**
+ * Is the acknowledgement armed on this deployment? A provider key and a From
+ * that is not Resend's onboarding sender (see the header). ONE definition:
+ * `sendEnquiryAck` gates on it and the Settings overview (A07,
+ * activation-readiness.ts) reports it, so the page cannot say "on" for a
+ * sender that skips. Reads the environment only; whether the From's domain
+ * is verified is `senderReadiness`'s question, not this one.
+ */
+export function enquiryAckConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
+  const from = env.ENQUIRY_ALERT_FROM;
+  return Boolean(env.RESEND_API_KEY && from && !/@resend\.dev\b/i.test(from));
+}
+
+/**
  * Send, or say why not. NEVER throws — the enquiry it acknowledges is already
  * committed and the desk already told.
  */
@@ -77,7 +90,9 @@ export async function sendEnquiryAck(
   }
   const key = process.env.RESEND_API_KEY;
   const from = process.env.ENQUIRY_ALERT_FROM;
-  if (!key || !from || /@resend\.dev\b/i.test(from)) {
+  // `!key || !from` repeats what the predicate already refused, for the
+  // compiler: past this line both are strings.
+  if (!enquiryAckConfigured(process.env) || !key || !from) {
     console.warn(
       "[enquiry-ack] SKIPPED — set RESEND_API_KEY and ENQUIRY_ALERT_FROM (a verified " +
         "sending address, never resend.dev) in the Vercel environment to arm it.",

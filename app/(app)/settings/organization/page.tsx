@@ -1,5 +1,6 @@
 import { BrandingUpload, OrgNameForm } from "@/components/features/settings/org-forms";
 import { getCurrentProfile } from "@/lib/services/auth";
+import { BRANDING_USE, brandingPublicUrl, readBrandingFiles, type BrandingKind } from "@/lib/services/branding";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -18,14 +19,16 @@ export default async function OrganizationSettingsPage() {
     .eq("id", profile.orgId)
     .maybeSingle();
 
-  // branding lives in the public media bucket; existence check via listing
+  // branding lives in the public media bucket; existence check via listing.
+  // A failed listing is "could not check", never "not uploaded" (A07).
   const admin = createAdminClient();
-  const { data: brandingFiles } = await admin.storage.from("media").list("branding");
-  const fileMeta = new Map((brandingFiles ?? []).map((f) => [f.name, f.updated_at ?? ""]));
-  // cache-bust with the file's own updated_at, so a re-upload shows immediately
-  const publicUrl = (file: string) =>
-    admin.storage.from("media").getPublicUrl(`branding/${file}`).data.publicUrl +
-    `?v=${encodeURIComponent(fileMeta.get(file) ?? "")}`;
+  const branding = await readBrandingFiles(admin);
+  const current = (kind: BrandingKind): string | null => {
+    if (!branding.ok) return null;
+    const updatedAt = branding.files[kind];
+    // cache-bust with the file's own updated_at, so a re-upload shows immediately
+    return updatedAt === undefined ? null : brandingPublicUrl(admin, kind, updatedAt);
+  };
 
   return (
     <div className="flex flex-col gap-6">
@@ -39,14 +42,16 @@ export default async function OrganizationSettingsPage() {
         <BrandingUpload
           kind="logo"
           title="Logo"
-          hint="PNG · used on documents and reports."
-          currentUrl={fileMeta.has("logo.png") ? publicUrl("logo.png") : null}
+          hint={`PNG · ${BRANDING_USE.logo}`}
+          currentUrl={current("logo")}
+          unreadable={!branding.ok}
         />
         <BrandingUpload
           kind="watermark"
           title="Watermark"
-          hint="PNG with transparency · applied to public/partner photo renditions by the media pipeline."
-          currentUrl={fileMeta.has("watermark.png") ? publicUrl("watermark.png") : null}
+          hint={`PNG with transparency · ${BRANDING_USE.watermark}`}
+          currentUrl={current("watermark")}
+          unreadable={!branding.ok}
         />
       </section>
     </div>
