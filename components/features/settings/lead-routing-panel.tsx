@@ -129,9 +129,9 @@ export function LeadRoutingPanel({
           <h3 className="text-sm font-semibold text-text-1">What this does not do</h3>
           <p className="mt-1 text-xs text-text-2">
             It never moves a lead somebody already holds, and it sends no e-mail. The response
-            clock runs from the moment the enquiry arrives whoever holds it; after an hour with no
-            first response, the ten-minute sweep raises a task for the assignee — or, for an
-            unassigned lead, the oldest admin.
+            clock runs from the moment the enquiry arrives whoever holds it; once an hour passes with
+            no first response, the CRM adds a follow-up task within ten minutes — for the assignee, or,
+            for an unassigned lead, the oldest admin.
           </p>
         </section>
 

@@ -67,3 +67,5 @@ Dark mode: not in Phase 1 (backlog).
 ## Tone
 
 No decorative illustrations. Empty states: one sentence + one button. The product should feel like a private-bank back office: quiet, precise, fast.
+
+Business words first; the system's words behind a disclosure. A status, a banner or an error leads with a plain sentence an agent can act on — "Desk alert not sent — the mail service refused it", "This page could not load", "Background jobs: 1 of 12 needs attention — Mandate expiry". Result codes, job and key names, attempt counters, migration numbers and raw error messages go in `TechnicalDetails` (`components/features/shared/technical-details.tsx`, a native `<details>` "Technical details"), never in the sentence: they are what support needs quoted, not what the screen leads with. Error boundaries say "This page could not load" with the error's digest as the reference to quote (`PageLoadError`). Screen copy does not name the machinery — sweep, worker, outbox, row, migration, guardrail; it says what happens ("the nightly check", "closes automatically overnight").

@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { retryEnquiryAlert } from "@/lib/actions/leads";
 import { deskAlertStatus, type DeskAlertJob, type DeskAlertTone } from "@/lib/services/enquiry-alert-status";
 import { Button } from "@/components/ui/button";
+import { TechnicalDetails } from "@/components/features/shared/technical-details";
 import { cn } from "@/lib/utils";
 
 /**
@@ -56,6 +57,8 @@ export function DeskAlertChip({ leadId, job }: { leadId: string; job: DeskAlertJ
           <BellRing className="size-3" /> {pending ? "Retrying…" : "Retry alert"}
         </Button>
       ) : null}
+      {/* the outbox's codes and counters, out of the sentence (A08) */}
+      {status.detail ? <TechnicalDetails>{status.detail}</TechnicalDetails> : null}
     </span>
   );
 }
