@@ -128,6 +128,7 @@ JamesEdition pull idempotent.
 **Functions (SECURITY DEFINER, EXECUTE granted to `anon` by name, like 0066):**
 
 - `portal_connection_by_token(p_portal text, p_token text)` → `(org_slug, enabled, settings)` or no row.
+- *(0097 renamed the argument to the digest and 0150/0151 replaced these three: `portal_feed_connection` / `portal_feed_supplement` take the TOKEN and hash it in SQL, and the pull record is the service-role-only `record_portal_pull` — DECISIONS `T-portal-feed-integrity`. The original design follows.)*
 - `portal_supplement(p_token text)` → one row per selected listing that the site
   feed would show: `reference, lat, lng, location_approx, images jsonb`
   where `images` is `[{jpeg, alt}]` ordered cover-first then `sort_order`,
@@ -201,7 +202,7 @@ with its own `PROPERTY_TYPES` map and an `EMPTY` document. Common rules:
 - UTF-8, the five XML specials escaped, all output through one `tag()` builder
   so no dialect concatenates strings.
 - `id` = the listing `reference` (stable, unique per org, what the desk says on the phone).
-- `date`/`lastmodified` = `updated_at`.
+- `date`/`lastmodified` = `updated_at`. **Superseded 2026-10-18 (DECISIONS `T-portal-feed-integrity`):** the date is when what THIS portal receives for the listing last changed — the sha256 of the rendered listing, date left out, kept per connection in `portal_export_state` (0150) — because a photo reorder, a cover change, a JPEG backfill, an area rename or a contact edit changed the XML and never moved `updated_at`.
 - Sale vs rent: `transaction_type = 'rent'` → the dialect's rent form with
   `rent_price_month`; `'sale'` or `'sale_or_rent'` → sale with `asking_price`.
   A listing marked sale-or-rent goes out once, as a sale (no portal in scope

@@ -344,7 +344,11 @@ Names only — values live in the dashboard:
 NEXT_PUBLIC_SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_ANON_KEY
 SUPABASE_SERVICE_ROLE_KEY        (secret)
-NEXT_PUBLIC_APP_URL
+NEXT_PUBLIC_APP_URL              (the CRM's canonical address, e.g. https://gnk-crm.vercel.app — alert e-mail links AND, since
+                                 2026-10-18, every portal feed URL's origin; must be an absolute https origin or it is ignored and
+                                 the feed URL falls back to Vercel's VERCEL_PROJECT_PRODUCTION_URL. Set it for Production)
+PUBLIC_SITE_URL                  (optional; the marketing site's origin, e.g. https://gnk-web.vercel.app — portal feeds then link each
+                                 listing to <origin>/properties/<reference>; unset = no link is sent. Change it at the domain cutover)
 TZ
 SENTRY_DSN                       (server — was missing once; everything reported nowhere)
 NEXT_PUBLIC_SENTRY_DSN
@@ -358,6 +362,13 @@ SITE_REVALIDATE_URL              (the site's revalidate door, https://gnk-web.ve
 SITE_REVALIDATE_KEY              (secret; = gnk-web's SITE_REVALIDATE_KEY — the CRM proves a knock is its own; unset = the site refreshes on its timers alone, logged once)
 CRON_SECRET                      (secret; the bearer token the desk-alert sweep requires, 0101 — Vercel's cron sends it unprompted once set; the pg_net job reads the same value from Vault. Unset = the sweep answers 503 and pending desk alerts wait; the enquiry route still sends at once)
 ```
+
+**Portal feed URLs are issued on Production only (2026-10-18, `T-portal-feed-integrity`).** A deployment whose
+`VERCEL_ENV` is `preview` or `development` refuses every portal connection write (enable, disable, Regenerate,
+contact settings) before reading anything, so a preview can neither mint a URL nor rotate production's — whatever
+database its `NEXT_PUBLIC_SUPABASE_*` variables point at. Off Vercel (`next dev`, CI) connections may be managed, and
+the card labels a URL built on a local origin as not for a portal. `VERCEL_ENV` and `VERCEL_PROJECT_PRODUCTION_URL`
+are set by Vercel itself.
 
 **Rotating a Supabase key requires a redeploy with the build cache OFF.** A
 cached build keeps the old value baked in and the change appears not to take.
