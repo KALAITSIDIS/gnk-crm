@@ -81,3 +81,41 @@ describe("annotateContactTimeline", () => {
     expect(e).toEqual(ev("pri-1", "updated", {}, "a note"));
   });
 });
+
+describe("a combined feed's lead, deal and viewing events are not merged contacts (A06)", () => {
+  /*
+   * The contact's Activity now carries the person's leads, deals and viewings.
+   * Their entity ids are never the contact's, and "any other id is a merged
+   * duplicate" would have put "merged contact" on every call logged from the
+   * inbox.
+   */
+  const typed = (entity_type: string, entity_id: string, event_type: string, note: string | null = null) => ({
+    id: `${entity_type}-${event_type}`,
+    entity_type,
+    entity_id,
+    event_type,
+    payload: {} as { [key: string]: Json },
+    note,
+  });
+
+  it.each([
+    ["a lead's call", typed("lead", "lead-1", "called")],
+    ["a deal's logged conversation", typed("deal", "deal-1", "conversation_logged", "spoke about the deposit")],
+    ["a viewing being scheduled", typed("viewing", "viewing-1", "created")],
+  ])("%s keeps its own note and no merged label", (_name, e) => {
+    const [out] = annotateContactTimeline([e], "pri-1", merged);
+    expect(out.note ?? "").not.toMatch(/merged contact|Mariou/);
+    expect(out.note).toBe(e.note);
+  });
+
+  it("still labels a merged duplicate's own CONTACT event", () => {
+    const [out] = annotateContactTimeline([typed("contact", "dup-1", "updated")], "pri-1", merged);
+    expect(out.note).toBe("Mariou Duplikatou");
+  });
+
+  it("does not name a crafted `merged` event on a lead after a duplicate", () => {
+    const e = { ...typed("lead", "lead-1", "merged"), payload: { merged_contact_id: "dup-1" } };
+    const [out] = annotateContactTimeline([e], "pri-1", merged);
+    expect(out.note).toBeNull();
+  });
+});

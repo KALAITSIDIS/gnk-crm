@@ -48,11 +48,20 @@ import { NOTE_ERASED_LABEL } from "@/lib/services/notes";
 /**
  * The row shape is `TimelineEvent` from lib/services/events.ts — the type the
  * renderer already reads — plus `entity_id`, which the contact page needs to
- * label an event that came from a merged-away contact. Defining a second
+ * label an event that came from a merged-away contact, and `actor_id`, which a
+ * combined feed needs to name the author. Defining a second
  * timeline type here is the "one fact, two definitions" failure this repo keeps
  * catching itself in.
  */
-export type TimelineRow = TimelineEvent & { entity_id: string | null };
+export type TimelineRow = TimelineEvent & {
+  entity_id: string | null;
+  /**
+   * Who wrote the event: a profile id, or null for the system (a cron, a
+   * definer, the website's enquiry door). A combined feed names the author
+   * from `profiles`, read as the viewer (`readEntityTimelines`).
+   */
+  actor_id: string | null;
+};
 
 /**
  * The entity types a screen actually renders a timeline for. A UNION, not a
@@ -61,8 +70,18 @@ export type TimelineRow = TimelineEvent & { entity_id: string | null };
  * doc 04 masks from listing managers behind `mandates_safe`. Nothing renders a
  * mandate timeline today, and adding one must be a compile error here rather
  * than a silent leak through a reader that answers as the system.
+ *
+ * `lead` and `viewing` joined for a customer's combined history (A06): the
+ * inbox's Contacted / Called / Log / WhatsApp buttons file their events on the
+ * LEAD, and a viewing's on the VIEWING, so a contact page that read only
+ * `contact` missed most of the work done with the person. Both rows are
+ * org-readable (`leads_select`, `viewings_select`: `org_id =
+ * current_org_id()`), and their payloads are ids, flags and times — with ONE
+ * exception, `viewing_slip_signed`, which carries the signer's and the second
+ * attendee's names while `viewing_slips_select` admits only an admin or the
+ * viewing's agent. `redactSlipSigners` below withholds them.
  */
-export type TimelineEntityType = "contact" | "property" | "deal" | "offer" | "key";
+export type TimelineEntityType = "contact" | "property" | "deal" | "offer" | "key" | "lead" | "viewing";
 
 export async function readEntityTimeline(opts: {
   /** the caller's org, from their own profile — never from user input */
@@ -73,7 +92,8 @@ export async function readEntityTimeline(opts: {
   limit: number;
   /**
    * the VIEWER's role — decides whether an older payload keeps its document
-   * title (redactDocumentTitles) and whether a won-deal follow-up keeps its kind
+   * title (redactDocumentTitles), whether a won-deal follow-up keeps its kind,
+   * and whether a signed slip's line keeps its names (redactSlipSigners)
    */
   viewerRole: string;
   /**
@@ -85,46 +105,245 @@ export async function readEntityTimeline(opts: {
    */
   viewer: SupabaseClient<Database>;
 }): Promise<TimelineRow[]> {
-  if (opts.entityIds.length === 0) return [];
+  const { rows } = await readSource(opts.orgId, opts.viewerRole, {
+    entityType: opts.entityType,
+    entityIds: opts.entityIds,
+    limit: opts.limit,
+  });
+  return attachCurrentTitles(opts.viewer, opts.orgId, rows);
+}
+
+/**
+ * One entity type's events, as the system, with every redaction applied — the
+ * part `readEntityTimeline` and `readEntityTimelines` share. `ok` is false when
+ * the read did not answer (an error, or an answer with no rows array, which is
+ * not "nothing happened": T-null-answer-guard); the rows are then empty.
+ */
+async function readSource(
+  orgId: string,
+  viewerRole: string,
+  source: {
+    entityType: TimelineEntityType;
+    entityIds: readonly string[];
+    limit: number;
+    excludeEventTypes?: readonly string[];
+  },
+): Promise<{ rows: TimelineRow[]; ok: boolean }> {
+  if (source.entityIds.length === 0) return { rows: [], ok: true };
   /*
    * An org is REQUIRED, and refusing here rather than trusting callers is the
    * point: on a service-role client `org_id` is the only boundary there is, and
    * a caller that derived it from an empty array would pass "" without
    * noticing. Loudly nothing, never quietly everything.
    */
-  if (!opts.orgId) {
-    console.error("timeline read refused: no org", { entityType: opts.entityType });
-    return [];
+  if (!orgId) {
+    console.error("timeline read refused: no org", { entityType: source.entityType });
+    return { rows: [], ok: false };
   }
 
-  const { data, error } = await createAdminClient()
+  let query = createAdminClient()
     .from("events")
-    .select("id, occurred_at, event_type, entity_type, entity_id, payload")
+    .select("id, occurred_at, event_type, entity_type, entity_id, actor_id, payload")
     // EXPLICIT — the admin client bypasses RLS, so this is the only org boundary
-    .eq("org_id", opts.orgId)
-    .eq("entity_type", opts.entityType)
-    .in("entity_id", opts.entityIds as string[])
+    .eq("org_id", orgId)
+    .eq("entity_type", source.entityType)
+    .in("entity_id", source.entityIds as string[]);
+  // In the QUERY, not after it: a lead's delivery telemetry (an alert retried
+  // through its backoff, an escalation chain) would otherwise fill the limit
+  // with rows the feed then drops.
+  if (source.excludeEventTypes && source.excludeEventTypes.length > 0) {
+    query = query.not("event_type", "in", `(${source.excludeEventTypes.join(",")})`);
+  }
+  const { data, error } = await query
     .order("occurred_at", { ascending: false })
     // events of one transaction share occurred_at (a close writes won_override
     // and won together, 0117); within an org, id order is chain order (0109)
     .order("id", { ascending: false })
-    .limit(opts.limit);
+    .limit(source.limit);
 
   // A timeline that silently shows nothing is indistinguishable from a record
   // nothing has happened to — the failure this whole day's work was about. A
   // read that failed says so in the log rather than rendering as an empty
-  // history; the caller keeps its page.
-  if (error) {
+  // history; the caller keeps its page (and `readEntityTimelines` reports it).
+  if (error || !Array.isArray(data)) {
     console.error("timeline read failed:", {
-      entityType: opts.entityType,
-      count: opts.entityIds.length,
-      error: error.message,
+      entityType: source.entityType,
+      count: source.entityIds.length,
+      error: error ? error.message : "the answer held no rows",
     });
-    return [];
+    return { rows: [], ok: false };
   }
-  const rows = await attachNotes((data ?? []) as unknown as TimelineRow[], opts.orgId);
-  const redacted = redactWonDealKinds(redactDocumentTitles(rows, opts.viewerRole), opts.viewerRole);
-  return attachCurrentTitles(opts.viewer, opts.orgId, redacted);
+  const rows = await attachNotes(data as unknown as TimelineRow[], orgId);
+  const redacted = redactSlipSigners(
+    redactWonDealKinds(redactDocumentTitles(rows, viewerRole), viewerRole),
+    viewerRole,
+  );
+  return { rows: redacted, ok: true };
+}
+
+/**
+ * Newest first; events at the same instant in chain order (newest id first).
+ * Negative when `a` is the newer. The order the reader asks Postgres for, so a
+ * merge of several sources reads exactly like one source would.
+ *
+ * Compared as instants first — PostgREST prints a timestamptz with as many
+ * fractional digits as it has, so two strings of different length are not
+ * always in text order — then as text (the sub-millisecond digits), then by id.
+ */
+export function compareNewestFirst(
+  a: { occurred_at: string; id: string | number },
+  b: { occurred_at: string; id: string | number },
+): number {
+  const ta = Date.parse(a.occurred_at);
+  const tb = Date.parse(b.occurred_at);
+  if (Number.isFinite(ta) && Number.isFinite(tb) && ta !== tb) return tb - ta;
+  if (a.occurred_at !== b.occurred_at) return a.occurred_at < b.occurred_at ? 1 : -1;
+  const ia = Number(a.id);
+  const ib = Number(b.id);
+  if (Number.isFinite(ia) && Number.isFinite(ib) && ia !== ib) return ib - ia;
+  const sa = String(a.id);
+  const sb = String(b.id);
+  return sa === sb ? 0 : sa < sb ? 1 : -1;
+}
+
+/** A row of a combined feed: the author's name, when the viewer may read it. */
+export type TimelineFeedRow = TimelineRow & {
+  /** `profiles.full_name` of `actor_id`, read as the viewer; null for the system or an unreadable profile */
+  actor_name: string | null;
+};
+
+export interface EntityTimelines {
+  /** newest first, at most `limit` */
+  rows: TimelineFeedRow[];
+  /**
+   * A source's read did not answer, so some of this history is missing. The
+   * page must SAY so: the rows alone would read as a record with less history
+   * than it has — a zero standing in for unavailable data.
+   */
+  incomplete: boolean;
+  /** older events exist than the ones returned (a source reached its cap, or the merge was cut to `limit`) */
+  truncated: boolean;
+}
+
+/**
+ * Lead delivery telemetry: the enquiry alert's sends and retries and the
+ * escalation's mails (0101–0112). Facts about the OFFICE's mailbox, already on
+ * the inbox's chips, with no timeline line of their own — on a customer's
+ * history they are noise between the calls, and a retry chain would fill a
+ * source's cap.
+ */
+export const CUSTOMER_FEED_SKIPPED_TYPES = ["enquiry_alert", "lead_escalation"] as const;
+
+/**
+ * Several records' histories as ONE feed: a contact with its leads, deals and
+ * viewings; a deal with its offers; a property with its keys and viewings.
+ *
+ * Each source is read exactly as `readEntityTimeline` reads one — as the
+ * system, org-bound, with the notes join and every redaction — so the same
+ * contract holds: every id in every source must have come back from a query
+ * on the CALLER's client. A source with no ids asks nothing.
+ *
+ * THE MERGE IS HONEST ABOUT ITS EDGES. Each source is capped at `perSource`,
+ * and a capped source may hold older rows the merge never saw. So rows older
+ * than the newest "oldest row" among the capped sources are dropped rather
+ * than shown out of context — otherwise a quiet source's year-old line would
+ * sit where a busy source's missing lines belong. Then the newest `limit`
+ * remain, and `truncated` says older events exist.
+ *
+ * Then, once for the whole page and as the VIEWER: the current task / document
+ * titles and a viewing's current feedback (`attachCurrentTitles`), and the
+ * authors' names from `profiles` (org-readable, `profiles_select`).
+ */
+export async function readEntityTimelines(opts: {
+  /** the caller's org, from their own profile — never from user input */
+  orgId: string;
+  /** the VIEWER's role — decides the redactions (document titles, won deals, slip signers) */
+  viewerRole: string;
+  /** The VIEWER's own client — as readEntityTimeline's. Never the admin client. */
+  viewer: SupabaseClient<Database>;
+  /** ids the CALLER already read through RLS, by entity type */
+  sources: readonly { entityType: TimelineEntityType; entityIds: readonly string[] }[];
+  /** cap per source */
+  perSource: number;
+  /** cap on the merged feed */
+  limit: number;
+  /** event types left out of every source, in the query */
+  excludeEventTypes?: readonly string[];
+}): Promise<EntityTimelines> {
+  const reads = await Promise.all(
+    opts.sources
+      .filter((s) => s.entityIds.length > 0)
+      .map((s) =>
+        readSource(opts.orgId, opts.viewerRole, {
+          entityType: s.entityType,
+          entityIds: s.entityIds,
+          limit: opts.perSource,
+          excludeEventTypes: opts.excludeEventTypes,
+        }),
+      ),
+  );
+  const incomplete = reads.some((r) => !r.ok);
+
+  // the newest of the capped sources' oldest rows: below it, a capped source
+  // may be missing lines
+  let floor: TimelineRow | null = null;
+  for (const r of reads) {
+    if (!r.ok || r.rows.length < opts.perSource || r.rows.length === 0) continue;
+    const oldest = r.rows[r.rows.length - 1];
+    if (!floor || compareNewestFirst(oldest, floor) < 0) floor = oldest;
+  }
+
+  const seen = new Set<string>();
+  const merged = reads
+    .flatMap((r) => r.rows)
+    .filter((r) => {
+      const key = String(r.id);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort(compareNewestFirst);
+  const edge = floor;
+  const kept = edge ? merged.filter((r) => compareNewestFirst(r, edge) <= 0) : merged;
+  const truncated = edge !== null || kept.length > opts.limit;
+  const page = kept.slice(0, opts.limit);
+
+  const [titled, names] = await Promise.all([
+    attachCurrentTitles(opts.viewer, opts.orgId, page),
+    readActorNames(opts.viewer, opts.orgId, page),
+  ]);
+  return {
+    rows: titled.map((r) => ({ ...r, actor_name: r.actor_id ? (names.get(r.actor_id) ?? null) : null })),
+    incomplete,
+    truncated,
+  };
+}
+
+/**
+ * The authors' names, read as the VIEWER (`profiles_select` is org-wide, so
+ * this discloses nothing a staff member cannot already read). A failed read
+ * leaves the names off — the line still reads, and a person is never shown
+ * as "system".
+ */
+async function readActorNames(
+  viewer: SupabaseClient<Database>,
+  orgId: string,
+  rows: readonly TimelineRow[],
+): Promise<Map<string, string>> {
+  const names = new Map<string, string>();
+  const ids = [
+    ...new Set(rows.map((r) => r.actor_id).filter((v): v is string => typeof v === "string" && v !== "")),
+  ];
+  if (ids.length === 0 || !orgId) return names;
+  const { data, error } = await viewer.from("profiles").select("id, full_name").eq("org_id", orgId).in("id", ids);
+  if (error || !Array.isArray(data)) {
+    console.error("timeline author read failed:", { count: ids.length, error: error ? error.message : "no rows" });
+    return names;
+  }
+  for (const p of data) {
+    if (typeof p.full_name === "string" && p.full_name.trim()) names.set(p.id, p.full_name);
+  }
+  return names;
 }
 
 /**
@@ -267,6 +486,43 @@ function redactDocumentTitles(rows: TimelineRow[], viewerRole: string): Timeline
     // the redaction path is the last place to leave noise
     const rest: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(payload)) if (k !== "title") rest[k] = v;
+    return { ...r, payload: rest as TimelineRow["payload"] };
+  });
+}
+
+/** The two names a signed viewing slip's event carries (viewing-slips.ts, 0082). */
+const SLIP_NAME_KEYS = new Set(["signer_name", "second_attendee"]);
+
+/**
+ * A SIGNED SLIP'S NAMES ARE THE SLIP'S, NOT THE VIEWING'S.
+ *
+ * `signViewingSlip` writes `viewing_slip_signed` on the VIEWING with
+ * `signer_name` and, when one attended, `second_attendee` — the hash-chained
+ * copy is the integrity claim (0082), so it stays in the chain. The line
+ * prints the signer ("Viewing slip signed by …").
+ *
+ * `viewings_select` is org-wide, so a viewing's events reach every staff
+ * member's contact feed; `viewing_slips_select` is not — it admits an admin or
+ * the viewing's own agent (0100). Read as the system and rendered as stored,
+ * the feed would hand a colleague's buyer's signature name to every agent and
+ * listing manager who opens the contact.
+ *
+ * So for anyone but an admin both names go, and the line falls back to its
+ * neutral "Viewing slip signed". The viewing's own agent loses the name here
+ * too — resolving per-row agency would be a second query per event, and they
+ * read the slip itself on the viewing page. Keyed by event TYPE, not entity:
+ * any org member may insert any payload (0071), and a crafted event on a
+ * contact must not print a name either.
+ */
+function redactSlipSigners(rows: TimelineRow[], viewerRole: string): TimelineRow[] {
+  if (viewerRole === "admin") return rows;
+  return rows.map((r) => {
+    if (r.event_type !== "viewing_slip_signed") return r;
+    const payload = (r.payload ?? {}) as Record<string, unknown>;
+    if (typeof payload !== "object" || Array.isArray(payload)) return r;
+    if (!Object.keys(payload).some((k) => SLIP_NAME_KEYS.has(k))) return r;
+    const rest: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(payload)) if (!SLIP_NAME_KEYS.has(k)) rest[k] = v;
     return { ...r, payload: rest as TimelineRow["payload"] };
   });
 }

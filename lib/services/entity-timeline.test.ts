@@ -15,7 +15,9 @@ import { fakeClient } from "@/lib/testing/fake-client";
 const admin = vi.hoisted(() => ({ client: null as unknown }));
 vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => admin.client }));
 
-const { readEntityTimeline } = await import("./entity-timeline");
+const { readEntityTimeline, readEntityTimelines, compareNewestFirst, CUSTOMER_FEED_SKIPPED_TYPES } = await import(
+  "./entity-timeline"
+);
 
 // the VIEWER's client — a blank fake; see event-context.test.ts for what it is asked
 const viewer = () => fakeClient({}).client as never;
@@ -525,5 +527,315 @@ describe("a task's or document's title comes from its ROW, read as the VIEWER (T
     });
     expect(row.current_title).toBeUndefined();
     expect(row.event_type).toBe("document_uploaded");
+  });
+});
+
+describe("the reader names the author (A06)", () => {
+  it("selects actor_id, so a feed can say who did it", async () => {
+    const svc = fakeClient({ events: [{ data: [], error: null }] });
+    admin.client = svc.client;
+    await readEntityTimeline({ orgId: "o", entityType: "contact", entityIds: ["c1"], limit: 50, viewerRole: "admin", viewer: viewer() });
+    const [[columns]] = svc.argsOf("events", "select") as [[string]];
+    expect(columns.split(",").map((c) => c.trim())).toContain("actor_id");
+  });
+
+  it("an answer with no rows array is a failed read, logged — not a record nothing happened to", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const svc = fakeClient({ events: [{ data: null, error: null }] });
+    admin.client = svc.client;
+    expect(
+      await readEntityTimeline({ orgId: "o", entityType: "lead", entityIds: ["l1"], limit: 50, viewerRole: "admin", viewer: viewer() }),
+    ).toEqual([]);
+    expect(err).toHaveBeenCalledWith("timeline read failed:", expect.objectContaining({ entityType: "lead" }));
+    err.mockRestore();
+  });
+});
+
+describe("a signed slip's names are withheld from everyone but an admin (A06)", () => {
+  /*
+   * `viewing_slip_signed` sits on the VIEWING, and `viewings_select` is
+   * org-wide — so once a contact's feed reads its viewings' events, every
+   * agent and listing manager who opens the contact would read the signer's
+   * name and the second attendee's. `viewing_slips_select` admits only an
+   * admin or the viewing's own agent.
+   */
+  const slip = (payload: Record<string, unknown>) => ({
+    id: 21,
+    occurred_at: "2026-10-01T10:00:00Z",
+    event_type: "viewing_slip_signed",
+    entity_type: "viewing",
+    entity_id: "v1",
+    actor_id: "agent-1",
+    payload,
+  });
+  const NAMES = { sha256: "a".repeat(64), pdf_sha256: "b".repeat(64), signer_name: "Zenobia Quillfeather", second_attendee: "Q. Quillfeather", geotagged: true };
+
+  const read = async (viewerRole: string, payload: Record<string, unknown> = NAMES) => {
+    const svc = fakeClient({ events: [{ data: [slip(payload)], error: null }] });
+    admin.client = svc.client;
+    const [r] = await readEntityTimeline({ orgId: "o", entityType: "viewing", entityIds: ["v1"], limit: 50, viewerRole, viewer: viewer() });
+    return r.payload as Record<string, unknown>;
+  };
+
+  it.each(["agent", "listing_manager"])("strips both names for a %s, keeping the digests", async (role) => {
+    const p = await read(role);
+    expect(p.signer_name).toBeUndefined();
+    expect(p.second_attendee).toBeUndefined();
+    expect(p.sha256, "the integrity facts stay").toBe("a".repeat(64));
+    expect(p.geotagged).toBe(true);
+  });
+
+  it("keeps them for an admin, who may open the slip", async () => {
+    const p = await read("admin");
+    expect(p.signer_name).toBe("Zenobia Quillfeather");
+    expect(p.second_attendee).toBe("Q. Quillfeather");
+  });
+
+  it("strips a name from a crafted slip event on another record too — the rule is the TYPE", async () => {
+    const svc = fakeClient({ events: [{ data: [{ ...slip(NAMES), entity_type: "contact", entity_id: "c1" }], error: null }] });
+    admin.client = svc.client;
+    const [r] = await readEntityTimeline({ orgId: "o", entityType: "contact", entityIds: ["c1"], limit: 50, viewerRole: "agent", viewer: viewer() });
+    expect(JSON.stringify(r.payload)).not.toContain("Quillfeather");
+  });
+
+  it("goes through the combined reader as well", async () => {
+    const svc = fakeClient({ events: [{ data: [slip(NAMES)], error: null }] });
+    admin.client = svc.client;
+    const out = await readEntityTimelines({
+      orgId: "o",
+      viewerRole: "agent",
+      viewer: viewer(),
+      sources: [{ entityType: "viewing", entityIds: ["v1"] }],
+      perSource: 50,
+      limit: 100,
+    });
+    expect(JSON.stringify(out.rows)).not.toContain("Quillfeather");
+  });
+});
+
+describe("readEntityTimelines — one feed from several records (A06)", () => {
+  const ev = (id: number, at: string, entity_type: string, event_type = "updated", actor_id: string | null = "p1") => ({
+    id,
+    occurred_at: at,
+    event_type,
+    entity_type,
+    entity_id: `${entity_type}-1`,
+    actor_id,
+    payload: {},
+  });
+
+  it("reads each source with its own org filter, merges newest first, and breaks a tie by chain order", async () => {
+    const svc = fakeClient({
+      events: [
+        { data: [ev(5, "2026-10-03T10:00:00Z", "contact"), ev(1, "2026-10-01T10:00:00Z", "contact")], error: null },
+        // a lead event in the SAME instant as the contact's newest: id decides (chain order)
+        { data: [ev(7, "2026-10-03T10:00:00Z", "lead", "called"), ev(2, "2026-10-02T10:00:00Z", "lead", "contacted")], error: null },
+      ],
+    });
+    admin.client = svc.client;
+    const out = await readEntityTimelines({
+      orgId: "org-1",
+      viewerRole: "agent",
+      viewer: fakeClient({ profiles: [{ data: [{ id: "p1", full_name: "Agent One" }], error: null }] }).client as never,
+      sources: [
+        { entityType: "contact", entityIds: ["contact-1"] },
+        { entityType: "lead", entityIds: ["lead-1"] },
+      ],
+      perSource: 50,
+      limit: 100,
+    });
+    expect(out.rows.map((r) => r.id)).toEqual([7, 5, 2, 1]);
+    expect(out.incomplete).toBe(false);
+    expect(out.truncated).toBe(false);
+    const eqs = svc.argsOf("events", "eq");
+    expect(eqs.filter(([k]) => k === "org_id"), "one org boundary PER source").toEqual([
+      ["org_id", "org-1"],
+      ["org_id", "org-1"],
+    ]);
+    expect(eqs.filter(([k]) => k === "entity_type")).toEqual([
+      ["entity_type", "contact"],
+      ["entity_type", "lead"],
+    ]);
+  });
+
+  it("asks nothing for a source with no ids", async () => {
+    const svc = fakeClient({ events: [{ data: [], error: null }] });
+    admin.client = svc.client;
+    await readEntityTimelines({
+      orgId: "org-1",
+      viewerRole: "admin",
+      viewer: viewer(),
+      sources: [
+        { entityType: "contact", entityIds: ["c1"] },
+        { entityType: "lead", entityIds: [] },
+        { entityType: "deal", entityIds: [] },
+      ],
+      perSource: 50,
+      limit: 100,
+    });
+    expect(svc.served.events, "one query: the contact").toBe(1);
+  });
+
+  it("leaves the skipped types out IN THE QUERY, so telemetry cannot fill a source's cap", async () => {
+    const svc = fakeClient({ events: [{ data: [], error: null }] });
+    admin.client = svc.client;
+    await readEntityTimelines({
+      orgId: "org-1",
+      viewerRole: "admin",
+      viewer: viewer(),
+      sources: [{ entityType: "lead", entityIds: ["l1"] }],
+      perSource: 50,
+      limit: 100,
+      excludeEventTypes: CUSTOMER_FEED_SKIPPED_TYPES,
+    });
+    expect(svc.argsOf("events", "not")).toEqual([["event_type", "in", "(enquiry_alert,lead_escalation)"]]);
+  });
+
+  it("says the history is INCOMPLETE when one source fails, and still shows the others", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const svc = fakeClient({
+      events: [
+        { data: [ev(3, "2026-10-03T10:00:00Z", "contact")], error: null },
+        { data: null, error: { message: "statement timeout" } },
+      ],
+    });
+    admin.client = svc.client;
+    const out = await readEntityTimelines({
+      orgId: "org-1",
+      viewerRole: "admin",
+      viewer: viewer(),
+      sources: [
+        { entityType: "contact", entityIds: ["c1"] },
+        { entityType: "deal", entityIds: ["d1"] },
+      ],
+      perSource: 50,
+      limit: 100,
+    });
+    expect(out.incomplete, "a failed source is said, never a shorter history").toBe(true);
+    expect(out.rows.map((r) => r.id)).toEqual([3]);
+    err.mockRestore();
+  });
+
+  it("drops rows older than a capped source's edge — they would sit where its missing lines belong", async () => {
+    // the lead source is capped at 2: anything older than its oldest returned
+    // row may have siblings it never returned
+    const svc = fakeClient({
+      events: [
+        { data: [ev(9, "2026-10-09T10:00:00Z", "lead"), ev(8, "2026-10-08T10:00:00Z", "lead")], error: null },
+        { data: [ev(4, "2026-10-08T12:00:00Z", "contact"), ev(1, "2025-01-01T10:00:00Z", "contact")], error: null },
+      ],
+    });
+    admin.client = svc.client;
+    const out = await readEntityTimelines({
+      orgId: "org-1",
+      viewerRole: "admin",
+      viewer: viewer(),
+      sources: [
+        { entityType: "lead", entityIds: ["l1"] },
+        { entityType: "contact", entityIds: ["c1"] },
+      ],
+      perSource: 2,
+      limit: 100,
+    });
+    expect(out.rows.map((r) => r.id), "the year-old contact line waits behind the cap").toEqual([9, 4, 8]);
+    expect(out.truncated).toBe(true);
+  });
+
+  it("cuts the merge at `limit` and says so", async () => {
+    const svc = fakeClient({
+      events: [
+        { data: [ev(3, "2026-10-03T10:00:00Z", "contact"), ev(1, "2026-10-01T10:00:00Z", "contact")], error: null },
+        { data: [ev(2, "2026-10-02T10:00:00Z", "deal")], error: null },
+      ],
+    });
+    admin.client = svc.client;
+    const out = await readEntityTimelines({
+      orgId: "org-1",
+      viewerRole: "admin",
+      viewer: viewer(),
+      sources: [
+        { entityType: "contact", entityIds: ["c1"] },
+        { entityType: "deal", entityIds: ["d1"] },
+      ],
+      perSource: 50,
+      limit: 2,
+    });
+    expect(out.rows.map((r) => r.id)).toEqual([3, 2]);
+    expect(out.truncated).toBe(true);
+  });
+
+  it("names the authors from profiles on the VIEWER's client; the system stays null", async () => {
+    const svc = fakeClient({
+      events: [{ data: [ev(2, "2026-10-02T10:00:00Z", "contact", "updated", "p1"), ev(1, "2026-10-01T10:00:00Z", "contact", "superseded", null)], error: null }],
+    });
+    admin.client = svc.client;
+    const mine = fakeClient({ profiles: [{ data: [{ id: "p1", full_name: "Agent One" }], error: null }] });
+    const out = await readEntityTimelines({
+      orgId: "org-1",
+      viewerRole: "agent",
+      viewer: mine.client as never,
+      sources: [{ entityType: "contact", entityIds: ["c1"] }],
+      perSource: 50,
+      limit: 100,
+    });
+    expect(out.rows.map((r) => [r.actor_id, r.actor_name])).toEqual([
+      ["p1", "Agent One"],
+      [null, null],
+    ]);
+    expect(mine.argsOf("profiles", "in")).toEqual([["id", ["p1"]]]);
+    expect(mine.argsOf("profiles", "eq")).toEqual([["org_id", "org-1"]]);
+    expect(svc.calls.filter((c) => c.table === "profiles"), "never the admin client").toEqual([]);
+  });
+
+  it("a failed author read leaves the names off — a person never becomes the system", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const svc = fakeClient({ events: [{ data: [ev(2, "2026-10-02T10:00:00Z", "contact", "updated", "p1")], error: null }] });
+    admin.client = svc.client;
+    const out = await readEntityTimelines({
+      orgId: "org-1",
+      viewerRole: "agent",
+      viewer: fakeClient({ profiles: [{ data: null, error: { message: "boom" } }] }).client as never,
+      sources: [{ entityType: "contact", entityIds: ["c1"] }],
+      perSource: 50,
+      limit: 100,
+    });
+    expect(out.rows[0].actor_id).toBe("p1");
+    expect(out.rows[0].actor_name).toBeNull();
+    err.mockRestore();
+  });
+
+  it("refuses a missing org: nothing is asked, and the feed says it is incomplete", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const svc = fakeClient({});
+    admin.client = svc.client;
+    const out = await readEntityTimelines({
+      orgId: "",
+      viewerRole: "admin",
+      viewer: viewer(),
+      sources: [{ entityType: "contact", entityIds: ["c1"] }],
+      perSource: 50,
+      limit: 100,
+    });
+    expect(svc.served.events ?? 0).toBe(0);
+    expect(out).toEqual({ rows: [], incomplete: true, truncated: false });
+    err.mockRestore();
+  });
+});
+
+describe("compareNewestFirst", () => {
+  it("orders by instant, then by chain id", () => {
+    const rows = [
+      { id: 1, occurred_at: "2026-10-01T10:00:00+00:00" },
+      { id: 3, occurred_at: "2026-10-01T10:00:00.5+00:00" },
+      { id: 2, occurred_at: "2026-10-01T10:00:00.5+00:00" },
+      { id: 4, occurred_at: "2026-10-02T09:00:00+00:00" },
+    ];
+    expect([...rows].sort(compareNewestFirst).map((r) => r.id)).toEqual([4, 3, 2, 1]);
+  });
+
+  it("compares the sub-millisecond digits Date.parse drops", () => {
+    const a = { id: 1, occurred_at: "2026-10-01T10:00:00.123456+00:00" };
+    const b = { id: 2, occurred_at: "2026-10-01T10:00:00.123+00:00" };
+    expect(compareNewestFirst(a, b), "the later microsecond is the newer, whatever the id").toBeLessThan(0);
   });
 });

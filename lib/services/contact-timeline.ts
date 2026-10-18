@@ -10,9 +10,22 @@ import type { Json } from "@/lib/supabase/database.types";
  *
  * A `merged` event written before 2026-09-23 carries `merged_contact_name`
  * and its line already prints it, so it gets no second copy.
+ *
+ * ONLY A CONTACT'S EVENT CAN COME FROM A MERGED CONTACT. Since A06 the feed
+ * also carries the person's leads, deals and viewings, whose `entity_id` is
+ * never this contact's — "any other id is a merged duplicate" would have
+ * labelled every call logged on the lead "merged contact". An event with no
+ * `entity_type` is read as a contact's, which is what every caller passed
+ * before the feed was combined.
  */
 export function annotateContactTimeline<
-  E extends { entity_id: string | null; event_type: string; payload: Json; note?: string | null },
+  E extends {
+    entity_type?: string;
+    entity_id: string | null;
+    event_type: string;
+    payload: Json;
+    note?: string | null;
+  },
 >(
   events: E[],
   contactId: string,
@@ -23,10 +36,12 @@ export function annotateContactTimeline<
     parts.filter(Boolean).join(" · ") || null;
 
   return events.map((e) => {
+    const isContactEvent = e.entity_type === undefined || e.entity_type === "contact";
     // the merged-away source's name, and/or the conversation note the reader attached (0094)
-    if (e.entity_id !== contactId) {
+    if (isContactEvent && e.entity_id !== contactId) {
       return { ...e, note: join(nameOf.get(e.entity_id ?? "") ?? "merged contact", e.note) };
     }
+    if (!isContactEvent) return { ...e, note: e.note ?? null };
     const p =
       e.payload && typeof e.payload === "object" && !Array.isArray(e.payload)
         ? (e.payload as Record<string, unknown>)

@@ -15,7 +15,8 @@ import { EraseContactDialog } from "@/components/features/contacts/erase-dialog"
 import { MergeDialog } from "@/components/features/contacts/merge-dialog";
 import { ChatLinks } from "@/components/features/shared/chat-links";
 import { LogContactConversation } from "@/components/features/contacts/log-contact";
-import { EventTimeline } from "@/components/features/shared/event-timeline";
+import { ContactActivityStrip } from "@/components/features/contacts/activity-summary";
+import { ActivityFeed } from "@/components/features/shared/event-timeline";
 import { StatusBadge } from "@/components/features/shared/status-badge";
 import { PortfolioTab } from "@/components/features/contacts/portfolio-tab";
 import {
@@ -52,9 +53,11 @@ import {
 } from "@/lib/constants/checklists";
 import { formatPhone } from "@/lib/services/phone";
 import { createClient } from "@/lib/supabase/server";
+import { unwrapRows } from "@/lib/supabase/unwrap";
 import { isGuid } from "@/lib/validators/ids";
 import { formatDateTime } from "@/lib/utils/format";
-import { readEntityTimeline } from "@/lib/services/entity-timeline";
+import { CUSTOMER_FEED_SKIPPED_TYPES, readEntityTimelines } from "@/lib/services/entity-timeline";
+import { readContactActivitySummary } from "@/lib/services/contact-activity-summary";
 
 const TEMP_TONES: Record<string, string> = {
   hot: "bg-danger/10 text-danger",
@@ -78,7 +81,7 @@ export default async function ContactDetailPage({
   const [
     { data: c },
     { data: areaRows },
-    { data: mergedRows },
+    mergedRes,
     { data: profileRows },
     { data: portfolioRows },
     { data: districtRows },
@@ -105,31 +108,19 @@ export default async function ContactDetailPage({
         .order("created_at", { ascending: false }),
     ]);
   if (!c) notFound();
+  // its ids feed the combined history below: a failed read is a failure, not "no duplicates"
+  const mergedRows = unwrapRows(mergedRes, "merged contacts");
 
   const profile = await getCurrentProfile(supabase);
 
   const [
-    { data: eventRows },
-    { data: dealRows },
+    dealsRes,
     { data: stageRows },
     { data: documentRows },
     { data: absorber },
-    { data: viewingRows },
+    viewingsRes,
+    leadsRes,
   ] = await Promise.all([
-    // Combined history: this contact + everything merged into it (DECISIONS
-    // T2.3), read as the SYSTEM. `events_select` shows a non-admin only the
-    // rows they authored, so on the caller's client this answered "what did I
-    // do to this contact" — a colleague's edit and every cron's event were
-    // invisible. The ids are ones RLS already returned to this page, and the
-    // page notFound()s above when it cannot read the contact.
-    readEntityTimeline({
-      orgId: profile.orgId,
-      viewerRole: profile.role,
-      viewer: supabase,
-      entityType: "contact",
-      entityIds: [id, ...(mergedRows ?? []).map((m) => m.id)],
-      limit: 50,
-    }).then((data) => ({ data, error: null })),
     supabase
       .from("deals")
       .select(
@@ -159,9 +150,63 @@ export default async function ContactDetailPage({
       .eq("contact_id", id)
       .order("scheduled_at", { ascending: false })
       .limit(50),
+    // A06: the person's enquiries. The inbox files its Contacted / Called /
+    // Log / WhatsApp events on the LEAD, so without these the Activity tab
+    // missed most of the work done with the person. Org-readable (leads_select).
+    supabase
+      .from("leads")
+      .select("id")
+      .eq("contact_id", id)
+      .order("received_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(50),
+  ]);
+  // These three lists' ids feed the combined history and the summary strip, so
+  // a failed read fails the page rather than reading as "no deals, no leads,
+  // no viewings" — a contact with no history it actually has.
+  const dealRows = unwrapRows(dealsRes, "contact deals");
+  const viewingRows = unwrapRows(viewingsRes, "contact viewings");
+  const leadIds = unwrapRows(leadsRes, "contact leads").map((l) => l.id);
+  const contactIds = [id, ...mergedRows.map((m) => m.id)];
+  const dealIds = dealRows.map((d) => d.id);
+  const now = new Date(); // per-request clock: "next" viewing, overdue task
+
+  const [timeline, summary] = await Promise.all([
+    // Combined history (A06): this contact + everything merged into it
+    // (DECISIONS T2.3), its leads, the deals this viewer may read, and its
+    // viewings — read as the SYSTEM. `events_select` shows a non-admin only
+    // the rows they authored, so on the caller's client this answered "what
+    // did I do to this contact". Every id came back from a read on THIS
+    // client above (the page notFound()s when it cannot read the contact),
+    // and a slip's signer names are withheld from non-admins by the reader.
+    readEntityTimelines({
+      orgId: profile.orgId,
+      viewerRole: profile.role,
+      viewer: supabase,
+      sources: [
+        { entityType: "contact", entityIds: contactIds },
+        { entityType: "lead", entityIds: leadIds },
+        { entityType: "deal", entityIds: dealIds },
+        { entityType: "viewing", entityIds: viewingRows.map((v) => v.id) },
+      ],
+      perSource: 50,
+      limit: 100,
+      excludeEventTypes: CUSTOMER_FEED_SKIPPED_TYPES,
+    }),
+    // Last logged contact / last chat opened (system, same ids) and the next
+    // step (THIS client: a non-admin sees only their own tasks)
+    readContactActivitySummary({
+      orgId: profile.orgId,
+      viewer: supabase,
+      contactId: id,
+      contactIds,
+      leadIds,
+      dealIds,
+      now,
+    }),
   ]);
 
-  const events = annotateContactTimeline(eventRows ?? [], id, mergedRows ?? []);
+  const events = annotateContactTimeline(timeline.rows, id, mergedRows);
 
   const areaOptions = (areaRows ?? []).map((a) => ({
     id: a.id,
@@ -354,11 +399,20 @@ export default async function ContactDetailPage({
             — records and future activity live there.
           </p>
         ) : null}
-        {(mergedRows ?? []).length > 0 ? (
+        {mergedRows.length > 0 ? (
           <p className="mt-1 text-xs text-text-3">
-            Absorbed: {(mergedRows ?? []).map((m) => m.display_name).join(", ")}
+            Absorbed: {mergedRows.map((m) => m.display_name).join(", ")}
           </p>
         ) : null}
+        {/* A06: last logged contact, last chat-link click (never counted as
+            contact), next step — across the contact, its leads and deals */}
+        <ContactActivityStrip
+          summary={summary}
+          actorNames={profileName}
+          viewerIsAdmin={profile.role === "admin"}
+          canAddTask={!c.is_archived && !isErased}
+          now={now}
+        />
       </div>
 
       <Tabs defaultValue="profile">
@@ -373,8 +427,8 @@ export default async function ContactDetailPage({
           {isParty ? (
             <TabsTrigger value="terms">Standard terms</TabsTrigger>
           ) : null}
-          <TabsTrigger value="deals">Deals ({(dealRows ?? []).length})</TabsTrigger>
-          <TabsTrigger value="viewings">Viewings ({(viewingRows ?? []).length})</TabsTrigger>
+          <TabsTrigger value="deals">Deals ({dealRows.length})</TabsTrigger>
+          <TabsTrigger value="viewings">Viewings ({viewingRows.length})</TabsTrigger>
           <TabsTrigger value="documents">Documents ({documents.length})</TabsTrigger>
         </TabsList>
 
@@ -433,11 +487,11 @@ export default async function ContactDetailPage({
         </TabsContent>
 
         <TabsContent value="activity" className="mt-4">
-          <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-6">
-            <EventTimeline events={events} />
-            {events.length === 50 ? (
-              <p className="mt-3 text-xs text-text-3">Showing the latest 50 events.</p>
-            ) : null}
+          <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-4 sm:p-6">
+            {/* the contact's own events and its leads', deals' and viewings',
+                each from another record chipped with where it came from;
+                filterable in place (no URL parameter) */}
+            <ActivityFeed timeline={{ ...timeline, rows: events }} pageEntityType="contact" />
           </div>
         </TabsContent>
 
@@ -464,14 +518,14 @@ export default async function ContactDetailPage({
         </TabsContent>
 
         <TabsContent value="viewings" className="mt-4">
-          {(viewingRows ?? []).length === 0 ? (
+          {viewingRows.length === 0 ? (
             <div className="max-w-3xl rounded-[10px] border border-dashed border-border py-12 text-center text-sm text-text-3">
               No viewings yet — schedule one from a property page or the calendar.
             </div>
           ) : (
             <div className="max-w-3xl rounded-[10px] border border-border bg-surface p-6">
               <ul className="flex flex-col divide-y divide-border/60">
-                {(viewingRows ?? []).map((v) => (
+                {viewingRows.map((v) => (
                   <li key={v.id} className="flex items-center justify-between gap-3 py-2 text-sm">
                     <Link href={`/viewings/${v.id}`} className="text-brand-700 hover:underline">
                       {formatDateTime(v.scheduled_at)}
@@ -490,7 +544,7 @@ export default async function ContactDetailPage({
         </TabsContent>
 
         <TabsContent value="deals" className="mt-4">
-          {(dealRows ?? []).length === 0 ? (
+          {dealRows.length === 0 ? (
             <div className="max-w-3xl rounded-[10px] border border-dashed border-border py-12 text-center text-sm text-text-3">
               No deals yet — convert a lead or start one from the pipeline.
             </div>
@@ -509,7 +563,7 @@ export default async function ContactDetailPage({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {(dealRows ?? []).map((d) => (
+                  {dealRows.map((d) => (
                     <TableRow key={d.id} className="h-11 hover:bg-surface-2">
                       <TableCell className="font-medium">
                         <Link href={`/deals/${d.id}`} className="text-brand-700 hover:underline">
