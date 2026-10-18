@@ -673,15 +673,15 @@ describe("searchParamsRecord", () => {
 describe("ownWriteTracker — the filter bar's own navigations vs everyone else's (A03)", () => {
   it("an own write that lands is the bar's; nothing is left pending", () => {
     const t = ownWriteTracker();
-    t.wrote("type=land");
+    t.wrote("type=land", "");
     expect(t.settled("type=land")).toBe(true);
     expect(t.pending()).toEqual([]);
   });
 
   it("two writes in flight land in order; each is the bar's own", () => {
     const t = ownWriteTracker();
-    t.wrote(`district=${PAPHOS}`);
-    t.wrote(`district=${PAPHOS}&type=land`);
+    t.wrote(`district=${PAPHOS}`, "");
+    t.wrote(`district=${PAPHOS}&type=land`, "");
     expect(t.settled(`district=${PAPHOS}`)).toBe(true);
     expect(t.pending()).toEqual([`district=${PAPHOS}&type=land`]);
     expect(t.settled(`district=${PAPHOS}&type=land`)).toBe(true);
@@ -690,8 +690,8 @@ describe("ownWriteTracker — the filter bar's own navigations vs everyone else'
 
   it("a superseded write never lands — and is forgotten, so a later Back to that URL is external", () => {
     const t = ownWriteTracker();
-    t.wrote("type=villa");
-    t.wrote("type=land");
+    t.wrote("type=villa", "");
+    t.wrote("type=land", "");
     expect(t.settled("type=land")).toBe(true);
     expect(t.pending()).toEqual([]);
     expect(t.settled("type=villa"), "Back to the superseded URL").toBe(false);
@@ -699,18 +699,40 @@ describe("ownWriteTracker — the filter bar's own navigations vs everyone else'
 
   it("a URL the bar did not write is external, and drops whatever was pending", () => {
     const t = ownWriteTracker();
-    t.wrote("type=land");
+    t.wrote("type=land", "");
     expect(t.settled("sort=price_asc")).toBe(false);
     expect(t.pending()).toEqual([]);
   });
 
   it("A, B, A: the settled A is the newest A — no stale copy lingers", () => {
     const t = ownWriteTracker();
-    t.wrote("type=land");
-    t.wrote("type=villa");
-    t.wrote("type=land");
+    t.wrote("type=land", "");
+    t.wrote("type=villa", "");
+    t.wrote("type=land", "");
     expect(t.settled("type=land")).toBe(true);
     expect(t.pending()).toEqual([]);
+  });
+
+  it("a write back to the URL on screen drops the writes in flight: a link landing on one later is external", () => {
+    // the review's sequence: on screen A; Sort → price (B), then back to Newest
+    // (A) before B commits. The router discards B, A changes nothing on screen,
+    // so nothing settles — then the Price header's link lands on exactly B.
+    const t = ownWriteTracker();
+    const A = "district=" + PAPHOS;
+    const B = `district=${PAPHOS}&sort=price_asc`;
+    t.wrote(B, A);
+    t.wrote(A, A);
+    expect(t.pending(), "superseded, and the write back never settles").toEqual([]);
+    expect(t.settled(B), "the header link is somebody else's navigation").toBe(false);
+  });
+
+  it("a write that is not the URL on screen is still recorded after one that was", () => {
+    const t = ownWriteTracker();
+    t.wrote("sort=price_asc", "");
+    t.wrote("", "");
+    t.wrote("type=land", "");
+    expect(t.pending()).toEqual(["type=land"]);
+    expect(t.settled("type=land")).toBe(true);
   });
 
   /*
@@ -733,7 +755,7 @@ describe("ownWriteTracker — the filter bar's own navigations vs everyone else'
     let latest = onScreen;
     const write = (updates: Record<string, string | undefined>) => {
       latest = nextPropertiesQuery(latest, updates);
-      t.wrote(latest);
+      t.wrote(latest, onScreen);
       return latest;
     };
     write({ district: PAPHOS });

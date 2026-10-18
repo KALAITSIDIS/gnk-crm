@@ -495,11 +495,23 @@ export function clearedPropertiesQuery(current: string): string {
  * LAST pending copy of `q`, so a superseded copy can never linger and make a
  * later Back to that URL look like the bar's own. Anything else is external,
  * and the pending list is dropped.
+ *
+ * `wrote(q, onScreen)` with q EQUAL to the URL on screen (Sort → price, then
+ * back to Newest before the first answer) records nothing and drops what was
+ * pending (A03 review): the earlier writes are superseded, and this one will
+ * never settle — the URL does not change, so no settle is ever reported. Kept,
+ * they lingered, and a later sortable-header or "Show all kinds" link landing
+ * on one of them was taken for the bar's own write: the bar kept composing from
+ * the URL it had asked for and silently dropped what the person clicked.
  */
 export function ownWriteTracker() {
   let pending: string[] = [];
   return {
-    wrote(query: string): void {
+    wrote(query: string, onScreen: string): void {
+      if (query === onScreen) {
+        pending = [];
+        return;
+      }
       pending.push(query);
     },
     settled(query: string): boolean {

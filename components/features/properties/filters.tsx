@@ -180,7 +180,9 @@ export function PropertiesFilters({
     (query: string) => {
       if (query === latest.current) return;
       latest.current = query;
-      tracker.wrote(query);
+      // back to the URL on screen: the writes in flight are superseded and
+      // this one never settles, so the tracker forgets them all
+      tracker.wrote(query, settled.current);
       startTransition(() => {
         setShownQuery(query);
         router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
