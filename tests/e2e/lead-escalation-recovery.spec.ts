@@ -21,11 +21,12 @@ import {
  * supabase/tests/lead-escalation-recovery.test.ts; the wording is
  * lib/services/lead-escalation-status.test.ts's. This spec covers what only
  * the running app can prove: a website lead carrying BOTH kinds shows both
- * chips with the right words; Review & resend warns, asks for no typed text
- * (0115) and, once confirmed, the row is pending under a NEW key with the admin's event; Retry
- * on a plain failure leaves the key alone; a lead with no escalation row
- * renders the desk alert alone; and an agent sees the status without the
- * controls.
+ * chips with the right words — business words on the row, the codes only
+ * under "Technical details" (A08); "Send a new copy…" warns, asks for no
+ * typed text (0115) and, once confirmed, the row is pending under a NEW key
+ * with the admin's event; Retry on a plain failure leaves the key alone; a
+ * lead with no escalation row renders the desk alert alone; and an agent
+ * sees the status without the controls.
  *
  * NOTHING IS SENT. The local `.env.local` has no RESEND_API_KEY and no
  * ENQUIRY_ALERT_TO, so the action's after() worker reports itself unconfigured
@@ -158,7 +159,7 @@ test.describe("Lead inbox — escalation status and recovery", () => {
     }
   });
 
-  test("a lead carrying both kinds shows both; Review & resend warns, asks for no typed text, and re-queues the escalation under a NEW key with the admin's event", async ({ page }) => {
+  test("a lead carrying both kinds shows both; Send a new copy warns, asks for no typed text, and re-queues the escalation under a NEW key with the admin's event", async ({ page }) => {
     const { id: adminId, orgId } = await fixtureProfile(svc);
     const lead = await submit("both");
     const deskId = await deskAlertFailed(lead);
@@ -170,23 +171,30 @@ test.describe("Lead inbox — escalation status and recovery", () => {
     await page.goto("/leads", { waitUntil: "networkidle" });
     const row = rowOf(page, "both");
     await expect(row).toBeVisible({ timeout: opTimeout(30_000) });
-    await expect(row.getByText(/desk alert FAILED/i)).toBeVisible();
+    await expect(row.getByText(/desk alert not sent/i)).toBeVisible();
     await expect(row.getByText(/escalation needs a decision/i)).toBeVisible();
-    await expect(row.getByText(/may already have sent it/i)).toBeVisible();
-    await expect(row.getByRole("button", { name: /review & resend/i })).toBeVisible();
+    await expect(row.getByText(/first e-mail may already have reached colleagues/i)).toBeVisible();
+    // A08: the row reads in business words; the provider's codes are only under "Technical details"
+    await expect(row.getByText(/FAILED/)).toHaveCount(0);
+    await expect(row.getByText(/last result 503 \(transient\)/), "the desk alert's code, closed").toBeHidden();
+    await expect(row.getByText(/invalid_idempotent_request/), "the escalation's code, closed").toBeHidden();
+    const escalationDetails = row.locator("details").filter({ hasText: "invalid_idempotent_request" });
+    await escalationDetails.locator("summary").click();
+    await expect(escalationDetails.getByText(/invalid_idempotent_request \(conflict\)/)).toBeVisible();
+    await expect(row.getByRole("button", { name: /send a new copy/i })).toBeVisible();
     await expect(row.getByRole("button", { name: /retry escalation/i }), "the row admits resend, not retry").toHaveCount(0);
 
-    await row.getByRole("button", { name: /review & resend/i }).click();
+    await row.getByRole("button", { name: /send a new copy/i }).click();
     const dialog = page.getByRole("dialog");
-    await expect(dialog.getByText(/may already have accepted/i)).toBeVisible();
+    await expect(dialog.getByText(/first e-mail may already have arrived/i)).toBeVisible();
     // 0115: no free-text box — the chain keeps the facts (who, when, which
     // action, the previous state), never words typed about a person
     await expect(dialog.getByRole("textbox")).toHaveCount(0);
-    await expect(dialog.getByText(/audit log records that you resent it/i)).toBeVisible();
+    await expect(dialog.getByText(/event log records that you sent a new copy/i)).toBeVisible();
     // opening the dialog moved nothing
     expect(await jobOf(lead, "lead_escalation")).toMatchObject({ state: "failed", key_serial: 1 });
-    await dialog.getByRole("button", { name: /resend under a new key/i }).click();
-    await expect(page.getByText(/escalation queued under a new key/i)).toBeVisible({ timeout: opTimeout(20_000) });
+    await dialog.getByRole("button", { name: /^send a new copy$/i }).click();
+    await expect(page.getByText(/new copy of the escalation queued/i)).toBeVisible({ timeout: opTimeout(20_000) });
     await expect(page.getByRole("dialog")).toBeHidden({ timeout: opTimeout(20_000) });
 
     // the database agrees: pending under key 2, the desk alert untouched, one event signed by the admin
@@ -211,7 +219,7 @@ test.describe("Lead inbox — escalation status and recovery", () => {
     // the row now reads as queued, with no control
     await page.reload({ waitUntil: "networkidle" });
     await expect(rowOf(page, "both").getByText(/escalation queued/i)).toBeVisible({ timeout: opTimeout(30_000) });
-    await expect(rowOf(page, "both").getByRole("button", { name: /resend|retry escalation/i })).toHaveCount(0);
+    await expect(rowOf(page, "both").getByRole("button", { name: /send a new copy|retry escalation/i })).toHaveCount(0);
     assertNoProblems(problems, "leads (escalation resend)");
   });
 
@@ -225,8 +233,8 @@ test.describe("Lead inbox — escalation status and recovery", () => {
     await page.goto("/leads", { waitUntil: "networkidle" });
     const row = rowOf(page, "retry");
     await expect(row).toBeVisible({ timeout: opTimeout(30_000) });
-    await expect(row.getByText(/escalation FAILED \(validation_error\)/i)).toBeVisible();
-    await expect(row.getByRole("button", { name: /review & resend/i })).toHaveCount(0);
+    await expect(row.getByText(/escalation not sent — the mail service refused it/i)).toBeVisible();
+    await expect(row.getByRole("button", { name: /send a new copy/i })).toHaveCount(0);
     await row.getByRole("button", { name: /retry escalation/i }).click();
     await expect(page.getByText(/escalation queued — sending now/i)).toBeVisible({ timeout: opTimeout(20_000) });
 
@@ -275,7 +283,7 @@ test.describe("Lead inbox — escalation status and recovery", () => {
         const row = rowOf(page, "agent");
         await expect(row).toBeVisible({ timeout: opTimeout(30_000) });
         await expect(row.getByText(/escalation needs a decision/i)).toBeVisible();
-        await expect(row.getByRole("button", { name: /review & resend|retry escalation/i }), "an agent may look, not act").toHaveCount(0);
+        await expect(row.getByRole("button", { name: /send a new copy|retry escalation/i }), "an agent may look, not act").toHaveCount(0);
       } finally {
         await svc.from("profiles").delete().eq("id", agentId);
         await svc.auth.admin.deleteUser(agentId);

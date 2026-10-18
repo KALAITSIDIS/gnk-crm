@@ -52,6 +52,7 @@
   --color-brand-500: var(--brand-500);
   --color-brand-100: var(--brand-100);
   --color-accent-500: var(--accent-500);
+  --color-accent-700: var(--accent-700);
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-danger: var(--danger);
@@ -69,9 +70,10 @@
   --brand-700: #1F4E79;  /* primary actions, links */
   --brand-500: #2E6DA4;
   --brand-100: #D9E2F3;  /* selected states, soft fills */
-  --accent-500: #B08D57; /* bronze/gold — sparing: KPIs, VIP, score ring */
+  --accent-500: #B08D57; /* bronze/gold FILLS — sparing: KPIs, score ring; 3.09:1 on white, never body text */
+  --accent-700: #7E6237; /* bronze TEXT — VIP; 5.69:1 on white */
   --success: #1E7F4F;
-  --warning: #B7791F;
+  --warning: #975A16;    /* was #B7791F (3.64:1 as text); 5.54:1 on white, 4.83:1 on its own 10% tint */
   --danger: #B42318;
   --surface: #FFFFFF;
   --surface-2: #F6F8FB;
@@ -157,5 +159,31 @@
   }
   html {
     @apply font-sans;
+  }
+
+  /*
+   * One visible keyboard-focus indicator (A08). Feature code builds links and
+   * raw buttons outside components/ui, and those had only the browser's own
+   * outline in --ring at 50% from the rule above: 2.11:1 on white, 1.70:1 on
+   * the navy sidebar. This draws a solid 2px --ring outline instead.
+   *
+   * It does not double-ring the ui primitives: Button, Input, Select,
+   * Textarea and Checkbox carry `outline-none` plus their own ring, and a
+   * utility beats @layer base whatever the specificity. Tab triggers are left
+   * out: they draw their own 1px outline inside a 3px-padded strip that clips
+   * anything farther out (components/ui/tabs.tsx).
+   *
+   * Both `:where()`s keep this at one pseudo-class of specificity, so the
+   * navy rule below wins without depending on source order.
+   * tests/unit/palette-parity.test.ts measures both colours.
+   */
+  :where(a[href], button, summary, input, select, textarea, [role="button"], [tabindex]:not([tabindex="-1"])):where(:not([role="tab"])):focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  /* the sidebar and the phone drawer are navy: white there, not --ring */
+  .bg-brand-950 :focus-visible {
+    outline-color: var(--sidebar-foreground);
   }
 }

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Building2, CalendarPlus, Inbox, Plus, Search, User } from "lucide-react";
 import { searchEntities, type EntityOption } from "@/lib/actions/entity-search";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -17,6 +18,11 @@ import { Input } from "@/components/ui/input";
 /**
  * Topbar global search (doc 05): fuzzy properties + contacts behind ⌘K, with
  * the quick-add shortcuts. Reuses the searchEntities action (RLS org-scoped).
+ *
+ * Two triggers open the ONE dialog (A08): the wide search box from `sm` up,
+ * and below `sm` an icon-only "Search" button — a phone has no ⌘K, and the
+ * wide box is `hidden` there, so before this a phone had no way in at all.
+ * Exactly one of the two is displayed at any width.
  */
 
 interface Results {
@@ -41,6 +47,8 @@ export function GlobalSearch() {
   const [searching, setSearching] = useState(false);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const seq = useRef(0);
+  const wideTrigger = useRef<HTMLButtonElement>(null);
+  const phoneTrigger = useRef<HTMLButtonElement>(null);
 
   // single open/close path so closing always clears the query state
   const setOpenAndReset = useCallback((v: boolean) => {
@@ -103,6 +111,7 @@ export function GlobalSearch() {
     <Dialog open={open} onOpenChange={setOpenAndReset}>
       <DialogTrigger asChild>
         <button
+          ref={wideTrigger}
           type="button"
           className="hidden h-9 w-full max-w-md items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 text-sm text-text-3 transition-colors hover:border-brand-500/40 hover:text-text-2 sm:flex"
         >
@@ -111,7 +120,24 @@ export function GlobalSearch() {
           <kbd className="ml-auto rounded border border-border bg-surface px-1.5 text-xs">⌘K</kbd>
         </button>
       </DialogTrigger>
-      <DialogContent className="top-24 max-w-lg translate-y-0 p-4">
+      <DialogTrigger asChild>
+        <Button ref={phoneTrigger} variant="ghost" size="icon" aria-label="Search" className="sm:hidden">
+          <Search className="size-5" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent
+        className="top-24 max-w-lg translate-y-0 p-4"
+        onCloseAutoFocus={(e) => {
+          // Radix returns focus to the trigger that registered LAST, which at
+          // one of the two widths is display:none, so focus would fall to
+          // <body>. Return it to whichever trigger is on screen instead.
+          e.preventDefault();
+          const shown = [wideTrigger.current, phoneTrigger.current].find(
+            (el) => el !== null && el.getClientRects().length > 0,
+          );
+          shown?.focus();
+        }}
+      >
         <DialogHeader className="sr-only">
           <DialogTitle>Global search</DialogTitle>
           <DialogDescription>Search properties and contacts, or jump to quick actions.</DialogDescription>
@@ -131,7 +157,9 @@ export function GlobalSearch() {
         </div>
 
         {hasResults ? (
-          <div className="flex max-h-80 flex-col gap-3 overflow-y-auto">
+          // p-1 is room for the focus outline (2px, 2px outside — globals.css),
+          // which a scroll box clips at its padding edge; -m-1 keeps the layout
+          <div className="-m-1 flex max-h-80 flex-col gap-3 overflow-y-auto p-1">
             {results.properties.length > 0 ? (
               <div>
                 <p className="px-1 pb-1 text-xs font-medium uppercase tracking-wide text-text-3">

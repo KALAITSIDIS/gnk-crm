@@ -109,13 +109,17 @@ export async function assertNoHorizontalOverflow(page: Page, context: string) {
   ).toBeLessThanOrEqual(1);
 }
 
+/** What an error boundary says — the route boundaries (A08) and global-error. */
+export const ERROR_BOUNDARY_TEXT = /this page could not load|something went wrong/i;
+
 /** Asserts the app shell rendered rather than an error boundary / blank page. */
 export async function assertShellRendered(page: Page) {
   await expect(page.locator("main")).toBeVisible();
   const body = (await page.locator("body").innerText()).trim();
   expect(body.length, "page body is empty").toBeGreaterThan(20);
-  // T5.7 error boundaries render this copy; a module smoke test must not hit it.
-  await expect(page.getByText(/something went wrong/i)).toHaveCount(0);
+  // the T5.7 error boundaries render this copy (A08: "This page could not load";
+  // global-error keeps "Something went wrong"); a module smoke test must not hit it.
+  await expect(page.getByText(ERROR_BOUNDARY_TEXT)).toHaveCount(0);
 }
 
 /**

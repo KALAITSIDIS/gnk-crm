@@ -82,20 +82,25 @@ const NOT_SENDABLE = new Set(["not_started", "pending", "failed"]);
 /** The providerStatus word for a domain listed as verified whose `capabilities.sending` is "disabled". */
 export const SENDING_DISABLED = "sending disabled";
 
-/** The sender line on the activation preview. A test pins every answer's words. */
+/**
+ * The sender line on the activation preview, and the Sending domain row of
+ * the Settings overview (A07) — one set of words for both surfaces, so
+ * neither may speak of "this preview" or "this page". A test pins every
+ * answer's words.
+ */
 export function senderReadinessCopy(r: SenderReadiness): { tone: SenderTone; text: string } {
   switch (r.state) {
     case "not_configured":
       return {
         tone: "danger",
-        text: `NOT configured on this deployment (${r.missing.join("; ")}) — the worker sends nothing, so any job the sweep creates would wait.`,
+        text: `NOT configured on this deployment (${r.missing.join("; ")}) — no e-mail is sent, so alerts and escalations that fall due would wait until it is.`,
       };
     case "invalid_from":
       return {
         tone: "danger",
         text:
-          "ENQUIRY_ALERT_FROM holds no usable e-mail address (the provider takes a@domain or Name <a@domain>). The worker would still " +
-          "attempt every message and the provider would refuse each one — a permanent failure on the inbox row.",
+          "ENQUIRY_ALERT_FROM holds no usable e-mail address (Resend takes a@domain or Name <a@domain>). Every message would " +
+          "still be tried and Resend would refuse each one — shown as not sent on the lead card.",
       };
     case "key_rejected":
       return {
@@ -140,7 +145,7 @@ export function senderReadinessCopy(r: SenderReadiness): { tone: SenderTone; tex
     case "domain_verified":
       return {
         tone: "neutral",
-        text: `From ${r.domain}, verified for sending in Resend (read when this preview ran). Resend takes mail from it; acceptance is not delivery to an inbox.`,
+        text: `From ${r.domain}, verified for sending in Resend (as Resend answered just now). Resend takes mail from it; acceptance is not delivery to an inbox.`,
       };
   }
 }

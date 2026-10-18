@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { recoverLeadEscalation } from "@/lib/actions/leads";
 import { escalationStatus, type EscalationJob } from "@/lib/services/lead-escalation-status";
 import type { DeskAlertTone } from "@/lib/services/enquiry-alert-status";
+import { TechnicalDetails } from "@/components/features/shared/technical-details";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -19,23 +20,27 @@ import { cn } from "@/lib/utils";
 
 /**
  * The escalation's status on a website lead's inbox row (0107; recovery
- * 0111), beside the desk alert's chip: queued, sending, retrying, accepted
- * by the provider, failed, cancelled — and, for an ADMIN, the one recovery
- * the database would admit for this row:
+ * 0111), beside the desk alert's chip: queued, sending, delayed, sent,
+ * not sent, cancelled — and, for an ADMIN, the one recovery the database
+ * would admit for this row:
  *
- *   Retry escalation — one click; the same provider key, which cannot send
- *                      a second copy;
- *   Review & resend  — a dialog that says the earlier e-mail may already
- *                      have been accepted and, only on an explicit
- *                      confirmation, creates a NEW logical send. It asks for
- *                      no typed text (0115): the event records who, when,
- *                      which action and why the worker stopped, and the
- *                      append-only chain must never hold words about a person.
+ *   Retry escalation  — one click; the same provider key, which cannot
+ *                       send a second copy, so colleagues cannot get it
+ *                       twice;
+ *   Send a new copy…  — a dialog that says the first e-mail may already
+ *                       have arrived and, only on an explicit
+ *                       confirmation, creates a NEW logical send. It asks
+ *                       for no typed text (0115): the event records who,
+ *                       when, which action and why the first one stopped,
+ *                       and the append-only chain must never hold words
+ *                       about a person.
  *
- * The wording lives in lib/services/lead-escalation-status.ts where a test
- * pins it; the rules live in request_lead_escalation_recovery, which refuses
- * anything this file gets wrong. A lead with no escalation row renders
- * nothing. Provider acceptance is never called delivery.
+ * Business words on the row; the outbox's codes, counters and key behind
+ * "Technical details" (A08). The wording lives in
+ * lib/services/lead-escalation-status.ts where a test pins it; the rules
+ * live in request_lead_escalation_recovery, which refuses anything this
+ * file gets wrong. A lead with no escalation row renders nothing. Provider
+ * acceptance is never called delivery.
  */
 const TONE_CLASSES: Record<DeskAlertTone, string> = {
   success: "text-success",
@@ -65,9 +70,9 @@ export function EscalationChip({ job, isAdmin }: { job: EscalationJob | null; is
       try {
         await recoverLeadEscalation({ jobId: job.id, action: "resend" });
         setOpen(false);
-        toast.success("Escalation queued under a new key — sending now");
+        toast.success("New copy of the escalation queued — sending now");
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not resend the escalation");
+        toast.error(e instanceof Error ? e.message : "Could not send a new copy of the escalation");
       }
     });
 
@@ -76,7 +81,6 @@ export function EscalationChip({ job, isAdmin }: { job: EscalationJob | null; is
       <span className={cn("text-xs", TONE_CLASSES[status.tone])} title="Whether a colleague was e-mailed that this enquiry was still unanswered">
         {status.label}
       </span>
-      {status.detail ? <span className="text-xs text-text-3">— {status.detail}</span> : null}
       {isAdmin && status.recovery === "retry" ? (
         <Button
           type="button"
@@ -85,7 +89,7 @@ export function EscalationChip({ job, isAdmin }: { job: EscalationJob | null; is
           className="h-6 px-2 text-xs"
           disabled={pending}
           onClick={retry}
-          title="Send the escalation again under the same provider key — the provider cannot send a second copy under it"
+          title="Sends it again. Colleagues cannot receive it twice: the mail service drops a repeat of the same e-mail."
         >
           <RotateCcw className="size-3" /> {pending ? "Retrying…" : "Retry escalation"}
         </Button>
@@ -99,34 +103,35 @@ export function EscalationChip({ job, isAdmin }: { job: EscalationJob | null; is
             className="h-6 px-2 text-xs"
             disabled={pending}
             onClick={() => setOpen(true)}
-            title="Decide whether to send the escalation again under a NEW provider key"
+            title="Decide whether to send colleagues a new copy of the escalation"
           >
-            <MailWarning className="size-3" /> Review &amp; resend
+            <MailWarning className="size-3" /> Send a new copy…
           </Button>
           <DialogContent className="max-w-md">
             <DialogHeader>
-              <DialogTitle>Resend the escalation under a new key?</DialogTitle>
+              <DialogTitle>Send a new copy of the escalation?</DialogTitle>
               <DialogDescription>
-                The provider may already have accepted the earlier e-mail under its key — a retry under the same key cannot
-                tell, so the worker stopped for this decision. Resending creates a new e-mail: if the earlier one was
-                delivered, the recipients receive it twice. Check with them first where you can.
+                The first e-mail may already have arrived — if it did, colleagues will get it twice. Check with them
+                first where you can.
               </DialogDescription>
             </DialogHeader>
-            <p className="text-xs text-text-3">Why the worker stopped: {status.detail ?? status.label}.</p>
             <p className="text-xs text-text-3">
-              The audit log records that you resent it, when, and why the worker stopped.
+              The event log records that you sent a new copy, when, and why the first one stopped.
             </p>
+            {status.detail ? <TechnicalDetails>{status.detail}</TechnicalDetails> : null}
             <DialogFooter>
               <Button type="button" variant="outline" disabled={pending} onClick={() => setOpen(false)}>
                 Cancel
               </Button>
               <Button type="button" disabled={pending} onClick={resend}>
-                {pending ? "Resending…" : "Resend under a new key"}
+                {pending ? "Sending…" : "Send a new copy"}
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
       ) : null}
+      {/* the outbox's codes, counters and key, out of the sentence (A08) */}
+      {status.detail ? <TechnicalDetails>{status.detail}</TechnicalDetails> : null}
     </span>
   );
 }

@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { type SupabaseClient } from "@supabase/supabase-js";
-import { fixtureProfile, isLocal, opTimeout, serviceClient } from "./helpers";
+import { ERROR_BOUNDARY_TEXT, fixtureProfile, isLocal, opTimeout, serviceClient } from "./helpers";
 
 /**
  * Performance measurement (audit brief Phase 4).
@@ -214,7 +214,7 @@ test.describe("scale safeguards", () => {
       expect(response?.status(), `${path}?page=9999 status`).toBeLessThan(400);
       // must render the shell + an empty-page message, never the error boundary
       await expect(page.locator("main")).toBeVisible();
-      await expect(page.getByText(/something went wrong/i)).toHaveCount(0);
+      await expect(page.getByText(ERROR_BOUNDARY_TEXT)).toHaveCount(0);
       await expect(page.getByText(/nothing on this page|none on this page/i).first()).toBeVisible();
     }
   });
@@ -223,7 +223,7 @@ test.describe("scale safeguards", () => {
     for (const junk of ["abc", "-1", "0", ""]) {
       const response = await page.goto(`/leads?page=${junk}`, { waitUntil: "networkidle" });
       expect(response?.status(), `?page=${junk} status`).toBeLessThan(400);
-      await expect(page.getByText(/something went wrong/i)).toHaveCount(0);
+      await expect(page.getByText(ERROR_BOUNDARY_TEXT)).toHaveCount(0);
     }
   });
 
@@ -272,6 +272,6 @@ test.describe("scale safeguards", () => {
     if (/showing the first/i.test(text)) {
       expect(text).toMatch(/not on this calendar/i);
     }
-    await expect(page.getByText(/something went wrong/i)).toHaveCount(0);
+    await expect(page.getByText(ERROR_BOUNDARY_TEXT)).toHaveCount(0);
   });
 });

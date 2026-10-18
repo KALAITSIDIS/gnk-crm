@@ -188,7 +188,7 @@ export const VERDICT_COPY: Record<PreviewVerdict, string> = {
 export const RECIPIENT_REASON_COPY: Record<RecipientReason, string> = {
   ok: "eligible",
   not_in_organisation: "not a member of this organisation",
-  inactive: "inactive — the sweep skips them",
+  inactive: "inactive — the check skips them",
   not_admin_or_agent: "not an admin or agent — cannot work a lead",
   no_email: "no e-mail address on file",
 };

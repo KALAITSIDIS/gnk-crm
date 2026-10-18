@@ -90,7 +90,7 @@ export const NUDGE_LABELS: Record<NudgeThresholdKey, { label: string; unit: stri
     reservation_expiry_days: {
       label: "Warn before a hold lapses",
       unit: "days ahead",
-      help: "Warns while there is still time to extend or chase the deposit. Runs after the nightly expiry sweep, so a hold that already lapsed closes its warning instead.",
+      help: "Warns while there is still time to extend or chase the deposit. Runs after the nightly expiry check, so a hold that already lapsed closes its warning instead.",
     },
     installment_due_days: {
       label: "Chase an instalment",

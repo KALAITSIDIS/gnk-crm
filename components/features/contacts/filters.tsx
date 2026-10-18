@@ -69,6 +69,10 @@ export function ContactsFilters({ agents }: { agents: { id: string; full_name: s
   ].some((k) => searchParams.has(k));
   const selectClass = "h-9 w-auto min-w-28 text-[13px]";
 
+  // Every control carries its own name (A08): a placeholder is not one, and
+  // a Select's trigger otherwise announces only its value ("combobox, Any
+  // source"). The keys and leads filters are the pattern; the DOM walk in
+  // tests/e2e/accessibility.spec.ts visits /contacts.
   return (
     <div className="flex flex-wrap items-center gap-2">
       <div className="relative w-full max-w-xs">
@@ -77,12 +81,13 @@ export function ContactsFilters({ agents }: { agents: { id: string; full_name: s
           value={search}
           onChange={(e) => onSearchChange(e.target.value)}
           placeholder="Search name, phone, email…"
+          aria-label="Search contacts"
           className="h-9 pl-8 text-[13px]"
         />
       </div>
 
       <Select value={searchParams.get("type") ?? ALL} onValueChange={(v) => setParams({ type: v })}>
-        <SelectTrigger className={selectClass}>
+        <SelectTrigger className={selectClass} aria-label="Contact type">
           <SelectValue placeholder="Type" />
         </SelectTrigger>
         <SelectContent>
@@ -99,7 +104,7 @@ export function ContactsFilters({ agents }: { agents: { id: string; full_name: s
         value={searchParams.get("temperature") ?? ALL}
         onValueChange={(v) => setParams({ temperature: v })}
       >
-        <SelectTrigger className={selectClass}>
+        <SelectTrigger className={selectClass} aria-label="Temperature">
           <SelectValue placeholder="Temperature" />
         </SelectTrigger>
         <SelectContent>
@@ -116,7 +121,7 @@ export function ContactsFilters({ agents }: { agents: { id: string; full_name: s
         value={searchParams.get("source") ?? ALL}
         onValueChange={(v) => setParams({ source: v })}
       >
-        <SelectTrigger className={selectClass}>
+        <SelectTrigger className={selectClass} aria-label="Source">
           <SelectValue placeholder="Source" />
         </SelectTrigger>
         <SelectContent>
@@ -133,7 +138,7 @@ export function ContactsFilters({ agents }: { agents: { id: string; full_name: s
         value={searchParams.get("agent") ?? ALL}
         onValueChange={(v) => setParams({ agent: v })}
       >
-        <SelectTrigger className={selectClass}>
+        <SelectTrigger className={selectClass} aria-label="Agent">
           <SelectValue placeholder="Agent" />
         </SelectTrigger>
         <SelectContent>
@@ -150,7 +155,7 @@ export function ContactsFilters({ agents }: { agents: { id: string; full_name: s
         value={searchParams.get("language") ?? ALL}
         onValueChange={(v) => setParams({ language: v })}
       >
-        <SelectTrigger className={selectClass}>
+        <SelectTrigger className={selectClass} aria-label="Language">
           <SelectValue placeholder="Language" />
         </SelectTrigger>
         <SelectContent>
@@ -165,6 +170,7 @@ export function ContactsFilters({ agents }: { agents: { id: string; full_name: s
 
       <Input
         placeholder="Nationality"
+        aria-label="Nationality"
         value={nationality}
         onChange={(e) => setNationality(e.target.value)}
         onBlur={() => setParams({ nationality: nationality || undefined })}
@@ -178,7 +184,7 @@ export function ContactsFilters({ agents }: { agents: { id: string; full_name: s
         value={searchParams.get("archived") === "1" ? "archived" : "active"}
         onValueChange={(v) => setParams({ archived: v === "archived" ? "1" : undefined })}
       >
-        <SelectTrigger className={selectClass}>
+        <SelectTrigger className={selectClass} aria-label="Show">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as Sentry from "@sentry/nextjs";
-import { ackBodyFor, ackSubjectFor, DESK_HOURS, sendEnquiryAck } from "./enquiry-ack";
+import { ackBodyFor, ackSubjectFor, DESK_HOURS, enquiryAckConfigured, sendEnquiryAck } from "./enquiry-ack";
 
 vi.mock("@sentry/nextjs", () => ({ captureMessage: vi.fn() }));
 
@@ -112,5 +112,51 @@ describe("arming — never from the onboarding sender, never without an address"
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNRESET"));
     await expect(sendEnquiryAck(base)).resolves.toBe("failed");
+  });
+});
+
+/**
+ * A07: the Settings overview reports the acknowledgement through the same
+ * predicate the sender gates on — one definition, so the page can never say
+ * "on" while the sender skips, or the reverse.
+ */
+describe("enquiryAckConfigured — the one arming rule", () => {
+  const env = (o: Record<string, string>) => o as unknown as NodeJS.ProcessEnv;
+  const KEY = { RESEND_API_KEY: "re_test" };
+  const CASES: Array<[string, Record<string, string>, boolean]> = [
+    ["no key, no From", {}, false],
+    ["no key", { ENQUIRY_ALERT_FROM: "GNK <hello@send.kalaitsidis.com>" }, false],
+    ["no From", KEY, false],
+    ["an empty From", { ...KEY, ENQUIRY_ALERT_FROM: "" }, false],
+    ["the onboarding sender", { ...KEY, ENQUIRY_ALERT_FROM: "GNK website <onboarding@resend.dev>" }, false],
+    ["a bare resend.dev address", { ...KEY, ENQUIRY_ALERT_FROM: "desk@resend.dev" }, false],
+    ["resend.dev in capitals", { ...KEY, ENQUIRY_ALERT_FROM: "Desk <DESK@RESEND.DEV>" }, false],
+    ["a custom domain", { ...KEY, ENQUIRY_ALERT_FROM: "GN Kalaitsidis Capital <hello@send.kalaitsidis.com>" }, true],
+    ["a bare custom address", { ...KEY, ENQUIRY_ALERT_FROM: "hello@send.kalaitsidis.com" }, true],
+  ];
+
+  it.each(CASES)("%s → %s", (_name, vars, expected) => {
+    expect(enquiryAckConfigured(env(vars))).toBe(expected);
+  });
+
+  it("sendEnquiryAck skips exactly when the predicate is false, and attempts exactly when it is true", async () => {
+    const OLD = { ...process.env };
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 200 }));
+    try {
+      for (const [name, vars, expected] of CASES) {
+        delete process.env.RESEND_API_KEY;
+        delete process.env.ENQUIRY_ALERT_FROM;
+        Object.assign(process.env, vars);
+        expect(enquiryAckConfigured(), name).toBe(expected);
+        fetchMock.mockClear();
+        const outcome = await sendEnquiryAck(base);
+        expect(outcome, name).toBe(expected ? "sent" : "skipped");
+        expect(fetchMock.mock.calls.length, name).toBe(expected ? 1 : 0);
+      }
+    } finally {
+      process.env = { ...OLD };
+      vi.restoreAllMocks();
+    }
   });
 });

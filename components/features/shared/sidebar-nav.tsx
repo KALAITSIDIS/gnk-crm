@@ -40,14 +40,19 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const t = useTranslations("nav");
 
+  // The current module is announced, not shown by colour alone (A08): its own
+  // page is aria-current="page"; on one of its sub-pages (a record, /new) the
+  // link marks the current section, aria-current="true". The desktop sidebar
+  // and the phone drawer each render this nav; only one is displayed at a time.
   return (
-    <nav className="flex flex-col gap-0.5 px-3">
+    <nav aria-label="Main" className="flex flex-col gap-0.5 px-3">
       {items.map(({ href, key, icon: Icon }) => {
         const active = pathname === href || pathname.startsWith(`${href}/`);
         return (
           <Link
             key={href}
             href={href}
+            aria-current={pathname === href ? "page" : active ? "true" : undefined}
             onClick={onNavigate}
             className={cn(
               "flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-white/70 transition-colors hover:bg-brand-900 hover:text-white",

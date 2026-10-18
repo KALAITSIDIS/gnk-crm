@@ -142,7 +142,7 @@ export function StagesEditor({ groups }: { groups: { dealType: string; stages: S
         const movable = g.stages.filter((s) => !s.is_won && !s.is_lost);
         return (
           <section key={g.dealType} className="rounded-[10px] border border-border bg-surface p-5">
-            <h2 className="mb-2 text-sm font-semibold capitalize text-text-1">{g.dealType}</h2>
+            <h3 className="mb-2 text-sm font-semibold capitalize text-text-1">{g.dealType}</h3>
             <ul className="flex flex-col divide-y divide-border/60">
               {g.stages.map((s) => (
                 <StageLine

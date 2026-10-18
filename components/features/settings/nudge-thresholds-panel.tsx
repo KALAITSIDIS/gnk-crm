@@ -43,7 +43,7 @@ export function NudgeThresholdsPanel({
   useEffect(() => {
     if (state.savedAt && state.savedAt !== last.current) {
       last.current = state.savedAt;
-      toast.success("Nudge thresholds saved — tonight's sweeps use the new values");
+      toast.success("Nudge thresholds saved — tonight's checks use the new values");
     }
   }, [state.savedAt]);
 
@@ -54,8 +54,8 @@ export function NudgeThresholdsPanel({
   return (
     <div className="flex flex-col gap-4">
       <p className="text-sm text-text-2">
-        When the nightly sweeps raise chase-up tasks. Each runs once a night; changing a value
-        here takes effect on the next run, and every save is an event.
+        When the CRM raises chase-up tasks. The checks run once a night, so a change here takes
+        effect from the next night. Every save is recorded in the event log.
       </p>
 
       <form action={formAction} className="flex flex-col gap-4">
@@ -90,7 +90,7 @@ export function NudgeThresholdsPanel({
                   {outside ? (
                     <p className="text-xs text-warning">
                       Currently {values[k]}, which is outside this form&rsquo;s range — it was set
-                      by editing <code>nudge_thresholds</code> directly. The sweeps are using it.
+                      on the Cyprus config page. The nightly checks are using it.
                       Saving here will replace it.
                     </p>
                   ) : null}

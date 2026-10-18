@@ -2,26 +2,22 @@
 
 import { useEffect } from "react";
 import * as Sentry from "@sentry/nextjs";
-import { Button } from "@/components/ui/button";
+import { PageLoadError } from "@/components/features/shared/page-load-error";
 
+/**
+ * The properties segment's error boundary (T5.7). Same words as the app's
+ * (A08): what failed is the page, and the reference is what to quote.
+ */
 export default function PropertiesError({
   error,
-  reset,
+  retry,
 }: {
   error: Error & { digest?: string };
-  reset: () => void;
+  retry: () => void;
 }) {
   useEffect(() => {
     Sentry.captureException(error);
   }, [error]);
 
-  return (
-    <div className="flex flex-col items-center gap-3 rounded-[10px] border border-border bg-surface py-16">
-      <p className="text-sm font-medium text-text-1">Couldn&apos;t load properties.</p>
-      <p className="max-w-md truncate text-xs text-text-3">{error.message}</p>
-      <Button variant="outline" size="sm" onClick={reset}>
-        Retry
-      </Button>
-    </div>
-  );
+  return <PageLoadError error={error} retry={retry} />;
 }

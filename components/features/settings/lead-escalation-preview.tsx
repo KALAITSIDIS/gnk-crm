@@ -70,7 +70,7 @@ function LeadRow({ lead, timeZone }: { lead: PreviewLead; timeZone: string }) {
       <TableCell className="whitespace-nowrap text-xs">{when(lead.due_at, timeZone)}</TableCell>
       <TableCell className="text-xs">
         <span className={cn("font-medium", sendable ? "text-success" : lead.verdict === "due" ? "text-warning" : "text-text-2")}>
-          {sendable ? VERDICT_COPY.due : lead.verdict === "due" ? "would be minted, but not sent" : VERDICT_COPY[lead.verdict]}
+          {sendable ? VERDICT_COPY.due : lead.verdict === "due" ? "due, but no e-mail would go out" : VERDICT_COPY[lead.verdict]}
         </span>
         {excluded && lead.verdict === "due" ? <span className="block text-text-3">{excluded}</span> : null}
       </TableCell>
@@ -130,7 +130,7 @@ export function LeadEscalationPreviewCard({
         <dt className="text-text-3">Recipients</dt>
         <dd className="text-text-1">
           {proposed} proposed, {preview.eligible_recipient_count} eligible under the escalation&rsquo;s rules (an active admin or agent with an
-          address) — not a check that the provider will take a message for them
+          address) — not a check that the e-mail service will accept a message for them
         </dd>
         <dt className="text-text-3">Sender</dt>
         <dd
@@ -144,9 +144,9 @@ export function LeadEscalationPreviewCard({
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Stat label="enquiries considered" value={c.considered} />
-        <Stat label="jobs the sweep would create" value={c.due} />
+        <Stat label="enquiries that would be escalated" value={c.due} />
         <Stat
-          label={sender.state === "not_configured" ? "e-mails the worker would attempt once configured" : "e-mails the worker would attempt"}
+          label={sender.state === "not_configured" ? "e-mails that would be sent once e-mail is set up" : "e-mails that would be sent"}
           value={c.would_send}
           tone={sender.state === "domain_verified" ? "success" : undefined}
         />
@@ -160,7 +160,7 @@ export function LeadEscalationPreviewCard({
       <div className="flex flex-col gap-1">
         <h4 className="text-xs font-semibold text-text-1">Who could be told</h4>
         {proposed === 0 ? (
-          <p className="text-xs text-danger">Nobody is ticked — every due enquiry would be cancelled as no_recipient.</p>
+          <p className="text-xs text-danger">Nobody is ticked — every due enquiry would be cancelled, with nobody to tell.</p>
         ) : (
           <ul className="flex flex-col gap-1">
             {preview.recipients.map((r) => (
@@ -180,7 +180,7 @@ export function LeadEscalationPreviewCard({
         <h4 className="text-xs font-semibold text-text-1">The enquiries</h4>
         {preview.leads.length === 0 ? (
           <p className="text-xs text-text-2">
-            No open, unanswered website enquiry is inside the sweep&rsquo;s window — nothing would be escalated right now with these values.
+            No open, unanswered website enquiry is inside the escalation&rsquo;s window — nothing would be escalated right now with these values.
           </p>
         ) : (
           <div className="overflow-x-auto">
@@ -212,8 +212,8 @@ export function LeadEscalationPreviewCard({
 
       <p className="text-xs text-text-3">
         Eligibility changes after this preview: an enquiry answered, closed or redacted, a colleague deactivated, or a new enquiry arriving
-        changes the answer. The five-minute check and the alert sweep decide again at their own moment, and the e-mail is rebuilt from the lead
-        then. Previewing never switches escalation on — Save does.
+        changes the answer. The five-minute check, and the send after it, decide again when they run, and the e-mail is written from the
+        lead as it is then. Previewing never switches escalation on — Save does.
       </p>
     </section>
   );
