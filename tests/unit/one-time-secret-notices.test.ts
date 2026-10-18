@@ -134,6 +134,7 @@ describe("the callers hand the notice on", () => {
   it.each([
     ["share-links", "share-links-client.tsx"],
     ["properties", "availability-share.tsx"],
+    ["shared", "match-proposal.tsx"],
   ])("%s/%s shows the notice beside the minted link and toasts it", (dir, file) => {
     const src = code("components", "features", dir, file);
     expect(tagOf(src, "MintedLink")).toContain("notice={minted.notice}");

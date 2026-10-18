@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { describeMatchHit, describeMatchReason } from "@/lib/services/match-reasons";
+import { visibilityChipLabel } from "@/lib/services/match-proposal";
 import type { MatchVerdict } from "@/lib/services/matching";
 
 /**
@@ -75,6 +76,45 @@ export function MatchReasons({ verdict }: { verdict: MatchVerdict }) {
       ))}
       {hidden > 0 ? <span className="text-xs text-text-3">+{hidden} more</span> : null}
     </div>
+  );
+}
+
+/**
+ * Who the listing is for, when that is not everyone (A04): off-market, VIP,
+ * partner, coming soon. Not a match rule — the listing still matches — but a
+ * proposal puts it in front of the buyer, so the row says so first. Nothing
+ * for public or private stock.
+ */
+export function VisibilityChip({ visibility }: { visibility: string | null | undefined }) {
+  const label = visibilityChipLabel(visibility);
+  if (!label) return null;
+  return (
+    <span
+      className={cn(
+        "rounded border px-1.5 py-0.5 text-xs font-medium",
+        visibility === "off_market"
+          ? "border-danger/30 bg-danger/8 text-danger"
+          : "border-border bg-surface-2 text-text-2",
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+
+/**
+ * "Proposed 18 Oct 2026" — a buyer-bound proposal link already holds this
+ * pairing (A04). The date is the newest such link's; `detail` (its state, how
+ * often it was opened) goes in the tooltip.
+ */
+export function ProposedBadge({ date, detail }: { date: string; detail?: string }) {
+  return (
+    <span
+      className="rounded border border-brand-700/30 bg-brand-700/5 px-1.5 py-0.5 text-xs text-brand-700"
+      title={detail}
+    >
+      Proposed {date}
+    </span>
   );
 }
 

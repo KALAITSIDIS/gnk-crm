@@ -133,6 +133,12 @@ const CASES: Case[] = [
     good: (id) => leads.createContactFromEnquiry(id),
   },
   {
+    name: "saveSearchFromEnquiry",
+    bad: (bad) => leads.saveSearchFromEnquiry(bad),
+    refusal: { value: { error: "Lead not found", savedAt: null } },
+    good: (id) => leads.saveSearchFromEnquiry(id),
+  },
+  {
     name: "deleteMedia — the property id",
     bad: (bad) => deleteMedia(bad, ID2),
     refusal: { value: { error: "Photo not found" } },

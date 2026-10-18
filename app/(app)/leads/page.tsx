@@ -22,6 +22,14 @@ import { loadEnquiryContactSuggestions } from "@/lib/queries/enquiry-contact-sug
 import { loadLeadsWithUnredactedNotes } from "@/lib/queries/lead-unredacted-notes";
 import { applyLeadListFilters, parseLeadFilters } from "@/lib/queries/leads-list";
 import {
+  ACTIVE_SEARCH_FILTER,
+  LEAD_CONTACT_EMBED,
+  SEARCH_EMBED_TABLE,
+  savedSearchOffer,
+  savedSearchState,
+} from "@/lib/queries/lead-saved-search";
+import { SavedSearchStatus } from "@/components/features/leads/saved-search-status";
+import {
   isRangeBeyondEnd,
   pageRange,
   pageSchema,
@@ -59,16 +67,22 @@ export default async function LeadsPage({
   const leadsBase = supabase
     .from("leads")
     .select(
+      // the contact embed carries its lifecycle and whether it has an active
+      // saved search (A04, lib/queries/lead-saved-search.ts) — in this one
+      // read, never a query per row
       `id, source, channel, message, status, received_at, first_response_at,
        assigned_agent_id, lost_reason, converted_deal_id, criteria, contact_id,
-       contacts(id, display_name, phone_e164, telegram_username, has_whatsapp),
+       ${LEAD_CONTACT_EMBED},
        properties(id, reference),
        notification_jobs!notification_jobs_lead_id_fkey(id, kind, state, attempts, max_attempts,
          next_attempt_at, claimed_until, last_category, last_result, accepted_at,
-         first_attempted_at, last_attempted_at, key_serial)`,
+         first_attempted_at, last_attempted_at, key_serial)` as const,
       // exact count of the SCOPED set, so the pager totals match these rows
       { count: "exact" },
-    );
+    )
+    // these narrow the EMBEDDED searches only — every lead still comes back
+    .eq(...ACTIVE_SEARCH_FILTER)
+    .limit(1, { referencedTable: SEARCH_EMBED_TABLE });
   const leadsQuery = applyLeadListFilters(leadsBase, filters);
 
   // header counts are exact DB counts, independent of the current page
@@ -202,10 +216,20 @@ export default async function LeadsPage({
               phone_e164: string | null;
               telegram_username: string | null;
               has_whatsapp: boolean;
+              is_archived: boolean | null;
+              erased_at: string | null;
+              buyer_requirements?: unknown;
             } | null;
             const property = lead.properties as { id: string; reference: string } | null;
             const isOpen = (openStatuses as string[]).includes(lead.status);
             const suggestion = suggestions.get(lead.id) ?? null;
+            const searchState = savedSearchState(contact);
+            const searchOffer = savedSearchOffer({
+              lead,
+              contact,
+              state: searchState,
+              role: profile.role,
+            });
             return (
               <li
                 key={lead.id}
@@ -262,6 +286,17 @@ export default async function LeadsPage({
                   </div>
                   {/* the whole enquiry and its brief, not one truncated line (0098, LR-03) */}
                   <LeadMessage message={lead.message} criteria={lead.criteria} />
+                  {/* A04: does the matcher have anything to go on for this person —
+                      and the brief saved as their search in one click */}
+                  {contact && searchOffer.show ? (
+                    <SavedSearchStatus
+                      leadId={lead.id}
+                      contactId={contact.id}
+                      state={searchState}
+                      canAdd={searchOffer.canAdd}
+                      canSaveBrief={searchOffer.canSaveBrief}
+                    />
+                  ) : null}
                   {suggestion ? (
                     <EnquiryContactSuggestions
                       leadId={lead.id}

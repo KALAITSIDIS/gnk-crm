@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findMatchingProperties } from "./matches";
+import { CANDIDATE_COLUMNS, findMatchingBuyers, findMatchingProperties } from "./matches";
 import { RETIRED_PROPERTY_VISIBILITY } from "@/lib/validators/properties";
 import type { MatchRequirement } from "@/lib/services/matching";
 
@@ -107,5 +107,82 @@ describe("findMatchingProperties pushes the right hard filters into SQL", () => 
     const limit = calls.findIndex((c) => c.method === "limit");
     expect(order).toBeGreaterThan(-1);
     expect(limit).toBeGreaterThan(order);
+  });
+});
+
+/*
+ * A04: a match row says when a listing is off-market (or VIP, partner, coming
+ * soon) — it is still inventory and still matches, but the row is now where a
+ * proposal is made, and a proposal shows the listing to the buyer. The column
+ * has to be in the candidate select for the row to know.
+ */
+describe("the candidate select carries what a match row shows", () => {
+  it("selects visibility — and selects exactly CANDIDATE_COLUMNS", async () => {
+    const { client, calls } = spyBuilder();
+    await findMatchingProperties(client as never, req());
+    const [select] = argsOf(calls, "select");
+    expect(select![0]).toBe(CANDIDATE_COLUMNS);
+    expect(CANDIDATE_COLUMNS.split(",").map((c) => c.trim())).toContain("visibility");
+  });
+
+  it("the buyer side reads each buyer's languages, for the proposal's language", async () => {
+    const { client, calls } = spyBuilder([
+      {
+        id: "req-1",
+        label: "Sea view",
+        contact_id: "c-1",
+        ...req(),
+        contacts: { id: "c-1", display_name: "Buyer One", assigned_agent_id: null, languages: ["ru", "en"] },
+      },
+    ]);
+    const property = {
+      id: "p1",
+      status: "available",
+      transaction_type: "sale",
+      property_type: "apartment",
+      district_id: null,
+      area_id: null,
+      asking_price: 250000,
+      rent_price_month: null,
+      bedrooms: 2,
+      bathrooms: 1,
+      covered_area_sqm: 90,
+      plot_area_sqm: null,
+      title_deed_status: "separate",
+      vat_status: "resale_no_vat",
+      sea_distance_m: null,
+      delivery_date: null,
+      features: [],
+    } as const;
+    const result = await findMatchingBuyers(client as never, { ...property, features: [] });
+    const [select] = argsOf(calls, "select");
+    expect(String(select![0])).toMatch(/contacts!inner\([^)]*\blanguages\b/);
+    expect(result.rows[0]?.contactLanguages).toEqual(["ru", "en"]);
+  });
+
+  it("a buyer row whose languages did not come back reads as none, never undefined", async () => {
+    const { client } = spyBuilder([
+      { id: "req-2", label: null, contact_id: "c-2", ...req(), contacts: { id: "c-2", display_name: "B", assigned_agent_id: null } },
+    ]);
+    const result = await findMatchingBuyers(client as never, {
+      id: "p1",
+      status: "available",
+      transaction_type: "sale",
+      property_type: "apartment",
+      district_id: null,
+      area_id: null,
+      asking_price: null,
+      rent_price_month: null,
+      bedrooms: null,
+      bathrooms: null,
+      covered_area_sqm: null,
+      plot_area_sqm: null,
+      title_deed_status: "unknown",
+      vat_status: "unknown",
+      sea_distance_m: null,
+      delivery_date: null,
+      features: [],
+    });
+    expect(result.rows[0]?.contactLanguages).toEqual([]);
   });
 });

@@ -58,6 +58,8 @@ import { isGuid } from "@/lib/validators/ids";
 import { formatDateTime } from "@/lib/utils/format";
 import { CUSTOMER_FEED_SKIPPED_TYPES, readEntityTimelines } from "@/lib/services/entity-timeline";
 import { readContactActivitySummary } from "@/lib/services/contact-activity-summary";
+import { proposalsForContact } from "@/lib/queries/proposals-sent";
+import { ProposalsSentList } from "@/components/features/contacts/proposals-sent";
 
 const TEMP_TONES: Record<string, string> = {
   hot: "bg-danger/10 text-danger",
@@ -67,15 +69,38 @@ const TEMP_TONES: Record<string, string> = {
   vip: "bg-accent-500/10 text-accent-500",
 };
 
+/**
+ * The tabs below, in order — what `?tab=` may name (A04: the leads inbox links
+ * a lead's contact straight to its Preferences, where saved searches live).
+ * Anything else, and "terms" on a contact without standard terms, opens Profile.
+ */
+const CONTACT_TABS = [
+  "profile",
+  "preferences",
+  "kyc",
+  "activity",
+  "portfolio",
+  "terms",
+  "deals",
+  "viewings",
+  "documents",
+] as const;
+
 export default async function ContactDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  /** `?tab=` — open on that tab; anything unknown opens Profile */
+  searchParams: Promise<{ tab?: string | string[] }>;
 }) {
   const { id } = await params;
   // a segment that is not an id names nothing: 404 before any query (T-malformed-ids) —
   // and the reads below interpolate it into PostgREST `.or()` filter strings
   if (!isGuid(id)) notFound();
+  const query = await searchParams;
+  // the first value wins for a repeated parameter, as on every list page
+  const askedTab = Array.isArray(query.tab) ? query.tab[0] : query.tab;
   const supabase = await createClient();
 
   const [
@@ -85,7 +110,7 @@ export default async function ContactDetailPage({
     { data: profileRows },
     { data: portfolioRows },
     { data: districtRows },
-    { data: requirementRows },
+    requirementsRes,
   ] =
     await Promise.all([
       supabase.from("contacts").select("*").eq("id", id).maybeSingle(),
@@ -110,6 +135,9 @@ export default async function ContactDetailPage({
   if (!c) notFound();
   // its ids feed the combined history below: a failed read is a failure, not "no duplicates"
   const mergedRows = unwrapRows(mergedRes, "merged contacts");
+  // A04: what the matcher reads, and what "No saved searches yet — add one"
+  // would otherwise be drawn from — a failed read must not invite a duplicate
+  const requirementRows = unwrapRows(requirementsRes, "saved searches");
 
   const profile = await getCurrentProfile(supabase);
 
@@ -171,7 +199,7 @@ export default async function ContactDetailPage({
   const dealIds = dealRows.map((d) => d.id);
   const now = new Date(); // per-request clock: "next" viewing, overdue task
 
-  const [timeline, summary] = await Promise.all([
+  const [timeline, summary, proposals] = await Promise.all([
     // Combined history (A06): this contact + everything merged into it
     // (DECISIONS T2.3), its leads, the deals this viewer may read, and its
     // viewings — read as the SYSTEM. `events_select` shows a non-admin only
@@ -204,6 +232,10 @@ export default async function ContactDetailPage({
       dealIds,
       now,
     }),
+    // A04: the proposals minted for this buyer — the "Proposed" marks on the
+    // matches and the Proposals sent list. Bounded, and a failure is stated,
+    // never "none" (lib/queries/proposals-sent.ts).
+    proposalsForContact(supabase, id),
   ]);
 
   const events = annotateContactTimeline(timeline.rows, id, mergedRows);
@@ -216,7 +248,7 @@ export default async function ContactDetailPage({
     id: d.id,
     name: (d.name as { en?: string })?.en ?? "—",
   }));
-  const requirements = (requirementRows ?? []) as unknown as RequirementRow[];
+  const requirements = requirementRows as unknown as RequirementRow[];
 
   const profileName = new Map((profileRows ?? []).map((p) => [p.id, p.full_name]));
   // reassignment select: active agents, plus the current holder even if deactivated
@@ -311,6 +343,18 @@ export default async function ContactDetailPage({
   const officeDefaults = isParty ? (await getPartyDefaults(null)).defaults : {};
 
   const portfolio = buildPortfolio(portfolioRows ?? [], id);
+
+  // `?tab=` (A04): a known tab this contact HAS, else Profile
+  const initialTab =
+    CONTACT_TABS.find((t) => t === askedTab && (t !== "terms" || isParty)) ?? "profile";
+  // the buyer a proposal from the matches is bound to (A04) — nothing is
+  // offered on an archived or erased contact, and the action refuses either
+  const proposalBuyer = {
+    id: c.id,
+    name: c.display_name ?? "this buyer",
+    languages: Array.isArray(c.languages) ? (c.languages as string[]) : [],
+  };
+  const mayActOnMatches = !c.is_archived && !isErased;
 
   return (
     <div className="flex flex-col gap-4">
@@ -415,7 +459,9 @@ export default async function ContactDetailPage({
         />
       </div>
 
-      <Tabs defaultValue="profile">
+      {/* keyed by the asked tab: following a ?tab= link from this page itself
+          remounts the tabs on it rather than keeping the last one open */}
+      <Tabs key={initialTab} defaultValue={initialTab}>
         <TabsList>
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="preferences">Preferences</TabsTrigger>
@@ -467,16 +513,35 @@ export default async function ContactDetailPage({
               />
             </section>
 
-            <section className="rounded-[10px] border border-border bg-surface p-6">
+            <section className="rounded-[10px] border border-border bg-surface p-4 sm:p-6">
               <div className="mb-4">
                 <h2 className="text-sm font-semibold text-text-1">Matching listings</h2>
                 <p className="text-sm text-text-2">
                   Scored against each saved search. Every score shows what it missed.
+                  {mayActOnMatches
+                    ? " Tick listings to make one proposal for this buyer, or schedule a viewing from a row — nothing is sent for you."
+                    : ""}
                 </p>
               </div>
-              <MatchesCard requirements={requirements as unknown as RequirementForMatching[]} />
+              <MatchesCard
+                requirements={requirements as unknown as RequirementForMatching[]}
+                buyer={proposalBuyer}
+                canAct={mayActOnMatches}
+                role={profile.role}
+                proposals={proposals}
+              />
             </section>
 
+            {/* A04: what this buyer was already sent, from the links themselves */}
+            <section className="rounded-[10px] border border-border bg-surface p-6">
+              <div className="mb-3">
+                <h2 className="text-sm font-semibold text-text-1">Proposals sent</h2>
+                <p className="text-sm text-text-2">
+                  Proposal links made for this buyer, newest first.
+                </p>
+              </div>
+              <ProposalsSentList history={proposals} now={now} />
+            </section>
           </div>
         </TabsContent>
 

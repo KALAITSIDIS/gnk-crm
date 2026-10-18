@@ -11,8 +11,14 @@
  *
  *   HARD (a `blocker`)  — a miss disqualifies. Reserved for things a buyer
  *                         would refuse outright: wrong transaction, wrong type,
- *                         wrong district, off-market, no separate deed when one
- *                         was demanded, or a price beyond the tolerance below.
+ *                         wrong district, a bedroom count outside the band, no
+ *                         separate deed when one was demanded, or a price
+ *                         beyond the tolerance below — the requirement side is
+ *                         HARD_REQUIREMENT_FIELDS. A listing whose STATUS is
+ *                         off the market (sold, draft, …) is blocked too.
+ *                         `visibility` is not judged here: an `off_market`
+ *                         listing is inventory sold discreetly and does match;
+ *                         the match list marks it, and a proposal asks first.
  *   SOFT (a `miss`)     — reduces the score and is NAMED. Everything else.
  *
  * THE SCORE IS NEVER STORED. `quality_score` is stored, and
@@ -190,6 +196,67 @@ const num = (v: number | null | undefined): number | null => {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 };
+
+/**
+ * The requirement fields a listing must SATISFY to be shown at all — each one,
+ * missed, is a `blocker` in matchProperty below. Exported so the saved-search
+ * form can say which fields hide listings and which only rank them (A04): the
+ * split lived in this file's comments and nowhere a desk could read it.
+ * `budget_max` hides only beyond BUDGET_TOLERANCE_PCT; inside it, it ranks.
+ * matching.test.ts pins this list to the engine field by field, and the form
+ * lays its fields out FROM these two lists, in this order, so the grouping
+ * cannot drift. (The order is the form's; the engine does not care.)
+ */
+export const HARD_REQUIREMENT_FIELDS = [
+  "transaction_type",
+  "budget_max",
+  "bedrooms_min",
+  "bedrooms_max",
+  "title_deed_required",
+  "property_types",
+  "district_ids",
+] as const satisfies readonly (keyof MatchRequirement)[];
+
+/** Every other requirement field: a miss lowers the score and is named, never hides a listing. */
+export const SOFT_REQUIREMENT_FIELDS = [
+  "budget_min",
+  "delivery_by",
+  "vat_preference",
+  "bathrooms_min",
+  "covered_area_min_sqm",
+  "plot_area_min_sqm",
+  "max_sea_distance_m",
+  "area_ids",
+  "features_required",
+] as const satisfies readonly (keyof MatchRequirement)[];
+
+export type HardRequirementField = (typeof HARD_REQUIREMENT_FIELDS)[number];
+export type SoftRequirementField = (typeof SOFT_REQUIREMENT_FIELDS)[number];
+
+/** The four things a desk qualifies a buyer on, in the order it asks them. */
+export const QUALIFYING_CRITERIA = ["budget", "location", "property type", "bedrooms"] as const;
+export type QualifyingCriterion = (typeof QUALIFYING_CRITERIA)[number];
+
+/**
+ * Which qualifying criteria this search leaves OPEN, so a search made from a
+ * two-field website brief says "Not stated: location, bedrooms" instead of
+ * silently matching every village and every size. An open criterion is not an
+ * error (a vague search is never punished in the score); it is what the desk
+ * still has to ask.
+ */
+export function unstatedCriteria(
+  req: Pick<
+    MatchRequirement,
+    "budget_min" | "budget_max" | "district_ids" | "area_ids" | "property_types" | "bedrooms_min" | "bedrooms_max"
+  >,
+): QualifyingCriterion[] {
+  const open: QualifyingCriterion[] = [];
+  if (num(req.budget_min) === null && num(req.budget_max) === null) open.push("budget");
+  if ((req.district_ids ?? []).length === 0 && (req.area_ids ?? []).length === 0) open.push("location");
+  if ((req.property_types ?? []).length === 0) open.push("property type");
+  if (num(req.bedrooms_min) === null && num(req.bedrooms_max) === null) open.push("bedrooms");
+  return open;
+}
 
 export function matchProperty(req: MatchRequirement, c: MatchCandidate): MatchVerdict {
   const blockers: MatchReason[] = [];

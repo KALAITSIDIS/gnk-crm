@@ -22,7 +22,8 @@ import {
 import { generateShareToken, hashShareToken } from "@/lib/services/share-links-token";
 import { rowsOf } from "@/lib/supabase/rows";
 import { createClient } from "@/lib/supabase/server";
-import { contactLinkError } from "@/lib/services/contact-reread";
+import { CONTACT_CHECK_FAILED, CONTACT_UNAVAILABLE } from "@/lib/services/contact-reread";
+import { RETIRED_PROPERTY_VISIBILITY } from "@/lib/validators/properties";
 
 export type ShareLinkActionState = {
   error: string | null;
@@ -92,6 +93,32 @@ async function recordLink(supabase: Client, params: Parameters<typeof logEvent>[
   }
 }
 
+/**
+ * The link's recipient, re-read under RLS before anything is minted — the
+ * contact-reread idiom (`contactLinkError`: a contact of another organisation,
+ * or one the read could not confirm, is a sentence and nothing is written),
+ * plus the contact's LIFECYCLE (A04). An erased contact gets no new records:
+ * the erasure removed the person's data and a proposal bound to them would
+ * start a new trail (BACKLOG "Sessions can still attach records to an erased
+ * contact" — this closes its share-links half in the app; the database trigger
+ * stays on BACKLOG). An archived contact is read-only everywhere, and the
+ * matcher already drops their searches. Null when there is no recipient or it
+ * may receive one.
+ */
+async function recipientError(supabase: Client, contactId: string | undefined): Promise<string | null> {
+  if (!contactId) return null;
+  const { data, error } = await supabase
+    .from("contacts")
+    .select("id, is_archived, erased_at")
+    .eq("id", contactId)
+    .maybeSingle();
+  if (error) return CONTACT_CHECK_FAILED;
+  if (!data) return CONTACT_UNAVAILABLE;
+  if (data.erased_at) return "This contact was erased — no proposal can be made for them.";
+  if (data.is_archived) return "This contact is archived — restore it before sending them a proposal.";
+  return null;
+}
+
 const createSchema = z.object({
   property_ids: z
     .array(z.guid())
@@ -127,14 +154,21 @@ export async function createShareLink(
   // never allowed to open.
   const { data: visible, error: visibleErr } = await supabase
     .from("properties")
-    .select("id")
+    .select("id, visibility")
     .in("id", d.property_ids);
   if (visibleErr) return refuse(visibleErr.message);
   if ((visible ?? []).length !== d.property_ids.length) {
     return refuse("Some of those properties are no longer available to you.");
   }
+  // A retired listing is off the books, and the proposal page drops it
+  // (0146): minting it would hand the buyer a link that shows less than the
+  // agent picked. The /share-links pool never offers one; a match row could
+  // be stale by the time it is pressed.
+  if ((visible ?? []).some((p) => p.visibility === RETIRED_PROPERTY_VISIBILITY)) {
+    return refuse("Some of those listings were archived meanwhile — a proposal cannot show them. Refresh and pick again.");
+  }
   // the recipient, read the same way (0139 binds the link to the organisation)
-  const contactErr = await contactLinkError(supabase, [d.contact_id]);
+  const contactErr = await recipientError(supabase, d.contact_id);
   if (contactErr) return refuse(contactErr);
 
   const token = generateShareToken();
@@ -189,6 +223,12 @@ export async function createShareLink(
   if (notRecorded) notices.push(notRecorded);
 
   revalidatePath("/share-links");
+  // a buyer-bound proposal marks its listings "Proposed" on the buyer's
+  // Preferences tab and the buyer on each listing's Matching buyers tab (A04)
+  if (d.contact_id) {
+    revalidatePath(`/contacts/${d.contact_id}`);
+    for (const id of d.property_ids) revalidatePath(`/properties/${id}`);
+  }
   return { error: null, path: shareLinkPath(token), savedAt: Date.now(), notice: joinNotices(notices) };
 }
 
@@ -262,7 +302,7 @@ export async function createAvailabilityLink(
     }
   }
   // the recipient, read the same way (0139 binds the link to the organisation)
-  const contactErr = await contactLinkError(supabase, [d.contact_id]);
+  const contactErr = await recipientError(supabase, d.contact_id);
   if (contactErr) return refuse(contactErr);
 
   const token = generateShareToken();
