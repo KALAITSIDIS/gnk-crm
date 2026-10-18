@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 149::bigint as migrations,
+    2::bigint as auth_users, 150::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -1039,6 +1039,27 @@ misc as (
              and position('if p_ip_hash is null or p_ip_hash !~ ''^[0-9a-f]{32}$'' then' in p.prosrc) > 0
              and position('if p_ip_hash is null or p_ip_hash !~ ''^[0-9a-f]{32}$'' then' in p.prosrc)
                  < position('insert into' in p.prosrc))::text
+  union all
+  -- 0154: the lead-source report keeps spam out of both sides of its convert
+  -- rate and divides its win rate within one scope (won / converted_visible,
+  -- the deals the caller can read); the stage report keys a row on
+  -- (pipeline, stage id), splits departures by the stages' order and counts
+  -- closes per pipeline. A restore that brought back 0076's / 0130's bodies
+  -- reads 'false false'; the 0130 HONESTY row above still holds for 0154's.
+  select 'HONESTY: lead sources keep spam out of the convert rate and the win rate in one scope; stage conversion is per pipeline, stage id and direction (0154)', 'true true',
+         coalesce((select (p.prosrc ~ 'count\(l\.converted_deal_id\) filter \(where l\.status <> ''spam''\)'
+                           and p.prosrc ~ 'then converted_not_spam::numeric / \(leads - spam\) end'
+                           and p.prosrc ~ 'then won::numeric / converted_visible end'
+                           and p.prosrc ~ 'count\(d\.id\)\s+as converted_visible')::text
+                     from pg_proc p
+                    where p.oid = to_regprocedure('public.report_source_roi(timestamptz, timestamptz)')), 'false') || ' ' ||
+         coalesce((select (p.prosrc ~ '''stage_key'',\s+''id'''
+                           and p.prosrc ~ 'when sf\.deal_type = st\.deal_type and st\.sort_order > sf\.sort_order then ''forward'''
+                           and p.prosrc ~ 'when sf\.deal_type = st\.deal_type and st\.sort_order < sf\.sort_order then ''backward'''
+                           and p.prosrc ~ 'e\.to_stage_id is not distinct from m\.from_stage_id'
+                           and p.prosrc ~ '''outcomes_by_type''')::text
+                     from pg_proc p
+                    where p.oid = to_regprocedure('public.report_stage_conversion(timestamptz, timestamptz)')), 'false')
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.

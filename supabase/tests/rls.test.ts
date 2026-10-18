@@ -3958,6 +3958,11 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     expect(Number(bySource.website.won_value)).toBe(100000);
     expect(Number(bySource.website.convert_rate)).toBeCloseTo(1 / 4, 10);
     expect(Number(bySource.website.win_rate)).toBe(1);
+    // 0154: no spam here, and every converted deal is visible to this caller,
+    // so the figures above are the same as before; spam, an agent's scope and
+    // the rest are pinned in report-definitions.test.ts
+    expect(bySource.website.spam).toBe(0);
+    expect(bySource.website.converted_visible).toBe(1);
 
     expect(bySource.referral.leads, "a source that produced nothing is KEPT").toBe(1);
     expect(bySource.referral.converted).toBe(0);
@@ -4026,15 +4031,42 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
   });
 
   it("39. C4 stage conversion is derived from events, and declares which key it joins on", async () => {
-    // 0065. Stage NAMES, not ids: move_deal_to_stage (0011) logs
-    // {'from': <name>, 'to': <name>}. The first draft of this report read
-    // payload->>'from_stage_id' and would have returned zeros forever, so this
-    // asserts against the shape the WRITER actually produces.
+    // 0065 asserted against the shape the WRITER actually produces — the first
+    // draft read a key no writer wrote and would have returned zeros forever.
+    // Since 0067 that shape carries the stage ids beside the names, and since
+    // 0131 the deals_stage_changed_event trigger writes it; since 0154 the
+    // report keys its rows on those ids (per pipeline) and splits departures
+    // by direction, so this fixture records ids, as the writer does. (A
+    // name-only legacy move: test 46 and stage-conversion-malformed.test.ts.)
     //
     // Unique names in the LIVE window, because back-dating an event would make
-    // events_partition_health() report an inversion (test 21d).
+    // events_partition_health() report an inversion (test 21d). Two stages of
+    // ORG_A's sale pipeline, S1 before S2; sort_order is UNIQUE per
+    // (org, deal_type), so derived from what is there (test 45's idiom).
     const S1 = `C4-${run}-Qualified`;
     const S2 = `C4-${run}-Offer`;
+    const { data: top } = await svc
+      .from("deal_stages")
+      .select("sort_order")
+      .eq("org_id", ORG_A)
+      .eq("deal_type", "sale")
+      .order("sort_order", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const base = (top?.sort_order ?? 0) + 1;
+    const stageIds: Record<string, string> = {};
+    for (const [name, order] of [
+      [S1, base],
+      [S2, base + 1],
+    ] as const) {
+      const { data, error } = await svc
+        .from("deal_stages")
+        .insert({ org_id: ORG_A, deal_type: "sale", name, sort_order: order })
+        .select("id")
+        .single();
+      if (error) throw error;
+      stageIds[name] = data.id as string;
+    }
     const mkMove = async (entityId: string, from: string | null, to: string) => {
       const { error } = await svc.from("events").insert({
         org_id: ORG_A,
@@ -4042,7 +4074,10 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
         entity_type: "deal",
         entity_id: entityId,
         event_type: "stage_changed",
-        payload: from === null ? { to } : { from, to },
+        payload:
+          from === null
+            ? { to, to_stage_id: stageIds[to] }
+            : { from, to, from_stage_id: stageIds[from], to_stage_id: stageIds[to] },
       });
       if (error) throw error;
     };
@@ -4065,22 +4100,32 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
     const conv = res.data as unknown as {
       derived_from: string;
       stage_key: string;
-      stages: Array<{ stage: string; entered: number; advanced: number; advance_rate: number }>;
-      transitions: Array<{ from: string | null; to: string; deals: number }>;
+      stages: Array<{
+        stage: string;
+        stage_id: string | null;
+        deal_type: string | null;
+        entered: number;
+        advanced: number;
+        regressed: number;
+        advance_rate: number;
+      }>;
+      transitions: Array<{ from: string | null; to: string; deals: number; direction: string | null }>;
       outcomes: { won: number; lost: number };
       note: string;
     };
 
     expect(conv.derived_from, "this is the one report re-derivable from the chain").toBe("events");
-    expect(conv.stage_key, "it declares that it joins on a mutable name").toBe("name");
+    expect(conv.stage_key, "it declares that it joins on the stage id (0154)").toBe("id");
 
-    const s1 = conv.stages.find((s) => s.stage === S1)!;
-    const s2 = conv.stages.find((s) => s.stage === S2)!;
+    const s1 = conv.stages.find((s) => s.stage_id === stageIds[S1])!;
+    const s2 = conv.stages.find((s) => s.stage_id === stageIds[S2])!;
+    expect([s1.stage, s1.deal_type], "the row names its stage and pipeline").toEqual([S1, "sale"]);
     expect(s1.entered, "three deals entered the first stage").toBe(3);
     expect(
       s1.advanced,
       "two moved on — the pre-window entrant's departure is EXCLUDED (0076)",
     ).toBe(2);
+    expect(s1.regressed, "S1 → S2 is forward in the pipeline's order").toBe(0);
     expect(Number(s1.advance_rate)).toBeCloseTo(2 / 3, 10);
     expect(s2.entered, "the pre-window entrant still ENTERS the second stage").toBe(3);
     expect(s2.advanced, "nothing moved past the second stage").toBe(0);
@@ -4092,6 +4137,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
 
     const t = conv.transitions.find((x) => x.from === S1 && x.to === S2)!;
     expect(t.deals, "transitions count EVERY move, cohort or not").toBe(3);
+    expect(t.direction).toBe("forward");
 
     // the chain must survive events written by a test, as everywhere else
     const { data: chainOk } = await svc.rpc("verify_events_chain", { p_org: ORG_A });
@@ -4635,7 +4681,7 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       p_to: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
     };
     type Conv = {
-      stages: Array<{ stage: string; entered: number; advanced: number }>;
+      stages: Array<{ stage: string; stage_id?: string | null; entered: number; advanced: number }>;
       moves_total: number;
       moves_with_ids: number;
     };
@@ -4655,6 +4701,10 @@ describe("RLS matrix — 12 mandatory tests (doc 04)", () => {
       after.stages.find((s) => s.stage === renamed)?.entered,
       "history follows the rename instead of splitting",
     ).toBe(1);
+    expect(
+      after.stages.find((s) => s.stage === renamed)?.stage_id,
+      "0154: the row IS the stage — keyed by its id, labelled with its current name",
+    ).toBe(s2);
     expect(
       after.stages.find((s) => s.stage === nameB),
       "and the old spelling is gone, not left holding half the traffic",
