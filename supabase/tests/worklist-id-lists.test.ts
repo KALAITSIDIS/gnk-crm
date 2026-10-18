@@ -277,6 +277,20 @@ beforeAll(async () => {
       where p.org_id = $1 and p.reference = any($2::text[])`,
     [BIG, [1, 3, 5, 7, 9, 11, 13, 15, 17, 19].map(nth)],
   );
+  // F03: six AVAILABLE listings (n ≡ 1 mod 4) made public — the first two
+  // with every website essential (a cover, an English title, a price), the
+  // rest missing some: no cover past N_PHOTOGRAPHED, no title or price unless
+  // given one here. The oracle in the case below says which.
+  await pg.query(
+    `update properties set visibility = 'public', published_at = now()
+      where org_id = $1 and reference = any($2::text[])`,
+    [BIG, [1, 5, 9, 113, 117, 121].map(nth)],
+  );
+  await pg.query(
+    `update properties set title = '{"en":"Public flat"}'::jsonb, asking_price = 200000
+      where org_id = $1 and reference = any($2::text[])`,
+    [BIG, [1, 5, 117].map(nth)],
+  );
   const hashOf = async (ref: string) =>
     (
       await pg.query<{ h: string }>(
@@ -407,6 +421,34 @@ describe("the listing worklist scores every live listing, whatever the portfolio
       const shared = Object.fromEntries(worklist!.sharedPhotos.map((s) => [s.property.reference, s.withReferences]));
       const ref = (n: number) => `WB${TAG}-${String(n).padStart(4, "0")}`;
       expect(shared, label).toEqual({ [ref(3)]: [ref(5)], [ref(5)]: [ref(3)] });
+    }
+  }, 180_000);
+
+  it("F03: public listings without a website essential are named exactly — for an admin and a listing manager, under the cap", async () => {
+    const oracle = await refs(
+      `select p.reference as v from properties p
+        where p.org_id = $1 and p.visibility = 'public' and p.status = 'available'
+          and (not exists (select 1 from property_media m where m.property_id = p.id and m.kind = 'photo' and m.is_cover)
+               or coalesce(btrim(p.title->>'en'), '') = ''
+               or (p.asking_price is null and p.rent_price_month is null))`,
+      [BIG],
+    );
+    const ref = (n: number) => `WB${TAG}-${String(n).padStart(4, "0")}`;
+    // the fixture has what the case assumes: four of the six public ones lack something
+    expect(oracle).toEqual([ref(113), ref(117), ref(121), ref(9)].sort());
+    for (const [label, user] of [["an admin", bigUser], ["a listing manager", bigManager]] as const) {
+      const { worklist, thrown } = await worklistOf(user);
+      expect(thrown, label).toBeNull();
+      const named = worklist!.publicMissingEssentials.map((e) => e.property.reference).sort();
+      console.log(`[evidence] F03 ${label}: public without essentials ${named.length} (oracle ${oracle.length}); public ${worklist!.publicCount}`);
+      expect(named, label).toEqual(oracle);
+      expect(worklist!.publicCount, label).toBe(6);
+      const missing = Object.fromEntries(
+        worklist!.publicMissingEssentials.map((e) => [e.property.reference, e.missing.map((m) => m.key)]),
+      );
+      expect(missing[ref(117)], label).toEqual(["cover"]);
+      expect(missing[ref(9)], label).toEqual(["title_en", "price"]);
+      expect(missing[ref(121)], label).toEqual(["cover", "title_en", "price"]);
     }
   }, 180_000);
 

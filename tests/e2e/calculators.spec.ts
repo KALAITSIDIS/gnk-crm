@@ -61,6 +61,37 @@ test.describe("Cyprus purchase-cost calculators", () => {
   });
 
   /**
+   * F01: whether the sale is subject to VAT is a named scenario. A bare
+   * calculator keeps today's default — not subject to VAT — and today's
+   * figures; it is now SAID, not silently assumed.
+   */
+  test("[F01] the bare page opens on 'Not subject to VAT', named, at today's figure", async ({
+    page,
+  }) => {
+    await expect(page.getByRole("group", { name: /VAT on this purchase/i })).toBeVisible();
+    await expect(page.getByRole("radio", { name: /^Not subject to VAT/i })).toBeChecked();
+    await expect(page.getByRole("radio", { name: /^Subject to VAT/i })).not.toBeChecked();
+    await expect(page.getByRole("radio", { name: /^Not confirmed/i })).not.toBeChecked();
+    // nothing on the page says "VAT was paid" — a different fact
+    await expect(page.getByText(/VAT was paid/i)).toHaveCount(0);
+
+    await priceIn(page, "300000");
+    expect(parseEuro(await totalOf(page, /transfer fees/i))).toBe(8600);
+  });
+
+  test("[F01] 'Not confirmed' shows both branches and keeps relief live", async ({ page }) => {
+    await priceIn(page, "300000");
+    await page.getByRole("radio", { name: /^Not confirmed/i }).check();
+    await expect(page.getByText(/VAT status not confirmed — confirm before quoting/i)).toBeVisible();
+    await expect(page.getByText(/subject to VAT, no transfer fees are payable/i)).toBeVisible();
+    await expect(page.getByRole("heading", { name: /^If not subject to VAT$/i })).toBeVisible();
+    await expect(page.getByRole("checkbox", { name: /50% relief/i })).toBeEnabled();
+    const total = await totalOf(page, /transfer fees/i);
+    expect(total).toMatch(/^Total \(if not subject to VAT\)/);
+    expect(parseEuro(total)).toBe(8600);
+  });
+
+  /**
    * FINDING CALC-1 (fixed 2026-07-22). The DLS scale restarts for each
    * purchaser's share, so the figure an agent quotes a couple must be lower
    * than the sole-purchaser one. This is the assertion that would have caught
@@ -117,29 +148,32 @@ test.describe("Cyprus purchase-cost calculators", () => {
     expect(parseEuro(await totalOf(page, /transfer fees/i))).toBe(17200);
   });
 
-  test("a VAT-paid purchase shows a nil transfer-fee assessment", async ({ page }) => {
+  test("a purchase subject to VAT shows a nil transfer-fee assessment", async ({ page }) => {
     await priceIn(page, "300000");
-    await page.getByRole("checkbox", { name: /VAT was paid/i }).check();
-    await expect(page.getByText(/no transfer fees/i)).toBeVisible();
+    await page.getByRole("radio", { name: /^Subject to VAT/i }).check();
+    await expect(page.getByText(/no transfer fees — the transaction is subject to VAT/i)).toBeVisible();
   });
 
-  test("[UX-4] the relief tick is disabled while VAT was paid", async ({ page }) => {
+  test("[UX-4] the relief tick is disabled while the purchase is subject to VAT", async ({
+    page,
+  }) => {
     await priceIn(page, "300000");
     const relief = page.getByRole("checkbox", { name: /50% relief/i });
-    const vat = page.getByRole("checkbox", { name: /VAT was paid/i });
+    const subject = page.getByRole("radio", { name: /^Subject to VAT/i });
+    const notSubject = page.getByRole("radio", { name: /^Not subject to VAT/i });
 
     await expect(relief).toBeEnabled();
 
-    // A VAT-paid purchase carries no transfer fee at all, so relief cannot
-    // change the number. Leaving the tick live invites an agent to toggle it
-    // mid-conversation and watch nothing happen.
-    await vat.check();
+    // A purchase subject to VAT carries no transfer fee at all, so relief
+    // cannot change the number. Leaving the tick live invites an agent to
+    // toggle it mid-conversation and watch nothing happen.
+    await subject.check();
     await expect(relief).toBeDisabled();
     await expect(page.getByText(/no relief to apply/i)).toBeVisible();
 
-    // Un-ticking VAT restores it WITH the prior choice intact — the control is
+    // Going back restores it WITH the prior choice intact — the control is
     // disabled, not reset.
-    await vat.uncheck();
+    await notSubject.check();
     await expect(relief).toBeEnabled();
     await expect(relief).toBeChecked();
   });
@@ -166,6 +200,8 @@ test.describe("Cyprus purchase-cost calculators", () => {
     expect(clip, "the pasted text explains the repeal").toMatch(/abolished for documents signed/i);
     expect(clip, "and names the law").toContain("239(I)/2025");
     expect(clip, "a repealed tax has no total").not.toMatch(/Total:/);
+    // F01 binding: every copied summary names the VAT scenario on screen
+    expect(clip, "and the scenario it was copied under").toContain("Scenario: not subject to VAT");
     // the on-card belt stays too
     await expect(card.getByText(/^Total/)).toHaveCount(0);
   });
@@ -184,6 +220,20 @@ test.describe("Cyprus purchase-cost calculators", () => {
   test("?price= deep link prefills from a property (the linking contract)", async ({ page }) => {
     await page.goto("/calculators?price=170000", { waitUntil: "networkidle" });
     await expect(page.getByLabel(/purchase price/i)).toHaveValue("170000");
+    await expect(page.getByRole("radio", { name: /^Not subject to VAT/i })).toBeChecked();
     expect(parseEuro(await totalOf(page, /transfer fees/i))).toBe(3400); // 6,800 less relief
+  });
+
+  test("[F01] the transfer summary names its scenario", async ({ page }) => {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await priceIn(page, "300000");
+    const card = page
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: /transfer fees/i }) });
+    await card.getByRole("button", { name: /copy summary/i }).click();
+    const clip = await page.evaluate(() => navigator.clipboard.readText());
+    expect(clip).toContain("Scenario: not subject to VAT");
+    expect(clip).toMatch(/^Total: €8\.600$/m);
+    expect(clip).toMatch(/Rates verified .* · computed .* — verify current legislation\./);
   });
 });

@@ -25,7 +25,8 @@ import {
  *
  * Transfer fees — Dept. of Lands & Surveys progressive scale, assessed on
  *   each purchaser's share: 3% to €85,000, 5% to €170,000, 8% above.
- *   50% relief on transfers not subject to VAT; nil where VAT was paid.
+ *   50% relief on transfers not subject to VAT; nil where the transfer is
+ *   subject to VAT (the config key keeps its old name, vat_paid_exempt).
  * Stamp duty — nil on the first €5,000, 0.15% to €170,000, 0.20% above,
  *   capped at €20,000 per contract.
  */
@@ -64,13 +65,13 @@ describe("transfer fees — statutory scale, hand-computed", () => {
 
   for (const { price, gross, why } of cases) {
     it(`EUR ${price.toLocaleString("en-GB")} -> ${gross} gross (${why})`, () => {
-      const r = computeTransferFees(price, TRANSFER, { relief: false, vatPaid: false });
+      const r = computeTransferFees(price, TRANSFER, { relief: false, subjectToVat: false });
       expect(r.total).toBe(gross);
     });
   }
 
   it("relief halves the gross exactly, never the band rows", () => {
-    const r = computeTransferFees(300000, TRANSFER, { relief: true, vatPaid: false });
+    const r = computeTransferFees(300000, TRANSFER, { relief: true, subjectToVat: false });
     expect(r.gross).toBe(17200);
     expect(r.reliefAmount).toBe(8600);
     expect(r.total).toBe(8600);
@@ -78,16 +79,16 @@ describe("transfer fees — statutory scale, hand-computed", () => {
     expect(r.rows.map((b) => b.fee)).toEqual([2550, 4250, 10400]);
   });
 
-  it("VAT-paid wins over relief and returns a nil assessment", () => {
-    const r = computeTransferFees(300000, TRANSFER, { relief: true, vatPaid: true });
+  it("subject to VAT wins over relief and returns a nil assessment", () => {
+    const r = computeTransferFees(300000, TRANSFER, { relief: true, subjectToVat: true });
     expect(r.vatExempt).toBe(true);
     expect(r.total).toBe(0);
     expect(r.reliefApplied).toBe(false);
   });
 
-  it("vat_paid_exempt=false makes the VAT tick a no-op (config drives behaviour)", () => {
+  it("vat_paid_exempt=false makes the subject-to-VAT scenario a no-op (config drives behaviour)", () => {
     const noExempt = { ...TRANSFER, vat_paid_exempt: false };
-    const r = computeTransferFees(300000, noExempt, { relief: false, vatPaid: true });
+    const r = computeTransferFees(300000, noExempt, { relief: false, subjectToVat: true });
     expect(r.vatExempt).toBe(false);
     expect(r.total).toBe(17200);
   });
@@ -108,7 +109,7 @@ describe("[CALC-1] transfer fees are assessed per purchaser share", () => {
     // one share: 2,550 + (65,000 x 5%) = 5,800 -> x2 = 11,600 gross
     const joint = computeTransferFees(300000, TRANSFER, {
       relief: true,
-      vatPaid: false,
+      subjectToVat: false,
       purchasers: 2,
     });
     expect(joint.gross).toBe(11600);
@@ -117,10 +118,10 @@ describe("[CALC-1] transfer fees are assessed per purchaser share", () => {
   });
 
   it("the joint assessment is cheaper than the single one — the whole point", () => {
-    const single = computeTransferFees(300000, TRANSFER, { relief: true, vatPaid: false });
+    const single = computeTransferFees(300000, TRANSFER, { relief: true, subjectToVat: false });
     const joint = computeTransferFees(300000, TRANSFER, {
       relief: true,
-      vatPaid: false,
+      subjectToVat: false,
       purchasers: 2,
     });
     expect(single.total).toBe(8600);
@@ -129,10 +130,10 @@ describe("[CALC-1] transfer fees are assessed per purchaser share", () => {
   });
 
   it("omitting purchasers is identical to a single purchaser (back-compatible)", () => {
-    const implicit = computeTransferFees(300000, TRANSFER, { relief: false, vatPaid: false });
+    const implicit = computeTransferFees(300000, TRANSFER, { relief: false, subjectToVat: false });
     const explicit = computeTransferFees(300000, TRANSFER, {
       relief: false,
-      vatPaid: false,
+      subjectToVat: false,
       purchasers: 1,
     });
     expect(implicit.total).toBe(17200);
@@ -144,7 +145,7 @@ describe("[CALC-1] transfer fees are assessed per purchaser share", () => {
     // 255,000 / 3 = 85,000 per share -> 2,550 each -> 7,650 gross
     const r = computeTransferFees(255000, TRANSFER, {
       relief: false,
-      vatPaid: false,
+      subjectToVat: false,
       purchasers: 3,
     });
     expect(r.perShareGross).toBe(2550);
@@ -155,7 +156,7 @@ describe("[CALC-1] transfer fees are assessed per purchaser share", () => {
   it("reports the per-share breakdown, not the combined one", () => {
     const r = computeTransferFees(300000, TRANSFER, {
       relief: false,
-      vatPaid: false,
+      subjectToVat: false,
       purchasers: 2,
     });
     // rows describe ONE share of 150,000: 85,000 @ 3% then 65,000 @ 5%
@@ -169,7 +170,7 @@ describe("[CALC-1] transfer fees are assessed per purchaser share", () => {
     // 300,001 / 2 = 150,000.50 -> 2,550 + (65,000.50 x 5%) = 5,800.03 per share
     const r = computeTransferFees(300001, TRANSFER, {
       relief: false,
-      vatPaid: false,
+      subjectToVat: false,
       purchasers: 2,
     });
     expect(r.perShareGross).toBe(5800.03);
@@ -180,7 +181,7 @@ describe("[CALC-1] transfer fees are assessed per purchaser share", () => {
     for (const bad of [0, -3, 0.4, Number.NaN, Number.POSITIVE_INFINITY]) {
       const r = computeTransferFees(300000, TRANSFER, {
         relief: false,
-        vatPaid: false,
+        subjectToVat: false,
         purchasers: bad,
       });
       expect(r.purchasers, `purchasers=${bad}`).toBe(1);
@@ -191,16 +192,16 @@ describe("[CALC-1] transfer fees are assessed per purchaser share", () => {
   it("truncates a fractional purchaser count rather than splitting a person", () => {
     const r = computeTransferFees(300000, TRANSFER, {
       relief: false,
-      vatPaid: false,
+      subjectToVat: false,
       purchasers: 2.9,
     });
     expect(r.purchasers).toBe(2);
   });
 
-  it("a VAT-paid purchase is nil however many purchasers there are", () => {
+  it("a purchase subject to VAT is nil however many purchasers there are", () => {
     const r = computeTransferFees(300000, TRANSFER, {
       relief: true,
-      vatPaid: true,
+      subjectToVat: true,
       purchasers: 4,
     });
     expect(r.vatExempt).toBe(true);
@@ -213,7 +214,7 @@ describe("[CALC-1] transfer fees are assessed per purchaser share", () => {
     for (let n = 1; n <= 6; n++) {
       const total = computeTransferFees(600000, TRANSFER, {
         relief: false,
-        vatPaid: false,
+        subjectToVat: false,
         purchasers: n,
       }).total;
       expect(total).toBeLessThanOrEqual(prev);
@@ -271,14 +272,14 @@ describe("banded arithmetic invariants", () => {
   it("is monotonic — a higher price never costs less", () => {
     let prev = -1;
     for (let price = 0; price <= 400000; price += 4321) {
-      const total = computeTransferFees(price, TRANSFER, { relief: false, vatPaid: false }).total;
+      const total = computeTransferFees(price, TRANSFER, { relief: false, subjectToVat: false }).total;
       expect(total).toBeGreaterThanOrEqual(prev);
       prev = total;
     }
   });
 
   it("emits no rows and no fee for a zero price", () => {
-    const r = computeTransferFees(0, TRANSFER, { relief: false, vatPaid: false });
+    const r = computeTransferFees(0, TRANSFER, { relief: false, subjectToVat: false });
     expect(r.rows).toHaveLength(0);
     expect(r.total).toBe(0);
   });
@@ -287,7 +288,7 @@ describe("banded arithmetic invariants", () => {
     for (const price of [0, 1, 4999, 5000, 85000, 170000, 999999]) {
       expect(computeStampDuty(price, STAMP).total).toBeGreaterThanOrEqual(0);
       expect(
-        computeTransferFees(price, TRANSFER, { relief: false, vatPaid: false }).total,
+        computeTransferFees(price, TRANSFER, { relief: false, subjectToVat: false }).total,
       ).toBeGreaterThanOrEqual(0);
     }
   });

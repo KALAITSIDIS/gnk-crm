@@ -90,6 +90,7 @@ vi.mock("@/lib/supabase/admin", async () => {
 import { updateUnitStatus } from "@/lib/actions/units";
 import { resetSiteRevalidateLatch } from "@/lib/services/site-revalidate";
 import { REVERT_0143_SQL, readMigration0143 } from "./revert-0143";
+import { REVERT_0152_SQL } from "./revert-0152";
 
 // ---------------------------------------------------------------------------
 // The door: a local stand-in for the site's /api/revalidate.
@@ -617,6 +618,14 @@ describe("the migration (rolled back) and the function's shape", () => {
       pg.off("notice", onNotice);
     }
   }
+  // The state before 0143, inside the caller's rolled-back transaction: 0143's
+  // preflight refuses any properties trigger it does not know, and 0152 added
+  // properties_storage_from_features after it — so a replay first takes the
+  // later file off (its documented rollback), then 0143's.
+  async function backToBefore0143() {
+    await pg.query(REVERT_0152_SQL);
+    await pg.query(REVERT_0143_SQL);
+  }
   const lastRow = (res: unknown) => {
     const results = (Array.isArray(res) ? res : [res]) as { rows: Record<string, unknown>[] }[];
     return results[results.length - 1]!.rows[0]!;
@@ -624,7 +633,7 @@ describe("the migration (rolled back) and the function's shape", () => {
 
   it("9. replays over the state before it — preflight, postflight, the read-only diagnostic last — and refuses a second application", async () => {
     await rolledBack(async (notices) => {
-      await pg.query(REVERT_0143_SQL);
+      await backToBefore0143();
       expect((await pg.query("select to_regprocedure($1) as f", [SIG])).rows[0].f).toBeNull();
       const row = lastRow(await pg.query(readMigration0143()));
       expect(Object.keys(row)).toEqual(["migration", "units_status_unrecorded"]);
@@ -668,7 +677,7 @@ describe("the migration (rolled back) and the function's shape", () => {
       const bad = mutate(readMigration0143());
       expect(bad, "the mutation installed").not.toBe(readMigration0143());
       await rolledBack(async () => {
-        await pg.query(REVERT_0143_SQL);
+        await backToBefore0143();
         await expect(pg.query(bad)).rejects.toThrow(refusal);
       });
     });

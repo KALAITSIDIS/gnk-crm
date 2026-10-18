@@ -1,6 +1,4 @@
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
 import {
   AddUnitForm,
   PaymentPlansSection,
@@ -11,6 +9,8 @@ import {
   type UnitRow,
 } from "@/components/features/properties/units-matrix";
 import { AvailabilityShare } from "@/components/features/properties/availability-share";
+import { AvailabilityOverview } from "@/components/features/properties/availability-overview";
+import { PropertyBreadcrumb } from "@/components/features/properties/property-breadcrumb";
 import { BuildProgressCard } from "@/components/features/properties/build-progress-card";
 import { SalesVelocityCard } from "@/components/features/properties/sales-velocity-card";
 import { GenerateUnitsForm } from "@/components/features/properties/generate-units-form";
@@ -30,9 +30,10 @@ import {
   UNIT_ROW_SELECT,
 } from "@/lib/services/unit-inheritance";
 import { countContainerUnits } from "@/lib/services/container-units";
-import { Button } from "@/components/ui/button";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { fetchProjectVelocity } from "@/lib/queries/sales-velocity";
+import { fetchLineage } from "@/lib/queries/property-lineage";
+import { describeHold, fetchContainerAvailability } from "@/lib/queries/container-availability";
 import { NOT_RECORDED_NOTICE } from "@/lib/services/optimistic-save";
 import { createClient } from "@/lib/supabase/server";
 import { isGuid } from "@/lib/validators/ids";
@@ -53,23 +54,26 @@ export default async function ProjectUnitsPage({
   /**
    * `?units=failed&reason=…` — the wizard created the project but not its
    * units; `?recorded=failed` — it created them but could not write the
-   * event (OPS-01)
+   * event (OPS-01); `?unit=<id>` — a unit page's "Units matrix" link: that
+   * row is marked (A05; anything that is not an id is ignored)
    */
-  searchParams: Promise<{ units?: string; reason?: string; recorded?: string }>;
+  searchParams: Promise<{ units?: string; reason?: string; recorded?: string; unit?: string }>;
 }) {
   const { id } = await params;
   // a segment that is not an id names nothing: 404 before any query (T-malformed-ids) —
   // PostgREST's 22P02 used to reach the throw below and render the error boundary
   if (!isGuid(id)) notFound();
-  const { units: unitsParam, reason: unitsReason, recorded } = await searchParams;
+  const { units: unitsParam, reason: unitsReason, recorded, unit: unitParam } = await searchParams;
   const unitsFailed = unitsParam === "failed";
   const notRecorded = recorded === "failed";
+  const highlightId = typeof unitParam === "string" && isGuid(unitParam) ? unitParam : null;
   const supabase = await createClient();
 
   // the full inheritable set, because the drift panel compares every one of them
   const { data: project, error: projectErr } = await supabase
     .from("properties")
-    .select(`${UNIT_PARENT_SELECT}, title`)
+    // parent_id and visibility: the breadcrumb's lineage (A05)
+    .select(`${UNIT_PARENT_SELECT}, title, parent_id, visibility`)
     .eq("id", id)
     .maybeSingle();
   if (projectErr) throw new Error(`Project query failed: ${projectErr.message}`);
@@ -81,7 +85,7 @@ export default async function ProjectUnitsPage({
   const profile = await getCurrentProfile(supabase);
   const canManage = profile.role === "admin" || profile.role === "listing_manager";
 
-  const [unitRows, priceListsRes, plansRes, phasesRes, typesRes, velocity] = await Promise.all([
+  const [unitRows, priceListsRes, plansRes, phasesRes, typesRes, velocity, availability, lineage] = await Promise.all([
     // EVERY unit, page by page (fetch-all.ts): this list is also the scope the
     // reprice form reviews, and the database refuses a reprice whose reviewed
     // scope is not the whole scope (0141) — an unpaged read stopped at
@@ -147,7 +151,15 @@ export default async function ProjectUnitsPage({
     // is asked alongside them: both of its reads are paged (T-velocity-id-lists),
     // and run last they added their round trips to every view of this page.
     fetchProjectVelocity(supabase, id),
+    // A05: every live hold under this node (and, on a phased project, under its
+    // phases), plus the read-only availability across those phases — reads by
+    // PARENT, paged, never a unit-id list (container-availability.ts)
+    fetchContainerAvailability(supabase, { id, kind: project.kind }),
+    // A05: the trail back up — at most two reads by primary key; never throws
+    fetchLineage(supabase, { id, kind: project.kind, parent_id: project.parent_id }),
   ]);
+  // one clock for every Hold cell on the page
+  const now = new Date();
   const priceListRows = unwrapRows(priceListsRes, "price lists");
   const planRows = unwrapRows(plansRes, "payment plans");
   const phaseRows = unwrapRows(phasesRes, "phases");
@@ -182,7 +194,19 @@ export default async function ProjectUnitsPage({
     ...u,
     covered_area_sqm: u.covered_area_sqm === null ? null : Number(u.covered_area_sqm),
     asking_price: u.asking_price === null ? null : Number(u.asking_price),
+    hold: describeHold(u.status, availability.holds.get(u.id), now),
   }));
+  // A05: a phased project's units, all of them, each with its hold — the same
+  // holds map the matrix reads, so the two tables cannot disagree
+  const overview = availability.overview;
+  const overviewUnits =
+    overview?.units.map((u) => ({ ...u, hold: describeHold(u.status, availability.holds.get(u.id), now) })) ?? [];
+  const phaseCount = overview?.phases.length ?? 0;
+  const directUnitCount = overview ? overview.units.filter((u) => u.parent_id === id).length : units.length;
+  // A05 review: "its units are in its phases" only when the phases HOLD units —
+  // a project whose phases are all still empty has no units anywhere, and the
+  // matrix keeps its "add the first one" hint (the add form is on this page)
+  const unitsInPhases = overview?.units.some((u) => u.parent_id !== id) ?? false;
 
   // Versions come back newest-first, so each one's predecessor is the NEXT
   // element — that is what it gets compared against.
@@ -221,7 +245,12 @@ export default async function ProjectUnitsPage({
     installments: (p.installments ?? []) as PaymentPlanRow["installments"],
   }));
 
-  const statusCounts = units.reduce<Record<string, number>>((acc, u) => {
+  // The header counts what the page shows: on a phased project, every unit
+  // under it (the overview's read); otherwise the matrix's direct units. It
+  // counted direct units only, so a phased project read "0 units" over units
+  // its own banner knew about.
+  const countedUnits: { status: string }[] = overview ? overviewUnits : units;
+  const statusCounts = countedUnits.reduce<Record<string, number>>((acc, u) => {
     acc[u.status] = (acc[u.status] ?? 0) + 1;
     return acc;
   }, {});
@@ -229,16 +258,25 @@ export default async function ProjectUnitsPage({
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <Button asChild variant="ghost" size="sm" className="-ml-2 mb-2 text-text-2">
-          <Link href={`/properties/${id}`}>
-            <ArrowLeft className="size-4" /> {project.reference}
-          </Link>
-        </Button>
+        <PropertyBreadcrumb
+          lineage={lineage}
+          self={{
+            id,
+            reference: project.reference,
+            kind: project.kind,
+            title: (project.title as { en?: string } | null)?.en ?? null,
+            visibility: project.visibility,
+          }}
+          current={{ label: "Units" }}
+        />
         <h1 className="text-xl font-semibold text-text-1">
           Units — {(project.title as { en?: string })?.en ?? project.reference}
         </h1>
         <p className="mt-1 text-sm text-text-2">
-          {units.length} unit{units.length === 1 ? "" : "s"}
+          {countedUnits.length} unit{countedUnits.length === 1 ? "" : "s"}
+          {overview
+            ? ` across ${phaseCount} phase${phaseCount === 1 ? "" : "s"} (${directUnitCount} directly under the project)`
+            : ""}
           {Object.entries(statusCounts)
             .map(([s, n]) => ` · ${n} ${s.replace(/_/g, " ")}`)
             .join("")}
@@ -315,7 +353,27 @@ export default async function ProjectUnitsPage({
         </div>
       ) : null}
 
-      <UnitsMatrix units={units} canManage={canManage} />
+      {overview ? (
+        <AvailabilityOverview
+          project={{ id, reference: project.reference, delivery_date: project.delivery_date }}
+          phases={overview.phases}
+          units={overviewUnits}
+        />
+      ) : null}
+
+      {overview ? (
+        <h2 className="-mb-2 text-base font-semibold text-text-1">Units directly under this project</h2>
+      ) : null}
+      <UnitsMatrix
+        units={units}
+        canManage={canManage}
+        highlightId={highlightId}
+        emptyText={
+          unitsInPhases
+            ? "None — this project's units are in its phases (above)."
+            : "No units yet — add the first one below."
+        }
+      />
 
       <AvailabilityShare
         projectId={id}

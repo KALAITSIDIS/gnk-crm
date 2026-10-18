@@ -1,9 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { MapLocationFields } from "@/components/features/properties/map-location-fields";
 import { PricingBreakdown } from "@/components/features/properties/pricing-breakdown";
-import { VatTreatment } from "@/components/features/properties/vat-treatment";
+import { VatLiveScope, VatTreatmentPanel } from "@/components/features/properties/vat-treatment";
 import type { VatConfigRow } from "@/lib/services/vat";
+import { PUBLISH_THRESHOLD } from "@/lib/services/quality-score";
 import { SectionForm } from "@/components/features/properties/section-form";
 import { MultilangTabs, type MultilangValue } from "@/components/features/shared/multilang-tabs";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -19,6 +21,14 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { PROPERTY_FEATURES } from "@/lib/constants/features";
 import {
+  detailsFieldLabel,
+  detailsLayout,
+  recordedValues,
+  type DetailsField,
+  type DetailsGroup,
+  type PropertyProfile,
+} from "@/lib/services/property-layout";
+import {
   AREA_NONE,
   CONSTRUCTION_STATUSES,
   ENERGY_CLASSES,
@@ -26,8 +36,10 @@ import {
   PROPERTY_STATUSES,
   TITLE_DEED_STATUSES,
   TRANSACTION_TYPES,
+  VAT_STATUS_LABELS,
   VAT_STATUSES,
   VISIBILITY_LEVELS,
+  utilityFormValue,
 } from "@/lib/validators/properties";
 import type { AreaOption } from "@/components/features/properties/filters";
 
@@ -147,6 +159,205 @@ function constructionOptions(current: string | null) {
   return options;
 }
 
+/** Water / electricity on a plot: three answers, because "not known" is one (F07). */
+const UTILITY_OPTIONS = [
+  { value: "unknown", label: "Not known" },
+  { value: "yes", label: "Yes" },
+  { value: "no", label: "No" },
+];
+
+type FieldContext = {
+  property: PropertyDetailData;
+  profile: PropertyProfile;
+  districtAreas: AreaOption[];
+};
+
+/**
+ * One field of the Details tab, by name. Every field the layout can name has
+ * a case here, and the switch is exhaustive — a field added to
+ * DETAILS_FIELDS without a control fails the typecheck rather than rendering
+ * nothing (and a field that renders nothing is a field the save nulls).
+ */
+function DetailsFieldControl({ field, ctx }: { field: DetailsField; ctx: FieldContext }) {
+  const p = ctx.property;
+  const label = detailsFieldLabel(field, ctx.profile);
+  switch (field) {
+    case "status":
+      return <SelectField name={field} label={label} options={PROPERTY_STATUSES} defaultValue={p.status} />;
+    case "visibility":
+      return <SelectField name={field} label={label} options={VISIBILITY_LEVELS} defaultValue={p.visibility} />;
+    case "transaction_type":
+      return (
+        <SelectField
+          name={field}
+          label={label}
+          options={TRANSACTION_TYPES}
+          defaultValue={p.transaction_type}
+        />
+      );
+    case "area_id":
+      return (
+        <SelectField
+          name={field}
+          label={label}
+          options={[
+            { value: AREA_NONE, label: "— (no area)" },
+            ...ctx.districtAreas.map((a) => ({ value: a.id, label: a.name })),
+          ]}
+          defaultValue={p.area_id ?? AREA_NONE}
+          placeholder={ctx.districtAreas.length ? "Select area…" : "No areas for district"}
+        />
+      );
+    case "address":
+    case "postal_code":
+    case "planning_zone_code":
+      return <TextField name={field} label={label} defaultValue={p[field]} />;
+    case "location":
+      return (
+        <MapLocationFields
+          location={p.location}
+          propertyId={p.id}
+          isApproximate={Boolean((p as { location_approx?: boolean }).location_approx)}
+        />
+      );
+    case "amenities_notes":
+      return (
+        <div className="flex flex-col gap-2 sm:col-span-2">
+          <Label htmlFor={field}>{label}</Label>
+          <Input id={field} name={field} defaultValue={p.amenities_notes ?? ""} />
+        </div>
+      );
+    case "asking_price":
+    case "min_acceptable_price":
+    case "owner_net_price":
+    case "rent_price_month":
+    case "covered_area_sqm":
+    case "plot_area_sqm":
+    case "veranda_sqm":
+    case "roof_garden_sqm":
+    case "basement_sqm":
+    case "building_density_pct":
+    case "coverage_ratio_pct":
+    case "max_height_m":
+    case "road_frontage_m":
+      return <NumberField name={field} label={label} defaultValue={p[field]} step="0.01" />;
+    case "sea_distance_m":
+    case "bedrooms":
+    case "bathrooms":
+    case "wc":
+    case "parking_spaces":
+    case "floor_number":
+    case "total_floors":
+    case "year_built":
+    case "max_floors":
+      return <NumberField name={field} label={label} defaultValue={p[field]} />;
+    case "vat_status":
+      // F01: labels that say whether VAT applies — "New vat" / "Unknown" read
+      // as kinds of sale; "Unknown (not confirmed)" reads as what it is
+      return (
+        <SelectField
+          name={field}
+          label={label}
+          options={VAT_STATUSES.map((v) => ({ value: v, label: VAT_STATUS_LABELS[v] }))}
+          defaultValue={p.vat_status}
+        />
+      );
+    case "energy_class":
+      return (
+        <SelectField
+          name={field}
+          label={label}
+          options={ENERGY_CLASSES.map((e) => ({ value: e, label: e === "none" ? "—" : e }))}
+          defaultValue={p.energy_class ?? "none"}
+        />
+      );
+    case "construction_status":
+      return (
+        <SelectField
+          name={field}
+          label={label}
+          options={constructionOptions(p.construction_status)}
+          defaultValue={p.construction_status ?? ""}
+        />
+      );
+    case "delivery_date":
+      return (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={field}>{label}</Label>
+          <Input id={field} name={field} type="date" defaultValue={p.delivery_date ?? ""} />
+        </div>
+      );
+    case "water_available":
+    case "electricity_available":
+      return (
+        <SelectField
+          name={field}
+          label={label}
+          options={UTILITY_OPTIONS}
+          defaultValue={utilityFormValue(p[field])}
+        />
+      );
+    case "constraints_notes":
+      return (
+        <div className="flex flex-col gap-2">
+          <Label htmlFor={field}>{label}</Label>
+          <Textarea id={field} name={field} rows={3} defaultValue={p.constraints_notes ?? ""} />
+        </div>
+      );
+    case "features":
+      // ONE array, posted whole: every box is always rendered, in one place,
+      // whatever the layout — leaving some out would drop their keys on save.
+      // Storage room is one of these boxes and nowhere else (F02, 0152).
+      return (
+        <>
+          {PROPERTY_FEATURES.map(([key, featureLabel]) => (
+            <label key={key} className="flex items-center gap-2 text-sm text-text-1">
+              <Checkbox
+                name="features"
+                value={key}
+                defaultChecked={(p.features ?? []).includes(key)}
+              />
+              {featureLabel}
+            </label>
+          ))}
+        </>
+      );
+    case "internal_notes":
+      return (
+        <Textarea
+          name={field}
+          rows={4}
+          defaultValue={p.internal_notes ?? ""}
+          placeholder="Never shown outside the team"
+        />
+      );
+    default: {
+      const unhandled: never = field;
+      throw new Error(`Details field without a control: ${String(unhandled)}`);
+    }
+  }
+}
+
+/** The grid each group's fields sit in. */
+function groupGrid(g: DetailsGroup): string {
+  switch (g.id) {
+    case "features":
+      return "grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4";
+    case "internal_notes":
+    case "constraints":
+      return "flex flex-col gap-4";
+    case "listing":
+    case "location":
+      return "grid gap-4 sm:grid-cols-2 lg:grid-cols-3";
+    case "build_handover":
+      return g.fields.length > 3
+        ? "grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
+        : "grid gap-4 sm:grid-cols-2 lg:grid-cols-3";
+    default:
+      return "grid gap-4 sm:grid-cols-2 lg:grid-cols-4";
+  }
+}
+
 export function DetailsForm({
   property,
   areas,
@@ -169,12 +380,117 @@ export function DetailsForm({
   vatConfig?: VatConfigRow | null;
   vatConfigVerifiedAt?: string | null;
 }) {
-  const districtAreas = areas.filter((a) => a.districtId === property.district_id);
-  const isLand = property.property_type === "land";
-  // a development's one area is its SITE — the overview calls it "Site plot",
-  // and the same field labelled "Plot (m²)" here read as a different field to
-  // a real operator (2026-09-03 session)
-  const isContainer = property.kind === "project" || property.kind === "phase";
+  // F07: laid out for the kind of property — land opens on its planning, a
+  // development on its build and handover — and nothing is ever left out: a
+  // group that does not suit the property is collapsed into a native
+  // <details>, whose inputs still post (lib/services/property-layout.ts says
+  // why, and its test pins every field to the column the save writes).
+  const layout = detailsLayout({
+    property_type: property.property_type,
+    kind: property.kind,
+    transaction_type: property.transaction_type,
+  });
+  const ctx: FieldContext = {
+    property,
+    profile: layout.profile,
+    districtAreas: areas.filter((a) => a.districtId === property.district_id),
+  };
+  const isContainer = layout.profile === "container";
+
+  const fieldsOf = (g: DetailsGroup) =>
+    g.fields.map((f) => <DetailsFieldControl key={f} field={f} ctx={ctx} />);
+
+  const renderGroup = (g: DetailsGroup) => {
+    // NATIVE <details>, never Radix Collapsible/Accordion: those unmount their
+    // content while closed, so its inputs would not post and the save would
+    // null every value inside. Open when it holds anything, and the summary
+    // says what, so a stray value (a bedroom count on a plot, which the feed
+    // publishes) is never out of sight.
+    if (g.collapsed) {
+      const recorded = recordedValues(g, property, layout.profile);
+      return (
+        <details
+          key={g.id}
+          data-details-group={g.id}
+          open={recorded.length > 0}
+          className="rounded-[10px] border border-border px-4 py-3"
+        >
+          <summary className="cursor-pointer text-sm text-text-2">
+            <span className="text-base font-semibold text-text-1">{g.heading}</span>
+            {` — ${g.collapsed} · `}
+            {recorded.length === 0
+              ? "nothing recorded"
+              : `${recorded.length} recorded: ${recorded.join(", ")}`}
+          </summary>
+          <div className={`mt-4 ${groupGrid(g)}`}>{fieldsOf(g)}</div>
+        </details>
+      );
+    }
+
+    if (g.id === "pricing") {
+      return (
+        <div key={g.id} data-details-group={g.id} className="flex flex-col gap-4">
+          <SectionTitle>{g.heading}</SectionTitle>
+          {isContainer ? (
+            // "From price", exactly as the create wizard and the overview call
+            // it: on 2026-09-05 PAF0002 held 4,850,000 here — a whole
+            // development's total typed into a field labelled "Asking price".
+            // The units carry the prices; this says where they are.
+            <p className="text-sm text-text-2">
+              Each unit carries its own price and availability —{" "}
+              <Link
+                href={`/properties/${property.id}/units`}
+                className="font-medium text-brand-700 hover:underline"
+              >
+                Units matrix
+              </Link>
+              . This is the figure the listing leads with.
+            </p>
+          ) : null}
+          <PricingBreakdown
+            commissionPct={commissionPct}
+            askingPrice={property.asking_price}
+            minAcceptablePrice={property.min_acceptable_price}
+            ownerNetPrice={property.owner_net_price}
+          >
+            <div className={groupGrid(g)}>{fieldsOf(g)}</div>
+          </PricingBreakdown>
+          {/* VAT is DERIVED, not read from `vat_status`: right after the price,
+              live from the whole form (the covered area may sit in another
+              group, collapsed or not) — see vat-treatment.tsx */}
+          <VatTreatmentPanel
+            config={vatConfig}
+            configVerifiedAt={vatConfigVerifiedAt}
+            // F01: the reduced rate is for a dwelling. A development is judged
+            // by its units (a "building" project's flats are apartments), so
+            // its own type does not gate it — the same rule createProperty
+            // applies when it decides what the generated units are
+            propertyType={isContainer ? null : property.property_type}
+            propertyId={property.id}
+          />
+        </div>
+      );
+    }
+
+    return (
+      <div key={g.id} data-details-group={g.id} className="flex flex-col gap-4">
+        {g.heading ? <SectionTitle>{g.heading}</SectionTitle> : null}
+        {g.note ? <p className="-mt-2 text-sm text-text-2">{g.note}</p> : null}
+        <div className={groupGrid(g)}>
+          {fieldsOf(g)}
+          {g.id === "listing" && isAdmin ? (
+            <div className="flex items-center gap-2 sm:col-span-2 lg:col-span-3">
+              <Checkbox id="publish_override" name="publish_override" />
+              <Label htmlFor="publish_override" className="text-text-2">
+                Override publish gate (admin) — allows visibility “Public” below score{" "}
+                {PUBLISH_THRESHOLD}; the override is written to the event log
+              </Label>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <SectionForm
@@ -183,268 +499,15 @@ export function DetailsForm({
       readOnly={readOnly}
       updatedAt={property.updated_at}
     >
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <SelectField
-          name="status"
-          label="Status"
-          options={PROPERTY_STATUSES}
-          defaultValue={property.status}
-        />
-        <SelectField
-          name="visibility"
-          label="Visibility"
-          options={VISIBILITY_LEVELS}
-          defaultValue={property.visibility}
-        />
-        <SelectField
-          name="transaction_type"
-          label="Transaction"
-          options={TRANSACTION_TYPES}
-          defaultValue={property.transaction_type}
-        />
-        {isAdmin ? (
-          <div className="flex items-center gap-2 sm:col-span-2 lg:col-span-3">
-            <Checkbox id="publish_override" name="publish_override" />
-            <Label htmlFor="publish_override" className="text-text-2">
-              Override publish gate (admin) — allows visibility “Public” below score{" "}
-              70; the override is written to the event log
-            </Label>
-          </div>
-        ) : null}
-      </div>
-
-      <SectionTitle>Location</SectionTitle>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <SelectField
-          name="area_id"
-          label="Area"
-          options={[
-            { value: AREA_NONE, label: "— (no area)" },
-            ...districtAreas.map((a) => ({ value: a.id, label: a.name })),
-          ]}
-          defaultValue={property.area_id ?? AREA_NONE}
-          placeholder={districtAreas.length ? "Select area…" : "No areas for district"}
-        />
-        <TextField name="address" label="Address" defaultValue={property.address} />
-        <TextField name="postal_code" label="Postal code" defaultValue={property.postal_code} />
-        <NumberField
-          name="sea_distance_m"
-          label="Sea distance (m)"
-          defaultValue={property.sea_distance_m}
-        />
-        <MapLocationFields
-          location={property.location}
-          propertyId={property.id}
-          isApproximate={Boolean((property as { location_approx?: boolean }).location_approx)}
-        />
-        <div className="flex flex-col gap-2 sm:col-span-2">
-          <Label htmlFor="amenities_notes">Amenities notes</Label>
-          <Input
-            id="amenities_notes"
-            name="amenities_notes"
-            defaultValue={property.amenities_notes ?? ""}
-          />
-        </div>
-      </div>
-
-      {/* VAT is DERIVED here, not read from `vat_status`. The panel needs the
-          price (below) and the covered area (Areas & rooms), so it wraps both:
-          its reads go through the form, but it only re-renders for input
-          events that bubble to it. See vat-treatment.tsx. */}
-      <VatTreatment
-        config={vatConfig}
-        configVerifiedAt={vatConfigVerifiedAt}
+      {/* the VAT panel's listener wraps EVERY group, so the price and the
+          covered area refresh it wherever the layout puts them */}
+      <VatLiveScope
         askingPrice={property.asking_price}
         coveredAreaSqm={property.covered_area_sqm}
         vatStatus={property.vat_status}
       >
-      <SectionTitle>Pricing</SectionTitle>
-      <PricingBreakdown
-        commissionPct={commissionPct}
-        askingPrice={property.asking_price}
-        minAcceptablePrice={property.min_acceptable_price}
-        ownerNetPrice={property.owner_net_price}
-      >
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {/* "From price" on a container, exactly as the create wizard and the
-            overview already call it: the units carry the prices and this figure
-            is only what the listing leads with. This form was the one place
-            still calling it "Asking price (€)" for a project, and on 2026-09-05
-            PAF0002 was found holding 4,850,000 in it — a whole-development total
-            typed into a field whose label invited exactly that. The units total
-            4,800,000 and the from price is 800,000; nothing validates this
-            number, so the label is the only thing standing between a typist and
-            a wrong figure on a live mandate. */}
-        <NumberField
-          name="asking_price"
-          label={isContainer ? "From price (€)" : "Asking price (€)"}
-          defaultValue={property.asking_price}
-          step="0.01"
-        />
-        <NumberField
-          name="min_acceptable_price"
-          label="Min acceptable (€)"
-          defaultValue={property.min_acceptable_price}
-          step="0.01"
-        />
-        <NumberField
-          name="owner_net_price"
-          label="Owner net (€)"
-          defaultValue={property.owner_net_price}
-          step="0.01"
-        />
-        <NumberField
-          name="rent_price_month"
-          label="Rent (€/month)"
-          defaultValue={property.rent_price_month}
-          step="0.01"
-        />
-        <SelectField
-          name="vat_status"
-          label="VAT status"
-          options={VAT_STATUSES}
-          defaultValue={property.vat_status}
-        />
-      </div>
-      </PricingBreakdown>
-
-      <SectionTitle>Areas & rooms</SectionTitle>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <NumberField name="covered_area_sqm" label="Covered (m²)" defaultValue={property.covered_area_sqm} step="0.01" />
-        <NumberField name="plot_area_sqm" label={isContainer ? "Site plot (m²)" : "Plot (m²)"} defaultValue={property.plot_area_sqm} step="0.01" />
-        <NumberField name="veranda_sqm" label="Veranda (m²)" defaultValue={property.veranda_sqm} step="0.01" />
-        <NumberField name="roof_garden_sqm" label="Roof garden (m²)" defaultValue={property.roof_garden_sqm} step="0.01" />
-        <NumberField name="basement_sqm" label="Basement (m²)" defaultValue={property.basement_sqm} step="0.01" />
-        <NumberField name="bedrooms" label="Bedrooms" defaultValue={property.bedrooms} />
-        <NumberField name="bathrooms" label="Bathrooms" defaultValue={property.bathrooms} />
-        <NumberField name="wc" label="WC" defaultValue={property.wc} />
-        <NumberField name="parking_spaces" label="Parking spaces" defaultValue={property.parking_spaces} />
-        <NumberField name="floor_number" label="Floor" defaultValue={property.floor_number} />
-        <NumberField name="total_floors" label="Total floors" defaultValue={property.total_floors} />
-        <NumberField name="year_built" label="Year built" defaultValue={property.year_built} />
-        <SelectField
-          name="energy_class"
-          label="Energy class"
-          options={ENERGY_CLASSES.map((e) => ({ value: e, label: e === "none" ? "—" : e }))}
-          defaultValue={property.energy_class ?? "none"}
-        />
-        <div className="flex items-end gap-2 pb-2">
-          <Checkbox
-            id="has_storage"
-            name="has_storage"
-            defaultChecked={property.has_storage === true}
-          />
-          <Label htmlFor="has_storage">Storage room</Label>
-        </div>
-      </div>
-      </VatTreatment>
-
-      {/* audit finding 10: both columns have existed since 0001 and no screen
-          wrote them. Delivery date is the most-asked question about an off-plan
-          unit, and both are inherited by a project's units. */}
-      <SectionTitle>Build &amp; handover</SectionTitle>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <SelectField
-          name="construction_status"
-          label="Construction status"
-          options={constructionOptions(property.construction_status)}
-          defaultValue={property.construction_status ?? ""}
-        />
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="delivery_date">Expected delivery</Label>
-          <Input
-            id="delivery_date"
-            name="delivery_date"
-            type="date"
-            defaultValue={property.delivery_date ?? ""}
-          />
-        </div>
-      </div>
-
-      <SectionTitle>Features</SectionTitle>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-        {PROPERTY_FEATURES.map(([key, label]) => (
-          <label key={key} className="flex items-center gap-2 text-sm text-text-1">
-            <Checkbox
-              name="features"
-              value={key}
-              defaultChecked={(property.features ?? []).includes(key)}
-            />
-            {label}
-          </label>
-        ))}
-      </div>
-
-      {isLand ? (
-        <>
-          <SectionTitle>Land / planning</SectionTitle>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <TextField
-              name="planning_zone_code"
-              label="Planning zone (e.g. Κα6)"
-              defaultValue={property.planning_zone_code}
-            />
-            <NumberField
-              name="building_density_pct"
-              label="Building density (%)"
-              defaultValue={property.building_density_pct}
-              step="0.01"
-            />
-            <NumberField
-              name="coverage_ratio_pct"
-              label="Coverage ratio (%)"
-              defaultValue={property.coverage_ratio_pct}
-              step="0.01"
-            />
-            <NumberField name="max_floors" label="Max floors" defaultValue={property.max_floors} />
-            <NumberField
-              name="max_height_m"
-              label="Max height (m)"
-              defaultValue={property.max_height_m}
-              step="0.01"
-            />
-            <NumberField
-              name="road_frontage_m"
-              label="Road frontage (m)"
-              defaultValue={property.road_frontage_m}
-              step="0.01"
-            />
-            <div className="flex items-end gap-2 pb-2">
-              <Checkbox
-                id="water_available"
-                name="water_available"
-                defaultChecked={property.water_available === true}
-              />
-              <Label htmlFor="water_available">Water available</Label>
-            </div>
-            <div className="flex items-end gap-2 pb-2">
-              <Checkbox
-                id="electricity_available"
-                name="electricity_available"
-                defaultChecked={property.electricity_available === true}
-              />
-              <Label htmlFor="electricity_available">Electricity available</Label>
-            </div>
-            <div className="flex flex-col gap-2 sm:col-span-2 lg:col-span-4">
-              <Label htmlFor="constraints_notes">Constraints (archaeology, forestry…)</Label>
-              <Textarea
-                id="constraints_notes"
-                name="constraints_notes"
-                rows={3}
-                defaultValue={property.constraints_notes ?? ""}
-              />
-            </div>
-          </div>
-        </>
-      ) : null}
-
-      <SectionTitle>Internal notes</SectionTitle>
-      <Textarea
-        name="internal_notes"
-        rows={4}
-        defaultValue={property.internal_notes ?? ""}
-        placeholder="Never shown outside the team"
-      />
+        {layout.groups.map(renderGroup)}
+      </VatLiveScope>
     </SectionForm>
   );
 }

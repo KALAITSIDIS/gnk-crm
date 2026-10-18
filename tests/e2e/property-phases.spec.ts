@@ -101,3 +101,100 @@ test("a phase keeps its own delivery date and its units inherit it", async ({ pa
   await admin.from("properties").delete().eq("id", phase!.id);
   await admin.from("properties").delete().eq("id", project!.id);
 });
+
+/**
+ * A05: the hierarchy navigates UP as well as down, and a phased project's units
+ * page tells the truth about its inventory.
+ *
+ *   * a unit under a phase carries Properties › project › phase › unit, from
+ *     parent_id (never the reference), and an Overview "Part of" fact whose
+ *     matrix link lands on — and marks — the unit's row in its phase's matrix;
+ *   * the phase's units page links back to its project;
+ *   * the project's units page says "2 units across 1 phase", not "0 units",
+ *     and shows both units under the phase with its own delivery date and the
+ *     live hold — never "No units yet" over units that exist.
+ *
+ * Seeded through the service role: a project, a phase with its own date, two
+ * units under it, and a live hold on the first (whose status is still
+ * Available — the two are not coupled, by decision, so the grid says so).
+ */
+test("a unit links up to its phase and project; the project's units page shows every phase's units and holds", async ({
+  page,
+}) => {
+  const admin = svc();
+  const { orgId } = await fixtureProfile(admin);
+  const tag = randomBytes(3).toString("hex");
+  const ref = `E2E-LN-${tag}`;
+
+  const insert = async (row: Record<string, unknown>) => {
+    const { data, error } = await admin
+      .from("properties")
+      .insert({ org_id: orgId, property_type: "apartment", status: "available", ...row })
+      .select("id, reference")
+      .single();
+    expect(error, `seeding ${String(row.reference)}: ${error?.message}`).toBeNull();
+    return data as { id: string; reference: string };
+  };
+  const project = await insert({ reference: ref, kind: "project", title: { en: "E2E lineage project" }, delivery_date: "2028-03-31" });
+  const phase = await insert({ reference: `${ref}-P1`, kind: "phase", parent_id: project.id, delivery_date: "2027-06-30" });
+  const u1 = await insert({ reference: `${ref}-P1-A101`, kind: "unit", parent_id: phase.id, block: "A", unit_number: "101", delivery_date: "2027-06-30" });
+  const u2 = await insert({ reference: `${ref}-P1-A102`, kind: "unit", parent_id: phase.id, block: "A", unit_number: "102", delivery_date: "2027-06-30" });
+  const { error: holdErr } = await admin.from("reservations").insert({
+    org_id: orgId,
+    property_id: u1.id,
+    status: "held",
+    expires_at: new Date(Date.now() + 10 * 86_400_000).toISOString(),
+  });
+  expect(holdErr, `seeding the hold: ${holdErr?.message}`).toBeNull();
+
+  try {
+    await page.goto(`/properties/${u1.id}`);
+    const crumbs = page.getByRole("navigation", { name: "Breadcrumb" });
+    await expect(crumbs.getByRole("link", { name: project.reference, exact: true })).toHaveAttribute(
+      "href",
+      `/properties/${project.id}`,
+    );
+    await expect(crumbs.getByRole("link", { name: phase.reference, exact: true })).toHaveAttribute(
+      "href",
+      `/properties/${phase.id}`,
+    );
+    await expect(crumbs.locator('[aria-current="page"]')).toContainText(u1.reference);
+    await expect(crumbs.getByRole("link", { name: "Properties", exact: true })).toBeVisible();
+
+    // the Overview's "Part of" fact, and its way to the unit's row
+    await page.getByRole("link", { name: "Its row in the units matrix" }).click();
+    await page.waitForURL((url) => url.pathname === `/properties/${phase.id}/units` && url.hash === `#unit-${u1.id}`);
+    const row = page.locator(`[id="unit-${u1.id}"]`);
+    await expect(row).toHaveAttribute("aria-current", "true");
+    await expect(row).toBeInViewport();
+    await expect(row).toContainText(/Held to \d{1,2} \w{3,4} \d{4}/);
+    await expect(row).toContainText("Status still says Available");
+    // the phase's units page leads back to its project
+    await expect(
+      page.getByRole("navigation", { name: "Breadcrumb" }).getByRole("link", { name: project.reference, exact: true }),
+    ).toHaveAttribute("href", `/properties/${project.id}`);
+
+    // the project's units page: the true count, every phase's units, read-only
+    await page.goto(`/properties/${project.id}/units`);
+    await expect(page.getByText("2 units across 1 phase (0 directly under the project)")).toBeVisible();
+    const overview = page.getByTestId("availability-overview");
+    await expect(overview.getByRole("link", { name: phase.reference, exact: true })).toHaveAttribute(
+      "href",
+      `/properties/${phase.id}/units`,
+    );
+    await expect(overview).toContainText("delivery 30 Jun 2027");
+    // both are Available — the hold does not change a status (declined coupling)
+    await expect(overview).toContainText("2 of 2 available");
+    await expect(overview.getByRole("link", { name: u1.reference, exact: true })).toBeVisible();
+    await expect(overview.getByRole("link", { name: u2.reference, exact: true })).toBeVisible();
+    await expect(overview).toContainText(/Held to/);
+    await expect(overview.getByRole("combobox")).toHaveCount(0);
+    await expect(page.getByText("None — this project's units are in its phases (above).")).toBeVisible();
+    await expect(page.getByText("No units yet — add the first one below.")).toHaveCount(0);
+  } finally {
+    await admin.from("reservations").delete().eq("property_id", u1.id);
+    await admin.from("properties").delete().eq("parent_id", phase.id);
+    await admin.from("properties").delete().eq("id", phase.id);
+    await admin.from("properties").delete().eq("id", project.id);
+  }
+});

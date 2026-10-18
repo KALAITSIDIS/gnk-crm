@@ -35,9 +35,19 @@
  * veranda, roof garden and basement are stored separately and whether each
  * counts depends on the permit. Treating covered area as the basis is the
  * defensible default, not a certainty, so `assumptions` says it out loud.
+ *
+ * UNKNOWN IS A SCENARIO, NEVER A CONCLUSION (F01, 2026-10-18). Whether VAT
+ * applies to a sale at all is the declaration's to say, and `vatApplicability`
+ * below is the ONE reading of it — the Details panel and the calculators both
+ * take it from here, so they cannot disagree about the same listing again
+ * (the panel used to quote VAT-inclusive figures for "unknown" while the
+ * calculator, fed only the price, quoted transfer fees with relief). When the
+ * status is unknown the figures are still shown, as the case where VAT
+ * applies, and `scenarioNote` says so; nothing here concludes it does.
  */
 
-import { formatMoney } from "@/lib/utils/format";
+import { formatDate, formatMoney } from "@/lib/utils/format";
+import { isDwellingType, type VAT_STATUSES } from "@/lib/validators/properties";
 
 /** The `cyprus_config.vat_property` row, as stored. Every field optional — a
  *  malformed row must produce a refusal, not a crash. */
@@ -45,6 +55,8 @@ export interface VatConfigRow {
   standard_rate?: unknown;
   reduced_rate?: unknown;
   reduced_rules_post_2023?: {
+    /** "first primary residence, new property" — quoted when a non-dwelling is refused the rate */
+    applies_to?: unknown;
     reduced_area_cap_sqm?: unknown;
     reduced_value_cap_eur?: unknown;
     max_total_area_sqm?: unknown;
@@ -59,7 +71,45 @@ export interface VatConfigRow {
   } | null;
 }
 
-export type VatStatus = "new_vat" | "resale_no_vat" | "reduced_rate_eligible" | "unknown";
+/** `properties.vat_status` — tied to the enum list, so a new value must be mapped below. */
+export type VatStatus = (typeof VAT_STATUSES)[number];
+
+/**
+ * Does VAT apply to this sale, on the stored declaration?
+ *   applies         — new_vat, reduced_rate_eligible
+ *   does_not_apply  — resale_no_vat (transfer fees apply instead)
+ *   unconfirmed     — unknown, unset, or anything this file has not mapped
+ */
+export type VatApplicability = "applies" | "does_not_apply" | "unconfirmed";
+
+/** THE mapping from the declaration to a purchase-cost scenario (F01). */
+export function vatApplicability(status: VatStatus | null | undefined): VatApplicability {
+  switch (status) {
+    case "new_vat":
+    case "reduced_rate_eligible":
+      return "applies";
+    case "resale_no_vat":
+      return "does_not_apply";
+    case "unknown":
+    case null:
+    case undefined:
+      return "unconfirmed";
+    default: {
+      // a new enum value fails the typecheck here until it is mapped; at run
+      // time a value this file does not know is, by definition, not confirmed
+      const unmapped: never = status;
+      void unmapped;
+      return "unconfirmed";
+    }
+  }
+}
+
+/**
+ * Said above the figures whenever the status is not confirmed. "Subject to
+ * VAT" and "VAT paid" are different facts, and neither is known here.
+ */
+export const UNCONFIRMED_SCENARIO_NOTE =
+  "Whether VAT applies to this sale is not confirmed. These figures are the case where it does — nothing here confirms that it does, or that it has been paid. If it does not, transfer fees apply instead.";
 
 export interface VatInput {
   /** `properties.covered_area_sqm`. Numeric arrives from PostgREST as a string. */
@@ -72,6 +122,13 @@ export interface VatInput {
   config: VatConfigRow | null;
   /** `cyprus_config.vat_property`.verified_at, so an unverified row is flagged. */
   configVerifiedAt?: string | null;
+  /**
+   * `properties.property_type`. When given and not a dwelling, the reduced
+   * rate is never offered — the config limits it to a primary residence.
+   * Omit (or null) where the type does not decide it: a development is judged
+   * by its units, not by what it calls itself.
+   */
+  propertyType?: string | null;
 }
 
 export interface VatBand {
@@ -134,7 +191,17 @@ export interface VatTreatment {
   conflictsWithDeclaration: boolean;
   /** Set when the transitional regime would be BETTER than the current rules. */
   transitionalMayHelp: { deadline: string; oldRule: string; condition: string | null } | null;
+  /** The declaration, read once by `vatApplicability`. */
+  applicability: VatApplicability;
+  /**
+   * Set when figures are shown for a status that is not confirmed: they are
+   * the case where VAT applies, and this sentence must sit above them.
+   */
+  scenarioNote: string | null;
 }
+
+/** The derivation proper; `deriveVat` adds how far the declaration can be trusted. */
+type VatFigures = Omit<VatTreatment, "applicability" | "scenarioNote">;
 
 /** PostgREST hands numerics over as strings; blanks arrive as "" or null. */
 function num(v: number | string | null | undefined): number | null {
@@ -154,7 +221,20 @@ function round2(n: number): number {
 }
 
 export function deriveVat(input: VatInput): VatTreatment {
-  const base: VatTreatment = {
+  const figures = deriveFigures(input);
+  const applicability = vatApplicability(input.vatStatus);
+  return {
+    ...figures,
+    applicability,
+    // only where there ARE figures to frame: "enter a price" or a refusal
+    // needs no sentence explaining what the numbers assume
+    scenarioNote:
+      applicability === "unconfirmed" && figures.bands.length > 0 ? UNCONFIRMED_SCENARIO_NOTE : null,
+  };
+}
+
+function deriveFigures(input: VatInput): VatFigures {
+  const base: VatFigures = {
     outcome: "cannot_derive",
     reasons: [],
     assumptions: [],
@@ -197,6 +277,10 @@ export function deriveVat(input: VatInput): VatTreatment {
   const assumptions: string[] = [];
   if (!input.configVerifiedAt) {
     assumptions.push("The VAT thresholds have not been marked verified by anyone.");
+  } else {
+    // provenance, the way the calculators print "last verified" — a figure
+    // that does not say how old its thresholds are cannot be weighed
+    assumptions.push(`VAT thresholds verified ${formatDate(input.configVerifiedAt)}.`);
   }
 
   // ------------------------------------------------------------ resale case --
@@ -223,6 +307,35 @@ export function deriveVat(input: VatInput): VatTreatment {
   }
 
   const standardVatOnAll = round2(price * standardRate!);
+
+  // ------------------------------------------------------- the dwelling gate --
+  // The config's own `applies_to` limits the reduced rate to a "first primary
+  // residence, new property". Land, a shop or an office is nobody's residence,
+  // so no split, no cliff and no transitional hint is offered for one — those
+  // all describe a rate it cannot have. Whether VAT applies to such a sale at
+  // all (a taxable seller, building land) is NOT derived: that stays the
+  // declaration's, and `applicability` reads it.
+  if (input.propertyType && !isDwellingType(input.propertyType)) {
+    const appliesTo =
+      typeof r?.applies_to === "string" && r.applies_to.trim() ? r.applies_to.trim() : null;
+    const type =
+      input.propertyType === "other" ? "this property type" : input.propertyType.replace(/_/g, " ");
+    return {
+      ...base,
+      outcome: "standard_only",
+      reasons: [
+        `The reduced rate is for a dwelling bought as a primary residence${
+          appliesTo ? ` (“${appliesTo}”)` : ""
+        } — not available for ${type}.`,
+        `Shown at the standard ${(standardRate! * 100).toFixed(0)}% rate.`,
+      ],
+      assumptions,
+      bands: [{ base: price, rate: standardRate!, vat: standardVatOnAll }],
+      totalVat: standardVatOnAll,
+      totalWithVat: round2(price + standardVatOnAll),
+      conflictsWithDeclaration: input.vatStatus === "reduced_rate_eligible",
+    };
+  }
 
   if (area === null || area <= 0) {
     return {
@@ -369,6 +482,28 @@ function transitionalHint(cfg: VatConfigRow): VatTreatment["transitionalMayHelp"
   // quotes a lapsed relief to exactly the buyers it lapsed for
   const condition = typeof t.condition === "string" ? t.condition : null;
   return { deadline, oldRule, condition };
+}
+
+/**
+ * The calculators, opened on a property at a price (the T5.1 link contract,
+ * extended by F01). The calculator reads the property itself — reference and
+ * stored VAT status — and opens on the matching scenario; the price travels
+ * in the link because the one being discussed may not be the saved one. A
+ * price that is not a positive number is left out rather than sent as 0.
+ */
+export function purchaseCostsHref(
+  propertyId: string,
+  price: number | string | null | undefined,
+): string {
+  const n =
+    typeof price === "number"
+      ? price
+      : typeof price === "string" && price.trim() !== ""
+        ? Number(price.trim())
+        : Number.NaN;
+  return Number.isFinite(n) && n > 0
+    ? `/calculators?price=${n}&property=${propertyId}`
+    : `/calculators?property=${propertyId}`;
 }
 
 /** Does this treatment carry anything worth rendering? */

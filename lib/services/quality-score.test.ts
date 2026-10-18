@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { computeQualityScore, type QualityScoreInput } from "./quality-score";
+import {
+  buildQualityInput,
+  computeQualityScore,
+  WEBSITE_ESSENTIALS,
+  type QualityScoreInput,
+  type QualityScoreSource,
+} from "./quality-score";
 
 const empty: QualityScoreInput = {
   isLand: false,
@@ -238,5 +244,106 @@ describe("a shared photograph is a warning, never a point (0088)", () => {
   it("warns of nothing by default, and nothing for an empty list", () => {
     expect(computeQualityScore(full).warnings).toEqual([]);
     expect(computeQualityScore({ ...full, sharedPhotoWith: [] }).warnings).toEqual([]);
+  });
+});
+
+/**
+ * F03: website essentials, reported apart from the score. A listing with no
+ * photograph at all reached 85 on paperwork and read as fine everywhere; the
+ * result now says what the website cannot show it without, and the weights
+ * do not move (no stored score goes stale).
+ */
+describe("website essentials are reported apart from the score (F03)", () => {
+  it("an 85-point listing with no photograph lacks exactly one essential: its cover", () => {
+    const result = computeQualityScore({ ...full, hasCoverPhoto: false, photoCount: 0 });
+    expect(result.score).toBe(85);
+    expect(result.essentialsMissing.map((i) => i.key)).toEqual(["cover"]);
+    // a subset of missing, never extra points or a second list of gaps
+    expect(result.missing.map((i) => i.key)).toEqual(["cover", "photos6"]);
+  });
+
+  it("the essentials are exactly WEBSITE_ESSENTIALS — cover, English title, price — for every kind", () => {
+    expect([...WEBSITE_ESSENTIALS]).toEqual(["cover", "title_en", "price"]);
+    for (const over of [{}, { isLand: true }, { isContainer: true }] as Partial<QualityScoreInput>[]) {
+      const items = computeQualityScore({ ...empty, ...over }).items;
+      expect(items.filter((i) => i.essential).map((i) => i.key)).toEqual(["cover", "title_en", "price"]);
+      expect(computeQualityScore({ ...empty, ...over }).essentialsMissing.map((i) => i.key)).toEqual([
+        "cover",
+        "title_en",
+        "price",
+      ]);
+    }
+  });
+
+  it("a container's price essential is its units' prices; area, rooms and units are never essentials", () => {
+    const result = computeQualityScore({ ...full, isContainer: true, unitCount: 0, pricedUnitCount: 0 });
+    const price = result.essentialsMissing.find((i) => i.key === "price");
+    expect(price?.label).toBe("Units priced");
+    expect(result.essentialsMissing.map((i) => i.key)).toEqual(["price"]);
+    for (const key of ["units", "area", "rooms", "planning"]) {
+      expect(result.items.find((i) => i.key === key)?.essential).toBeUndefined();
+    }
+  });
+
+  it("land is not asked for its planning terms as an essential — that stays completeness", () => {
+    const land = computeQualityScore({ ...full, isLand: true, hasPlanningZoneAndDensity: false });
+    expect(land.missing.map((i) => i.key)).toContain("planning");
+    expect(land.essentialsMissing).toEqual([]);
+  });
+
+  it("moves no points: weights still total 100 and a complete listing has nothing missing", () => {
+    expect(computeQualityScore(empty).items.reduce((s, i) => s + i.points, 0)).toBe(100);
+    expect(computeQualityScore(full).essentialsMissing).toEqual([]);
+    expect(computeQualityScore(full).score).toBe(100);
+  });
+});
+
+/**
+ * F03: buildQualityInput is now the ONE builder (the page, the gate, the
+ * worklist, the stored score). The gate hands it the row merged with a save's
+ * pending updates, where an unset column can be `undefined`.
+ */
+describe("buildQualityInput (F03: the one input builder)", () => {
+  const row: QualityScoreSource = {
+    property_type: "apartment",
+    kind: "standalone",
+    title: { en: "Flat" },
+    public_description: { en: "x".repeat(300) },
+    asking_price: 250000,
+    rent_price_month: null,
+    covered_area_sqm: 90,
+    plot_area_sqm: null,
+    bedrooms: 2,
+    bathrooms: 1,
+    planning_zone_code: null,
+    building_density_pct: null,
+    location: "0101000020E6100000",
+    location_approx: false,
+    title_deed_status: "separate",
+    permit_status: "obtained",
+    assigned_agent_id: "a",
+    owner_contact_id: "o",
+    developer_contact_id: null,
+  };
+  const facts = { hasCoverPhoto: true, photoCount: 6, mandateActive: true };
+
+  it("an approximate (centroid) point earns no exact-location points", () => {
+    expect(buildQualityInput(row, facts).hasCoords).toBe(true);
+    expect(buildQualityInput({ ...row, location_approx: true }, facts).hasCoords).toBe(false);
+  });
+
+  it("an undefined column is as unset as a null one (the gate's merged row)", () => {
+    const merged = { ...row, asking_price: undefined, location: undefined, assigned_agent_id: undefined } as unknown as QualityScoreSource;
+    const input = buildQualityInput(merged, facts);
+    expect(input.hasPrice).toBe(false);
+    expect(input.hasCoords).toBe(false);
+    expect(input.hasAssignedAgent).toBe(false);
+    const result = computeQualityScore(input);
+    expect(result.essentialsMissing.map((i) => i.key)).toEqual(["price"]);
+  });
+
+  it("a stored row scores exactly as before (null is unset, a value is set)", () => {
+    expect(computeQualityScore(buildQualityInput(row, facts)).score).toBe(100);
+    expect(computeQualityScore(buildQualityInput({ ...row, asking_price: null }, facts)).score).toBe(90);
   });
 });

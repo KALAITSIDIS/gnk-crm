@@ -86,6 +86,30 @@
       "idleDays": "{days}d idle",
       "noActivity": "no activity",
       "unnamed": "Unnamed"
+    },
+    "listingHealth": {
+      "title": "Listing health",
+      "ready": "ready to market",
+      "attention": "needs attention",
+      "unreadable": "Listing health: unreadable ({message}).",
+      "nothingPublic": "Website essentials: nothing is public on the website.",
+      "essentialsClean": "Website essentials: {count, plural, one {the # public listing has} other {all # public listings have}} a cover photo, an English title and a price.",
+      "essentialsMissing": "Website essentials: {count, plural, one {# public listing lacks} other {# public listings lack}} what the site needs — {list}.",
+      "completenessClean": "Completeness: {count, plural, one {the # public listing scores} other {all # public listings score}} {threshold} or more.",
+      "completenessBelow": "Completeness: {count, plural, one {# public listing scores} other {# public listings score}} below {threshold} — {list}.",
+      "longest": "Longest on the market: {ref}, {days, plural, one {# day} other {# days}}.",
+      "priceReview": "{count, plural, one {# listing} other {# listings}} at {days}+ days, due a price review.",
+      "dataWarnings": "Data warnings across live listings: {list}.",
+      "noDataWarnings": "Data warnings across live listings: none.",
+      "buildConflicts": "{count, plural, one {# build contradiction} other {# build contradictions}} ({total} to correct)",
+      "sharedPhotos": "{count, plural, one {# listing shares a photograph} other {# listings share a photograph}}",
+      "essential": {
+        "cover": "cover photo",
+        "title_en": "English title",
+        "price": "price",
+        "unitsPriced": "priced units"
+      },
+      "worklist": "Worklist"
     }
   },
   "reports": {
