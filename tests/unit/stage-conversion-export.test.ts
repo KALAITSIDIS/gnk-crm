@@ -63,14 +63,17 @@ async function exportWith(rpc: { data: unknown; error: unknown }) {
 }
 
 const lines = (csv: string) => csv.replace(/^﻿/, "").split("\r\n").filter(Boolean);
-const HEADER = "Stage,Entered,Advanced,Advance rate,Note,From,To,Malformed moves excluded";
+const HEADER =
+  "Stage,Entered,Advanced,Advance rate,Note,From,To,Malformed moves excluded,Deal type,Moved back,Direction unknown,Stage id";
+/** 0154: a body still at 0130 has no pipeline, direction split or stage id — four blank cells, never a made-up 0 */
+const LEGACY_TAIL = ",,,,";
 
 describe("stage-conversion CSV export", () => {
   it("a normal report exports its rows, with 0 excluded on every row", async () => {
     const { res, body } = await exportWith({ data: report(), error: null });
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/csv");
-    expect(lines(body)).toEqual([HEADER, `Qualified,2,1,50.0%,${NOTE},2026-01-01,2026-01-31,0`]);
+    expect(lines(body)).toEqual([HEADER, `Qualified,2,1,50.0%,${NOTE},2026-01-01,2026-01-31,0${LEGACY_TAIL}`]);
     expect(logEvent).toHaveBeenCalledTimes(1);
     expect(logEvent.mock.calls[0]![1]).toMatchObject({ payload: { list: "report:stage_conversion", count: 1 } });
   });
@@ -78,7 +81,7 @@ describe("stage-conversion CSV export", () => {
   it("a mixed window keeps its valid rows exportable and states the exclusions on each", async () => {
     const { res, body } = await exportWith({ data: report({ moves_malformed: 2 }), error: null });
     expect(res.status).toBe(200);
-    expect(lines(body)).toEqual([HEADER, `Qualified,2,1,50.0%,${NOTE},2026-01-01,2026-01-31,2`]);
+    expect(lines(body)).toEqual([HEADER, `Qualified,2,1,50.0%,${NOTE},2026-01-01,2026-01-31,2${LEGACY_TAIL}`]);
     expect(logEvent).toHaveBeenCalledTimes(1);
   });
 
@@ -138,6 +141,29 @@ describe("stage-conversion CSV export", () => {
     delete legacy.moves_malformed;
     const { res, body } = await exportWith({ data: legacy, error: null });
     expect(res.status).toBe(200);
-    expect(lines(body)[1]).toBe(`Qualified,2,1,50.0%,${NOTE},2026-01-01,2026-01-31,0`);
+    expect(lines(body)[1]).toBe(`Qualified,2,1,50.0%,${NOTE},2026-01-01,2026-01-31,0${LEGACY_TAIL}`);
+  });
+
+  it("0154's rows carry their pipeline, direction split and stage id — APPENDED, the left-to-right pins unchanged", async () => {
+    const { res, body } = await exportWith({
+      data: report({
+        stage_key: "id",
+        stages: [
+          { deal_type: "sale", stage_id: "s-q", stage: "Qualified", sort_order: 2, entered: 2, advanced: 1, regressed: 1, departed_unknown: 0, advance_rate: 0.5 },
+          { deal_type: "rental", stage_id: "r-q", stage: "Qualified", sort_order: 2, entered: 1, advanced: 0, regressed: 0, departed_unknown: 0, advance_rate: 0 },
+          { deal_type: null, stage_id: null, stage: "OLD-B", sort_order: null, entered: 1, advanced: 0, regressed: 0, departed_unknown: 1, advance_rate: 0 },
+        ],
+      }),
+      error: null,
+    });
+    expect(res.status).toBe(200);
+    expect(lines(body)).toEqual([
+      HEADER,
+      `Qualified,2,1,50.0%,${NOTE},2026-01-01,2026-01-31,0,sale,1,0,s-q`,
+      `Qualified,1,0,0.0%,${NOTE},2026-01-01,2026-01-31,0,rental,0,0,r-q`,
+      // a pipeline that cannot be read says so; a recorded name has no stage id
+      `OLD-B,1,0,0.0%,${NOTE},2026-01-01,2026-01-31,0,unknown,0,1,`,
+    ]);
+    expect(logEvent.mock.calls[0]![1]).toMatchObject({ payload: { list: "report:stage_conversion", count: 3 } });
   });
 });
