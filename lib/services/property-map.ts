@@ -9,6 +9,8 @@
  * coordinates alone would have shipped a permanently empty screen.
  */
 
+import { formatMoney } from "@/lib/utils/format";
+
 export type LatLng = { lat: number; lng: number };
 
 export type MappableProperty = {
@@ -149,3 +151,99 @@ export function boundsOf(
  * JSON, and a plainly absurd round number is easier to recognise in a debugger.
  */
 export const PRICE_ABSENT = 1_000_000_000_000;
+
+/** A pin's price in words — the popup's and the map page's list's one wording.
+ *  No price is a dash, never €0 (a 0 a human typed IS a price, and shows). */
+export function featurePriceText(price: number | null, isRent: boolean): string {
+  if (price === null) return "—";
+  return isRent ? `${formatMoney(price)} / month` : formatMoney(price);
+}
+
+/**
+ * The map page's line about what it could place (F08): "12 on the map · 3
+ * without a location". The rows without a location used to vanish from the map
+ * with nothing anywhere saying so; they are still in the list.
+ */
+export function placementSummary(placed: number, unplaced: number): string {
+  return `${placed} on the map · ${unplaced} without a location`;
+}
+
+// ---------------------------------------------------------------------------
+// When the map cannot draw (F08)
+// ---------------------------------------------------------------------------
+
+/**
+ * `loading` until the style is in and the pins are added; `ready` after.
+ * `unsupported`: this browser cannot give MapLibre a WebGL2 context — a remote
+ * desktop, a virtual machine, a GPU-blocklisted browser, hardware acceleration
+ * off. `failed`: anything else that stops the map (the map library's code did
+ * not arrive, the style did not load).
+ */
+export type MapStatus = "loading" | "ready" | "unsupported" | "failed";
+export type MapFailure = Extract<MapStatus, "unsupported" | "failed">;
+
+/**
+ * What a thrown error means for the map. MapLibre 6 throws
+ * `GPUInitializationError` from the `Map` constructor when it cannot create a
+ * WebGL2 context. Matched by NAME (the class sets it explicitly, so it survives
+ * minification) rather than `instanceof`, so this stays free of the library.
+ */
+export function mapFailureReason(err: unknown): MapFailure {
+  const name = typeof err === "object" && err !== null ? (err as { name?: unknown }).name : undefined;
+  return name === "GPUInitializationError" ? "unsupported" : "failed";
+}
+
+/**
+ * What one MapLibre `error` event means for the map as a whole — null when it
+ * does not stop the map.
+ *
+ * - A lost WebGL context MapLibre could not get back (`GPUInitializationError`
+ *   through the event, any time): the map is gone — `unsupported`.
+ * - Before the style has loaded, an error naming no source is the STYLE itself
+ *   (unreachable, refused by the CSP, invalid): nothing will ever draw — `failed`.
+ * - After it, errors are tiles, sprites and glyphs: transient, and the pins
+ *   are already up. Not a failure — one bad tile must not take the map away.
+ */
+export function mapErrorOutcome(
+  event: { error?: unknown; sourceId?: unknown; tile?: unknown },
+  styleLoaded: boolean,
+): MapFailure | null {
+  if (mapFailureReason(event.error) === "unsupported") return "unsupported";
+  if (styleLoaded) return null;
+  if (event.sourceId || event.tile) return null;
+  return "failed";
+}
+
+/** How much VISIBLE time a map may take to draw its pins before the page says
+ *  so and offers the list. */
+export const MAP_SLOW_AFTER_MS = 15_000;
+
+/**
+ * Calls `onElapsed` once `after` ms of VISIBLE time have passed; returns a stop
+ * function. Time while the tab is hidden never counts.
+ *
+ * WHY VISIBLE TIME: a hidden tab never runs requestAnimationFrame, so MapLibre
+ * neither renders nor requests a tile there. A wall-clock timer would call a
+ * perfectly working map "slow" in every background tab — the exact instrument
+ * trap that once had a working map reported as broken (BACKLOG "THE PROPERTY
+ * MAP (B5) RENDERS BLANK", withdrawn 2026-08-20; ENGINEERING_NOTES §7.1). A tick
+ * counts only when the tab is visible at that tick, so hidden time is never
+ * counted by more than one step.
+ */
+export function startVisibleTimer(
+  after: number,
+  isVisible: () => boolean,
+  onElapsed: () => void,
+  step = 1_000,
+): () => void {
+  let visibleMs = 0;
+  const id = setInterval(() => {
+    if (!isVisible()) return;
+    visibleMs += step;
+    if (visibleMs >= after) {
+      clearInterval(id);
+      onElapsed();
+    }
+  }, step);
+  return () => clearInterval(id);
+}

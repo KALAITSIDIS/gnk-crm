@@ -12,7 +12,8 @@ import {
   propertiesViewTitle,
 } from "@/lib/queries/properties-list";
 import { readPropertyPlaces } from "@/lib/queries/property-places";
-import { toGeoJson, type MappableProperty } from "@/lib/services/property-map";
+import { placementSummary, toGeoJson, type MappableProperty } from "@/lib/services/property-map";
+import { fetchAll } from "@/lib/supabase/fetch-all";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
 import { parseLocationPoint } from "@/lib/utils/geo";
@@ -44,6 +45,17 @@ export async function generateMetadata({
  * Deliberately a SECOND VIEW of the list rather than a new module: it reuses
  * parsePropertyFilters and applyPropertyListFilters so the two views cannot
  * disagree about what a filter set means.
+ *
+ * F08 — it says what it could not place: "N on the map · M without a
+ * location". A row with no point, no area centre and no district centre was
+ * dropped from the map with nothing anywhere saying so. To state N and M at
+ * all, the read has to be EVERY matching row: it used to be one unpaged,
+ * unordered select, which PostgREST cuts at 1,000 rows silently (BACKLOG "The
+ * properties map reads its pins unpaged and unordered") — an arbitrary
+ * thousand, perhaps a different thousand each load, and a count over them
+ * would have been a confident wrong number. Now it pages (fetchAll) over a
+ * unique order, reference then id, which is also the order of the list the
+ * map carries under itself.
  */
 export default async function PropertiesMapPage({
   searchParams,
@@ -54,28 +66,47 @@ export default async function PropertiesMapPage({
   const filters = parsePropertyFilters(sp);
   const supabase = await createClient();
 
-  const query = applyPropertyListFilters(
-    supabase
-      .from("properties")
-      .select(
-        // The mandate embed is here because applyPropertyListFilters EMITS a
-        // filter on it for every mandate filter (and, for none/expired, on the
-        // empty block embed it carries), and PostgREST rejects a filter naming
-        // a relationship the select does not embed (400 PGRST108). The map has
-        // always shared the filter builder without sharing this half of its
-        // contract, so those filters threw here long before the embed was
-        // renamed. The map does not RENDER a mandate; the embeds exist to make
-        // the filters legal, and !inner / the anti-join restrict the pins.
-        `id, reference, location, title, asking_price, rent_price_month,
-         areas(centroid), districts(centroid),
-         property_media(path_thumb, is_cover, sort_order, kind),
-         ${mandateEmbed(filters)}`,
-      ),
-    filters,
-  );
+  // A fresh builder per page — builders are mutable (fetch-all.ts).
+  const pinsQuery = () =>
+    applyPropertyListFilters(
+      supabase
+        .from("properties")
+        .select(
+          // The mandate embed is here because applyPropertyListFilters EMITS a
+          // filter on it for every mandate filter (and, for none/expired, on the
+          // empty block embed it carries), and PostgREST rejects a filter naming
+          // a relationship the select does not embed (400 PGRST108). The map has
+          // always shared the filter builder without sharing this half of its
+          // contract, so those filters threw here long before the embed was
+          // renamed. The map does not RENDER a mandate; the embeds exist to make
+          // the filters legal, and !inner / the anti-join restrict the pins.
+          //
+          // `location_approx` (0054): a STORED point may be an area centre the
+          // agent chose to save. This select predated the column, so every such
+          // point drew as a surveyed, teal "Exact location" (F08).
+          `id, reference, location, location_approx, title, asking_price, rent_price_month,
+           areas(centroid), districts(centroid),
+           property_media(path_thumb, is_cover, sort_order, kind),
+           ${mandateEmbed(filters)}`,
+        ),
+      filters,
+    );
 
-  const [places, result] = await Promise.all([readPropertyPlaces(), query]);
-  const rows = unwrapRows(result, "properties");
+  const [places, rows] = await Promise.all([
+    readPropertyPlaces(),
+    fetchAll(
+      async (from, to) => ({
+        // unwrapRows per page keeps its routing of a token PostgREST refuses
+        // (PGRST303) to the session-clock page
+        data: unwrapRows(
+          await pinsQuery().order("reference").order("id").range(from, to),
+          "properties",
+        ),
+        error: null,
+      }),
+      "properties",
+    ),
+  ]);
   // the filters in words, as on the list — the map ignores the sort
   const description = describePropertyFilters({ ...filters, sort: "newest" }, places);
 
@@ -108,6 +139,7 @@ export default async function PropertiesMapPage({
       id: r.id,
       reference: r.reference,
       location: parseLocationPoint(r.location),
+      locationApprox: r.location_approx,
       areaCentroid: parseLocationPoint(r.areas?.centroid),
       districtCentroid: parseLocationPoint(r.districts?.centroid),
       title: (r.title as { en?: string } | null)?.en ?? null,
@@ -117,11 +149,17 @@ export default async function PropertiesMapPage({
     };
   });
 
+  const data = toGeoJson(mappable);
+  const unplaced = rows.length - data.features.length;
+
   const search = new URLSearchParams(
     Object.entries(sp).flatMap(([k, v]) =>
       typeof v === "string" ? [[k, v] as [string, string]] : [],
     ),
   ).toString();
+  // the list under the same filters: the header's List button, and the way out
+  // of a map that cannot draw (F08)
+  const listHref = `/properties${search ? `?${search}` : ""}`;
 
   return (
     <div className="flex h-full flex-col gap-4">
@@ -135,15 +173,18 @@ export default async function PropertiesMapPage({
               {description}
             </p>
           ) : null}
+          <p className="text-[13px] text-text-2" data-testid="property-map-placement">
+            {placementSummary(data.features.length, unplaced)}
+          </p>
         </div>
         <Button asChild variant="outline">
-          <Link href={`/properties${search ? `?${search}` : ""}`}>
+          <Link href={listHref}>
             <List className="mr-2 size-4" />
             List
           </Link>
         </Button>
       </div>
-      <PropertyMap data={toGeoJson(mappable)} />
+      <PropertyMap data={data} listHref={listHref} unplaced={unplaced} />
     </div>
   );
 }
