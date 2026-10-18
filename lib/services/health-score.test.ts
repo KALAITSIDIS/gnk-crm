@@ -1,7 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { HEALTH_WEIGHTS, computeHealth, type HealthInputs } from "./health-score";
+import {
+  HEALTH_WEIGHTS,
+  activityFactor,
+  computeHealth,
+  healthAssessedLine,
+  liveHealth,
+  type HealthFactor,
+  type HealthInputs,
+  type HealthRowForDisplay,
+} from "./health-score";
 import { KYC_ITEMS } from "@/lib/constants/checklists";
 import { fakeClient } from "@/lib/testing/fake-client";
+import { formatDateTime } from "@/lib/utils/format";
 
 /** the service-role client createAdminClient hands out, how many were built, and an optional throw */
 const admin = vi.hoisted(() => ({ client: null as unknown, built: 0, throws: null as Error | null }));
@@ -109,6 +119,243 @@ describe("computeHealth", () => {
     expect(result.score).toBe(25 + 15 + 0 + 15 + 15);
     const activity = result.factors.find((f) => f.key === "activity");
     expect(activity?.detail).toBe("10d since last activity");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A09 — the activity factor re-scored at read time
+// ---------------------------------------------------------------------------
+const DAY = 86_400_000;
+const activityOf = (factors: HealthFactor[] | null) => factors?.find((f) => f.key === "activity");
+
+describe("activityFactor — the one 7/14-day rule, shared by the recompute and the readers", () => {
+  it("is exactly computeHealth's activity factor, at every boundary and either side", () => {
+    for (const days of [0, 0.5, 6.9, 7, 7.01, 13.99, 14, 14.01, 20, 30, 365, -0.5, -3]) {
+      const stored = activityOf(computeHealth({ ...base, lastActivityAt: daysAgo(days) }, NOW).factors);
+      expect(activityFactor(daysAgo(days), NOW), `${days}d`).toEqual(stored);
+    }
+    expect(activityFactor(null, NOW)).toEqual(activityOf(computeHealth(base, NOW).factors));
+    // a Date reads as its ISO string does
+    expect(activityFactor(new Date(daysAgo(10)), NOW)).toEqual(activityFactor(daysAgo(10), NOW));
+  });
+
+  it("scores 30 through day 7, 15 through day 14, 0 after, and says how many whole days", () => {
+    const at = (days: number) => activityFactor(daysAgo(days), NOW);
+    expect(at(7)).toMatchObject({ points: 30, max: 30, detail: "7d since last activity" });
+    expect(at(7.01)).toMatchObject({ points: 15, detail: "7d since last activity" });
+    expect(at(14)).toMatchObject({ points: 15, detail: "14d since last activity" });
+    expect(at(14.01)).toMatchObject({ points: 0, detail: "14d since last activity" });
+    expect(at(30)).toMatchObject({ points: 0, detail: "30d since last activity" });
+    expect(activityFactor(null, NOW)).toMatchObject({ points: 0, detail: "no activity recorded" });
+  });
+
+  it("scores a time in the future (clock skew) as full, and reads 0d — never negative", () => {
+    expect(activityFactor(daysAgo(-2), NOW)).toEqual({
+      key: "activity",
+      label: "Recent activity",
+      points: 30,
+      max: 30,
+      detail: "0d since last activity",
+    });
+  });
+});
+
+/** When the snapshot below was assessed — also the deal's last activity, so it stored 30/30. */
+const ASSESSED = "2026-07-01T09:30:00.000Z";
+const after = (days: number) => new Date(Date.parse(ASSESSED) + days * DAY);
+
+/** A deal as healthUpdateFor leaves it: every factor met, assessed right after its last activity. */
+function storedDeal(overrides: Partial<HealthRowForDisplay> = {}): HealthRowForDisplay {
+  const result = computeHealth(
+    {
+      budgetConfirmed: true,
+      buyerKycPct: 100,
+      titleDeedKnown: true,
+      mandateActive: true,
+      lastActivityAt: ASSESSED,
+    },
+    new Date(ASSESSED),
+  );
+  return {
+    status: "open",
+    health_score: result.score,
+    health: { budget_confirmed: true, factors: result.factors, computed_at: ASSESSED },
+    last_activity_at: ASSESSED,
+    ...overrides,
+  };
+}
+
+describe("liveHealth — an open deal's activity as of now; a closed deal's as stored", () => {
+  it("an open deal stored at 100, idle 10 days, shows 85 — the activity factor re-scored, the rest as assessed", () => {
+    const row = storedDeal();
+    expect(row.health_score).toBe(100);
+    const h = liveHealth(row, after(10));
+    expect(h.basis).toBe("live");
+    expect(h.score).toBe(85);
+    expect(activityOf(h.factors)).toEqual({
+      key: "activity",
+      label: "Recent activity",
+      points: 15,
+      max: 30,
+      detail: "10d since last activity",
+    });
+    const storedFactors = (row.health as { factors: HealthFactor[] }).factors;
+    expect(h.factors!.filter((f) => f.key !== "activity")).toEqual(
+      storedFactors.filter((f) => f.key !== "activity"),
+    );
+    // the order of the breakdown is the stored order
+    expect(h.factors!.map((f) => f.key)).toEqual(storedFactors.map((f) => f.key));
+    expect(h.assessedAt).toBe(ASSESSED);
+  });
+
+  it("idle 20 days: 70, activity 0/30 '20d since last activity'", () => {
+    const h = liveHealth(storedDeal(), after(20));
+    expect(h.score).toBe(70);
+    expect(activityOf(h.factors)).toMatchObject({ points: 0, max: 30, detail: "20d since last activity" });
+  });
+
+  it("within 7 days nothing changes, and at the instant of the recompute the live score IS the stored one", () => {
+    expect(liveHealth(storedDeal(), after(3)).score).toBe(100);
+    for (const days of [0, 5, 9, 16, 40]) {
+      const activity = new Date(Date.parse(ASSESSED) - days * DAY).toISOString();
+      const result = computeHealth(
+        { budgetConfirmed: false, buyerKycPct: 67, titleDeedKnown: true, mandateActive: null, lastActivityAt: activity },
+        new Date(ASSESSED),
+      );
+      const row = storedDeal({
+        health_score: result.score,
+        health: { factors: result.factors, computed_at: ASSESSED },
+        last_activity_at: activity,
+      });
+      expect(liveHealth(row, new Date(ASSESSED)), `${days}d`).toMatchObject({
+        score: result.score,
+        factors: result.factors,
+        basis: "live",
+      });
+    }
+  });
+
+  it("a won or a lost deal keeps its stored score and breakdown, however long ago its last activity", () => {
+    for (const status of ["won", "lost"]) {
+      const row = storedDeal({ status });
+      const h = liveHealth(row, after(20));
+      expect(h).toEqual({
+        score: 100,
+        factors: (row.health as { factors: HealthFactor[] }).factors,
+        assessedAt: ASSESSED,
+        basis: "closed",
+      });
+    }
+  });
+
+  it("no snapshot: the stored score as it is, no breakdown, never a guessed number", () => {
+    for (const health of [{}, null, { budget_confirmed: true }, [], "x", 7]) {
+      const h = liveHealth(storedDeal({ health_score: 55, health }), after(20));
+      expect(h, JSON.stringify(health)).toEqual({ score: 55, factors: null, assessedAt: null, basis: "stored" });
+    }
+  });
+
+  it("a snapshot that is not a well-formed factor list is no snapshot: nothing is added up from it", () => {
+    const good = (storedDeal().health as { factors: HealthFactor[] }).factors;
+    const broken: unknown[] = [
+      "not a list",
+      [...good.slice(0, 4), { ...good[4], points: "30" }],
+      [...good.slice(0, 4), { ...good[4], points: Number.NaN }],
+      [...good.slice(0, 4), { ...good[4], max: null }],
+      [...good.slice(0, 4), { ...good[4], detail: undefined }],
+      [...good.slice(0, 4), { ...good[4], label: 3 }],
+      [...good.slice(0, 4), { ...good[4], key: "vibes" }],
+      [...good, good[4]], // activity twice
+      [...good.slice(0, 4), null],
+    ];
+    for (const factors of broken) {
+      const h = liveHealth(storedDeal({ health_score: 64, health: { factors, computed_at: ASSESSED } }), after(20));
+      expect(h.basis, JSON.stringify(factors)).toBe("stored");
+      expect(h.score).toBe(64);
+      expect(h.factors).toBeNull();
+    }
+  });
+
+  it("a snapshot with no activity entry is shown as stored, not re-scored", () => {
+    const good = (storedDeal().health as { factors: HealthFactor[] }).factors;
+    const four = good.filter((f) => f.key !== "activity");
+    const h = liveHealth(storedDeal({ health_score: 70, health: { factors: four, computed_at: ASSESSED } }), after(20));
+    expect(h).toEqual({ score: 70, factors: four, assessedAt: ASSESSED, basis: "stored" });
+  });
+
+  it("a last_activity_at that is not a time is not re-scored (no zero for unreadable data)", () => {
+    const h = liveHealth(storedDeal({ last_activity_at: "not a time" }), after(20));
+    expect(h.basis).toBe("stored");
+    expect(h.score).toBe(100);
+  });
+
+  it("a last activity in the future (clock skew) scores full and reads 0d", () => {
+    const row = storedDeal({ last_activity_at: after(2).toISOString() });
+    const h = liveHealth(row, new Date(ASSESSED));
+    expect(h.score).toBe(100);
+    expect(activityOf(h.factors)?.detail).toBe("0d since last activity");
+  });
+
+  it("the factors always sum to the score it shows — even over a stored score that disagrees with them", () => {
+    for (let days = 0; days <= 40; days += 0.5) {
+      for (const health_score of [100, 0, 42]) {
+        const h = liveHealth(storedDeal({ health_score }), after(days));
+        expect(h.factors!.reduce((s, f) => s + f.points, 0), `${days}d`).toBe(h.score);
+      }
+    }
+  });
+
+  it("does not touch the row it was given", () => {
+    const row = storedDeal();
+    const before = JSON.stringify(row);
+    const storedActivity = activityOf((row.health as { factors: HealthFactor[] }).factors);
+    const h = liveHealth(row, after(20));
+    expect(JSON.stringify(row)).toBe(before);
+    expect(storedActivity).toMatchObject({ points: 30, detail: "0d since last activity" });
+    expect(h.factors).not.toBe((row.health as { factors: HealthFactor[] }).factors);
+  });
+
+  it("assessedAt is health.computed_at only when that is a time", () => {
+    const factors = (storedDeal().health as { factors: HealthFactor[] }).factors;
+    for (const computed_at of [undefined, null, "", "yesterday", 1751362200000]) {
+      const h = liveHealth(storedDeal({ health: { factors, computed_at } }), after(10));
+      expect(h.assessedAt, String(computed_at)).toBeNull();
+      expect(h.basis).toBe("live");
+    }
+  });
+});
+
+describe("healthAssessedLine — when the breakdown was assessed, in Cyprus time", () => {
+  const live = liveHealth(storedDeal(), after(20));
+
+  it("an open deal: 'Checklist assessed <time> · activity as of now'", () => {
+    expect(healthAssessedLine(live)).toBe(`Checklist assessed ${formatDateTime(ASSESSED)} · activity as of now`);
+    // 09:30 UTC on 1 July is 12:30 in Nicosia (EEST)
+    expect(healthAssessedLine(live)).toMatch(/12:30/);
+  });
+
+  it("an open deal whose assessment time is not recorded says so, and invents none", () => {
+    expect(healthAssessedLine({ ...live, assessedAt: null })).toBe(
+      "Activity as of now · when the checklist was assessed is not recorded",
+    );
+  });
+
+  it("a closed deal: 'Assessed <time>', and that it is not re-scored", () => {
+    const closed = liveHealth(storedDeal({ status: "won" }), after(20));
+    expect(healthAssessedLine(closed)).toBe(
+      `Assessed ${formatDateTime(ASSESSED)} · a closed deal is not re-scored over time`,
+    );
+    expect(healthAssessedLine({ ...closed, assessedAt: null })).toBeNull();
+  });
+
+  it("a stored breakdown that could not be re-scored: just when it was assessed", () => {
+    const h = liveHealth(storedDeal({ last_activity_at: "not a time" }), after(20));
+    expect(healthAssessedLine(h)).toBe(`Assessed ${formatDateTime(ASSESSED)}`);
+  });
+
+  it("no breakdown, no line", () => {
+    expect(healthAssessedLine(liveHealth(storedDeal({ health: {} }), after(20)))).toBeNull();
+    expect(healthAssessedLine(liveHealth(storedDeal({ status: "lost", health: null }), after(20)))).toBeNull();
   });
 });
 

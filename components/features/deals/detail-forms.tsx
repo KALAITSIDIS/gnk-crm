@@ -82,43 +82,55 @@ export function DealDetailsForm({ deal }: { deal: DealDetailsValues }) {
 }
 
 /**
- * Health panel (doc 02 §C5): score, factor checklist from the stored
- * snapshot, and the manual "budget confirmed" flag (evented via section save;
- * the score recomputes in-action right after).
+ * Health panel (doc 02 §C5): score, factor checklist, and the manual "budget
+ * confirmed" flag (evented via section save; the score recomputes in-action
+ * right after). The score and checklist are liveHealth's (A09): an open
+ * deal's activity re-scored at the request, every other factor from the
+ * stored snapshot — `note` says when that snapshot was assessed.
  */
 export function HealthPanel({
   dealId,
   score,
   budgetConfirmed,
   factors,
+  note,
 }: {
   dealId: string;
   score: number;
   budgetConfirmed: boolean;
   factors: HealthFactor[] | null;
+  /** healthAssessedLine — null when there is no breakdown */
+  note: string | null;
 }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center gap-3">
-        <HealthDot score={score} factors={factors} className="size-3" />
+        <HealthDot score={score} factors={factors} note={note} className="size-3" />
         <span className="text-2xl font-semibold tabular-nums text-text-1">{score}</span>
         <span className="text-sm text-text-3">/ 100</span>
       </div>
 
       {factors && factors.length > 0 ? (
-        <ul className="flex flex-col gap-1.5">
-          {factors.map((f) => (
-            <li key={f.key} className="flex items-baseline justify-between gap-3 text-sm">
-              <span className={cn(f.points > 0 ? "text-text-1" : "text-text-3")}>
-                {f.points > 0 ? "✓" : "○"} {f.label}
-                <span className="ml-1.5 text-xs text-text-3">{f.detail}</span>
-              </span>
-              <span className="shrink-0 text-xs tabular-nums text-text-3">
-                {f.points}/{f.max}
-              </span>
-            </li>
-          ))}
-        </ul>
+        <div className="flex flex-col gap-2">
+          <ul className="flex flex-col gap-1.5">
+            {factors.map((f) => (
+              <li key={f.key} className="flex items-baseline justify-between gap-3 text-sm">
+                <span className={cn(f.points > 0 ? "text-text-1" : "text-text-3")}>
+                  {f.points > 0 ? "✓" : "○"} {f.label}
+                  <span className="ml-1.5 text-xs text-text-3">{f.detail}</span>
+                </span>
+                <span className="shrink-0 text-xs tabular-nums text-text-3">
+                  {f.points}/{f.max}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {note ? (
+            <p data-testid="health-assessed" className="text-xs text-text-3">
+              {note}
+            </p>
+          ) : null}
+        </div>
       ) : (
         <p className="text-xs text-text-3">
           Factor breakdown appears after the next update to this deal.

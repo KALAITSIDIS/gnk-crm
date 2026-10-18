@@ -47,8 +47,14 @@ export interface KanbanDeal {
    * anywhere, and it is not the stored estimate (`deals.expected_value`).
    */
   displayValue: number | null;
+  /**
+   * The score the card shows — liveHealth's (A09): an open deal's activity
+   * re-scored at the request, a closed deal's as stored. Display only.
+   */
   health_score: number;
   healthFactors: HealthFactor[] | null;
+  /** When the breakdown was assessed (healthAssessedLine); null with no breakdown */
+  healthNote: string | null;
   agentInitials: string;
   status: "open" | "won" | "lost";
   /** Open: days since entering the stage. Won/lost: days since closing. */
@@ -127,6 +133,7 @@ function DealCard({ deal, dragging = false }: { deal: KanbanDeal; dragging?: boo
         <HealthDot
           score={deal.health_score}
           factors={deal.healthFactors}
+          note={deal.healthNote}
           className="mt-1"
         />
       </div>

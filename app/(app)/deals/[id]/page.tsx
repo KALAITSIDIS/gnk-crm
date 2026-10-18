@@ -16,7 +16,7 @@ import { EventTimeline } from "@/components/features/shared/event-timeline";
 import { HealthDot } from "@/components/features/shared/health-dot";
 import { Button } from "@/components/ui/button";
 import type { EntityOption } from "@/lib/actions/entity-search";
-import type { HealthFactor } from "@/lib/services/health-score";
+import { healthAssessedLine, liveHealth } from "@/lib/services/health-score";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { isGuid } from "@/lib/validators/ids";
 import { dealValue, dealValueIsFinal } from "@/lib/services/deal-value";
@@ -175,11 +175,17 @@ export default async function DealDetailPage({
   const wonEligible = deal.status === "open" && offers.some((o) => o.status === "accepted");
   const acceptedAmount = offers.find((o) => o.status === "accepted")?.amount ?? null;
 
-  const healthJson = (deal.health ?? {}) as {
-    budget_confirmed?: boolean;
-    factors?: HealthFactor[];
-  };
-  const healthFactors = Array.isArray(healthJson.factors) ? healthJson.factors : null;
+  const healthJson = (deal.health ?? {}) as { budget_confirmed?: boolean };
+  // an open deal's activity factor as of this request; a won/lost deal's as
+  // stored; nothing written back (A09). Same per-request clock as `lapsed`.
+  const health = liveHealth(deal, new Date(nowMs));
+  const healthNote = healthAssessedLine(health);
+  // F01: the calculators open at the deal's figure, with the property's own
+  // context (its VAT status) when the deal names one — the price stays the deal's
+  const costsHref =
+    headerValue === null
+      ? null
+      : `/calculators?price=${headerValue}${deal.property_id ? `&property=${deal.property_id}` : ""}`;
 
   return (
     <div className="flex flex-col gap-4">
@@ -207,7 +213,7 @@ export default async function DealDetailPage({
               {stage.name}
             </span>
           ) : null}
-          <HealthDot score={deal.health_score} factors={healthFactors} />
+          <HealthDot score={health.score} factors={health.factors} note={healthNote} />
           <AddTaskDialog entity={{ deal_id: deal.id }} entityLabel={deal.title} />
           {/* A won deal leads with its CONFIRMED price (dealValue — the board's
               and the dashboard's figure), labelled so it is never mistaken
@@ -218,9 +224,9 @@ export default async function DealDetailPage({
             <span className="text-text-3">{headerIsFinal ? "Final value" : "Expected value"}</span>{" "}
             {formatMoney(headerValue)}
           </span>
-          {headerValue !== null ? (
+          {costsHref !== null ? (
             <Link
-              href={`/calculators?price=${headerValue}`}
+              href={costsHref}
               className="inline-flex items-center gap-1 text-xs font-medium text-text-2 hover:text-brand-700"
               title={
                 headerIsFinal
@@ -387,9 +393,10 @@ export default async function DealDetailPage({
             <h2 className="mb-3 text-sm font-semibold text-text-1">Health</h2>
             <HealthPanel
               dealId={deal.id}
-              score={deal.health_score}
+              score={health.score}
               budgetConfirmed={healthJson.budget_confirmed === true}
-              factors={healthFactors}
+              factors={health.factors}
+              note={healthNote}
             />
           </section>
 

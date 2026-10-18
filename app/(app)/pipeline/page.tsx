@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { DEAL_TYPES, parseDealType } from "@/lib/queries/deals-list";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { dealValue } from "@/lib/services/deal-value";
+import { healthAssessedLine, liveHealth } from "@/lib/services/health-score";
 import { mayMoveDeals } from "@/lib/services/pipeline-move";
 import { ExportCsvButton } from "@/components/features/shared/export-csv-button";
 import { Button } from "@/components/ui/button";
@@ -19,8 +20,10 @@ export const dynamic = "force-dynamic";
 /** Won/lost deals stay visible on the board this long (DECISIONS, pipeline audit). */
 const CLOSED_WINDOW_DAYS = 30;
 
+// last_activity_at: each open card's activity factor is re-scored against this
+// request's clock (liveHealth, A09)
 const DEAL_COLUMNS =
-  "id, title, stage_id, expected_value, final_value, health_score, health, agent_id, status, stage_entered_at, won_at, lost_at, created_at, properties(reference)";
+  "id, title, stage_id, expected_value, final_value, health_score, health, last_activity_at, agent_id, status, stage_entered_at, won_at, lost_at, created_at, properties(reference)";
 
 type SearchParams = { [key: string]: string | string[] | undefined };
 
@@ -84,26 +87,31 @@ export default async function PipelinePage({
   const now = Date.now();
   const daysSince = (iso: string | null) =>
     iso === null ? 0 : Math.max(0, Math.floor((now - new Date(iso).getTime()) / 86_400_000));
+  const clock = new Date(now);
 
-  const deals: KanbanDeal[] = dealRows.map((d) => ({
-    id: d.id,
-    title: d.title,
-    stage_id: d.stage_id,
-    // a won card shows (and its column sums) the confirmed final value — the
-    // rule of the dashboard's "won this month" and the money reports (0076 /
-    // 0140). Display only: the deal's stored estimate is not touched.
-    displayValue: dealValue(d),
-    health_score: d.health_score,
-    healthFactors: Array.isArray((d.health as { factors?: unknown } | null)?.factors)
-      ? ((d.health as { factors: KanbanDeal["healthFactors"] }).factors ?? null)
-      : null,
-    agentInitials: initials(d.agent_id ? agentName.get(d.agent_id) : undefined),
-    status: d.status as KanbanDeal["status"],
-    daysInStage: daysSince(
-      d.status === "won" ? d.won_at : d.status === "lost" ? d.lost_at : d.stage_entered_at,
-    ),
-    propertyRef: (d.properties as { reference: string } | null)?.reference ?? null,
-  }));
+  const deals: KanbanDeal[] = dealRows.map((d) => {
+    // an open card's activity factor as of this request; won/lost frozen;
+    // nothing written back (A09)
+    const health = liveHealth(d, clock);
+    return {
+      id: d.id,
+      title: d.title,
+      stage_id: d.stage_id,
+      // a won card shows (and its column sums) the confirmed final value — the
+      // rule of the dashboard's "won this month" and the money reports (0076 /
+      // 0140). Display only: the deal's stored estimate is not touched.
+      displayValue: dealValue(d),
+      health_score: health.score,
+      healthFactors: health.factors,
+      healthNote: healthAssessedLine(health),
+      agentInitials: initials(d.agent_id ? agentName.get(d.agent_id) : undefined),
+      status: d.status as KanbanDeal["status"],
+      daysInStage: daysSince(
+        d.status === "won" ? d.won_at : d.status === "lost" ? d.lost_at : d.stage_entered_at,
+      ),
+      propertyRef: (d.properties as { reference: string } | null)?.reference ?? null,
+    };
+  });
   /* eslint-enable react-hooks/purity */
 
   const openCount = (openRes.data ?? []).length;

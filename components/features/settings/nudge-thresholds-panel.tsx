@@ -100,20 +100,27 @@ export function NudgeThresholdsPanel({
           </div>
         </section>
 
-        {/* The decision from 0052, stated where it can actually be read. If
-            these two definitions of "stale" are going to differ, the person
-            changing one of them is who needs to know. */}
+        {/* The operator's decision from 0052 — health does NOT follow this
+            setting — stated where it can actually be read. If these two
+            definitions of "stale" are going to differ, the person changing one
+            of them is who needs to know. Its old reason (stored scores were
+            recalculated only when a deal was touched) went with A09: the
+            activity factor is now re-scored every time a deal is shown
+            (liveHealth), so coupling would be cheap — still the operator's
+            call, not this page's. Health counts `last_activity_at` (any saved
+            change); the chase-up counts `last_contact_at` (0025). */}
         <section className="rounded-[10px] border border-border bg-surface-2 p-4">
           <h2 className="text-sm font-semibold text-text-1">
             This does not change how deals are scored
           </h2>
           <p className="mt-1 text-xs text-text-2">
-            Deal health scores activity on a fixed scale — full marks within 7 days, half within
-            14, none after that — and it stays that way whatever you set above. So if you chase
-            after 21 days, the health score will already call a deal stale a week before anyone is
-            told to ring them. That is deliberate: health scores are stored per deal and only
-            recalculated when something happens to that deal, so tying them to this setting would
-            leave every existing score wrong until it was next touched.
+            Deal health scores activity on a fixed scale — full marks within 7 days of the
+            deal&rsquo;s last activity, half within 14, none after that — worked out afresh every
+            time the deal is shown, so an idle deal loses those points as the days pass. It does not
+            follow the setting above: chase after 21 days and the health score will already call a
+            deal stale a week before anyone is told to ring them. The two also count different
+            things: health counts any activity on the deal (a saved edit, a stage move, an offer,
+            logged contact); the chase-up counts only logged contact.
           </p>
         </section>
 
