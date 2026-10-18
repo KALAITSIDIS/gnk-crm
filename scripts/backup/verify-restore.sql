@@ -1112,6 +1112,42 @@ misc as (
                      and btrim(regexp_replace(p.prosrc, '\s+', ' ', 'g'))
                          = 'select p.kind, p.status, count(*) as n from public.properties p where p.visibility <> ''archived'' and p.status <> ''withdrawn'' group by p.kind, p.status order by p.kind, p.status'))::text
   union all
+  -- 0155: a logged conversation's outcome (spoke / message sent, no reply yet
+  -- / client replied) is one of three words for every writer (a validated
+  -- CHECK), is fixed with its note (the BEFORE trigger refuses a rewrite) and
+  -- rides in its conversation_logged event (the AFTER trigger); and
+  -- log_conversation is the ONE function of that name — SECURITY INVOKER,
+  -- p_outcome defaulted (the deployed four-argument call resolves), stored on
+  -- the note, closed to anon. A restore that lost the CHECK or its
+  -- validation, a guard, the payload, a trigger, or brought back 0094's
+  -- function beside or instead of this one reads otherwise.
+  select 'INTEGRITY: a logged conversation''s outcome is one of three, fixed with its note and carried by its event; one invoker log_conversation, closed to anon (0155)', 'true true true true',
+         (exists (select 1 from pg_constraint c
+                   where c.conrelid = to_regclass('public.interaction_notes') and c.conname = 'interaction_notes_outcome_check'
+                     and c.contype = 'c' and c.convalidated
+                     and pg_get_constraintdef(c.oid) = 'CHECK (((outcome IS NULL) OR (outcome = ANY (ARRAY[''spoke''::text, ''message_sent''::text, ''client_replied''::text]))))'))::text || ' ' ||
+         coalesce((select regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'if new\.outcome is distinct from old\.outcome then\s+raise exception'
+                          and exists (select 1 from pg_trigger t
+                                       where t.tgrelid = to_regclass('public.interaction_notes') and t.tgfoid = p.oid
+                                         and t.tgname = 'interaction_notes_before' and t.tgenabled = 'O' and t.tgtype = 23)
+                     from pg_proc p
+                    where p.oid = to_regprocedure('public.trg_interaction_notes_before()')), false)::text || ' ' ||
+         coalesce((select regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'jsonb_build_object\(''outcome'', new\.outcome\)'
+                          and exists (select 1 from pg_trigger t
+                                       where t.tgrelid = to_regclass('public.interaction_notes') and t.tgfoid = p.oid
+                                         and t.tgname = 'interaction_notes_after_insert' and t.tgenabled = 'O' and t.tgtype = 5)
+                     from pg_proc p
+                    where p.oid = to_regprocedure('public.trg_interaction_notes_after_insert()')), false)::text || ' ' ||
+         ((select count(*) from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname = 'log_conversation') = 1
+          and coalesce((select not p.prosecdef
+                               and p.proargnames = array['p_entity_type', 'p_entity_id', 'p_channel', 'p_note', 'p_outcome']
+                               and p.pronargdefaults = 1
+                               and regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~ 'values \(v_org, p_entity_type, p_entity_id, p_channel, btrim\(p_note\), p_outcome\)'
+                               and not has_function_privilege('anon', p.oid, 'execute')
+                               and has_function_privilege('authenticated', p.oid, 'execute')
+                          from pg_proc p
+                         where p.oid = to_regprocedure('public.log_conversation(text, uuid, public.comm_channel, text, text)')), false))::text
+  union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.
   -- signature_path / pdf_path equal storage.objects.name exactly (no bucket prefix).

@@ -284,6 +284,50 @@ const asMoney = (v: unknown): string | null => {
   }).format(n);
 };
 
+/**
+ * A conversation's or a chat link's channel, readable: `whatsapp` →
+ * "WhatsApp", `in_person` → "In person" (A06). The stored values are the
+ * `comm_channel` enum (lib/validators/contacts.ts COMM_CHANNELS); anything else
+ * — a crafted payload, a channel added later — prints as stored, the way stage
+ * names do. A `switch`, not a lookup object: a payload can say "constructor".
+ */
+export function channelLabel(v: unknown, t: EventTranslator): string | null {
+  const channel = asText(v);
+  if (!channel) return null;
+  switch (channel) {
+    case "whatsapp":
+      return t("channelWhatsapp");
+    case "telegram":
+      return t("channelTelegram");
+    case "phone":
+      return t("channelPhone");
+    case "email":
+      return t("channelEmail");
+    case "sms":
+      return t("channelSms");
+    case "in_person":
+      return t("channelInPerson");
+    case "other":
+      return t("channelOther");
+    default:
+      return channel;
+  }
+}
+
+/** A viewing's own status line (the `viewing_status` enum), else null. */
+function viewingStatusLine(to: string | null, t: EventTranslator): string | null {
+  switch (to) {
+    case "completed":
+      return t("viewingCompleted");
+    case "cancelled":
+      return t("viewingCancelled");
+    case "no_show":
+      return t("viewingNoShow");
+    default:
+      return null;
+  }
+}
+
 /*
  * Each entry chooses a message key (and its interpolation values) from the
  * payload; the fixed text lives in messages/*.json under `events.*`. Only the
@@ -300,11 +344,14 @@ const asMoney = (v: unknown): string | null => {
  * arrives separately as `current_title` / `current_feedback`, read from its row.
  *
  * `entityType` is the event's entity, for the lines that read differently by
- * entity: `completed` / `reopened` say "Task …" only for a task, and
- * `imported` prints a reference only for a property.
+ * entity: `completed` / `reopened` say "Task …" only for a task, `imported`
+ * prints a reference only for a property, and a viewing's `created` /
+ * `status_changed` say "Viewing …" — a contact's combined feed carries them
+ * beside the person's own "Created" (A06).
  */
 const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string) => string> = {
-  created: (p, t) => {
+  created: (p, t, entityType) => {
+    if (entityType === "viewing") return t("viewingScheduled");
     const amount = asMoney(p.amount);
     return amount ? t("createdAmount", { amount }) : t("created");
   },
@@ -317,9 +364,11 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string)
     const to = asText(p.to);
     return from && to ? t("stageChange", { from, to }) : t("stage");
   },
-  status_changed: (p, t) => {
+  status_changed: (p, t, entityType) => {
     const from = asText(p.from);
     const to = asText(p.to);
+    const viewingLine = entityType === "viewing" ? viewingStatusLine(to, t) : null;
+    if (viewingLine) return viewingLine;
     const amount = asMoney(p.amount);
     if (from && to) return amount ? t("statusChangeAmount", { from, to, amount }) : t("statusChange", { from, to });
     return amount ? t("statusAmount", { amount }) : t("status");
@@ -374,14 +423,30 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string)
   // Article 17 on an unlinked enquiry — the line says only that it happened;
   // what was redacted is gone, and an event cannot be erased
   redacted: (_p, t) => t("redacted"),
-  contacted: (_p, t) => t("contacted"),
-  called: (_p, t) => t("called"),
+  // `first_response` / `first_call` are the stamps the action took (leads.ts):
+  // the line says which tap stopped the lead's response clock
+  contacted: (p, t) => (p.first_response === true ? t("contactedFirstResponse") : t("contacted")),
+  called: (p, t) => (p.first_call === true ? t("calledFirstCall") : t("called")),
+  // `outcome` (0155, A06-b) is what the desk said happened, chosen in the
+  // Log-conversation dialog — never synchronised from a messaging app. "spoke",
+  // no outcome (every note before 0155) and anything else read as before.
   conversation_logged: (p, t) => {
-    const channel = asText(p.channel);
-    return channel ? t("conversationLoggedChannel", { channel }) : t("conversationLogged");
+    const channel = channelLabel(p.channel, t);
+    switch (asText(p.outcome)) {
+      case "message_sent":
+        return channel ? t("conversationMessageSentChannel", { channel }) : t("conversationMessageSent");
+      case "client_replied":
+        return channel ? t("conversationClientRepliedChannel", { channel }) : t("conversationClientReplied");
+      default:
+        return channel ? t("conversationLoggedChannel", { channel }) : t("conversationLogged");
+    }
   },
+  // A click on a WhatsApp / Telegram button opens the app; nothing says a
+  // message was sent or read (no messaging API — Do-Not-Build). The line says
+  // so, so it never reads as contact: it stamps no response clock, closes no
+  // SLA task and moves no deal's last_contact_at (logChatLinkOpened).
   chat_link_opened: (p, t) => {
-    const channel = asText(p.channel);
+    const channel = channelLabel(p.channel, t);
     return channel ? t("chatOpenedChannel", { channel }) : t("chatOpened");
   },
   converted: (_p, t) => t("converted"),

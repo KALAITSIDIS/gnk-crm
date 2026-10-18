@@ -18,6 +18,7 @@ import {
   createContactSchema,
   kycStateSchema,
 } from "@/lib/validators/contacts";
+import { conversationOutcomeField } from "@/lib/validators/conversation";
 
 export interface DuplicateMatch {
   id: string;
@@ -557,6 +558,8 @@ const logContactConversationSchema = z.object({
   contact_id: z.guid("Missing contact"),
   channel: z.enum(COMM_CHANNELS, { message: "Choose how you made contact" }),
   note: z.string().trim().max(2000, "Keep the note under 2000 characters").optional(),
+  // what happened (0155, A06-b) — the agent's own claim; still event-only
+  outcome: conversationOutcomeField,
 });
 
 export async function logContactConversation(
@@ -567,7 +570,7 @@ export async function logContactConversation(
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Invalid input", savedAt: null };
   }
-  const { contact_id: contactId, channel, note } = parsed.data;
+  const { contact_id: contactId, channel, note, outcome } = parsed.data;
 
   const supabase = await createClient();
   const profile = await getCurrentProfile(supabase);
@@ -590,12 +593,14 @@ export async function logContactConversation(
   if (note) {
     // The words go to interaction_notes and the chain gets their digest
     // (0094, audit SEC-03): erasure can blank a row, never an event. The
-    // database writes the conversation_logged event from the note's insert.
+    // database writes the conversation_logged event from the note's insert,
+    // with the outcome when one was chosen (0155).
     const { error: noteErr } = await supabase.rpc("log_conversation", {
       p_entity_type: "contact",
       p_entity_id: contactId,
       p_channel: channel,
       p_note: note,
+      p_outcome: outcome,
     });
     if (noteErr) return { error: noteErr.message, savedAt: null };
   } else {
@@ -605,7 +610,8 @@ export async function logContactConversation(
       entityType: "contact",
       entityId: contactId,
       eventType: "conversation_logged",
-      payload: { channel },
+      // the trigger's shape (0155): the outcome only when one was chosen
+      payload: { channel, ...(outcome ? { outcome } : {}) },
     });
   }
 

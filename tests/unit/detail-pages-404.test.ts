@@ -66,7 +66,7 @@ const [contactPage, dealPage, propertyPage, unitsPage, viewingPage, signPage, ic
 ]);
 
 const PAGES: { route: string; Page: PageFn; withSearch?: boolean }[] = [
-  { route: "/contacts/[id]", Page: contactPage.default as PageFn },
+  { route: "/contacts/[id]", Page: contactPage.default as PageFn, withSearch: true },
   { route: "/deals/[id]", Page: dealPage.default as PageFn },
   { route: "/properties/[id]", Page: propertyPage.default as PageFn, withSearch: true },
   { route: "/properties/[id]/units", Page: unitsPage.default as PageFn, withSearch: true },

@@ -38,6 +38,8 @@ export function CreateViewingDialog({
   defaultContact = null,
   defaultDealId = null,
   triggerLabel = "New viewing",
+  compact = false,
+  triggerAriaLabel,
   role,
 }: {
   defaultAgent?: EntityOption | null;
@@ -47,6 +49,10 @@ export function CreateViewingDialog({
   /** WF-3: the schema accepted deal_id since T4.1 — nothing ever sent it */
   defaultDealId?: string | null;
   triggerLabel?: string;
+  /** A04: a small outline trigger, for a row action on a match list */
+  compact?: boolean;
+  /** the trigger's accessible name when many rows carry the same short label */
+  triggerAriaLabel?: string;
   /** The caller's role. The gate lives HERE so a fourth call site cannot
    *  forget it — see mayCreateViewing. */
   role: string;
@@ -126,8 +132,13 @@ export function CreateViewingDialog({
       }}
     >
       <DialogTrigger asChild>
-        <Button>
-          <CalendarPlus className="size-4" /> {triggerLabel}
+        <Button
+          variant={compact ? "outline" : "default"}
+          size={compact ? "sm" : "default"}
+          className={compact ? "h-7 text-xs" : undefined}
+          aria-label={triggerAriaLabel}
+        >
+          <CalendarPlus className={compact ? "size-3.5" : "size-4"} /> {triggerLabel}
         </Button>
       </DialogTrigger>
       <DialogContent className="max-w-md">

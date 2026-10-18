@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   BUDGET_TOLERANCE_PCT,
+  HARD_REQUIREMENT_FIELDS,
   MATCH_WEIGHTS,
+  QUALIFYING_CRITERIA,
+  SOFT_REQUIREMENT_FIELDS,
   matchProperty,
+  unstatedCriteria,
+  type HardRequirementField,
   type MatchCandidate,
   type MatchRequirement,
+  type SoftRequirementField,
 } from "./matching";
 
 /** A requirement that constrains almost nothing — add only what a test needs. */
@@ -269,5 +275,114 @@ describe("matchProperty — hostile input", () => {
       expect(v.score).toBeLessThanOrEqual(100);
       expect(Number.isInteger(v.score), "scores are whole numbers for display").toBe(true);
     }
+  });
+});
+
+/*
+ * A04: the saved-search form now SAYS which fields hide a listing and which
+ * only rank it, and lays its fields out from these two lists. So the lists
+ * are pinned to the engine here, field by field: a field moved between them,
+ * or a rule changed underneath them, turns this red instead of leaving the
+ * form telling the desk something the matcher does not do.
+ */
+describe("HARD_REQUIREMENT_FIELDS / SOFT_REQUIREMENT_FIELDS — the form's grouping is the engine's", () => {
+  /** each field set ALONE, and a property that violates it */
+  const HARD_CASES: Record<HardRequirementField, [Partial<MatchRequirement>, Partial<MatchCandidate>]> = {
+    transaction_type: [{ transaction_type: "rent" }, {}],
+    property_types: [{ property_types: ["villa"] }, {}],
+    district_ids: [{ district_ids: ["d2"] }, {}],
+    bedrooms_min: [{ bedrooms_min: 3 }, {}],
+    bedrooms_max: [{ bedrooms_max: 1 }, {}],
+    title_deed_required: [{ title_deed_required: true }, { title_deed_status: "pending" }],
+    // 25% over: beyond the tolerance, which is what makes a budget hide a row
+    budget_max: [{ budget_max: 200000 }, {}],
+  };
+  const SOFT_CASES: Record<SoftRequirementField, [Partial<MatchRequirement>, Partial<MatchCandidate>]> = {
+    budget_min: [{ budget_min: 300000 }, {}],
+    area_ids: [{ area_ids: ["a2"] }, {}],
+    bathrooms_min: [{ bathrooms_min: 3 }, {}],
+    covered_area_min_sqm: [{ covered_area_min_sqm: 200 }, {}],
+    plot_area_min_sqm: [{ plot_area_min_sqm: 500 }, {}],
+    max_sea_distance_m: [{ max_sea_distance_m: 100 }, {}],
+    delivery_by: [{ delivery_by: "2020-01-01" }, { delivery_date: "2027-06-30" }],
+    vat_preference: [{ vat_preference: "new_vat" }, {}],
+    features_required: [{ features_required: ["pool"] }, {}],
+  };
+
+  it("the two lists cover every requirement field exactly once", () => {
+    const all = Object.keys(req()).sort();
+    const listed = [...HARD_REQUIREMENT_FIELDS, ...SOFT_REQUIREMENT_FIELDS];
+    expect([...listed].sort()).toEqual(all);
+    expect(new Set(listed).size, "no field in both lists").toBe(listed.length);
+    // and the case tables above are exactly those lists
+    expect(Object.keys(HARD_CASES).sort()).toEqual([...HARD_REQUIREMENT_FIELDS].sort());
+    expect(Object.keys(SOFT_CASES).sort()).toEqual([...SOFT_REQUIREMENT_FIELDS].sort());
+  });
+
+  for (const field of HARD_REQUIREMENT_FIELDS) {
+    it(`${field}, set alone and missed, HIDES the listing (a blocker)`, () => {
+      const [r, p] = HARD_CASES[field];
+      expect(matchProperty(req(), prop(p)).eligible, "the control property matches with nothing set").toBe(true);
+      const v = matchProperty(req(r), prop(p));
+      expect(v.eligible, `${field} must hide a listing that misses it`).toBe(false);
+      expect(v.blockers.length).toBeGreaterThan(0);
+    });
+  }
+
+  for (const field of SOFT_REQUIREMENT_FIELDS) {
+    it(`${field}, set alone and missed, only RANKS the listing (a named miss, never a blocker)`, () => {
+      const [r, p] = SOFT_CASES[field];
+      const v = matchProperty(req(r), prop(p));
+      expect(v.eligible, `${field} must never hide a listing`).toBe(true);
+      expect(v.blockers).toEqual([]);
+      // `availableNow` is always judged; the miss asserted is this field's own
+      expect(v.misses.filter((m) => m.code !== "status_not_available").length, `${field} names its miss`).toBeGreaterThan(0);
+      expect(v.score).toBeLessThan(100);
+    });
+  }
+
+  it("budget_max inside the tolerance ranks rather than hides — the form says 10% over still shows", () => {
+    const v = matchProperty(req({ budget_max: 230000 }), prop({ asking_price: 250000 }));
+    expect(v.eligible).toBe(true);
+    expect(codes(v.misses)).toContain("budget");
+    expect(BUDGET_TOLERANCE_PCT).toBe(10);
+  });
+});
+
+describe("unstatedCriteria — what the desk still has to ask", () => {
+  it("an empty search leaves all four open, in the order a desk asks them", () => {
+    expect(unstatedCriteria(req())).toEqual(["budget", "location", "property type", "bedrooms"]);
+    expect([...QUALIFYING_CRITERIA]).toEqual(["budget", "location", "property type", "bedrooms"]);
+  });
+
+  it("a budget-only search (a two-field website brief) names the other three", () => {
+    expect(unstatedCriteria(req({ budget_max: 300000 }))).toEqual(["location", "property type", "bedrooms"]);
+    expect(unstatedCriteria(req({ budget_min: 300000 })), "a floor is a stated budget too").toEqual([
+      "location",
+      "property type",
+      "bedrooms",
+    ]);
+  });
+
+  it("an area alone, or a district alone, is a stated location; either bedroom bound is stated", () => {
+    expect(unstatedCriteria(req({ area_ids: ["a1"] }))).not.toContain("location");
+    expect(unstatedCriteria(req({ district_ids: ["d1"] }))).not.toContain("location");
+    expect(unstatedCriteria(req({ bedrooms_max: 2 }))).not.toContain("bedrooms");
+    expect(unstatedCriteria(req({ bedrooms_min: 0 })), "zero is a stated minimum (a studio)").not.toContain(
+      "bedrooms",
+    );
+  });
+
+  it("a full search leaves nothing open", () => {
+    expect(
+      unstatedCriteria(
+        req({ budget_max: 400000, district_ids: ["d1"], property_types: ["villa"], bedrooms_min: 3 }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("tolerates what PostgREST hands back for numeric — a number, or a numeric string", () => {
+    expect(unstatedCriteria(req({ budget_max: "300000" as unknown as number }))).not.toContain("budget");
+    expect(unstatedCriteria(req({ budget_max: Number.NaN }))).toContain("budget");
   });
 });

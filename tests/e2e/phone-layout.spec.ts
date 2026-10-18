@@ -185,4 +185,73 @@ test.describe("phone layouts (CRM-06)", () => {
       await svc.from("properties").delete().eq("id", project);
     }
   });
+
+  /**
+   * A04 put a tick, chips and a Viewing button on every match row, and a
+   * Create proposal bar under the list. The widest case is a row carrying all
+   * of them — so the fixture is a buyer whose search matches a reserved,
+   * off-market listing, opened straight on the Preferences tab
+   * (`?tab=preferences`), with that row ticked so the caveat and the
+   * off-market confirmation are on the page too.
+   */
+  test("a buyer's matches with their row actions do not scroll sideways on a phone", async ({ page }) => {
+    test.skip(!isLocal(), "seeding a buyer and a listing needs the local service key");
+    const svc = serviceClient();
+    const { orgId } = await fixtureProfile(svc);
+    const tag = runTag();
+    const ref = `E2EPL${tag.slice(-5).toUpperCase()}`;
+    const { data: district } = await svc.from("districts").select("id").eq("org_id", orgId).eq("code", "PAF").single();
+    const { data: buyer, error: bErr } = await svc
+      .from("contacts")
+      .insert({ org_id: orgId, first_name: "Phone", last_name: `Matches-${tag}`, contact_types: ["buyer"] })
+      .select("id")
+      .single();
+    expect(bErr, `seeding a buyer: ${bErr?.message}`).toBeNull();
+    const { data: listing, error: pErr } = await svc
+      .from("properties")
+      .insert({
+        org_id: orgId,
+        reference: ref,
+        kind: "standalone",
+        property_type: "villa",
+        transaction_type: "sale",
+        status: "reserved",
+        visibility: "off_market",
+        district_id: district!.id,
+        asking_price: 450000,
+        bedrooms: 3,
+        title: { en: `A rather long listing title for the phone layout check ${tag}` },
+      })
+      .select("id")
+      .single();
+    expect(pErr, `seeding a listing: ${pErr?.message}`).toBeNull();
+    const { error: rErr } = await svc.from("buyer_requirements").insert({
+      org_id: orgId,
+      contact_id: buyer!.id,
+      label: `Phone layout ${tag}`,
+      transaction_type: "sale",
+      property_types: ["villa"],
+      district_ids: [district!.id],
+      area_ids: [],
+      features_required: [],
+      title_deed_required: false,
+    });
+    expect(rErr, `seeding a search: ${rErr?.message}`).toBeNull();
+    try {
+      await page.goto(`/contacts/${buyer!.id}?tab=preferences`, { waitUntil: "networkidle" });
+      await expect(
+        page.getByRole("button", { name: new RegExp(`^Viewing — ${ref}`) }),
+        "the widest row — tick, chips, Viewing — is what gets measured",
+      ).toBeVisible();
+      await page.getByRole("checkbox", { name: `Include ${ref} in the proposal` }).check();
+      await expect(page.getByRole("checkbox", { name: /this buyer may see off-market listings/i })).toBeVisible();
+      await assertNoHorizontalOverflow(page, "contact preferences with match actions");
+    } finally {
+      await svc.from("buyer_requirements").delete().eq("contact_id", buyer!.id);
+      await svc.from("events").delete().eq("entity_id", buyer!.id);
+      await svc.from("contacts").delete().eq("id", buyer!.id);
+      await svc.from("events").delete().eq("entity_id", listing!.id);
+      await svc.from("properties").delete().eq("id", listing!.id);
+    }
+  });
 });

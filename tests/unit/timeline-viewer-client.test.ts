@@ -37,7 +37,7 @@ type Site = { file: string; call: string; arg: string; ok: boolean };
 
 function scan(file: string): Site[] {
   const text = readFileSync(file, "utf8");
-  if (!/readEntityTimeline|attachCurrentTitles/.test(text)) return [];
+  if (!/readEntityTimeline|attachCurrentTitles|readContactActivitySummary/.test(text)) return [];
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const rel = relative(root, file).replace(/\\/g, "/");
 
@@ -71,7 +71,13 @@ function scan(file: string): Site[] {
     }
     if (ts.isCallExpression(n) && ts.isIdentifier(n.expression)) {
       const name = n.expression.text;
-      if (name === "readEntityTimeline" && n.arguments[0] && ts.isObjectLiteralExpression(n.arguments[0])) {
+      // the single reader, the combined feed (A06) and the contact summary
+      // strip, whose next task and next viewing are read on `viewer` (A06)
+      if (
+        (name === "readEntityTimeline" || name === "readEntityTimelines" || name === "readContactActivitySummary") &&
+        n.arguments[0] &&
+        ts.isObjectLiteralExpression(n.arguments[0])
+      ) {
         const prop = n.arguments[0].properties.find(
           (p): p is ts.PropertyAssignment => ts.isPropertyAssignment(p) && p.name.getText(sf) === "viewer",
         );
@@ -95,8 +101,18 @@ describe("every timeline title lookup is handed the viewer's session client", ()
   const sites = ["app", "components", "lib"].flatMap((d) => sources(join(root, d))).flatMap(scan);
 
   it("finds the call sites (a scanner that finds nothing proves nothing)", () => {
-    // contacts 1, properties 2, deals 2, the admin feed 1, and the reader's own pass-through
-    expect(sites.filter((s) => s.call === "readEntityTimeline").length).toBeGreaterThanOrEqual(5);
+    // each of the three record pages reads its timeline through one of the two
+    // readers — the contact page through the combined one since A06; a page
+    // moving from the single reader to the combined one keeps this honest
+    for (const page of ["app/(app)/contacts/[id]/page.tsx", "app/(app)/deals/[id]/page.tsx", "app/(app)/properties/[id]/page.tsx"]) {
+      expect(
+        sites.some((s) => s.file === page && (s.call === "readEntityTimeline" || s.call === "readEntityTimelines")),
+        `${page} reads its timeline`,
+      ).toBe(true);
+    }
+    expect(sites.filter((s) => s.call === "readEntityTimelines").length).toBeGreaterThanOrEqual(1);
+    expect(sites.filter((s) => s.call === "readContactActivitySummary").length).toBeGreaterThanOrEqual(1);
+    // the admin feed 1, and the readers' own pass-throughs
     expect(sites.filter((s) => s.call === "attachCurrentTitles").length).toBeGreaterThanOrEqual(2);
   });
 
