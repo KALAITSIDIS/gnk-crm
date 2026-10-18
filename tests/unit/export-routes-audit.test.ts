@@ -139,6 +139,45 @@ describe("each export records the shape of its filters, never their text", () =>
     });
   });
 
+  it("properties: the land bounds are recorded as the numbers they are; the sort is not a filter (A03)", async () => {
+    const payload = await exportOf("properties", {
+      district: DISTRICT,
+      type: "land",
+      plot_min: "1500",
+      plot_max: "6000",
+      density_min: "90",
+      sort: "plot_desc",
+      junk: "Forged",
+    });
+    expectNoTypedText(payload);
+    expect(payload.filters).toEqual({
+      district: DISTRICT,
+      type: "land",
+      plot_min: 1500,
+      plot_max: 6000,
+      density_min: 90,
+      scope: "active",
+    });
+  });
+
+  it("properties: the CSV is read in the list's order — the sort, then id; the default unchanged (A03)", async () => {
+    const orderOf = async (query: Record<string, string>) => {
+      const fake = fakeClient({});
+      state.client = fake.client;
+      await exportOf("properties", query);
+      return fake.argsOf("properties", "order");
+    };
+    expect(await orderOf({})).toEqual([["created_at", { ascending: false }], ["id"]]);
+    expect(await orderOf({ sort: "plot_desc" })).toEqual([
+      ["plot_area_sqm", { ascending: false, nullsFirst: false }],
+      ["id"],
+    ]);
+    expect(await orderOf({ sort: "price_asc", transaction: "rent" })).toEqual([
+      ["rent_price_month", { ascending: true, nullsFirst: false }],
+      ["id"],
+    ]);
+  });
+
   it("an export with no filters still records the list's default scope, and nothing else", async () => {
     expect((await exportOf("keys", {})).filters).toEqual({ status: "all" });
     expect((await exportOf("leads", {})).filters).toEqual({ status: "open" });

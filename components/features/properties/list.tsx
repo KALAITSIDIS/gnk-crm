@@ -1,6 +1,6 @@
 import Link from "next/link";
 import Image from "next/image";
-import { Building2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Building2 } from "lucide-react";
 import { MandateBadge, type MandateBadgeState } from "@/components/features/shared/mandate-badge";
 import { StatusBadge } from "@/components/features/shared/status-badge";
 import {
@@ -11,6 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import type { ColumnSort, SortableColumn } from "@/lib/queries/properties-list";
 import { formatArea, formatMoney } from "@/lib/utils/format";
 import { publicMediaUrl } from "@/lib/utils/storage";
 import { cn } from "@/lib/utils";
@@ -29,6 +30,7 @@ export interface PropertyRow {
   bedrooms: number | null;
   covered_area_sqm: number | null;
   plot_area_sqm: number | null;
+  building_density_pct: number | null;
   asking_price: number | null;
   rent_price_month: number | null;
   quality_score: number;
@@ -58,6 +60,20 @@ function priceCell(row: PropertyRow) {
     return `from ${formatMoney(row.asking_price)}`;
   }
   return formatMoney(row.asking_price);
+}
+
+/** A density as the land panel records it; an unknown one is a dash, never 0%. */
+function densityCell(pct: number | null) {
+  if (pct === null || !Number.isFinite(pct)) return "—";
+  return `${new Intl.NumberFormat("de-DE", { maximumFractionDigits: 2 }).format(pct)}%`;
+}
+
+function typeText(row: PropertyRow) {
+  return `${labelize(row.property_type)}${KIND_TAG[row.kind] ? ` · ${KIND_TAG[row.kind]}` : ""}`;
+}
+
+function locationText(row: PropertyRow) {
+  return [row.district, row.area].filter(Boolean).join(" · ") || "—";
 }
 
 function scoreColor(score: number) {
@@ -91,60 +107,167 @@ function Thumb({ row, className }: { row: PropertyRow; className?: string }) {
   );
 }
 
-export function PropertiesTable({ rows }: { rows: PropertyRow[] }) {
+/**
+ * Column priority (A03). The table showed twelve columns from the tablet
+ * breakpoint up inside a horizontal scroller, so at tablet and small-laptop
+ * widths everything right of the title was off screen. Now the layout is
+ * FIXED — the narrow columns have widths, the title and the location share
+ * what is left and truncate (the full text is the cell's title) — and the
+ * columns appear by priority, a header and its cells hidden by one class so
+ * they cannot misalign:
+ *
+ *   md (tablet)  reference · title · price · status — the title cell carries
+ *                the type and the location on a second line
+ *   lg (1024)    + location · area (plot for land)
+ *   xl (1280)    + beds (density for land) · mandate
+ *   1680 px      + photo · type · score · visibility
+ *
+ * The fixed widths at each step sum to well under the content width beside
+ * the sidebar (lg: 464 of 728 px; xl: 656 of 984), so the table no longer
+ * scrolls sideways at 1024 px; each fixed width holds its header with the
+ * sort arrow. Below the tablet breakpoint the default view is the cards.
+ */
+const COLUMN = {
+  thumb: "hidden w-16 min-[1680px]:table-cell",
+  reference: "w-28",
+  title: "",
+  location: "hidden lg:table-cell",
+  type: "hidden w-32 min-[1680px]:table-cell",
+  beds: "hidden w-20 text-right xl:table-cell",
+  area: "hidden w-24 text-right lg:table-cell",
+  price: "w-36 text-right",
+  score: "hidden w-20 text-right min-[1680px]:table-cell",
+  mandate: "hidden w-28 xl:table-cell",
+  status: "w-28",
+  visibility: "hidden w-28 min-[1680px]:table-cell",
+} as const;
+
+/**
+ * A header that sorts: a plain server-rendered link (no client code) to the
+ * same list with the column's next sort, every filter kept, page 1 — and
+ * `aria-sort` on the column that is the current sort.
+ */
+function SortableHead({
+  label,
+  sort,
+  className,
+}: {
+  label: string;
+  sort: ColumnSort | undefined;
+  className: string;
+}) {
+  if (!sort) return <TableHead className={className}>{label}</TableHead>;
+  const Icon = sort.direction === "ascending" ? ArrowUp : sort.direction === "descending" ? ArrowDown : ArrowUpDown;
+  return (
+    <TableHead className={className} aria-sort={sort.direction ?? undefined}>
+      <Link
+        href={sort.href}
+        scroll={false}
+        className={cn(
+          "inline-flex items-center gap-1 hover:text-brand-700",
+          sort.direction ? "text-text-1" : "text-text-2",
+        )}
+      >
+        {label}
+        <Icon className="size-3.5 text-text-3" aria-hidden="true" />
+      </Link>
+    </TableHead>
+  );
+}
+
+export function PropertiesTable({
+  rows,
+  land = false,
+  sorts = {},
+}: {
+  rows: PropertyRow[];
+  /** `type=land` (A03): "Plot m²" and "Density %" in place of "Area" and "Beds" */
+  land?: boolean;
+  /** the sortable headers' links, built by the page from its own URL */
+  sorts?: Partial<Record<SortableColumn, ColumnSort>>;
+}) {
   return (
     <div className="overflow-x-auto rounded-[10px] border border-border bg-surface">
-      <Table>
+      <Table className="table-fixed">
         <TableHeader className="bg-surface">
           <TableRow>
-            <TableHead className="w-12" />
-            <TableHead>Reference</TableHead>
-            <TableHead>Title</TableHead>
-            <TableHead>Location</TableHead>
-            <TableHead>Type</TableHead>
-            <TableHead className="text-right">Beds</TableHead>
-            <TableHead className="text-right">Area</TableHead>
-            <TableHead className="text-right">Price</TableHead>
-            <TableHead className="text-right">Score</TableHead>
-            <TableHead>Mandate</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Visibility</TableHead>
+            <TableHead className={COLUMN.thumb}>
+              <span className="sr-only">Photo</span>
+            </TableHead>
+            <SortableHead label="Reference" sort={sorts.reference} className={COLUMN.reference} />
+            <TableHead className={COLUMN.title}>Title</TableHead>
+            <TableHead className={COLUMN.location}>Location</TableHead>
+            <TableHead className={COLUMN.type}>Type</TableHead>
+            <TableHead className={COLUMN.beds}>{land ? "Density" : "Beds"}</TableHead>
+            {land ? (
+              <SortableHead label="Plot m²" sort={sorts.plot} className={COLUMN.area} />
+            ) : (
+              <TableHead className={COLUMN.area}>Area</TableHead>
+            )}
+            <SortableHead label="Price" sort={sorts.price} className={COLUMN.price} />
+            <SortableHead label="Score" sort={sorts.score} className={COLUMN.score} />
+            <TableHead className={COLUMN.mandate}>Mandate</TableHead>
+            <TableHead className={COLUMN.status}>Status</TableHead>
+            <TableHead className={COLUMN.visibility}>Visibility</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {rows.map((row) => (
             <TableRow key={row.id} className="h-11 hover:bg-surface-2">
-              <TableCell className="py-1">
+              <TableCell className={cn(COLUMN.thumb, "py-1")}>
                 <Thumb row={row} className="h-8 w-12" />
               </TableCell>
-              <TableCell className="font-medium">
-                <Link href={`/properties/${row.id}`} className="text-brand-700 hover:underline">
+              <TableCell className={cn(COLUMN.reference, "font-medium")}>
+                <Link
+                  href={`/properties/${row.id}`}
+                  className="block truncate text-brand-700 hover:underline"
+                  title={row.reference}
+                >
                   {row.reference}
                 </Link>
               </TableCell>
-              <TableCell className="max-w-56 truncate text-[13px]">{row.title ?? "—"}</TableCell>
-              <TableCell className="text-[13px] text-text-2">
-                {[row.district, row.area].filter(Boolean).join(" · ") || "—"}
-              </TableCell>
               <TableCell className="text-[13px]">
-                {labelize(row.property_type)}
-                {KIND_TAG[row.kind] ? <span className="text-text-3"> · {KIND_TAG[row.kind]}</span> : null}
+                <div className="truncate" title={row.title ?? undefined}>
+                  {row.title ?? "—"}
+                </div>
+                {/* what the hidden Type and Location columns would say */}
+                <div className="truncate text-xs text-text-3 min-[1680px]:hidden">
+                  {typeText(row)}
+                  <span className="lg:hidden"> · {locationText(row)}</span>
+                </div>
               </TableCell>
-              <TableCell className="text-right tabular-nums">{row.bedrooms ?? "—"}</TableCell>
-              <TableCell className="text-right tabular-nums text-[13px]">
-                {formatArea(row.property_type === "land" ? row.plot_area_sqm : row.covered_area_sqm)}
+              <TableCell className={cn(COLUMN.location, "text-[13px] text-text-2")}>
+                <div className="truncate" title={locationText(row)}>
+                  {locationText(row)}
+                </div>
               </TableCell>
-              <TableCell className="text-right font-medium tabular-nums">{priceCell(row)}</TableCell>
-              <TableCell className={cn("text-right tabular-nums", scoreColor(row.quality_score))}>
+              <TableCell className={cn(COLUMN.type, "text-[13px]")}>
+                <div className="truncate">
+                  {labelize(row.property_type)}
+                  {KIND_TAG[row.kind] ? <span className="text-text-3"> · {KIND_TAG[row.kind]}</span> : null}
+                </div>
+              </TableCell>
+              <TableCell className={cn(COLUMN.beds, "tabular-nums")}>
+                {land ? densityCell(row.building_density_pct) : (row.bedrooms ?? "—")}
+              </TableCell>
+              <TableCell className={cn(COLUMN.area, "tabular-nums text-[13px]")}>
+                {formatArea(land || row.property_type === "land" ? row.plot_area_sqm : row.covered_area_sqm)}
+              </TableCell>
+              <TableCell className={cn(COLUMN.price, "font-medium tabular-nums")}>
+                <div className="truncate" title={priceCell(row)}>
+                  {priceCell(row)}
+                </div>
+              </TableCell>
+              <TableCell className={cn(COLUMN.score, "tabular-nums", scoreColor(row.quality_score))}>
                 {row.quality_score}
               </TableCell>
-              <TableCell>
+              <TableCell className={COLUMN.mandate}>
                 <MandateBadge state={row.mandate} />
               </TableCell>
-              <TableCell>
+              <TableCell className={COLUMN.status}>
                 <StatusBadge status={row.status} />
               </TableCell>
-              <TableCell>
+              <TableCell className={COLUMN.visibility}>
                 <StatusBadge status={row.visibility} />
               </TableCell>
             </TableRow>
@@ -176,9 +299,7 @@ export function PropertiesCards({ rows }: { rows: PropertyRow[] }) {
               <MandateBadge state={row.mandate} />
             </div>
             <p className="truncate text-sm text-text-1">{row.title ?? labelize(row.property_type)}</p>
-            <p className="truncate text-xs text-text-2">
-              {[row.district, row.area].filter(Boolean).join(" · ") || "—"}
-            </p>
+            <p className="truncate text-xs text-text-2">{locationText(row)}</p>
             <div className="mt-1 flex items-center justify-between">
               <span className="font-semibold tabular-nums text-text-1">{priceCell(row)}</span>
               <StatusBadge status={row.status} />

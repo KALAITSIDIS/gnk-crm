@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   isStatusRegression,
+  MAX_BEDS_FILTER,
   partiesSectionSchema,
+  PROPERTY_FILTER_KEYS,
+  PROPERTY_PRESENTATION_KEYS,
+  PROPERTY_SORTS,
   propertyFiltersSchema,
   resolvePartyUpdates,
   resolvePropertyKindScope,
@@ -205,5 +209,52 @@ describe("resolvePropertyKindScope", () => {
     const garbage = propertyFiltersSchema.parse({ kind: "ALL" });
     expect(garbage.kind).toBeUndefined();
     expect(resolvePropertyKindScope(garbage)).toBe("exclude-units");
+  });
+});
+
+describe("propertyFiltersSchema — the one key list (A03)", () => {
+  it("PROPERTY_FILTER_KEYS plus the presentation keys are EXACTLY the schema's keys", () => {
+    // the parser, the Clear button and the export's audit vetting all read
+    // PROPERTY_FILTER_KEYS: a filter added to the schema and not to the list
+    // would be parsed nowhere, never offer Clear, and reach the audit unvetted
+    const keys = [...PROPERTY_FILTER_KEYS, ...PROPERTY_PRESENTATION_KEYS];
+    expect(new Set(keys).size, "no key listed twice").toBe(keys.length);
+    expect([...keys].sort()).toEqual(Object.keys(propertyFiltersSchema.shape).sort());
+  });
+
+  it("view, sort and page are presentation, never filters", () => {
+    for (const k of PROPERTY_PRESENTATION_KEYS) {
+      expect(PROPERTY_FILTER_KEYS as readonly string[], k).not.toContain(k);
+    }
+  });
+});
+
+describe("propertyFiltersSchema — beds is capped (BACKLOG: past int4 the list crashed)", () => {
+  it("takes a whole number from 0 to the cap", () => {
+    expect(MAX_BEDS_FILTER).toBe(99);
+    expect(propertyFiltersSchema.parse({ beds: "0" }).beds).toBe(0);
+    expect(propertyFiltersSchema.parse({ beds: "3" }).beds).toBe(3);
+    expect(propertyFiltersSchema.parse({ beds: "99" }).beds).toBe(99);
+  });
+
+  it("drops a value past the cap, past int4, a fraction or a negative — no filter, never a 400", () => {
+    for (const bad of ["100", "2147483648", "1e300", "2.5", "-1", "abc"]) {
+      expect(propertyFiltersSchema.parse({ beds: bad }).beds, bad).toBeUndefined();
+    }
+  });
+});
+
+describe("propertyFiltersSchema — land bounds and the sort (A03)", () => {
+  it("plot and density bounds are non-negative finite numbers", () => {
+    const f = propertyFiltersSchema.parse({ plot_min: "1500", plot_max: "6000.5", density_min: "90" });
+    expect([f.plot_min, f.plot_max, f.density_min]).toEqual([1500, 6000.5, 90]);
+    const bad = propertyFiltersSchema.parse({ plot_min: "-5", plot_max: "x", density_min: "Infinity" });
+    expect([bad.plot_min, bad.plot_max, bad.density_min]).toEqual([undefined, undefined, undefined]);
+  });
+
+  it("the sort defaults to newest, keeps every known sort and drops an unknown one to newest", () => {
+    expect(propertyFiltersSchema.parse({}).sort).toBe("newest");
+    for (const sort of PROPERTY_SORTS) expect(propertyFiltersSchema.parse({ sort }).sort).toBe(sort);
+    expect(propertyFiltersSchema.parse({ sort: "PRICE_ASC" }).sort).toBe("newest");
   });
 });

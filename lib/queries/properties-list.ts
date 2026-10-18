@@ -1,11 +1,15 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
+import { formatMoney } from "@/lib/utils/format";
 import {
+  PROPERTY_FILTER_KEYS,
+  PROPERTY_PRESENTATION_KEYS,
   propertyFiltersSchema,
   resolvePropertyKindScope,
   resolvePropertyScope,
   type PropertyFilters,
   type PropertyKindFilter,
+  type PropertySort,
   RETIRED_PROPERTY_STATUS,
   RETIRED_PROPERTY_VISIBILITY,
 } from "@/lib/validators/properties";
@@ -27,25 +31,23 @@ function first(v: ParamValue): string | undefined {
   return Array.isArray(v) ? v[0] : v;
 }
 
-/** Parse URL searchParams into the validated filter object (invalid → default). */
+/**
+ * Parse URL searchParams into the validated filter object (invalid → default).
+ * Reads exactly `PROPERTY_FILTER_KEYS` and `PROPERTY_PRESENTATION_KEYS` — the
+ * one key list (A03) — and the first value of a repeated key, as Next hands
+ * the page a repeated key as an array.
+ */
 export function parsePropertyFilters(sp: PropertySearchParams): PropertyFilters {
-  return propertyFiltersSchema.parse({
-    q: first(sp.q),
-    district: first(sp.district),
-    area: first(sp.area),
-    type: first(sp.type),
-    transaction: first(sp.transaction),
-    status: first(sp.status),
-    visibility: first(sp.visibility),
-    beds: first(sp.beds),
-    price_min: first(sp.price_min),
-    price_max: first(sp.price_max),
-    mandate: first(sp.mandate),
-    kind: first(sp.kind),
-    scope: first(sp.scope),
-    view: first(sp.view),
-    page: first(sp.page),
-  });
+  const input: Record<string, string | undefined> = {};
+  for (const key of [...PROPERTY_FILTER_KEYS, ...PROPERTY_PRESENTATION_KEYS]) input[key] = first(sp[key]);
+  return propertyFiltersSchema.parse(input);
+}
+
+/** A query string's parameters as the page reads them: the FIRST value of a repeated key. */
+export function searchParamsRecord(params: URLSearchParams): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of params) if (!(key in out)) out[key] = value;
+  return out;
 }
 
 /**
@@ -216,6 +218,13 @@ export function applyPropertyListFilters<Q extends PropertyFilterBuilder<Q>>(
 
   if (filters.beds !== undefined) q = q.gte("bedrooms", filters.beds as never);
 
+  // Land (A03): plot area and building density. A listing with no recorded
+  // plot or density matches no bound — `null >= x` is not true — which the
+  // inputs say in their own words; an unknown is never read as a zero.
+  if (filters.plot_min !== undefined) q = q.gte("plot_area_sqm", filters.plot_min as never);
+  if (filters.plot_max !== undefined) q = q.lte("plot_area_sqm", filters.plot_max as never);
+  if (filters.density_min !== undefined) q = q.gte("building_density_pct", filters.density_min as never);
+
   // € bounds check the price that matters for the transaction context; with no
   // transaction filter, either price may satisfy the bracket — but ONE price
   // must satisfy the WHOLE bracket. Until 2026-09-06 the two bounds went out as
@@ -321,4 +330,311 @@ export function propertyCountNoun(kind: PropertyKindFilter | undefined, n: numbe
 /** "6 units not shown" — the hint beside the default list's own total. */
 export function hiddenUnitsText(n: number): string {
   return `${n} ${plural(n, "unit", "units")} not shown`;
+}
+
+/* ---------- the order (A03) ---------- */
+
+/** Minimal shape of the `order` modifier the list's sorts use; see PropertyFilterBuilder. */
+interface PropertyOrderBuilder<Q> {
+  order(column: string, options?: { ascending?: boolean; nullsFirst?: boolean }): Q;
+}
+
+/**
+ * The column a non-default sort orders by, and its direction; null for the
+ * default (`newest`). Price is the price the transaction filter reads: the
+ * monthly rent under "Rent", the asking price otherwise — so in a mixed list
+ * a rental with no asking price sorts LAST, and the description says "asking
+ * price" (a coalesced list price would need a generated column).
+ */
+export function propertySortColumn(
+  filters: Pick<PropertyFilters, "sort" | "transaction">,
+): { column: string; ascending: boolean } | null {
+  switch (filters.sort) {
+    case "newest":
+      return null;
+    case "updated":
+      return { column: "updated_at", ascending: false };
+    case "price_asc":
+    case "price_desc":
+      return {
+        column: filters.transaction === "rent" ? "rent_price_month" : "asking_price",
+        ascending: filters.sort === "price_asc",
+      };
+    case "plot_asc":
+    case "plot_desc":
+      return { column: "plot_area_sqm", ascending: filters.sort === "plot_asc" };
+    case "score_asc":
+    case "score_desc":
+      return { column: "quality_score", ascending: filters.sort === "score_asc" };
+    case "reference":
+    case "reference_desc":
+      return { column: "reference", ascending: filters.sort === "reference" };
+  }
+}
+
+/**
+ * Order a properties query by the list's sort — the page and the CSV export
+ * both call this, so the screen and the file list the same rows in the same
+ * order (T-list-page-order).
+ *
+ * The default emits EXACTLY what the list always sent, `created_at.desc,id.asc`
+ * — no nulls clause, nothing else — so every bookmark without `sort` keeps its
+ * order. Every other sort puts unknown values LAST in either direction
+ * (Postgres' own default puts them first when descending) and ends on `id`:
+ * without a unique last key, rows tied on a price or a score could appear on
+ * two pages and on none.
+ */
+export function applyPropertyListOrder<Q extends PropertyOrderBuilder<Q>>(
+  query: Q,
+  filters: Pick<PropertyFilters, "sort" | "transaction">,
+): Q {
+  const by = propertySortColumn(filters);
+  if (!by) return query.order("created_at", { ascending: false }).order("id");
+  return query.order(by.column, { ascending: by.ascending, nullsFirst: false }).order("id");
+}
+
+/**
+ * The table's sortable columns and their two sorts, ascending first: a header
+ * that is not the current sort goes to its first; the current one flips.
+ */
+export const SORTABLE_COLUMNS = {
+  reference: ["reference", "reference_desc"],
+  price: ["price_asc", "price_desc"],
+  plot: ["plot_asc", "plot_desc"],
+  score: ["score_asc", "score_desc"],
+} as const satisfies Record<string, readonly [PropertySort, PropertySort]>;
+export type SortableColumn = keyof typeof SORTABLE_COLUMNS;
+
+export interface ColumnSort {
+  /** where the header goes: the same list, every filter kept, page 1, the column's next sort */
+  href: string;
+  /** `aria-sort` for the header: the direction when it is the current sort */
+  direction: "ascending" | "descending" | null;
+}
+
+/** A sortable header's link, built from the list's own query (no client code). */
+export function columnSort(
+  column: SortableColumn,
+  query: string,
+  current: PropertySort,
+  path = "/properties",
+): ColumnSort {
+  const [asc, desc] = SORTABLE_COLUMNS[column];
+  const direction = current === asc ? "ascending" : current === desc ? "descending" : null;
+  const next = nextPropertiesQuery(query, { sort: current === asc ? desc : asc });
+  return { href: next ? `${path}?${next}` : path, direction };
+}
+
+/* ---------- the URL the filter bar writes (A03) ---------- */
+
+/** What a filter select posts for "no filter": its parameter is removed. */
+export const FILTER_ALL = "__all__";
+
+/**
+ * The list query after `updates`, from `current` (a query string, no "?"): an
+ * update of undefined, "" or `FILTER_ALL` removes its parameter, any other
+ * value sets it, every other parameter is kept. A filter change returns to
+ * page 1 — a narrower filter must not strand you on a page that no longer
+ * exists; `keepPage` is for a change that shows the same rows another way
+ * (the table/card toggle). An update that changes nothing (a number box
+ * blurred as it was) keeps the page too: leaving a box must not jump from
+ * page 3 to page 1. The default sort is written as no parameter, so a URL
+ * without `sort` and one with `sort=newest` cannot both exist for one view.
+ */
+export function nextPropertiesQuery(
+  current: string,
+  updates: Record<string, string | undefined>,
+  opts: { keepPage?: boolean } = {},
+): string {
+  const params = new URLSearchParams(current);
+  let changed = false;
+  for (const [key, value] of Object.entries(updates)) {
+    if (value === undefined || value === "" || value === FILTER_ALL || (key === "sort" && value === "newest")) {
+      if (params.has(key)) changed = true;
+      params.delete(key);
+    } else {
+      const before = params.getAll(key);
+      if (before.length !== 1 || before[0] !== value) changed = true;
+      params.set(key, value);
+    }
+  }
+  if (changed && !opts.keepPage) params.delete("page");
+  return params.toString();
+}
+
+/** What Clear leaves of a query: how the list is shown (view, sort) — no filter, no page. */
+export function clearedPropertiesQuery(current: string): string {
+  const from = new URLSearchParams(current);
+  const out = new URLSearchParams();
+  for (const key of ["view", "sort"] as const) {
+    const value = from.get(key);
+    if (value) out.set(key, value);
+  }
+  return out.toString();
+}
+
+/**
+ * Which settled URLs the filter bar navigated to itself (A03).
+ *
+ * The bar composes every change from the newest URL it has ASKED for, never
+ * from the one on screen: a navigation is a transition, and until it commits
+ * the rendered URL is the old one. Composing from it dropped the change still
+ * in flight — a district picked and then a type before the first answer lost
+ * the district; a search typed 300 ms earlier landed on top of a select
+ * changed in the meantime and put the old select value back.
+ *
+ * When a URL settles, the bar must tell its own write landing (nothing to do:
+ * its newest write is already ahead) from somebody else's navigation — Back,
+ * a header sort link, "Show all kinds", a page link — which it adopts as its
+ * new base (gnk-web's lesson: an own `replaceState` mistaken for a
+ * navigation, and the reverse).
+ *
+ * `settled(q)` is true for one of the writes still pending, and forgets it
+ * together with every write before it: navigations commit in order, and a
+ * later one supersedes an earlier one that then never commits. It matches the
+ * LAST pending copy of `q`, so a superseded copy can never linger and make a
+ * later Back to that URL look like the bar's own. Anything else is external,
+ * and the pending list is dropped.
+ */
+export function ownWriteTracker() {
+  let pending: string[] = [];
+  return {
+    wrote(query: string): void {
+      pending.push(query);
+    },
+    settled(query: string): boolean {
+      const at = pending.lastIndexOf(query);
+      if (at === -1) {
+        pending = [];
+        return false;
+      }
+      pending = pending.slice(at + 1);
+      return true;
+    },
+    pending(): readonly string[] {
+      return [...pending];
+    },
+  };
+}
+export type OwnWriteTracker = ReturnType<typeof ownWriteTracker>;
+
+/* ---------- a view that names itself (A03) ---------- */
+
+/** A district or an area, by id, with the name the list shows. */
+export interface PlaceName {
+  id: string;
+  name: string;
+}
+export interface PlaceNames {
+  districts: readonly PlaceName[];
+  areas: readonly PlaceName[];
+}
+
+const labelize = (value: string) => value.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+const amount = (n: number) => new Intl.NumberFormat("de-DE", { maximumFractionDigits: 2 }).format(n);
+
+const KIND_WORDS: Record<PropertyKindFilter, string> = {
+  all: "All kinds",
+  standalone: "Standalone listings",
+  project: "Projects",
+  phase: "Phases",
+  unit: "Units only",
+};
+const TRANSACTION_WORDS = { sale: "For sale", rent: "For rent", sale_or_rent: "Sale or rent" } as const;
+const MANDATE_WORDS = { active: "Active mandate", expired: "Expired mandate", none: "No mandate" } as const;
+const SCOPE_WORDS = { active: null, archived: "Archived", all: "Active & archived" } as const;
+
+/** A bound pair in words: "a–b", "≥ a", "≤ b"; null when neither is set. */
+function bounds(min: number | undefined, max: number | undefined, show: (n: number) => string): string | null {
+  if (min !== undefined && max !== undefined) return `${show(min)}–${show(max)}`;
+  if (min !== undefined) return `≥ ${show(min)}`;
+  if (max !== undefined) return `≤ ${show(max)}`;
+  return null;
+}
+
+/** The sort in words; null for the default. */
+export function describePropertySort(filters: Pick<PropertyFilters, "sort" | "transaction">): string | null {
+  const arrow = (ascending: boolean) => (ascending ? "↑" : "↓");
+  switch (filters.sort) {
+    case "newest":
+      return null;
+    case "updated":
+      return "recently updated first";
+    case "price_asc":
+    case "price_desc":
+      return `sorted by ${filters.transaction === "rent" ? "rent" : "asking price"} ${arrow(filters.sort === "price_asc")}`;
+    case "plot_asc":
+    case "plot_desc":
+      return `sorted by plot ${arrow(filters.sort === "plot_asc")}`;
+    case "score_asc":
+    case "score_desc":
+      return `sorted by quality score ${arrow(filters.sort === "score_asc")}`;
+    case "reference":
+      return "sorted by reference A–Z";
+    case "reference_desc":
+      return "sorted by reference Z–A";
+  }
+}
+
+/** How much of a search the description repeats. */
+const SEARCH_SHOWN = 40;
+
+/**
+ * Every filter and the sort of a list view, in words, in a fixed order — e.g.
+ * "Paphos · Land · plot 1.500–6.000 m² · density ≥ 90% · sorted by plot ↓"
+ * (doc 02 §A11 number format). The list and the map show it under their
+ * heading and in the document title, so a bookmark, a history entry or a
+ * shared link names the view it holds: the URL is the saved view (saved views
+ * in the database stay "never at two operators"). Empty for the default view.
+ *
+ * Only what the parser kept is described — an invalid parameter the list
+ * ignores is not named. A district or area id the session cannot read is
+ * "Unknown district" / "Unknown area", never left out: the list still filters
+ * by it.
+ */
+export function describePropertyFilters(filters: PropertyFilters, places: PlaceNames): string {
+  const parts: string[] = [];
+  const nameOf = (list: readonly PlaceName[], id: string | undefined, unknown: string) =>
+    id === undefined ? null : (list.find((p) => p.id === id)?.name ?? unknown);
+
+  if (filters.q) {
+    const q = filters.q.length > SEARCH_SHOWN ? `${filters.q.slice(0, SEARCH_SHOWN)}…` : filters.q;
+    parts.push(`“${q}”`);
+  }
+  const district = nameOf(places.districts, filters.district, "Unknown district");
+  if (district) parts.push(district);
+  const area = nameOf(places.areas, filters.area, "Unknown area");
+  if (area) parts.push(area);
+  if (filters.type) parts.push(labelize(filters.type));
+  if (filters.kind) parts.push(KIND_WORDS[filters.kind]);
+  if (filters.transaction) parts.push(TRANSACTION_WORDS[filters.transaction]);
+  if (filters.status) parts.push(labelize(filters.status));
+  if (filters.visibility) {
+    parts.push(`Visibility: ${filters.visibility === "vip" ? "VIP" : labelize(filters.visibility)}`);
+  }
+  if (filters.mandate) parts.push(MANDATE_WORDS[filters.mandate]);
+  if (filters.beds !== undefined) parts.push(`${filters.beds}+ beds`);
+
+  const rent = filters.transaction === "rent";
+  const price = bounds(filters.price_min, filters.price_max, (n) => formatMoney(n));
+  if (price) parts.push(`${rent ? "rent" : "price"} ${price}${rent ? "/mo" : ""}`);
+  const plot = bounds(filters.plot_min, filters.plot_max, amount);
+  if (plot) parts.push(`plot ${plot} m²`);
+  if (filters.density_min !== undefined) parts.push(`density ≥ ${amount(filters.density_min)}%`);
+
+  const scope = SCOPE_WORDS[filters.scope];
+  if (scope) parts.push(scope);
+  const sort = describePropertySort(filters);
+  if (sort) parts.push(sort);
+  return parts.join(" · ");
+}
+
+/**
+ * The document title of a list view: "<base> · <its description>", and the
+ * page number past page one (a history entry of page 3 is not page 1).
+ */
+export function propertiesViewTitle(base: string, filters: PropertyFilters, places: PlaceNames): string {
+  const described = describePropertyFilters(filters, places);
+  const page = filters.page > 1 ? ` · page ${filters.page}` : "";
+  return `${described ? `${base} · ${described}` : base}${page}`;
 }

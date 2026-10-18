@@ -2,16 +2,28 @@ import { describe, expect, it } from "vitest";
 import {
   parsePropertyFilters,
   applyPropertyListFilters,
+  applyPropertyListOrder,
+  clearedPropertiesQuery,
+  columnSort,
   countPropertyList,
+  describePropertyFilters,
+  describePropertySort,
+  FILTER_ALL,
   hiddenUnitFilters,
   hiddenUnitsText,
   mandateEmbed,
+  nextPropertiesQuery,
+  ownWriteTracker,
+  propertiesViewTitle,
   propertyCountNoun,
+  propertySortColumn,
+  searchParamsRecord,
+  SORTABLE_COLUMNS,
   MANDATE_BLOCK_EMBED,
   MANDATE_HAS_EMBED,
   MANDATE_REL,
 } from "./properties-list";
-import type { PropertyFilters } from "@/lib/validators/properties";
+import { PROPERTY_SORTS, type PropertyFilters } from "@/lib/validators/properties";
 
 /**
  * A chainable spy standing in for the Supabase filter builder. Every predicate
@@ -436,5 +448,391 @@ describe("propertyCountNoun / hiddenUnitsText — the header's words", () => {
   it("counts the hidden units in words", () => {
     expect(hiddenUnitsText(6)).toBe("6 units not shown");
     expect(hiddenUnitsText(1)).toBe("1 unit not shown");
+  });
+});
+
+/* ------------------------------------------------------------------------ *
+ * A03 — land filters, the sort, the filter bar's URL, a view that names itself
+ * ------------------------------------------------------------------------ */
+
+const PAPHOS = "11111111-2222-4333-8444-555555555555";
+const PEYIA = "66666666-7777-4888-8999-aaaaaaaaaaaa";
+const PLACES = {
+  districts: [{ id: PAPHOS, name: "Paphos" }],
+  areas: [{ id: PEYIA, name: "Peyia" }],
+};
+
+describe("applyPropertyListFilters — land and plot (A03)", () => {
+  const landCalls = (calls: { method: string; args: unknown[] }[]) =>
+    calls.filter((c) => c.args[0] === "plot_area_sqm" || c.args[0] === "building_density_pct");
+
+  it("plot_min / plot_max / density_min bound plot_area_sqm and building_density_pct, as numbers", () => {
+    const { spy, calls } = spyBuilder();
+    applyPropertyListFilters(spy as never, base({ plot_min: "1500", plot_max: "6000", density_min: "90" }));
+    expect(landCalls(calls)).toEqual([
+      { method: "gte", args: ["plot_area_sqm", 1500] },
+      { method: "lte", args: ["plot_area_sqm", 6000] },
+      { method: "gte", args: ["building_density_pct", 90] },
+    ]);
+  });
+
+  it("each bound stands alone", () => {
+    for (const [param, expected] of [
+      ["plot_min", { method: "gte", args: ["plot_area_sqm", 1500.5] }],
+      ["plot_max", { method: "lte", args: ["plot_area_sqm", 1500.5] }],
+      ["density_min", { method: "gte", args: ["building_density_pct", 1500.5] }],
+    ] as const) {
+      const { spy, calls } = spyBuilder();
+      applyPropertyListFilters(spy as never, base({ [param]: "1500.5" }));
+      expect(landCalls(calls), param).toEqual([expected]);
+    }
+  });
+
+  it("a negative, non-numeric, infinite or empty bound is no filter at all", () => {
+    for (const bad of ["-1", "abc", "Infinity", "1e999", "", "NaN"]) {
+      const f = base({ plot_min: bad, plot_max: bad, density_min: bad });
+      expect([f.plot_min, f.plot_max, f.density_min], bad).toEqual([undefined, undefined, undefined]);
+      const { spy, calls } = spyBuilder();
+      applyPropertyListFilters(spy as never, f);
+      expect(landCalls(calls), bad).toEqual([]);
+    }
+  });
+
+  it("no land parameter, no land predicate — the default list is untouched", () => {
+    const { spy, calls } = spyBuilder();
+    applyPropertyListFilters(spy as never, base({ type: "land" }));
+    expect(landCalls(calls)).toEqual([]);
+  });
+
+  it("the business example: Paphos land, plot 1,500–6,000 m², density ≥ 90%", () => {
+    const { spy, calls } = spyBuilder();
+    applyPropertyListFilters(
+      spy as never,
+      base({ district: PAPHOS, type: "land", plot_min: "1500", plot_max: "6000", density_min: "90" }),
+    );
+    expect(calls).toContainEqual({ method: "eq", args: ["district_id", PAPHOS] });
+    expect(calls).toContainEqual({ method: "eq", args: ["property_type", "land"] });
+    expect(landCalls(calls)).toHaveLength(3);
+  });
+});
+
+describe("applyPropertyListFilters — the search box (q)", () => {
+  it("matches reference, address and English title, with PostgREST's separators taken out", () => {
+    const { spy, calls } = spyBuilder();
+    applyPropertyListFilters(spy as never, base({ q: " PAF(0012),%x " }));
+    const or = calls.filter((c) => c.method === "or" && String(c.args[0]).includes("ilike"));
+    // trimmed by the schema, then each of % , ( ) becomes a space and the ends are trimmed again
+    expect(or).toEqual([
+      { method: "or", args: ["reference.ilike.%PAF 0012   x%,address.ilike.%PAF 0012   x%,title->>en.ilike.%PAF 0012   x%"] },
+    ]);
+  });
+
+  it("a search made only of separators searches nothing rather than everything", () => {
+    const { spy, calls } = spyBuilder();
+    applyPropertyListFilters(spy as never, base({ q: "%(),%" }));
+    expect(calls.filter((c) => c.method === "or" && String(c.args[0]).includes("ilike"))).toEqual([]);
+  });
+});
+
+describe("applyPropertyListOrder (A03)", () => {
+  const orders = (filters: PropertyFilters) => {
+    const { spy, calls } = spyBuilder();
+    applyPropertyListOrder(spy as never, filters);
+    return calls;
+  };
+
+  it("the default is EXACTLY the order the list always sent: created_at desc, then id", () => {
+    const expected = [
+      { method: "order", args: ["created_at", { ascending: false }] },
+      { method: "order", args: ["id"] },
+    ];
+    expect(orders(base())).toEqual(expected);
+    expect(orders(base({ sort: "newest" }))).toEqual(expected);
+    // an unknown sort is the default, like any other invalid parameter
+    expect(base({ sort: "cheapest" }).sort).toBe("newest");
+    expect(orders(base({ sort: "cheapest" }))).toEqual(expected);
+  });
+
+  it("on the wire the default is still created_at.desc,id.asc — the pin list-page-order holds (no nulls clause)", async () => {
+    const { createClient } = await import("@supabase/supabase-js");
+    const db = createClient("http://127.0.0.1:1", "anon-key-unused");
+    const wire = (filters: PropertyFilters) => {
+      const q = applyPropertyListOrder(db.from("properties").select("id"), filters);
+      return (q as unknown as { url: URL }).url.searchParams.get("order");
+    };
+    expect(wire(base())).toBe("created_at.desc,id.asc");
+    expect(wire(base({ sort: "price_asc" }))).toBe("asking_price.asc.nullslast,id.asc");
+    expect(wire(base({ sort: "price_desc", transaction: "rent" }))).toBe("rent_price_month.desc.nullslast,id.asc");
+    expect(wire(base({ sort: "plot_desc" }))).toBe("plot_area_sqm.desc.nullslast,id.asc");
+  });
+
+  it.each(PROPERTY_SORTS.filter((s) => s !== "newest"))(
+    "%s: one sort column with unknowns last, then id — a unique order, so pages partition",
+    (sort) => {
+      const calls = orders(base({ sort }));
+      expect(calls).toHaveLength(2);
+      expect(calls[0]!.method).toBe("order");
+      expect(calls[0]!.args[1]).toMatchObject({ nullsFirst: false });
+      expect(calls[1]).toEqual({ method: "order", args: ["id"] });
+    },
+  );
+
+  it("each sort orders the column it names, in the direction it names", () => {
+    expect(propertySortColumn(base({ sort: "updated" }))).toEqual({ column: "updated_at", ascending: false });
+    expect(propertySortColumn(base({ sort: "price_asc" }))).toEqual({ column: "asking_price", ascending: true });
+    expect(propertySortColumn(base({ sort: "price_desc" }))).toEqual({ column: "asking_price", ascending: false });
+    expect(propertySortColumn(base({ sort: "plot_asc" }))).toEqual({ column: "plot_area_sqm", ascending: true });
+    expect(propertySortColumn(base({ sort: "plot_desc" }))).toEqual({ column: "plot_area_sqm", ascending: false });
+    expect(propertySortColumn(base({ sort: "score_asc" }))).toEqual({ column: "quality_score", ascending: true });
+    expect(propertySortColumn(base({ sort: "score_desc" }))).toEqual({ column: "quality_score", ascending: false });
+    expect(propertySortColumn(base({ sort: "reference" }))).toEqual({ column: "reference", ascending: true });
+    expect(propertySortColumn(base({ sort: "reference_desc" }))).toEqual({ column: "reference", ascending: false });
+    expect(propertySortColumn(base())).toBeNull();
+  });
+
+  it("price orders by the price the transaction filter reads: rent under Rent, the asking price otherwise", () => {
+    expect(propertySortColumn(base({ sort: "price_asc", transaction: "rent" }))?.column).toBe("rent_price_month");
+    for (const transaction of ["sale", "sale_or_rent"]) {
+      expect(propertySortColumn(base({ sort: "price_asc", transaction }))?.column, transaction).toBe("asking_price");
+    }
+    expect(propertySortColumn(base({ sort: "price_asc" }))?.column).toBe("asking_price");
+  });
+});
+
+describe("columnSort — the table's sortable headers (A03)", () => {
+  it("a header that is not the sort goes to its first (ascending) sort, every filter kept, page dropped", () => {
+    const s = columnSort("price", `district=${PAPHOS}&view=table&page=3`, "newest");
+    expect(s.direction).toBeNull();
+    expect(s.href).toBe(`/properties?district=${PAPHOS}&view=table&sort=price_asc`);
+  });
+
+  it("the current sort's header says its direction and flips it", () => {
+    const asc = columnSort("price", "sort=price_asc", "price_asc");
+    expect(asc).toEqual({ direction: "ascending", href: "/properties?sort=price_desc" });
+    const desc = columnSort("price", "sort=price_desc", "price_desc");
+    expect(desc).toEqual({ direction: "descending", href: "/properties?sort=price_asc" });
+  });
+
+  it("every sortable column pairs two real sorts, ascending first", () => {
+    for (const [column, [asc, desc]] of Object.entries(SORTABLE_COLUMNS)) {
+      expect(PROPERTY_SORTS, column).toContain(asc);
+      expect(PROPERTY_SORTS, column).toContain(desc);
+      expect(propertySortColumn(base({ sort: asc }))?.ascending, `${column} first is ascending`).toBe(true);
+      expect(propertySortColumn(base({ sort: desc }))?.ascending, `${column} second is descending`).toBe(false);
+    }
+  });
+});
+
+describe("nextPropertiesQuery — what the filter bar writes (A03)", () => {
+  it("sets a value, removes an empty / undefined / ALL one, keeps the rest", () => {
+    expect(nextPropertiesQuery("type=villa&view=table", { district: PAPHOS })).toBe(
+      `type=villa&view=table&district=${PAPHOS}`,
+    );
+    for (const cleared of [undefined, "", FILTER_ALL]) {
+      expect(nextPropertiesQuery("type=villa&view=table", { type: cleared }), String(cleared)).toBe("view=table");
+    }
+  });
+
+  it("a filter change returns to page 1; the view toggle keeps the page", () => {
+    expect(nextPropertiesQuery("type=villa&page=3", { type: "land" })).toBe("type=land");
+    expect(nextPropertiesQuery("type=villa&page=3", { view: "cards" }, { keepPage: true })).toBe(
+      "type=villa&page=3&view=cards",
+    );
+  });
+
+  it("a change that changes nothing keeps the page — leaving a number box as it was is not a new filter", () => {
+    expect(nextPropertiesQuery("beds=2&page=3", { beds: "2" })).toBe("beds=2&page=3");
+    expect(nextPropertiesQuery("page=3", { beds: undefined })).toBe("page=3");
+  });
+
+  it("the default sort is no parameter at all", () => {
+    expect(nextPropertiesQuery("sort=price_asc&type=land", { sort: "newest" })).toBe("type=land");
+    expect(nextPropertiesQuery("type=land", { sort: "plot_desc" })).toBe("type=land&sort=plot_desc");
+  });
+
+  it("a repeated key collapses to the one value written", () => {
+    expect(nextPropertiesQuery("type=villa&type=land&page=2", { type: "land" })).toBe("type=land");
+  });
+});
+
+describe("clearedPropertiesQuery — Clear keeps how the list is shown, nothing else", () => {
+  it("keeps view and sort; drops every filter and the page", () => {
+    expect(
+      clearedPropertiesQuery(`q=PAF&district=${PAPHOS}&plot_min=1500&kind=all&scope=all&view=cards&sort=plot_desc&page=4`),
+    ).toBe("view=cards&sort=plot_desc");
+    expect(clearedPropertiesQuery("q=PAF&type=land")).toBe("");
+  });
+});
+
+describe("searchParamsRecord", () => {
+  it("reads the FIRST value of a repeated key, as the page does", () => {
+    expect(searchParamsRecord(new URLSearchParams("type=villa&type=land&q=x"))).toEqual({ type: "villa", q: "x" });
+  });
+});
+
+describe("ownWriteTracker — the filter bar's own navigations vs everyone else's (A03)", () => {
+  it("an own write that lands is the bar's; nothing is left pending", () => {
+    const t = ownWriteTracker();
+    t.wrote("type=land");
+    expect(t.settled("type=land")).toBe(true);
+    expect(t.pending()).toEqual([]);
+  });
+
+  it("two writes in flight land in order; each is the bar's own", () => {
+    const t = ownWriteTracker();
+    t.wrote(`district=${PAPHOS}`);
+    t.wrote(`district=${PAPHOS}&type=land`);
+    expect(t.settled(`district=${PAPHOS}`)).toBe(true);
+    expect(t.pending()).toEqual([`district=${PAPHOS}&type=land`]);
+    expect(t.settled(`district=${PAPHOS}&type=land`)).toBe(true);
+    expect(t.pending()).toEqual([]);
+  });
+
+  it("a superseded write never lands — and is forgotten, so a later Back to that URL is external", () => {
+    const t = ownWriteTracker();
+    t.wrote("type=villa");
+    t.wrote("type=land");
+    expect(t.settled("type=land")).toBe(true);
+    expect(t.pending()).toEqual([]);
+    expect(t.settled("type=villa"), "Back to the superseded URL").toBe(false);
+  });
+
+  it("a URL the bar did not write is external, and drops whatever was pending", () => {
+    const t = ownWriteTracker();
+    t.wrote("type=land");
+    expect(t.settled("sort=price_asc")).toBe(false);
+    expect(t.pending()).toEqual([]);
+  });
+
+  it("A, B, A: the settled A is the newest A — no stale copy lingers", () => {
+    const t = ownWriteTracker();
+    t.wrote("type=land");
+    t.wrote("type=villa");
+    t.wrote("type=land");
+    expect(t.settled("type=land")).toBe(true);
+    expect(t.pending()).toEqual([]);
+  });
+
+  /*
+   * The race itself, on a model of the bar: changes composed from the URL on
+   * screen (the old bar) against changes composed from the newest URL asked
+   * for (`latest`, the bar now). Two changes before the first navigation
+   * commits — a district, then a type; or a select and then the search's
+   * debounce firing.
+   */
+  it("composing from the newest URL asked for keeps both changes; composing from the screen lost the first", () => {
+    const onScreen = ""; // nothing has committed yet
+    // the old bar: each change from the rendered URL
+    const oldFirst = nextPropertiesQuery(onScreen, { district: PAPHOS });
+    const oldSecond = nextPropertiesQuery(onScreen, { type: "land" });
+    expect(oldFirst).toBe(`district=${PAPHOS}`);
+    expect(oldSecond, "the old bar's second write drops the district").toBe("type=land");
+
+    // the bar now: each change from `latest`
+    const t = ownWriteTracker();
+    let latest = onScreen;
+    const write = (updates: Record<string, string | undefined>) => {
+      latest = nextPropertiesQuery(latest, updates);
+      t.wrote(latest);
+      return latest;
+    };
+    write({ district: PAPHOS });
+    const last = write({ type: "land" });
+    // the search's debounce fires after both
+    const withSearch = write({ q: "plot" });
+    expect(last).toBe(`district=${PAPHOS}&type=land`);
+    expect(withSearch).toBe(`district=${PAPHOS}&type=land&q=plot`);
+    // only the last navigation commits (the router superseded the others)
+    expect(t.settled(withSearch)).toBe(true);
+    expect(t.pending()).toEqual([]);
+  });
+});
+
+describe("describePropertyFilters / propertiesViewTitle — a view that names itself (A03)", () => {
+  it("the default view has no description, and its title is just the list's name", () => {
+    expect(describePropertyFilters(base(), PLACES)).toBe("");
+    expect(propertiesViewTitle("Properties", base(), PLACES)).toBe("Properties");
+    // presentation is not description
+    expect(describePropertyFilters(base({ view: "cards", page: "2" }), PLACES)).toBe("");
+  });
+
+  it("the business example reads as the view it is", () => {
+    const f = base({
+      district: PAPHOS,
+      type: "land",
+      plot_min: "1500",
+      plot_max: "6000",
+      density_min: "90",
+      sort: "plot_desc",
+    });
+    const words = "Paphos · Land · plot 1.500–6.000 m² · density ≥ 90% · sorted by plot ↓";
+    expect(describePropertyFilters(f, PLACES)).toBe(words);
+    expect(propertiesViewTitle("Properties", f, PLACES)).toBe(`Properties · ${words}`);
+  });
+
+  it("names every filter, in a fixed order", () => {
+    const f = base({
+      q: "sea view",
+      district: PAPHOS,
+      area: PEYIA,
+      type: "villa",
+      kind: "all",
+      transaction: "sale",
+      status: "under_offer",
+      visibility: "vip",
+      mandate: "none",
+      beds: "3",
+      price_min: "100000",
+      price_max: "500000",
+      scope: "all",
+      sort: "price_desc",
+    });
+    expect(describePropertyFilters(f, PLACES)).toBe(
+      "“sea view” · Paphos · Peyia · Villa · All kinds · For sale · Under offer · Visibility: VIP · No mandate · " +
+        "3+ beds · price €100.000–€500.000 · Active & archived · sorted by asking price ↓",
+    );
+  });
+
+  it("one bound reads as ≥ or ≤; a rent bracket says rent and per month", () => {
+    expect(describePropertyFilters(base({ plot_min: "1500" }), PLACES)).toBe("plot ≥ 1.500 m²");
+    expect(describePropertyFilters(base({ plot_max: "800.5" }), PLACES)).toBe("plot ≤ 800,5 m²");
+    expect(describePropertyFilters(base({ price_min: "100000" }), PLACES)).toBe("price ≥ €100.000");
+    expect(describePropertyFilters(base({ transaction: "rent", price_min: "500", price_max: "2000" }), PLACES)).toBe(
+      "For rent · rent €500–€2.000/mo",
+    );
+  });
+
+  it("an id the session cannot name is still described — the list still filters by it", () => {
+    const other = "99999999-9999-4999-8999-999999999999";
+    expect(describePropertyFilters(base({ district: other, area: other }), PLACES)).toBe(
+      "Unknown district · Unknown area",
+    );
+  });
+
+  it("only what the parser kept is described: an invalid parameter the list ignores is not named", () => {
+    expect(describePropertyFilters(base({ beds: "150", type: "castle", district: "not-an-id", sort: "x" }), PLACES)).toBe("");
+  });
+
+  it("a long search is cut at 40 characters, in quotes", () => {
+    const q = "a".repeat(60);
+    expect(describePropertyFilters(base({ q }), PLACES)).toBe(`“${"a".repeat(40)}…”`);
+  });
+
+  it("the archived scope and page numbers are named; page only in the title", () => {
+    expect(describePropertyFilters(base({ scope: "archived" }), PLACES)).toBe("Archived");
+    expect(propertiesViewTitle("Properties", base({ scope: "archived", page: "3" }), PLACES)).toBe(
+      "Properties · Archived · page 3",
+    );
+    expect(propertiesViewTitle("Properties", base({ page: "2" }), PLACES)).toBe("Properties · page 2");
+  });
+
+  it("every sort but the default has words; price says which price it orders by", () => {
+    for (const sort of PROPERTY_SORTS) {
+      const words = describePropertySort(base({ sort }));
+      if (sort === "newest") expect(words).toBeNull();
+      else expect(words, sort).toMatch(/\S/);
+    }
+    expect(describePropertySort(base({ sort: "price_asc", transaction: "rent" }))).toBe("sorted by rent ↑");
+    expect(describePropertySort(base({ sort: "price_asc" }))).toBe("sorted by asking price ↑");
   });
 });

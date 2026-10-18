@@ -1,18 +1,42 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { List } from "lucide-react";
 import { PropertyMap } from "@/components/features/properties/map-view";
+import { RememberPropertiesListUrl } from "@/components/features/properties/remember-list-url";
 import { Button } from "@/components/ui/button";
 import {
   applyPropertyListFilters,
+  describePropertyFilters,
   mandateEmbed,
   parsePropertyFilters,
+  propertiesViewTitle,
 } from "@/lib/queries/properties-list";
+import { readPropertyPlaces } from "@/lib/queries/property-places";
 import { toGeoJson, type MappableProperty } from "@/lib/services/property-map";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
 import { parseLocationPoint } from "@/lib/utils/geo";
 
 type SearchParams = { [key: string]: string | string[] | undefined };
+
+/**
+ * Named like the list it maps (A03): "Properties map · Paphos · Land · …". The
+ * map is unpaged and ignores the sort, so neither is in its name.
+ */
+export async function generateMetadata({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParams>;
+}): Promise<Metadata> {
+  const filters = parsePropertyFilters(await searchParams);
+  return {
+    title: propertiesViewTitle(
+      "Properties map",
+      { ...filters, sort: "newest", page: 1 },
+      await readPropertyPlaces(),
+    ),
+  };
+}
 
 /**
  * Map view of the properties list (IMPROVEMENTS B5).
@@ -50,7 +74,10 @@ export default async function PropertiesMapPage({
     filters,
   );
 
-  const rows = unwrapRows(await query, "properties");
+  const [places, result] = await Promise.all([readPropertyPlaces(), query]);
+  const rows = unwrapRows(result, "properties");
+  // the filters in words, as on the list — the map ignores the sort
+  const description = describePropertyFilters({ ...filters, sort: "newest" }, places);
 
   // PostgREST serialises geography(point,4326) as EWKB HEX, not GeoJSON — a
   // hand-rolled GeoJSON reader silently returns null for every row and renders a
@@ -98,8 +125,17 @@ export default async function PropertiesMapPage({
 
   return (
     <div className="flex h-full flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Properties — map</h1>
+      {/* the record pages' "Properties" link comes back here (A03) */}
+      <RememberPropertiesListUrl />
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="text-xl font-semibold">Properties — map</h1>
+          {description ? (
+            <p className="text-[13px] text-text-3" data-testid="properties-view-description">
+              {description}
+            </p>
+          ) : null}
+        </div>
         <Button asChild variant="outline">
           <Link href={`/properties${search ? `?${search}` : ""}`}>
             <List className="mr-2 size-4" />

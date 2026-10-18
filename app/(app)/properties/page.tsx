@@ -1,10 +1,7 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Building2, ListChecks, Map, Plus } from "lucide-react";
-import {
-  PropertiesFilters,
-  type AreaOption,
-  type DistrictOption,
-} from "@/components/features/properties/filters";
+import { PropertiesFilters } from "@/components/features/properties/filters";
 import {
   PropertiesCards,
   PropertiesTable,
@@ -17,13 +14,20 @@ import { unwrapCount, unwrapRows } from "@/lib/supabase/unwrap";
 import { PROPERTIES_PAGE_SIZE } from "@/lib/validators/properties";
 import {
   applyPropertyListFilters,
+  applyPropertyListOrder,
+  columnSort,
   countPropertyList,
+  describePropertyFilters,
   hiddenUnitFilters,
   hiddenUnitsText,
   mandateEmbed,
   parsePropertyFilters,
+  propertiesViewTitle,
   propertyCountNoun,
+  type ColumnSort,
+  type SortableColumn,
 } from "@/lib/queries/properties-list";
+import { readPropertyPlaces } from "@/lib/queries/property-places";
 import { ExportCsvButton } from "@/components/features/shared/export-csv-button";
 
 type SearchParams = { [key: string]: string | string[] | undefined };
@@ -44,6 +48,21 @@ function deriveMandateState(mandates: MandateEmbed[]): MandateBadgeState {
   return "none";
 }
 
+/**
+ * The tab, the history entry and the bookmark name the view (A03): "Properties
+ * · Paphos · Land · plot 1.500–6.000 m² · density ≥ 90% · sorted by plot ↓".
+ * The URL is the saved view; this is its name. The district and area names
+ * come from the same per-request read the page makes (`readPropertyPlaces`).
+ */
+export async function generateMetadata({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParams>;
+}): Promise<Metadata> {
+  const filters = parsePropertyFilters(await searchParams);
+  return { title: propertiesViewTitle("Properties", filters, await readPropertyPlaces()) };
+}
+
 export default async function PropertiesPage({
   searchParams,
 }: {
@@ -54,29 +73,14 @@ export default async function PropertiesPage({
 
   const supabase = await createClient();
 
-  const [districtsRes, areasRes] = await Promise.all([
-    supabase.from("districts").select("id, name, sort_order").order("sort_order"),
-    supabase.from("areas").select("id, district_id, name"),
-  ]);
-
-  const districts: DistrictOption[] = unwrapRows(districtsRes, "districts").map((d) => ({
-    id: d.id,
-    name: (d.name as { en?: string })?.en ?? "—",
-  }));
-  const areas: AreaOption[] = unwrapRows(areasRes, "areas").map((a) => ({
-    id: a.id,
-    districtId: a.district_id,
-    name: (a.name as { en?: string })?.en ?? "—",
-  }));
-
   // Shared with the export route and the map so they select exactly the same
   // rows; the mandate filters ride in this one request (T-mandate-filter-anti-join).
   const base = supabase
     .from("properties")
     .select(
       `id, reference, kind, property_type, transaction_type, status, visibility,
-       title, bedrooms, covered_area_sqm, plot_area_sqm, asking_price,
-       rent_price_month, quality_score,
+       title, bedrooms, covered_area_sqm, plot_area_sqm, building_density_pct,
+       asking_price, rent_price_month, quality_score,
        districts(name), areas(name),
        property_media(path_thumb, is_cover, sort_order, kind),
        ${mandateEmbed(filters)}`,
@@ -91,16 +95,15 @@ export default async function PropertiesPage({
   const unitFilters = hiddenUnitFilters(filters);
 
   const from = (filters.page - 1) * PROPERTIES_PAGE_SIZE;
-  // `id` breaks created_at ties: without a unique last key each offset page may
-  // order tied rows differently, repeating some and skipping others. Same order
-  // as the CSV export; the table and the cards render these same rows. (A
-  // listing added between two page loads still shifts the pages — each is its
-  // own request.) T-list-page-order
-  const [result, hiddenRes] = await Promise.all([
-    query
-      .order("created_at", { ascending: false })
-      .order("id")
-      .range(from, from + PROPERTIES_PAGE_SIZE - 1),
+  // The list's sort (A03), then `id`: without a unique last key each offset
+  // page may order tied rows differently, repeating some and skipping others.
+  // The default is exactly the order this page always sent (created_at desc,
+  // id). Same order as the CSV export; the table and the cards render these
+  // same rows. (A listing added between two page loads still shifts the
+  // pages — each is its own request.) T-list-page-order
+  const [places, result, hiddenRes] = await Promise.all([
+    readPropertyPlaces(),
+    applyPropertyListOrder(query, filters).range(from, from + PROPERTIES_PAGE_SIZE - 1),
     unitFilters ? countPropertyList(supabase, unitFilters) : null,
   ]);
 
@@ -142,6 +145,7 @@ export default async function PropertiesPage({
       bedrooms: p.bedrooms,
       covered_area_sqm: p.covered_area_sqm === null ? null : Number(p.covered_area_sqm),
       plot_area_sqm: p.plot_area_sqm === null ? null : Number(p.plot_area_sqm),
+      building_density_pct: p.building_density_pct === null ? null : Number(p.building_density_pct),
       asking_price: p.asking_price === null ? null : Number(p.asking_price),
       rent_price_month: p.rent_price_month === null ? null : Number(p.rent_price_month),
       quality_score: p.quality_score,
@@ -184,10 +188,20 @@ export default async function PropertiesPage({
     return `/properties?${params.toString()}`;
   })();
 
+  // A03: the sortable headers — plain links to this list with the column's
+  // next sort, every filter kept, page 1
+  const land = filters.type === "land";
+  const sortable: SortableColumn[] = land ? ["reference", "plot", "price", "score"] : ["reference", "price", "score"];
+  const sorts: Partial<Record<SortableColumn, ColumnSort>> = {};
+  for (const column of sortable) sorts[column] = columnSort(column, filterParams.toString(), filters.sort);
+
+  // what this view holds, in words — the same words as the document title
+  const description = describePropertyFilters(filters, places);
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-4">
-        <div>
+        <div className="min-w-0">
           <h1 className="text-xl font-semibold text-text-1">Properties</h1>
           <p className="text-sm text-text-2">
             {total} {filters.scope === "archived" ? "archived " : ""}
@@ -206,6 +220,11 @@ export default async function PropertiesPage({
               </>
             ) : null}
           </p>
+          {description ? (
+            <p className="text-[13px] text-text-3" data-testid="properties-view-description">
+              {description}
+            </p>
+          ) : null}
         </div>
         <div className="flex items-center gap-2">
           {/* Deliberately NOT filter-aware, unlike Map and Export below: the
@@ -234,7 +253,7 @@ export default async function PropertiesPage({
         </div>
       </div>
 
-      <PropertiesFilters districts={districts} areas={areas} />
+      <PropertiesFilters districts={places.districts} areas={places.areas} />
 
       {rows.length === 0 ? (
         <div className="flex flex-col items-center gap-3 rounded-[10px] border border-border bg-surface py-16">
@@ -263,7 +282,7 @@ export default async function PropertiesPage({
       ) : filters.view === "cards" ? (
         <PropertiesCards rows={rows} />
       ) : filters.view === "table" ? (
-        <PropertiesTable rows={rows} />
+        <PropertiesTable rows={rows} land={land} sorts={sorts} />
       ) : (
         /* auto (audit CRM-06): cards on a phone, the table from the tablet
            breakpoint up. Both are rendered and one is hidden by CSS, because
@@ -276,7 +295,7 @@ export default async function PropertiesPage({
               34767615456 failed on the hidden card). A phone never sees the
               table, so its order costs nothing there. */}
           <div className="hidden md:block">
-            <PropertiesTable rows={rows} />
+            <PropertiesTable rows={rows} land={land} sorts={sorts} />
           </div>
           <div className="md:hidden">
             <PropertiesCards rows={rows} />
