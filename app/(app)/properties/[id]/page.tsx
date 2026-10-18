@@ -61,19 +61,36 @@ import { formatArea, formatDate, formatDateTime, formatMoney } from "@/lib/utils
 import { readEntityTimeline } from "@/lib/services/entity-timeline";
 import { NOT_RECORDED_NOTICE } from "@/lib/services/optimistic-save";
 
+/** The tabs below, in order — what `?tab=` may name. */
+const PROPERTY_TABS = [
+  "overview",
+  "details",
+  "legal",
+  "marketing",
+  "media",
+  "mandate",
+  "documents",
+  "reservation",
+  "buyers",
+  "activity",
+] as const;
+
 export default async function PropertyDetailPage({
   params,
   searchParams,
 }: {
   params: Promise<{ id: string }>;
   /** `?recorded=failed` — the wizard created the listing but could not write its event (OPS-01) */
-  searchParams: Promise<{ recorded?: string }>;
+  /** `?tab=` — open on that tab (a portal reason's "Fix" link); anything unknown opens Overview */
+  searchParams: Promise<{ recorded?: string; tab?: string }>;
 }) {
   const { id } = await params;
   // a segment that is not an id names nothing: 404 before any query (T-malformed-ids) —
   // PostgREST's 22P02 used to reach the throw below and render the error boundary
   if (!isGuid(id)) notFound();
-  const notRecorded = (await searchParams).recorded === "failed";
+  const query = await searchParams;
+  const notRecorded = query.recorded === "failed";
+  const initialTab = PROPERTY_TABS.find((t) => t === query.tab) ?? "overview";
   const supabase = await createClient();
 
   // mandates via mandates_safe, NOT the base table: LM has no base-table
@@ -584,7 +601,7 @@ export default async function PropertyDetailPage({
         {title ? <p className="mt-1 text-sm text-text-2">{title}</p> : null}
       </div>
 
-      <Tabs defaultValue="overview">
+      <Tabs defaultValue={initialTab}>
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="details">Details</TabsTrigger>
