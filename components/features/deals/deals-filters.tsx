@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Search, X } from "lucide-react";
 import { EntityPicker } from "@/components/features/shared/entity-picker";
@@ -17,8 +17,7 @@ import {
 import type { EntityOption } from "@/lib/actions/entity-search";
 import { DEAL_LIST_FILTER_KEYS, DEAL_TYPES, type DealListFilters } from "@/lib/queries/deals-list";
 import { DEAL_LIST_STATUSES, isDayKey, type DealListStatus } from "@/lib/validators/deals";
-
-const ALL = "__all__";
+import { ANY as ALL, FilterUrlWriter, type FilterUpdates } from "./filter-url-writer";
 
 const STATUS_LABELS: Record<DealListStatus, string> = {
   open: "Open",
@@ -54,59 +53,63 @@ export function DealsFilters({
   // Typed fields (the search, the dates) write after a 400 ms pause. Every
   // change made during it is kept, and any change written sooner — a select,
   // a picker — carries the waiting ones with it, so none is lost to the other.
+  // Each write is built on the latest URL this bar wrote, not the one last
+  // rendered, so a change still on its way is carried too (FilterUrlWriter).
+  const writer = useRef(new FilterUrlWriter(searchParams.toString()));
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pending = useRef<Record<string, string | undefined>>({});
   useEffect(() => {
     return () => {
       if (timer.current) clearTimeout(timer.current);
     };
   }, []);
 
-  const push = useCallback(
-    (updates: Record<string, string | undefined>) => {
-      if (timer.current) clearTimeout(timer.current);
-      const all = { ...pending.current, ...updates };
-      pending.current = {};
-      const params = new URLSearchParams(searchParams.toString());
-      for (const [key, value] of Object.entries(all)) {
-        if (value === undefined || value === "" || value === ALL) params.delete(key);
-        else params.set(key, value);
-      }
-      params.delete("page"); // a changed filter always returns to page 1
-      const qs = params.toString();
-      router.replace(qs ? `${pathname}?${qs}` : pathname);
-    },
-    [router, pathname, searchParams],
-  );
+  const go = (qs: string | null) => {
+    if (qs !== null) router.replace(qs ? `${pathname}?${qs}` : pathname);
+  };
 
-  const later = (update: Record<string, string | undefined>) => {
-    pending.current = { ...pending.current, ...update };
+  const push = (updates: FilterUpdates) => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+    go(writer.current.write(updates));
+  };
+
+  const later = (update: FilterUpdates) => {
+    writer.current.queue(update);
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => push({}), 400);
   };
 
-  // Local copies of the typed fields, each kept in step with ITS value in the
-  // URL (Back/Forward, Clear). Adjusted DURING RENDER (React's pattern for
-  // state that follows a prop), as the keys filter does, rather than in an
-  // effect — and only when that one value changed, so a reload caused by
-  // another filter never rewrites what is being typed.
+  // The typed boxes are uncontrolled: what is typed stays in the box while a
+  // render is on its way. They follow the URL only after a navigation that is
+  // not this bar's own write (Back/Forward, a link), and never over a change
+  // still waiting to be written — so a write that lands mid-typing, of this
+  // field or another, never rewrites what is being typed (F05 review). Run
+  // before paint, so the writer knows the URL on screen before any timer fires.
+  const qBox = useRef<HTMLInputElement>(null);
+  const fromBox = useRef<HTMLInputElement>(null);
+  const toBox = useRef<HTMLInputElement>(null);
+  const rendered = searchParams.toString();
   const urlQ = values.q ?? "";
   const urlFrom = values.closed_from ?? "";
   const urlTo = values.closed_to ?? "";
-  const [text, setText] = useState(urlQ);
-  const [from, setFrom] = useState(urlFrom);
-  const [to, setTo] = useState(urlTo);
-  const [synced, setSynced] = useState({ q: urlQ, from: urlFrom, to: urlTo });
-  if (synced.q !== urlQ || synced.from !== urlFrom || synced.to !== urlTo) {
-    // the URL holds the search trimmed: "Maria " written as "Maria" is not a change to undo
-    if (synced.q !== urlQ && text.trim() !== urlQ) setText(urlQ);
-    if (synced.from !== urlFrom) setFrom(urlFrom);
-    if (synced.to !== urlTo) setTo(urlTo);
-    setSynced({ q: urlQ, from: urlFrom, to: urlTo });
-  }
+  useLayoutEffect(() => {
+    const boxes = { q: qBox, closed_from: fromBox, closed_to: toBox };
+    const moves = writer.current.observe(
+      rendered,
+      { q: urlQ, closed_from: urlFrom, closed_to: urlTo },
+      {
+        q: qBox.current?.value ?? "",
+        closed_from: fromBox.current?.value ?? "",
+        closed_to: toBox.current?.value ?? "",
+      },
+    );
+    for (const [key, value] of Object.entries(moves)) {
+      const box = boxes[key as keyof typeof boxes].current;
+      if (box) box.value = value;
+    }
+  }, [rendered, urlQ, urlFrom, urlTo]);
 
   const onDate = (key: "closed_from" | "closed_to", value: string) => {
-    (key === "closed_from" ? setFrom : setTo)(value);
     // a half-typed date is no date yet: only a whole day, or a cleared box, filters
     if (value === "" || isDayKey(value)) later({ [key]: value || undefined });
   };
@@ -120,11 +123,9 @@ export function DealsFilters({
         <div className="relative w-full max-w-xs">
           <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-text-3" />
           <Input
-            value={text}
-            onChange={(e) => {
-              setText(e.target.value);
-              later({ q: e.target.value.trim() || undefined });
-            }}
+            ref={qBox}
+            defaultValue={urlQ}
+            onChange={(e) => later({ q: e.target.value.trim() || undefined })}
             placeholder="Search deal title or reference…"
             aria-label="Search deals"
             maxLength={200}
@@ -184,11 +185,9 @@ export function DealsFilters({
             size="sm"
             onClick={() => {
               if (timer.current) clearTimeout(timer.current);
-              pending.current = {};
-              setText("");
-              setFrom("");
-              setTo("");
-              router.replace(pathname);
+              timer.current = null;
+              for (const box of [qBox, fromBox, toBox]) if (box.current) box.current.value = "";
+              go(writer.current.clear());
             }}
             className="h-9 text-text-2"
           >
@@ -226,8 +225,9 @@ export function DealsFilters({
           <Label htmlFor="deals-closed-from">Closed from</Label>
           <Input
             id="deals-closed-from"
+            ref={fromBox}
             type="date"
-            value={from}
+            defaultValue={urlFrom}
             onChange={(e) => onDate("closed_from", e.target.value)}
             className="h-9 w-40 text-[13px]"
           />
@@ -236,8 +236,9 @@ export function DealsFilters({
           <Label htmlFor="deals-closed-to">Closed to</Label>
           <Input
             id="deals-closed-to"
+            ref={toBox}
             type="date"
-            value={to}
+            defaultValue={urlTo}
             onChange={(e) => onDate("closed_to", e.target.value)}
             className="h-9 w-40 text-[13px]"
           />
