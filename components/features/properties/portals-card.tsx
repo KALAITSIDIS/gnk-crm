@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { deselectPortal, selectPortal } from "@/lib/actions/portals";
@@ -10,27 +11,47 @@ import { formatDateTime } from "@/lib/utils/format";
 // imports — reaches the browser bundle. `PortalRow` is declared there because
 // that is where the rows are built; two declarations of the same shape would
 // drift.
-import type { PortalRow } from "@/lib/services/portals/property-portals";
+import type { PortalRow, PortalRowState } from "@/lib/services/portals/property-portals";
 
 /**
- * Which portals this listing is on (spec 2026-09-14 §Property page).
+ * Which portals this listing is selected for, and whether each one's feed
+ * carries it (spec 2026-09-14 §Property page; portal integrations audit
+ * 2026-10-18, finding 7).
+ *
+ * WHAT IT CAN AND CANNOT SAY. The CRM knows a listing is SELECTED, whether it
+ * passes the portal's requirements and so is IN THE FEED the portal is
+ * offered, and when the feed URL was last requested. It never learns whether
+ * the portal accepted or published it — so no row says "on", "live" or
+ * "published", and the card says where to check instead.
  *
  * THE REASONS COME FROM THE SAME FUNCTION THE FEED USES. `eligibilityFor` is
  * what decides whether the portal's document carries this listing, so a
  * disabled toggle here names exactly why the listing would be missing from
- * that feed — rather than a second, kinder list of rules that would drift
- * from the one the crawler actually meets. A selection whose listing has
- * since become ineligible keeps its Remove button: the row exists, and the
- * desk must be able to undo it.
+ * that feed, each with a link to the tab that fixes it. A selection whose
+ * listing has since become ineligible keeps its Remove button: the row
+ * exists, and the desk must be able to undo it.
  *
- * No website revalidation on either action: the site's feed is built from
- * `public_listings`, which knows nothing about portal selection, so the
- * public site is unaffected by anything on this card. The actions revalidate
- * this property's page and `router.refresh()` picks the new state up —
- * including after a FAILURE, because the commonest failure is a row someone
- * else has already removed, and not refreshing would leave the desk clicking
- * a button that can no longer do anything.
+ * No website revalidation on either action: the site's feed knows nothing
+ * about portal selection. The actions revalidate this property's page and
+ * `router.refresh()` picks the new state up — including after a FAILURE,
+ * because the commonest failure is a row someone else has already removed.
  */
+
+const STATE_TEXT: Record<PortalRowState, string> = {
+  in_feed: "Selected · in the feed this portal is offered",
+  excluded: "Selected · left out of the feed until the reasons below are fixed",
+  off_site: "Selected · not sent while the listing is off the website (sold, withdrawn or private)",
+  switched_off: "Selected · the portal is switched off, so no feed carries it — enabling the portal puts it back",
+  not_selected: "Not selected",
+};
+
+const STATE_CLASS: Record<PortalRowState, string> = {
+  in_feed: "text-text-2",
+  excluded: "text-warning",
+  off_site: "text-text-3",
+  switched_off: "text-text-3",
+  not_selected: "text-text-3",
+};
 
 export function PortalsCard({
   propertyId,
@@ -47,8 +68,6 @@ export function PortalsCard({
   const router = useRouter();
   const [pending, start] = useTransition();
   // One transition for the card, but only the row that was clicked says so.
-  // Every button reading "Working…" at once claimed the desk had started
-  // something on every portal.
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const toggle = (row: PortalRow) => {
@@ -71,9 +90,11 @@ export function PortalsCard({
       router.refresh();
       toast.success(
         wasSelected
-          ? `Removed from ${row.name} at its next pull`
-          : `On ${row.name} at its next pull`,
+          ? `Deselected — dropped from the ${row.name} feed at its next request`
+          : `Selected for ${row.name} — it goes into the feed at its next request; ${row.name} decides whether to publish it`,
       );
+      // saved, but its timeline line could not be written or confirmed
+      if (result.notice) toast.warning(result.notice);
     });
   };
 
@@ -98,8 +119,9 @@ export function PortalsCard({
     >
       <h2 className="text-sm font-semibold text-text-1">Portals</h2>
       <p className="mt-1 text-sm text-text-2">
-        Where this listing is advertised beyond the website. A portal picks the change up at its
-        next pull.
+        Where this listing can be offered beyond the website. A portal sees a change at its next
+        request to the feed; whether it publishes the listing is its own decision, and it does not
+        tell the CRM.
       </p>
       {photoNote ? (
         <p className="mt-1 text-xs text-warning" data-testid="portals-photo-note">
@@ -113,7 +135,11 @@ export function PortalsCard({
           const reasonsId = `portal-reasons-${row.id}`;
           // Pulled out rather than tested inline: a boolean does not narrow
           // the discriminated union at the point the list is rendered.
-          const reasons = row.eligibility.ok ? null : row.eligibility.reasons;
+          // An off-site selection is not a failure, so it lists no reasons to
+          // fix (that would offer to put a sold listing back on the website).
+          const reasons = row.eligibility.ok || row.state === "off_site" ? null : row.eligibility.reasons;
+          const notRequestedSince =
+            selected && row.connectionEnabled && (!row.lastRequestedAt || row.lastRequestedAt < selected.at);
           return (
             <li
               key={row.id}
@@ -122,6 +148,9 @@ export function PortalsCard({
             >
               <div className="min-w-0">
                 <p className="text-sm font-medium text-text-1">{row.name}</p>
+                <p className={`mt-0.5 text-xs ${STATE_CLASS[row.state]}`} data-testid={`portal-state-${row.id}`}>
+                  {STATE_TEXT[row.state]}
+                </p>
                 {selected ? (
                   <p className="mt-0.5 text-xs text-text-3">
                     Selected {formatDateTime(selected.at)}
@@ -130,29 +159,44 @@ export function PortalsCard({
                 ) : null}
                 {row.connectionEnabled ? (
                   <p className="mt-0.5 text-xs text-text-3">
-                    {row.lastPulledAt
-                      ? `Portal last pulled ${formatDateTime(row.lastPulledAt)}`
-                      : "Portal has not pulled yet"}
+                    {row.lastRequestedAt
+                      ? `Feed URL last requested ${formatDateTime(row.lastRequestedAt)}${
+                          notRequestedSince ? " — not since this listing was selected" : ""
+                        }`
+                      : "The feed URL has not been requested yet"}
                   </p>
-                ) : (
-                  // Disabling a portal leaves its selections in place, so this
-                  // listing is one switch away from being published there again.
-                  <p className="mt-0.5 text-xs text-text-3">
-                    Portal is switched off — this listing goes out again if it is switched back on
-                  </p>
-                )}
+                ) : null}
                 {reasons ? (
                   <ul id={reasonsId} className="mt-1 list-disc pl-4 text-xs text-warning">
                     {reasons.map((reason) => (
-                      <li key={reason}>{reason}</li>
+                      <li key={reason.text}>
+                        {reason.text}{" "}
+                        {reason.fixTab ? (
+                          <Link
+                            href={`/properties/${propertyId}?tab=${reason.fixTab}`}
+                            className="text-brand underline underline-offset-2"
+                          >
+                            Fix
+                          </Link>
+                        ) : null}
+                      </li>
                     ))}
                   </ul>
                 ) : null}
+                {row.advisories.length ? (
+                  <ul className="mt-1 list-disc pl-4 text-xs text-text-3" data-testid={`portal-advisories-${row.id}`}>
+                    {row.advisories.map((a) => (
+                      <li key={a}>{a}</li>
+                    ))}
+                  </ul>
+                ) : null}
+                {selected && row.publicationCheck ? (
+                  <p className="mt-1 text-xs text-text-3">Whether it is published: {row.publicationCheck}</p>
+                ) : null}
               </div>
               {/* A switched-off portal is never offered Select: the connection
-                  is the admin's to make, and a row selected into a portal
-                  nothing pulls is a promise the CRM cannot keep. Remove stays,
-                  so an existing selection can still be taken back. */}
+                  is the admin's to make. Remove stays, so an existing
+                  selection can still be taken back. */}
               {selected || row.connectionEnabled ? (
                 <Button
                   type="button"

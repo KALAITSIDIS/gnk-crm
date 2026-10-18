@@ -774,11 +774,18 @@ sha256sum -c gnk-backups-offsite-<date>.tar.gz.sha256
 >
 > `data.sql` and `pg_dump.sql` contain `auth.users` rows including
 > **`encrypted_password` bcrypt hashes**, and the Storage export contains signed
-> viewing slips and evidence PDFs. Since 0095 the archive also carries live
-> **`portal_connections.feed_token`** values — each one *is* an enabled portal's
-> pull URL, so a leaked archive hands those out; the remedy is **Regenerate** on
-> `/settings/portals` (`regeneratePortalToken`: a new `feed_token`, the old URL
-> stops answering) and then re-pointing the portal at the new URL.
+> viewing slips and evidence PDFs. From 0095 the archive carried live
+> **`portal_connections.feed_token`** values, and from 0097 their sha256
+> (`feed_token_sha256`), which the anon portal functions accepted AS the
+> credential until **0151** dropped them (2026-10-18, `T-portal-feed-integrity`):
+> an archive taken before 0151 is applied still hands out working feeds through
+> PostgREST to anyone who also has the public anon key. Since 0151 the readers
+> hash the URL's token themselves, so a stored digest opens nothing. Should a
+> pre-0151 archive leak, the remedy is **Regenerate** on `/settings/portals`
+> (`regeneratePortalToken`: a new token, the old URL stops answering) and then
+> re-pointing the portal at the new URL. **Share links still have the old
+> shape** (`share_links.token_sha256` is accepted by `resolve_share_link`;
+> BACKLOG "Portal integrations audit — 2026-10-18").
 > **Never put it in the repo** — `gnk-crm` is a
 > **public** GitHub repository — and never in a public bucket, a pastebin, a chat
 > or an issue. Acceptable destinations are a personal cloud account that is not

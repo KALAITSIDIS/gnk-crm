@@ -101,8 +101,8 @@ export function QualityWorklist({ worklist }: { worklist: Worklist }) {
             publish threshold of {PUBLISH_THRESHOLD}
           </h2>
           <p className="mt-1 text-xs text-text-3">
-            Live on the site and on every portal. Complete the listing, or take it private
-            until it is complete.
+            Public on the site, and in the feed of any portal it is selected for. Complete the
+            listing, or take it private until it is complete.
           </p>
           <div className="mt-3 flex flex-wrap gap-1.5">
             {w.belowThreshold.map((p) => (

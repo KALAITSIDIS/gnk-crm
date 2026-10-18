@@ -1359,9 +1359,13 @@ export type Database = {
           enabled: boolean
           feed_token_sha256: string | null
           id: string
+          last_error_at: string | null
+          last_error_reason: string | null
           last_pull_count: number | null
+          last_pull_outcome: string | null
           last_pulled_at: string | null
           last_pulled_ua: string | null
+          last_success_at: string | null
           leads_pulled_to: string | null
           org_id: string
           portal: string
@@ -1374,9 +1378,13 @@ export type Database = {
           enabled?: boolean
           feed_token_sha256?: string | null
           id?: string
+          last_error_at?: string | null
+          last_error_reason?: string | null
           last_pull_count?: number | null
+          last_pull_outcome?: string | null
           last_pulled_at?: string | null
           last_pulled_ua?: string | null
+          last_success_at?: string | null
           leads_pulled_to?: string | null
           org_id: string
           portal: string
@@ -1389,9 +1397,13 @@ export type Database = {
           enabled?: boolean
           feed_token_sha256?: string | null
           id?: string
+          last_error_at?: string | null
+          last_error_reason?: string | null
           last_pull_count?: number | null
+          last_pull_outcome?: string | null
           last_pulled_at?: string | null
           last_pulled_ua?: string | null
+          last_success_at?: string | null
           leads_pulled_to?: string | null
           org_id?: string
           portal?: string
@@ -1413,6 +1425,38 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
+          },
+        ]
+      }
+      portal_export_state: {
+        Row: {
+          changed_at: string
+          connection_id: string
+          content_sha256: string
+          org_id: string
+          reference: string
+        }
+        Insert: {
+          changed_at?: string
+          connection_id: string
+          content_sha256: string
+          org_id: string
+          reference: string
+        }
+        Update: {
+          changed_at?: string
+          connection_id?: string
+          content_sha256?: string
+          org_id?: string
+          reference?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "portal_export_state_connection_fkey"
+            columns: ["org_id", "connection_id"]
+            isOneToOne: false
+            referencedRelation: "portal_connections"
+            referencedColumns: ["org_id", "id"]
           },
         ]
       }
@@ -1459,6 +1503,62 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
+          },
+        ]
+      }
+      portal_pull_log: {
+        Row: {
+          connection_id: string
+          detail: Json
+          excluded: number | null
+          first_at: string
+          hits: number
+          id: number
+          last_at: string
+          org_id: string
+          outcome: string
+          reason: string | null
+          selected: number | null
+          served: number | null
+          ua: string
+        }
+        Insert: {
+          connection_id: string
+          detail?: Json
+          excluded?: number | null
+          first_at?: string
+          hits?: number
+          id?: never
+          last_at?: string
+          org_id: string
+          outcome: string
+          reason?: string | null
+          selected?: number | null
+          served?: number | null
+          ua?: string
+        }
+        Update: {
+          connection_id?: string
+          detail?: Json
+          excluded?: number | null
+          first_at?: string
+          hits?: number
+          id?: never
+          last_at?: string
+          org_id?: string
+          outcome?: string
+          reason?: string | null
+          selected?: number | null
+          served?: number | null
+          ua?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "portal_pull_log_connection_fkey"
+            columns: ["org_id", "connection_id"]
+            isOneToOne: false
+            referencedRelation: "portal_connections"
+            referencedColumns: ["org_id", "id"]
           },
         ]
       }
@@ -3576,10 +3676,6 @@ export type Database = {
         Args: { p_district_code: string; p_org: string }
         Returns: string
       }
-      note_portal_pull: {
-        Args: { p_count: number; p_token_sha256: string; p_ua: string }
-        Returns: undefined
-      }
       note_public_enquiry_hit: {
         Args: { p_ip_hash: string; p_limit?: number }
         Returns: boolean
@@ -3607,16 +3703,17 @@ export type Database = {
       populate_geometry_columns:
         | { Args: { tbl_oid: unknown; use_typmod?: boolean }; Returns: number }
         | { Args: { use_typmod?: boolean }; Returns: string }
-      portal_connection_by_token: {
-        Args: { p_portal: string; p_token_sha256: string }
+      portal_feed_connection: {
+        Args: { p_portal: string; p_token: string }
         Returns: {
           enabled: boolean
           org_slug: string
+          selected_count: number
           settings: Json
         }[]
       }
-      portal_supplement: {
-        Args: { p_token_sha256: string }
+      portal_feed_supplement: {
+        Args: { p_token: string }
         Returns: {
           images: Json
           lat: number
@@ -3750,6 +3847,19 @@ export type Database = {
           p_holder_profile_id?: string
           p_key_id: string
           p_note?: string
+        }
+        Returns: undefined
+      }
+      record_portal_pull: {
+        Args: {
+          p_detail: Json
+          p_excluded: number
+          p_outcome: string
+          p_reason: string
+          p_selected: number
+          p_served: number
+          p_token: string
+          p_ua: string
         }
         Returns: undefined
       }
@@ -4508,6 +4618,10 @@ export type Database = {
           lead_org_id: string
           replayed: boolean
         }[]
+      }
+      sync_portal_export: {
+        Args: { p_rows: Json; p_token: string }
+        Returns: Json
       }
       unlockrows: { Args: { "": string }; Returns: number }
       updategeometrysrid: {

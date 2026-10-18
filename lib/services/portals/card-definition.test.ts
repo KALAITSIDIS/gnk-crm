@@ -85,6 +85,14 @@ describe("portal card definition", () => {
     }
   });
 
+  it("drops settingsFormSchema too — the save's stricter schema is the same kind of class instance", () => {
+    for (const def of PORTALS) {
+      const card = toPortalCardDefinition(def);
+      expect(Object.hasOwn(card, "settingsFormSchema"), def.id).toBe(false);
+      expect(def.settingsFormSchema, `${def.id} still has a form schema to save with`).toBeDefined();
+    }
+  });
+
   it("holds no function, symbol or class instance at any depth", () => {
     for (const def of PORTALS) {
       expect(findNonPlain(toPortalCardDefinition(def), def.id)).toBeNull();
@@ -92,6 +100,8 @@ describe("portal card definition", () => {
   });
 
   it("carries every field the card draws", () => {
+    // Updated: the card now also says why a pending portal cannot be enabled
+    // (pendingReason) and where to see what a portal published (publicationCheck).
     for (const def of PORTALS) {
       const card = toPortalCardDefinition(def);
       expect(card, def.id).toEqual({
@@ -105,7 +115,41 @@ describe("portal card definition", () => {
         settingsFields: def.settingsFields,
         pullCadence: def.pullCadence,
         docsUrl: def.docsUrl,
+        pendingReason: def.pendingReason,
+        publicationCheck: def.publicationCheck,
       });
+    }
+  });
+
+  it("a pending portal's card carries its reason, a public portal's carries where to check publication", () => {
+    // The settings card branches on `spec`: a pending card explains itself, a
+    // public one points at the portal's own account. This asserts each branch
+    // receives words to show, not just that the projection copies fields.
+    const pending = PORTALS.filter((d) => d.spec === "pending");
+    const pub = PORTALS.filter((d) => d.spec === "public");
+    expect(pending.length).toBeGreaterThan(0);
+    expect(pub.length).toBeGreaterThan(0);
+    for (const def of pending) {
+      const card = toPortalCardDefinition(def);
+      expect(card.pendingReason, def.id).toBe(def.pendingReason);
+      expect(card.pendingReason?.length, def.id).toBeGreaterThan(10);
+    }
+    for (const def of pub) {
+      const card = toPortalCardDefinition(def);
+      expect(Object.hasOwn(card, "pendingReason"), def.id).toBe(true);
+      expect(card.pendingReason, def.id).toBeNull();
+      expect(card.publicationCheck, def.id).toBe(def.publicationCheck);
+      expect(card.publicationCheck.length, def.id).toBeGreaterThan(10);
+    }
+  });
+
+  it("the new fields survive the RSC boundary: JSON keeps a null pendingReason as null", () => {
+    // JSON.stringify drops `undefined` keys but keeps `null` — a public card
+    // must arrive saying "no pending reason", not missing the field
+    for (const def of PORTALS) {
+      const crossed = JSON.parse(JSON.stringify(toPortalCardDefinition(def))) as Record<string, unknown>;
+      expect(Object.hasOwn(crossed, "pendingReason"), def.id).toBe(true);
+      expect(Object.hasOwn(crossed, "publicationCheck"), def.id).toBe(true);
     }
   });
 });

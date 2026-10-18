@@ -409,8 +409,10 @@ export async function setMediaCover(
  * gnk-web compares across pages — hashed a photo's id, sort order and cover
  * flag, and 0086 folded alt in after this action gave alt its first write path
  * and 0085 put it in the feed body. This is one of two media paths that do NOT
- * recompute the quality score (which is what incidentally touches
- * `properties.updated_at` for upload, set-cover and delete); the other is
+ * recompute the quality score (which touches `properties.updated_at` for an
+ * upload, a set-cover or a delete ONLY when the score actually changes —
+ * quality-score.ts persists nothing otherwise, so a portal feed's dates come
+ * from 0150's export revision, never from this); the other is
  * moveMedia, whose sort_order was already in the fingerprint — so before 0086
  * an edit here was the only media change that hash could not see. 0086's own
  * header says "the ONE"; that is the overstatement, and it stays because an

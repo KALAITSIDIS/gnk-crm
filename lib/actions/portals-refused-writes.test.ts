@@ -44,7 +44,13 @@ vi.mock("@/lib/services/auth", () => ({
     fullName: "A. Actor",
   }),
 }));
-vi.mock("@/lib/services/events", () => ({ logEvent }));
+// The real module with logEvent replaced: recordLine's catch reads
+// EventWriteError (via one-time-secrets.ts eventNotice), so the class must be
+// the real one, not a missing export on a bare mock.
+vi.mock("@/lib/services/events", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  logEvent,
+}));
 const revalidatePath = vi.hoisted(() => vi.fn<(path: string) => void>());
 vi.mock("next/cache", () => ({ revalidatePath }));
 
@@ -56,7 +62,35 @@ const {
   setPortalEnabled,
 } = await import("@/lib/actions/portals");
 
-const listing = () => ({ id: "prop-1", reference: "PAF0001", org_id: "org-1" });
+/**
+ * A listing JamesEdition would receive: selectPortal now re-checks the
+ * portal's eligibility server-side (finding 7) from the same columns the card
+ * reads, so a fixture without them would be refused before the insert these
+ * tests are about. Reads come back as ARRAYS (`.select().eq()`, no
+ * maybeSingle), so each page wraps its row.
+ */
+const listing = () => ({
+  id: "prop-1",
+  reference: "PAF0001",
+  org_id: "org-1",
+  visibility: "public",
+  status: "available",
+  transaction_type: "sale",
+  asking_price: 950_000,
+  rent_price_month: null,
+  currency: "EUR",
+  public_description: { en: "A villa above the sea." },
+  property_type: "villa",
+  location: null,
+  location_approx: false,
+  districts: { name: { en: "Paphos" } },
+  areas: null,
+});
+/** two JPEG-prepared photos over JamesEdition's 800×600 floor */
+const photos = () => [
+  { kind: "photo", path_jpeg: "org-1/prop-1/a.jpg", width: 2400, height: 1600 },
+  { kind: "photo", path_jpeg: "org-1/prop-1/b.jpg", width: 2400, height: 1600 },
+];
 
 function setup(pages: Record<string, FakePage[]>, role = "admin") {
   const fake = fakeClient(pages);
@@ -76,8 +110,9 @@ const writesTo = (fake: ReturnType<typeof fakeClient>, table: string) =>
 describe("selectPortal", () => {
   it("reports the refusal when the insert wrote nothing at all", async () => {
     const fake = setup({
-      properties: [{ data: listing(), error: null }],
-      portal_connections: [{ data: { enabled: true }, error: null }],
+      properties: [{ data: [listing()], error: null }],
+      portal_connections: [{ data: [{ enabled: true }], error: null }],
+      property_media: [{ data: photos(), error: null }],
       portal_listings: [{ data: [], error: null }], // the INSERT — filtered away
     });
     const res = await selectPortal("prop-1", "jamesedition");
@@ -94,8 +129,9 @@ describe("selectPortal", () => {
     // (property_id, portal) is the primary key: someone selected it already,
     // and THEIR event is the one that happened.
     setup({
-      properties: [{ data: listing(), error: null }],
-      portal_connections: [{ data: { enabled: true }, error: null }],
+      properties: [{ data: [listing()], error: null }],
+      portal_connections: [{ data: [{ enabled: true }], error: null }],
+      property_media: [{ data: photos(), error: null }],
       portal_listings: [
         { data: null, error: { message: "duplicate key value", code: "23505" } },
       ],
@@ -112,8 +148,9 @@ describe("selectPortal", () => {
 
   it("names the policy refusal when RLS raises it", async () => {
     setup({
-      properties: [{ data: listing(), error: null }],
-      portal_connections: [{ data: { enabled: true }, error: null }],
+      properties: [{ data: [listing()], error: null }],
+      portal_connections: [{ data: [{ enabled: true }], error: null }],
+      property_media: [{ data: photos(), error: null }],
       portal_listings: [
         { data: null, error: { message: "new row violates row-level security", code: "42501" } },
       ],
@@ -125,8 +162,10 @@ describe("selectPortal", () => {
 
   it("refuses a portal nobody enabled, without touching the selection table", async () => {
     const fake = setup({
-      properties: [{ data: listing(), error: null }],
-      portal_connections: [{ data: null, error: null }], // no connection row
+      properties: [{ data: [listing()], error: null }],
+      // no connection row — read as an array, [] is "none" (null would now be
+      // a hollow answer, refused as unreadable rather than "not enabled")
+      portal_connections: [{ data: [], error: null }],
       portal_listings: [{ data: [{ portal: "jamesedition" }], error: null }],
     });
     const res = await selectPortal("prop-1", "jamesedition");
@@ -135,13 +174,15 @@ describe("selectPortal", () => {
       fake.calls.filter((c) => c.table === "portal_listings"),
       "the selection table is never reached",
     ).toHaveLength(0);
+    expect(fake.calls.filter((c) => c.table === "property_media"), "nor the photos").toHaveLength(0);
     expect(logEvent).not.toHaveBeenCalled();
   });
 
   it("logs exactly once, on the property, when the insert lands", async () => {
     setup({
-      properties: [{ data: listing(), error: null }],
-      portal_connections: [{ data: { enabled: true }, error: null }],
+      properties: [{ data: [listing()], error: null }],
+      portal_connections: [{ data: [{ enabled: true }], error: null }],
+      property_media: [{ data: photos(), error: null }],
       portal_listings: [{ data: [{ portal: "jamesedition" }], error: null }],
     });
     const res = await selectPortal("prop-1", "jamesedition");
@@ -166,8 +207,9 @@ describe("selectPortal", () => {
      * its smallest form.
      */
     setup({
-      properties: [{ data: { ...listing(), org_id: "org-of-the-record" }, error: null }],
-      portal_connections: [{ data: { enabled: true }, error: null }],
+      properties: [{ data: [{ ...listing(), org_id: "org-of-the-record" }], error: null }],
+      portal_connections: [{ data: [{ enabled: true }], error: null }],
+      property_media: [{ data: photos(), error: null }],
       portal_listings: [{ data: [{ portal: "jamesedition" }], error: null }],
     });
     await selectPortal("prop-1", "jamesedition");
@@ -178,7 +220,7 @@ describe("selectPortal", () => {
 describe("deselectPortal", () => {
   it("refuses instead of claiming a removal the delete never made", async () => {
     setup({
-      properties: [{ data: listing(), error: null }],
+      properties: [{ data: [listing()], error: null }],
       portal_listings: [{ data: [], error: null }], // the DELETE — zero rows
     });
     const res = await deselectPortal("prop-1", "jamesedition");
@@ -191,7 +233,7 @@ describe("deselectPortal", () => {
 
   it("logs the removal when the delete lands", async () => {
     setup({
-      properties: [{ data: listing(), error: null }],
+      properties: [{ data: [listing()], error: null }],
       portal_listings: [{ data: [{ portal: "jamesedition" }], error: null }],
     });
     const res = await deselectPortal("prop-1", "jamesedition");
@@ -208,7 +250,7 @@ describe("deselectPortal", () => {
     // Same deliberately-impossible fixture as the selection side, for the
     // same reason: it is the only way to see which source the value came from.
     setup({
-      properties: [{ data: { ...listing(), org_id: "org-of-the-record" }, error: null }],
+      properties: [{ data: [{ ...listing(), org_id: "org-of-the-record" }], error: null }],
       portal_listings: [{ data: [{ portal: "jamesedition" }], error: null }],
     });
     await deselectPortal("prop-1", "jamesedition");
@@ -254,7 +296,8 @@ describe("setPortalEnabled", () => {
     // feed token nobody asked for, and the event would put `portal_disabled`
     // on the organisation's timeline for a portal that was never enabled — a
     // line in an append-only log describing something that did not happen.
-    const fake = setup({ portal_connections: [{ data: null, error: null }] });
+    // [] is "no row"; a hollow null is an error now (portals-write-outcomes.test.ts)
+    const fake = setup({ portal_connections: [{ data: [], error: null }] });
     const res = await setPortalEnabled("jamesedition", false);
     expect(res.error, "nothing to do is not a failure").toBeNull();
     expect(res.savedAt).not.toBeNull();
@@ -265,7 +308,7 @@ describe("setPortalEnabled", () => {
   it("reports the refusal when the write matched no row", async () => {
     setup({
       portal_connections: [
-        { data: { id: "conn-1", settings: {} }, error: null }, // the read
+        { data: [{ id: "conn-1", settings: {} }], error: null }, // the read
         { data: [], error: null }, // the UPDATE — filtered away
       ],
     });
@@ -280,7 +323,7 @@ describe("setPortalEnabled", () => {
     // the card to show exactly once. `feed_token` is not a column any more.
     const fresh = setup({
       portal_connections: [
-        { data: null, error: null }, // no row yet
+        { data: [], error: null }, // no row yet
         { data: [{ id: "conn-1" }], error: null }, // the INSERT
       ],
     });
@@ -308,7 +351,7 @@ describe("setPortalEnabled", () => {
     // rotate the URL on every toggle and point the portal at a dead one.
     const existing = setup({
       portal_connections: [
-        { data: { id: "conn-1", settings: {}, feed_token_sha256: "b".repeat(64) }, error: null },
+        { data: [{ id: "conn-1", settings: {}, feed_token_sha256: "b".repeat(64) }], error: null },
         { data: [{ id: "conn-1" }], error: null }, // the UPDATE
       ],
     });
@@ -326,7 +369,7 @@ describe("setPortalEnabled", () => {
 
     const again = setup({
       portal_connections: [
-        { data: { id: "conn-1", settings: {}, feed_token_sha256: "b".repeat(64) }, error: null },
+        { data: [{ id: "conn-1", settings: {}, feed_token_sha256: "b".repeat(64) }], error: null },
         { data: [{ id: "conn-1" }], error: null },
       ],
     });
@@ -344,7 +387,7 @@ describe("setPortalEnabled", () => {
     // disabled row with no token; the switch is where the URL is born.
     const fake = setup({
       portal_connections: [
-        { data: { id: "conn-1", settings: {}, feed_token_sha256: null }, error: null },
+        { data: [{ id: "conn-1", settings: {}, feed_token_sha256: null }], error: null },
         { data: [{ id: "conn-1" }], error: null },
       ],
     });
@@ -378,7 +421,7 @@ describe("savePortalSettings", () => {
   it("refuses instead of reporting a save the row never took", async () => {
     setup({
       portal_connections: [
-        { data: { id: "conn-1" }, error: null }, // the read
+        { data: [{ id: "conn-1" }], error: null }, // the read
         { data: [], error: null }, // the UPDATE — filtered away
       ],
     });
@@ -397,7 +440,7 @@ describe("savePortalSettings", () => {
     // database's to mint here exactly as it is on the enable path.
     const fake = setup({
       portal_connections: [
-        { data: null, error: null }, // no row yet
+        { data: [], error: null }, // no row yet
         { data: [{ id: "conn-1" }], error: null }, // the INSERT
       ],
     });
@@ -425,7 +468,7 @@ describe("savePortalSettings", () => {
      */
     setup({
       portal_connections: [
-        { data: { id: "conn-1" }, error: null },
+        { data: [{ id: "conn-1" }], error: null },
         { data: [{ id: "conn-1" }], error: null },
       ],
     });

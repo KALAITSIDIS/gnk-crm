@@ -407,7 +407,7 @@
     "mediaAltCleared": "Photo description cleared",
     "publishOverride": "Publish gate overridden (score {score} < {threshold})",
     "portalSelected": "Selected for portal {portal}",
-    "portalRemoved": "Removed from portal {portal}",
+    "portalRemoved": "Deselected for portal {portal}",
     "portalEnabled": "Portal {portal} enabled",
     "portalDisabled": "Portal {portal} disabled",
     "portalSettingsUpdated": "Portal {portal} settings updated",
