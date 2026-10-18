@@ -66,8 +66,8 @@ describe("fetchLineage", () => {
     expect(l.issue?.text).toBe("This record is recorded as its own parent. Tell an admin.");
   });
 
-  it("a cycle through a phase stops at two reads", async () => {
-    // u → ph1 → u: the second read returns the unit itself
+  it("a cycle through a phase stops at ONE read: the phase's own parent_id already names the unit", async () => {
+    // u → ph1 → u: a second read would only return the unit itself
     const fake = fakeClient({
       properties: [
         { data: [row("ph1", "phase", "u")], error: null },
@@ -76,8 +76,22 @@ describe("fetchLineage", () => {
       ],
     });
     const l = await fetchLineage(fake.client as never, { id: "u", kind: "unit", parent_id: "ph1" });
-    expect(fake.served.properties).toBe(2);
+    expect(fake.served.properties).toBe(1);
     expect(l.issue?.code).toBe("unexpected_parent_kind");
+    expect(l.chain.map((n) => n.id)).toEqual(["ph1"]);
+  });
+
+  it("a phase that is its own parent: one read, the phase shown once (A05 review: no duplicate crumb keys)", async () => {
+    const fake = fakeClient({
+      properties: [
+        { data: [row("ph1", "phase", "ph1")], error: null },
+        { data: [row("ph1", "phase", "ph1")], error: null },
+      ],
+    });
+    const l = await fetchLineage(fake.client as never, { id: "u", kind: "unit", parent_id: "ph1" });
+    expect(fake.served.properties).toBe(1);
+    expect(l.chain.map((n) => n.id)).toEqual(["ph1"]);
+    expect(l.issue?.text).toMatch(/is recorded as its own parent — a phase belongs to a project/);
   });
 
   it("a third ancestor is never read: too deep, from the project's own parent_id", async () => {

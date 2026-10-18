@@ -80,6 +80,7 @@ import { UnitsMatrix, type UnitRow } from "@/components/features/properties/unit
 import { fetchContainerAvailability } from "@/lib/queries/container-availability";
 import { fetchLineage } from "@/lib/queries/property-lineage";
 import type { Lineage } from "@/lib/services/property-lineage";
+import { formatDate } from "@/lib/utils/format";
 
 // ---------------------------------------------------------------------------
 let o: Client;
@@ -149,8 +150,13 @@ let standalone: { id: string; reference: string };
 let underStandalone: { id: string; reference: string };
 let foreignProject: { id: string; reference: string };
 let underForeign: { id: string; reference: string };
+let emptyPhased: { id: string; reference: string };
+let phaseOnly: { id: string; reference: string };
 let eventsBefore = 0;
-const HELD_TO = "2026-12-15T10:00:00Z";
+// RELATIVE to the run (A05 review): a fixed expiry turned "Confirmed to …"
+// into "lapsed" once that day passed, and then failed every hold() insert on
+// reservation_window_ordered (expires_at > held_from = now() - 2 days)
+const HELD_TO = new Date(Date.now() + 30 * 86_400_000).toISOString();
 
 beforeAll(async () => {
   svc = serviceClient();
@@ -192,6 +198,13 @@ beforeAll(async () => {
   foreignProject = await insertProperty({ kind: "project" }, FOREIGN);
   // the defect BACKLOG records: parent_id is not org-bound, so this is accepted
   underForeign = await insertProperty({ kind: "unit", parent_id: foreignProject.id, unit_number: "7" });
+  // a project whose only phase is still empty (just created): units nowhere
+  emptyPhased = await insertProperty({ kind: "project" });
+  await insertProperty({ kind: "phase", parent_id: emptyPhased.id });
+  // a project whose units are ALL in its phase: none directly under it
+  phaseOnly = await insertProperty({ kind: "project" });
+  const phaseOnlyPhase = await insertProperty({ kind: "phase", parent_id: phaseOnly.id });
+  await insertProperty({ kind: "unit", parent_id: phaseOnlyPhase.id, unit_number: "1" });
 
   const buyer = (
     await o.query<{ id: string }>("insert into contacts (org_id, first_name, last_name) values ($1, 'Lineage', 'Buyer') returning id", [ORG])
@@ -316,7 +329,7 @@ describe("the REAL units page", () => {
     const matrix = tree.find((e) => e.type === UnitsMatrix)!;
     const rows = matrix.props.units as UnitRow[];
     expect(rows.map((u) => u.id)).toEqual([direct.id]);
-    expect(rows[0]!.hold?.label).toMatch(/^Confirmed to /);
+    expect(rows[0]!.hold?.label).toBe(`Confirmed to ${formatDate(HELD_TO)}`);
 
     const crumb = tree.find((e) => e.type === PropertyBreadcrumb)!;
     expect((crumb.props.lineage as Lineage).chain).toEqual([]);
@@ -338,6 +351,24 @@ describe("the REAL units page", () => {
   it("a ?unit= that is not an id is ignored, not queried", async () => {
     const tree = await unitsPage(phase1.id, { unit: "not-an-id" });
     expect(tree.find((e) => e.type === UnitsMatrix)!.props.highlightId).toBeNull();
+  });
+
+  it("a project whose only phase is still empty: no units anywhere, and the matrix keeps its add-first hint", async () => {
+    const tree = await unitsPage(emptyPhased.id);
+    const overview = tree.find((e) => e.type === AvailabilityOverview);
+    expect(overview, "a phased project still gets the consolidated view").toBeTruthy();
+    expect(plain(renderToStaticMarkup(overview!))).toContain("No units yet in this project or its phases.");
+    const matrix = tree.find((e) => e.type === UnitsMatrix)!;
+    expect(matrix.props.units).toEqual([]);
+    // never "its units are in its phases" when the phases hold none
+    expect(matrix.props.emptyText).toBe("No units yet — add the first one below.");
+  });
+
+  it("a project whose units are all in its phases: the empty direct matrix points at them", async () => {
+    const tree = await unitsPage(phaseOnly.id);
+    const matrix = tree.find((e) => e.type === UnitsMatrix)!;
+    expect(matrix.props.units).toEqual([]);
+    expect(matrix.props.emptyText).toBe("None — this project's units are in its phases (above).");
   });
 });
 
@@ -363,6 +394,14 @@ describe("the REAL property page", () => {
     expect(html).toContain(`href="/properties/${phase1.id}/units?unit=${u1.id}#unit-${u1.id}"`);
     const kind = tree.find((e) => e.key === "Kind")!;
     expect(renderToStaticMarkup(kind)).toContain(">Unit<");
+  });
+
+  it("an archived unit: 'Part of' still names its phase, but no link to a matrix row that is not there", async () => {
+    const tree = await detailPage(archivedUnit.id);
+    const html = renderToStaticMarkup(tree.find((e) => e.key === "Part of")!);
+    expect(html).toContain(`href="/properties/${phase1.id}"`);
+    expect(html).not.toContain("/units?unit=");
+    expect(plain(html)).toContain("Archived — not listed in the units matrix");
   });
 
   it("a unit whose parent is another organisation's: the page renders and says so", async () => {

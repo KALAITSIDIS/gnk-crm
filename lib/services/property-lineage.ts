@@ -108,9 +108,20 @@ export interface Lineage {
 
 const TELL_AN_ADMIN = "Tell an admin.";
 
-/** True when the reader should ask for the parent's parent: a unit whose parent is a phase. */
+/**
+ * True when the reader should ask for the parent's parent: a unit whose parent
+ * is a phase with a parent. Not when that parent is the phase itself or the
+ * unit — a loop: assessLineage says so from the phase's own parent_id, and a
+ * read would only come back with a node already in hand.
+ */
 export function needsGrandparent(row: LineageRow, parent: LineageNode): boolean {
-  return row.kind === "unit" && parent.kind === "phase" && parent.parent_id !== null;
+  return (
+    row.kind === "unit" &&
+    parent.kind === "phase" &&
+    parent.parent_id !== null &&
+    parent.parent_id !== parent.id &&
+    parent.parent_id !== row.id
+  );
 }
 
 /** The parent kinds the model allows for a kind; empty = must have no parent. */
@@ -214,6 +225,27 @@ export function assessLineage(
       },
     };
   }
+  // a loop through the phase (A05 review): the phase is its own parent, or is
+  // recorded under this very unit. Said — and the trail keeps the phase ONCE:
+  // the same node twice is two crumbs with one React key.
+  if (p.parent_id === p.id) {
+    return {
+      chain: [p],
+      issue: {
+        code: "unexpected_parent_kind",
+        text: `Its phase ${p.reference} is recorded as its own parent — a phase belongs to a project. ${TELL_AN_ADMIN}`,
+      },
+    };
+  }
+  if (p.parent_id === row.id) {
+    return {
+      chain: [p],
+      issue: {
+        code: "unexpected_parent_kind",
+        text: `Its phase ${p.reference} is recorded under this unit — a phase belongs to a project. ${TELL_AN_ADMIN}`,
+      },
+    };
+  }
   if (!grandparent || grandparent.state !== "found") {
     return { chain: [p], issue: unreadable(grandparent ?? { state: "failed" }, `The project above ${p.reference}`) };
   }
@@ -233,10 +265,12 @@ export function assessLineage(
 /**
  * The node a "Units matrix" link should open on: the recorded parent, when it
  * is a container a unit can be listed under. Null for anything else — a matrix
- * link to a standalone would open a redirect, not the unit's row.
+ * link to a standalone would open a redirect, not the unit's row — and for an
+ * ARCHIVED unit: the matrix never lists one (it lives in the archived list),
+ * so the link would land on a page with no row marked (A05 review).
  */
-export function matrixParent(row: LineageRow, lineage: Lineage): LineageNode | null {
-  if (row.kind !== "unit" || row.parent_id === null) return null;
+export function matrixParent(row: LineageRow & { visibility: string }, lineage: Lineage): LineageNode | null {
+  if (row.kind !== "unit" || row.parent_id === null || row.visibility === "archived") return null;
   const parent = lineage.chain[lineage.chain.length - 1];
   if (!parent || parent.id !== row.parent_id) return null;
   return parent.kind === "project" || parent.kind === "phase" ? parent : null;

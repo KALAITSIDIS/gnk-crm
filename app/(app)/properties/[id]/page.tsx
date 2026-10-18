@@ -552,6 +552,9 @@ export default async function PropertyDetailPage({
           >
             Its row in the units matrix
           </Link>
+        ) : p.kind === "unit" && p.visibility === "archived" ? (
+          // the matrix lists no archived unit — said, rather than a link to no row
+          <span className="text-xs font-normal text-text-3">Archived — not listed in the units matrix</span>
         ) : null}
         {lineage.issue ? (
           <span role="note" className="text-xs font-normal text-warning">

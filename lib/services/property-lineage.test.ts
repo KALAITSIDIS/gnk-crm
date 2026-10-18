@@ -143,6 +143,34 @@ describe("assessLineage — anomalies are said, never guessed", () => {
     );
   });
 
+  it("a phase recorded as its own parent: said, and the phase shown ONCE (no duplicate crumb keys)", () => {
+    const selfPhase = { ...PHASE, parent_id: "ph1" };
+    const row = { id: "u", kind: "unit", parent_id: "ph1" };
+    // the reader does not ask for it again ...
+    expect(needsGrandparent(row, selfPhase)).toBe(false);
+    // ... and were it handed the same phase back, the answer is the same
+    for (const l of [assessLineage(row, found(selfPhase)), assessLineage(row, found(selfPhase), found(selfPhase))]) {
+      expect(l.chain).toEqual([selfPhase]);
+      expect(new Set(l.chain.map((n) => n.id)).size).toBe(l.chain.length);
+      expect(l.issue).toEqual({
+        code: "unexpected_parent_kind",
+        text: "Its phase PAF0002-P1 is recorded as its own parent — a phase belongs to a project. Tell an admin.",
+      });
+    }
+  });
+
+  it("a phase recorded under this very unit (a loop): said, the unit never listed as its own ancestor", () => {
+    const loopPhase = { ...PHASE, parent_id: "u" };
+    const row = { id: "u", kind: "unit", parent_id: "ph1" };
+    expect(needsGrandparent(row, loopPhase)).toBe(false);
+    const l = assessLineage(row, found(loopPhase));
+    expect(l.chain).toEqual([loopPhase]);
+    expect(l.issue).toEqual({
+      code: "unexpected_parent_kind",
+      text: "Its phase PAF0002-P1 is recorded under this unit — a phase belongs to a project. Tell an admin.",
+    });
+  });
+
   it("a phase with no project at all (the 0001 CHECK forbids it)", () => {
     const orphan = node({ id: "ph1", kind: "phase", reference: "PAF0002-P1", parent_id: null });
     const l = assessLineage({ id: "u", kind: "unit", parent_id: "ph1" }, found(orphan));
@@ -188,24 +216,31 @@ describe("needsGrandparent", () => {
 
 describe("matrixParent", () => {
   it("is the recorded parent when it is a container", () => {
-    const row = { id: "u", kind: "unit", parent_id: "ph1" };
+    const row = { id: "u", kind: "unit", parent_id: "ph1", visibility: "private" };
     expect(matrixParent(row, assessLineage(row, found(PHASE), found(PROJECT)))).toEqual(PHASE);
-    const direct = { id: "u", kind: "unit", parent_id: "proj" };
+    const direct = { id: "u", kind: "unit", parent_id: "proj", visibility: "public" };
     expect(matrixParent(direct, assessLineage(direct, found(PROJECT)))).toEqual(PROJECT);
   });
 
   it("is null for a parent of the wrong kind, an unread parent, or a non-unit", () => {
     const standalone = node({ id: "s", kind: "standalone" });
-    const row = { id: "u", kind: "unit", parent_id: "s" };
+    const row = { id: "u", kind: "unit", parent_id: "s", visibility: "private" };
     expect(matrixParent(row, assessLineage(row, found(standalone)))).toBeNull();
-    const hidden = { id: "u", kind: "unit", parent_id: "x" };
+    const hidden = { id: "u", kind: "unit", parent_id: "x", visibility: "private" };
     expect(matrixParent(hidden, assessLineage(hidden, { state: "absent" }))).toBeNull();
-    const phase = { id: "ph1", kind: "phase", parent_id: "proj" };
+    const phase = { id: "ph1", kind: "phase", parent_id: "proj", visibility: "private" };
     expect(matrixParent(phase, assessLineage(phase, found(PROJECT)))).toBeNull();
   });
 
+  it("is null for an ARCHIVED unit: the matrix lists none, so the link would mark no row (A05 review)", () => {
+    const row = { id: "u", kind: "unit", parent_id: "ph1", visibility: "archived" };
+    const lineage = assessLineage(row, found(PHASE), found(PROJECT));
+    expect(lineage.chain.map((n) => n.id)).toEqual(["proj", "ph1"]); // Part of still names it
+    expect(matrixParent(row, lineage)).toBeNull();
+  });
+
   it("still opens the matrix when the hierarchy is too deep above the parent", () => {
-    const row = { id: "u", kind: "unit", parent_id: "proj" };
+    const row = { id: "u", kind: "unit", parent_id: "proj", visibility: "private" };
     const lineage = assessLineage(row, found({ ...PROJECT, parent_id: "above" }));
     expect(lineage.issue?.code).toBe("too_deep");
     expect(matrixParent(row, lineage)?.id).toBe("proj");

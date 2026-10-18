@@ -203,6 +203,10 @@ export default async function ProjectUnitsPage({
     overview?.units.map((u) => ({ ...u, hold: describeHold(u.status, availability.holds.get(u.id), now) })) ?? [];
   const phaseCount = overview?.phases.length ?? 0;
   const directUnitCount = overview ? overview.units.filter((u) => u.parent_id === id).length : units.length;
+  // A05 review: "its units are in its phases" only when the phases HOLD units —
+  // a project whose phases are all still empty has no units anywhere, and the
+  // matrix keeps its "add the first one" hint (the add form is on this page)
+  const unitsInPhases = overview?.units.some((u) => u.parent_id !== id) ?? false;
 
   // Versions come back newest-first, so each one's predecessor is the NEXT
   // element — that is what it gets compared against.
@@ -365,7 +369,7 @@ export default async function ProjectUnitsPage({
         canManage={canManage}
         highlightId={highlightId}
         emptyText={
-          overview
+          unitsInPhases
             ? "None — this project's units are in its phases (above)."
             : "No units yet — add the first one below."
         }
