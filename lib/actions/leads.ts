@@ -34,6 +34,7 @@ import {
 import { normalizePhone } from "@/lib/services/phone";
 import { zonedWallClockToUtc } from "@/lib/utils/tz";
 import { COMM_CHANNELS, LEAD_OPEN_STATUSES } from "@/lib/validators/contacts";
+import { conversationOutcomeField } from "@/lib/validators/conversation";
 import { createLeadSchema } from "@/lib/validators/leads";
 import { isGuid } from "@/lib/validators/ids";
 import { contactLinkError } from "@/lib/services/contact-reread";
@@ -810,6 +811,11 @@ const conversationSchema = z.object({
   lead_id: z.guid(),
   channel: z.enum(COMM_CHANNELS),
   note: z.string().trim().min(1, "Note is required").max(5000),
+  // What happened (0155, A06-b). Whatever it says, this is a logged
+  // conversation: it stamps first_response_at below exactly as before — a
+  // message the agent says they sent IS the agency's response. Only a
+  // chat-link click never stamps it (logChatLinkOpened).
+  outcome: conversationOutcomeField,
 });
 
 export async function logConversation(
@@ -838,12 +844,14 @@ export async function logConversation(
 
   // The words go to interaction_notes and the chain gets their digest (0094,
   // audit SEC-03): erasure can blank a row, never an event. The database
-  // writes the conversation_logged event from the note's insert trigger.
+  // writes the conversation_logged event from the note's insert trigger, with
+  // the outcome when one was chosen (0155; omitted, the call is 0094's).
   const { error: noteErr } = await supabase.rpc("log_conversation", {
     p_entity_type: "lead",
     p_entity_id: lead.id,
     p_channel: parsed.data.channel,
     p_note: parsed.data.note,
+    p_outcome: parsed.data.outcome,
   });
   if (noteErr) return { error: noteErr.message, savedAt: null };
 

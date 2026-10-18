@@ -1001,6 +1001,62 @@ describe("communication lines (A06)", () => {
   });
 });
 
+/**
+ * A06-b (0155): the Log-conversation dialogs say what happened — Spoke, Message
+ * sent (no reply yet), Client replied — stored on the note, carried in the
+ * conversation_logged payload by the trigger or by logEvent on the no-note
+ * path. The two new lines read as what they are; "spoke", a conversation
+ * logged before 0155 (no outcome) and anything a payload could be crafted to
+ * say read as the plain conversation line.
+ */
+describe("a logged conversation's outcome (A06-b)", () => {
+  const localeT = (messages: unknown, locale: string): EventTranslator => {
+    const tr = createTranslator({ locale, messages: messages as typeof en, namespace: "events" });
+    return ((key, values) => tr(key as never, values as never)) as EventTranslator;
+  };
+
+  it("names a sent message and a client's reply, with the channel as a word", () => {
+    expect(describeEvent(ev("conversation_logged", { channel: "whatsapp", outcome: "message_sent" }, "lead"), t)).toBe(
+      "Message sent (WhatsApp)",
+    );
+    expect(describeEvent(ev("conversation_logged", { channel: "phone", outcome: "client_replied" }, "deal"), t)).toBe(
+      "Client replied (Phone)",
+    );
+    expect(describeEvent(ev("conversation_logged", { outcome: "message_sent" }, "contact"), t)).toBe("Message sent");
+    expect(describeEvent(ev("conversation_logged", { outcome: "client_replied" }, "contact"), t)).toBe("Client replied");
+  });
+
+  it("reads 'spoke', no outcome and anything else as the plain conversation line", () => {
+    for (const outcome of ["spoke", undefined, null, "", "MESSAGE_SENT", "constructor", 1, true, { a: 1 }]) {
+      expect(describeEvent(ev("conversation_logged", { channel: "email", outcome }, "lead"), t), String(outcome)).toBe(
+        "Conversation logged (Email)",
+      );
+    }
+    // a payload that is only an outcome still never prints the stored word
+    expect(describeEvent(ev("conversation_logged", { outcome: "spoke" }, "lead"), t)).toBe("Conversation logged");
+  });
+
+  it("is never the chat-link click's line, which stays 'link click only'", () => {
+    const sent = describeEvent(ev("conversation_logged", { channel: "whatsapp", outcome: "message_sent" }, "contact"), t);
+    const click = describeEvent(ev("chat_link_opened", { channel: "whatsapp", outcome: "message_sent" }, "contact"), t);
+    expect(click).toBe("WhatsApp chat opened (link click only)");
+    expect(sent).not.toBe(click);
+  });
+
+  it.each([
+    ["en", en],
+    ["el", el],
+    ["ru", ru],
+  ])("%s: three distinct lines, each naming the channel", (locale, messages) => {
+    const tl = localeT(messages, locale);
+    const line = (outcome?: string) => describeEvent(ev("conversation_logged", { channel: "whatsapp", outcome }, "lead"), tl);
+    const lines = [line(), line("message_sent"), line("client_replied")];
+    expect(new Set(lines).size).toBe(3);
+    for (const l of lines) expect(l).toContain("WhatsApp");
+    expect(line("spoke")).toBe(line());
+  });
+});
+
 describe("a viewing's own lines read as a viewing's (A06)", () => {
   it("names a viewing's creation as scheduling it, whatever the payload", () => {
     expect(describeEvent(ev("created", { property_id: "p1", scheduled_at: "2026-10-20T10:00:00Z" }, "viewing"), t)).toBe(

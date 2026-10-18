@@ -116,6 +116,37 @@ describe("last logged contact and last chat opened", () => {
     expect(s.lastContact.ok && s.lastContact.value?.payload).toEqual({ channel: "phone" });
   });
 
+  it("hands on a conversation's outcome (0155), so the strip says 'Message sent', not 'Conversation logged'", async () => {
+    system(
+      [
+        none,
+        {
+          data: [
+            event(7, "2026-10-17T10:00:00Z", "conversation_logged", "lead", {
+              channel: "whatsapp",
+              outcome: "message_sent",
+              note_id: "n1",
+              note_sha256: "x",
+            }),
+          ],
+          error: null,
+        },
+        none,
+      ],
+      [none, none, none],
+    );
+    const s = await read(fakeClient({}).client);
+    expect(s.lastContact.ok && s.lastContact.value?.payload).toEqual({ channel: "whatsapp", outcome: "message_sent" });
+
+    // a crafted outcome that is not a string is dropped, not passed on
+    system(
+      [none, none, { data: [event(2, "2026-10-01T10:00:00Z", "conversation_logged", "deal", { channel: "phone", outcome: { a: 1 } })], error: null }],
+      [none, none, none],
+    );
+    const crafted = await read(fakeClient({}).client);
+    expect(crafted.lastContact.ok && crafted.lastContact.value?.payload).toEqual({ channel: "phone" });
+  });
+
   it("a failed read is `{ ok: false }`, never a 'none logged yet'", async () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     system([none, { data: null, error: { message: "timeout" } }, none], [none, none, { data: null, error: null }]);

@@ -41,7 +41,7 @@ export interface LastEvent {
   event_type: string;
   entity_type: string;
   actor_id: string | null;
-  /** only what the line reads: the channel and the first-response / first-call flags */
+  /** only what the line reads: the channel, a conversation's outcome (0155) and the first-response / first-call flags */
   payload: Json;
 }
 
@@ -66,8 +66,12 @@ export interface ContactActivitySummary {
 
 type Client = SupabaseClient<Database>;
 
-/** The payload keys a summary line reads — nothing else leaves this module. */
-const LINE_KEYS = ["channel", "first_response", "first_call"] as const;
+/**
+ * The payload keys a summary line reads — nothing else leaves this module.
+ * `outcome` (0155): "Message sent (WhatsApp)" and "Client replied (WhatsApp)"
+ * are different news at the top of a buyer's page.
+ */
+const LINE_KEYS = ["channel", "outcome", "first_response", "first_call"] as const;
 
 function lineOnly(payload: unknown): Json {
   const out: Record<string, Json> = {};

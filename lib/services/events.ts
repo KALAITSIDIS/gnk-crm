@@ -393,9 +393,19 @@ const EVENT_LINES: Record<string, (p: P, t: EventTranslator, entityType: string)
   // the line says which tap stopped the lead's response clock
   contacted: (p, t) => (p.first_response === true ? t("contactedFirstResponse") : t("contacted")),
   called: (p, t) => (p.first_call === true ? t("calledFirstCall") : t("called")),
+  // `outcome` (0155, A06-b) is what the desk said happened, chosen in the
+  // Log-conversation dialog — never synchronised from a messaging app. "spoke",
+  // no outcome (every note before 0155) and anything else read as before.
   conversation_logged: (p, t) => {
     const channel = channelLabel(p.channel, t);
-    return channel ? t("conversationLoggedChannel", { channel }) : t("conversationLogged");
+    switch (asText(p.outcome)) {
+      case "message_sent":
+        return channel ? t("conversationMessageSentChannel", { channel }) : t("conversationMessageSent");
+      case "client_replied":
+        return channel ? t("conversationClientRepliedChannel", { channel }) : t("conversationClientReplied");
+      default:
+        return channel ? t("conversationLoggedChannel", { channel }) : t("conversationLogged");
+    }
   },
   // A click on a WhatsApp / Telegram button opens the app; nothing says a
   // message was sent or read (no messaging API — Do-Not-Build). The line says

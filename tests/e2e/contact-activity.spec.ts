@@ -23,6 +23,12 @@ import { assertNoHorizontalOverflow, fixtureProfile, isLocal, opTimeout, runTag,
  *   Communication;
  * - on /leads, a website enquiry whose only activity is a WhatsApp click
  *   still shows a running clock, and the lead row is still unanswered.
+ * - A06-b (0155): the Log-conversation dialogs say what happened. The
+ *   contact's Log contact with "Message sent, no reply yet" and no note, then
+ *   the inbox's Log on the person's lead with "Client replied" and a note:
+ *   the Activity tab reads "Message sent (WhatsApp)" and "Client replied
+ *   (Phone)" with a Lead chip, the strip's last logged contact is the reply,
+ *   and the database holds the outcome in each event (and on the note).
  *
  * What a non-admin may NOT see (a signed slip's names, a colleague's task, a
  * deal they cannot read) is measured against the real policies in
@@ -194,4 +200,66 @@ test("an inbox WhatsApp click leaves the enquiry's response clock running", asyn
   const after = page.locator("li").filter({ hasText: WEB_LEAD_MESSAGE }).first();
   await expect(after).toBeVisible();
   await expect(after.getByText("answered", { exact: true }), "the clock is still running").toHaveCount(0);
+});
+
+/** the newest conversation_logged payload on one record */
+async function lastLoggedPayload(entityType: string, entityId: string): Promise<Record<string, unknown> | null> {
+  const { data, error } = await svc
+    .from("events")
+    .select("payload")
+    .eq("entity_type", entityType)
+    .eq("entity_id", entityId)
+    .eq("event_type", "conversation_logged")
+    .order("id", { ascending: false })
+    .limit(1);
+  if (error) throw new Error(error.message);
+  return (data?.[0]?.payload as Record<string, unknown> | undefined) ?? null;
+}
+
+test("the Log dialogs say what happened: a message sent with no reply yet, then the client's reply on the lead (A06-b)", async ({ page }) => {
+  // 1. the contact's Log contact — WhatsApp, "Message sent, no reply yet", no note
+  await page.goto(`/contacts/${contactId}`, { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "Log contact" }).click();
+  const contactDialog = page.getByRole("dialog", { name: "Log contact" });
+  await contactDialog.getByLabel("How did you make contact?").selectOption("whatsapp");
+  const what = contactDialog.getByRole("group", { name: "What happened" });
+  await expect(what.getByRole("radio", { name: "Spoke" }), "Spoke is preselected").toBeChecked();
+  await what.getByRole("radio", { name: "Message sent, no reply yet" }).check();
+  await contactDialog.getByRole("button", { name: "Log contact" }).click();
+  await expect(contactDialog).toBeHidden({ timeout: opTimeout(15_000) });
+  await expect
+    .poll(() => lastLoggedPayload("contact", contactId), { timeout: opTimeout(15_000) })
+    .toEqual({ channel: "whatsapp", outcome: "message_sent" });
+
+  // 2. the inbox's Log on the person's lead — Phone, "Client replied", with a note
+  await page.goto("/leads", { waitUntil: "networkidle" });
+  const card = page.locator("li").filter({ hasText: PHONE_LEAD_MESSAGE }).filter({ has: page.getByRole("button", { name: "Log", exact: true }) });
+  test.skip(!(await card.count()), "the seeded lead is not on the inbox's first page on this database");
+  await card.first().getByRole("button", { name: "Log", exact: true }).click();
+  const leadDialog = page.getByRole("dialog", { name: "Log conversation" });
+  await leadDialog.getByRole("group", { name: "What happened" }).getByRole("radio", { name: "Client replied" }).check();
+  await leadDialog.getByLabel("Note").fill(`E2E rang back about the second floor ${TAG}`);
+  await leadDialog.getByRole("button", { name: "Log conversation" }).click();
+  await expect(leadDialog).toBeHidden({ timeout: opTimeout(15_000) });
+  await expect.poll(() => lastLoggedPayload("lead", phoneLeadId), { timeout: opTimeout(15_000) }).toMatchObject({
+    channel: "phone",
+    outcome: "client_replied",
+  });
+  const payload = (await lastLoggedPayload("lead", phoneLeadId))!;
+  expect(JSON.stringify(payload), "the note's words stay out of the chain").not.toContain(TAG);
+  const { data: note } = await svc.from("interaction_notes").select("outcome").eq("id", payload.note_id as string).single();
+  expect(note).toEqual({ outcome: "client_replied" });
+
+  // 3. the person's page reads both, and the reply is the last logged contact
+  await page.goto(`/contacts/${contactId}`, { waitUntil: "networkidle" });
+  await expect(stripPart(page, "Last logged contact")).toContainText("Client replied (Phone)");
+  await expect(stripPart(page, "Last logged contact")).toContainText("on a lead");
+  await page.getByRole("tab", { name: "Activity" }).click();
+  const panel = page.getByRole("tabpanel");
+  await expect(panel.locator("li").filter({ hasText: "Message sent (WhatsApp)" })).toHaveCount(1);
+  const reply = panel.locator("li").filter({ hasText: "Client replied (Phone)" });
+  await expect(reply).toHaveCount(1);
+  await expect(reply).toContainText("Lead");
+  await expect(reply).toContainText(adminName);
+  await expect(panel.getByText(`rang back about the second floor ${TAG}`), "the note's text shows with its line").toBeVisible();
 });

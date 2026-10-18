@@ -29,6 +29,7 @@ import {
   redactLead,
   type LeadActionState,
 } from "@/lib/actions/leads";
+import { ConversationOutcomeField } from "@/components/features/shared/conversation-outcome-field";
 import { EntityPicker } from "@/components/features/shared/entity-picker";
 import type { EntityOption } from "@/lib/actions/entity-search";
 import { Button } from "@/components/ui/button";
@@ -650,6 +651,7 @@ function LogConversationForm({ leadId, onDone }: { leadId: string; onDone: () =>
           </SelectContent>
         </Select>
       </div>
+      <ConversationOutcomeField idPrefix={`log-outcome-${leadId}`} />
       <div className="flex flex-col gap-1.5">
         <Label htmlFor={`note-${leadId}`}>Note</Label>
         <Textarea id={`note-${leadId}`} name="note" rows={3} required />
