@@ -1,8 +1,14 @@
 "use client";
 
 import { useState, type FormEvent, type ReactNode } from "react";
+import Link from "next/link";
 import { AlertTriangle, Info, Receipt } from "lucide-react";
-import { deriveVat, type VatConfigRow, type VatStatus } from "@/lib/services/vat";
+import {
+  deriveVat,
+  purchaseCostsHref,
+  type VatConfigRow,
+  type VatStatus,
+} from "@/lib/services/vat";
 import { formatMoney } from "@/lib/utils/format";
 
 /**
@@ -28,6 +34,8 @@ export function VatTreatment({
   askingPrice,
   coveredAreaSqm,
   vatStatus,
+  propertyType,
+  propertyId,
   children,
 }: {
   config: VatConfigRow | null;
@@ -35,6 +43,10 @@ export function VatTreatment({
   askingPrice: number | string | null;
   coveredAreaSqm: number | string | null;
   vatStatus: VatStatus | null;
+  /** The reduced-rate dwelling gate; null for a development (its units decide). */
+  propertyType: string | null;
+  /** So the transfer-fees link opens the calculators on THIS property. */
+  propertyId: string;
   /** Pricing and Areas & rooms — wrapped so their input events bubble here. */
   children: ReactNode;
 }) {
@@ -70,7 +82,16 @@ export function VatTreatment({
     vatStatus: live.status,
     config,
     configVerifiedAt,
+    propertyType,
   });
+  // F01: an unconfirmed status still gets figures, but as a scenario — every
+  // label on them says so, and the banner above them says what they assume
+  const unconfirmed = t.applicability === "unconfirmed";
+  const ifApplies = unconfirmed ? " (if it applies)" : "";
+  // where VAT does not (or may not) apply, the other tax is one click away,
+  // on this property, at the price on the form
+  const transferHref =
+    t.applicability === "applies" ? null : purchaseCostsHref(propertyId, live.price);
 
   return (
     <div onInput={onInput} onChange={onInput}>
@@ -82,6 +103,22 @@ export function VatTreatment({
           <h3 className="text-sm font-semibold text-text-1">VAT treatment</h3>
           <span className="ml-auto text-xs text-text-3">derived, not saved</span>
         </div>
+
+        {/* ------------------------------------- unknown is not a conclusion -- */}
+        {unconfirmed ? (
+          <div
+            role="note"
+            className="mt-3 flex gap-2 rounded-[8px] border border-warning/40 bg-warning/10 p-3"
+          >
+            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
+            <div className="text-sm">
+              <p className="font-semibold text-text-1">VAT status: Unknown — not confirmed</p>
+              <p className="mt-0.5 text-text-2">
+                {t.scenarioNote ?? "Whether VAT applies to this sale is not confirmed."}
+              </p>
+            </div>
+          </div>
+        ) : null}
 
         {/* ---------------------------------------------------- the numbers -- */}
         {t.bands.length > 0 ? (
@@ -98,14 +135,14 @@ export function VatTreatment({
               </div>
             ))}
             <div className="mt-1 flex items-baseline justify-between gap-4 border-t border-border pt-2 text-sm tabular-nums">
-              <span className="font-semibold text-text-1">VAT</span>
+              <span className="font-semibold text-text-1">VAT{ifApplies}</span>
               <span className="text-lg font-semibold text-text-1">
                 {t.totalVat === null ? "—" : formatMoney(t.totalVat)}
               </span>
             </div>
             {t.totalWithVat !== null ? (
               <div className="flex items-baseline justify-between gap-4 text-xs tabular-nums text-text-3">
-                <span>Price including VAT</span>
+                <span>Price including VAT{ifApplies}</span>
                 <span>{formatMoney(t.totalWithVat)}</span>
               </div>
             ) : null}
@@ -196,6 +233,14 @@ export function VatTreatment({
               <li key={r}>{r}</li>
             ))}
           </ul>
+        ) : null}
+
+        {transferHref ? (
+          <p className="mt-2 text-sm">
+            <Link href={transferHref} className="font-medium text-brand-700 hover:underline">
+              Transfer fees for this price →
+            </Link>
+          </p>
         ) : null}
 
         {/* THE BUYER HALF, WHICH A PROPERTY ROW CANNOT KNOW. Always stated for a

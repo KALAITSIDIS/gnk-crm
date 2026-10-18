@@ -26,6 +26,7 @@ import {
   PROPERTY_STATUSES,
   TITLE_DEED_STATUSES,
   TRANSACTION_TYPES,
+  VAT_STATUS_LABELS,
   VAT_STATUSES,
   VISIBILITY_LEVELS,
 } from "@/lib/validators/properties";
@@ -257,6 +258,12 @@ export function DetailsForm({
         askingPrice={property.asking_price}
         coveredAreaSqm={property.covered_area_sqm}
         vatStatus={property.vat_status}
+        // F01: the reduced rate is for a dwelling. A development is judged by
+        // its units (a "building" project's flats are apartments), so its own
+        // type does not gate it — the same rule createProperty applies when
+        // it decides what the generated units are
+        propertyType={isContainer ? null : property.property_type}
+        propertyId={property.id}
       >
       <SectionTitle>Pricing</SectionTitle>
       <PricingBreakdown
@@ -299,10 +306,12 @@ export function DetailsForm({
           defaultValue={property.rent_price_month}
           step="0.01"
         />
+        {/* F01: labels that say whether VAT applies — "New vat" / "Unknown"
+            read as kinds of sale; "Unknown (not confirmed)" reads as what it is */}
         <SelectField
           name="vat_status"
           label="VAT status"
-          options={VAT_STATUSES}
+          options={VAT_STATUSES.map((v) => ({ value: v, label: VAT_STATUS_LABELS[v] }))}
           defaultValue={property.vat_status}
         />
       </div>

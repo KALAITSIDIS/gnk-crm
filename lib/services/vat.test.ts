@@ -1,5 +1,19 @@
 import { describe, it, expect } from "vitest";
-import { deriveVat, type VatConfigRow } from "./vat";
+import {
+  deriveVat,
+  purchaseCostsHref,
+  UNCONFIRMED_SCENARIO_NOTE,
+  vatApplicability,
+  type VatApplicability,
+  type VatConfigRow,
+  type VatStatus,
+} from "./vat";
+import {
+  DWELLING_TYPES,
+  PROPERTY_TYPES,
+  VAT_STATUS_LABELS,
+  VAT_STATUSES,
+} from "@/lib/validators/properties";
 
 /**
  * The real row, as verified on 2026-08-27 by migration 0058. Tests are written
@@ -317,6 +331,218 @@ describe("deriveVat — incomplete property", () => {
   it("always states the covered-area assumption when it used one", () => {
     const t = deriveVat({ coveredAreaSqm: 100, price: 300000, vatStatus: "new_vat", ...ok });
     expect(t.assumptions.some((a) => /Covered area/.test(a))).toBe(true);
+  });
+});
+
+/* ------------------------------------------------------------------ F01 -- */
+
+describe("vatApplicability — the one mapping from the declaration (F01)", () => {
+  // Typed as a Record over the enum: a new VAT status fails the typecheck
+  // here AND in vatApplicability's `never` arm until it is mapped.
+  const EXPECTED: Record<VatStatus, VatApplicability> = {
+    new_vat: "applies",
+    reduced_rate_eligible: "applies",
+    resale_no_vat: "does_not_apply",
+    unknown: "unconfirmed",
+  };
+
+  it("maps every stored status, and the table covers exactly the enum", () => {
+    expect(Object.keys(EXPECTED).sort()).toEqual([...VAT_STATUSES].sort());
+    for (const s of VAT_STATUSES) expect(vatApplicability(s), s).toBe(EXPECTED[s]);
+  });
+
+  it("an unset status is not confirmed — never treated as either answer", () => {
+    expect(vatApplicability(null)).toBe("unconfirmed");
+    expect(vatApplicability(undefined)).toBe("unconfirmed");
+  });
+
+  it("a value this file has never seen is not confirmed either (a stale form, a new enum)", () => {
+    expect(vatApplicability("vat_paid" as VatStatus)).toBe("unconfirmed");
+    expect(vatApplicability("" as VatStatus)).toBe("unconfirmed");
+  });
+
+  it("the Details labels agree with the mapping", () => {
+    for (const s of VAT_STATUSES) {
+      const label = VAT_STATUS_LABELS[s];
+      if (vatApplicability(s) === "unconfirmed") expect(label, s).toMatch(/not confirmed/);
+      if (vatApplicability(s) === "does_not_apply") expect(label, s).toMatch(/no VAT/);
+      // "Unknown" never reads as a kind of sale, and no label says "paid"
+      expect(label, s).not.toMatch(/paid/i);
+    }
+    expect(VAT_STATUS_LABELS.new_vat).toMatch(/VAT applies/);
+  });
+});
+
+describe("deriveVat — unknown is a scenario, never a conclusion (F01)", () => {
+  it("keeps the figures for an unknown status, framed as the case where VAT applies", () => {
+    const t = deriveVat({ coveredAreaSqm: null, price: 300000, vatStatus: "unknown", ...ok });
+    expect(t.applicability).toBe("unconfirmed");
+    expect(t.scenarioNote).toBe(UNCONFIRMED_SCENARIO_NOTE);
+    expect(t.scenarioNote).toMatch(/not confirmed/);
+    expect(t.scenarioNote).toMatch(/transfer fees apply instead/);
+    // the arithmetic is unchanged — a scenario, not a different number
+    expect(t.outcome).toBe("standard_only");
+    expect(t.totalVat).toBe(57000);
+    expect(t.totalWithVat).toBe(357000);
+  });
+
+  it("an unset status (an empty select) reads the same as unknown", () => {
+    const t = deriveVat({ coveredAreaSqm: 100, price: 300000, vatStatus: null, ...ok });
+    expect(t.applicability).toBe("unconfirmed");
+    expect(t.scenarioNote).toBe(UNCONFIRMED_SCENARIO_NOTE);
+    expect(t.outcome).toBe("reduced_possible");
+  });
+
+  it("a confirmed status carries no scenario note", () => {
+    for (const vatStatus of ["new_vat", "reduced_rate_eligible"] as const) {
+      const t = deriveVat({ coveredAreaSqm: 100, price: 300000, vatStatus, ...ok });
+      expect(t.applicability, vatStatus).toBe("applies");
+      expect(t.scenarioNote, vatStatus).toBeNull();
+    }
+    const resale = deriveVat({ coveredAreaSqm: 100, price: 300000, vatStatus: "resale_no_vat", ...ok });
+    expect(resale.applicability).toBe("does_not_apply");
+    expect(resale.scenarioNote).toBeNull();
+  });
+
+  it("frames nothing when there is nothing to frame (no price, or no config)", () => {
+    const noPrice = deriveVat({ coveredAreaSqm: 100, price: null, vatStatus: "unknown", ...ok });
+    expect(noPrice.applicability).toBe("unconfirmed");
+    expect(noPrice.bands).toEqual([]);
+    expect(noPrice.scenarioNote).toBeNull();
+
+    const noConfig = deriveVat({ coveredAreaSqm: 100, price: 300000, vatStatus: "unknown", config: null });
+    expect(noConfig.outcome).toBe("cannot_derive");
+    expect(noConfig.scenarioNote).toBeNull();
+  });
+});
+
+describe("deriveVat — the reduced rate is for a dwelling (F01, the config's applies_to)", () => {
+  const WITH_APPLIES_TO: VatConfigRow = {
+    ...CONFIG,
+    reduced_rules_post_2023: {
+      ...CONFIG.reduced_rules_post_2023,
+      applies_to: "first primary residence, new property",
+    },
+  };
+
+  it("land never gets a reduced band, a cliff or a transitional hint", () => {
+    // 191 m² would be an area cliff (and a transitional hint) for a dwelling
+    for (const coveredAreaSqm of [100, 191]) {
+      const t = deriveVat({
+        coveredAreaSqm,
+        price: 300000,
+        vatStatus: "new_vat",
+        propertyType: "land",
+        ...ok,
+      });
+      expect(t.outcome, `${coveredAreaSqm} m²`).toBe("standard_only");
+      expect(t.bands).toEqual([{ base: 300000, rate: 0.19, vat: 57000 }]);
+      expect(t.cliff).toBeNull();
+      expect(t.nearCliff).toBeNull();
+      expect(t.transitionalMayHelp).toBeNull();
+      expect(t.conflictsWithDeclaration).toBe(false);
+      expect(t.reasons[0]).toMatch(/dwelling/);
+      expect(t.reasons[0]).toContain("not available for land");
+    }
+  });
+
+  it("quotes the config's own applies_to when it carries one", () => {
+    const t = deriveVat({
+      coveredAreaSqm: 100,
+      price: 300000,
+      vatStatus: "new_vat",
+      propertyType: "mixed_use",
+      config: WITH_APPLIES_TO,
+      configVerifiedAt: "2026-08-27",
+    });
+    expect(t.reasons[0]).toContain("“first primary residence, new property”");
+    expect(t.reasons[0]).toContain("not available for mixed use");
+  });
+
+  it("a non-dwelling declared reduced-rate eligible is a contradiction worth flagging", () => {
+    const t = deriveVat({
+      coveredAreaSqm: 100,
+      price: 300000,
+      vatStatus: "reduced_rate_eligible",
+      propertyType: "shop",
+      ...ok,
+    });
+    expect(t.outcome).toBe("standard_only");
+    expect(t.conflictsWithDeclaration).toBe(true);
+  });
+
+  it("the acceptance case: unknown land at €200,000 with no covered area", () => {
+    const t = deriveVat({
+      coveredAreaSqm: null,
+      price: 200000,
+      vatStatus: "unknown",
+      propertyType: "land",
+      ...ok,
+    });
+    expect(t.applicability).toBe("unconfirmed");
+    expect(t.scenarioNote).toBe(UNCONFIRMED_SCENARIO_NOTE);
+    expect(t.bands.map((b) => b.rate)).toEqual([0.19]); // no 5% band
+    expect(t.totalVat).toBe(38000);
+    // the gate speaks, not the area — land has no "covered area" to miss
+    expect(t.reasons.join(" ")).not.toMatch(/No covered area/);
+  });
+
+  it("every dwelling type passes the gate; every other type is refused the rate", () => {
+    for (const propertyType of PROPERTY_TYPES) {
+      const t = deriveVat({
+        coveredAreaSqm: 100,
+        price: 300000,
+        vatStatus: "new_vat",
+        propertyType,
+        ...ok,
+      });
+      const dwelling = (DWELLING_TYPES as readonly string[]).includes(propertyType);
+      expect(t.outcome, propertyType).toBe(dwelling ? "reduced_possible" : "standard_only");
+    }
+  });
+
+  it("no type given (a development, judged by its units) keeps the old behaviour", () => {
+    for (const propertyType of [undefined, null]) {
+      const t = deriveVat({ coveredAreaSqm: 100, price: 300000, vatStatus: "new_vat", propertyType, ...ok });
+      expect(t.outcome).toBe("reduced_possible");
+      expect(t.totalVat).toBe(15000);
+    }
+  });
+
+  it("a resale is still a resale whatever the type — the gate is about the rate, not VAT", () => {
+    const t = deriveVat({
+      coveredAreaSqm: null,
+      price: 200000,
+      vatStatus: "resale_no_vat",
+      propertyType: "land",
+      ...ok,
+    });
+    expect(t.outcome).toBe("no_vat");
+    expect(t.applicability).toBe("does_not_apply");
+  });
+});
+
+describe("deriveVat — provenance of the thresholds (F01)", () => {
+  it("prints the verified date, as the calculators do", () => {
+    const t = deriveVat({ coveredAreaSqm: 100, price: 300000, vatStatus: "new_vat", ...ok });
+    expect(t.assumptions).toContain("VAT thresholds verified 27 Aug 2026.");
+    expect(t.assumptions.some((a) => /not been marked verified/.test(a))).toBe(false);
+  });
+});
+
+describe("purchaseCostsHref — the calculators, opened on a property (F01)", () => {
+  const ID = "00000000-0000-0000-0000-0000000000aa";
+
+  it("carries the price and the property", () => {
+    expect(purchaseCostsHref(ID, 200000)).toBe(`/calculators?price=200000&property=${ID}`);
+    expect(purchaseCostsHref(ID, "250000.5")).toBe(`/calculators?price=250000.5&property=${ID}`);
+    expect(purchaseCostsHref(ID, " 300000 ")).toBe(`/calculators?price=300000&property=${ID}`);
+  });
+
+  it("leaves out a price that is not a positive number rather than sending 0", () => {
+    for (const price of [null, undefined, "", "  ", "0", 0, -5, "abc", Number.NaN]) {
+      expect(purchaseCostsHref(ID, price), String(price)).toBe(`/calculators?property=${ID}`);
+    }
   });
 });
 

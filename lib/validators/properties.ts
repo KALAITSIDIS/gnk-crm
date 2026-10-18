@@ -417,6 +417,36 @@ export const VAT_STATUSES = [
   "reduced_rate_eligible",
   "unknown",
 ] as const;
+
+/**
+ * What each VAT status means, in words (F01). The stored values are
+ * unchanged; the labels say whether VAT applies, so "Unknown" reads as a fact
+ * not yet confirmed rather than as a fourth kind of sale. Whether a status
+ * means VAT applies is decided in ONE place — `vatApplicability` in
+ * lib/services/vat.ts — and these labels agree with it.
+ */
+export const VAT_STATUS_LABELS: Record<(typeof VAT_STATUSES)[number], string> = {
+  new_vat: "New (VAT applies)",
+  resale_no_vat: "Resale (no VAT)",
+  reduced_rate_eligible: "Reduced rate eligible",
+  unknown: "Unknown (not confirmed)",
+};
+
+/**
+ * The property types that are a DWELLING — something a buyer can live in.
+ * Two rules turn on it: a development's generated units carry its type only
+ * when it is one of these (createProperty), and the reduced VAT rate, which
+ * the config's own `applies_to` limits to a "first primary residence, new
+ * property", is never offered for anything else (deriveVat, F01). Building,
+ * mixed use and other are not here: a development of that type is judged by
+ * its units, which are apartments or villas.
+ */
+export const DWELLING_TYPES = ["apartment", "villa", "townhouse", "house"] as const;
+
+export function isDwellingType(t: string | null | undefined): boolean {
+  return typeof t === "string" && (DWELLING_TYPES as readonly string[]).includes(t);
+}
+
 export const ENERGY_CLASSES = ["A", "B+", "B", "C", "D", "E", "F", "G", "none"] as const;
 
 /**

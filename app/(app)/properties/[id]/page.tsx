@@ -6,7 +6,7 @@ import {
   LegalForm,
   MarketingForm,
 } from "@/components/features/properties/detail-forms";
-import type { VatConfigRow } from "@/lib/services/vat";
+import { purchaseCostsHref, type VatConfigRow } from "@/lib/services/vat";
 import { ArchivePropertyButton } from "@/components/features/properties/archive-button";
 import { AddTaskDialog } from "@/components/features/tasks/add-task-dialog";
 import { BuildProgressCard } from "@/components/features/properties/build-progress-card";
@@ -560,9 +560,12 @@ export default async function PropertyDetailPage({
               Available.
             </span>
           ) : null}
+          {/* F01: the calculators open on THIS property — its reference and
+              stored VAT status choose the scenario there — not on a bare price
+              that silently lands on "not subject to VAT" */}
           {p.asking_price !== null ? (
             <Link
-              href={`/calculators?price=${Number(p.asking_price)}`}
+              href={purchaseCostsHref(p.id, Number(p.asking_price))}
               className="inline-flex items-center gap-1 text-xs font-medium text-text-2 hover:text-brand-700"
               title="Purchase-cost calculators at asking price"
             >

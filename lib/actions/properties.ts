@@ -18,7 +18,7 @@ import { createClient } from "@/lib/supabase/server";
 import { changesForChain, isNoteField } from "@/lib/services/event-changes";
 import { changedValue } from "@/lib/utils/diff";
 import { hasStorageRoom } from "@/lib/constants/features";
-import { createPropertySchema } from "@/lib/validators/properties";
+import { createPropertySchema, isDwellingType } from "@/lib/validators/properties";
 import { isGuid } from "@/lib/validators/ids";
 import type { PropertyDuplicateMatch } from "@/lib/services/property-duplicate";
 import { contactLinkError } from "@/lib/services/contact-reread";
@@ -323,9 +323,9 @@ export async function createProperty(
     // apartments, a villa complex's units are villas. Only when the
     // development is already named after its dwelling type does that type
     // carry (the units page's generator defaults the same way; 2026-09-02
-    // review, critic pass).
-    const DWELLING_TYPES = new Set(["apartment", "villa", "townhouse", "house"]);
-    const unitPropertyType = DWELLING_TYPES.has(input.property_type)
+    // review, critic pass). DWELLING_TYPES is shared with the VAT panel's
+    // reduced-rate gate (F01), so the two cannot disagree on what a dwelling is.
+    const unitPropertyType = isDwellingType(input.property_type)
       ? input.property_type
       : layout === "villas"
         ? ("villa" as const)
