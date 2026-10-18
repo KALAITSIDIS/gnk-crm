@@ -21,7 +21,8 @@ import {
  *    unassigned overdue task is listed as "Unassigned" and opens its record;
  *  - an area change lands under "Settings & admin changes", never in "Latest
  *    sales activity";
- *  - the page does not scroll sideways at 380px.
+ *  - the page does not scroll sideways at 380px, with a long-titled task in
+ *    My day and in Team (the titles are cut, not the viewport widened).
  *
  * Seeds through the service role in the local seeded org; local only. The task
  * is deleted afterwards. The event cannot be (events are append-only), so it is
@@ -123,10 +124,45 @@ test.describe("dashboard: My day, Team and the split feed (A01)", () => {
     await expect(card(/^Latest sales activity$/)).not.toContainText(AREA);
   });
 
-  test("the admin dashboard does not scroll sideways at 380px", async ({ page }) => {
+  test("the admin dashboard does not scroll sideways at 380px, even with long task titles", async ({ page }) => {
+    // A cron title is long ("No contact in 14 days: " + the deal's title) and
+    // the rows cut it with `truncate` (nowrap). Below lg the My day and Team
+    // grids were an implicit `auto` column, which grows to the widest nowrap
+    // row — so one long title scrolled the whole page sideways (A01 review).
+    // The seed has no tasks, so without these two rows the check below would
+    // pass on an empty My day and prove nothing.
+    const svc = serviceClient();
+    const { id: adminId, orgId } = await fixtureProfile(svc);
+    const long = (whose: string) =>
+      `${TASK_TITLE} ${whose} — No contact in 14 days: three-bedroom penthouse with roof garden and sea view, Germasogeia tourist area (resale)`;
+    const fourYearsLate = new Date(Date.now() - 4 * 365 * 86_400_000).toISOString();
+    const { error } = await svc.from("tasks").insert([
+      // the admin's own: My day
+      { org_id: orgId, title: long("mine"), due_at: fourYearsLate, assignee_id: adminId },
+      // nobody's: Overdue across the team
+      { org_id: orgId, title: long("nobody's"), due_at: fourYearsLate, assignee_id: null },
+    ]);
+    expect(error).toBeNull();
+
     await page.setViewportSize({ width: 380, height: 800 });
     await page.goto("/dashboard", { waitUntil: "networkidle" });
-    await expect(page.getByRole("region", { name: "My day" })).toBeVisible();
-    await assertNoHorizontalOverflow(page, "dashboard at 380px");
+    const myDay = page.getByRole("region", { name: "My day" });
+    const team = page.getByRole("region", { name: "Team" });
+    const rows = [
+      { section: myDay, title: long("mine") },
+      { section: team, title: long("nobody's") },
+    ];
+    for (const { section, title } of rows) {
+      const row = section.getByRole("link").filter({ hasText: title });
+      await expect(row).toHaveCount(1);
+      // the title really is cut — wider than its box — so it is these rows the
+      // overflow check measures, not short ones that would fit anyway
+      const box = await row
+        .getByText(title, { exact: true })
+        .evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth }));
+      expect(box.scroll, `"${title}" is not truncated — its row grew to fit it`).toBeGreaterThan(box.client);
+      expect(box.client).toBeLessThanOrEqual(380);
+    }
+    await assertNoHorizontalOverflow(page, "dashboard at 380px with long task titles");
   });
 });

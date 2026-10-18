@@ -153,8 +153,11 @@ test.describe("Follow-up nudges", () => {
     await expect(link).toHaveCount(1);
     // the record it is about, not the /tasks list
     await expect(link).toHaveAttribute("href", `/deals/${dealId}`);
-    // labelled by kind, so it reads as a system reminder before it is opened
-    await expect(link.locator("span", { hasText: /^No contact$/ })).toHaveCount(1);
+    // labelled by kind, so it reads as a system reminder before it is opened.
+    // getByText, not locator("span", { hasText }): hasText matches every span
+    // whose WHOLE text is "No contact" — the pill and the line that wraps it —
+    // while getByText answers only the innermost (A01 review)
+    await expect(link.getByText("No contact", { exact: true })).toHaveCount(1);
 
     await link.click();
     await expect(page).toHaveURL(new RegExp(`/deals/${dealId}$`), { timeout: opTimeout(15_000) });

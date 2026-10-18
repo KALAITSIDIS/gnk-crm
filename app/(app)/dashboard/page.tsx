@@ -40,7 +40,12 @@ export default async function DashboardPage() {
             <h2 id="dashboard-my-day" className="text-base font-semibold text-text-1">
               {t("myDay.title")}
             </h2>
-            <MyDay profileId={profile.id} level={3} className="grid gap-4 lg:grid-cols-2" />
+            {/* grid-cols-1, not an implicit column: an implicit `auto` track
+                grows to its widest row's nowrap title, so below lg a long
+                task title pushed the page sideways at 380px instead of being
+                cut with an ellipsis (A01 review). grid-cols-1 is
+                minmax(0, 1fr) — the card holds the viewport's width. */}
+            <MyDay profileId={profile.id} level={3} className="grid grid-cols-1 gap-4 lg:grid-cols-2" />
           </section>
           {/* admin-branch only: tasks_select gives an admin the whole org's
               tasks and an agent only their own, so a team card is an admin view */}

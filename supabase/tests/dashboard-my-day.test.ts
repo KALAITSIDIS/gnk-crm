@@ -39,6 +39,14 @@ import {
  *      admin's.
  *   7. A count that comes back without a count is the page's failure — never a
  *      zero and never the length of the list.
+ *   8. /tasks sends each row where the dashboard does (taskTarget): a hold
+ *      reminder opens its property's Reservation tab through the reference
+ *      chip — not the buyer it also names — an unanswered-lead reminder opens
+ *      the inbox, a feedback nudge its viewing (A01 review: nothing pinned the
+ *      page's adoption of the rule).
+ *   9. Below lg the My day and Team grids are one zero-minimum column, so a
+ *      long nowrap title is cut instead of widening the page (A01 review; the
+ *      380px e2e measures it).
  *
  * THROWAWAY ORGANISATIONS, deleted at the end as postgres.
  */
@@ -74,6 +82,8 @@ vi.mock("next-intl/server", async () => {
 });
 
 import DashboardPage from "@/app/(app)/dashboard/page";
+import TasksPage from "@/app/(app)/tasks/page";
+import { TaskSection, type TaskItem } from "@/components/features/tasks/task-list";
 import { AdminDashboard } from "@/components/features/dashboard/admin-dashboard";
 import { AgentDashboard } from "@/components/features/dashboard/agent-dashboard";
 import { Card, CardEmpty } from "@/components/features/dashboard/card";
@@ -213,6 +223,8 @@ const TITLE = {
   agentFuture: `MD ${RUN} agent not yet due`,
   agentDone: `MD ${RUN} agent done overdue`,
   otherOrg: `MD ${RUN} other org overdue`,
+  holdExpiring: `MD ${RUN} hold expiring`,
+  leadUnanswered: `MD ${RUN} lead unanswered`,
 };
 
 /** The next Cyprus midnight, as My day computes it (via the next day KEY, not +24h). */
@@ -339,6 +351,25 @@ beforeAll(async () => {
   id.leadUnassignedClosed = await lead(ORG, { status: "converted", received_at: ago(DAY) });
   await lead(OTHER, { status: "new", received_at: ago(60_000) });
 
+  // /tasks' links (8): two of the admin's reminders, not due for ten days so
+  // neither My day nor Team counts them. The hold reminder names its buyer as
+  // well as its property — the old viewing → deal → contact chain sent it to
+  // the buyer; the rule sends it to the property's Reservation tab.
+  id.reservation = await one(
+    "insert into reservations (org_id, property_id, contact_id, expires_at) values ($1, $2, $3, now() + interval '10 days') returning id",
+    [ORG, id.property, id.contact],
+  );
+  id.holdExpiring = await task(ORG, TITLE.holdExpiring, new Date(now + 10 * DAY), admin.id, {
+    kind: "reservation_expiring",
+    property_id: id.property,
+    contact_id: id.contact,
+    reservation_id: id.reservation,
+  });
+  id.leadTask = await task(ORG, TITLE.leadUnanswered, new Date(now + 10 * DAY), admin.id, {
+    kind: "lead_unanswered",
+    lead_id: id.leadUnanswered,
+  });
+
   // the feed: twelve sales events, then the newest of all a config change
   for (let i = 0; i < 12; i++) {
     id[`sale${i}`] = await event(ORG, "property", "updated", admin.id, id.property);
@@ -349,7 +380,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (pg) {
-    for (const t of ["tasks", "viewings", "leads", "deals", "contacts", "properties"]) {
+    for (const t of ["tasks", "reservations", "viewings", "leads", "deals", "contacts", "properties"]) {
       await pg.query(`delete from ${t} where org_id = any($1::uuid[])`, [ORGS]);
     }
     for (const u of userIds) await svc.auth.admin.deleteUser(u);
@@ -375,6 +406,22 @@ describe("the dashboard page, by role", () => {
     const myDay = [...walk(tree)].find((e) => e.type === MyDay)!;
     expect(myDay.props.profileId).toBe(admin.id);
     expect(myDay.props.level).toBe(3); // its cards sit under the "My day" h2
+  });
+
+  it("below lg, My day and Team are ONE zero-minimum column — a long title is cut, the page not widened", async () => {
+    // An implicit grid column is `auto`: it grows to its widest row's nowrap
+    // title, and at 380px one cron title scrolled the page sideways.
+    // grid-cols-1 is repeat(1, minmax(0, 1fr)). The e2e at 380px measures it
+    // with long titles; this pins the class that does it on both grids.
+    const tree = await as(admin, () => DashboardPage());
+    const myDay = [...walk(tree)].find((e) => e.type === MyDay)!;
+    expect(String(myDay.props.className).split(/\s+/)).toEqual(
+      expect.arrayContaining(["grid", "grid-cols-1", "lg:grid-cols-2"]),
+    );
+    const team = (await as(admin, () => TeamCards({ profileId: admin.id }))) as Element;
+    expect(String(team.props.className).split(/\s+/)).toEqual(
+      expect.arrayContaining(["grid", "grid-cols-1", "lg:grid-cols-2"]),
+    );
   });
 
   it("an agent's page has no Team section and no admin KPIs — only the agent dashboard", async () => {
@@ -520,6 +567,44 @@ describe("an agent's My day", () => {
     const { data, error } = await client.from("tasks").select("id").eq("assignee_id", admin.id);
     expect(error).toBeNull();
     expect(data).toEqual([]);
+  });
+});
+
+describe("/tasks links each row by the dashboard's rule (taskTarget)", () => {
+  it("a hold opens its property's Reservation tab on the chip, a lead reminder the inbox, a nudge its record", async () => {
+    const tree = await as(admin, () => TasksPage({ searchParams: Promise.resolve({}) }));
+    const items = [...walk(tree)]
+      .filter((e) => e.type === TaskSection)
+      .flatMap((e) => e.props.items as TaskItem[]);
+    const item = (taskId: string) => {
+      const found = items.find((i) => i.id === taskId);
+      if (!found) throw new Error(`task ${taskId} is not on the admin's /tasks page`);
+      return found;
+    };
+    const links = (taskId: string) => {
+      const i = item(taskId);
+      return { propertyHref: i.propertyHref, href: i.href, hrefLabel: i.hrefLabel };
+    };
+
+    // the property IS the target: its reference chip opens the tab, and there is
+    // no second link — not to the buyer the reminder also carries (the old
+    // viewing → deal → contact chain's answer)
+    expect(links(id.holdExpiring)).toMatchObject({
+      propertyHref: `/properties/${id.property}?tab=reservation`,
+      href: null,
+    });
+    expect(item(id.holdExpiring).propertyRef).toBe(`MD${RUN}`.slice(0, 20));
+    // no lead page yet: the response is logged in the inbox
+    expect(links(id.leadTask)).toEqual({ propertyHref: null, href: "/leads", hrefLabel: "Lead inbox" });
+    // the dashboard's targets for the same rows
+    expect(links(id.dealNudge)).toEqual({ propertyHref: null, href: `/deals/${id.deal}`, hrefLabel: "Deal" });
+    // feedback is logged on the viewing; its property chip is a plain chip
+    expect(links(id.feedback)).toEqual({ propertyHref: null, href: `/viewings/${id.viewing}`, hrefLabel: "Viewing" });
+    // a typed task with no link stays on the list: no link at all
+    expect(links(id.adminOverdue)).toEqual({ propertyHref: null, href: null, hrefLabel: null });
+    console.log(
+      `[evidence] /tasks links: hold ${JSON.stringify(links(id.holdExpiring))}; lead ${JSON.stringify(links(id.leadTask))}`,
+    );
   });
 });
 

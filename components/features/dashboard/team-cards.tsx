@@ -92,8 +92,10 @@ export async function TeamCards({
     };
   });
 
+  // grid-cols-1 (minmax(0, 1fr)) below lg: an implicit `auto` column grows to
+  // a row's nowrap title and scrolls the phone page sideways (A01 review)
   return (
-    <div className={cn("grid gap-4 lg:grid-cols-2", className)}>
+    <div className={cn("grid grid-cols-1 gap-4 lg:grid-cols-2", className)}>
       <Card
         title={t("cards.unassignedLeads")}
         icon={<UserX className="size-4 text-warning" />}
