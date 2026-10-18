@@ -13,12 +13,16 @@ import {
 import type { MandateBadgeState } from "@/components/features/shared/mandate-badge";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/server";
-import { unwrapRows } from "@/lib/supabase/unwrap";
+import { unwrapCount, unwrapRows } from "@/lib/supabase/unwrap";
 import { PROPERTIES_PAGE_SIZE } from "@/lib/validators/properties";
 import {
   applyPropertyListFilters,
+  countPropertyList,
+  hiddenUnitFilters,
+  hiddenUnitsText,
   mandateEmbed,
   parsePropertyFilters,
+  propertyCountNoun,
 } from "@/lib/queries/properties-list";
 import { ExportCsvButton } from "@/components/features/shared/export-csv-button";
 
@@ -81,23 +85,35 @@ export default async function PropertiesPage({
 
   const query = applyPropertyListFilters(base, filters);
 
+  // F04: the default list leaves units out, so it SAYS how many — one exact
+  // HEAD count of the same filters with kind=unit, beside the page read. The
+  // default total plus this count is exactly what "Show all kinds" lists.
+  const unitFilters = hiddenUnitFilters(filters);
+
   const from = (filters.page - 1) * PROPERTIES_PAGE_SIZE;
   // `id` breaks created_at ties: without a unique last key each offset page may
   // order tied rows differently, repeating some and skipping others. Same order
   // as the CSV export; the table and the cards render these same rows. (A
   // listing added between two page loads still shifts the pages — each is its
   // own request.) T-list-page-order
-  const result = await query
-    .order("created_at", { ascending: false })
-    .order("id")
-    .range(from, from + PROPERTIES_PAGE_SIZE - 1);
+  const [result, hiddenRes] = await Promise.all([
+    query
+      .order("created_at", { ascending: false })
+      .order("id")
+      .range(from, from + PROPERTIES_PAGE_SIZE - 1),
+    unitFilters ? countPropertyList(supabase, unitFilters) : null,
+  ]);
 
-  // PGRST103 = page beyond the result set → render the empty-page state
-  if (result.error && result.error.code !== "PGRST103") {
-    throw new Error(`Properties query failed: ${result.error.message}`);
-  }
-  const data = result.data ?? [];
-  const count = result.count ?? 0;
+  // PGRST103 = page beyond the result set → render the empty-page state. That
+  // answer carries no count, so the total is asked for rather than shown as 0;
+  // every other answer must carry its rows and its count (a missing one is a
+  // failure, never an empty list).
+  const beyondEnd = result.error?.code === "PGRST103";
+  const data = beyondEnd ? [] : unwrapRows(result, "properties");
+  const total = beyondEnd
+    ? unwrapCount(await countPropertyList(supabase, filters), "properties (count)")
+    : unwrapCount(result, "properties");
+  const hiddenUnits = hiddenRes ? unwrapCount(hiddenRes, "properties (units not shown)") : 0;
 
   const rows: PropertyRow[] = data.map((p) => {
     const media = (p.property_media ?? []) as {
@@ -134,7 +150,6 @@ export default async function PropertiesPage({
     };
   });
 
-  const total = count;
   const totalPages = Math.max(1, Math.ceil(total / PROPERTIES_PAGE_SIZE));
   const pageParams = (page: number) => {
     const params = new URLSearchParams();
@@ -149,19 +164,25 @@ export default async function PropertiesPage({
   // Both Export and Map carry the active filters but not pagination — the whole
   // filtered set, RLS-scoped to what this user can see. ONE source of truth for
   // which params travel: a second copy would drift from this one.
-  const filterQuery = (() => {
+  const filterParams = (() => {
     const params = new URLSearchParams();
     for (const [k, v] of Object.entries(sp)) {
       if (k === "page") continue;
       const val = first(v);
       if (val) params.set(k, val);
     }
-    const qs = params.toString();
-    return qs ? `?${qs}` : "";
+    return params;
   })();
+  const filterQuery = filterParams.toString() ? `?${filterParams.toString()}` : "";
 
   const exportHref = `/properties/export${filterQuery}`;
   const mapHref = `/properties/map${filterQuery}`;
+  // the same filters with every kind — the default's rows plus the units it hides
+  const allKindsHref = (() => {
+    const params = new URLSearchParams(filterParams);
+    params.set("kind", "all");
+    return `/properties?${params.toString()}`;
+  })();
 
   return (
     <div className="flex flex-col gap-4">
@@ -169,8 +190,21 @@ export default async function PropertiesPage({
         <div>
           <h1 className="text-xl font-semibold text-text-1">Properties</h1>
           <p className="text-sm text-text-2">
-            {total} {filters.scope === "archived" ? "archived " : ""}propert
-            {total === 1 ? "y" : "ies"}
+            {total} {filters.scope === "archived" ? "archived " : ""}
+            {propertyCountNoun(filters.kind, total)}
+            {hiddenUnits > 0 ? (
+              <>
+                {" · "}
+                {hiddenUnitsText(hiddenUnits)}
+                {" — "}
+                <Link
+                  href={allKindsHref}
+                  className="font-medium text-brand-700 underline-offset-2 hover:underline"
+                >
+                  Show all kinds
+                </Link>
+              </>
+            ) : null}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -208,11 +242,17 @@ export default async function PropertiesPage({
           <p className="text-sm text-text-2">
             {total > 0 || filters.page > 1
               ? "Nothing on this page."
-              : filters.scope === "archived"
-                ? "No archived properties — withdrawn listings and archived visibility show up here."
-                : "No properties match — add the first one or clear filters."}
+              : hiddenUnits > 0
+                ? `No listings or developments match — ${hiddenUnits} ${hiddenUnits === 1 ? "unit does" : "units do"}.`
+                : filters.scope === "archived"
+                  ? "No archived properties — withdrawn listings and archived visibility show up here."
+                  : "No properties match — add the first one or clear filters."}
           </p>
-          {filters.scope === "archived" ? null : (
+          {total === 0 && filters.page === 1 && hiddenUnits > 0 ? (
+            <Button asChild variant="outline" size="sm">
+              <Link href={allKindsHref}>Show all kinds</Link>
+            </Button>
+          ) : filters.scope === "archived" ? null : (
             <Button asChild variant="outline" size="sm">
               <Link href="/properties/new">
                 <Plus className="size-4" /> Add property
@@ -244,7 +284,9 @@ export default async function PropertiesPage({
         </>
       )}
 
-      {totalPages > 1 ? (
+      {/* past the end there is no "Page 12 of 11" to show; the empty state says
+          so and the header still states the true total */}
+      {totalPages > 1 && !beyondEnd ? (
         <div className="flex items-center justify-between text-sm text-text-2">
           <span>
             Page {filters.page} of {totalPages}

@@ -4,7 +4,7 @@ import { getCurrentProfile } from "@/lib/services/auth";
 import { auditFilters, logListExport, vet } from "@/lib/services/export-audit";
 import {
   MANDATE_FILTERS,
-  PROPERTY_KINDS,
+  PROPERTY_KIND_FILTERS,
   PROPERTY_SCOPES,
   PROPERTY_STATUSES,
   PROPERTY_TYPES,
@@ -68,7 +68,7 @@ export async function GET(request: NextRequest) {
         price_min: vet.number,
         price_max: vet.number,
         mandate: vet.oneOf(MANDATE_FILTERS),
-        kind: vet.oneOf(PROPERTY_KINDS),
+        kind: vet.oneOf(PROPERTY_KIND_FILTERS),
         scope: vet.oneOf(PROPERTY_SCOPES),
       },
     ),

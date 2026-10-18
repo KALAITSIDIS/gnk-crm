@@ -174,7 +174,10 @@ async function listPage(user: TestUser, params: Params) {
       PropertiesPage({ searchParams: Promise.resolve({ view: "table", ...params }) }),
     )) as ReactNode;
     const els = [...walk(root)];
-    const header = els.find((e) => e.type === "p" && /^\d+ (?:archived )?propert(?:y|ies)$/.test(textOf(e)));
+    // the default list names what it holds (F04): "N listings & developments"
+    const header = els.find(
+      (e) => e.type === "p" && /^\d+ (?:archived )?(?:listings & developments|listing or development)(?: · |$)/.test(textOf(e)),
+    );
     if (!header) throw new Error("the page stated no total");
     const table = els.find((e) => e.type === PropertiesTable);
     const rows = table ? (table.props.rows as { id: string; mandate: string }[]) : [];

@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/select";
 import {
   MANDATE_FILTERS,
+  PROPERTY_KIND_FILTERS,
   PROPERTY_KINDS,
   PROPERTY_SCOPES,
   PROPERTY_STATUSES,
@@ -33,6 +34,14 @@ export interface AreaOption {
 }
 
 const ALL = "__all__";
+
+/** The single-kind options; the default and "All kinds" are written out below. */
+const KIND_LABEL: Record<(typeof PROPERTY_KINDS)[number], string> = {
+  standalone: "Standalone listings",
+  project: "Projects",
+  phase: "Phases",
+  unit: "Units only",
+};
 
 function labelize(value: string) {
   return value.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
@@ -78,6 +87,8 @@ export function PropertiesFilters({
 
   const district = searchParams.get("district") ?? ALL;
   const districtAreas = areas.filter((a) => a.districtId === district);
+  const kindParam = searchParams.get("kind");
+  const kindValues: readonly string[] = PROPERTY_KIND_FILTERS;
   // null is AUTO — cards on a phone, the table above it — so neither toggle
   // is lit until the person chooses; an explicit choice is kept everywhere.
   const rawView = searchParams.get("view");
@@ -212,20 +223,25 @@ export function PropertiesFilters({
 
         {/* Units are hidden unless asked for (audit finding 3) — one 60-unit
             project is 2.5 pages of the default list. The default option SAYS SO
-            rather than reading "All kinds": a default that silently removes rows
-            is a trap, one the user can see and change is a choice. */}
+            — and the list header counts the units it leaves out — rather than
+            reading "All kinds": a default that silently removes rows is a trap,
+            one the user can see and change is a choice. "All kinds" is its own
+            option (F04), units included. ALL is the default (no parameter);
+            "all" is a real value that travels in the URL. A value the server
+            does not read shows the default, which is what the server applies. */}
         <Select
-          value={searchParams.get("kind") ?? ALL}
+          value={kindParam !== null && kindValues.includes(kindParam) ? kindParam : ALL}
           onValueChange={(v) => setParams({ kind: v })}
         >
           <SelectTrigger className={selectClass}>
             <SelectValue placeholder="Kind" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={ALL}>Standalone &amp; projects</SelectItem>
+            <SelectItem value={ALL}>Listings &amp; developments (no units)</SelectItem>
+            <SelectItem value="all">All kinds</SelectItem>
             {PROPERTY_KINDS.map((k) => (
               <SelectItem key={k} value={k}>
-                {k === "unit" ? "Units only" : labelize(k)}
+                {KIND_LABEL[k]}
               </SelectItem>
             ))}
           </SelectContent>

@@ -194,4 +194,16 @@ describe("resolvePropertyKindScope", () => {
     expect(resolvePropertyKindScope({ kind: "project" })).toBe("none");
     expect(resolvePropertyKindScope({ kind: "phase" })).toBe("none");
   });
+
+  it("kind=all (F04) stops the default filtering and narrows nothing", () => {
+    expect(resolvePropertyKindScope({ kind: "all" })).toBe("none");
+  });
+
+  it("the filters schema reads kind=all, and a kind it does not know as the default", () => {
+    expect(propertyFiltersSchema.parse({ kind: "all" }).kind).toBe("all");
+    expect(propertyFiltersSchema.parse({ kind: "unit" }).kind).toBe("unit");
+    const garbage = propertyFiltersSchema.parse({ kind: "ALL" });
+    expect(garbage.kind).toBeUndefined();
+    expect(resolvePropertyKindScope(garbage)).toBe("exclude-units");
+  });
 });

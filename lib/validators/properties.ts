@@ -151,6 +151,14 @@ const optionalNumber = z
     return Number.isFinite(n) && n >= 0 ? n : undefined;
   });
 
+/**
+ * What the list's `kind` parameter may say: one kind, or `all` (F04). Absent
+ * is the default — every kind but units (see `resolvePropertyKindScope`).
+ * Declared above the schema, which reads it at module-evaluation time.
+ */
+export const PROPERTY_KIND_FILTERS = [...PROPERTY_KINDS, "all"] as const;
+export type PropertyKindFilter = (typeof PROPERTY_KIND_FILTERS)[number];
+
 /** Parsed from URL searchParams — invalid values silently drop to undefined. */
 export const propertyFiltersSchema = z.object({
   q: z
@@ -167,7 +175,7 @@ export const propertyFiltersSchema = z.object({
   price_min: optionalNumber,
   price_max: optionalNumber,
   mandate: optionalEnum(MANDATE_FILTERS),
-  kind: optionalEnum(PROPERTY_KINDS),
+  kind: optionalEnum(PROPERTY_KIND_FILTERS),
   scope: z
     .string()
     .optional()
@@ -211,13 +219,16 @@ export type PropertyKindMode = "exclude-units" | "none";
  * including its escape hatch: an explicit `kind=unit` wins over the default,
  * because a filter that returns nothing when you pick it is a broken filter.
  *
- * The default is VISIBLE IN THE UI — the select reads "Standalone & projects",
- * not "All kinds". A default that silently removes rows is a trap; one the user
+ * The default is VISIBLE IN THE UI — the select reads "Listings & developments
+ * (no units)", and the list header counts the units it is leaving out with a
+ * link to them. A default that silently removes rows is a trap; one the user
  * can see and change is a choice.
+ *
+ * `kind=all` (F04) is the explicit "every kind": no kind predicate at all, so
+ * the list, the export and the map can hold the same rows a by-status count
+ * of every record does. An explicit single kind narrows on its own.
  */
-export function resolvePropertyKindScope(filters: {
-  kind?: (typeof PROPERTY_KINDS)[number];
-}): PropertyKindMode {
+export function resolvePropertyKindScope(filters: { kind?: PropertyKindFilter }): PropertyKindMode {
   return filters.kind === undefined ? "exclude-units" : "none";
 }
 

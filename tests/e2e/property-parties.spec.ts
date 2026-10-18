@@ -227,7 +227,24 @@ test.describe("property kind filter", () => {
     expect(units).not.toContain(project!.reference);
 
     // The default option says what it does rather than hiding it.
-    await expect(page.getByText("Standalone & projects")).toBeVisible();
+    await expect(page.getByText("Listings & developments (no units)")).toBeVisible();
+
+    // F04: the header COUNTS what the default leaves out, and one click lists
+    // every kind — the default's rows plus exactly those units.
+    const header = page.locator("main p").filter({ hasText: /^\d+ listings? (?:&|or) developments?/ }).first();
+    const said = (await header.innerText()).trim();
+    const m = /^(\d+) listings? (?:&|or) developments? · (\d+) units? not shown — Show all kinds$/.exec(said);
+    expect(m, said).not.toBeNull();
+    expect(Number(m![2])).toBeGreaterThanOrEqual(unitRefs.length);
+    await header.getByRole("link", { name: "Show all kinds" }).click();
+    await expect(page).toHaveURL(/[?&]kind=all(&|$)/);
+    await expect(
+      page.locator("main p").filter({ hasText: /· all kinds$/ }).first(),
+    ).toHaveText(`${Number(m![1]) + Number(m![2])} properties · all kinds`);
+    // the same view's export holds the project AND its units
+    const all = await refsIn("?kind=all");
+    expect(all).toContain(project!.reference);
+    for (const ref of unitRefs) expect(all).toContain(ref);
 
     await admin.from("properties").delete().eq("parent_id", projectId);
     await admin.from("properties").delete().eq("id", projectId);

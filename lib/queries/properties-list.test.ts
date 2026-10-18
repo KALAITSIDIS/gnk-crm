@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   parsePropertyFilters,
   applyPropertyListFilters,
+  countPropertyList,
+  hiddenUnitFilters,
+  hiddenUnitsText,
   mandateEmbed,
+  propertyCountNoun,
   MANDATE_BLOCK_EMBED,
   MANDATE_HAS_EMBED,
   MANDATE_REL,
@@ -321,5 +325,116 @@ describe("applyPropertyListFilters — kind scope (audit finding 3)", () => {
     expect(k).toHaveLength(1);
     expect(k[0].method).toBe("eq");
     expect(k[0].args[1]).toBe("project");
+  });
+});
+
+describe("applyPropertyListFilters — kind=all (F04)", () => {
+  const kindCalls = (calls: { method: string; args: unknown[] }[]) =>
+    calls.filter((c) => c.args[0] === "kind");
+
+  it("kind=all parses to 'all' and puts NO kind predicate on the query", () => {
+    const f = base({ kind: "all" });
+    expect(f.kind).toBe("all");
+    const { spy, calls } = spyBuilder();
+    applyPropertyListFilters(spy as never, f);
+    expect(kindCalls(calls)).toEqual([]);
+  });
+
+  it("kind=all leaves the retired scope exactly as it was", () => {
+    const scoped = (over: Record<string, string>) => {
+      const { spy, calls } = spyBuilder();
+      applyPropertyListFilters(spy as never, base(over));
+      return calls.filter((c) => c.args[0] !== "kind");
+    };
+    expect(scoped({ kind: "all" })).toEqual(scoped({}));
+    expect(scoped({ kind: "all", scope: "archived" })).toEqual(scoped({ scope: "archived" }));
+    expect(scoped({ kind: "all", status: "available" })).toEqual(scoped({ status: "available" }));
+  });
+
+  it("a kind the list does not know still falls back to the default — units hidden", () => {
+    const f = base({ kind: "everything" });
+    expect(f.kind).toBeUndefined();
+    const { spy, calls } = spyBuilder();
+    applyPropertyListFilters(spy as never, f);
+    expect(kindCalls(calls)).toEqual([{ method: "neq", args: ["kind", "unit"] }]);
+  });
+});
+
+describe("hiddenUnitFilters — the units the default list leaves out (F04)", () => {
+  it("is the same filters with kind=unit when the list hides units", () => {
+    const f = base({ status: "available", mandate: "none", q: "PAF", page: "3" });
+    const hidden = hiddenUnitFilters(f);
+    expect(hidden).toEqual({ ...f, kind: "unit" });
+  });
+
+  it("is null when the list hides nothing — any explicit kind, all included", () => {
+    for (const kind of ["all", "unit", "standalone", "project", "phase"]) {
+      expect(hiddenUnitFilters(base({ kind })), kind).toBeNull();
+    }
+  });
+
+  it("the default and the hidden-units count split one all-kinds set: neq vs eq on kind, the rest identical", () => {
+    const f = base({ status: "available", type: "apartment", mandate: "expired" });
+    const record = (filters: ReturnType<typeof base>) => {
+      const { spy, calls } = spyBuilder();
+      applyPropertyListFilters(spy as never, filters);
+      return calls;
+    };
+    const shown = record(f);
+    const hidden = record(hiddenUnitFilters(f)!);
+    const all = record(base({ status: "available", type: "apartment", mandate: "expired", kind: "all" }));
+    expect(shown.filter((c) => c.args[0] === "kind")).toEqual([{ method: "neq", args: ["kind", "unit"] }]);
+    expect(hidden.filter((c) => c.args[0] === "kind")).toEqual([{ method: "eq", args: ["kind", "unit"] }]);
+    const rest = (calls: typeof shown) => calls.filter((c) => c.args[0] !== "kind");
+    expect(rest(hidden)).toEqual(rest(shown));
+    expect(rest(all)).toEqual(rest(shown));
+  });
+});
+
+describe("countPropertyList", () => {
+  it("is an exact HEAD count over the list's embeds and predicates", () => {
+    const selects: unknown[][] = [];
+    const { spy, calls } = spyBuilder();
+    const supabase = {
+      from: (table: string) => {
+        calls.push({ method: "from", args: [table] });
+        return {
+          select: (...args: unknown[]) => {
+            selects.push(args);
+            return spy;
+          },
+        };
+      },
+    };
+    const f = base({ mandate: "none", kind: "unit" });
+    countPropertyList(supabase as never, f);
+    expect(calls[0]).toEqual({ method: "from", args: ["properties"] });
+    // the mandate aliases ride in the select, or their filters are 400 PGRST108
+    expect(selects).toEqual([[`id, ${mandateEmbed(f)}`, { count: "exact", head: true }]]);
+    expect(calls).toContainEqual({ method: "eq", args: ["kind", "unit"] });
+    expect(calls).toContainEqual({ method: "is", args: ["mandate_block", null] });
+  });
+});
+
+describe("propertyCountNoun / hiddenUnitsText — the header's words", () => {
+  it("names what the default holds — not 'properties' with the units taken out", () => {
+    expect(propertyCountNoun(undefined, 4)).toBe("listings & developments");
+    expect(propertyCountNoun(undefined, 1)).toBe("listing or development");
+    expect(propertyCountNoun(undefined, 0)).toBe("listings & developments");
+  });
+
+  it("names each explicit kind, and says when every kind is in", () => {
+    expect(propertyCountNoun("all", 10)).toBe("properties · all kinds");
+    expect(propertyCountNoun("all", 1)).toBe("property · all kinds");
+    expect(propertyCountNoun("standalone", 3)).toBe("standalone listings");
+    expect(propertyCountNoun("project", 1)).toBe("project");
+    expect(propertyCountNoun("phase", 2)).toBe("phases");
+    expect(propertyCountNoun("unit", 6)).toBe("units");
+    expect(propertyCountNoun("unit", 1)).toBe("unit");
+  });
+
+  it("counts the hidden units in words", () => {
+    expect(hiddenUnitsText(6)).toBe("6 units not shown");
+    expect(hiddenUnitsText(1)).toBe("1 unit not shown");
   });
 });

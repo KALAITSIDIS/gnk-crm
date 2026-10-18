@@ -1,8 +1,11 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/lib/supabase/database.types";
 import {
   propertyFiltersSchema,
   resolvePropertyKindScope,
   resolvePropertyScope,
   type PropertyFilters,
+  type PropertyKindFilter,
   RETIRED_PROPERTY_STATUS,
   RETIRED_PROPERTY_VISIBILITY,
 } from "@/lib/validators/properties";
@@ -179,8 +182,9 @@ export function applyPropertyListFilters<Q extends PropertyFilterBuilder<Q>>(
   // Units are inventory inside a project, not listings — hidden unless asked
   // for, so one 60-unit project cannot bury the list, the export and the map
   // (all three share this function). An explicit kind wins, same escape hatch
-  // as the retired scope below.
-  if (filters.kind) q = q.eq("kind", filters.kind as never);
+  // as the retired scope below; `all` (F04) asks for every kind, so it adds no
+  // kind predicate at all.
+  if (filters.kind && filters.kind !== "all") q = q.eq("kind", filters.kind as never);
   else if (resolvePropertyKindScope(filters) === "exclude-units") {
     q = q.neq("kind", "unit" as never);
   }
@@ -258,4 +262,63 @@ export function applyPropertyListFilters<Q extends PropertyFilterBuilder<Q>>(
   }
 
   return q;
+}
+
+/* ---------- the header: what the list holds, and what it leaves out (F04) ---------- */
+
+/**
+ * An exact count of the rows `filters` select, as a HEAD request: the same
+ * embeds (`mandateEmbed`, so every mandate filter's alias is legal) and the
+ * same predicates as the list, the export and the map. The caller reads it
+ * with `unwrapCount` — a missing count is a failure, never zero.
+ */
+export function countPropertyList(supabase: SupabaseClient<Database>, filters: PropertyFilters) {
+  return applyPropertyListFilters(
+    supabase
+      .from("properties")
+      .select(`id, ${mandateEmbed(filters)}`, { count: "exact", head: true }),
+    filters,
+  );
+}
+
+/**
+ * The filters whose count is "the units this list is not showing" (F04): the
+ * list's own filters with `kind=unit` — or null when the list hides no units
+ * (any explicit kind, `all` included). The default list and this count split
+ * one all-kinds set exactly: `kind <> 'unit'` and `kind = 'unit'` under the
+ * same other predicates, `kind` being NOT NULL. So the default's total plus
+ * this count is the total `?kind=all` states.
+ */
+export function hiddenUnitFilters(filters: PropertyFilters): PropertyFilters | null {
+  return resolvePropertyKindScope(filters) === "exclude-units" ? { ...filters, kind: "unit" } : null;
+}
+
+const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
+
+/**
+ * What the header calls the rows a kind filter holds. The default names what
+ * it holds — "listings & developments", a development being a project or a
+ * phase — because "properties" over a list with the units taken out is the
+ * reading that made the dashboard's counts irreconcilable with it (F04).
+ */
+export function propertyCountNoun(kind: PropertyKindFilter | undefined, n: number): string {
+  switch (kind) {
+    case undefined:
+      return plural(n, "listing or development", "listings & developments");
+    case "all":
+      return `${plural(n, "property", "properties")} · all kinds`;
+    case "standalone":
+      return plural(n, "standalone listing", "standalone listings");
+    case "project":
+      return plural(n, "project", "projects");
+    case "phase":
+      return plural(n, "phase", "phases");
+    case "unit":
+      return plural(n, "unit", "units");
+  }
+}
+
+/** "6 units not shown" — the hint beside the default list's own total. */
+export function hiddenUnitsText(n: number): string {
+  return `${n} ${plural(n, "unit", "units")} not shown`;
 }

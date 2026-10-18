@@ -40,9 +40,22 @@ function labelize(value: string) {
   return value.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
 }
 
+/**
+ * Which rows are not plain listings — named on the row, because "All kinds"
+ * (F04) puts a project beside its own units and the list must not leave the
+ * reader to tell them apart by reference.
+ */
+const KIND_TAG: Record<string, string> = { project: "Project", phase: "Phase", unit: "Unit" };
+
 function priceCell(row: PropertyRow) {
   if (row.transaction_type === "rent") {
     return row.rent_price_month ? `${formatMoney(row.rent_price_month)}/mo` : "—";
+  }
+  // A project's or phase's own asking price is its "from" figure — the units
+  // carry the prices (the detail page labels it "From price"). Beside its
+  // units it must not read as one more price.
+  if ((row.kind === "project" || row.kind === "phase") && row.asking_price !== null) {
+    return `from ${formatMoney(row.asking_price)}`;
   }
   return formatMoney(row.asking_price);
 }
@@ -113,7 +126,10 @@ export function PropertiesTable({ rows }: { rows: PropertyRow[] }) {
               <TableCell className="text-[13px] text-text-2">
                 {[row.district, row.area].filter(Boolean).join(" · ") || "—"}
               </TableCell>
-              <TableCell className="text-[13px]">{labelize(row.property_type)}</TableCell>
+              <TableCell className="text-[13px]">
+                {labelize(row.property_type)}
+                {KIND_TAG[row.kind] ? <span className="text-text-3"> · {KIND_TAG[row.kind]}</span> : null}
+              </TableCell>
               <TableCell className="text-right tabular-nums">{row.bedrooms ?? "—"}</TableCell>
               <TableCell className="text-right tabular-nums text-[13px]">
                 {formatArea(row.property_type === "land" ? row.plot_area_sqm : row.covered_area_sqm)}
@@ -151,7 +167,12 @@ export function PropertiesCards({ rows }: { rows: PropertyRow[] }) {
           <Thumb row={row} className="h-40 w-full rounded-b-none rounded-t-[10px]" />
           <div className="flex flex-col gap-1.5 p-4">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-sm font-semibold text-brand-700">{row.reference}</span>
+              <span className="text-sm font-semibold text-brand-700">
+                {row.reference}
+                {KIND_TAG[row.kind] ? (
+                  <span className="text-xs font-normal text-text-3"> · {KIND_TAG[row.kind]}</span>
+                ) : null}
+              </span>
               <MandateBadge state={row.mandate} />
             </div>
             <p className="truncate text-sm text-text-1">{row.title ?? labelize(row.property_type)}</p>
