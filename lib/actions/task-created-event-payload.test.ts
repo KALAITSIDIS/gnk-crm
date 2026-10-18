@@ -10,9 +10,9 @@ import { fakeClient, type FakePage } from "@/lib/testing/fake-client";
  * task's hash-chained `created` event, where neither erasure nor a correction
  * can reach it. Nothing reads it there: the timeline's `created` line prints an
  * amount only, and no entity override exists for tasks. The title stays on the
- * task ROW, where the task list shows it — there is no task edit, and erasure
- * does not touch tasks (BACKLOG), but a row can be corrected and the event
- * could not. Driven through the real action, like
+ * task ROW, where the task list shows it and its edit (A02) corrects it —
+ * erasure does not touch tasks (BACKLOG), but a row can be corrected and the
+ * event could not. Driven through the real action, like
  * deal-created-event-payload.test.ts, and every logged payload is searched for
  * the fixture's own words.
  *
@@ -72,7 +72,7 @@ describe("quickAddTask writes the task's title to the row, not the chain", () =>
     ).toEqual([]);
   });
 
-  it("logs the created event with the due date and the linked ids only", async () => {
+  it("logs the created event with the due date, the assignee and the linked ids only", async () => {
     const { result } = add(
       { title: TITLE, due_date: "2026-10-01", contact_id: CONTACT_ID, deal_id: DEAL_ID },
       {
@@ -84,15 +84,17 @@ describe("quickAddTask writes the task's title to the row, not the chain", () =>
     expect(created()?.payload).toEqual({
       // Cyprus end of day, 23:59 on 1 October 2026 (UTC+3)
       due_at: "2026-10-01T20:59:00.000Z",
+      // A02: who holds it — an id, always set (the creator unless chosen)
+      assignee_id: "agent-1",
       contact_id: CONTACT_ID,
       deal_id: DEAL_ID,
     });
   });
 
-  it("logs a task with no date and no link as a null due date and nothing else", async () => {
+  it("logs a task with no date and no link as a null due date and its assignee, nothing else", async () => {
     const { result } = add({ title: TITLE });
     expect((await result).error).toBeNull();
-    expect(created()?.payload).toEqual({ due_at: null });
+    expect(created()?.payload).toEqual({ due_at: null, assignee_id: "agent-1" });
   });
 
   it("still writes the title to the task ROW", async () => {

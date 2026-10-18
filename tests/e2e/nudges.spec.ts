@@ -4,6 +4,7 @@ import {
   assertNoProblems,
   fixtureProfile,
   isLocal,
+  opTimeout,
   serviceClient,
   watchForProblems,
 } from "./helpers";
@@ -131,6 +132,37 @@ test.describe("Follow-up nudges", () => {
     await expect(overdue.getByText(`No contact in 14 days: ${DEAL_TITLE}`)).toBeVisible();
 
     assertNoProblems(problems, "tasks with a follow-up nudge");
+  });
+
+  test("the same nudge is on the admin's own day, labelled, and opens its deal (A01)", async ({ page }) => {
+    // Production's users are admins, and until A01 the admin dashboard had no
+    // personal day at all — the nudge reached /tasks and nowhere they look first.
+    const svc = serviceClient();
+    const { dealId, orgId } = await seedStaleDeal(svc, 60);
+    expect((await svc.rpc("create_followup_nudges", { p_org: orgId })).error).toBeNull();
+
+    const problems = watchForProblems(page);
+    await page.goto("/dashboard", { waitUntil: "networkidle" });
+
+    // the "My day" section (a <section aria-labelledby>), its tasks card inside
+    const myDay = page.getByRole("region", { name: "My day" });
+    const tasksCard = myDay
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: /^Tasks due today & overdue/ }) });
+    const link = tasksCard.getByRole("link").filter({ hasText: `No contact in 14 days: ${DEAL_TITLE}` });
+    await expect(link).toHaveCount(1);
+    // the record it is about, not the /tasks list
+    await expect(link).toHaveAttribute("href", `/deals/${dealId}`);
+    // labelled by kind, so it reads as a system reminder before it is opened.
+    // getByText, not locator("span", { hasText }): hasText matches every span
+    // whose WHOLE text is "No contact" — the pill and the line that wraps it —
+    // while getByText answers only the innermost (A01 review)
+    await expect(link.getByText("No contact", { exact: true })).toHaveCount(1);
+
+    await link.click();
+    await expect(page).toHaveURL(new RegExp(`/deals/${dealId}$`), { timeout: opTimeout(15_000) });
+
+    assertNoProblems(problems, "dashboard My day with a follow-up nudge");
   });
 
   test("contact on the deal clears the nudge — the loop a user actually sees", async ({ page }) => {

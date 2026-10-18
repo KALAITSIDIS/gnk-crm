@@ -32,6 +32,40 @@ export const ENTITY_TYPES = [
 ] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 
+/**
+ * The admin dashboard's two feeds (A01). Settings, users, the organisation and
+ * CSV-export audit lines are ADMIN activity; everything else is the sales desk
+ * at work. One unfiltered "latest 10" let a morning of area renames push every
+ * sale, viewing and lead off the screen — and config changes have no other
+ * surface, so they get their own card rather than a filter that hides them.
+ *
+ * Every member of ENTITY_TYPES is in exactly one list (entity-type-feeds.test.ts
+ * pins the partition), so a new entity type cannot be added without choosing
+ * its feed.
+ * The sales feed is read as "not an admin type" all the same: `entity_type` is
+ * free text in the database, and a type only SQL writes must still show up
+ * somewhere rather than vanish from both cards.
+ */
+export const ADMIN_ENTITY_TYPES = [
+  "organization",
+  "user",
+  "config",
+  "export",
+] as const satisfies readonly EntityType[];
+export const SALES_ENTITY_TYPES = [
+  "property",
+  "contact",
+  "lead",
+  "deal",
+  "viewing",
+  "offer",
+  "mandate",
+  "key",
+  "document",
+  "task",
+  "share_link",
+] as const satisfies readonly EntityType[];
+
 export interface LogEventParams {
   orgId: string;
   /** profiles.id of the acting user; null/undefined = system action */

@@ -6,6 +6,7 @@ import { SlipDownloadButton } from "@/components/features/viewings/slip-download
 import { ConfirmationCard } from "@/components/features/viewings/confirmation-card";
 import { RescheduleViewingDialog } from "@/components/features/viewings/reschedule-viewing-dialog";
 import { ViewingStatusActions } from "@/components/features/viewings/viewing-status-actions";
+import { AddTaskDialog } from "@/components/features/tasks/add-task-dialog";
 import { Button } from "@/components/ui/button";
 import { getCurrentProfile } from "@/lib/services/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -140,6 +141,16 @@ export default async function ViewingDetailPage({ params }: { params: Promise<{ 
           >
             {status.replace("_", " ")}
           </span>
+          {/* A02: a follow-up from a viewing ("send the floor plan", "call the
+              owner about the price") lands on the viewing's own record; the
+              same gate as the other record pages — any staff role that can
+              see the viewing may add a task, for themselves or a colleague */}
+          <div className="ml-auto">
+            <AddTaskDialog
+              entity={{ viewing_id: v.id }}
+              entityLabel={property ? `viewing at ${property.reference}` : "this viewing"}
+            />
+          </div>
         </div>
       </div>
 

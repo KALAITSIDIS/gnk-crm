@@ -42,16 +42,38 @@
       "cards": {
         "pipelineByStage": "Pipeline by stage (open deals)",
         "leadsBySource": "Leads by source (30d)",
-        "listingsByStatus": "Listings by status",
         "mandatesExpiring": "Mandates expiring ≤30 days",
-        "latestEvents": "Latest events"
+        "salesActivity": "Latest sales activity",
+        "adminChanges": "Settings & admin changes"
+      },
+      "inventory": {
+        "title": "Inventory by status",
+        "saleable": "Saleable available",
+        "status": {
+          "draft": "Draft",
+          "available": "Available",
+          "reserved": "Reserved",
+          "under_offer": "Under offer",
+          "sold": "Sold",
+          "rented": "Rented"
+        },
+        "kinds": {
+          "standalone": "{count, plural, one {# listing} other {# listings}}",
+          "project": "{count, plural, one {# development} other {# developments}}",
+          "phase": "{count, plural, one {# phase} other {# phases}}",
+          "unit": "{count, plural, one {# unit} other {# units}}"
+        },
+        "totalLabel": "{status}: {count, plural, one {# live record} other {# live records}} — open the list",
+        "footnote": "Live records: not archived and not withdrawn, the properties list's default. A development counts once as its project record (and once per phase); its units count separately. Saleable means listings and units: a development itself cannot be reserved.",
+        "retired": "Withdrawn & archived",
+        "empty": "No live listings."
       },
       "empty": {
         "noOpenDeals": "Nothing yet (no open deals).",
         "noLeads": "No leads in the last 30 days.",
-        "noListings": "No listings yet.",
         "noMandates": "None in the next 30 days.",
-        "noEvents": "No activity yet."
+        "noEvents": "No activity yet.",
+        "noAdminChanges": "No settings, user or export changes yet."
       },
       "actions": {
         "openPipeline": "Open pipeline",
@@ -66,11 +88,14 @@
         "viewings": "Viewings",
         "contacts": "Contacts",
         "calculators": "Calculators"
-      },
+      }
+    },
+    "myDay": {
+      "title": "My day",
       "cards": {
         "todaysViewings": "Today's viewings",
         "tasksDue": "Tasks due today & overdue",
-        "myNewLeads": "My new leads",
+        "myLeads": "My open leads",
         "hotIdle": "Hot buyers idle 3+ days"
       },
       "empty": {
@@ -84,9 +109,40 @@
         "allTasks": "All tasks",
         "leadInbox": "Open lead inbox"
       },
+      "unanswered": "{count, plural, one {# unanswered} other {# unanswered}}",
       "idleDays": "{days}d idle",
       "noActivity": "no activity",
-      "unnamed": "Unnamed"
+      "unnamed": "Unnamed",
+      "kind": {
+        "mandate_renewal": "Mandate renewal",
+        "deal_no_contact": "No contact",
+        "viewing_feedback": "Feedback due",
+        "price_drop_match": "Price-drop match",
+        "new_listing_match": "New-listing match",
+        "reservation_expiring": "Hold expiring",
+        "bulk_price_drop_match": "Reprice match",
+        "installment_due": "Instalment due",
+        "key_recall": "Key return",
+        "viewing_no_show": "No-show",
+        "listing_status_check": "Listing status",
+        "retention_expired": "Retention review",
+        "reservation_still_live": "Hold to settle",
+        "lead_unanswered": "Lead unanswered",
+        "other": "Reminder"
+      }
+    },
+    "team": {
+      "title": "Team",
+      "cards": {
+        "unassignedLeads": "Unassigned open leads",
+        "overdue": "Overdue across the team"
+      },
+      "empty": {
+        "noUnassigned": "Every open lead has an agent.",
+        "noOverdue": "Nothing overdue on anyone else's list."
+      },
+      "unassigned": "Unassigned",
+      "unknownUser": "Unknown user"
     },
     "listingHealth": {
       "title": "Listing health",

@@ -16,7 +16,8 @@ test.describe("Tasks CSV export", () => {
     expect(disposition).toMatch(/filename="my-tasks-\d{4}-\d{2}-\d{2}\.csv"/);
 
     const body = await res.text();
+    // A02 appended Assignee: the view may be delegated or the team's
     expect(body.charCodeAt(0)).toBe(0xfeff);
-    expect(body.replace(/^﻿/, "")).toMatch(/^Title,Status,Due,Done at,Property,Auto,Created\r\n/);
+    expect(body.replace(/^﻿/, "")).toMatch(/^Title,Status,Due,Done at,Property,Auto,Created,Assignee\r\n/);
   });
 });

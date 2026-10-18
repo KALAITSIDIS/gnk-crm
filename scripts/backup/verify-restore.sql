@@ -200,6 +200,9 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   ('add_deal_stage',       false, false, true, true),
   ('reorder_stage',        false, false, true, true),
   ('admin_dashboard_stats',false, false, true, true),
+  -- 0153: the dashboard's Inventory card — SECURITY INVOKER like
+  -- admin_dashboard_stats, never anon (pinned although invokers are out of grant_unpinned's scope)
+  ('property_inventory_counts', false, false, true, true),
   -- reporting engine (0065) — SECURITY INVOKER by design (the MV lesson)
   ('report_agent_performance', false, false, true, true),
   ('report_source_roi',        false, false, true, true),
@@ -1092,6 +1095,22 @@ misc as (
                            and p.prosrc ~ '''outcomes_by_type''')::text
                      from pg_proc p
                     where p.oid = to_regprocedure('public.report_stage_conversion(timestamptz, timestamptz)')), 'false')
+  union all
+  -- 0153: the dashboard's Inventory card counts exactly the properties list's
+  -- default scope — live = not archived AND not withdrawn — per kind and
+  -- status, as a STABLE SECURITY INVOKER (the caller's RLS is its tenant
+  -- boundary). Its grants are the grants_expected row above; this reads the
+  -- shape and the body (whitespace folded). A restore that lost the function,
+  -- made it a definer, or brought back a predicate that counts withdrawn or
+  -- archived rows (0093's) reads false.
+  select 'INTEGRITY: the dashboard''s inventory counts the properties list''s default scope, per kind and status (0153)', 'true',
+         (exists (select 1 from pg_proc p
+                   where p.oid = to_regprocedure('public.property_inventory_counts()')
+                     and not p.prosecdef and p.provolatile = 's' and p.proretset
+                     and p.proargnames = array['kind', 'status', 'n']
+                     and p.proallargtypes = array['public.property_kind'::regtype, 'public.property_status'::regtype, 'bigint'::regtype]::oid[]
+                     and btrim(regexp_replace(p.prosrc, '\s+', ' ', 'g'))
+                         = 'select p.kind, p.status, count(*) as n from public.properties p where p.visibility <> ''archived'' and p.status <> ''withdrawn'' group by p.kind, p.status order by p.kind, p.status'))::text
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.

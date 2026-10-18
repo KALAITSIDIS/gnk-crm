@@ -3666,6 +3666,14 @@ export type Database = {
         Args: { p_limit?: number; p_now?: string; p_policy: Json }
         Returns: Json
       }
+      property_inventory_counts: {
+        Args: never
+        Returns: {
+          kind: Database["public"]["Enums"]["property_kind"]
+          n: number
+          status: Database["public"]["Enums"]["property_status"]
+        }[]
+      }
       public_listings: {
         Args: {
           p_limit?: number
