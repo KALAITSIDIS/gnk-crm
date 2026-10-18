@@ -157,7 +157,9 @@ export function GlobalSearch() {
         </div>
 
         {hasResults ? (
-          <div className="flex max-h-80 flex-col gap-3 overflow-y-auto">
+          // p-1 is room for the focus outline (2px, 2px outside — globals.css),
+          // which a scroll box clips at its padding edge; -m-1 keeps the layout
+          <div className="-m-1 flex max-h-80 flex-col gap-3 overflow-y-auto p-1">
             {results.properties.length > 0 ? (
               <div>
                 <p className="px-1 pb-1 text-xs font-medium uppercase tracking-wide text-text-3">

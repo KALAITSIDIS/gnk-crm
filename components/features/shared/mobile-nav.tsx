@@ -68,7 +68,8 @@ export function MobileNav({ appName }: { appName: string }) {
                 <X className="size-5" />
               </Button>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto pb-4">
+            {/* pt-1: room for the first link's focus outline, which this scroll box would clip */}
+            <div className="min-h-0 flex-1 overflow-y-auto pt-1 pb-4">
               <SidebarNav onNavigate={() => setOpen(false)} />
             </div>
           </div>

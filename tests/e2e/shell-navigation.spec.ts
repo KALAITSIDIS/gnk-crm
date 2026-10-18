@@ -1,5 +1,13 @@
 import { test, expect, type Locator, type Page, type TestInfo } from "@playwright/test";
-import { assertNoHorizontalOverflow, assertNoProblems, assertShellRendered, watchForProblems } from "./helpers";
+import {
+  assertNoHorizontalOverflow,
+  assertNoProblems,
+  assertShellRendered,
+  fixtureProfile,
+  isLocal,
+  serviceClient,
+  watchForProblems,
+} from "./helpers";
 
 /**
  * A08 (review 2026-10-18): what the shell gives a keyboard, a screen reader
@@ -18,7 +26,12 @@ import { assertNoHorizontalOverflow, assertNoProblems, assertShellRendered, watc
  *
  * Computed styles and focus are what a unit test cannot see; the colours'
  * contrast is measured in tests/unit/palette-parity.test.ts. Runs in the
- * desktop AND mobile projects. Read-only: nothing is written.
+ * desktop AND mobile projects. Read-only, except the one local-only test
+ * that seeds two contacts for the search results (and deletes them).
+ *
+ * The outline is drawn 2px OUTSIDE the element, so a scroll box with no
+ * padding cuts it off (A08 review): `outlineClipping` measures the outline's
+ * box against the padding box of every clipping ancestor.
  */
 
 /** Tailwind's `sm` — below it the wide search box is hidden. */
@@ -51,6 +64,41 @@ async function focusStyle(target: Locator) {
       outlineColor: s.outlineColor,
       boxShadow: s.boxShadow,
     };
+  });
+}
+
+/**
+ * Where a clipping ancestor cuts the target's focus outline: for each
+ * ancestor whose overflow is not `visible`, the edges of the outline's box
+ * (the element's border box grown by outline-width + outline-offset) that
+ * fall outside that ancestor's padding box. Empty means the whole outline
+ * is drawn. Measured at the current scroll position.
+ */
+async function outlineClipping(target: Locator): Promise<string[]> {
+  return target.evaluate((el) => {
+    const s = getComputedStyle(el);
+    const grow = parseFloat(s.outlineWidth) + parseFloat(s.outlineOffset);
+    const r = el.getBoundingClientRect();
+    const box = { left: r.left - grow, top: r.top - grow, right: r.right + grow, bottom: r.bottom + grow };
+    const cuts: string[] = [];
+    for (let a = el.parentElement; a; a = a.parentElement) {
+      const as = getComputedStyle(a);
+      if (as.overflowX === "visible" && as.overflowY === "visible") continue;
+      const ar = a.getBoundingClientRect();
+      const pad = {
+        left: ar.left + a.clientLeft,
+        top: ar.top + a.clientTop,
+        right: ar.left + a.clientLeft + a.clientWidth,
+        bottom: ar.top + a.clientTop + a.clientHeight,
+      };
+      const name = `${a.tagName.toLowerCase()}.${[...a.classList].join(".")}`;
+      const tol = 0.5;
+      if (box.left < pad.left - tol) cuts.push(`${name}: left by ${(pad.left - box.left).toFixed(1)}px`);
+      if (box.right > pad.right + tol) cuts.push(`${name}: right by ${(box.right - pad.right).toFixed(1)}px`);
+      if (box.top < pad.top - tol) cuts.push(`${name}: top by ${(pad.top - box.top).toFixed(1)}px`);
+      if (box.bottom > pad.bottom + tol) cuts.push(`${name}: bottom by ${(box.bottom - pad.bottom).toFixed(1)}px`);
+    }
+    return cuts;
   });
 }
 
@@ -92,6 +140,16 @@ test.describe("[A08] the main nav says where you are", () => {
     expect(s.outlineStyle).toBe("solid");
     expect(s.outlineWidth).toBeGreaterThanOrEqual(2);
     expect(s.outlineColor, "white on --brand-950, not --ring").toBe(WHITE);
+  });
+
+  test("the FIRST nav link's outline is drawn whole — the drawer's scroll box does not cut its top edge", async ({ page }, testInfo) => {
+    await page.goto("/contacts", { waitUntil: "networkidle" });
+    const nav = await mainNav(page, testInfo);
+    const first = nav.getByRole("link").first();
+    await expect(first).toHaveText("Dashboard");
+    await tabTo(page, first);
+    expect((await focusStyle(first)).outlineStyle).toBe("solid");
+    expect(await outlineClipping(first), "no clipping ancestor cuts the outline").toEqual([]);
   });
 });
 
@@ -145,6 +203,46 @@ test.describe("[A08] global search on every width", () => {
     await expect(dialog).toBeHidden();
     await expect(shown, "focus returns to the trigger on screen, not to <body>").toBeFocused();
     assertNoProblems(problems, "global search");
+  });
+
+  test("a keyboard-focused search result shows its whole outline — the results' scroll box cuts no edge", async ({ page }, testInfo) => {
+    test.skip(!isLocal(), "seeds and deletes two contacts through the service client — local only");
+    const svc = serviceClient();
+    const { orgId } = await fixtureProfile(svc);
+    const NAME = `E2EFocusClip${testInfo.project.name.replace(/\W/g, "")}`;
+    const clean = () => svc.from("contacts").delete().eq("org_id", orgId).ilike("first_name", `${NAME}%`);
+    await clean();
+    const { error } = await svc.from("contacts").insert([
+      { org_id: orgId, first_name: `${NAME}One`, contact_types: ["buyer"] },
+      { org_id: orgId, first_name: `${NAME}Two`, contact_types: ["buyer"] },
+    ]);
+    expect(error, "seeding the two contacts").toBeNull();
+    try {
+      await page.goto("/dashboard", { waitUntil: "networkidle" });
+      const header = page.locator("header");
+      await (narrowerThanSm(testInfo)
+        ? header.locator('button[aria-label="Search"]')
+        : header.locator("button", { hasText: "Search properties, contacts" })
+      ).click();
+      const dialog = page.getByRole("dialog", { name: "Global search" });
+      const input = dialog.getByPlaceholder("Search properties, contacts…");
+      await expect(input).toBeFocused();
+      await input.fill(NAME);
+      const results = dialog.getByRole("button", { name: new RegExp(NAME) });
+      await expect(results).toHaveCount(2);
+
+      // Tab from the input: the first result, then the last
+      for (const target of [results.first(), results.last()]) {
+        await tabTo(page, target, 10);
+        const s = await focusStyle(target);
+        expect(s.focusVisible).toBe(true);
+        expect(s.outlineStyle).toBe("solid");
+        expect(s.outlineColor).toBe(RING);
+        expect(await outlineClipping(target), "no clipping ancestor cuts the outline").toEqual([]);
+      }
+    } finally {
+      await clean();
+    }
   });
 });
 
