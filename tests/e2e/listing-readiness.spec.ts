@@ -97,13 +97,16 @@ test("a public listing with no photograph is said to be on the website without o
     // the ring is a button the keyboard reaches, and its tooltip opens on focus
     const ring = page.getByRole("button", { name: /^Quality score 85 of 100/ });
     await expect(ring).toHaveAttribute("type", "button");
+    // the ring sits just before the heading in the tab order: Shift+Tab from
+    // the heading reaches it. (A forward Tab has to walk the whole page and
+    // wrap round the shell, and the A08 summary strip added stops to that walk.)
     await page.locator("h1").click();
     let reached = false;
-    for (let i = 0; i < 40 && !reached; i++) {
-      await page.keyboard.press("Tab");
+    for (let i = 0; i < 10 && !reached; i++) {
+      await page.keyboard.press("Shift+Tab");
       reached = await ring.evaluate((el) => el === document.activeElement);
     }
-    expect(reached, "Tab reaches the score ring").toBe(true);
+    expect(reached, "the keyboard reaches the score ring").toBe(true);
     await expect(page.getByRole("tooltip")).toContainText("Missing (2):");
 
     // 2. the admin dashboard names it under website essentials, apart from completeness

@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 import { TabLink } from "@/components/features/properties/property-tabs";
+import { isOnWebsite } from "@/lib/services/property-summary";
 import { essentialNoun, fixHref, fixLocation, fixTab } from "@/lib/services/quality-worklist";
 import {
   PUBLISH_THRESHOLD,
@@ -53,7 +54,7 @@ export function ListingReadiness({
   /** the row this one's build contradiction is inherited from, if it is (worklist rule) */
   buildSource: { id: string; reference: string } | null;
 }) {
-  const onWebsite = visibility === "public" && status === "available";
+  const onWebsite = isOnWebsite(status, visibility);
   const essentials = quality.items.filter((i) => i.essential === true);
   const essentialsMissing = quality.essentialsMissing;
   const buildConflict = quality.warnings.find((w) => w.key === "build_conflict") ?? null;
@@ -63,10 +64,14 @@ export function ListingReadiness({
 
   return (
     <section
+      // the summary strip's "Outstanding" count links here (A08): tabIndex -1
+      // so following the link moves focus into the panel, not just the scroll
+      id="listing-readiness"
+      tabIndex={-1}
       aria-labelledby="listing-readiness-heading"
       data-listing-readiness=""
       // inside the page's Tabs root (gap-2), above the strip: mb-2 makes the page's gap-4
-      className="mb-2 rounded-[10px] border border-border bg-surface p-4"
+      className="mb-2 scroll-mt-4 rounded-[10px] border border-border bg-surface p-4"
     >
       <h2 id="listing-readiness-heading" className="text-sm font-semibold text-text-1">
         Listing readiness

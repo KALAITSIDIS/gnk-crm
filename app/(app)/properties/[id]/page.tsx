@@ -1,4 +1,5 @@
-import { Fragment, type ReactNode } from "react";
+import { cache, Fragment, type ReactNode } from "react";
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Calculator, Copy } from "lucide-react";
@@ -9,7 +10,6 @@ import {
 } from "@/components/features/properties/detail-forms";
 import { purchaseCostsHref, type VatConfigRow } from "@/lib/services/vat";
 import { ArchivePropertyButton } from "@/components/features/properties/archive-button";
-import { AddTaskDialog } from "@/components/features/tasks/add-task-dialog";
 import { BuildProgressCard } from "@/components/features/properties/build-progress-card";
 import { PartiesForm } from "@/components/features/properties/parties-form";
 import { MediaTab } from "@/components/features/properties/media-tab";
@@ -30,6 +30,7 @@ import {
 import { EventTimeline } from "@/components/features/shared/event-timeline";
 import { QualityScoreRing } from "@/components/features/shared/quality-score-ring";
 import { ListingReadiness } from "@/components/features/properties/listing-readiness";
+import { PropertySummary } from "@/components/features/properties/property-summary";
 import { PropertyTabs } from "@/components/features/properties/property-tabs";
 import { PropertyBreadcrumb } from "@/components/features/properties/property-breadcrumb";
 import { fetchLineage } from "@/lib/queries/property-lineage";
@@ -38,6 +39,7 @@ import { buildQualityInput, computeQualityScore } from "@/lib/services/quality-s
 import { fetchBuildConflictSource } from "@/lib/queries/quality-worklist";
 import { propertyTabFrom } from "@/lib/services/property-tabs";
 import { landOverviewFacts } from "@/lib/services/property-layout";
+import { priceLine } from "@/lib/services/property-summary";
 import { fetchSharedPhotoReferences } from "@/lib/services/shared-photos";
 import { countContainerUnits, EMPTY_CONTAINER_FACTS } from "@/lib/services/container-units";
 import { getCurrentProfile } from "@/lib/services/auth";
@@ -65,9 +67,42 @@ import type { MatchCandidate } from "@/lib/services/matching";
 import { buildPropertyPortalRows } from "@/lib/services/portals/property-portals";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
-import { formatArea, formatDate, formatDateTime, formatMoney } from "@/lib/utils/format";
+import { formatArea, formatDate, formatDateTime } from "@/lib/utils/format";
 import { readEntityTimeline } from "@/lib/services/entity-timeline";
 import { NOT_RECORDED_NOTICE } from "@/lib/services/optimistic-save";
+
+/**
+ * The property row, read ONCE per request for both generateMetadata and the
+ * page (React cache(): memoised for the request in a server render, a plain
+ * call anywhere else). Keyed by the id alone — each call makes its own
+ * request-scoped client from the same cookies, so the caller's RLS applies.
+ */
+const readProperty = cache(async (id: string) => {
+  const supabase = await createClient();
+  return supabase.from("properties").select("*, districts(name), areas(name)").eq("id", id).maybeSingle();
+});
+
+/**
+ * The browser tab names the record by its REFERENCE only (A08): no title, no
+ * owner's or buyer's name — tab titles land in browser history on shared
+ * devices. Never throws: a malformed id, an unreadable row or a failed read
+ * leaves the default title, and the page itself 404s or renders the error
+ * boundary on the same answer.
+ */
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  if (!isGuid(id)) return {};
+  try {
+    const { data } = await readProperty(id);
+    return data ? { title: data.reference } : {};
+  } catch {
+    return {};
+  }
+}
 
 export default async function PropertyDetailPage({
   params,
@@ -86,15 +121,15 @@ export default async function PropertyDetailPage({
   const notRecorded = query.recorded === "failed";
   const initialTab = propertyTabFrom(query.tab);
   const supabase = await createClient();
+  // one clock for the request: the upcoming-viewings window, the next action
+  // and the mandate's expiry are all judged against the same instant
+  const now = new Date();
 
   // mandates via mandates_safe, NOT the base table: LM has no base-table
   // policy and commission columns are masked in the view (doc 04, T4.5)
   const [propertyRes, areasRes, mediaRes, mandatesRes, keysRes] = await Promise.all([
-    supabase
-      .from("properties")
-      .select("*, districts(name), areas(name)")
-      .eq("id", id)
-      .maybeSingle(),
+    // shared with generateMetadata (one read per request)
+    readProperty(id),
     supabase.from("areas").select("id, district_id, name"),
     supabase
       .from("property_media")
@@ -173,6 +208,7 @@ export default async function PropertyDetailPage({
     plansRes,
     vatConfigRes,
     lineage,
+    nextTaskRes,
   ] = await Promise.all([
     supabase
       .from("price_history")
@@ -210,7 +246,7 @@ export default async function PropertyDetailPage({
       .select("id, scheduled_at, duration_min, status, contacts(display_name), agent:profiles!agent_id(full_name)")
       .eq("property_id", id)
       .eq("status", "scheduled")
-      .gte("scheduled_at", new Date().toISOString())
+      .gte("scheduled_at", now.toISOString())
       .order("scheduled_at", { ascending: true })
       .limit(10),
     supabase
@@ -255,6 +291,19 @@ export default async function PropertyDetailPage({
     // under a phase. At most two reads by primary key on this caller's client;
     // never throws (an unreadable parent is said on the page, not guessed).
     fetchLineage(supabase, { id: p.id, kind: p.kind, parent_id: p.parent_id }),
+    // A08: the summary's next action — the next OPEN task on this property,
+    // overdue first, undated last, `id` breaking ties. ONE read on the
+    // caller's client: tasks_select shows an admin every task in the org and
+    // anyone else only the tasks assigned to or created by them, which is why
+    // the summary says "Your next task" to a non-admin.
+    supabase
+      .from("tasks")
+      .select("id, title, due_at")
+      .eq("property_id", id)
+      .eq("is_done", false)
+      .order("due_at", { ascending: true, nullsFirst: false })
+      .order("id")
+      .limit(1),
   ]);
   const priceRows = unwrapRows(priceRes, "price history");
   const propertyEventRows = unwrapRows(eventsRes, "events");
@@ -264,6 +313,8 @@ export default async function PropertyDetailPage({
     .slice(0, 50);
   const viewingRows = unwrapRows(viewingsRes, "viewings");
   const documentRows = unwrapRows(documentsRes, "documents");
+  // a failed read throws to the boundary — never "None" for a read that did not answer
+  const nextTask = unwrapRows(nextTaskRes, "next task")[0] ?? null;
 
   const isAdminOrLM = profile.role === "admin" || profile.role === "listing_manager";
   // mirrors properties_update RLS — forms render read-only when a save would no-op
@@ -370,6 +421,14 @@ export default async function PropertyDetailPage({
   }));
 
   const activeMandate = mandateRows.find((m) => m.status === "active");
+  // mandates_safe (0127) shows an agent only the mandates of properties
+  // assigned to them and those they created: for any other agent an empty
+  // answer is not "No mandate" (A08 — the summary says "Not visible to you",
+  // and the header badge is not drawn rather than say "No mandate")
+  const mandatesComplete =
+    profile.role === "admin" ||
+    profile.role === "listing_manager" ||
+    p.assigned_agent_id === profile.id;
   const mandateState: MandateBadgeState = activeMandate
     ? (activeMandate.type as MandateBadgeState)
     : mandateRows.some((m) => m.status === "expired")
@@ -387,14 +446,20 @@ export default async function PropertyDetailPage({
       ].filter(Boolean),
     ),
   ];
-  const { data: ownerRows } = contactIds.length
-    ? await supabase
-        .from("contacts")
-        .select("id, display_name, phone_e164")
-        .in("id", contactIds as string[])
-    : { data: [] };
+  // A08: through unwrapRows — the summary says "Not recorded" or "not visible
+  // to you" for a party it cannot show, so a failed read must not look like
+  // either (it rendered an empty Parties panel before)
+  const ownerRows = contactIds.length
+    ? unwrapRows(
+        await supabase
+          .from("contacts")
+          .select("id, display_name, phone_e164")
+          .in("id", contactIds as string[]),
+        "party contacts",
+      )
+    : [];
   const ownerById = new Map(
-    (ownerRows ?? []).map((c) => [
+    ownerRows.map((c) => [
       c.id,
       { id: c.id, label: c.display_name ?? "Unnamed", sublabel: c.phone_e164 },
     ]),
@@ -403,13 +468,17 @@ export default async function PropertyDetailPage({
   // The assigned agent is a profile, not a contact — and it may be an INACTIVE
   // one, so this query must not filter on is_active or the panel would render
   // empty while the column still points somewhere.
-  const { data: agentRow } = p.assigned_agent_id
-    ? await supabase
-        .from("profiles")
-        .select("id, full_name, role, is_active")
-        .eq("id", p.assigned_agent_id)
-        .maybeSingle()
-    : { data: null };
+  // A08: through unwrapRows, so a failed read is the error boundary — not the
+  // summary's "Assigned, but not visible to you" (a primary-key read: 0 or 1 rows)
+  const agentRow = p.assigned_agent_id
+    ? (unwrapRows(
+        await supabase
+          .from("profiles")
+          .select("id, full_name, role, is_active")
+          .eq("id", p.assigned_agent_id),
+        "assigned agent",
+      )[0] ?? null)
+    : null;
   const assignedAgent = agentRow
     ? {
         id: agentRow.id,
@@ -492,6 +561,9 @@ export default async function PropertyDetailPage({
       </span>
     ) : null;
 
+  // A08: the ONE price expression, shared with the summary strip
+  const price = priceLine(p);
+
   const overviewFacts: [string, ReactNode][] = [
     ["Kind", kindLabel(p.kind)],
     ...(partOf ? ([["Part of", partOf]] as [string, ReactNode][]) : []),
@@ -502,14 +574,7 @@ export default async function PropertyDetailPage({
     // — and its one area is the site; it has no rooms of its own (2026-09-02
     // review: the overview read "Area —" for a development whose site plot
     // the wizard had just asked for).
-    [
-      isContainerRow ? "From price" : "Price",
-      p.transaction_type === "rent"
-        ? p.rent_price_month
-          ? `${formatMoney(Number(p.rent_price_month))}/mo`
-          : "—"
-        : formatMoney(p.asking_price === null ? null : Number(p.asking_price)),
-    ],
+    [price.label, price.text ?? "—"],
     [
       isContainerRow ? "Site plot" : isLand ? "Plot" : "Area",
       formatArea(
@@ -584,21 +649,35 @@ export default async function PropertyDetailPage({
             missing={quality.missing}
             warnings={quality.warnings}
           />
-          <h1 className="font-mono text-xl font-semibold text-text-1">{p.reference}</h1>
-          <MandateBadge state={mandateState} />
-          <StatusBadge status={p.status} />
-          <StatusBadge status={p.visibility} />
-          {/* Public and Available are TWO switches and the feed needs both
-              (0066: `visibility = 'public' and status = 'available'`). Setting
-              one without the other reads as published and reaches nobody — a
-              real session did exactly that and reported the listing live
-              (2026-09-03). Said here, next to the pair that disagrees. */}
-          {p.visibility === "public" && p.status !== "available" ? (
-            <span className="text-xs text-warning" role="note">
-              Public, but not on the site: the public feed only carries listings whose status is
-              Available.
+          {/* A08: the human title beside the reference, in the heading — it
+              was a small grey line under the header */}
+          <h1 className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span className="font-mono text-xl font-semibold text-text-1">{p.reference}</span>
+            {/* the space keeps the heading's name "PAF0001 Sea-view flat", not
+                "PAF0001Sea-view flat" (a flex gap is not a word break) */}
+            {title ? " " : null}
+            {title ? (
+              <span className="min-w-0 break-words text-base font-medium text-text-1">{title}</span>
+            ) : null}
+          </h1>
+          {/* each badge says what it is to a screen reader: "Open" or
+              "Expired" alone could be a mandate's or a deal's state */}
+          {mandatesComplete || activeMandate ? (
+            <span>
+              <span className="sr-only">Mandate: </span>
+              <MandateBadge state={mandateState} />
             </span>
           ) : null}
+          <span>
+            <span className="sr-only">Status: </span>
+            <StatusBadge status={p.status} />
+          </span>
+          <span>
+            <span className="sr-only">Visibility: </span>
+            <StatusBadge status={p.visibility} />
+          </span>
+          {/* Public-but-not-Available (2026-09-03) is said by the summary's
+              Availability cell: availabilityLine, the one rule (0066's feed) */}
           {/* F01: the calculators open on THIS property — its reference and
               stored VAT status choose the scenario there — not on a bare price
               that silently lands on "not subject to VAT" */}
@@ -612,9 +691,10 @@ export default async function PropertyDetailPage({
             </Link>
           ) : null}
           {/* the same action group as the contact header: it wraps at phone
-              width rather than widening the page (the reason is written there) */}
+              width rather than widening the page (the reason is written there).
+              "Add task" is in the summary's Next action cell (A08) — one
+              AddTaskDialog on the page, beside the action it adds to. */}
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            <AddTaskDialog entity={{ property_id: p.id }} entityLabel={p.reference} />
             {p.kind === "project" || p.kind === "phase" ? (
               <Button asChild variant="outline" size="sm">
                 <Link href={`/properties/${p.id}/units`}>Units matrix</Link>
@@ -640,12 +720,25 @@ export default async function PropertyDetailPage({
             ) : null}
           </div>
         </div>
-        {title ? <p className="mt-1 text-sm text-text-2">{title}</p> : null}
       </div>
 
       {/* F03: the tab state is held by PropertyTabs (property-tabs.tsx), so
           the readiness panel's "fix it here" links switch the tab in place */}
       <PropertyTabs initialTab={initialTab}>
+        {/* A08: the at-a-glance strip under the heading — inside the Tabs
+            root so its Mandate link switches the tab in place */}
+        <PropertySummary
+          property={p}
+          contacts={ownerById}
+          agent={agentRow}
+          nextTask={nextTask}
+          nextViewing={viewingRows[0] ?? null}
+          mandates={mandateRows}
+          mandatesComplete={mandatesComplete}
+          quality={quality}
+          viewerIsAdmin={profile.role === "admin"}
+          now={now}
+        />
         {/* F03: readiness in visible text — website essentials, completeness
             and data warnings, each its own statement — where the ring's hover
             tooltip was the only account of it */}
