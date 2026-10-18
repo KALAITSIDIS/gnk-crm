@@ -26,6 +26,11 @@ import { createTestUser, ensureTestOrg, serviceClient, type TestUser } from "./h
  *      which is "Last chat opened"; the next task is the viewer's OWN (a
  *      colleague's earlier task and its title stay hidden), an admin's is the
  *      earliest of all; the next viewing is the scheduled one.
+ *   4. A DEVELOPER WITH 250 DEALS (A06 review): the page's history ids are
+ *      every deal (`readContactHistoryIds`), not the Deals tab's newest 50,
+ *      and the readers send them in slices — one `.in()` of all 250 is a 414
+ *      from this gateway — so a call logged on a deal outside the tab's 50 is
+ *      still the strip's "Last logged contact" and on the feed.
  *
  * Nothing below the services is stubbed but the Next.js request plumbing:
  * `createClient` is the acting user's aal2 session, `createAdminClient` the
@@ -56,6 +61,7 @@ vi.mock("@/lib/supabase/admin", async () => {
 import { logChatLinkOpened, markContacted } from "@/lib/actions/leads";
 import { CUSTOMER_FEED_SKIPPED_TYPES, readEntityTimelines } from "@/lib/services/entity-timeline";
 import { readContactActivitySummary } from "@/lib/services/contact-activity-summary";
+import { readContactHistoryIds } from "@/lib/queries/contact-history";
 
 let svc: SupabaseClient;
 let pg: Client;
@@ -360,5 +366,115 @@ describe("the summary strip", () => {
     const s = await summaryAs(admin);
     expect(s.nextTask).toEqual({ ok: true, value: expect.objectContaining({ id: colleagueTask }) });
     expect(s.nextViewing).toEqual({ ok: true, value: expect.objectContaining({ id: viewing }) });
+  });
+});
+
+describe("a developer with 250 deals: every deal is asked about (A06 review)", () => {
+  let developer: string;
+  let farDeal: string;
+  let farCall: string;
+
+  beforeAll(async () => {
+    const stage = (
+      await one<{ id: string }>(
+        "select id from deal_stages where org_id = $1 and deal_type = 'sale' and not is_won and not is_lost order by sort_order limit 1",
+        [ORG],
+      )
+    ).id;
+    developer = (
+      await one<{ id: string }>("insert into contacts (org_id, first_name) values ($1, $2) returning id", [ORG, `ZZDeveloper ${RUN}`])
+    ).id;
+    // the seller on every unit deal of a project, each a day older than the last
+    await pg.query(
+      `insert into deals (org_id, deal_type, stage_id, title, agent_id, created_by, seller_contact_id, created_at)
+       select $1, 'sale', $2, 'ZZDev unit ' || g || ' ' || $3, $4, $4, $5, now() - make_interval(days => g)
+         from generate_series(1, 250) g`,
+      [ORG, stage, RUN, agentA.id, developer],
+    );
+    // the Deals tab's read — the newest 50 by creation — and a deal outside it
+    const tab = await admin.client
+      .from("deals")
+      .select("id")
+      .or(`buyer_contact_id.eq.${developer},seller_contact_id.eq.${developer}`)
+      .order("created_at", { ascending: false })
+      .limit(50);
+    if (tab.error || !Array.isArray(tab.data)) throw new Error(`tab read: ${tab.error?.message}`);
+    const shown = new Set(tab.data.map((d) => d.id as string));
+    farDeal = (
+      await one<{ id: string }>(
+        "select id from deals where org_id = $1 and seller_contact_id = $2 and not (id = any($3::uuid[])) order by created_at limit 1",
+        [ORG, developer, [...shown]],
+      )
+    ).id;
+    // yesterday's call — logged on the oldest unit deal, from its own page
+    farCall = await plant(ORG, agentA.id, "deal", farDeal, "called", { first_call: false });
+  });
+
+  it("the history ids are all 250 deals — the tab's 50 do not include the deal the call was logged on", async () => {
+    const ids = await readContactHistoryIds(admin.client as never, developer);
+    expect(ids.dealIds).toHaveLength(250);
+    expect(ids.dealIds).toContain(farDeal);
+    expect(ids.leadIds).toEqual([]);
+    expect(ids.viewingIds).toEqual([]);
+  });
+
+  it("one .in() of all 250 ids is refused by the gateway — the reason the readers slice", async () => {
+    const ids = await readContactHistoryIds(admin.client as never, developer);
+    const all = await svc.from("events").select("id").eq("org_id", ORG).eq("entity_type", "deal").in("entity_id", ids.dealIds).limit(1);
+    expect(all.error, "an unsliced read of every deal's events does not answer").not.toBeNull();
+    expect(all.status).toBe(414);
+  });
+
+  it("the strip's last logged contact is the call on the 250th deal; the feed has it", async () => {
+    const ids = await readContactHistoryIds(admin.client as never, developer);
+    const s = await readContactActivitySummary({
+      orgId: ORG,
+      viewer: admin.client as never,
+      contactId: developer,
+      contactIds: [developer],
+      leadIds: ids.leadIds,
+      dealIds: ids.dealIds,
+      now: new Date(),
+    });
+    expect(s.lastContact).toEqual({
+      ok: true,
+      value: expect.objectContaining({ event_type: "called", entity_type: "deal" }),
+    });
+    expect(s.lastContact.ok && String(s.lastContact.value?.id)).toBe(String(farCall));
+    expect(s.lastChatOpened).toEqual({ ok: true, value: null });
+
+    const feed = await readEntityTimelines({
+      orgId: ORG,
+      viewerRole: "admin",
+      viewer: admin.client as never,
+      sources: [
+        { entityType: "contact", entityIds: [developer] },
+        { entityType: "deal", entityIds: ids.dealIds },
+      ],
+      perSource: 50,
+      limit: 100,
+      excludeEventTypes: CUSTOMER_FEED_SKIPPED_TYPES,
+    });
+    expect(feed.incomplete, "every slice answered").toBe(false);
+    expect(feed.rows.map((r) => String(r.id))).toContain(String(farCall));
+  });
+
+  it("the contrast: asked about only the tab's 50, the same strip reads 'None logged yet'", async () => {
+    const tab = await admin.client
+      .from("deals")
+      .select("id")
+      .or(`buyer_contact_id.eq.${developer},seller_contact_id.eq.${developer}`)
+      .order("created_at", { ascending: false })
+      .limit(50);
+    const s = await readContactActivitySummary({
+      orgId: ORG,
+      viewer: admin.client as never,
+      contactId: developer,
+      contactIds: [developer],
+      leadIds: [],
+      dealIds: (tab.data ?? []).map((d) => d.id as string),
+      now: new Date(),
+    });
+    expect(s.lastContact, "the pre-review page's answer: a none standing in for data it never read").toEqual({ ok: true, value: null });
   });
 });

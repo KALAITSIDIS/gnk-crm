@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Database, Json } from "@/lib/supabase/database.types";
 import { LOGGED_CONTACT_TYPES } from "@/lib/services/activity-kinds";
-import { compareNewestFirst } from "@/lib/services/entity-timeline";
+import { compareNewestFirst, idSlices } from "@/lib/services/entity-timeline";
 
 /**
  * The strip under a contact's name (A06): when the desk last RECORDED contact
@@ -26,11 +26,16 @@ import { compareNewestFirst } from "@/lib/services/entity-timeline";
  *   admits an admin, the assignee or the creator, and a task's title is typed
  *   text ("Call Maria about the deposit") — read as the system it would put a
  *   colleague's task on every agent's screen. So a non-admin's "next step" is
- *   THEIR next task, and the page says so.
+ *   a task THEY may read: theirs, or one they set a colleague (tasks_select
+ *   admits the creator too), and the strip names whose it is
+ *   (`nextTaskLabel`) rather than calling every one "your task".
  *
  * NOTHING IS A ZERO. Each part is `{ ok: true, value }` — `value: null` is a
  * true "none" — or `{ ok: false }` when its read did not answer, which the
- * strip renders as "could not load", never as "no contact yet".
+ * strip renders as "could not load", never as "no contact yet". "None" is
+ * only true of EVERY id it was given, so the caller hands over every lead and
+ * deal (lib/queries/contact-history.ts), never a display list's newest 50;
+ * the ids go out in slices under the gateway's 414 (IDS_PER_READ).
  */
 
 export type SummaryPart<T> = { ok: true; value: T | null } | { ok: false };
@@ -49,6 +54,12 @@ export interface NextTask {
   id: string;
   title: string;
   due_at: string | null;
+  /**
+   * Whose task it is. A non-admin reads their own tasks AND the ones they set
+   * a colleague (tasks_select: admin, assignee or creator), so "Your task" is
+   * said only when this is the viewer (`nextTaskLabel`).
+   */
+  assignee_id: string | null;
 }
 
 export interface NextViewing {
@@ -91,15 +102,17 @@ async function newestOf(orgId: string, sources: readonly Source[], types: readon
   const live = sources.filter((s) => s.ids.length > 0);
   if (live.length === 0) return { ok: true, value: null };
   const admin = createAdminClient();
+  // every source's ids in slices under the 414 — a developer's deals run to hundreds
+  const asks = live.flatMap((s) => idSlices(s.ids).map((ids) => ({ entityType: s.entityType, ids })));
   const answers = await Promise.all(
-    live.map((s) =>
+    asks.map((a) =>
       admin
         .from("events")
         .select("id, occurred_at, event_type, entity_type, actor_id, payload")
         // EXPLICIT — the admin client bypasses RLS, so this is the only org boundary
         .eq("org_id", orgId)
-        .eq("entity_type", s.entityType)
-        .in("entity_id", s.ids as string[])
+        .eq("entity_type", a.entityType)
+        .in("entity_id", a.ids)
         .in("event_type", types as string[])
         .order("occurred_at", { ascending: false })
         .order("id", { ascending: false })
@@ -110,7 +123,7 @@ async function newestOf(orgId: string, sources: readonly Source[], types: readon
   for (const [i, res] of answers.entries()) {
     if (res.error || !Array.isArray(res.data)) {
       console.error("contact summary read failed:", {
-        entityType: live[i].entityType,
+        entityType: asks[i].entityType,
         error: res.error ? res.error.message : "the answer held no rows",
       });
       return { ok: false };
@@ -138,16 +151,17 @@ async function nextTaskOf(
 ): Promise<SummaryPart<NextTask>> {
   const live = sources.filter((s) => s.ids.length > 0);
   if (live.length === 0) return { ok: true, value: null };
-  // one query per link column, each with its own short id list — never one
-  // `.or()` that grows with the deals and leads (the ~197-id 414)
+  // one query per link column and slice, each with a short id list — never
+  // one `.or()` that grows with the deals and leads (the ~197-id 414)
+  const asks = live.flatMap((s) => idSlices(s.ids).map((ids) => ({ column: s.column, ids })));
   const answers = await Promise.all(
-    live.map((s) =>
+    asks.map((a) =>
       viewer
         .from("tasks")
-        .select("id, title, due_at")
+        .select("id, title, due_at, assignee_id")
         .eq("org_id", orgId)
         .eq("is_done", false)
-        .in(s.column, s.ids as string[])
+        .in(a.column, a.ids)
         .order("due_at", { ascending: true, nullsFirst: false })
         .order("id", { ascending: true })
         .limit(1),
@@ -161,9 +175,26 @@ async function nextTaskOf(
     }
     const row = res.data[0];
     if (!row) continue;
-    if (!best || earlierTask(row, best)) best = { id: row.id, title: row.title, due_at: row.due_at };
+    const candidate: NextTask = { id: row.id, title: row.title, due_at: row.due_at, assignee_id: row.assignee_id ?? null };
+    if (!best || earlierTask(candidate, best)) best = candidate;
   }
   return { ok: true, value: best };
+}
+
+/**
+ * What the strip calls the next task: "Your task" only when it is assigned to
+ * the viewer. A non-admin's read also returns a task they CREATED for a
+ * colleague (tasks_select), and calling that "your task" misleads the one
+ * decision the strip exists for — who is on this person (A06 review).
+ */
+export function nextTaskLabel(
+  task: Pick<NextTask, "assignee_id">,
+  viewerId: string,
+  names: ReadonlyMap<string, string>,
+): string {
+  if (task.assignee_id === viewerId) return "Your task";
+  if (!task.assignee_id) return "Unassigned task";
+  return `Task for ${names.get(task.assignee_id) ?? "a colleague"}`;
 }
 
 function earlierTask(a: NextTask, b: NextTask): boolean {
@@ -208,9 +239,9 @@ export async function readContactActivitySummary(opts: {
   contactId: string;
   /** the contact and every contact merged into it — ids the CALLER read through RLS */
   contactIds: readonly string[];
-  /** the contact's leads, read through RLS */
+  /** EVERY lead of the contact, read through RLS — not a display list's newest few */
   leadIds: readonly string[];
-  /** the deals the caller may read with this contact as a party, read through RLS */
+  /** EVERY deal the caller may read with this contact as a party, read through RLS */
   dealIds: readonly string[];
   /** the request's clock: "next" viewing means from now on */
   now: Date;

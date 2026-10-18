@@ -114,10 +114,35 @@ export async function readEntityTimeline(opts: {
 }
 
 /**
+ * Ids per `.in()` read. The gateway answers 414 at about 197 uuids in one URL
+ * (T-velocity-id-lists); 100 is ~3.7 KB of URL, sales-velocity.ts's bound. A
+ * developer is `seller_contact_id` on every unit deal, so one contact's
+ * history can name hundreds of deals (A06 review): every id list a reader
+ * here sends goes out in slices of this many.
+ */
+export const IDS_PER_READ = 100;
+
+/** `ids` without repeats, in slices of at most `size`, in order; none for an empty list. */
+export function idSlices(ids: readonly string[], size: number = IDS_PER_READ): string[][] {
+  const unique = [...new Set(ids)];
+  const out: string[][] = [];
+  for (let i = 0; i < unique.length; i += size) out.push(unique.slice(i, i + size));
+  return out;
+}
+
+/**
  * One entity type's events, as the system, with every redaction applied — the
  * part `readEntityTimeline` and `readEntityTimelines` share. `ok` is false when
  * the read did not answer (an error, or an answer with no rows array, which is
  * not "nothing happened": T-null-answer-guard); the rows are then empty.
+ *
+ * `capped` is true only when the source HAS more than `limit` events: each
+ * slice asks for ONE row past the cap, and that row's presence is the answer
+ * (fetchUpTo's probe). A source that holds exactly `limit` events is complete
+ * — read as "cut", its oldest row became the merge's floor and every other
+ * source's older lines were dropped although nothing was missing (A06 review).
+ * The newest `limit` of the union are among each slice's newest `limit + 1`,
+ * so the slices' merge keeps exactly what one unsliced read would have.
  */
 async function readSource(
   orgId: string,
@@ -128,8 +153,8 @@ async function readSource(
     limit: number;
     excludeEventTypes?: readonly string[];
   },
-): Promise<{ rows: TimelineRow[]; ok: boolean }> {
-  if (source.entityIds.length === 0) return { rows: [], ok: true };
+): Promise<{ rows: TimelineRow[]; ok: boolean; capped: boolean }> {
+  if (source.entityIds.length === 0) return { rows: [], ok: true, capped: false };
   /*
    * An org is REQUIRED, and refusing here rather than trusting callers is the
    * point: on a service-role client `org_id` is the only boundary there is, and
@@ -138,47 +163,63 @@ async function readSource(
    */
   if (!orgId) {
     console.error("timeline read refused: no org", { entityType: source.entityType });
-    return { rows: [], ok: false };
+    return { rows: [], ok: false, capped: false };
   }
 
-  let query = createAdminClient()
-    .from("events")
-    .select("id, occurred_at, event_type, entity_type, entity_id, actor_id, payload")
-    // EXPLICIT — the admin client bypasses RLS, so this is the only org boundary
-    .eq("org_id", orgId)
-    .eq("entity_type", source.entityType)
-    .in("entity_id", source.entityIds as string[]);
-  // In the QUERY, not after it: a lead's delivery telemetry (an alert retried
-  // through its backoff, an escalation chain) would otherwise fill the limit
-  // with rows the feed then drops.
-  if (source.excludeEventTypes && source.excludeEventTypes.length > 0) {
-    query = query.not("event_type", "in", `(${source.excludeEventTypes.join(",")})`);
-  }
-  const { data, error } = await query
-    .order("occurred_at", { ascending: false })
-    // events of one transaction share occurred_at (a close writes won_override
-    // and won together, 0117); within an org, id order is chain order (0109)
-    .order("id", { ascending: false })
-    .limit(source.limit);
+  const admin = createAdminClient();
+  const answers = await Promise.all(
+    idSlices(source.entityIds).map((ids) => {
+      let query = admin
+        .from("events")
+        .select("id, occurred_at, event_type, entity_type, entity_id, actor_id, payload")
+        // EXPLICIT — the admin client bypasses RLS, so this is the only org boundary
+        .eq("org_id", orgId)
+        .eq("entity_type", source.entityType)
+        .in("entity_id", ids);
+      // In the QUERY, not after it: a lead's delivery telemetry (an alert retried
+      // through its backoff, an escalation chain) would otherwise fill the limit
+      // with rows the feed then drops.
+      if (source.excludeEventTypes && source.excludeEventTypes.length > 0) {
+        query = query.not("event_type", "in", `(${source.excludeEventTypes.join(",")})`);
+      }
+      return (
+        query
+          .order("occurred_at", { ascending: false })
+          // events of one transaction share occurred_at (a close writes won_override
+          // and won together, 0117); within an org, id order is chain order (0109)
+          .order("id", { ascending: false })
+          // one past the cap: whether it comes back is whether older events exist
+          .limit(source.limit + 1)
+      );
+    }),
+  );
 
-  // A timeline that silently shows nothing is indistinguishable from a record
-  // nothing has happened to — the failure this whole day's work was about. A
-  // read that failed says so in the log rather than rendering as an empty
-  // history; the caller keeps its page (and `readEntityTimelines` reports it).
-  if (error || !Array.isArray(data)) {
-    console.error("timeline read failed:", {
-      entityType: source.entityType,
-      count: source.entityIds.length,
-      error: error ? error.message : "the answer held no rows",
-    });
-    return { rows: [], ok: false };
+  const found: TimelineRow[] = [];
+  for (const { data, error } of answers) {
+    // A timeline that silently shows nothing is indistinguishable from a record
+    // nothing has happened to — the failure this whole day's work was about. A
+    // read that failed says so in the log rather than rendering as an empty
+    // history; the caller keeps its page (and `readEntityTimelines` reports it).
+    // One slice failing fails the source: half a source is not its history.
+    if (error || !Array.isArray(data)) {
+      console.error("timeline read failed:", {
+        entityType: source.entityType,
+        count: source.entityIds.length,
+        error: error ? error.message : "the answer held no rows",
+      });
+      return { rows: [], ok: false, capped: false };
+    }
+    found.push(...(data as unknown as TimelineRow[]));
   }
-  const rows = await attachNotes(data as unknown as TimelineRow[], orgId);
+  // one slice is already in the database's order; several are merged into it
+  if (answers.length > 1) found.sort(compareNewestFirst);
+  const capped = found.length > source.limit;
+  const rows = await attachNotes(found.slice(0, source.limit), orgId);
   const redacted = redactSlipSigners(
     redactWonDealKinds(redactDocumentTitles(rows, viewerRole), viewerRole),
     viewerRole,
   );
-  return { rows: redacted, ok: true };
+  return { rows: redacted, ok: true, capped };
 }
 
 /**
@@ -221,7 +262,7 @@ export interface EntityTimelines {
    * than it has — a zero standing in for unavailable data.
    */
   incomplete: boolean;
-  /** older events exist than the ones returned (a source reached its cap, or the merge was cut to `limit`) */
+  /** older events exist than the ones returned (a source holds more than its cap, or the merge was cut to `limit`) */
   truncated: boolean;
 }
 
@@ -244,11 +285,16 @@ export const CUSTOMER_FEED_SKIPPED_TYPES = ["enquiry_alert", "lead_escalation"] 
  * on the CALLER's client. A source with no ids asks nothing.
  *
  * THE MERGE IS HONEST ABOUT ITS EDGES. Each source is capped at `perSource`,
- * and a capped source may hold older rows the merge never saw. So rows older
- * than the newest "oldest row" among the capped sources are dropped rather
- * than shown out of context — otherwise a quiet source's year-old line would
- * sit where a busy source's missing lines belong. Then the newest `limit`
- * remain, and `truncated` says older events exist.
+ * and a source holding MORE than that (its probe row came back, readSource)
+ * has older rows the merge never saw. So rows older than the newest "oldest
+ * row" among those sources are dropped rather than shown out of context —
+ * otherwise a quiet source's year-old line would sit where a busy source's
+ * missing lines belong. A source with exactly `perSource` events is complete
+ * and sets no floor. Then the newest `limit` remain, and `truncated` says
+ * older events exist.
+ *
+ * Any number of ids per source: readSource sends them in slices under the
+ * gateway's 414 (IDS_PER_READ).
  *
  * Then, once for the whole page and as the VIEWER: the current task / document
  * titles and a viewing's current feedback (`attachCurrentTitles`), and the
@@ -285,10 +331,10 @@ export async function readEntityTimelines(opts: {
   const incomplete = reads.some((r) => !r.ok);
 
   // the newest of the capped sources' oldest rows: below it, a capped source
-  // may be missing lines
+  // may be missing lines. Capped means MORE exist — not "returned perSource".
   let floor: TimelineRow | null = null;
   for (const r of reads) {
-    if (!r.ok || r.rows.length < opts.perSource || r.rows.length === 0) continue;
+    if (!r.ok || !r.capped || r.rows.length === 0) continue;
     const oldest = r.rows[r.rows.length - 1];
     if (!floor || compareNewestFirst(oldest, floor) < 0) floor = oldest;
   }

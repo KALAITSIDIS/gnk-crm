@@ -59,6 +59,7 @@ import { formatDateTime } from "@/lib/utils/format";
 import { CUSTOMER_FEED_SKIPPED_TYPES, readEntityTimelines } from "@/lib/services/entity-timeline";
 import { readContactActivitySummary } from "@/lib/services/contact-activity-summary";
 import { proposalsForContact } from "@/lib/queries/proposals-sent";
+import { readContactHistoryIds } from "@/lib/queries/contact-history";
 import { ProposalsSentList } from "@/components/features/contacts/proposals-sent";
 
 const TEMP_TONES: Record<string, string> = {
@@ -147,7 +148,7 @@ export default async function ContactDetailPage({
     { data: documentRows },
     { data: absorber },
     viewingsRes,
-    leadsRes,
+    historyIds,
   ] = await Promise.all([
     supabase
       .from("deals")
@@ -178,25 +179,20 @@ export default async function ContactDetailPage({
       .eq("contact_id", id)
       .order("scheduled_at", { ascending: false })
       .limit(50),
-    // A06: the person's enquiries. The inbox files its Contacted / Called /
-    // Log / WhatsApp events on the LEAD, so without these the Activity tab
-    // missed most of the work done with the person. Org-readable (leads_select).
-    supabase
-      .from("leads")
-      .select("id")
-      .eq("contact_id", id)
-      .order("received_at", { ascending: false })
-      .order("id", { ascending: false })
-      .limit(50),
+    // A06: what the combined history and the summary strip are asked about —
+    // EVERY lead, deal and viewing of the person, not the two tabs' newest 50
+    // above. The inbox files its Contacted / Called / Log / WhatsApp events on
+    // the LEAD, and a developer is the seller on every unit deal: a call logged
+    // yesterday on the 51st-newest deal must still be "Last logged contact".
+    // Paged; a failed page fails the page (lib/queries/contact-history.ts).
+    readContactHistoryIds(supabase, id),
   ]);
-  // These three lists' ids feed the combined history and the summary strip, so
-  // a failed read fails the page rather than reading as "no deals, no leads,
-  // no viewings" — a contact with no history it actually has.
+  // The tabs' lists. A failed read fails the page rather than reading as "no
+  // deals, no viewings" — a contact with no history it actually has.
   const dealRows = unwrapRows(dealsRes, "contact deals");
   const viewingRows = unwrapRows(viewingsRes, "contact viewings");
-  const leadIds = unwrapRows(leadsRes, "contact leads").map((l) => l.id);
+  const { leadIds, dealIds, viewingIds } = historyIds;
   const contactIds = [id, ...mergedRows.map((m) => m.id)];
-  const dealIds = dealRows.map((d) => d.id);
   const now = new Date(); // per-request clock: "next" viewing, overdue task
 
   const [timeline, summary, proposals] = await Promise.all([
@@ -215,14 +211,15 @@ export default async function ContactDetailPage({
         { entityType: "contact", entityIds: contactIds },
         { entityType: "lead", entityIds: leadIds },
         { entityType: "deal", entityIds: dealIds },
-        { entityType: "viewing", entityIds: viewingRows.map((v) => v.id) },
+        { entityType: "viewing", entityIds: viewingIds },
       ],
       perSource: 50,
       limit: 100,
       excludeEventTypes: CUSTOMER_FEED_SKIPPED_TYPES,
     }),
     // Last logged contact / last chat opened (system, same ids) and the next
-    // step (THIS client: a non-admin sees only their own tasks)
+    // step (THIS client: a non-admin sees the tasks they hold or set — the
+    // strip says whose)
     readContactActivitySummary({
       orgId: profile.orgId,
       viewer: supabase,
@@ -453,6 +450,7 @@ export default async function ContactDetailPage({
         <ContactActivityStrip
           summary={summary}
           actorNames={profileName}
+          viewerId={profile.id}
           viewerIsAdmin={profile.role === "admin"}
           canAddTask={!c.is_archived && !isErased}
           now={now}

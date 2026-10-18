@@ -15,9 +15,8 @@ import { fakeClient } from "@/lib/testing/fake-client";
 const admin = vi.hoisted(() => ({ client: null as unknown }));
 vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => admin.client }));
 
-const { readEntityTimeline, readEntityTimelines, compareNewestFirst, CUSTOMER_FEED_SKIPPED_TYPES } = await import(
-  "./entity-timeline"
-);
+const { readEntityTimeline, readEntityTimelines, compareNewestFirst, CUSTOMER_FEED_SKIPPED_TYPES, idSlices, IDS_PER_READ } =
+  await import("./entity-timeline");
 
 // the VIEWER's client — a blank fake; see event-context.test.ts for what it is asked
 const viewer = () => fakeClient({}).client as never;
@@ -103,7 +102,16 @@ describe("readEntityTimeline", () => {
       ["occurred_at", { ascending: false }],
       ["id", { ascending: false }],
     ]);
-    expect(svc.argsOf("events", "limit")).toEqual([[50]]);
+    // one past the cap: that row's presence is what says older events exist
+    expect(svc.argsOf("events", "limit")).toEqual([[51]]);
+  });
+
+  it("returns at most `limit` rows even though it asks for one more", async () => {
+    const many = Array.from({ length: 4 }, (_, i) => ({ ...row(4 - i, "updated") }));
+    const svc = fakeClient({ events: [{ data: many, error: null }] });
+    admin.client = svc.client;
+    const rows = await readEntityTimeline({ orgId: "o", entityType: "contact", entityIds: ["c1"], limit: 3, viewerRole: "admin", viewer: viewer() });
+    expect(rows.map((r) => r.id), "the probe row is never shown").toEqual([4, 3, 2]);
   });
 
   it("a failed read is LOGGED — the screen still cannot tell it from an empty history", async () => {
@@ -717,8 +725,37 @@ describe("readEntityTimelines — one feed from several records (A06)", () => {
   });
 
   it("drops rows older than a capped source's edge — they would sit where its missing lines belong", async () => {
-    // the lead source is capped at 2: anything older than its oldest returned
-    // row may have siblings it never returned
+    // the lead source holds MORE than 2 (the probe row, 7, came back): anything
+    // older than its oldest kept row may have siblings it never returned
+    const svc = fakeClient({
+      events: [
+        {
+          data: [ev(9, "2026-10-09T10:00:00Z", "lead"), ev(8, "2026-10-08T10:00:00Z", "lead"), ev(7, "2026-10-07T10:00:00Z", "lead")],
+          error: null,
+        },
+        { data: [ev(4, "2026-10-08T12:00:00Z", "contact"), ev(1, "2025-01-01T10:00:00Z", "contact")], error: null },
+      ],
+    });
+    admin.client = svc.client;
+    const out = await readEntityTimelines({
+      orgId: "org-1",
+      viewerRole: "admin",
+      viewer: viewer(),
+      sources: [
+        { entityType: "lead", entityIds: ["l1"] },
+        { entityType: "contact", entityIds: ["c1"] },
+      ],
+      perSource: 2,
+      limit: 100,
+    });
+    expect(out.rows.map((r) => r.id), "the year-old contact line waits behind the cap").toEqual([9, 4, 8]);
+    expect(out.truncated).toBe(true);
+    expect(svc.argsOf("events", "limit"), "each source asks one past perSource").toEqual([[3], [3]]);
+  });
+
+  it("a source with EXACTLY perSource events is complete: no floor, nothing dropped, not truncated (A06 review)", async () => {
+    // the lead source answered 2 of the 3 asked for — it has no third event,
+    // so the contact's year-old line is real history, not a gap's neighbour
     const svc = fakeClient({
       events: [
         { data: [ev(9, "2026-10-09T10:00:00Z", "lead"), ev(8, "2026-10-08T10:00:00Z", "lead")], error: null },
@@ -737,8 +774,91 @@ describe("readEntityTimelines — one feed from several records (A06)", () => {
       perSource: 2,
       limit: 100,
     });
-    expect(out.rows.map((r) => r.id), "the year-old contact line waits behind the cap").toEqual([9, 4, 8]);
+    expect(out.rows.map((r) => r.id)).toEqual([9, 4, 8, 1]);
+    expect(out.truncated, "nothing was missing").toBe(false);
+  });
+
+  it("sends a long id list in slices under the 414, and merges them as one source", async () => {
+    // a developer: the seller on 250 unit deals
+    const ids = Array.from({ length: 250 }, (_, i) => `d${String(i).padStart(3, "0")}`);
+    const svc = fakeClient({
+      events: [
+        { data: [ev(2, "2026-10-02T10:00:00Z", "deal")], error: null },
+        { data: [], error: null },
+        // the NEWEST event is on a deal in the last slice — once past the 50th id, never asked about
+        { data: [ev(9, "2026-10-09T10:00:00Z", "deal", "conversation_logged")], error: null },
+      ],
+    });
+    admin.client = svc.client;
+    const out = await readEntityTimelines({
+      orgId: "org-1",
+      viewerRole: "admin",
+      viewer: viewer(),
+      sources: [{ entityType: "deal", entityIds: ids }],
+      perSource: 50,
+      limit: 100,
+    });
+    const slices = svc.argsOf("events", "in").map(([, v]) => v as string[]);
+    expect(slices.map((v) => v.length)).toEqual([100, 100, 50]);
+    expect(slices.flat(), "every id asked about, once").toEqual(ids);
+    expect(svc.argsOf("events", "eq").filter(([k]) => k === "org_id").length, "each slice org-bound").toBe(3);
+    expect(out.rows.map((r) => r.id)).toEqual([9, 2]);
+    expect(out.incomplete).toBe(false);
+    expect(out.truncated).toBe(false);
+  });
+
+  it("caps a sliced source over the UNION: two slices of 2 rows each, perSource 3 → capped at the third newest", async () => {
+    const ids = Array.from({ length: 150 }, (_, i) => `d${i}`);
+    const svc = fakeClient({
+      events: [
+        { data: [ev(8, "2026-10-08T10:00:00Z", "deal"), ev(4, "2026-10-04T10:00:00Z", "deal")], error: null },
+        { data: [ev(6, "2026-10-06T10:00:00Z", "deal"), ev(2, "2026-10-02T10:00:00Z", "deal")], error: null },
+        { data: [ev(5, "2026-10-05T12:00:00Z", "contact"), ev(1, "2025-01-01T10:00:00Z", "contact")], error: null },
+      ],
+    });
+    admin.client = svc.client;
+    const out = await readEntityTimelines({
+      orgId: "org-1",
+      viewerRole: "admin",
+      viewer: viewer(),
+      sources: [
+        { entityType: "deal", entityIds: ids },
+        { entityType: "contact", entityIds: ["c1"] },
+      ],
+      perSource: 3,
+      limit: 100,
+    });
+    // the deal source holds 4 > 3: it keeps 8, 6, 4 and its floor is 4, so
+    // the contact's year-old line waits; the contact's 5 is above the floor
+    expect(out.rows.map((r) => r.id)).toEqual([8, 6, 5, 4]);
     expect(out.truncated).toBe(true);
+  });
+
+  it("one failed slice fails its whole source — half a source is not its history", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const ids = Array.from({ length: 101 }, (_, i) => `d${i}`);
+    const svc = fakeClient({
+      events: [
+        { data: [ev(8, "2026-10-08T10:00:00Z", "deal")], error: null },
+        { data: null, error: { message: "URI too long" } },
+        { data: [ev(3, "2026-10-03T10:00:00Z", "contact")], error: null },
+      ],
+    });
+    admin.client = svc.client;
+    const out = await readEntityTimelines({
+      orgId: "org-1",
+      viewerRole: "admin",
+      viewer: viewer(),
+      sources: [
+        { entityType: "deal", entityIds: ids },
+        { entityType: "contact", entityIds: ["c1"] },
+      ],
+      perSource: 50,
+      limit: 100,
+    });
+    expect(out.incomplete).toBe(true);
+    expect(out.rows.map((r) => r.id), "the deal slice that answered is not shown as the deals' history").toEqual([3]);
+    err.mockRestore();
   });
 
   it("cuts the merge at `limit` and says so", async () => {
@@ -819,6 +939,17 @@ describe("readEntityTimelines — one feed from several records (A06)", () => {
     expect(svc.served.events ?? 0).toBe(0);
     expect(out).toEqual({ rows: [], incomplete: true, truncated: false });
     err.mockRestore();
+  });
+});
+
+describe("idSlices", () => {
+  it("slices at IDS_PER_READ, keeps the order, drops repeats, and makes nothing of an empty list", () => {
+    expect(IDS_PER_READ, "under the gateway's ~197-id 414").toBeLessThan(197);
+    const ids = Array.from({ length: 205 }, (_, i) => `x${i}`);
+    expect(idSlices(ids).map((s) => s.length)).toEqual([100, 100, 5]);
+    expect(idSlices(ids).flat()).toEqual(ids);
+    expect(idSlices(["a", "b", "a", "c"], 2)).toEqual([["a", "b"], ["c"]]);
+    expect(idSlices([])).toEqual([]);
   });
 });
 

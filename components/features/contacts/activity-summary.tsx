@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
-import type { ContactActivitySummary, LastEvent } from "@/lib/services/contact-activity-summary";
+import { nextTaskLabel, type ContactActivitySummary, type LastEvent } from "@/lib/services/contact-activity-summary";
 import { channelLabel, describeEvent, type EventTranslator } from "@/lib/services/events";
 import { formatDate, formatDateTime } from "@/lib/utils/format";
 
@@ -15,6 +15,10 @@ import { formatDate, formatDateTime } from "@/lib/utils/format";
  * call or a "contacted" stamp, and the click has its own line that says it is
  * not one. A part whose read failed says so; it never reads as "none".
  *
+ * The next task says whose it is: "Your task" only when it is assigned to the
+ * viewer. A non-admin also reads the tasks they set a colleague (tasks_select
+ * admits the creator), and those read "Task for <name>".
+ *
  * The contact page's chrome is English by convention (only the timeline's
  * lines are translated), so the labels are here and the lines come from
  * `events.*`.
@@ -22,6 +26,7 @@ import { formatDate, formatDateTime } from "@/lib/utils/format";
 export async function ContactActivityStrip({
   summary,
   actorNames,
+  viewerId,
   viewerIsAdmin,
   canAddTask,
   now,
@@ -29,6 +34,8 @@ export async function ContactActivityStrip({
   summary: ContactActivitySummary;
   /** profile id → name, from the page's own profiles read */
   actorNames: ReadonlyMap<string, string>;
+  /** the viewer's profile id — "Your task" only for a task assigned to them */
+  viewerId: string;
   viewerIsAdmin: boolean;
   /** the header shows Add task (not archived, not erased) */
   canAddTask: boolean;
@@ -101,7 +108,7 @@ export async function ContactActivityStrip({
           ) : nextTask.value ? (
             <span>
               <Link href="/tasks" className="text-brand-700 hover:underline">
-                {viewerIsAdmin ? "Task" : "Your task"}: {nextTask.value.title}
+                {nextTaskLabel(nextTask.value, viewerId, actorNames)}: {nextTask.value.title}
               </Link>
               <span className={`block text-xs ${overdue(nextTask.value.due_at) ? "text-danger" : "text-text-3"}`}>
                 {nextTask.value.due_at
@@ -125,7 +132,8 @@ export async function ContactActivityStrip({
           ) : null}
           {nextTask.ok && nextViewing.ok && !nextTask.value && !nextViewing.value ? (
             <span className="text-text-3">
-              {viewerIsAdmin ? "Nothing scheduled" : "Nothing scheduled for you"}
+              {/* a non-admin reads only the tasks they hold or set */}
+              {viewerIsAdmin ? "Nothing scheduled" : "Nothing scheduled by or for you"}
               {canAddTask ? " — use Add task above" : ""}
             </span>
           ) : null}

@@ -17,7 +17,7 @@ import { fakeClient, type FakePage } from "@/lib/testing/fake-client";
 const admin = vi.hoisted(() => ({ client: null as unknown }));
 vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => admin.client }));
 
-const { readContactActivitySummary } = await import("./contact-activity-summary");
+const { readContactActivitySummary, nextTaskLabel } = await import("./contact-activity-summary");
 
 const NOW = new Date("2026-10-18T09:00:00Z");
 
@@ -156,6 +156,44 @@ describe("last logged contact and last chat opened", () => {
     err.mockRestore();
   });
 
+  it("asks about EVERY deal of a developer, in slices under the 414 — the newest call wins wherever it sits (A06 review)", async () => {
+    // 250 unit deals with this contact as the seller: three slices per question
+    const deals = Array.from({ length: 250 }, (_, i) => `d${i}`);
+    const svc = system(
+      [
+        none, // contact
+        none, // lead
+        { data: [event(2, "2026-09-01T10:00:00Z", "conversation_logged", "deal", { channel: "phone" })], error: null },
+        none,
+        // yesterday's call, logged on a deal only the third slice asks about
+        { data: [event(8, "2026-10-17T10:00:00Z", "called", "deal", { first_call: false })], error: null },
+      ],
+      [none, none, none, none, none],
+    );
+    const s = await read(fakeClient({}).client, { dealIds: deals });
+    expect(s.lastContact.ok && s.lastContact.value?.id).toBe(8);
+    const dealSlices = svc
+      .argsOf("events", "in")
+      .filter(([k]) => k === "entity_id")
+      .map(([, v]) => v as string[])
+      .filter((v) => v[0]?.startsWith("d"));
+    expect(dealSlices.map((v) => v.length), "two questions × three slices").toEqual([100, 100, 50, 100, 100, 50]);
+    expect(dealSlices.slice(0, 3).flat()).toEqual(deals);
+    expect(svc.argsOf("events", "eq").filter(([k]) => k === "org_id").length, "every slice org-bound").toBe(10);
+  });
+
+  it("one failed slice is `{ ok: false }` — the other slices' answer is not 'the last contact'", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const deals = Array.from({ length: 101 }, (_, i) => `d${i}`);
+    system(
+      [none, none, { data: [event(2, "2026-09-01T10:00:00Z", "called", "deal")], error: null }, { data: null, error: { message: "414" } }],
+      [none, none, none, none],
+    );
+    const s = await read(fakeClient({}).client, { dealIds: deals });
+    expect(s.lastContact).toEqual({ ok: false });
+    err.mockRestore();
+  });
+
   it("asks nothing for an empty source", async () => {
     const svc = system([none], [none]);
     await read(fakeClient({}).client, { leadIds: [], dealIds: [] });
@@ -179,7 +217,7 @@ describe("next step — read as the VIEWER", () => {
       viewings: [{ data: [{ id: "v1", scheduled_at: "2026-10-20T08:00:00Z", properties: { reference: "PAF0001" } }], error: null }],
     });
     const s = await read(mine.client);
-    expect(s.nextTask).toEqual({ ok: true, value: { id: "t-l", title: "Call back", due_at: "2026-10-19T21:59:59Z" } });
+    expect(s.nextTask).toEqual({ ok: true, value: { id: "t-l", title: "Call back", due_at: "2026-10-19T21:59:59Z", assignee_id: null } });
     expect(s.nextViewing).toEqual({ ok: true, value: { id: "v1", scheduled_at: "2026-10-20T08:00:00Z", reference: "PAF0001" } });
     expect(svc.calls.filter((c) => c.table === "tasks" || c.table === "viewings"), "never the admin client").toEqual([]);
     // one short id list per link column — never one `.or()` that grows with the deals
@@ -201,6 +239,38 @@ describe("next step — read as the VIEWER", () => {
       ]),
     );
     expect(mine.argsOf("viewings", "gte")).toEqual([["scheduled_at", NOW.toISOString()]]);
+    expect(mine.argsOf("tasks", "select"), "whose task it is comes back with it").toEqual([
+      ["id, title, due_at, assignee_id"],
+      ["id, title, due_at, assignee_id"],
+      ["id, title, due_at, assignee_id"],
+    ]);
+  });
+
+  it("hands on whose task it is", async () => {
+    system([none, none, none], [none, none, none]);
+    const mine = fakeClient({
+      tasks: [{ data: [{ id: "t1", title: "Chase the deposit", due_at: "2026-10-20T21:59:59Z", assignee_id: "p-colleague" }], error: null }, none, none],
+      viewings: [none],
+    });
+    const s = await read(mine.client);
+    expect(s.nextTask).toEqual({ ok: true, value: expect.objectContaining({ id: "t1", assignee_id: "p-colleague" }) });
+  });
+
+  it("slices a long deal list for the task read too", async () => {
+    system([none, none, none, none], [none, none, none, none]);
+    const deals = Array.from({ length: 150 }, (_, i) => `d${i}`);
+    const mine = fakeClient({
+      tasks: [none, none, none, { data: [{ id: "t9", title: "Sign the unit 9 papers", due_at: null, assignee_id: null }], error: null }],
+      viewings: [none],
+    });
+    const s = await read(mine.client, { dealIds: deals });
+    expect(mine.argsOf("tasks", "in").map(([k, v]) => [k, (v as string[]).length])).toEqual([
+      ["contact_id", 1],
+      ["lead_id", 1],
+      ["deal_id", 100],
+      ["deal_id", 50],
+    ]);
+    expect(s.nextTask.ok && s.nextTask.value?.id, "the task on the 150th deal").toBe("t9");
   });
 
   it("an undated task comes after a dated one", async () => {
@@ -229,6 +299,19 @@ describe("next step — read as the VIEWER", () => {
     expect(s.nextTask).toEqual({ ok: false });
     expect(s.nextViewing).toEqual({ ok: false });
     err.mockRestore();
+  });
+});
+
+describe("nextTaskLabel — 'Your task' only when it is the viewer's (A06 review)", () => {
+  const names = new Map([["p-colleague", "Maria Ioannou"]]);
+  it("says whose the task is", () => {
+    expect(nextTaskLabel({ assignee_id: "p-me" }, "p-me", names)).toBe("Your task");
+    // tasks_select admits the CREATOR: a task an agent set a colleague is not theirs
+    expect(nextTaskLabel({ assignee_id: "p-colleague" }, "p-me", names)).toBe("Task for Maria Ioannou");
+    expect(nextTaskLabel({ assignee_id: "p-gone" }, "p-me", names), "an unreadable profile is still not 'yours'").toBe(
+      "Task for a colleague",
+    );
+    expect(nextTaskLabel({ assignee_id: null }, "p-me", names)).toBe("Unassigned task");
   });
 });
 
