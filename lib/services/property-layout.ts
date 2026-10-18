@@ -425,7 +425,17 @@ function utility(v: boolean | null | undefined): string {
 /**
  * The land facts the Overview shows in place of "Bedrooms / Bathrooms" (F07):
  * the planning terms, the frontage and the utilities — what a buyer of a plot
- * asks first. An unknown value is a dash, never a zero or a "No".
+ * asks first. A value never recorded (NULL) is a dash or "not recorded",
+ * never a zero or a "No".
+ *
+ * What this cannot tell apart: a land row saved BEFORE F07 holds false for
+ * every utility box left unticked on any Details save (the old checkbox parse,
+ * see UTILITY_STATES in lib/validators/properties.ts), so its stored false —
+ * shown here as "No" — may be the form's default rather than an answer. The
+ * column keeps no trace of which it was; the row's `updated` events do (a
+ * `{from: null, to: false}` change logged before the F07 release). Clearing
+ * that residue is a data fix the operator decides (F07 review, BACKLOG) — not
+ * something a display can guess per row.
  */
 export function landOverviewFacts(p: {
   planning_zone_code: string | null;

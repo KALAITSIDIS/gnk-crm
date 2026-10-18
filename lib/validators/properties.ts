@@ -500,6 +500,9 @@ const optText = (max: number) => z.preprocess(emptyToUndefined, z.string().max(m
  *   "on" / "true" → true — a ticked box on a page rendered before F07;
  *   ABSENT → undefined, which `detailsUpdates` does not write: a stale page's
  *   unticked box, or a form that did not render the field, changes nothing.
+ * The falses written before F07 are still stored, and this select shows them
+ * as "No" (posting them back unchanged): see landOverviewFacts in
+ * lib/services/property-layout.ts for that residue and who clears it.
  */
 export const UTILITY_STATES = ["unknown", "yes", "no"] as const;
 export type UtilityState = (typeof UTILITY_STATES)[number];
