@@ -104,7 +104,8 @@ export function proposalsForContact(supabase: Client, contactId: string): Promis
  * Every buyer-bound proposal that holds this listing, newest first. The inner
  * embed both filters the links and narrows each one's curation to this row.
  * `share_link_properties` has no index on `property_id` (0023 keys it by link
- * first) — a sequential scan, trivial at today's volume; BACKLOG if it grows.
+ * first) — a sequential scan, trivial at today's volume. If it grows, add
+ * `share_link_properties (property_id)` (a T-match-workflow follow-up).
  */
 export function proposalsForProperty(supabase: Client, propertyId: string): Promise<ProposalHistory> {
   return settle(

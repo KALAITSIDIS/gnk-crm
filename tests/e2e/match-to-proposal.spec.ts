@@ -17,6 +17,8 @@ import { fixtureProfile, isLocal, opTimeout, runTag, serviceClient } from "./hel
  *      buyers tab says it too; "Viewing" opens with both parties filled in.
  *   3. An off-market match is marked, and a proposal including it cannot be
  *      made until "This buyer may see off-market listings" is ticked.
+ *   4. On the listing's side, a proposal's one-time link survives Escape and a
+ *      click beside the dialog; only Done ends it (A04 review).
  *
  * Seeds and deletes through the service client, so local only.
  */
@@ -235,9 +237,35 @@ test("ticked matches become ONE proposal bound to the buyer; Proposed shows on b
     await expect(buyerRow.getByRole("button", { name: `Proposal — ${REFS.a} for ${BUYER}` })).toBeVisible();
     await expect(buyerRow.getByRole("button", { name: `Viewing — ${REFS.a} with ${BUYER}` })).toBeVisible();
 
-    // nothing was sent: no viewing was created, and the only new link is the one minted
+    // ---------- a proposal from the listing's side: only Done ends the link (A04 review) ----------
+    await buyerRow.getByRole("button", { name: `Proposal — ${REFS.a} for ${BUYER}` }).click();
+    const single = page.getByRole("dialog", { name: `Proposal for ${BUYER}` });
+    await expect(single).toBeVisible();
+    await single.getByRole("button", { name: "Create proposal", exact: true }).click();
+    const fromListing = single.getByRole("textbox", { name: "Proposal link ready" });
+    await expect(fromListing, "the link is shown once").toBeVisible({ timeout: opTimeout(15_000) });
+    const once = await fromListing.inputValue();
+    // the one copy there will ever be: neither Escape nor a click beside the
+    // dialog throws it away, and there is no corner X while it is shown
+    await page.keyboard.press("Escape");
+    await expect(fromListing).toHaveValue(once);
+    await page.mouse.click(4, 4);
+    await expect(fromListing).toHaveValue(once);
+    await expect(single.getByRole("button", { name: "Close" })).toHaveCount(0);
+    await single.getByRole("button", { name: "Done" }).click();
+    await expect(single).toBeHidden();
+    // reopened, it offers a NEW proposal — the shown link is not kept anywhere
+    await buyerRow.getByRole("button", { name: `Proposal — ${REFS.a} for ${BUYER}` }).click();
+    await expect(single.getByRole("button", { name: "Create proposal", exact: true })).toBeVisible();
+    await expect(single.getByRole("textbox", { name: "Proposal link ready" })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(single, "with no link shown, Escape closes it as before").toBeHidden();
+
+    // nothing was sent: no viewing was created, and the only new links are the two minted
     const { data: viewings } = await svc.from("viewings").select("id").eq("contact_id", buyer!.id);
     expect(viewings).toEqual([]);
+    const { data: minted } = await svc.from("share_links").select("id").eq("contact_id", buyer!.id);
+    expect(minted, "the contact side's proposal and the listing side's").toHaveLength(2);
   } finally {
     await cleanup(svc, buyer?.id ?? null, null, (props ?? []).map((p) => p.id));
   }

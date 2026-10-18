@@ -38,7 +38,8 @@ export function visibilityChipLabel(visibility: string | null | undefined): stri
  * Only `off_market` asks for an explicit "this buyer may see it" before a
  * proposal is made: it is the visibility whose whole point is that buyers are
  * chosen. Whether VIP, partner and coming-soon stock should ask too has no
- * audience model behind it yet — an operator decision, recorded, not guessed.
+ * audience model behind it yet: an open operator decision (T-match-workflow),
+ * not guessed here.
  */
 export function needsAudienceConfirmation(listings: readonly { visibility: string | null | undefined }[]): boolean {
   return listings.some((l) => l.visibility === "off_market");

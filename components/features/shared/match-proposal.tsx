@@ -357,18 +357,32 @@ function SingleProposalDialog({ buyer, listing }: { buyer: ProposalBuyer; listin
   const { minted, clear, pending, mint, locale } = useMintProposal(buyer);
   const blocker = proposalBlocker({ listings: [listing], offMarketConfirmed: confirmed });
   const ids = `${listing.id}-${buyer.id}`;
+  const reset = () => {
+    setConfirmed(false);
+    setTitle("");
+  };
+  /*
+   * While the link is shown, ONLY Done closes the dialog (A04 review). It is
+   * the one copy there will ever be — only its hash is stored — and the link
+   * already exists: the row says "Proposed" from the moment it was minted, so
+   * an Escape or a click beside the dialog that threw it away left a live,
+   * buyer-bound link nobody holds, recoverable only by revoking it on
+   * /share-links. The contact side keeps it inline until Done; this matches.
+   * The same while it is being made: a dialog closed mid-"Creating…" would
+   * hide the link it is about to show.
+   */
+  const holding = Boolean(minted) || pending;
+  const holdWhileShown = (e: Event) => {
+    if (holding) e.preventDefault();
+  };
 
   return (
     <Dialog
       open={open}
       onOpenChange={(o) => {
+        if (!o && holding) return; // Done ends it, nothing else
         setOpen(o);
-        if (!o) {
-          // the link was shown once; closing ends it, as "Done" does
-          clear();
-          setConfirmed(false);
-          setTitle("");
-        }
+        if (!o) reset();
       }}
     >
       <DialogTrigger asChild>
@@ -381,7 +395,13 @@ function SingleProposalDialog({ buyer, listing }: { buyer: ProposalBuyer; listin
           <FileText className="size-3.5" /> Proposal
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-md">
+      <DialogContent
+        className="max-w-md"
+        // no corner X while the link is shown: Done is the way out
+        showCloseButton={!holding}
+        onEscapeKeyDown={holdWhileShown}
+        onInteractOutside={holdWhileShown}
+      >
         <DialogHeader>
           <DialogTitle>Proposal for {buyer.name}</DialogTitle>
           <DialogDescription>{listing.reference}, as a no-login page bound to this buyer.</DialogDescription>
@@ -391,6 +411,7 @@ function SingleProposalDialog({ buyer, listing }: { buyer: ProposalBuyer; listin
             minted={minted}
             onDone={() => {
               clear();
+              reset();
               setOpen(false);
             }}
           />
