@@ -110,6 +110,8 @@ const FORM_PAGES = [
   { name: "Calculators", path: "/calculators" },
   { name: "Tasks (quick add)", path: "/tasks" },
   { name: "Keys (filters)", path: "/keys" },
+  // A03: every filter, the land bounds and the sort are named controls
+  { name: "Properties (filters)", path: "/properties" },
   { name: "Leads (filters)", path: "/leads" },
   { name: "Settings — organization", path: "/settings/organization" },
   { name: "Settings — users", path: "/settings/users" },
@@ -190,6 +192,53 @@ test("[A11Y-1] checkbox groups are exposed as named groups, not orphan labels", 
   await page.goto("/contacts/new", { waitUntil: "networkidle" });
   await expect(page.getByRole("group", { name: /languages/i })).toBeVisible();
   await expect(page.getByRole("group", { name: /contact types/i })).toBeVisible();
+});
+
+/**
+ * A08: the properties filter bar, pinned by the field names a screen reader
+ * reads, as the browser computes them (the FORM_PAGES walk above only proves
+ * each control has SOME name). tests/unit/properties-filters-names.test.ts
+ * pins the same names from the server-rendered markup on every unit run.
+ */
+test("[A08] the properties filters are reachable by their field names", async ({ page }) => {
+  await page.goto("/properties", { waitUntil: "networkidle" });
+  await expect(
+    page.getByRole("searchbox", { name: "Search properties by reference, title or address", exact: true }),
+  ).toBeVisible();
+  for (const name of [
+    "District",
+    "Area",
+    "Property type",
+    "Transaction",
+    "Status",
+    "Visibility",
+    "Kind",
+    "Mandate",
+    "Active or archived",
+    "Sort",
+  ]) {
+    await expect(page.getByRole("combobox", { name, exact: true }), `no combobox named ${name}`).toBeVisible();
+  }
+  for (const name of [
+    "Bedrooms at least",
+    "Price from (€)",
+    "Price up to (€)",
+    "Plot area from (m²)",
+    "Plot area up to (m²)",
+    "Building density at least (%)",
+  ]) {
+    await expect(page.getByRole("spinbutton", { name, exact: true }), `no number box named ${name}`).toBeVisible();
+  }
+  // the land bounds are one named group, each described by the note on unknown values
+  const land = page.getByRole("group", { name: "Land and plot", exact: true });
+  await expect(land.getByRole("spinbutton")).toHaveCount(3);
+  await expect(land.getByRole("spinbutton", { name: "Plot area from (m²)", exact: true })).toHaveAccessibleDescription(
+    /left out, not counted as zero/,
+  );
+  // the layout toggles: a named group; the bare list has chosen neither
+  const layout = page.getByRole("group", { name: "Layout", exact: true });
+  await expect(layout.getByRole("button", { name: "Table view", exact: true })).toHaveAttribute("aria-pressed", "false");
+  await expect(layout.getByRole("button", { name: "Card view", exact: true })).toHaveAttribute("aria-pressed", "false");
 });
 
 /**

@@ -102,6 +102,23 @@ export function parseMapsCoords(input: string): LatLng | null {
   return extractCoords(decoded) ?? extractCoords(text);
 }
 
+/**
+ * A Google Maps link to a point — the keyless Maps URLs API,
+ * `https://www.google.com/maps/search/?api=1&query=<lat>,<lng>` (F08: each row
+ * of the map page's list, the way to a location when the map itself cannot
+ * draw). Six decimals, ~11 cm, the rounding `locationChanged` compares at. The
+ * comma is percent-encoded as Google documents it; `parseMapsCoords` decodes
+ * it, so a link copied out of the CRM pastes back in as the same point.
+ *
+ * The link sends the coordinates to Google only when someone follows it, and
+ * callers open it with rel="noopener noreferrer" so the CRM URL (with its
+ * filters) does not travel as the Referer.
+ */
+export function mapsSearchUrl(p: LatLng): string {
+  const query = encodeURIComponent(`${p.lat.toFixed(6)},${p.lng.toFixed(6)}`);
+  return `https://www.google.com/maps/search/?api=1&query=${query}`;
+}
+
 // Hosts Google hands out for shortened Maps/place links. A short link has no
 // coordinates in the URL, so recognising one tells the UI to resolve it server-
 // side (the browser can't follow the redirect — the host sends no CORS headers).

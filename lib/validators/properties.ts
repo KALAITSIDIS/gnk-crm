@@ -137,13 +137,23 @@ const optionalUuid = z
   .optional()
   .transform((v) => (v && z.guid().safeParse(v).success ? v : undefined));
 
-const optionalInt = z
+/**
+ * The highest bedroom count the "Beds ≥" filter takes. `bedrooms` is int4: a
+ * value past 2,147,483,647 reached PostgREST and came back 400 22003 / 22P02,
+ * the error boundary on the list and the map and the export's 500 (BACKLOG
+ * "A Beds filter past int4 crashes the properties list and map"). No listing
+ * has a hundred bedrooms; a larger value is dropped like any other invalid
+ * filter, and the input carries the same `max`.
+ */
+export const MAX_BEDS_FILTER = 99;
+
+const optionalBeds = z
   .string()
   .optional()
   .transform((v) => {
     if (!v) return undefined;
     const n = Number(v);
-    return Number.isInteger(n) && n >= 0 ? n : undefined;
+    return Number.isInteger(n) && n >= 0 && n <= MAX_BEDS_FILTER ? n : undefined;
   });
 
 const optionalNumber = z
@@ -154,6 +164,67 @@ const optionalNumber = z
     const n = Number(v);
     return Number.isFinite(n) && n >= 0 ? n : undefined;
   });
+
+/**
+ * What the list's `kind` parameter may say: one kind, or `all` (F04). Absent
+ * is the default — every kind but units (see `resolvePropertyKindScope`).
+ * Declared above the schema, which reads it at module-evaluation time.
+ */
+export const PROPERTY_KIND_FILTERS = [...PROPERTY_KINDS, "all"] as const;
+export type PropertyKindFilter = (typeof PROPERTY_KIND_FILTERS)[number];
+
+/**
+ * How the list may be ordered (A03). `newest` is the default and emits exactly
+ * the order the list always had — `created_at desc, id` — so a URL without
+ * `sort` lists what it always listed, in the same order. Every other sort puts
+ * unknown values last and ends on `id`, so paging stays a partition
+ * (T-list-page-order). See `applyPropertyListOrder`.
+ */
+export const PROPERTY_SORTS = [
+  "newest",
+  "updated",
+  "price_asc",
+  "price_desc",
+  "plot_asc",
+  "plot_desc",
+  "score_asc",
+  "score_desc",
+  "reference",
+  "reference_desc",
+] as const;
+export type PropertySort = (typeof PROPERTY_SORTS)[number];
+export const DEFAULT_PROPERTY_SORT = "newest" satisfies PropertySort;
+
+/**
+ * Every URL parameter that NARROWS the list — the one list of them (A03). The
+ * parser reads exactly these plus `PROPERTY_PRESENTATION_KEYS`; the filter
+ * bar's Clear button shows when any of them is set; the export's audit vetting
+ * must name each of them (`q` excepted: it is recorded only as used). A new
+ * filter joins here, and the unit test that compares this list with the
+ * schema's keys fails until it does.
+ */
+export const PROPERTY_FILTER_KEYS = [
+  "q",
+  "district",
+  "area",
+  "type",
+  "transaction",
+  "status",
+  "visibility",
+  "beds",
+  "price_min",
+  "price_max",
+  "plot_min",
+  "plot_max",
+  "density_min",
+  "mandate",
+  "kind",
+  "scope",
+] as const;
+export type PropertyFilterKey = (typeof PROPERTY_FILTER_KEYS)[number];
+
+/** How the rows are shown, not which rows: kept by Clear, never audited as a filter. */
+export const PROPERTY_PRESENTATION_KEYS = ["view", "sort", "page"] as const;
 
 /** Parsed from URL searchParams — invalid values silently drop to undefined. */
 export const propertyFiltersSchema = z.object({
@@ -167,11 +238,17 @@ export const propertyFiltersSchema = z.object({
   transaction: optionalEnum(TRANSACTION_TYPES),
   status: optionalEnum(PROPERTY_STATUSES),
   visibility: optionalEnum(VISIBILITY_LEVELS),
-  beds: optionalInt,
+  beds: optionalBeds,
   price_min: optionalNumber,
   price_max: optionalNumber,
+  // Land (A03): plot area and building density, on the columns the land panel
+  // edits (plot_area_sqm, building_density_pct). A row whose value is unknown
+  // never matches a bound — SQL null semantics, and the inputs say so.
+  plot_min: optionalNumber,
+  plot_max: optionalNumber,
+  density_min: optionalNumber,
   mandate: optionalEnum(MANDATE_FILTERS),
-  kind: optionalEnum(PROPERTY_KINDS),
+  kind: optionalEnum(PROPERTY_KIND_FILTERS),
   scope: z
     .string()
     .optional()
@@ -186,6 +263,13 @@ export const propertyFiltersSchema = z.object({
     // everything past the title off the right edge. An explicit value is
     // honoured on every screen.
     .transform((v) => (v === "cards" ? "cards" : v === "table" ? "table" : "auto")),
+  // an unknown sort is the default one, like any other invalid parameter
+  sort: z
+    .string()
+    .optional()
+    .transform((v): PropertySort =>
+      v && (PROPERTY_SORTS as readonly string[]).includes(v) ? (v as PropertySort) : DEFAULT_PROPERTY_SORT,
+    ),
   page: z
     .string()
     .optional()
@@ -215,13 +299,16 @@ export type PropertyKindMode = "exclude-units" | "none";
  * including its escape hatch: an explicit `kind=unit` wins over the default,
  * because a filter that returns nothing when you pick it is a broken filter.
  *
- * The default is VISIBLE IN THE UI — the select reads "Standalone & projects",
- * not "All kinds". A default that silently removes rows is a trap; one the user
+ * The default is VISIBLE IN THE UI — the select reads "Listings & developments
+ * (no units)", and the list header counts the units it is leaving out with a
+ * link to them. A default that silently removes rows is a trap; one the user
  * can see and change is a choice.
+ *
+ * `kind=all` (F04) is the explicit "every kind": no kind predicate at all, so
+ * the list, the export and the map can hold the same rows a by-status count
+ * of every record does. An explicit single kind narrows on its own.
  */
-export function resolvePropertyKindScope(filters: {
-  kind?: (typeof PROPERTY_KINDS)[number];
-}): PropertyKindMode {
+export function resolvePropertyKindScope(filters: { kind?: PropertyKindFilter }): PropertyKindMode {
   return filters.kind === undefined ? "exclude-units" : "none";
 }
 

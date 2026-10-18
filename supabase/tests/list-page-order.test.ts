@@ -302,7 +302,8 @@ function read(list: List, root: ReactNode): Screen {
         ids: views.table ?? views.cards ?? [],
         views,
         text,
-        ...fromHeader(els, /^(\d+) (?:archived )?propert(?:y|ies)$/),
+        // the default list names what it holds (F04): "N listings & developments"
+        ...fromHeader(els, /^(\d+) (?:archived )?(?:listings & developments|listing or development)(?: · |$)/),
       };
     }
     case "tasks": {
