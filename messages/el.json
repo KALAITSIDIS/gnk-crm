@@ -521,7 +521,7 @@
     "mediaAltCleared": "Αφαιρέθηκε η περιγραφή φωτογραφίας",
     "publishOverride": "Παρακάμφθηκε η πύλη δημοσίευσης (βαθμός {score} < {threshold})",
     "portalSelected": "Επιλέχθηκε για την πύλη {portal}",
-    "portalRemoved": "Αφαιρέθηκε από την πύλη {portal}",
+    "portalRemoved": "Αποεπιλέχθηκε για την πύλη {portal}",
     "portalEnabled": "Η πύλη {portal} ενεργοποιήθηκε",
     "portalDisabled": "Η πύλη {portal} απενεργοποιήθηκε",
     "portalSettingsUpdated": "Ενημερώθηκαν οι ρυθμίσεις της πύλης {portal}",

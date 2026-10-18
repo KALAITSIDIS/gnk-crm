@@ -20,9 +20,18 @@ export const TABLES = [
   "unit_type_applications",
   "share_links", "share_link_properties", "share_link_attempts",
   "public_listing_attempts", "public_enquiry_attempts",
-  // 0095: the feed_token IS the portal's pull URL, so a restore that loses
-  // this table points every enabled portal at a dead link.
+  // 0095 / 0097 / 0151: the row holds feed_token_sha256, the sha256 of the
+  // token in each portal's pull URL (the plaintext feed_token column went in
+  // 0097), and it is the only way the feed recognises that URL — so a restore
+  // that loses this table points every enabled portal at a dead link. Until
+  // 0151 a copy of the digest opened the feed itself; since 0151 it opens
+  // nothing (the readers hash the URL's token, and a digest hashed again is
+  // not the digest).
   "portal_connections", "portal_listings",
+  // 0150: the pull history (counts and reason codes, no person) and each
+  // listing's export revision — a restore that loses the second re-dates
+  // every listing at the next pull, and the portals re-import them all.
+  "portal_pull_log", "portal_export_state",
   // 0101: the desk-alert outbox — ids, states and counters only, no person;
   // a restore that loses it loses which enquiries still owe the desk a word.
   "notification_jobs",
@@ -78,6 +87,8 @@ export const PRIMARY_KEYS = {
   public_enquiry_attempts: ["ip_hash", "window_start"],
   portal_connections: ["id"],
   portal_listings: ["property_id", "portal"],
+  portal_pull_log: ["id"],
+  portal_export_state: ["connection_id", "reference"],
   notification_jobs: ["id"],
   enquiry_alert_sweep_runs: ["id"],
   chain_checks: ["org_id"],

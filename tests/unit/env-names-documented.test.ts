@@ -27,6 +27,8 @@ const PLATFORM = new Set([
   "NODE_ENV",
   "VERCEL_ENV",
   "VERCEL_URL",
+  // the project's production domain, on every deployment (feed-origin.ts)
+  "VERCEL_PROJECT_PRODUCTION_URL",
   "VERCEL_GIT_COMMIT_SHA",
   "NEXT_PUBLIC_VERCEL_ENV",
   "NEXT_RUNTIME",

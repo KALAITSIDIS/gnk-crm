@@ -844,7 +844,7 @@ describe("portal lines name the portal, not its id", () => {
   it("falls back to the id for a portal the registry no longer carries", () => {
     // A row written before a portal was retired still has to read.
     const line = describeEvent(ev("portal_removed", { portal: "deadportal" }, "property"), t);
-    expect(line).toBe("Removed from portal deadportal");
+    expect(line).toBe("Deselected for portal deadportal");
   });
 
   it("survives a payload with no portal at all", () => {

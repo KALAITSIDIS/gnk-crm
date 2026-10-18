@@ -521,7 +521,7 @@
     "mediaAltCleared": "Описание фотографии удалено",
     "publishOverride": "Публикация переопределена (оценка {score} < {threshold})",
     "portalSelected": "Выбрано для портала {portal}",
-    "portalRemoved": "Снято с портала {portal}",
+    "portalRemoved": "Выбор для портала {portal} отменён",
     "portalEnabled": "Портал {portal} включён",
     "portalDisabled": "Портал {portal} выключен",
     "portalSettingsUpdated": "Обновлены настройки портала {portal}",

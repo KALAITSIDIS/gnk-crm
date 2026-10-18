@@ -22,6 +22,8 @@ export type PortalCardDefinition = Pick<
   | "settingsFields"
   | "pullCadence"
   | "docsUrl"
+  | "pendingReason"
+  | "publicationCheck"
 >;
 
 export function toPortalCardDefinition(def: PortalDefinition): PortalCardDefinition {
@@ -36,6 +38,8 @@ export function toPortalCardDefinition(def: PortalDefinition): PortalCardDefinit
     settingsFields,
     pullCadence,
     docsUrl,
+    pendingReason,
+    publicationCheck,
   } = def;
   return {
     id,
@@ -48,5 +52,7 @@ export function toPortalCardDefinition(def: PortalDefinition): PortalCardDefinit
     settingsFields,
     pullCadence,
     docsUrl,
+    pendingReason,
+    publicationCheck,
   };
 }

@@ -1,51 +1,64 @@
 "use client";
 
 import Link from "next/link";
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, type ReactNode } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import { Tabs } from "@/components/ui/tabs";
 import { isPropertyTab, propertyTabHref, type PropertyTab } from "@/lib/services/property-tabs";
 
 /**
- * The property page's Tabs root, holding which tab is open where a link
- * outside the tab strip can change it (F03).
+ * The property page's Tabs root, kept in step with `?tab=`.
  *
- * The page opened on `?tab=` through Radix's `defaultValue`, which is read
- * once: a link to `?tab=details` on the page itself changed the URL and left
- * the tab where it was — and when the URL already said `?tab=details` (the
- * reader had since clicked another tab) it changed nothing at all. The
- * readiness panel's "fix it here" links are on the page itself, so the state
- * lives here: the strip is controlled by it, a TabLink sets it directly, and
- * a navigation that brings a new `?tab=` (the worklist, the calculators)
- * still opens on that tab. The URL is not rewritten on a tab click.
+ * Two reviews of 2026-10-18 found the same defect from two sides. A Portals
+ * reason's "Fix" link (`?tab=media`, details, marketing) and the readiness
+ * panel's "fix it here" links (F03) are on the page itself, and an
+ * uncontrolled `<Tabs defaultValue>` reads `?tab=` once, at mount: a link on
+ * the same page changed the URL and left the tab where it was.
  *
- * Anything may sit inside the root (it is a plain div): the readiness panel
- * does, above the strip, so its links share this state.
+ * Here the URL is the state: the open tab is whatever `?tab=` names (when it
+ * names a tab — lib/services/property-tabs.ts holds the one list), else the
+ * server's reading of it (`initialTab`, so server and client agree on the
+ * first paint). Clicking a tab writes it back with `history.replaceState` —
+ * Next keeps `useSearchParams` in step with that, and no server round trip
+ * re-renders the page for a tab click. Other query parameters
+ * (`?recorded=failed`) are kept. A plain `<Link href="?tab=…">` on the page
+ * (the Portals card) therefore moves the tab too; a `TabLink` (below) does it
+ * without a navigation and moves focus.
+ *
+ * Anything may sit inside the root (it is a plain div): the summary strip and
+ * the readiness panel do, above the strip, so their links share this state.
  */
-
 const TabContext = createContext<((tab: PropertyTab) => void) | null>(null);
 
 export function PropertyTabs({
   initialTab,
   children,
 }: {
+  /** the server's reading of `?tab=` at render (propertyTabFrom) */
   initialTab: PropertyTab;
   children: ReactNode;
 }) {
-  const [tab, setTab] = useState<PropertyTab>(initialTab);
-  // a navigation to this same page with a different `?tab=` re-renders this
-  // with a new initialTab and the state kept: follow it (React's "adjust
-  // state when a prop changes" pattern — during render, no effect)
-  const [seen, setSeen] = useState<PropertyTab>(initialTab);
-  if (seen !== initialTab) {
-    setSeen(initialTab);
-    setTab(initialTab);
-  }
+  const pathname = usePathname();
+  const params = useSearchParams();
+  const fromUrl = params.get("tab");
+  const value: PropertyTab = isPropertyTab(fromUrl) ? fromUrl : initialTab;
+
+  const select = (next: PropertyTab) => {
+    const query = new URLSearchParams(window.location.search);
+    query.set("tab", next);
+    // `null`, never `window.history.state`: Next's patched replaceState
+    // passes a call whose data carries its own `__NA` marker straight
+    // through WITHOUT syncing useSearchParams — the tab would not move.
+    // Given null, it copies its state in itself and syncs.
+    window.history.replaceState(null, "", `${pathname}?${query.toString()}`);
+  };
+
   return (
-    <TabContext.Provider value={setTab}>
+    <TabContext.Provider value={select}>
       <Tabs
-        value={tab}
-        onValueChange={(v) => {
-          if (isPropertyTab(v)) setTab(v);
+        value={value}
+        onValueChange={(next) => {
+          if (isPropertyTab(next)) select(next);
         }}
       >
         {children}

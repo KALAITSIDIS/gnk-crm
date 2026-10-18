@@ -29,6 +29,18 @@ export const DIALECT_TYPE_MAPS: Record<Dialect, Readonly<Record<string, string>>
   prian: {},
 };
 
+/**
+ * The largest whole price the dialect can carry; `null` = no stated limit.
+ * Kyero: "max 8 characters", whole numbers (kyero_v3_import_spec.txt).
+ */
+export const DIALECT_MAX_PRICE: Record<Dialect, number | null> = {
+  kyero: 99_999_999,
+  rera: null,
+  trovit: null,
+  bazaraki: null,
+  prian: null,
+};
+
 /** Currencies the dialect can express; `null` = any. */
 export const DIALECT_CURRENCIES: Record<Dialect, readonly string[] | null> = {
   kyero: KYERO_CURRENCIES,
