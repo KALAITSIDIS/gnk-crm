@@ -59,11 +59,12 @@
 --    where p.has_storage is not null
 --      and p.has_storage is distinct from coalesce('storage_room' = any(p.features), false)
 --    order by p.org_id, p.reference;
--- settle each on its Details tab (a tick is deliberate; an unticked box,
--- stored false, is the form's default) — in the release that carries this
--- change a Details save writes both from the one Features box; before it,
--- tick or untick both "Storage room" boxes alike — then apply again. Every
--- such save is evented.
+-- settle each on its Details tab IN THE RELEASE NOW SERVING, where both
+-- "Storage room" boxes are still shown (a tick is deliberate; an unticked
+-- box, stored false, is the form's default): tick or untick both alike, then
+-- apply again. Every such save is evented. Do NOT leave them for the release
+-- that carries this change — it shows the column nowhere and settles a row
+-- on its next Details save without asking (DEPLOY ORDER).
 -- A row whose has_storage is NULL (never set: the create wizard and the
 -- importer write neither) is BACKFILLED to the derived value and counted.
 -- No event is written for it: it is a projection of a fact the row already
@@ -84,15 +85,23 @@
 -- do NOT write the ledger row. Run twice, the file replaces its own function
 -- and trigger and changes nothing.
 --
--- DEPLOY ORDER: EITHER. The release does not need this file (its save
--- writes the mirror itself) and this file does not need the release. The
--- one wrinkle is the window when the database is at 0152 and the OLD
--- release is still serving: its "Areas & rooms" box still posts
--- has_storage, the trigger replaces it with the derived value, and that
--- save's `updated` event records a has_storage change the row does not
--- hold. So: hosted first (the house default) only with the merge straight
--- after it; or the release first, the conflicts settled in it, then this
--- file — which leaves no such window. No function signature, return shape
+-- DEPLOY ORDER: SETTLE, THEN HOSTED, THEN THE MERGE STRAIGHT AFTER IT.
+-- Neither side needs the other to run (the release's save writes the mirror
+-- itself; this file binds whatever writes), but each order leaves a window:
+--   - hosted first, the OLD release still serving: its "Areas & rooms" box
+--     still posts has_storage, the trigger replaces it with the derived
+--     value, and that save's `updated` event records a has_storage change
+--     the row does not hold — kept short by merging straight after;
+--   - the release first, this file not yet applied: the new Details save
+--     writes has_storage = the feature on EVERY save and the column is shown
+--     nowhere, so any unrelated Details save of a row still in conflict
+--     settles it in the feature's favour with no one deciding — a column
+--     tick with no feature is dropped (true -> false; evented, but chosen by
+--     no person), against the conflict report's "decided by a person".
+-- So the sequence is: (1) run the conflict report's read-only query above;
+-- (2) settle every row it lists in the release now serving, both boxes
+-- alike; (3) apply this file (its preflight refuses while any conflict is
+-- left); (4) merge straight after. No function signature, return shape
 -- or grant on any existing object changes — no release-compat entry;
 -- lib/supabase/database.types.ts does not change (the column keeps its type
 -- and nullability; trigger functions are not in the generated types).
