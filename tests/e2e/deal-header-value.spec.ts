@@ -9,7 +9,9 @@ import { fixtureProfile, isLocal, serviceClient } from "./helpers";
  * price leads with "Final value", anything else — including a win closed
  * WITHOUT a figure (an admin override, or a legacy win) — with "Expected
  * value", so an estimate is never passed off as the price. Costs opens the
- * calculators at the shown figure, and is absent when there is none.
+ * calculators at the shown figure, and is absent when there is none; when
+ * the deal names a property it also carries `&property=<id>` (F01: the
+ * calculators show that property's VAT context — the price stays the deal's).
  *
  * The won deals are planted with the service role (the maintenance path the
  * close guard deliberately does not bind; deal-close-outcomes.spec does the
@@ -17,6 +19,7 @@ import { fixtureProfile, isLocal, serviceClient } from "./helpers";
  */
 
 const TITLE = "E2E header-value fixture deal";
+const PROPERTY_REF = "E2EHDRVAL1";
 
 async function removeFixture(svc: SupabaseClient): Promise<void> {
   const { data: deals } = await svc.from("deals").select("id").like("title", `${TITLE}%`);
@@ -24,6 +27,7 @@ async function removeFixture(svc: SupabaseClient): Promise<void> {
     await svc.from("tasks").delete().eq("deal_id", d.id);
     await svc.from("deals").delete().eq("id", d.id);
   }
+  await svc.from("properties").delete().eq("reference", PROPERTY_REF);
 }
 
 test.beforeEach(() => {
@@ -79,6 +83,18 @@ test("the header labels its figure by its basis, and Costs opens at that figure"
     });
     // open with no figure at all: no number, no Costs
     const noFigure = await plant("no figure", { stage_id: openStage, expected_value: null });
+    // open on a property: Costs carries the property, the price is still the deal's
+    const { data: prop, error: propErr } = await svc
+      .from("properties")
+      .insert({ org_id: orgId, reference: PROPERTY_REF, property_type: "apartment", asking_price: 999000 })
+      .select("id")
+      .single();
+    expect(propErr, "planting the property").toBeNull();
+    const onProperty = await plant("on property", {
+      stage_id: openStage,
+      expected_value: 200000,
+      property_id: prop!.id,
+    });
 
     const header = page.getByTestId("deal-header-value");
     const costs = page.getByRole("link", { name: "Costs", exact: true });
@@ -94,6 +110,10 @@ test("the header labels its figure by its basis, and Costs opens at that figure"
     await page.goto(`/deals/${noFigure}`, { waitUntil: "networkidle" });
     await expect(header).toHaveText(/^Expected value\s+—$/);
     await expect(costs).toHaveCount(0);
+
+    await page.goto(`/deals/${onProperty}`, { waitUntil: "networkidle" });
+    await expect(header).toHaveText(/^Expected value\s+€200\.000$/);
+    await expect(costs).toHaveAttribute("href", `/calculators?price=200000&property=${prop!.id}`);
   } finally {
     await removeFixture(svc);
   }

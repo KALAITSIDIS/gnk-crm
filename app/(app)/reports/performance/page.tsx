@@ -2,13 +2,22 @@ import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 import { AlertTriangle, Download, ShieldCheck } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentProfile } from "@/lib/services/auth";
 import { addDayKey } from "@/lib/services/calendar-window";
-import { formatDateTime } from "@/lib/utils/format";
+import { formatDateTime, formatMoney } from "@/lib/utils/format";
 import { zonedDateRangeToUtc, zonedParts } from "@/lib/utils/tz";
 import {
+  isCitation,
+  isDirectional,
+  isPriceReductions,
+  isTimeToClose,
   num,
   pct,
+  reportObject,
+  reportRows,
+  sourceRowsDefineSpam,
   stageConversionView,
+  stagesByPipeline,
   type AgentPerformanceRow,
   type PriceReductions,
   type ReportCitation,
@@ -33,6 +42,9 @@ function defaultRange(): { from: string; to: string } {
 
 const isDate = (v: string | undefined): v is string => !!v && /^\d{4}-\d{2}-\d{2}$/.test(v);
 
+/** The deal_type enum's values, each with a `stages.pipelines.*` label. */
+const PIPELINES = new Set(["sale", "rental", "antiparoxi", "advisory"]);
+
 export default async function PerformanceReportsPage({
   searchParams,
 }: {
@@ -54,7 +66,8 @@ export default async function PerformanceReportsPage({
   const { gte, lt } = zonedDateRangeToUtc(from, to);
   const win = { p_from: gte!, p_to: lt! };
 
-  const [perfRes, roiRes, ttcRes, convRes, priceRes, citeRes] = await Promise.all([
+  const [profile, perfRes, roiRes, ttcRes, convRes, priceRes, citeRes] = await Promise.all([
+    getCurrentProfile(supabase),
     supabase.rpc("report_agent_performance", win),
     supabase.rpc("report_source_roi", win),
     supabase.rpc("report_time_to_close", win),
@@ -63,16 +76,22 @@ export default async function PerformanceReportsPage({
     supabase.rpc("report_citation"),
   ]);
 
-  const perf = (perfRes.data ?? []) as unknown as AgentPerformanceRow[];
-  const roi = (roiRes.data ?? []) as unknown as SourceRoiRow[];
-  const ttc = ttcRes.data as unknown as TimeToClose | null;
-  // T-stage-conversion-malformed: the RPC's error is READ, not dropped — a
-  // failure used to render as "Nothing in this window." Only this section
-  // changes; the other reports above and below render from their own results.
+  // Every RPC's error is READ (BACKLOG "The performance page paints four other
+  // reports' failures as 'Nothing in this window.'"): a failed or shapeless
+  // answer renders as a failure in its own section — role="alert", no export
+  // link — never as an empty list or as zeros. The other sections render from
+  // their own results. (Stage conversion has read its error since 0130.)
+  const perfView = reportRows<AgentPerformanceRow>(perfRes);
+  const roiView = reportRows<SourceRoiRow>(roiRes);
+  const ttcView = reportObject<TimeToClose>(ttcRes, isTimeToClose);
   const stages = stageConversionView(convRes);
   const conv = stages.status === "error" ? null : stages.conv;
-  const price = priceRes.data as unknown as PriceReductions | null;
-  const cite = citeRes.data as unknown as ReportCitation | null;
+  const priceView = reportObject<PriceReductions>(priceRes, isPriceReductions);
+  const citeView = reportObject<ReportCitation>(citeRes, isCitation);
+
+  const perf = perfView.status === "ok" ? perfView.rows : [];
+  const roi = roiView.status === "ok" ? roiView.rows : [];
+  const repeatCuts = priceView.status === "ok" ? priceView.value.repeat_cuts : [];
 
   // ids → names, the same way the list exports do it
   const agentIds = perf.map((r) => r.agent_id);
@@ -86,7 +105,7 @@ export default async function PerformanceReportsPage({
     ]),
   );
 
-  const propertyIds = (price?.repeat_cuts ?? []).map((c) => c.property_id);
+  const propertyIds = repeatCuts.map((c) => c.property_id);
   const { data: propRows } = propertyIds.length
     ? await supabase.from("properties").select("id, reference").in("id", propertyIds)
     : { data: [] };
@@ -95,20 +114,49 @@ export default async function PerformanceReportsPage({
   const exportHref = (report: string) =>
     `/reports/performance/export?${new URLSearchParams({ from, to, report }).toString()}`;
 
-  const money = (v: unknown) => {
-    const n = num(v);
-    return n === null ? "—" : n.toLocaleString("en-GB", { maximumFractionDigits: 0 });
-  };
+  // doc 02 §A11: euros as €1.234.567 — the transaction value, not commission
+  const money = (v: unknown) => formatMoney(num(v));
   const days = (v: unknown) => {
     const n = num(v);
     return n === null ? "—" : n.toFixed(1);
   };
+  /** a count the answer does not carry (a database before 0154) is a dash, never 0 */
+  const count = (v: unknown) => {
+    const n = num(v);
+    return n === null ? "—" : String(n);
+  };
+
+  // What each figure covers follows the caller's ROLE, because RLS does:
+  // leads_select and viewings_select are organisation-wide, deals_select gives
+  // an agent only their own deals, events_select gives everyone but an admin
+  // only the events they wrote. report_citation's `scope` says 'own' for every
+  // non-admin — a listing manager reads every deal — so it is not what this
+  // line is chosen from.
+  const isAgent = profile.role === "agent";
+  const scopeLine =
+    profile.role === "admin"
+      ? t("scope.admin")
+      : profile.role === "listing_manager"
+        ? t("scope.listingManager")
+        : t("scope.agent");
+
+  // 0154 answers carry `spam`; a database still at 0076's body does not, and
+  // its convert rate then still counts spam — the labels must not say otherwise
+  const roiDefinesSpam = sourceRowsDefineSpam(roi);
+  const directional = conv ? isDirectional(conv) : false;
+  const pipelineLabel = (dealType: string | null | undefined) =>
+    dealType && PIPELINES.has(dealType)
+      ? t(`stages.pipelines.${dealType}`)
+      : (dealType ?? t("stages.pipelines.unknown"));
 
   return (
     <div className="flex flex-col gap-4">
       <div>
         <h1 className="text-xl font-semibold text-text-1">{t("title")}</h1>
         <p className="text-sm text-text-2">{t("subtitle")}</p>
+        <p data-testid="report-scope" className="mt-1 max-w-4xl text-xs text-text-3">
+          {scopeLine}
+        </p>
       </div>
 
       {/* window ------------------------------------------------------------ */}
@@ -143,31 +191,44 @@ export default async function PerformanceReportsPage({
       </form>
 
       {/* citation ---------------------------------------------------------- */}
-      {cite ? (
+      {citeView.status === "error" ? (
+        <p
+          role="alert"
+          data-testid="citation-error"
+          className="max-w-4xl rounded-[10px] border border-danger/30 bg-danger/5 px-4 py-3 text-sm text-danger"
+        >
+          {t("citation.loadError")}
+        </p>
+      ) : (
         <div className="flex max-w-4xl flex-col gap-1 rounded-[10px] border border-border bg-surface px-4 py-3 text-sm">
           <span className="flex items-center gap-2 font-medium text-text-1">
             <ShieldCheck className="size-4 text-brand-700" />
             {t("citation.heading")}
           </span>
           <span className="text-text-2">
-            {cite.chain_verified_through === null
+            {citeView.value.chain_verified_through === null
               ? t("citation.none")
               : t("citation.body", {
-                  id: cite.chain_verified_through,
-                  hash: (cite.chain_verified_hash ?? "").slice(0, 12),
-                  when: cite.chain_verified_at ? formatDateTime(cite.chain_verified_at) : "—",
+                  id: citeView.value.chain_verified_through,
+                  hash: (citeView.value.chain_verified_hash ?? "").slice(0, 12),
+                  when: citeView.value.chain_verified_at
+                    ? formatDateTime(citeView.value.chain_verified_at)
+                    : "—",
                 })}
           </span>
-          <span className="text-xs text-text-3">
-            {cite.scope === "own" ? t("citation.scopeOwn") : t("citation.scopeOrg")}{" "}
-            {t("citation.limits")}
-          </span>
+          <span className="text-xs text-text-3">{t("citation.limits")}</span>
         </div>
-      ) : null}
+      )}
 
       {/* agent performance -------------------------------------------------- */}
-      <Section title={t("agents.heading")} exportHref={exportHref("agent_performance")} exportLabel={t("export")}>
-        {perf.length === 0 ? (
+      <Section
+        title={t("agents.heading")}
+        exportHref={perfView.status === "error" ? undefined : exportHref("agent_performance")}
+        exportLabel={t("export")}
+      >
+        {perfView.status === "error" ? (
+          <LoadError testId="agent-performance-error" text={t("loadError")} />
+        ) : perf.length === 0 ? (
           <Empty text={t("empty")} />
         ) : (
           <table className="w-full text-sm">
@@ -201,11 +262,22 @@ export default async function PerformanceReportsPage({
             </tbody>
           </table>
         )}
+        {perfView.status === "error" ? null : (
+          <Note testId="agent-performance-definition" text={t("agents.definition")} />
+        )}
       </Section>
 
-      {/* source ROI --------------------------------------------------------- */}
-      <Section title={t("sources.heading")} exportHref={exportHref("source_roi")} exportLabel={t("export")}>
-        {roi.length === 0 ? (
+      {/* lead sources — identifiers stay `source_roi` (the URL key and the
+          audit list report:source_roi are in the chain); what the report is,
+          and is not, is said in words under the table (F06) --------------- */}
+      <Section
+        title={t("sources.heading")}
+        exportHref={roiView.status === "error" ? undefined : exportHref("source_roi")}
+        exportLabel={t("export")}
+      >
+        {roiView.status === "error" ? (
+          <LoadError testId="lead-sources-error" text={t("loadError")} />
+        ) : roi.length === 0 ? (
           <Empty text={t("empty")} />
         ) : (
           <table className="w-full text-sm">
@@ -213,52 +285,92 @@ export default async function PerformanceReportsPage({
               <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-text-3">
                 <th className="px-4 py-2">{t("sources.source")}</th>
                 <th className="px-4 py-2 text-right">{t("sources.leads")}</th>
+                <th className="px-4 py-2 text-right">{t("sources.spam")}</th>
                 <th className="px-4 py-2 text-right">{t("sources.converted")}</th>
                 <th className="px-4 py-2 text-right">{t("sources.won")}</th>
                 <th className="px-4 py-2 text-right">{t("sources.wonValue")}</th>
-                <th className="px-4 py-2 text-right">{t("sources.convertRate")}</th>
+                <th className="px-4 py-2 text-right">
+                  {roiDefinesSpam ? t("sources.convertRateExclSpam") : t("sources.convertRate")}
+                </th>
                 <th className="px-4 py-2 text-right">{t("sources.winRate")}</th>
               </tr>
             </thead>
             <tbody>
-              {roi.map((r) => (
-                <tr key={r.source} className="border-b border-border/60">
-                  <td className="px-4 py-2 text-text-1">{r.source}</td>
-                  <td className="px-4 py-2 text-right tabular-nums text-text-2">{r.leads}</td>
-                  <td className="px-4 py-2 text-right tabular-nums text-text-2">{r.converted}</td>
-                  <td className="px-4 py-2 text-right tabular-nums text-text-2">{r.won}</td>
-                  <td className="px-4 py-2 text-right tabular-nums text-text-1">{money(r.won_value)}</td>
-                  <td className="px-4 py-2 text-right tabular-nums text-text-2">
-                    {pct(num(r.convert_rate)) || "—"}
-                  </td>
-                  <td className="px-4 py-2 text-right tabular-nums text-text-2">
-                    {pct(num(r.win_rate)) || "—"}
-                  </td>
-                </tr>
-              ))}
+              {roi.map((r) => {
+                const visible = num(r.converted_visible);
+                return (
+                  <tr key={r.source} className="border-b border-border/60">
+                    <td className="px-4 py-2 text-text-1">{r.source}</td>
+                    <td className="px-4 py-2 text-right tabular-nums text-text-2">{r.leads}</td>
+                    <td className="px-4 py-2 text-right tabular-nums text-text-2">{count(r.spam)}</td>
+                    <td className="px-4 py-2 text-right tabular-nums text-text-2">
+                      {r.converted}
+                      {visible !== null && visible !== num(r.converted) ? (
+                        <span className="block text-xs text-text-3">
+                          {t("sources.visibleToYou", { count: visible })}
+                        </span>
+                      ) : null}
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums text-text-2">{r.won}</td>
+                    <td className="px-4 py-2 text-right tabular-nums text-text-1">{money(r.won_value)}</td>
+                    <td className="px-4 py-2 text-right tabular-nums text-text-2">
+                      {pct(num(r.convert_rate)) || "—"}
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums text-text-2">
+                      {pct(num(r.win_rate)) || "—"}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
+        )}
+        {roiView.status === "error" ? null : (
+          <div
+            data-testid="lead-sources-definition"
+            className="flex flex-col gap-1 border-t border-border/60 px-4 py-2 text-xs text-text-3"
+          >
+            <p>
+              {t("sources.definition")}
+              {roiDefinesSpam ? ` ${t("sources.definitionSpam")}` : ""}
+            </p>
+            <p data-testid="lead-sources-scope">
+              {isAgent ? t("sources.scopeAgent") : t("sources.scopeOrg")}
+              {isAgent && roi.length > 0
+                ? ` ${roiDefinesSpam ? t("sources.winRateOwn") : t("sources.winRateMixed")}`
+                : ""}
+            </p>
+          </div>
         )}
       </Section>
 
       {/* time to close ------------------------------------------------------ */}
-      <Section title={t("ttc.heading")} exportHref={exportHref("time_to_close")} exportLabel={t("export")}>
-        <div className="grid gap-4 px-4 py-4 sm:grid-cols-2">
-          {(["won", "lost"] as const).map((k) => (
-            <div key={k} className="rounded-[8px] border border-border/60 p-3">
-              <p className="text-xs uppercase tracking-wide text-text-3">{t(`ttc.${k}`)}</p>
-              <p className="mt-1 text-lg font-semibold tabular-nums text-text-1">
-                <span className="text-sm font-normal text-text-2">
-                  {t("ttc.dealCount", { count: ttc ? ttc[k].count : 0 })}
-                </span>
-              </p>
-              <p className="mt-1 text-sm text-text-2">
-                {t("ttc.avg")} {days(ttc?.[k].avg_days)} · {t("ttc.median")} {days(ttc?.[k].median_days)}
-                {k === "won" ? ` · ${t("ttc.p90")} ${days(ttc?.won.p90_days)}` : ""}
-              </p>
-            </div>
-          ))}
-        </div>
+      <Section
+        title={t("ttc.heading")}
+        exportHref={ttcView.status === "error" ? undefined : exportHref("time_to_close")}
+        exportLabel={t("export")}
+      >
+        {ttcView.status === "error" ? (
+          <LoadError testId="time-to-close-error" text={t("loadError")} />
+        ) : (
+          <div className="grid gap-4 px-4 py-4 sm:grid-cols-2">
+            {(["won", "lost"] as const).map((k) => (
+              <div key={k} className="rounded-[8px] border border-border/60 p-3">
+                <p className="text-xs uppercase tracking-wide text-text-3">{t(`ttc.${k}`)}</p>
+                <p className="mt-1 text-lg font-semibold tabular-nums text-text-1">
+                  <span className="text-sm font-normal text-text-2">
+                    {t("ttc.dealCount", { count: Number(ttcView.value[k].count) })}
+                  </span>
+                </p>
+                <p className="mt-1 text-sm text-text-2">
+                  {t("ttc.avg")} {days(ttcView.value[k].avg_days)} · {t("ttc.median")}{" "}
+                  {days(ttcView.value[k].median_days)}
+                  {k === "won" ? ` · ${t("ttc.p90")} ${days(ttcView.value.won.p90_days)}` : ""}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
       </Section>
 
       {/* stage conversion --------------------------------------------------- */}
@@ -275,7 +387,7 @@ export default async function PerformanceReportsPage({
       >
         <p className="border-b border-border/60 px-4 py-2 text-xs text-text-3">
           {t("stages.derivedFrom")}
-          {conv?.stage_key === "name" ? ` ${t("stages.nameKeyed")}` : ""}
+          {conv ? ` ${directional ? t("stages.idKeyed") : t("stages.nameKeyed")}` : ""}
         </p>
         {stages.status === "error" ? (
           <p role="alert" data-testid="stage-conversion-error" className="px-4 py-6 text-sm text-danger">
@@ -289,13 +401,55 @@ export default async function PerformanceReportsPage({
           <Warning testId="stage-conversion-all-excluded" text={t("stages.allExcluded", { count: stages.excluded })} />
         ) : null}
         {stages.status === "empty" ? <Empty text={t("empty")} /> : null}
-        {stages.status !== "data" ? null : (
+        {stages.status !== "data" ? null : directional ? (
+          // 0154: one table per pipeline, stages in pipeline order; a
+          // departure is forward, back, or of a direction that cannot be read
+          stagesByPipeline(stages.conv.stages).map((g) => (
+            <div key={g.dealType ?? "unknown"} data-testid={`stage-pipeline-${g.dealType ?? "unknown"}`}>
+              <h3 className="border-b border-border/60 px-4 pb-2 pt-3 text-xs font-semibold uppercase tracking-wide text-text-2">
+                {pipelineLabel(g.dealType)}
+              </h3>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-text-3">
+                    <th className="px-4 py-2">{t("stages.stage")}</th>
+                    <th className="px-4 py-2 text-right">{t("stages.entered")}</th>
+                    <th className="px-4 py-2 text-right">{t("stages.advanced")}</th>
+                    <th className="px-4 py-2 text-right">{t("stages.regressed")}</th>
+                    <th className="px-4 py-2 text-right">{t("stages.departedUnknown")}</th>
+                    <th className="px-4 py-2 text-right">{t("stages.forwardRate")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {g.stages.map((s) => (
+                    <tr key={s.stage_id ?? `name:${s.stage}`} className="border-b border-border/60">
+                      <td className="px-4 py-2 text-text-1">
+                        {s.stage_id ? s.stage : t("stages.recordedName", { stage: s.stage })}
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums text-text-2">{s.entered}</td>
+                      <td className="px-4 py-2 text-right tabular-nums text-text-2">{s.advanced}</td>
+                      <td className="px-4 py-2 text-right tabular-nums text-text-2">{count(s.regressed)}</td>
+                      <td className="px-4 py-2 text-right tabular-nums text-text-2">
+                        {count(s.departed_unknown)}
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums text-text-2">
+                        {pct(num(s.advance_rate)) || "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))
+        ) : (
+          // a database still at 0130 (a rollback): one row per stage NAME
+          // across pipelines, and `advanced` counts departures either way
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-text-3">
                 <th className="px-4 py-2">{t("stages.stage")}</th>
                 <th className="px-4 py-2 text-right">{t("stages.entered")}</th>
-                <th className="px-4 py-2 text-right">{t("stages.advanced")}</th>
+                <th className="px-4 py-2 text-right">{t("stages.advancedAnyDirection")}</th>
                 <th className="px-4 py-2 text-right">{t("stages.advanceRate")}</th>
               </tr>
             </thead>
@@ -314,34 +468,47 @@ export default async function PerformanceReportsPage({
           </table>
         )}
         {conv ? (
-          <p className="border-t border-border/60 px-4 py-2 text-xs text-text-3">
+          <p
+            data-testid="stage-conversion-outcomes"
+            className="border-t border-border/60 px-4 py-2 text-xs text-text-3"
+          >
             {t("stages.outcomes", { won: conv.outcomes.won, lost: conv.outcomes.lost })}
+            {directional && (conv.outcomes_by_type ?? []).length > 0
+              ? ` ${(conv.outcomes_by_type ?? [])
+                  .map(
+                    (o) =>
+                      `${pipelineLabel(o.deal_type)}: ${t("stages.outcomesPipeline", { won: o.won, lost: o.lost })}`,
+                  )
+                  .join(" · ")}`
+              : ""}
           </p>
         ) : null}
         {conv?.note ? (
           // the RPC's own caveat, rendered verbatim (0076 self-describing
           // output): the UI can never disagree with what the payload says —
-          // notably that demotions count as advancement (RPT-2 residual,
-          // 2026-09-01 review)
-          <p className="border-t border-border/60 px-4 py-2 text-xs text-text-3">
-            {conv.note}
-          </p>
+          // since 0154, that direction reads the CURRENT stage order and that
+          // won / lost are not attributed to the stage they left
+          <p className="border-t border-border/60 px-4 py-2 text-xs text-text-3">{conv.note}</p>
         ) : null}
       </Section>
 
       {/* price reductions --------------------------------------------------- */}
       <Section
         title={t("prices.heading")}
-        exportHref={exportHref("price_reductions")}
+        exportHref={priceView.status === "error" ? undefined : exportHref("price_reductions")}
         exportLabel={t("export")}
       >
-        <div className="grid gap-4 px-4 py-4 sm:grid-cols-4">
-          <Stat label={t("prices.reductions")} value={String(price?.reductions ?? 0)} />
-          <Stat label={t("prices.properties")} value={String(price?.properties_affected ?? 0)} />
-          <Stat label={t("prices.avgCut")} value={pct(num(price?.avg_cut_fraction)) || "—"} />
-          <Stat label={t("prices.totalCut")} value={money(price?.total_cut_amount)} />
-        </div>
-        {(price?.repeat_cuts ?? []).length > 0 ? (
+        {priceView.status === "error" ? (
+          <LoadError testId="price-reductions-error" text={t("loadError")} />
+        ) : (
+          <div className="grid gap-4 px-4 py-4 sm:grid-cols-4">
+            <Stat label={t("prices.reductions")} value={count(priceView.value.reductions)} />
+            <Stat label={t("prices.properties")} value={count(priceView.value.properties_affected)} />
+            <Stat label={t("prices.avgCut")} value={pct(num(priceView.value.avg_cut_fraction)) || "—"} />
+            <Stat label={t("prices.totalCut")} value={money(priceView.value.total_cut_amount)} />
+          </div>
+        )}
+        {repeatCuts.length > 0 ? (
           <table className="w-full border-t border-border/60 text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-text-3">
@@ -352,7 +519,7 @@ export default async function PerformanceReportsPage({
               </tr>
             </thead>
             <tbody>
-              {(price?.repeat_cuts ?? []).map((c) => (
+              {repeatCuts.map((c) => (
                 <tr key={c.property_id} className="border-b border-border/60">
                   <td className="px-4 py-2 text-text-1">
                     {propertyRef.get(c.property_id) ?? c.property_id}
@@ -405,6 +572,23 @@ function Section({
 
 function Empty({ text }: { text: string }) {
   return <p className="px-4 py-6 text-sm text-text-2">{text}</p>;
+}
+
+/** A section whose report failed: said as a failure, never as an empty window. */
+function LoadError({ text, testId }: { text: string; testId: string }) {
+  return (
+    <p role="alert" data-testid={testId} className="px-4 py-6 text-sm text-danger">
+      {text}
+    </p>
+  );
+}
+
+function Note({ text, testId }: { text: string; testId: string }) {
+  return (
+    <p data-testid={testId} className="border-t border-border/60 px-4 py-2 text-xs text-text-3">
+      {text}
+    </p>
+  );
 }
 
 function Warning({ text, testId }: { text: string; testId: string }) {

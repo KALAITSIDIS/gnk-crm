@@ -178,9 +178,50 @@ describe("each export records the shape of its filters, never their text", () =>
     ]);
   });
 
+  it("deals: the title search becomes 'used'; ids, statuses and Cyprus days are kept; page is not a filter", async () => {
+    // a deal title names its buyer ("<buyer> — <property reference>", lib/actions/leads.ts)
+    const payload = await exportOf("deals", {
+      q: PERSON,
+      type: "sale",
+      status: "lost",
+      agent: AGENT,
+      property: DISTRICT,
+      contact: AGENT,
+      closed_from: "2026-01-01",
+      closed_to: "2026-08-31",
+      page: "4",
+      junk: "Forged",
+    });
+    expectNoTypedText(payload);
+    expect(payload).toMatchObject({ list: "deals", count: 0 });
+    expect(payload.filters).toEqual({
+      q: true,
+      type: "sale",
+      status: "lost",
+      agent: AGENT,
+      property: DISTRICT,
+      contact: AGENT,
+      closed_from: "2026-01-01",
+      closed_to: "2026-08-31",
+    });
+  });
+
+  it("deals: junk in the URL is no filter — dropped by the shared parser, so not recorded", async () => {
+    const payload = await exportOf("deals", {
+      type: "Maria",
+      status: "Georgiou",
+      contact: "Maria Georgiou",
+      closed_from: "2026-02-30",
+      closed_to: "Forged",
+    });
+    expectNoTypedText(payload);
+    expect(payload.filters).toBeUndefined();
+  });
+
   it("an export with no filters still records the list's default scope, and nothing else", async () => {
     expect((await exportOf("keys", {})).filters).toEqual({ status: "all" });
     expect((await exportOf("leads", {})).filters).toEqual({ status: "open" });
     expect((await exportOf("contacts", {})).filters).toBeUndefined();
+    expect((await exportOf("deals", {})).filters).toBeUndefined();
   });
 });

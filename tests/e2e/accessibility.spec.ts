@@ -113,6 +113,7 @@ const FORM_PAGES = [
   // A03: every filter, the land bounds and the sort are named controls
   { name: "Properties (filters)", path: "/properties" },
   { name: "Leads (filters)", path: "/leads" },
+  { name: "Deals (filters)", path: "/deals" },
   { name: "Settings — organization", path: "/settings/organization" },
   { name: "Settings — users", path: "/settings/users" },
   { name: "Settings — Cyprus config", path: "/settings/cyprus-config" },
