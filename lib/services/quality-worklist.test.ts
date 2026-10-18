@@ -170,7 +170,8 @@ describe("fixLocation turns a count into an instruction", () => {
       hasPlanningZoneAndDensity: false,
     });
     expect(land.missing.map((m) => m.key)).toContain("planning");
-    expect(fixLocation("planning")).toBe("Legal");
+    // F07: the fields live on Details (Plot & planning), never on Legal
+    expect(fixLocation("planning")).toBe("Details");
   });
 
   it("returns null for a key it does not know, rather than guessing", () => {

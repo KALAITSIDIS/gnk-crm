@@ -17,7 +17,6 @@ import { generateReference } from "@/lib/services/reference";
 import { createClient } from "@/lib/supabase/server";
 import { changesForChain, isNoteField } from "@/lib/services/event-changes";
 import { changedValue } from "@/lib/utils/diff";
-import { hasStorageRoom } from "@/lib/constants/features";
 import { createPropertySchema, isDwellingType } from "@/lib/validators/properties";
 import { isGuid } from "@/lib/validators/ids";
 import type { PropertyDuplicateMatch } from "@/lib/services/property-duplicate";
@@ -407,8 +406,13 @@ export async function updatePropertySection(
   // typing the same numbers over a centroid changes nothing but the claim.
   let approxChange: { from: unknown; to: unknown } | null = null;
 
-  const { detailsSectionSchema, legalSectionSchema, marketingSectionSchema, isStatusRegression } =
-    await import("@/lib/validators/properties");
+  const {
+    detailsSectionSchema,
+    detailsUpdates,
+    legalSectionSchema,
+    marketingSectionSchema,
+    isStatusRegression,
+  } = await import("@/lib/validators/properties");
 
   if (section === "details") {
     const parsed = detailsSectionSchema.safeParse({
@@ -430,58 +434,12 @@ export async function updatePropertySection(
       };
     }
 
-    updates = {
-      status: d.status,
-      visibility: d.visibility,
-      transaction_type: d.transaction_type,
-      area_id: d.area_id ?? null,
-      address: d.address ?? null,
-      postal_code: d.postal_code ?? null,
-      sea_distance_m: d.sea_distance_m ?? null,
-      amenities_notes: d.amenities_notes ?? null,
-      asking_price: d.asking_price ?? null,
-      min_acceptable_price: d.min_acceptable_price ?? null,
-      owner_net_price: d.owner_net_price ?? null,
-      rent_price_month: d.rent_price_month ?? null,
-      vat_status: d.vat_status,
-      covered_area_sqm: d.covered_area_sqm ?? null,
-      plot_area_sqm: d.plot_area_sqm ?? null,
-      veranda_sqm: d.veranda_sqm ?? null,
-      roof_garden_sqm: d.roof_garden_sqm ?? null,
-      basement_sqm: d.basement_sqm ?? null,
-      bedrooms: d.bedrooms ?? null,
-      bathrooms: d.bathrooms ?? null,
-      wc: d.wc ?? null,
-      parking_spaces: d.parking_spaces ?? null,
-      // F02: storage room has one value, the Features key. The column is its
-      // mirror (0152's trigger derives it for every writer); written here as
-      // well so the `updated` event records it moving with `features`, and so
-      // this save is right on a database without the trigger.
-      has_storage: hasStorageRoom(d.features),
-      floor_number: d.floor_number ?? null,
-      total_floors: d.total_floors ?? null,
-      year_built: d.year_built ?? null,
-      energy_class: d.energy_class ?? null,
-      features: d.features,
-      construction_status: d.construction_status ?? null,
-      delivery_date: d.delivery_date ?? null,
-      internal_notes: d.internal_notes ?? null,
-    };
-    // the land panel isn't rendered for non-land properties, so its absent
-    // checkboxes would read as `false` — only land rows take these columns
-    if (current.property_type === "land") {
-      Object.assign(updates, {
-        planning_zone_code: d.planning_zone_code ?? null,
-        building_density_pct: d.building_density_pct ?? null,
-        coverage_ratio_pct: d.coverage_ratio_pct ?? null,
-        max_floors: d.max_floors ?? null,
-        max_height_m: d.max_height_m ?? null,
-        road_frontage_m: d.road_frontage_m ?? null,
-        water_available: d.water_available,
-        electricity_available: d.electricity_available,
-        constraints_notes: d.constraints_notes ?? null,
-      });
-    }
+    // F07: which columns, and with what, is ONE pure function — the Details
+    // tab's per-type layout is pinned against it (property-layout.test.ts), so
+    // a field the form stops rendering can never become a column this save
+    // silently nulls. The land panel stays written for land rows only, and
+    // has_storage stays the Features key's mirror (F02).
+    updates = detailsUpdates(d, current);
 
     // location is a PostGIS point: DB returns EWKB hex, we write EWKT. Compare
     // decoded coords (rounded) so an unchanged point is not re-written every save.

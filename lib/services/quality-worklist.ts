@@ -116,7 +116,10 @@ const FIX_LOCATION: Record<string, string> = {
   units: "Units page",
   area: "Details",
   rooms: "Details",
-  planning: "Legal",
+  // F07: the planning zone and density are Details fields (Plot & planning, at
+  // the top of a plot's Details tab) — this used to send the desk to Legal,
+  // which has neither
+  planning: "Details",
   coords: "Details",
   deed: "Legal",
   permit: "Legal",

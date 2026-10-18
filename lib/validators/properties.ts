@@ -4,6 +4,10 @@ import { z } from "zod";
 // plain Node where neither "@/" nor a missing extension resolves.
 import { MAX_FLOOR, MAX_GENERATED_UNITS, MAX_PER_FLOOR } from "../services/unit-generator.ts";
 import { AREA_LABELS, areaProblem, floorProblem } from "./property-measurements.ts";
+import { hasStorageRoom } from "../constants/features.ts";
+import type { Database } from "@/lib/supabase/database.types";
+
+type PropertyUpdate = Database["public"]["Tables"]["properties"]["Update"];
 
 export const PROPERTY_TYPES = [
   "apartment",
@@ -482,12 +486,41 @@ const optLng = z.preprocess(
 );
 const optInt = z.preprocess(emptyToUndefined, z.coerce.number().int().min(0).optional());
 const optText = (max: number) => z.preprocess(emptyToUndefined, z.string().max(max).optional());
-// checkboxes are binary in the form, so an absent value means "no", not
-// "unknown" — the action only applies land-panel checkboxes to land rows
-const checkbox = z
-  .string()
+
+/**
+ * Water and electricity on a plot: Yes, No, or NOT KNOWN (F07).
+ *
+ * They were checkboxes, and a checkbox has no third state: an unticked box
+ * posts nothing, which parsed as "no". So every Details save of a land row —
+ * a price change, a density change — turned a never-recorded utility into a
+ * recorded "No", and its `updated` event logged a change nobody made. The
+ * columns are nullable on purpose; the form now offers the three answers and
+ * the parse keeps them apart:
+ *   "yes" → true, "no" → false, "unknown" → null;
+ *   "on" / "true" → true — a ticked box on a page rendered before F07;
+ *   ABSENT → undefined, which `detailsUpdates` does not write: a stale page's
+ *   unticked box, or a form that did not render the field, changes nothing.
+ */
+export const UTILITY_STATES = ["unknown", "yes", "no"] as const;
+export type UtilityState = (typeof UTILITY_STATES)[number];
+
+/** A stored utility as the form's select shows it — and therefore posts it back. */
+export function utilityFormValue(v: boolean | null | undefined): UtilityState {
+  return v === true ? "yes" : v === false ? "no" : "unknown";
+}
+
+const utilityAnswer = z
+  .enum([...UTILITY_STATES, "on", "true", ""], { message: "Choose Yes, No or Not known" })
   .optional()
-  .transform((v) => v === "on" || v === "true");
+  .transform((v): boolean | null | undefined =>
+    v === undefined
+      ? undefined
+      : v === "yes" || v === "on" || v === "true"
+        ? true
+        : v === "no"
+          ? false
+          : null,
+  );
 
 /** Sentinel for the clearable Area select — Radix SelectItem forbids "". */
 export const AREA_NONE = "__none__";
@@ -558,8 +591,8 @@ export const detailsSectionSchema = z.object({
   max_floors: optInt,
   max_height_m: optNumber,
   road_frontage_m: optNumber,
-  water_available: checkbox,
-  electricity_available: checkbox,
+  water_available: utilityAnswer,
+  electricity_available: utilityAnswer,
   constraints_notes: optText(2000),
 })
   .refine((d) => (d.latitude === undefined) === (d.longitude === undefined), {
@@ -574,6 +607,90 @@ export const detailsSectionSchema = z.object({
     const problem = floorProblem(d.floor_number, d.total_floors);
     if (problem) ctx.addIssue({ code: "custom", path: ["floor_number"], message: problem });
   });
+
+export type DetailsSectionInput = z.infer<typeof detailsSectionSchema>;
+
+/**
+ * Which columns a Details save writes, and with what (F07; extracted from
+ * `updatePropertySection`, where it was written inline since T1.3).
+ *
+ * EVERY column here is written on every save — absent parses to undefined and
+ * is written as null. That is what lets a blank box clear a value, and it is
+ * also the trap: a field the form does not render is a field this erases. The
+ * Details tab is laid out per kind of property (lib/services/property-layout.ts)
+ * and never leaves a field out — a group that does not suit the property is
+ * collapsed into a native <details>, whose inputs still post — and
+ * lib/services/property-layout.test.ts holds the two together: for every type
+ * and kind, the fields laid out are exactly the columns written here.
+ *
+ * The land panel is the one conditional block, by the same rule as
+ * `resolvePartyUpdates`: a column the form did not render is a column the save
+ * does not touch. It is rendered for land rows only, so only land rows take
+ * it. Within it, a utility that was not posted is not written either (see
+ * UTILITY_STATES).
+ *
+ * The map point and its approximate flag are not here: they are compared
+ * against the stored point first (an unchanged point is never rewritten), so
+ * the action handles them.
+ */
+export function detailsUpdates(
+  d: DetailsSectionInput,
+  current: { property_type: string },
+): PropertyUpdate {
+  const updates: PropertyUpdate = {
+    status: d.status,
+    visibility: d.visibility,
+    transaction_type: d.transaction_type,
+    area_id: d.area_id ?? null,
+    address: d.address ?? null,
+    postal_code: d.postal_code ?? null,
+    sea_distance_m: d.sea_distance_m ?? null,
+    amenities_notes: d.amenities_notes ?? null,
+    asking_price: d.asking_price ?? null,
+    min_acceptable_price: d.min_acceptable_price ?? null,
+    owner_net_price: d.owner_net_price ?? null,
+    rent_price_month: d.rent_price_month ?? null,
+    vat_status: d.vat_status,
+    covered_area_sqm: d.covered_area_sqm ?? null,
+    plot_area_sqm: d.plot_area_sqm ?? null,
+    veranda_sqm: d.veranda_sqm ?? null,
+    roof_garden_sqm: d.roof_garden_sqm ?? null,
+    basement_sqm: d.basement_sqm ?? null,
+    bedrooms: d.bedrooms ?? null,
+    bathrooms: d.bathrooms ?? null,
+    wc: d.wc ?? null,
+    parking_spaces: d.parking_spaces ?? null,
+    // F02: storage room has one value, the Features key. The column is its
+    // mirror (0152's trigger derives it for every writer); written here as
+    // well so the `updated` event records it moving with `features`, and so
+    // this save is right on a database without the trigger.
+    has_storage: hasStorageRoom(d.features),
+    floor_number: d.floor_number ?? null,
+    total_floors: d.total_floors ?? null,
+    year_built: d.year_built ?? null,
+    energy_class: d.energy_class ?? null,
+    features: d.features,
+    construction_status: d.construction_status ?? null,
+    delivery_date: d.delivery_date ?? null,
+    internal_notes: d.internal_notes ?? null,
+  };
+  if (current.property_type === "land") {
+    Object.assign(updates, {
+      planning_zone_code: d.planning_zone_code ?? null,
+      building_density_pct: d.building_density_pct ?? null,
+      coverage_ratio_pct: d.coverage_ratio_pct ?? null,
+      max_floors: d.max_floors ?? null,
+      max_height_m: d.max_height_m ?? null,
+      road_frontage_m: d.road_frontage_m ?? null,
+      ...(d.water_available !== undefined ? { water_available: d.water_available } : {}),
+      ...(d.electricity_available !== undefined
+        ? { electricity_available: d.electricity_available }
+        : {}),
+      constraints_notes: d.constraints_notes ?? null,
+    } satisfies PropertyUpdate);
+  }
+  return updates;
+}
 
 export const legalSectionSchema = z.object({
   title_deed_status: z.enum(TITLE_DEED_STATUSES),

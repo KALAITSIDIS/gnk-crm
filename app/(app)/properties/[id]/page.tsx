@@ -28,8 +28,8 @@ import {
 } from "@/components/features/properties/mandate-panel";
 import { EventTimeline } from "@/components/features/shared/event-timeline";
 import { QualityScoreRing } from "@/components/features/shared/quality-score-ring";
-import { computeQualityScore } from "@/lib/services/quality-score";
-import { buildProgress } from "@/lib/services/construction";
+import { buildQualityInput, computeQualityScore } from "@/lib/services/quality-score";
+import { landOverviewFacts } from "@/lib/services/property-layout";
 import { fetchSharedPhotoReferences } from "@/lib/services/shared-photos";
 import { countContainerUnits, EMPTY_CONTAINER_FACTS } from "@/lib/services/container-units";
 import { getCurrentProfile } from "@/lib/services/auth";
@@ -327,31 +327,22 @@ export default async function PropertyDetailPage({
     p.org_id as string,
     photos.map((m) => m.content_sha256).filter((h): h is string => Boolean(h)),
   );
-  const quality = computeQualityScore({
-    sharedPhotoWith,
-    isLand,
-    isContainer: isContainerRow,
-    unitCount: unitFacts.unitCount,
-    pricedUnitCount: unitFacts.pricedUnitCount,
-    hasCoverPhoto: photos.some((m) => m.is_cover),
-    photoCount: photos.length,
-    titleEn: (p.title as { en?: string } | null)?.en,
-    publicDescriptionEn: (p.public_description as { en?: string } | null)?.en,
-    hasPrice: p.asking_price !== null || p.rent_price_month !== null,
-    hasArea: isLand ? p.plot_area_sqm !== null : p.covered_area_sqm !== null,
-    hasBedroomsAndBathrooms: p.bedrooms !== null && p.bathrooms !== null,
-    hasPlanningZoneAndDensity:
-      p.planning_zone_code !== null && p.building_density_pct !== null,
-    hasCoords: p.location !== null,
-    titleDeedSet: p.title_deed_status !== "unknown",
-    permitSet: p.permit_status !== "unknown",
-    mandateActive: mandateRows.some((m) => m.status === "active"),
-    hasAssignedAgent: p.assigned_agent_id !== null,
-    hasOwnerOrDeveloper: p.owner_contact_id !== null || p.developer_contact_id !== null,
-    // Audit CRM-05: a build year that contradicts the status or a pending
-    // delivery date — the ring's warning list, alongside shared photographs.
-    buildConflict: buildProgress(p.construction_status, p.delivery_date, new Date(), p.year_built).mismatch,
-  });
+  // F07: through buildQualityInput — the ONE definition the stored score
+  // (recomputeQualityScore) and the worklist read. This page built its own
+  // input and drifted: it counted a centroid stand-in (location_approx, 0054)
+  // as an exact map location, so the ring on an approximate listing showed 10
+  // points more than the list, the worklist and the publish gate. The
+  // build-conflict and shared-photo warnings come from the same function.
+  const quality = computeQualityScore(
+    buildQualityInput(p, {
+      hasCoverPhoto: photos.some((m) => m.is_cover),
+      photoCount: photos.length,
+      mandateActive: mandateRows.some((m) => m.status === "active"),
+      unitCount: unitFacts.unitCount,
+      pricedUnitCount: unitFacts.pricedUnitCount,
+      sharedPhotoWith,
+    }),
+  );
 
   const changerIds = [...new Set((priceRows ?? []).map((r) => r.changed_by).filter(Boolean))];
   const { data: changerProfiles } = changerIds.length
@@ -477,9 +468,9 @@ export default async function PropertyDetailPage({
         : formatMoney(p.asking_price === null ? null : Number(p.asking_price)),
     ],
     [
-      isContainerRow ? "Site plot" : "Area",
+      isContainerRow ? "Site plot" : isLand ? "Plot" : "Area",
       formatArea(
-        p.property_type === "land" || isContainerRow
+        isLand || isContainerRow
           ? p.plot_area_sqm === null
             ? null
             : Number(p.plot_area_sqm)
@@ -490,7 +481,14 @@ export default async function PropertyDetailPage({
     ],
     ...(isContainerRow
       ? [["Units", `${unitFacts.unitCount} (${unitFacts.pricedUnitCount} priced)`] as [string, string]]
-      : [["Bedrooms / Bathrooms", `${p.bedrooms ?? "—"} / ${p.bathrooms ?? "—"}`] as [string, string]]),
+      : []),
+    // F07: a plot is described by its planning terms, frontage and utilities —
+    // the questions a land buyer asks first — not by bedrooms it does not have
+    ...(isLand
+      ? landOverviewFacts(p)
+      : isContainerRow
+        ? []
+        : [["Bedrooms / Bathrooms", `${p.bedrooms ?? "—"} / ${p.bathrooms ?? "—"}`] as [string, string]]),
     ["Quality score", `${quality.score}/100`],
     // T4.6 acceptance: current key holder visible on Overview
     [
