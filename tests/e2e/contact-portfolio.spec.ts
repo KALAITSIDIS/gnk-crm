@@ -64,6 +64,23 @@ test("a developer's project is one row with its units rolled up", async ({ page 
       developer_contact_id: contact!.id,
     })),
   );
+  // F04 review: an archived unit of the project. Its units page lists no
+  // archived unit, so the contact page must name it — and count it nowhere else
+  const { data: archivedUnit } = await admin
+    .from("properties")
+    .insert({
+      org_id: orgId,
+      reference: `${project!.reference}-U9`,
+      kind: "unit" as const,
+      parent_id: project!.id,
+      property_type: "apartment" as const,
+      status: "available" as const,
+      visibility: "archived" as const,
+      asking_price: 990000,
+      developer_contact_id: contact!.id,
+    })
+    .select("id, reference")
+    .single();
 
   await page.goto(`/contacts/${contact!.id}`);
 
@@ -87,9 +104,74 @@ test("a developer's project is one row with its units rolled up", async ({ page 
     .locator("xpath=following-sibling::dd[1]");
   await expect(total).toHaveText("€1.600.000");
 
+  // the archived unit: outside the 8 and the total above, but named and linked
+  const archived = panel.locator("details", { hasText: "Archived — not counted" });
+  await expect(archived.locator("summary")).toHaveText("Archived — not counted (1)");
+  await archived.locator("summary").click();
+  const group = archived.getByTestId("portfolio-archived-units");
+  await expect(group).toContainText(`1 archived unit of ${project!.reference}`);
+  await expect(group.getByRole("link", { name: archivedUnit!.reference, exact: true })).toHaveAttribute(
+    "href",
+    `/properties/${archivedUnit!.id}`,
+  );
+
   await admin.from("properties").delete().eq("parent_id", project!.id);
   await admin.from("properties").delete().eq("id", project!.id);
   await admin.from("contacts").delete().eq("id", contact!.id);
+});
+
+test("a landlord's rentals are not 'without an asking price' (F04 review)", async ({ page }) => {
+  const admin = svc();
+  const { orgId } = await fixtureProfile(admin);
+  const tag = randomBytes(3).toString("hex");
+
+  const { data: contact } = await admin
+    .from("contacts")
+    .insert({
+      org_id: orgId,
+      contact_kind: "person",
+      first_name: "Landlord",
+      last_name: tag,
+      contact_types: ["owner"],
+    })
+    .select("id")
+    .single();
+
+  const { data: rentals } = await admin
+    .from("properties")
+    .insert(
+      [0, 1].map((i) => ({
+        org_id: orgId,
+        reference: `E2E-RNT-${tag}-${i}`,
+        kind: "standalone" as const,
+        property_type: "apartment" as const,
+        transaction_type: "rent" as const,
+        status: "available" as const,
+        rent_price_month: 1200,
+        owner_contact_id: contact!.id,
+      })),
+    )
+    .select("id");
+
+  try {
+    await page.goto(`/contacts/${contact!.id}`);
+    await expect(page.getByRole("tab", { name: "Properties (2)" })).toBeVisible();
+    await page.getByRole("tab", { name: /Properties/ }).click();
+
+    const total = page
+      .getByRole("tabpanel")
+      .locator("dt", { hasText: "Asking total (listings + units)" })
+      .locator("xpath=following-sibling::dd[1]");
+    // a rental asks a monthly rent: nothing is missing, and the total says it leaves them out
+    await expect(total).toContainText("2 for rent only, not in this total");
+    await expect(total).not.toContainText("without an asking price");
+  } finally {
+    await admin
+      .from("properties")
+      .delete()
+      .in("id", (rentals ?? []).map((r) => r.id));
+    await admin.from("contacts").delete().eq("id", contact!.id);
+  }
 });
 
 test("a contact with nothing says so rather than showing an empty table", async ({ page }) => {

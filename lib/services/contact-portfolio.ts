@@ -13,7 +13,7 @@
  */
 
 export const PORTFOLIO_SELECT =
-  "id, reference, kind, parent_id, property_type, status, visibility, title, asking_price, owner_contact_id, developer_contact_id";
+  "id, reference, kind, parent_id, property_type, transaction_type, status, visibility, title, asking_price, owner_contact_id, developer_contact_id";
 
 export interface PortfolioRow {
   id: string;
@@ -21,6 +21,8 @@ export interface PortfolioRow {
   kind: string;
   parent_id: string | null;
   property_type: string;
+  /** sale | rent | sale_or_rent — only a row FOR SALE has an asking price to count */
+  transaction_type: string;
   status: string;
   visibility: string;
   /** multilingual jsonb ({en,el,ru}); typed loosely because the generated
@@ -35,7 +37,8 @@ export interface UnitRollup {
   total: number;
   /** counts keyed by status, e.g. { available: 40, sold: 12 } */
   byStatus: Record<string, number>;
-  /** sum of asking prices across the units that carry one */
+  /** sum of asking prices across the units FOR SALE that carry one — the
+   *  same rows, the same rule, as the portfolio's total */
   value: number;
 }
 
@@ -63,6 +66,21 @@ export interface ArchivedPortfolioEntry {
   roles: ("owner" | "developer")[];
 }
 
+/**
+ * This contact's archived units under one container the portfolio also holds
+ * (live or archived). Grouped, not listed one row each — a retired 60-unit
+ * block must not become 60 rows — but every unit is named and linked: the
+ * container's own pages list no archived unit (its units matrix reads
+ * `visibility <> 'archived'`), so this is the one place they are reached from
+ * here (F04 review).
+ */
+export interface ArchivedUnitGroup {
+  containerId: string;
+  containerReference: string;
+  /** by reference */
+  units: { id: string; reference: string }[];
+}
+
 export interface Portfolio {
   /** the live (not archived) records, units rolled into their container */
   entries: PortfolioEntry[];
@@ -72,18 +90,27 @@ export interface Portfolio {
   /**
    * The asking total, LISTINGS + UNITS (F04): every live standalone listing's
    * asking price and every live unit's — never a project's or a phase's own
-   * price, which is a "from" figure its units already carry. A row with no
-   * asking price adds nothing; `unpricedCount` says how many there were.
+   * price, which is a "from" figure its units already carry — and only for
+   * what is FOR SALE (sale, sale_or_rent): a rent-only listing has no asking
+   * price by design, so it is outside the total and outside `unpricedCount`
+   * (`rentOnlyCount` says how many there were). A for-sale row with no asking
+   * price adds nothing; `unpricedCount` says how many there were.
    */
   totalValue: number;
-  /** live listings and units in the total's scope that carry no asking price */
+  /** live for-sale listings and units in the total's scope with no asking price */
   unpricedCount: number;
+  /** live rent-only listings and units: the total does not cover them */
+  rentOnlyCount: number;
   /**
    * Archived records, outside every count and the total, so the tab can still
-   * say they exist: the archived top-level ones (an archived unit inside a
-   * container that is itself in the portfolio is reached through it instead).
+   * say they exist: every archived record except a unit whose container is in
+   * the portfolio — those are in `archivedUnits`, grouped under it.
    */
   archived: ArchivedPortfolioEntry[];
+  /** archived units grouped under a container in the portfolio, by its reference */
+  archivedUnits: ArchivedUnitGroup[];
+  /** every archived record: `archived` plus every unit in `archivedUnits` */
+  archivedCount: number;
 }
 
 const num = (v: number | string | null): number | null =>
@@ -94,6 +121,13 @@ const isContainer = (kind: string) => kind === "project" || kind === "phase";
 
 /** Archiving is how a record is retired here (there is no hard delete). */
 const isArchived = (row: PortfolioRow) => row.visibility === "archived";
+
+/** What an asking price is for: sale, or sale-or-rent. A rental carries a monthly rent. */
+const FOR_SALE: readonly string[] = ["sale", "sale_or_rent"];
+const isForSale = (row: PortfolioRow) => FOR_SALE.includes(row.transaction_type);
+
+/** A row's asking price as the total counts it: for sale and priced, else null. */
+const saleAsk = (row: PortfolioRow): number | null => (isForSale(row) ? num(row.asking_price) : null);
 
 function rolesFor(row: PortfolioRow, contactId: string): ("owner" | "developer")[] {
   const roles: ("owner" | "developer")[] = [];
@@ -127,18 +161,34 @@ const titleOf = (row: PortfolioRow) => (row.title as { en?: string } | null)?.en
  * project's asking price is its "from" figure; adding it on top of the units it
  * is priced from counted the same flats twice (a 300,000 "from" project with
  * two 250,000 units totalled 800,000, where the stock asks 500,000).
+ *
+ * ONLY WHAT IS FOR SALE HAS AN ASKING PRICE (F04 review). A landlord's two
+ * rentals read "2 without an asking price" beside the total — missing data,
+ * where nothing was missing. Rent-only rows are outside the total and the
+ * unpriced note, and counted apart so the tab can say the total leaves them out.
+ *
+ * AN ARCHIVED UNIT IS NEVER DROPPED (F04 review). One whose container is in
+ * the portfolio used to be left out of the archived list "because the
+ * container reaches it" — but the container's units page and record page list
+ * no archived unit, so it appeared nowhere and the archived count was short.
+ * It is grouped under its container instead, and counted.
  */
 export function buildPortfolio(rows: PortfolioRow[], contactId: string): Portfolio {
   const live = rows.filter((r) => !isArchived(r));
   const liveById = new Map(live.map((r) => [r.id, r]));
-  const anyById = new Set(rows.map((r) => r.id));
+  const byId = new Map(rows.map((r) => [r.id, r]));
   const units = live.filter((r) => r.kind === "unit");
   const nonUnits = live.filter((r) => r.kind !== "unit");
 
   let totalValue = 0;
   let unpricedCount = 0;
+  let rentOnlyCount = 0;
   const addToTotal = (row: PortfolioRow) => {
-    const price = num(row.asking_price);
+    if (!isForSale(row)) {
+      rentOnlyCount += 1;
+      return;
+    }
+    const price = saleAsk(row);
     if (price === null) unpricedCount += 1;
     else totalValue += price;
   };
@@ -152,7 +202,7 @@ export function buildPortfolio(rows: PortfolioRow[], contactId: string): Portfol
       const roll = rolled.get(u.parent_id) ?? { total: 0, byStatus: {}, value: 0 };
       roll.total += 1;
       roll.byStatus[u.status] = (roll.byStatus[u.status] ?? 0) + 1;
-      roll.value += num(u.asking_price) ?? 0;
+      roll.value += saleAsk(u) ?? 0;
       rolled.set(u.parent_id, roll);
     } else {
       orphanUnits.push(u);
@@ -177,9 +227,12 @@ export function buildPortfolio(rows: PortfolioRow[], contactId: string): Portfol
 
   entries.sort((a, b) => a.reference.localeCompare(b.reference));
 
-  const archived: ArchivedPortfolioEntry[] = rows
-    .filter(isArchived)
-    .filter((r) => !(r.kind === "unit" && r.parent_id !== null && anyById.has(r.parent_id)))
+  const archivedRows = rows.filter(isArchived);
+  const underContainer = (r: PortfolioRow) =>
+    r.kind === "unit" && r.parent_id !== null && byId.has(r.parent_id);
+
+  const archived: ArchivedPortfolioEntry[] = archivedRows
+    .filter((r) => !underContainer(r))
     .map((r) => ({
       id: r.id,
       reference: r.reference,
@@ -190,12 +243,30 @@ export function buildPortfolio(rows: PortfolioRow[], contactId: string): Portfol
     }))
     .sort((a, b) => a.reference.localeCompare(b.reference));
 
+  const groups = new Map<string, ArchivedUnitGroup>();
+  for (const u of archivedRows.filter(underContainer)) {
+    const container = byId.get(u.parent_id as string) as PortfolioRow;
+    const group = groups.get(container.id) ?? {
+      containerId: container.id,
+      containerReference: container.reference,
+      units: [],
+    };
+    group.units.push({ id: u.id, reference: u.reference });
+    groups.set(container.id, group);
+  }
+  const archivedUnits = [...groups.values()]
+    .map((g) => ({ ...g, units: g.units.sort((a, b) => a.reference.localeCompare(b.reference)) }))
+    .sort((a, b) => a.containerReference.localeCompare(b.containerReference));
+
   return {
     entries,
     propertyCount: entries.length,
     unitCount: units.length - orphanUnits.length,
     totalValue,
     unpricedCount,
+    rentOnlyCount,
     archived,
+    archivedUnits,
+    archivedCount: archived.length + archivedUnits.reduce((n, g) => n + g.units.length, 0),
   };
 }

@@ -11,6 +11,7 @@ const row = (over: Partial<PortfolioRow> & { id: string; reference: string }): P
   kind: "standalone",
   parent_id: null,
   property_type: "apartment",
+  transaction_type: "sale",
   status: "available",
   visibility: "private",
   title: null,
@@ -152,7 +153,10 @@ describe("buildPortfolio", () => {
       unitCount: 0,
       totalValue: 0,
       unpricedCount: 0,
+      rentOnlyCount: 0,
       archived: [],
+      archivedUnits: [],
+      archivedCount: 0,
     });
   });
 });
@@ -259,8 +263,44 @@ describe("buildPortfolio — archived records (F04)", () => {
     expect(portfolio.totalValue).toBe(250000);
     expect(portfolio.unitCount).toBe(1);
     expect(portfolio.entries[0].units).toEqual({ total: 1, byStatus: { available: 1 }, value: 250000 });
-    // reached through its project's units page, not listed one by one
+    // F04 review: NOT "reached through its project" — the units page and the
+    // record page list no archived unit (`.neq("visibility", "archived")`), so
+    // it is grouped under its project here, named, linked and counted
     expect(portfolio.archived).toEqual([]);
+    expect(portfolio.archivedUnits).toEqual([
+      { containerId: "p", containerReference: "PAF0002", units: [{ id: "u2", reference: "PAF0002-A2" }] },
+    ]);
+    expect(portfolio.archivedCount).toBe(1);
+  });
+
+  it("a live project with 5 live and 2 archived units: the 2 are in the archived count and named", () => {
+    // the review's scenario — before, nothing on the contact page showed they existed
+    const portfolio = buildPortfolio(
+      [
+        row({ id: "p", reference: "PAF0002", kind: "project", developer_contact_id: DEV }),
+        ...[1, 2, 3, 4, 5].map((i) =>
+          row({ id: `l${i}`, reference: `PAF0002-A${i}`, kind: "unit", parent_id: "p", developer_contact_id: DEV, asking_price: 100000 }),
+        ),
+        // out of reference order on purpose: the group lists them by reference
+        row({ id: "a7", reference: "PAF0002-A7", kind: "unit", parent_id: "p", developer_contact_id: DEV, visibility: "archived" }),
+        row({ id: "a6", reference: "PAF0002-A6", kind: "unit", parent_id: "p", developer_contact_id: DEV, visibility: "archived" }),
+      ],
+      DEV,
+    );
+    expect(portfolio.unitCount).toBe(5);
+    expect(portfolio.totalValue).toBe(500000);
+    expect(portfolio.archived).toEqual([]);
+    expect(portfolio.archivedUnits).toEqual([
+      {
+        containerId: "p",
+        containerReference: "PAF0002",
+        units: [
+          { id: "a6", reference: "PAF0002-A6" },
+          { id: "a7", reference: "PAF0002-A7" },
+        ],
+      },
+    ]);
+    expect(portfolio.archivedCount).toBe(2);
   });
 
   it("an archived listing is listed apart — never counted, never totalled", () => {
@@ -286,7 +326,7 @@ describe("buildPortfolio — archived records (F04)", () => {
     ]);
   });
 
-  it("an archived project is listed once, its archived units through it; a LIVE unit of it stands alone", () => {
+  it("an archived project is listed once, its archived units grouped under it; a LIVE unit of it stands alone", () => {
     const portfolio = buildPortfolio(
       [
         row({ id: "p", reference: "PAF0005", kind: "project", developer_contact_id: DEV, visibility: "archived" }),
@@ -296,6 +336,10 @@ describe("buildPortfolio — archived records (F04)", () => {
       DEV,
     );
     expect(portfolio.archived.map((a) => a.reference)).toEqual(["PAF0005"]);
+    expect(portfolio.archivedUnits).toEqual([
+      { containerId: "p", containerReference: "PAF0005", units: [{ id: "u1", reference: "PAF0005-A1" }] },
+    ]);
+    expect(portfolio.archivedCount).toBe(2);
     // still live — the properties list shows it, so the portfolio does too
     expect(portfolio.entries.map((e) => e.reference)).toEqual(["PAF0005-A2"]);
     expect(portfolio.totalValue).toBe(120000);
@@ -320,6 +364,80 @@ describe("buildPortfolio — archived records (F04)", () => {
     expect(portfolio.entries).toEqual([]);
     expect(portfolio.totalValue).toBe(0);
     expect(portfolio.archived.map((a) => a.reference)).toEqual(["PAF0009-A1"]);
+    expect(portfolio.archivedUnits).toEqual([]);
+    expect(portfolio.archivedCount).toBe(1);
+  });
+});
+
+/**
+ * F04 review: an asking price is what a property FOR SALE asks. A rental
+ * carries `rent_price_month` only, so counting it as "without an asking price"
+ * reported missing data where nothing was missing.
+ */
+describe("buildPortfolio — rentals are outside the asking total (F04 review)", () => {
+  it("a landlord's two rentals with no asking price: no unpriced note, nothing totalled", () => {
+    const portfolio = buildPortfolio(
+      [
+        row({ id: "r1", reference: "PAF0011", owner_contact_id: DEV, transaction_type: "rent" }),
+        row({ id: "r2", reference: "PAF0012", owner_contact_id: DEV, transaction_type: "rent" }),
+      ],
+      DEV,
+    );
+    expect(portfolio.unpricedCount).toBe(0);
+    expect(portfolio.totalValue).toBe(0);
+    expect(portfolio.rentOnlyCount).toBe(2);
+    // still listed: a rental is the landlord's property all the same
+    expect(portfolio.propertyCount).toBe(2);
+  });
+
+  it("a rental's stale asking price is not in the total, nor in its project's rollup value", () => {
+    const portfolio = buildPortfolio(
+      [
+        row({ id: "r", reference: "PAF0011", owner_contact_id: DEV, transaction_type: "rent", asking_price: 400000 }),
+        row({ id: "p", reference: "PAF0002", kind: "project", developer_contact_id: DEV }),
+        row({ id: "u1", reference: "PAF0002-A1", kind: "unit", parent_id: "p", developer_contact_id: DEV, asking_price: 250000 }),
+        row({
+          id: "u2",
+          reference: "PAF0002-A2",
+          kind: "unit",
+          parent_id: "p",
+          developer_contact_id: DEV,
+          transaction_type: "rent",
+          asking_price: 999000,
+        }),
+      ],
+      DEV,
+    );
+    expect(portfolio.totalValue).toBe(250000);
+    const project = portfolio.entries.find((e) => e.reference === "PAF0002");
+    // the row's figure and the total agree: the same rows, the same rule
+    expect(project?.units).toEqual({ total: 2, byStatus: { available: 2 }, value: 250000 });
+    expect(portfolio.unitCount).toBe(2);
+    expect(portfolio.rentOnlyCount).toBe(2);
+    expect(portfolio.unpricedCount).toBe(0);
+  });
+
+  it("sale_or_rent IS for sale: its asking price counts, and a missing one is reported", () => {
+    const portfolio = buildPortfolio(
+      [
+        row({ id: "a", reference: "PAF0001", owner_contact_id: DEV, transaction_type: "sale_or_rent", asking_price: 300000 }),
+        row({ id: "b", reference: "PAF0002", owner_contact_id: DEV, transaction_type: "sale_or_rent" }),
+      ],
+      DEV,
+    );
+    expect(portfolio.totalValue).toBe(300000);
+    expect(portfolio.unpricedCount).toBe(1);
+    expect(portfolio.rentOnlyCount).toBe(0);
+  });
+
+  it("an archived rental is outside every count, the rental count included", () => {
+    const portfolio = buildPortfolio(
+      [row({ id: "r", reference: "PAF0011", owner_contact_id: DEV, transaction_type: "rent", visibility: "archived" })],
+      DEV,
+    );
+    expect(portfolio.rentOnlyCount).toBe(0);
+    expect(portfolio.unpricedCount).toBe(0);
+    expect(portfolio.archivedCount).toBe(1);
   });
 });
 
@@ -330,9 +448,9 @@ describe("PORTFOLIO_SELECT", () => {
     expect(columns).toContain("developer_contact_id");
   });
 
-  it("selects what the rollup needs: kind, parent and status", () => {
+  it("selects what the rollup and the total need: kind, parent, status, price and what it is for", () => {
     const columns = PORTFOLIO_SELECT.split(",").map((c) => c.trim());
-    for (const c of ["kind", "parent_id", "status", "asking_price"]) {
+    for (const c of ["kind", "parent_id", "status", "asking_price", "transaction_type", "visibility"]) {
       expect(columns).toContain(c);
     }
   });

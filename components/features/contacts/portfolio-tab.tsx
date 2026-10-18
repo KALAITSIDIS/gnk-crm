@@ -36,12 +36,16 @@ function rowFigure(e: PortfolioEntry): string {
  * list makes about units by default.
  *
  * The total is "Asking total (listings + units)" and means exactly that (F04):
- * standalone listings and units, never a project's own "from" price on top of
- * the units it is priced from, and nothing archived. Archived records are
- * listed apart and counted nowhere.
+ * standalone listings and units for sale, never a project's own "from" price
+ * on top of the units it is priced from, never a rental's (it has no asking
+ * price — the note says the total leaves rentals out instead of calling them
+ * unpriced), and nothing archived. Archived records are listed apart and
+ * counted nowhere; an archived unit whose container is here is grouped under
+ * that container's reference, every unit named and linked — no other page
+ * lists it.
  */
 export function PortfolioTab({ portfolio }: { portfolio: Portfolio }) {
-  if (portfolio.entries.length === 0 && portfolio.archived.length === 0) {
+  if (portfolio.entries.length === 0 && portfolio.archivedCount === 0) {
     return (
       <p className="text-sm text-text-3">
         Nothing recorded against this contact yet. A property names them from its Parties panel,
@@ -83,6 +87,12 @@ export function PortfolioTab({ portfolio }: { portfolio: Portfolio }) {
                     {portfolio.unpricedCount} without an asking price
                   </span>
                 ) : null}
+                {/* a rental has a monthly rent, not an asking price: not missing, not in it */}
+                {portfolio.rentOnlyCount > 0 ? (
+                  <span className="ml-2 text-xs font-normal text-text-3">
+                    {portfolio.rentOnlyCount} for rent only, not in this total
+                  </span>
+                ) : null}
               </dd>
             </div>
           </dl>
@@ -120,11 +130,11 @@ export function PortfolioTab({ portfolio }: { portfolio: Portfolio }) {
         </>
       )}
 
-      {portfolio.archived.length > 0 ? (
+      {portfolio.archivedCount > 0 ? (
         // native <details>: closed by default, and its rows are plain links
         <details className="rounded-[10px] border border-border bg-surface">
           <summary className="cursor-pointer px-4 py-3 text-sm text-text-2">
-            Archived — not counted ({portfolio.archived.length})
+            Archived — not counted ({portfolio.archivedCount})
           </summary>
           <ul className="flex flex-col divide-y divide-border/60 border-t border-border">
             {portfolio.archived.map((a) => (
@@ -141,6 +151,32 @@ export function PortfolioTab({ portfolio }: { portfolio: Portfolio }) {
                     {a.kind !== "standalone" ? ` · ${labelize(a.kind)}` : null}
                   </span>
                 </Link>
+              </li>
+            ))}
+            {/* archived units under a container shown above: one row per
+                container, every unit linked — its units page lists none */}
+            {portfolio.archivedUnits.map((g) => (
+              <li
+                key={`units-of-${g.containerId}`}
+                data-testid="portfolio-archived-units"
+                className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-2.5"
+              >
+                <Archive className="size-4 shrink-0 self-center text-text-3" />
+                {/* the container itself is a row of its own, live or archived */}
+                <span className="text-sm text-text-2">
+                  {`${g.units.length} archived unit${g.units.length === 1 ? "" : "s"} of ${g.containerReference}`}
+                </span>
+                <span className="flex flex-wrap gap-x-2 gap-y-1">
+                  {g.units.map((u) => (
+                    <Link
+                      key={u.id}
+                      href={`/properties/${u.id}`}
+                      className="font-mono text-xs text-brand-700 hover:underline"
+                    >
+                      {u.reference}
+                    </Link>
+                  ))}
+                </span>
               </li>
             ))}
           </ul>
