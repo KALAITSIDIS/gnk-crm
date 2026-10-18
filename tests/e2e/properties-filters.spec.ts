@@ -215,6 +215,65 @@ test.describe("properties filters (A03)", () => {
     // the Sort select shows the same sort
     await expect(page.getByRole("combobox", { name: "Sort", exact: true })).toHaveText(/Asking price: high to low/);
   });
+
+  /*
+   * A03 review: Score and Visibility were hidden below 1680 px with nothing
+   * standing in for them, so a 1280–1600 px laptop never saw whether a listing
+   * was public and could sort by a score it could not see.
+   */
+  test("at 1280 px each row still says its visibility and score; from 1536 px they are columns", async ({ page }) => {
+    const path = `/properties?view=table&q=${plot!.reference}`;
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(path, { waitUntil: "networkidle" });
+    await expect(page.getByRole("columnheader", { name: "Visibility" })).toBeHidden();
+    await expect(page.getByRole("columnheader", { name: /^Score/ })).toBeHidden();
+    const row = page.getByRole("row").filter({ hasText: plot!.reference });
+    const standing = row.getByTestId("property-row-standing");
+    await expect(standing).toBeVisible();
+    await expect(standing).toContainText("Private");
+    await expect(standing).toContainText(/Score \d+/);
+
+    await page.setViewportSize({ width: 1536, height: 800 });
+    await page.goto(path, { waitUntil: "networkidle" });
+    await expect(page.getByRole("columnheader", { name: "Visibility" })).toBeVisible();
+    await expect(page.getByRole("columnheader", { name: /^Score/ })).toBeVisible();
+    // the stand-in steps aside once the columns are there: said once, not twice
+    await expect(page.getByRole("row").filter({ hasText: plot!.reference }).getByTestId("property-row-standing")).toBeHidden();
+  });
+
+  test("under Rent a sale_or_rent row's Price is its monthly rent — the figure the rent sort orders by", async ({ page }) => {
+    const svc = serviceClient();
+    const { orgId } = await fixtureProfile(svc);
+    const reference = `E2E-SOR-${randomBytes(3).toString("hex").toUpperCase()}`;
+    const { data, error } = await svc
+      .from("properties")
+      .insert({
+        org_id: orgId,
+        reference,
+        property_type: "apartment",
+        transaction_type: "sale_or_rent",
+        status: "available",
+        visibility: "private",
+        district_id: plot!.districtId,
+        asking_price: 350000,
+        rent_price_month: 1200,
+        title: { en: "E2E sale or rent" },
+      })
+      .select("id")
+      .single();
+    expect(error, `seeding: ${error?.message}`).toBeNull();
+    try {
+      await page.goto(`/properties?view=table&transaction=rent&sort=price_asc&q=${reference}`, { waitUntil: "networkidle" });
+      const row = page.getByRole("row").filter({ hasText: reference });
+      await expect(row).toContainText("€1.200/mo");
+      await expect(row).not.toContainText("€350.000");
+      // the same row with no transaction filter shows what it asks
+      await page.goto(`/properties?view=table&q=${reference}`, { waitUntil: "networkidle" });
+      await expect(page.getByRole("row").filter({ hasText: reference })).toContainText("€350.000");
+    } finally {
+      await serviceClient().from("properties").delete().eq("id", data!.id);
+    }
+  });
 });
 
 test.describe("properties filters — URLs a person can type (A03)", () => {

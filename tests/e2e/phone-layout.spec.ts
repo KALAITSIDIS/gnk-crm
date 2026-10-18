@@ -54,7 +54,8 @@ test.describe("phone layouts (CRM-06)", () => {
    */
   test("the properties table fits a 1024 px window without a sideways scroll", async ({ page }, testInfo) => {
     test.skip(isPhone(testInfo.project.use.viewport?.width ?? 1280), "desktop widths");
-    for (const width of [1024, 1280]) {
+    // 1536: Score and Visibility join as columns there (A03 review) and must fit too
+    for (const width of [1024, 1280, 1536]) {
       await page.setViewportSize({ width, height: 800 });
       for (const path of ["/properties?view=table", "/properties?view=table&type=land"]) {
         await page.goto(path, { waitUntil: "networkidle" });

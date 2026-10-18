@@ -49,8 +49,16 @@ function labelize(value: string) {
  */
 const KIND_TAG: Record<string, string> = { project: "Project", phase: "Phase", unit: "Unit" };
 
-function priceCell(row: PropertyRow) {
-  if (row.transaction_type === "rent") {
+/**
+ * The figure in the Price column. Under the Rent filter (`rent`) it is the
+ * monthly rent for every row — a sale_or_rent row too — because that is what
+ * the filter's € bracket and the price sort read (`propertySortColumn`): a
+ * list sorted "Rent: low to high" showing a sale_or_rent row's asking price
+ * between two rents contradicted its own order (A03 review). Otherwise a
+ * rent-only row shows its rent and every other row its asking price.
+ */
+export function priceCell(row: PropertyRow, rent = false) {
+  if (rent || row.transaction_type === "rent") {
     return row.rent_price_month ? `${formatMoney(row.rent_price_month)}/mo` : "—";
   }
   // A project's or phase's own asking price is its "from" figure — the units
@@ -117,15 +125,24 @@ function Thumb({ row, className }: { row: PropertyRow; className?: string }) {
  * they cannot misalign:
  *
  *   md (tablet)  reference · title · price · status — the title cell carries
- *                the type and the location on a second line
+ *                the visibility, the score, the type and the location on a
+ *                second line
  *   lg (1024)    + location · area (plot for land)
  *   xl (1280)    + beds (density for land) · mandate
- *   1680 px      + photo · type · score · visibility
+ *   2xl (1536)   + score · visibility
+ *   1680 px      + photo · type
+ *
+ * NOTHING IS LOST ON THE WAY DOWN: a hidden column's value is on the title
+ * cell's second line until its column appears — visibility and score FIRST on
+ * it, so a truncated line keeps them (A03 review: they were hidden below
+ * 1680 px with no stand-in, so a 1280–1600 px laptop could sort by a score it
+ * could not see and never saw whether a listing was public).
  *
  * The fixed widths at each step sum to well under the content width beside
- * the sidebar (lg: 464 of 728 px; xl: 656 of 984), so the table no longer
- * scrolls sideways at 1024 px; each fixed width holds its header with the
- * sort arrow. Below the tablet breakpoint the default view is the cards.
+ * the sidebar (lg: 464 of 728 px; xl: 656 of 984; 2xl: 848 of 1240; 1680:
+ * 1040 of 1384), so the table does not scroll sideways; each fixed width
+ * holds its header with the sort arrow. Below the tablet breakpoint the
+ * default view is the cards.
  */
 const COLUMN = {
   thumb: "hidden w-16 min-[1680px]:table-cell",
@@ -136,10 +153,10 @@ const COLUMN = {
   beds: "hidden w-20 text-right xl:table-cell",
   area: "hidden w-24 text-right lg:table-cell",
   price: "w-36 text-right",
-  score: "hidden w-20 text-right min-[1680px]:table-cell",
+  score: "hidden w-20 text-right 2xl:table-cell",
   mandate: "hidden w-28 xl:table-cell",
   status: "w-28",
-  visibility: "hidden w-28 min-[1680px]:table-cell",
+  visibility: "hidden w-28 2xl:table-cell",
 } as const;
 
 /**
@@ -178,11 +195,14 @@ function SortableHead({
 export function PropertiesTable({
   rows,
   land = false,
+  rent = false,
   sorts = {},
 }: {
   rows: PropertyRow[];
   /** `type=land` (A03): "Plot m²" and "Density %" in place of "Area" and "Beds" */
   land?: boolean;
+  /** `transaction=rent`: the Price column is the monthly rent (see `priceCell`) */
+  rent?: boolean;
   /** the sortable headers' links, built by the page from its own URL */
   sorts?: Partial<Record<SortableColumn, ColumnSort>>;
 }) {
@@ -230,8 +250,17 @@ export function PropertiesTable({
                 <div className="truncate" title={row.title ?? undefined}>
                   {row.title ?? "—"}
                 </div>
-                {/* what the hidden Type and Location columns would say */}
+                {/* what the hidden columns would say — visibility and score
+                    first, so truncation never takes them */}
                 <div className="truncate text-xs text-text-3 min-[1680px]:hidden">
+                  <span className="2xl:hidden" data-testid="property-row-standing">
+                    <StatusBadge status={row.visibility} className="text-xs" />
+                    {" · "}
+                    <span className={cn("tabular-nums", scoreColor(row.quality_score))}>
+                      Score {row.quality_score}
+                    </span>
+                    {" · "}
+                  </span>
                   {typeText(row)}
                   <span className="lg:hidden"> · {locationText(row)}</span>
                 </div>
@@ -254,8 +283,8 @@ export function PropertiesTable({
                 {formatArea(land || row.property_type === "land" ? row.plot_area_sqm : row.covered_area_sqm)}
               </TableCell>
               <TableCell className={cn(COLUMN.price, "font-medium tabular-nums")}>
-                <div className="truncate" title={priceCell(row)}>
-                  {priceCell(row)}
+                <div className="truncate" title={priceCell(row, rent)}>
+                  {priceCell(row, rent)}
                 </div>
               </TableCell>
               <TableCell className={cn(COLUMN.score, "tabular-nums", scoreColor(row.quality_score))}>
@@ -278,7 +307,14 @@ export function PropertiesTable({
   );
 }
 
-export function PropertiesCards({ rows }: { rows: PropertyRow[] }) {
+export function PropertiesCards({
+  rows,
+  rent = false,
+}: {
+  rows: PropertyRow[];
+  /** `transaction=rent`: the card's figure is the monthly rent (see `priceCell`) */
+  rent?: boolean;
+}) {
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
       {rows.map((row) => (
@@ -301,7 +337,7 @@ export function PropertiesCards({ rows }: { rows: PropertyRow[] }) {
             <p className="truncate text-sm text-text-1">{row.title ?? labelize(row.property_type)}</p>
             <p className="truncate text-xs text-text-2">{locationText(row)}</p>
             <div className="mt-1 flex items-center justify-between">
-              <span className="font-semibold tabular-nums text-text-1">{priceCell(row)}</span>
+              <span className="font-semibold tabular-nums text-text-1">{priceCell(row, rent)}</span>
               <StatusBadge status={row.status} />
             </div>
           </div>

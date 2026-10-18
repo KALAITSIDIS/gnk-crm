@@ -194,6 +194,9 @@ export default async function PropertiesPage({
   const sortable: SortableColumn[] = land ? ["reference", "plot", "price", "score"] : ["reference", "price", "score"];
   const sorts: Partial<Record<SortableColumn, ColumnSort>> = {};
   for (const column of sortable) sorts[column] = columnSort(column, filterParams.toString(), filters.sort);
+  // under "Rent" the price shown is the price the bracket and the sort read:
+  // the monthly rent, a sale_or_rent row's too (A03 review)
+  const rent = filters.transaction === "rent";
 
   // what this view holds, in words — the same words as the document title
   const description = describePropertyFilters(filters, places);
@@ -280,9 +283,9 @@ export default async function PropertiesPage({
           )}
         </div>
       ) : filters.view === "cards" ? (
-        <PropertiesCards rows={rows} />
+        <PropertiesCards rows={rows} rent={rent} />
       ) : filters.view === "table" ? (
-        <PropertiesTable rows={rows} land={land} sorts={sorts} />
+        <PropertiesTable rows={rows} land={land} rent={rent} sorts={sorts} />
       ) : (
         /* auto (audit CRM-06): cards on a phone, the table from the tablet
            breakpoint up. Both are rendered and one is hidden by CSS, because
@@ -295,10 +298,10 @@ export default async function PropertiesPage({
               34767615456 failed on the hidden card). A phone never sees the
               table, so its order costs nothing there. */}
           <div className="hidden md:block">
-            <PropertiesTable rows={rows} land={land} sorts={sorts} />
+            <PropertiesTable rows={rows} land={land} rent={rent} sorts={sorts} />
           </div>
           <div className="md:hidden">
-            <PropertiesCards rows={rows} />
+            <PropertiesCards rows={rows} rent={rent} />
           </div>
         </>
       )}

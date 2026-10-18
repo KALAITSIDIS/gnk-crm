@@ -40,7 +40,9 @@ import {
  *      database's `order by <col> <dir> nulls last, id`; the request says so;
  *      the CSV of each sort has the walk's order;
  *   5. the default (no `sort`) still sends exactly `created_at.desc,id.asc`;
- *   6. a price sort under "Rent" orders by the monthly rent;
+ *   6. a price sort under "Rent" orders by the monthly rent — and the Price
+ *      column SHOWS the monthly rent, a sale_or_rent row's too, so the
+ *      figures on screen are in the order the list claims (A03 review);
  *   7. the table's sortable headers carry the links and `aria-sort` the URL
  *      implies; a land list makes "Plot m²" sortable;
  *   8. a Beds value past int4 no longer throws the list or the map: it is no
@@ -75,7 +77,7 @@ vi.mock("@/lib/supabase/server", () => ({
 import PropertiesPage, { generateMetadata as listMetadata } from "@/app/(app)/properties/page";
 import PropertiesMapPage, { generateMetadata as mapMetadata } from "@/app/(app)/properties/map/page";
 import { GET as propertiesExport } from "@/app/(app)/properties/export/route";
-import { PropertiesTable } from "@/components/features/properties/list";
+import { priceCell, PropertiesTable, type PropertyRow } from "@/components/features/properties/list";
 import { PropertyMap } from "@/components/features/properties/map-view";
 import type { ColumnSort } from "@/lib/queries/properties-list";
 import { PROPERTY_SORTS, type PropertySort } from "@/lib/validators/properties";
@@ -143,6 +145,10 @@ interface ListScreen {
   description: string | null;
   sorts: Partial<Record<string, ColumnSort>>;
   land: boolean;
+  /** the table's price context: the monthly rent under "Rent" */
+  rent: boolean;
+  /** the rows the table was handed */
+  rows: PropertyRow[];
   /** the list read's `order` parameter */
   order: string | null;
   /** the list read's query, decoded */
@@ -172,6 +178,8 @@ async function listPage(user: TestUser, params: Params): Promise<ListScreen> {
     description: description ? textOf(description) : null,
     sorts: (table?.props.sorts ?? {}) as Partial<Record<string, ColumnSort>>,
     land: Boolean(table?.props.land),
+    rent: Boolean(table?.props.rent),
+    rows: table ? (table.props.rows as PropertyRow[]) : [],
     order: list?.searchParams.get("order") ?? null,
     listQuery: list?.searchParams ?? null,
   };
@@ -508,6 +516,36 @@ describe("the properties list as a self-describing saved view (A03)", () => {
     expect(w.ids).toEqual(want.ids);
     expect(w.pages[0]!.order).toBe("rent_price_month.desc.nullslast,id.asc");
     expect(w.pages[0]!.description).toBe("For rent · sorted by rent ↓");
+
+    // what the Price column shows is what it is sorted by: the monthly rent,
+    // a sale_or_rent row's included — it showed that row's asking price
+    const shown = w.pages.flatMap((p) => {
+      expect(p.rent, "the table is told it is the Rent list").toBe(true);
+      return p.rows.map((r) => ({ r, text: priceCell(r, p.rent) }));
+    });
+    // the review's case: a sale_or_rent row carrying BOTH figures
+    const saleOrRent = shown.filter(
+      ({ r }) => r.transaction_type === "sale_or_rent" && r.rent_price_month !== null && r.asking_price !== null,
+    );
+    console.log(`[evidence] rent price_desc: ${saleOrRent.length} sale_or_rent rows with both figures; the first shows "${saleOrRent[0]?.text}", not its asking "${saleOrRent[0] ? priceCell(saleOrRent[0].r) : ""}"`);
+    expect(saleOrRent.length, "the fixture has sale_or_rent rows with a rent and an asking price").toBeGreaterThan(0);
+    for (const { r, text } of saleOrRent) expect(text).not.toBe(priceCell(r));
+    const figures = shown.map(({ r, text }) => {
+      if (r.rent_price_month === null) {
+        expect(text).toBe("—");
+        return null;
+      }
+      expect(text).toMatch(/\/mo$/);
+      return Number(text.replace(/[^\d,]/g, "").replace(",", "."));
+    });
+    const known = figures.filter((n): n is number => n !== null);
+    expect(known, "the figures on screen descend, as the sort says").toEqual([...known].sort((a, b) => b - a));
+    // unknown rents last, as ordered
+    expect(figures.slice(known.length).every((n) => n === null)).toBe(true);
+
+    // and nothing changes without the Rent filter
+    const sale = await listPage(admin, { sort: "price_desc" });
+    expect(sale.rent).toBe(false);
   }, 60_000);
 
   it("the sortable headers: a link to the next sort with every filter kept and no page; aria-sort on the current one", async () => {
