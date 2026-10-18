@@ -46,7 +46,12 @@ export function AssigneeField({
   id: string;
   assignees: TaskAssignee[] | null;
   meId: string | null;
-  /** the preselected person; absent = me */
+  /**
+   * The preselected person. ABSENT (undefined) = me — a new task. NULL = the
+   * task is held by nobody: the "" option (`missingLabel`) is preselected and
+   * posts as "unchanged", so saving an edit of an unassigned task never hands
+   * it to whoever opened the dialog (A02 review).
+   */
   defaultValue?: string | null;
   loadError?: string | null;
   /** an edit's current holder who is not on the list (deactivated, or nobody) */
@@ -62,7 +67,8 @@ export function AssigneeField({
   if (assignees === null) {
     return <p className="text-xs text-text-3">Loading colleagues…</p>;
   }
-  const preselected = defaultValue ?? meId ?? "";
+  // `??` would read a null holder as "no default given" and preselect me
+  const preselected = defaultValue === undefined ? (meId ?? "") : (defaultValue ?? "");
   const known = assignees.some((a) => a.id === preselected);
   // me first, then everyone else by name (the list arrives sorted by name)
   const ordered = [

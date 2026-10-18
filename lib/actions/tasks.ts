@@ -7,6 +7,7 @@ import { getCurrentProfile } from "@/lib/services/auth";
 import { changesForChain, type FieldChange } from "@/lib/services/event-changes";
 import { logEvent } from "@/lib/services/events";
 import { eventNotice, joinNotices } from "@/lib/services/one-time-secrets";
+import { certainlyRolledBack } from "@/lib/services/rpc-outcome";
 import type { Database } from "@/lib/supabase/database.types";
 import { createClient } from "@/lib/supabase/server";
 import { changedValue } from "@/lib/utils/diff";
@@ -16,6 +17,8 @@ import {
   EDIT_REFUSED,
   LINK_REFUSED,
   REASSIGN_REFUSED,
+  SAVE_REFUSED,
+  SAVE_UNCONFIRMED,
   STALE_REFUSED,
   SYSTEM_TASK_FIXED,
   TASK_STAFF_ROLES,
@@ -251,15 +254,24 @@ export async function updateTask(
   write = task.due_at === null ? write.is("due_at", null) : write.eq("due_at", task.due_at);
   write = task.assignee_id === null ? write.is("assignee_id", null) : write.eq("assignee_id", task.assignee_id);
   const { data: updated, error } = await write.select("id");
-  if (error) {
-    // 42501 here is the new row failing tasks_select: handing on a task the
-    // caller could then no longer see (see taskRights)
-    return {
-      error: error.code === "42501" ? REASSIGN_REFUSED : "The task could not be saved — try again.",
-      savedAt: null,
-    };
+  if (error && certainlyRolledBack(error.code)) {
+    // refused before or while it ran: nothing was written. 42501 here is the
+    // new row failing tasks_select — handing on a task the caller could then
+    // no longer see (see taskRights)
+    return { error: error.code === "42501" ? REASSIGN_REFUSED : SAVE_REFUSED, savedAt: null };
   }
-  if (!Array.isArray(updated) || updated.length === 0) return { error: STALE_REFUSED, savedAt: null };
+  if (!error && Array.isArray(updated)) {
+    // the database's answer: no row = it moved under us, and nothing changed
+    if (updated.length === 0) return { error: STALE_REFUSED, savedAt: null };
+  } else if (!(await editLanded(supabase, task.id, updates))) {
+    // A hollow answer, a gateway's words, a code that can follow a commit: the
+    // edit may have committed. "Nothing was saved" would invite a retry that
+    // re-reads the edited row, finds nothing to change and records nothing —
+    // a change with no line on the chain (A02 review; "A code is not a
+    // refusal"). The row read back settles it when it holds the edit; when it
+    // does not, the outcome is unknown and is said to be.
+    return { error: SAVE_UNCONFIRMED, savedAt: null };
+  }
 
   const notices: string[] = [];
   if (Object.keys(changed).length > 0) {
@@ -293,6 +305,30 @@ export async function updateTask(
 /** A task's title is typed text — `updated` records only that it changed. */
 function isTaskTitle(field: string): boolean {
   return field === "title";
+}
+
+/**
+ * Does the row, read back now, hold every value this edit wrote? Asked only
+ * when the write's own answer did not settle it. True = the edit is in the
+ * row, so it is saved and its lines are owed. False — a different value, no
+ * row, a failed read — leaves the outcome unknown; it is never read as "not
+ * written". By id only: the title is compared here, never sent in a URL.
+ */
+async function editLanded(
+  supabase: Client,
+  taskId: string,
+  updates: { title?: string; due_at?: string | null; assignee_id?: string },
+): Promise<boolean> {
+  const { data: row, error } = await supabase
+    .from("tasks")
+    .select("title, due_at, assignee_id")
+    .eq("id", taskId)
+    .maybeSingle();
+  if (error || !row) return false;
+  if (updates.title !== undefined && row.title !== updates.title) return false;
+  if (updates.due_at !== undefined && !sameDue(row.due_at, updates.due_at)) return false;
+  if (updates.assignee_id !== undefined && row.assignee_id !== updates.assignee_id) return false;
+  return true;
 }
 
 /**

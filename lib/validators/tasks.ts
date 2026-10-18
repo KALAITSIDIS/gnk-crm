@@ -68,6 +68,16 @@ export const REASSIGN_REFUSED =
 export const DONE_REFUSED = "This task is done — reopen it to edit it.";
 export const STALE_REFUSED =
   "This task changed while you were editing it — nothing was saved. Reload and try again.";
+/** The edit was refused before or while it ran (`certainlyRolledBack`): nothing changed. */
+export const SAVE_REFUSED = "The task could not be saved — nothing was changed. Try again.";
+/**
+ * The edit's answer did not settle it — a hollow answer, a gateway's words, a
+ * code that can follow a commit — and the row read back does not hold it. It
+ * may be saved, or be saved yet; "nothing was saved" would invite a retry that
+ * finds nothing to change and records nothing (A02 review).
+ */
+export const SAVE_UNCONFIRMED =
+  "Could not confirm whether the task was saved — reload the page to see it before trying again.";
 
 const DATE_SHAPE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_SHAPE = /^([01]\d|2[0-3]):[0-5]\d$/;

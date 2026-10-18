@@ -7,6 +7,8 @@ import {
   EDIT_REFUSED,
   LINK_REFUSED,
   REASSIGN_REFUSED,
+  SAVE_REFUSED,
+  SAVE_UNCONFIRMED,
   STALE_REFUSED,
   SYSTEM_TASK_FIXED,
 } from "@/lib/validators/tasks";
@@ -303,10 +305,79 @@ describe("updateTask", () => {
     expect(events(fake)).toEqual([]);
   });
 
-  it("a hollow answer to the write is not a success", async () => {
-    const fake = run({ tasks: [task(), { data: null, error: null }] });
-    expect((await edit({ title: NEW_TITLE })).error).toBe(STALE_REFUSED);
+  // The write's answer does not always settle it (A02 review). Only an empty
+  // ARRAY says "nothing matched"; a hollow answer, or an error whose code can
+  // follow a commit, may hide a saved edit — and "nothing was saved" would
+  // send the person to a retry that finds nothing to change and logs nothing.
+  const titleOnly = { title: NEW_TITLE, due_date: "2026-10-19", due_time: "" };
+  const readBack = (over: Record<string, unknown> = {}): FakePage => ({
+    data: { title: TITLE, due_at: DUE, assignee_id: ME, ...over },
+    error: null,
+  });
+
+  it("a hollow answer whose row holds the edit: saved, and its line written", async () => {
+    const fake = run({ tasks: [task(), { data: null, error: null }, readBack({ title: NEW_TITLE })] });
+    expect(await edit(titleOnly)).toMatchObject({ error: null, notice: null });
+    expect(fake.served.tasks).toBe(3); // read, write, read back
+    expect(events(fake).map((e) => [e.event_type, e.payload])).toEqual([
+      ["updated", { changed: { title: { from_set: true, to_set: true } } }],
+    ]);
+    noTypedText(fake);
+  });
+
+  it("a hollow answer whose row does NOT hold the edit: unconfirmed — never 'nothing was saved', no line", async () => {
+    const fake = run({ tasks: [task(), { data: null, error: null }, readBack()] });
+    const r = await edit(titleOnly);
+    expect(r.error).toBe(SAVE_UNCONFIRMED);
+    expect(r.error).not.toBe(STALE_REFUSED);
     expect(events(fake)).toEqual([]);
+  });
+
+  it("a gateway's error with no code, and a read back that fails: unconfirmed", async () => {
+    const fake = run({
+      tasks: [task(), { data: null, error: { message: "Bad Gateway" } }, { data: null, error: { message: "Bad Gateway" } }],
+    });
+    expect((await edit(titleOnly)).error).toBe(SAVE_UNCONFIRMED);
+    expect(events(fake)).toEqual([]);
+  });
+
+  it("a code that can follow a commit (08006) is settled by the read back — the edit is there", async () => {
+    const fake = run({
+      tasks: [task(), { data: null, error: { message: "connection failure", code: "08006" } }, readBack({ title: NEW_TITLE })],
+    });
+    expect((await edit(titleOnly)).error).toBeNull();
+    expect(events(fake).map((e) => e.event_type)).toEqual(["updated"]);
+  });
+
+  it("a hand-on whose answer is lost is settled by the holder read back — `assigned` written", async () => {
+    const fake = run({
+      tasks: [task(), { data: null, error: null, status: 504 }, readBack({ assignee_id: COLLEAGUE })],
+      profiles: [colleague()],
+    });
+    expect((await edit({ assignee_id: COLLEAGUE })).error).toBeNull();
+    expect(events(fake).map((e) => [e.event_type, e.payload])).toEqual([
+      ["assigned", { to_name: "Maria Agent", to_id: COLLEAGUE, from_id: ME }],
+    ]);
+  });
+
+  it("a CERTAIN refusal (a statement-level code) says nothing changed, without a read back", async () => {
+    const fake = run({ tasks: [task(), { data: null, error: { message: "check violation", code: "23514" } }] });
+    expect((await edit(titleOnly)).error).toBe(SAVE_REFUSED);
+    expect(fake.served.tasks).toBe(2);
+    expect(events(fake)).toEqual([]);
+  });
+
+  it("an admin who fixes the title of an UNASSIGNED task leaves it unassigned (the form posts '' for nobody)", async () => {
+    state.me = { ...state.me, role: "admin" };
+    const fake = run({ tasks: [task({ assignee_id: null, created_by: COLLEAGUE }), updatedOne] });
+    const r = await edit({ ...titleOnly, assignee_id: "" });
+    expect(r.error).toBeNull();
+    expect(fake.argsOf("tasks", "update")[0]![0]).toEqual({ title: NEW_TITLE });
+    expect(fake.served.profiles ?? 0).toBe(0); // no assignee looked up
+    expect(events(fake).map((e) => e.event_type)).toEqual(["updated"]);
+    // and the write still requires the row to be held by nobody
+    const filters = fake.calls.filter((c) => c.table === "tasks" && c.method === "is");
+    expect(filters.map((c) => c.args)).toEqual([["assignee_id", null]]);
   });
 
   it("42501 from the write is the new row leaving the caller's sight", async () => {
