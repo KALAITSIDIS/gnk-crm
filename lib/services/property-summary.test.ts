@@ -221,7 +221,26 @@ describe("nextAction — the earlier of the next open task and the next viewing"
       now,
       viewerIsAdmin: true,
     });
-    expect(n).toMatchObject({ kind: "viewing", label: "Next viewing", text: "23 Oct 2026, 14:00" });
+    expect(n).toMatchObject({ kind: "viewing", label: "Next viewing", text: "23 Oct 2026, 14:00", detail: null });
+  });
+
+  it("for a non-admin the viewing is weighed against THEIR tasks only, and says so (A08 review)", () => {
+    // no task they can see — a colleague's earlier one may exist behind RLS
+    expect(nextAction({ task: null, viewing: viewing("2026-10-23T11:00:00Z"), now, viewerIsAdmin: false })).toMatchObject({
+      kind: "viewing",
+      label: "Next viewing",
+      text: "23 Oct 2026, 14:00",
+      detail: "your tasks only",
+    });
+    // and when their own task is later
+    expect(
+      nextAction({ task: task("2026-10-25T21:59:00Z"), viewing: viewing("2026-10-23T11:00:00Z"), now, viewerIsAdmin: false }),
+    ).toMatchObject({ kind: "viewing", detail: "your tasks only" });
+    // the admin sees every task: nothing to qualify
+    expect(nextAction({ task: null, viewing: viewing("2026-10-23T11:00:00Z"), now, viewerIsAdmin: true })).toMatchObject({
+      kind: "viewing",
+      detail: null,
+    });
   });
 
   it("a tie goes to the task", () => {
@@ -371,5 +390,37 @@ describe("outstandingLine — a count, the list stays in the readiness panel", (
       text: "None",
       detail: null,
     });
+  });
+
+  it("a reader who cannot see every mandate: 'Active mandate' is not counted as missing, and the cell says why (A08 review)", () => {
+    const q = {
+      missing: [item("photos"), item("mandate")],
+      warnings: [],
+      essentialsMissing: [],
+    };
+    // the admin (every mandate visible): the criterion IS missing
+    expect(outstandingLine(q, false).count).toBe(2);
+    expect(outstandingLine(q, false, { mandatesComplete: true }).count).toBe(2);
+    // an agent who is not this property's: unknown, so out of the count
+    expect(outstandingLine(q, false, { mandatesComplete: false })).toEqual({
+      count: 1,
+      tone: "warning",
+      text: "1 item",
+      detail: "mandate not visible to you",
+    });
+    // with website essentials missing too, both are said
+    expect(
+      outstandingLine({ ...q, missing: [...q.missing, item("cover")], essentialsMissing: [item("cover")] }, true, {
+        mandatesComplete: false,
+      }),
+    ).toEqual({ count: 2, tone: "danger", text: "2 items", detail: "incl. website essentials · mandate not visible to you" });
+    // the mandate the only gap: not "None" in green — "None" known, the mandate not
+    expect(
+      outstandingLine({ missing: [item("mandate")], warnings: [], essentialsMissing: [] }, false, { mandatesComplete: false }),
+    ).toEqual({ count: 0, tone: "neutral", text: "None", detail: "mandate not visible to you" });
+    // a partial reader whose mandate criterion is earned (an active one they can see): nothing to qualify
+    expect(
+      outstandingLine({ missing: [item("photos")], warnings: [], essentialsMissing: [] }, false, { mandatesComplete: false }),
+    ).toEqual({ count: 1, tone: "warning", text: "1 item", detail: null });
   });
 });

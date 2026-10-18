@@ -302,6 +302,9 @@ describe("the next action: one task read through RLS, against the next viewing",
     const s = await summary(agent, listing.id);
     const next = s.cell("next");
     expect(next.text).toMatch(/^Next viewing: \d{1,2} \w{3} \d{4}, \d{2}:\d{2}/);
+    // ... and says it was weighed against THEIR tasks only (A08 review): the
+    // admin's earlier task for someone else is exactly what it cannot see
+    expect(next.text).toMatch(/^Next viewing: [^·]+ · your tasks only/);
     expect(next.html).toContain(`href="/viewings/${viewingId}"`);
     expect(next.text).not.toContain(TITLE_OTHERS);
     expect(s.el.props.nextTask).toMatchObject({ title: TITLE_AGENTS });
@@ -399,6 +402,29 @@ describe("the other cells", () => {
     const markup = renderToStaticMarkup(panel);
     expect(markup).toContain('id="listing-readiness"');
     expect(markup).toContain('tabindex="-1"');
+  });
+
+  it("an agent who cannot see the mandates: Outstanding leaves 'Active mandate' out and says it is not visible (A08 review)", async () => {
+    const quality = (s: Awaited<ReturnType<typeof summary>>) =>
+      s.tree.find((e) => e.type === ListingReadiness)!.props.quality as QualityScoreResult;
+    // the admin sees the expired mandate: the criterion IS missing, and counted
+    const ad = await summary(admin, reserved.id);
+    const qa = quality(ad);
+    expect(qa.missing.map((m) => m.key)).toContain("mandate");
+    const na = qa.missing.length + qa.warnings.length;
+    // (this listing also misses website essentials — "incl. website essentials")
+    const essentials = qa.essentialsMissing.length > 0 ? " · incl. website essentials" : "";
+    expect(ad.cell("outstanding").text).toBe(`${na} ${na === 1 ? "item" : "items"} — see Listing readiness${essentials}`);
+    // the agent beside "Mandate: Not visible to you": not counted as missing
+    const ag = await summary(agent, reserved.id);
+    expect(ag.cell("mandate").text).toBe("Not visible to you");
+    const q = quality(ag);
+    expect(q.missing.map((m) => m.key)).toContain("mandate");
+    const n = q.missing.length - 1 + q.warnings.length;
+    expect(n).toBe(na - 1);
+    expect(ag.cell("outstanding").text).toBe(
+      `${n} ${n === 1 ? "item" : "items"} — see Listing readiness${essentials} · mandate not visible to you`,
+    );
   });
 });
 

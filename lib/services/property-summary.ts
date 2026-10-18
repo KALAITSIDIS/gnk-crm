@@ -231,7 +231,7 @@ export type NextAction =
       overdue: boolean;
       task: NextTaskRow;
     }
-  | { kind: "viewing"; label: "Next viewing"; text: string; viewing: NextViewingRow }
+  | { kind: "viewing"; label: "Next viewing"; text: string; detail: string | null; viewing: NextViewingRow }
   | { kind: "none"; label: null; text: "None"; detail: string | null };
 
 const instant = (iso: string | null): number => (iso ? Date.parse(iso) : Number.NaN);
@@ -242,7 +242,9 @@ const instant = (iso: string | null): number => (iso ? Date.parse(iso) : Number.
  * The task is the one the caller can SEE: tasks_select shows an admin every
  * task in the organisation and anyone else only the tasks assigned to them or
  * created by them. So for a non-admin it is "Your next task", never "the"
- * next task, and "None" says it covers their tasks only.
+ * next task — and whatever the cell shows (the viewing, or "None") says it was
+ * weighed against their tasks only: a colleague's earlier task may exist that
+ * RLS hides (A08 review — the qualifier was on "None" alone).
  *
  * Rules: an overdue task (its due moment passed) is the earliest thing there
  * is and says so. A task with no due date is shown only when no viewing is
@@ -289,7 +291,13 @@ export function nextAction({
     };
   }
   if (pick === "viewing" && viewing) {
-    return { kind: "viewing", label: "Next viewing", text: formatDateTime(viewing.scheduled_at), viewing };
+    return {
+      kind: "viewing",
+      label: "Next viewing",
+      text: formatDateTime(viewing.scheduled_at),
+      detail: viewerIsAdmin ? null : "your tasks only",
+      viewing,
+    };
   }
   return { kind: "none", label: null, text: "None", detail: viewerIsAdmin ? null : "your tasks only" };
 }
@@ -356,22 +364,36 @@ export function mandateLine(
  * so they are not counted twice; when one is missing on a listing that is on
  * the website, the count is marked danger. The items themselves are listed by
  * the readiness panel, which this links to.
+ *
+ * `mandatesComplete: false` — the reader does not see every mandate
+ * (mandates_safe, see mandateLine): a missing "Active mandate" criterion is
+ * then NOT KNOWN to be missing, so it is left out of the count and the cell
+ * says the mandate is not visible, beside a Mandate cell saying the same —
+ * never a count that calls it missing next to one that says it is hidden
+ * (A08 review). An active mandate the reader can see is earned, so it is
+ * never in `missing` to begin with.
  */
 export function outstandingLine(
   quality: {
-    missing: readonly unknown[];
+    missing: readonly { key: string }[];
     warnings: readonly unknown[];
     essentialsMissing: readonly unknown[];
   },
   onWebsite: boolean,
+  { mandatesComplete = true }: { mandatesComplete?: boolean } = {},
 ): { count: number; tone: SummaryTone; text: string; detail: string | null } {
-  const count = quality.missing.length + quality.warnings.length;
-  if (count === 0) return { count, tone: "success", text: "None", detail: null };
+  const mandateHidden = !mandatesComplete && quality.missing.some((m) => m.key === "mandate");
+  const hiddenNote = mandateHidden ? "mandate not visible to you" : null;
+  const count = quality.missing.length - (mandateHidden ? 1 : 0) + quality.warnings.length;
+  if (count === 0) {
+    return { count, tone: mandateHidden ? "neutral" : "success", text: "None", detail: hiddenNote };
+  }
   const essentials = quality.essentialsMissing.length > 0;
+  const detail = [essentials ? "incl. website essentials" : null, hiddenNote].filter((d): d is string => d !== null);
   return {
     count,
     tone: essentials && onWebsite ? "danger" : "warning",
     text: `${count} ${count === 1 ? "item" : "items"}`,
-    detail: essentials ? "incl. website essentials" : null,
+    detail: detail.length > 0 ? detail.join(" · ") : null,
   };
 }

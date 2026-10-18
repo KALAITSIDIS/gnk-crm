@@ -94,7 +94,9 @@ export function PropertySummary({
   const responsible = agentLine(property.assigned_agent_id, agent);
   const next = nextAction({ task: nextTask, viewing: nextViewing, now, viewerIsAdmin });
   const mandate = mandateLine(mandates, zonedParts(now).dayKey, { complete: mandatesComplete });
-  const outstanding = outstandingLine(quality, isOnWebsite(property.status, property.visibility));
+  const outstanding = outstandingLine(quality, isOnWebsite(property.status, property.visibility), {
+    mandatesComplete,
+  });
 
   return (
     <section
@@ -159,6 +161,9 @@ export function PropertySummary({
                   <Link href={`/viewings/${next.viewing.id}`} className="text-brand-700 hover:underline">
                     {next.text}
                   </Link>
+                  {next.detail ? (
+                    <span className="text-xs font-normal text-text-2"> · {next.detail}</span>
+                  ) : null}
                 </>
               ) : (
                 <>
@@ -181,7 +186,12 @@ export function PropertySummary({
 
         <Cell name="outstanding" term="Outstanding">
           {outstanding.count === 0 ? (
-            <Toned tone={outstanding.tone}>{outstanding.text}</Toned>
+            <Toned tone={outstanding.tone}>
+              {outstanding.text}
+              {outstanding.detail ? (
+                <span className="text-xs font-normal text-text-2"> · {outstanding.detail}</span>
+              ) : null}
+            </Toned>
           ) : (
             <Toned tone={outstanding.tone}>
               {/* a plain in-page anchor: the readiness panel is a section on

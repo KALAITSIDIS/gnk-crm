@@ -109,6 +109,32 @@ describe("PropertySummary (rendered)", () => {
     expect(viewingFirst).toContain('href="/viewings/v1"');
   });
 
+  it("a non-admin's viewing and Outstanding say what they could not see (A08 review)", () => {
+    const agentView = words(
+      render({
+        nextTask: null,
+        viewerIsAdmin: false,
+        mandates: [],
+        mandatesComplete: false,
+        quality: {
+          missing: [
+            { key: "cover", label: "Cover photo", points: 5 },
+            { key: "mandate", label: "Active mandate", points: 10 },
+          ],
+          warnings: [],
+          essentialsMissing: [{ key: "cover", label: "Cover photo", points: 5 }],
+        } as unknown as Props["quality"],
+      }),
+    );
+    expect(agentView).toContain("Next action Next viewing: 23 Oct 2026, 14:00 · your tasks only");
+    expect(agentView).toContain("Mandate Not visible to you");
+    expect(agentView).toContain(
+      "Outstanding 1 item — see Listing readiness · incl. website essentials · mandate not visible to you",
+    );
+    // the admin's viewing carries no qualifier
+    expect(words(render({ nextTask: null }))).not.toContain("your tasks only");
+  });
+
   it("only the fields it is about: no net price, floor price, notes or listing title", () => {
     const html = render();
     for (const secret of ["199123", "199.123", "233777", "233.777", "quick offer", "Sea-view"]) {
