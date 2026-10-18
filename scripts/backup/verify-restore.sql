@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 149::bigint as migrations,
+    2::bigint as auth_users, 150::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -200,6 +200,9 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   ('add_deal_stage',       false, false, true, true),
   ('reorder_stage',        false, false, true, true),
   ('admin_dashboard_stats',false, false, true, true),
+  -- 0153: the dashboard's Inventory card — SECURITY INVOKER like
+  -- admin_dashboard_stats, never anon (pinned although invokers are out of grant_unpinned's scope)
+  ('property_inventory_counts', false, false, true, true),
   -- reporting engine (0065) — SECURITY INVOKER by design (the MV lesson)
   ('report_agent_performance', false, false, true, true),
   ('report_source_roi',        false, false, true, true),
@@ -1039,6 +1042,22 @@ misc as (
              and position('if p_ip_hash is null or p_ip_hash !~ ''^[0-9a-f]{32}$'' then' in p.prosrc) > 0
              and position('if p_ip_hash is null or p_ip_hash !~ ''^[0-9a-f]{32}$'' then' in p.prosrc)
                  < position('insert into' in p.prosrc))::text
+  union all
+  -- 0153: the dashboard's Inventory card counts exactly the properties list's
+  -- default scope — live = not archived AND not withdrawn — per kind and
+  -- status, as a STABLE SECURITY INVOKER (the caller's RLS is its tenant
+  -- boundary). Its grants are the grants_expected row above; this reads the
+  -- shape and the body (whitespace folded). A restore that lost the function,
+  -- made it a definer, or brought back a predicate that counts withdrawn or
+  -- archived rows (0093's) reads false.
+  select 'INTEGRITY: the dashboard''s inventory counts the properties list''s default scope, per kind and status (0153)', 'true',
+         (exists (select 1 from pg_proc p
+                   where p.oid = to_regprocedure('public.property_inventory_counts()')
+                     and not p.prosecdef and p.provolatile = 's' and p.proretset
+                     and p.proargnames = array['kind', 'status', 'n']
+                     and p.proallargtypes = array['public.property_kind'::regtype, 'public.property_status'::regtype, 'bigint'::regtype]::oid[]
+                     and btrim(regexp_replace(p.prosrc, '\s+', ' ', 'g'))
+                         = 'select p.kind, p.status, count(*) as n from public.properties p where p.visibility <> ''archived'' and p.status <> ''withdrawn'' group by p.kind, p.status order by p.kind, p.status'))::text
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.

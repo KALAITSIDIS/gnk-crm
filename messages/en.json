@@ -41,15 +41,35 @@
       "cards": {
         "pipelineByStage": "Pipeline by stage (open deals)",
         "leadsBySource": "Leads by source (30d)",
-        "listingsByStatus": "Listings by status",
         "mandatesExpiring": "Mandates expiring ≤30 days",
         "salesActivity": "Latest sales activity",
         "adminChanges": "Settings & admin changes"
       },
+      "inventory": {
+        "title": "Inventory by status",
+        "saleable": "Saleable available",
+        "status": {
+          "draft": "Draft",
+          "available": "Available",
+          "reserved": "Reserved",
+          "under_offer": "Under offer",
+          "sold": "Sold",
+          "rented": "Rented"
+        },
+        "kinds": {
+          "standalone": "{count, plural, one {# listing} other {# listings}}",
+          "project": "{count, plural, one {# development} other {# developments}}",
+          "phase": "{count, plural, one {# phase} other {# phases}}",
+          "unit": "{count, plural, one {# unit} other {# units}}"
+        },
+        "totalLabel": "{status}: {count, plural, one {# live record} other {# live records}} — open the list",
+        "footnote": "Live records: not archived and not withdrawn, the properties list's default. A development counts once as its project record (and once per phase); its units count separately. Saleable means listings and units: a development itself cannot be reserved.",
+        "retired": "Withdrawn & archived",
+        "empty": "No live listings."
+      },
       "empty": {
         "noOpenDeals": "Nothing yet (no open deals).",
         "noLeads": "No leads in the last 30 days.",
-        "noListings": "No listings yet.",
         "noMandates": "None in the next 30 days.",
         "noEvents": "No activity yet.",
         "noAdminChanges": "No settings, user or export changes yet."

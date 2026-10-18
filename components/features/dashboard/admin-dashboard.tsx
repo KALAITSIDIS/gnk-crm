@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 import { Card, CardEmpty } from "@/components/features/dashboard/card";
+import { InventoryCard } from "@/components/features/dashboard/inventory-card";
 import { EventTimeline } from "@/components/features/shared/event-timeline";
 import { attachCurrentTitles } from "@/lib/services/event-context";
 import { ADMIN_ENTITY_TYPES } from "@/lib/services/events";
@@ -12,7 +13,8 @@ import { cyprusMonthStart, zonedParts } from "@/lib/utils/tz";
 /**
  * Admin dashboard (T5.3, doc 05 + doc 02 §C9). Every number is reproducible
  * by the SQL in `admin_dashboard_stats` (migration 0018) — acceptance requires
- * the on-screen figure to match the manual query on seeded data.
+ * the on-screen figure to match the manual query on seeded data. The
+ * Inventory card's numbers are `property_inventory_counts()` (0153, F04-C).
  *
  * Audit 2026-07-16: every response is unwrapped — a failed query throws to
  * the segment error boundary instead of painting €0 as if it were real data.
@@ -54,7 +56,10 @@ interface DashboardStats {
     p90_response_min?: number | null;
   };
   lead_sources30: { source: string; count: number }[];
-  property_statuses: { status: string; count: number }[];
+  // `property_statuses` is still in the payload and deliberately NOT read
+  // (F04-C): it counted every kind and withdrawn rows, which no list shows.
+  // The Inventory card reads property_inventory_counts() (0153) instead; the
+  // key goes the next time admin_dashboard_stats is replaced (BACKLOG).
   // NO `top_actors30`. The admin dashboard's "top agents by activity" card was
   // removed on 2026-08-26 by operator decision (DECISIONS T-top-agents) and
   // migration 0057 stops the function computing it. Reading it back means
@@ -212,15 +217,9 @@ export async function AdminDashboard({ orgId }: { orgId: string }) {
       display: `${formatMoney(stageValue.get(s.id) ?? 0)} · ${stageCount.get(s.id)}`,
     }));
 
-  // all three already come back grouped and ordered from SQL
+  // already comes back grouped and ordered from SQL
   const sourceRows = stats.lead_sources30.map((r) => ({
     label: r.source.replace(/_/g, " "),
-    value: Number(r.count),
-    display: String(r.count),
-  }));
-
-  const statusRows = stats.property_statuses.map((r) => ({
-    label: r.status.replace(/_/g, " "),
     value: Number(r.count),
     display: String(r.count),
   }));
@@ -330,18 +329,9 @@ export async function AdminDashboard({ orgId }: { orgId: string }) {
             }
           />
         </Card>
-        <Card title={t("cards.listingsByStatus")}>
-          <BarList
-            rows={statusRows}
-            empty={
-              <CardEmpty
-                text={t("empty.noListings")}
-                href="/properties"
-                action={t("actions.properties")}
-              />
-            }
-          />
-        </Card>
+        {/* F04-C: its own read (property_inventory_counts, 0153), every
+            number a link to the list that shows it */}
+        <InventoryCard />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
