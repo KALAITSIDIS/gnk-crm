@@ -43,14 +43,16 @@
         "leadsBySource": "Лиды по источникам (30 дн)",
         "listingsByStatus": "Объекты по статусам",
         "mandatesExpiring": "Мандаты, истекающие ≤30 дней",
-        "latestEvents": "Последние события"
+        "salesActivity": "Последняя активность продаж",
+        "adminChanges": "Изменения настроек и администрирования"
       },
       "empty": {
         "noOpenDeals": "Пока ничего (нет открытых сделок).",
         "noLeads": "Нет лидов за последние 30 дней.",
         "noListings": "Пока нет объектов.",
         "noMandates": "Нет в ближайшие 30 дней.",
-        "noEvents": "Пока нет активности."
+        "noEvents": "Пока нет активности.",
+        "noAdminChanges": "Пока нет изменений настроек, пользователей или выгрузок."
       },
       "actions": {
         "openPipeline": "Открыть воронку",
@@ -65,11 +67,14 @@
         "viewings": "Просмотры",
         "contacts": "Контакты",
         "calculators": "Калькуляторы"
-      },
+      }
+    },
+    "myDay": {
+      "title": "Мой день",
       "cards": {
         "todaysViewings": "Просмотры на сегодня",
         "tasksDue": "Задачи на сегодня и просроченные",
-        "myNewLeads": "Мои новые лиды",
+        "myLeads": "Мои открытые лиды",
         "hotIdle": "Горячие покупатели без контакта 3+ дней"
       },
       "empty": {
@@ -83,9 +88,40 @@
         "allTasks": "Все задачи",
         "leadInbox": "Входящие лиды"
       },
+      "unanswered": "{count, plural, one {# без ответа} few {# без ответа} many {# без ответа} other {# без ответа}}",
       "idleDays": "{days} дн без контакта",
       "noActivity": "нет активности",
-      "unnamed": "Без имени"
+      "unnamed": "Без имени",
+      "kind": {
+        "mandate_renewal": "Продление мандата",
+        "deal_no_contact": "Нет контакта",
+        "viewing_feedback": "Нужен отзыв",
+        "price_drop_match": "Совпадение: снижение цены",
+        "new_listing_match": "Совпадение: новый объект",
+        "reservation_expiring": "Бронь истекает",
+        "bulk_price_drop_match": "Совпадение: переоценка",
+        "installment_due": "Взнос к оплате",
+        "key_recall": "Возврат ключей",
+        "viewing_no_show": "Неявка",
+        "listing_status_check": "Статус объекта",
+        "retention_expired": "Проверка хранения",
+        "reservation_still_live": "Закрыть бронь",
+        "lead_unanswered": "Лид без ответа",
+        "other": "Напоминание"
+      }
+    },
+    "team": {
+      "title": "Команда",
+      "cards": {
+        "unassignedLeads": "Открытые лиды без агента",
+        "overdue": "Просроченное в команде"
+      },
+      "empty": {
+        "noUnassigned": "У каждого открытого лида есть агент.",
+        "noOverdue": "Ни у кого больше нет просроченных задач."
+      },
+      "unassigned": "Не назначено",
+      "unknownUser": "Неизвестный пользователь"
     }
   },
   "reports": {

@@ -20,9 +20,16 @@ export interface TaskItem {
   propertyId: string | null;
   propertyRef: string | null;
   /**
+   * The property chip's link when the task's subject IS the property — it
+   * opens the tab the task is about (`?tab=reservation`, `mandate`, `buyers`;
+   * lib/services/task-target.ts). Null: the chip opens the property plainly.
+   */
+  propertyHref: string | null;
+  /**
    * Where a follow-up nudge points — the deal it is about, or the viewing whose
    * feedback is missing (B7). A nudge the agent cannot act on in one click is a
-   * nudge they will learn to ignore. Null for tasks with no subject.
+   * nudge they will learn to ignore. Null for tasks with no subject, and when
+   * the property chip already carries the link.
    */
   href: string | null;
   hrefLabel: string | null;
@@ -114,7 +121,7 @@ export function TaskRow({ task }: { task: TaskItem }) {
       ) : null}
       {task.propertyId && task.propertyRef ? (
         <Link
-          href={`/properties/${task.propertyId}`}
+          href={task.propertyHref ?? `/properties/${task.propertyId}`}
           className="shrink-0 font-mono text-xs text-brand-700 hover:underline"
         >
           {task.propertyRef}

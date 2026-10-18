@@ -7,8 +7,9 @@ import { Pager } from "@/components/features/shared/pager";
 import { StrandedTasks } from "@/components/features/tasks/stranded-tasks";
 import { fetchStrandedTasks } from "@/lib/queries/stranded-tasks";
 import { getCurrentProfile } from "@/lib/services/auth";
+import { TASK_LINK_COLUMNS, taskTarget } from "@/lib/services/task-target";
 import { createClient } from "@/lib/supabase/server";
-import { unwrapRows } from "@/lib/supabase/unwrap";
+import { unwrapCount, unwrapRows } from "@/lib/supabase/unwrap";
 import {
   isRangeBeyondEnd,
   pageRange,
@@ -55,7 +56,7 @@ export default async function TasksPage({
   ] = await Promise.all([
     supabase
       .from("tasks")
-      .select("id, title, due_at, is_done, property_id, contact_id, deal_id, viewing_id, kind", {
+      .select(`id, title, due_at, is_done, ${TASK_LINK_COLUMNS}`, {
         count: "exact",
       })
       .eq("assignee_id", profile.id)
@@ -74,7 +75,7 @@ export default async function TasksPage({
       .range(pageRange(page).from, pageRange(page).to),
     supabase
       .from("tasks")
-      .select("id, title, due_at, is_done, property_id, contact_id, deal_id, viewing_id, kind")
+      .select(`id, title, due_at, is_done, ${TASK_LINK_COLUMNS}`)
       .eq("assignee_id", profile.id)
       .eq("is_done", true)
       .order("done_at", { ascending: false })
@@ -95,7 +96,8 @@ export default async function TasksPage({
   );
   const doneRows = unwrapRows(doneRes, "done tasks");
   const openCount = openRes.count ?? openRows.length;
-  const overdueCount = overdueRes.count ?? 0;
+  // a count that could not be read is the page's failure, never "0 overdue"
+  const overdueCount = unwrapCount(overdueRes, "overdue tasks");
   const pageCount = countPages(openCount);
 
   const propertyIds = [
@@ -119,32 +121,42 @@ export default async function TasksPage({
     : { data: [] };
   const contactById = new Map((contactRows ?? []).map((c) => [c.id, c.display_name]));
 
-  const toItem = (t: (typeof openRows)[number]): TaskItem => ({
-    id: t.id,
-    title: t.title,
-    dueAt: t.due_at,
-    isDone: t.is_done,
-    overdue: Boolean(t.due_at && new Date(t.due_at).getTime() < now.getTime()),
-    propertyId: t.property_id,
-    propertyRef: t.property_id ? (refById.get(t.property_id) ?? null) : null,
-    // a nudge links to the thing it is nagging about; the viewing wins because
-    // logging the feedback is the action that clears it
-    href: t.viewing_id
-      ? `/viewings/${t.viewing_id}`
-      : t.deal_id
-        ? `/deals/${t.deal_id}`
-        : t.contact_id
-          ? `/contacts/${t.contact_id}`
-          : null,
-    hrefLabel: t.viewing_id
-      ? "Viewing"
-      : t.deal_id
-        ? "Deal"
-        : t.contact_id
-          ? (contactById.get(t.contact_id) ?? "Contact")
-          : null,
-    isAuto: t.kind !== null,
-  });
+  const toItem = (t: (typeof openRows)[number]): TaskItem => {
+    // A nudge links to the page where the thing it nags about is done — the
+    // SAME rule the dashboard uses (lib/services/task-target.ts, A01): the
+    // viewing for feedback, the deal for no-contact, the property's own tab for
+    // a hold, an instalment, a mandate or a buyer match, the inbox for an
+    // unanswered lead.
+    const target = taskTarget(t);
+    const propertyRef = t.property_id ? (refById.get(t.property_id) ?? null) : null;
+    // when the target IS the property, its reference chip carries the link
+    // (opening the right tab) rather than a second link to the same page
+    const onChip = target.type === "property" && propertyRef !== null;
+    return {
+      id: t.id,
+      title: t.title,
+      dueAt: t.due_at,
+      isDone: t.is_done,
+      overdue: Boolean(t.due_at && new Date(t.due_at).getTime() < now.getTime()),
+      propertyId: t.property_id,
+      propertyRef,
+      propertyHref: onChip ? target.href : null,
+      href: target.type === "tasks" || onChip ? null : target.href,
+      hrefLabel:
+        target.type === "viewing"
+          ? "Viewing"
+          : target.type === "deal"
+            ? "Deal"
+            : target.type === "contact"
+              ? ((t.contact_id ? contactById.get(t.contact_id) : null) ?? "Contact")
+              : target.type === "leads"
+                ? "Lead inbox"
+                : target.type === "property"
+                  ? "Property"
+                  : null,
+      isAuto: t.kind !== null,
+    };
+  };
 
   const open = openRows.map(toItem);
   const overdue = open.filter((t) => t.overdue);

@@ -3,6 +3,7 @@ import { getTranslations } from "next-intl/server";
 import { Card, CardEmpty } from "@/components/features/dashboard/card";
 import { EventTimeline } from "@/components/features/shared/event-timeline";
 import { attachCurrentTitles } from "@/lib/services/event-context";
+import { ADMIN_ENTITY_TYPES } from "@/lib/services/events";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapRows } from "@/lib/supabase/unwrap";
 import { formatDate, formatMoney, formatResponseMinutes } from "@/lib/utils/format";
@@ -117,8 +118,13 @@ export async function AdminDashboard({ orgId }: { orgId: string }) {
     // SQL: select id, property_id, type, expiry_date from mandates_safe
     //      where status='active' and expiry_date between :cyprus_today and :cyprus_today + 30;
     expiringRes,
-    // SQL: select * from events order by occurred_at desc limit 10;
-    latestEventsRes,
+    // The feed, split in two (A01; lib/services/events.ts ADMIN_ENTITY_TYPES):
+    // SQL: select * from events where entity_type not in ('organization','user','config','export')
+    //      order by occurred_at desc, id desc limit 10;
+    salesEventsRes,
+    // SQL: select * from events where entity_type in ('organization','user','config','export')
+    //      order by occurred_at desc, id desc limit 5;
+    adminEventsRes,
   ] = await Promise.all([
     supabase.rpc("admin_dashboard_stats", {
       p_month_start: monthStart,
@@ -141,10 +147,20 @@ export async function AdminDashboard({ orgId }: { orgId: string }) {
     supabase
       .from("events")
       .select("id, occurred_at, entity_type, entity_id, event_type, payload, actor_id")
+      // NOT IN the admin types rather than IN the sales ones: entity_type is
+      // free text, and a type only SQL writes must not vanish from both cards
+      .not("entity_type", "in", `(${ADMIN_ENTITY_TYPES.join(",")})`)
       .order("occurred_at", { ascending: false })
       // one transaction, one occurred_at (a close, 0117): id is chain order
       .order("id", { ascending: false })
       .limit(10),
+    supabase
+      .from("events")
+      .select("id, occurred_at, entity_type, entity_id, event_type, payload, actor_id")
+      .in("entity_type", [...ADMIN_ENTITY_TYPES])
+      .order("occurred_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(5),
   ]);
 
   // A failed aggregate must reach the error boundary, never paint €0 as real.
@@ -155,7 +171,8 @@ export async function AdminDashboard({ orgId }: { orgId: string }) {
 
   const stages = unwrapRows(stagesRes, "deal stages");
   const expiring = unwrapRows(expiringRes, "expiring mandates");
-  const latestEvents = unwrapRows(latestEventsRes, "latest events");
+  const salesEvents = unwrapRows(salesEventsRes, "latest sales activity");
+  const adminEvents = unwrapRows(adminEventsRes, "settings and admin changes");
 
   const openDealsCount = Number(stats.open_pipeline.count);
   const wonDealsCount = Number(stats.won_month.count);
@@ -212,19 +229,19 @@ export async function AdminDashboard({ orgId }: { orgId: string }) {
   // covers mandate references AND event-feed references. Until 2026-08-26 the
   // profiles fetch ALSO fed the top-agents bars — the bars are gone, the fetch
   // stays, because the feed still needs a name for every actor.
-  const eventActorIds = latestEvents
+  const eventActorIds = [...salesEvents, ...adminEvents]
     .map((e) => e.actor_id)
     .filter((v): v is string => Boolean(v));
   const profileIds = [...new Set(eventActorIds)];
   const expiringIds = expiring
     .map((m) => m.property_id)
     .filter((v): v is string => Boolean(v));
-  const eventPropIds = latestEvents
+  const eventPropIds = salesEvents
     .filter((e) => e.entity_type === "property" && e.entity_id)
     .map((e) => e.entity_id!);
   const refIds = [...new Set([...expiringIds, ...eventPropIds])];
 
-  const [actorProfilesRes, refPropsRes, feedEvents] = await Promise.all([
+  const [actorProfilesRes, refPropsRes, salesFeed, adminFeed] = await Promise.all([
     profileIds.length
       ? supabase.from("profiles").select("id, full_name").in("id", profileIds)
       : Promise.resolve({ data: [], error: null }),
@@ -235,7 +252,8 @@ export async function AdminDashboard({ orgId }: { orgId: string }) {
     // says now: their events carry ids only (T-event-typed-text-shape,
     // T-viewing-feedback-shape), so the words come from the rows, read on this
     // same caller client
-    attachCurrentTitles(supabase, orgId, latestEvents),
+    attachCurrentTitles(supabase, orgId, salesEvents),
+    attachCurrentTitles(supabase, orgId, adminEvents),
   ]);
   const actorName = new Map(
     unwrapRows(actorProfilesRes, "actor profiles").map((p) => [p.id, p.full_name]),
@@ -244,12 +262,14 @@ export async function AdminDashboard({ orgId }: { orgId: string }) {
     unwrapRows(refPropsRes, "property references").map((p) => [p.id, p.reference]),
   );
 
-  // annotate the feed with who did it and, for property events, which listing
-  const timelineEvents = feedEvents.map((e) => {
+  // annotate the feeds with who did it and, for property events, which listing
+  const annotate = (e: (typeof salesFeed)[number]) => {
     const ref = e.entity_type === "property" && e.entity_id ? propRef.get(e.entity_id) : null;
     const actor = e.actor_id ? (actorName.get(e.actor_id) ?? null) : t("system");
     return { ...e, note: [ref, actor].filter(Boolean).join(" · ") || null };
-  });
+  };
+  const salesTimeline = salesFeed.map(annotate);
+  const adminTimeline = adminFeed.map(annotate);
 
   return (
     <div className="flex flex-col gap-4">
@@ -345,8 +365,11 @@ export async function AdminDashboard({ orgId }: { orgId: string }) {
             </ul>
           )}
         </Card>
-        <Card title={t("cards.latestEvents")}>
-          <EventTimeline events={timelineEvents} emptyText={t("empty.noEvents")} />
+        <Card title={t("cards.salesActivity")}>
+          <EventTimeline events={salesTimeline} emptyText={t("empty.noEvents")} />
+        </Card>
+        <Card title={t("cards.adminChanges")}>
+          <EventTimeline events={adminTimeline} emptyText={t("empty.noAdminChanges")} />
         </Card>
       </div>
     </div>
