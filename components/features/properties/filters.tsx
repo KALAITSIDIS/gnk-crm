@@ -482,7 +482,10 @@ export function PropertiesFilters({
             </SelectContent>
           </Select>
 
-          <div className="flex items-center rounded-lg border border-border p-0.5">
+          {/* A08: the two toggles are one named group and each says whether it
+              is the layout chosen. Under the automatic layout neither is
+              pressed: nothing has been chosen yet (see `view` above). */}
+          <div role="group" aria-label="Layout" className="flex items-center rounded-lg border border-border p-0.5">
             <Button
               variant={view === "table" ? "secondary" : "ghost"}
               size="icon"
