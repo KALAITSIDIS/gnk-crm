@@ -200,6 +200,8 @@ test.describe("Cyprus purchase-cost calculators", () => {
     expect(clip, "the pasted text explains the repeal").toMatch(/abolished for documents signed/i);
     expect(clip, "and names the law").toContain("239(I)/2025");
     expect(clip, "a repealed tax has no total").not.toMatch(/Total:/);
+    // F01 binding: every copied summary names the VAT scenario on screen
+    expect(clip, "and the scenario it was copied under").toContain("Scenario: not subject to VAT");
     // the on-card belt stays too
     await expect(card.getByText(/^Total/)).toHaveCount(0);
   });

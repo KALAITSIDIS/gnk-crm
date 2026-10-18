@@ -287,22 +287,36 @@ describe("buildStampSummary (F01 moved it out of the component)", () => {
     abolished: { from: "2026-01-01", law: "Law 239(I)/2025" },
   };
 
-  it("under the abolition: explains the repeal, names the property, carries no total", () => {
-    const text = buildStampSummary(300000, ABOLISHED, meta("PAF0001"))!;
-    expect(text.split("\n")[0]).toBe(
+  it("under the abolition: explains the repeal, names the property and the scenario, carries no total", () => {
+    const text = buildStampSummary(300000, ABOLISHED, meta("PAF0001"), "unconfirmed")!;
+    expect(text.split("\n").slice(0, 2)).toEqual([
       "Stamp duty for PAF0001: none — abolished for documents signed on or after 1 Jan 2026 (Law 239(I)/2025).",
-    );
+      "Scenario: VAT status not confirmed — confirm before quoting",
+    ]);
     expect(text).not.toMatch(/Total:/);
     // and with no price at all — the notice does not wait for one
-    expect(buildStampSummary(null, ABOLISHED, meta())!.split("\n")[0]).toBe(
+    expect(buildStampSummary(null, ABOLISHED, meta(), "does_not_apply")!.split("\n").slice(0, 2)).toEqual([
       "Stamp duty: none — abolished for documents signed on or after 1 Jan 2026 (Law 239(I)/2025).",
-    );
+      "Scenario: not subject to VAT",
+    ]);
   });
 
-  it("before an abolition: the scale and its total, or nothing without a price", () => {
-    const text = buildStampSummary(300000, STAMP, meta("PAF0001"))!;
-    expect(text.split("\n")[0]).toBe("Stamp duty for €300.000 — PAF0001:");
+  it("before an abolition: the scale and its total under a Scenario line, or nothing without a price", () => {
+    const text = buildStampSummary(300000, STAMP, meta("PAF0001"), "applies")!;
+    expect(text.split("\n").slice(0, 2)).toEqual(["Stamp duty for €300.000 — PAF0001:", "Scenario: subject to VAT"]);
     expect(text).toContain("Total: €507,50");
-    expect(buildStampSummary(null, STAMP, meta())).toBeNull();
+    // the duty does not move with the scenario — only the line naming it does
+    const other = buildStampSummary(300000, STAMP, meta("PAF0001"), "does_not_apply")!;
+    expect(other.replace("Scenario: not subject to VAT", "Scenario: subject to VAT")).toBe(text);
+    expect(buildStampSummary(null, STAMP, meta(), "applies")).toBeNull();
+  });
+
+  it("every copied stamp-duty summary carries exactly one Scenario line, for every scenario (F01 binding)", () => {
+    for (const s of VAT_SCENARIOS) {
+      for (const config of [STAMP, ABOLISHED]) {
+        const lines = buildStampSummary(300000, config, meta(), s)!.split("\n");
+        expect(lines.filter((l) => l.startsWith("Scenario: ")), s).toEqual([`Scenario: ${SUMMARY_SCENARIO[s]}`]);
+      }
+    }
   });
 });

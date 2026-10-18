@@ -198,7 +198,7 @@ export function CalculatorsClient({
   };
   const copyStamp = () => {
     if (!stampConfig) return;
-    const text = buildStampSummary(valid ? price : null, stampConfig, meta(stampVerifiedAt));
+    const text = buildStampSummary(valid ? price : null, stampConfig, meta(stampVerifiedAt), scenario);
     if (text) copyText(text);
   };
 

@@ -292,7 +292,11 @@ export const VAT_SCENARIO_LABELS: Record<VatApplicability, string> = {
   unconfirmed: "Not confirmed",
 };
 
-/** The "Scenario:" line every copied transfer-fee summary carries. */
+/**
+ * The "Scenario:" line every copied summary carries — transfer fees AND stamp
+ * duty (F01 binding: a pasted quote names the VAT assumption it was copied
+ * under, even where that figure does not depend on it).
+ */
 export const SUMMARY_SCENARIO: Record<VatApplicability, string> = {
   does_not_apply: "not subject to VAT",
   applies: "subject to VAT",
@@ -416,17 +420,22 @@ export function buildTransferSummary(price: number, s: TransferScenario, meta: S
 /**
  * The stamp-duty summary. Under an abolition it explains the repeal and
  * carries no total (Law 239(I)/2025); otherwise the pre-abolition scale.
+ * Like the transfer-fee summary it names the property and the VAT scenario
+ * on screen when it was copied; stamp duty itself does not depend on VAT.
  * Null when there is nothing to say yet (no price, and the duty applies).
  */
 export function buildStampSummary(
   price: number | null,
   config: StampDutyConfig,
   meta: SummaryMeta,
+  scenario: VatApplicability,
 ): string | null {
   const ref = meta.reference;
+  const scenarioLine = `Scenario: ${SUMMARY_SCENARIO[scenario]}`;
   if (config.abolished) {
     return [
       `Stamp duty${ref ? ` for ${ref}` : ""}: none — abolished for documents signed on or after ${formatDate(config.abolished.from)} (${config.abolished.law}).`,
+      scenarioLine,
       "Contracts signed before that date follow the previous bands.",
       summaryTail(meta.verifiedAt, meta.computedAt),
     ].join("\n");
@@ -435,6 +444,7 @@ export function buildStampSummary(
   const stamp = computeStampDuty(price, config);
   return [
     `Stamp duty for ${formatMoney(price)}${ref ? ` — ${ref}` : ""}:`,
+    scenarioLine,
     ...stamp.rows.map((b) => `  ${bandLabel(b)} @ ${pct(b.rate)} = ${formatMoney(b.fee)}`),
     ...(stamp.capApplied
       ? [`Uncapped: ${formatMoney(stamp.uncapped)} → capped at ${formatMoney(stamp.cap)}`]
