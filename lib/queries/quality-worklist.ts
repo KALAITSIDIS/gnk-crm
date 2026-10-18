@@ -6,7 +6,13 @@ import {
   computeQualityScore,
   type QualityScoreSource,
 } from "@/lib/services/quality-score";
-import { buildWorklist, type ScoredProperty, type Worklist } from "@/lib/services/quality-worklist";
+import {
+  buildWorklist,
+  inheritsBuildConflict,
+  type ScoredProperty,
+  type Worklist,
+} from "@/lib/services/quality-worklist";
+import { buildProgress } from "@/lib/services/construction";
 import { tallyContainerUnits } from "@/lib/services/container-units";
 import { sharedPhotoReferences } from "@/lib/services/shared-photos";
 import { RETIRED_PROPERTY_VISIBILITY } from "@/lib/validators/properties";
@@ -63,7 +69,7 @@ export async function fetchQualityWorklist(
       supabase
         .from("properties")
         .select(
-          "id, reference, title, quality_score, status, visibility, published_at, property_type, kind, parent_id, public_description, asking_price, rent_price_month, covered_area_sqm, plot_area_sqm, bedrooms, bathrooms, planning_zone_code, building_density_pct, location, location_approx, title_deed_status, permit_status, assigned_agent_id, owner_contact_id, developer_contact_id, year_built, construction_status, delivery_date, photos:property_media(is_cover, content_sha256), active_mandate:mandates_safe(id)",
+          "id, reference, title, quality_score, status, visibility, published_at, property_type, kind, parent_id, public_description, asking_price, rent_price_month, covered_area_sqm, plot_area_sqm, bedrooms, bathrooms, planning_zone_code, building_density_pct, location, location_approx, title_deed_status, permit_status, assigned_agent_id, owner_contact_id, developer_contact_id, year_built, construction_status, delivery_date, inherited_fields, photos:property_media(is_cover, content_sha256), active_mandate:mandates_safe(id)",
         )
         .in("status", [...LIVE_STATUSES])
         .neq("visibility", RETIRED_PROPERTY_VISIBILITY)
@@ -142,11 +148,60 @@ export async function fetchQualityWorklist(
         reference: p.reference,
         title: (p.title as { en?: string } | null)?.en ?? null,
         score: result.score,
+        // F03: a container's prices are fixed on its Units page (fixHref)
+        container: p.kind === "project" || p.kind === "phase",
       },
       listing: { visibility: p.visibility, status: p.status, publishedAt: p.published_at },
       result,
+      // F03: whether a build contradiction is this row's own or its parent's
+      lineage: { parentId: p.parent_id, inheritedFields: p.inherited_fields },
     };
   });
 
   return buildWorklist(scored);
+}
+
+/**
+ * The row a property's build contradiction is inherited from, for the
+ * property page's readiness panel (F03) — the worklist's rule
+ * (`inheritsBuildConflict`), asked of one row: up through parents (unit →
+ * phase → project) while the row still inherits a build column and the parent
+ * declares the very same contradiction. One read per level, and none at all
+ * for a row with no contradiction or no parent. The topmost such row, or null.
+ *
+ * A failed read throws (the page's error boundary): "fix it here" when the
+ * truth is "fix it on the project" is a wrong instruction, not a degraded one.
+ * A parent the reader cannot see ends the walk.
+ */
+export async function fetchBuildConflictSource(
+  supabase: SupabaseClient<Database>,
+  row: { parent_id: string | null; inherited_fields: readonly string[] | null },
+  conflict: string | null,
+): Promise<{ id: string; reference: string } | null> {
+  let child = { conflict, inheritedFields: row.inherited_fields, parentId: row.parent_id };
+  let source: { id: string; reference: string } | null = null;
+  // a project has phases and units below it and nothing above: three levels at most
+  for (let depth = 0; depth < 3 && child.conflict && child.parentId; depth++) {
+    const { data: parent, error } = await supabase
+      .from("properties")
+      .select("id, reference, parent_id, inherited_fields, construction_status, delivery_date, year_built")
+      .eq("id", child.parentId)
+      .maybeSingle();
+    if (error) throw new Error(`Query failed (build contradiction source): ${error.message}`);
+    if (!parent) break;
+    const parentConflict = buildProgress(
+      parent.construction_status,
+      parent.delivery_date,
+      new Date(),
+      parent.year_built,
+    ).mismatch;
+    if (!inheritsBuildConflict(child, parentConflict)) break;
+    source = { id: parent.id, reference: parent.reference };
+    child = {
+      conflict: parentConflict,
+      inheritedFields: parent.inherited_fields,
+      parentId: parent.parent_id,
+    };
+  }
+  return source;
 }

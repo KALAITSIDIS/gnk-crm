@@ -5,6 +5,7 @@ import { MapLocationFields } from "@/components/features/properties/map-location
 import { PricingBreakdown } from "@/components/features/properties/pricing-breakdown";
 import { VatLiveScope, VatTreatmentPanel } from "@/components/features/properties/vat-treatment";
 import type { VatConfigRow } from "@/lib/services/vat";
+import { PUBLISH_THRESHOLD } from "@/lib/services/quality-score";
 import { SectionForm } from "@/components/features/properties/section-form";
 import { MultilangTabs, type MultilangValue } from "@/components/features/shared/multilang-tabs";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -482,7 +483,7 @@ export function DetailsForm({
               <Checkbox id="publish_override" name="publish_override" />
               <Label htmlFor="publish_override" className="text-text-2">
                 Override publish gate (admin) — allows visibility “Public” below score{" "}
-                70; the override is written to the event log
+                {PUBLISH_THRESHOLD}; the override is written to the event log
               </Label>
             </div>
           ) : null}

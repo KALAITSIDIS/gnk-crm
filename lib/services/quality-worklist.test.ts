@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import { computeQualityScore, type QualityScoreInput } from "./quality-score";
 import {
   buildWorklist,
+  fixHref,
   fixLocation,
+  fixTab,
   type ScoredProperty,
 } from "./quality-worklist";
+import { PROPERTY_TABS } from "./property-tabs";
 
 /** Everything earned, so a test can take exactly what it wants away. */
 const perfect: QualityScoreInput = {
@@ -176,6 +179,60 @@ describe("fixLocation turns a count into an instruction", () => {
 
   it("returns null for a key it does not know, rather than guessing", () => {
     expect(fixLocation("not_a_criterion")).toBeNull();
+    expect(fixHref({ id: "p1" }, "not_a_criterion")).toBeNull();
+    expect(fixTab("not_a_criterion")).toBeNull();
+  });
+});
+
+/**
+ * F03: the property page's tabs have an href (`?tab=`), so a gap links to the
+ * tab it is fixed on instead of naming it — and a link can only name a tab
+ * the page has.
+ */
+describe("fixHref opens the property where the gap is fixed (F03)", () => {
+  const every = computeQualityScore({
+    ...perfect,
+    hasCoverPhoto: false,
+    photoCount: 0,
+    titleEn: "",
+    publicDescriptionEn: "",
+    hasPrice: false,
+    hasArea: false,
+    hasBedroomsAndBathrooms: false,
+    hasCoords: false,
+    titleDeedSet: false,
+    permitSet: false,
+    mandateActive: false,
+    hasAssignedAgent: false,
+    hasOwnerOrDeveloper: false,
+  }).missing.map((m) => m.key);
+
+  it("every criterion links to a tab the page actually has", () => {
+    for (const key of [...every, "planning"]) {
+      const tab = fixTab(key);
+      expect(tab, `${key} has a tab`).not.toBeNull();
+      expect(PROPERTY_TABS).toContain(tab);
+      expect(fixHref({ id: "p1" }, key)).toBe(`/properties/p1?tab=${tab}`);
+    }
+  });
+
+  it("sends each gap to the right tab", () => {
+    expect(fixHref({ id: "p1" }, "cover")).toBe("/properties/p1?tab=media");
+    expect(fixHref({ id: "p1" }, "title_en")).toBe("/properties/p1?tab=marketing");
+    expect(fixHref({ id: "p1" }, "price")).toBe("/properties/p1?tab=details");
+    expect(fixHref({ id: "p1" }, "deed")).toBe("/properties/p1?tab=legal");
+    expect(fixHref({ id: "p1" }, "mandate")).toBe("/properties/p1?tab=mandate");
+    expect(fixHref({ id: "p1" }, "party")).toBe("/properties/p1?tab=overview");
+    expect(fixLocation("mandate")).toBe("Mandate & Keys");
+  });
+
+  it("sends a container's units and its prices (\"Units priced\") to its Units page", () => {
+    expect(fixHref({ id: "p1", container: true }, "units")).toBe("/properties/p1/units");
+    expect(fixHref({ id: "p1", container: true }, "price")).toBe("/properties/p1/units");
+    expect(fixLocation("price", { container: true })).toBe("Units page");
+    expect(fixTab("price", { container: true })).toBeNull();
+    // a container's other gaps are still its own tabs
+    expect(fixHref({ id: "p1", container: true }, "cover")).toBe("/properties/p1?tab=media");
   });
 });
 

@@ -20,6 +20,7 @@ import { changedValue } from "@/lib/utils/diff";
 import { createPropertySchema, isDwellingType } from "@/lib/validators/properties";
 import { isGuid } from "@/lib/validators/ids";
 import type { PropertyDuplicateMatch } from "@/lib/services/property-duplicate";
+import type { QualityScoreSource } from "@/lib/services/quality-score";
 import { contactLinkError } from "@/lib/services/contact-reread";
 
 export type PropertyActionState = { error: string | null };
@@ -563,11 +564,16 @@ export async function updatePropertySection(
   // score ≥ PUBLISH_THRESHOLD, unless an admin overrides (logged event).
   // Scored over current + pending updates: the fields fixed in THIS save must
   // count, otherwise filling the gaps and publishing in one go is rejected.
+  //
+  // F03: the score alone, still. The website essentials (a cover photo, an
+  // English title, a price) are REPORTED on the property page, the worklist
+  // and the dashboard; whether a missing one also blocks this transition is
+  // the operator's open decision (BACKLOG LST-09), not this code's.
   const goingPublic = updates.visibility === "public" && current.visibility !== "public";
   /** set when an admin's override clears the gate; written only once the publish itself has. */
   let overrideToLog: { score: number; threshold: number } | null = null;
   if (goingPublic) {
-    const { computeQualityScore, PUBLISH_THRESHOLD } = await import(
+    const { buildQualityInput, computeQualityScore, PUBLISH_THRESHOLD } = await import(
       "@/lib/services/quality-score"
     );
     const [{ data: media }, { data: activeMandates }] = await Promise.all([
@@ -589,7 +595,6 @@ export async function updatePropertySection(
       string,
       unknown
     >;
-    const isLand = merged.property_type === "land";
     const isContainer = current.kind === "project" || current.kind === "phase";
     // ONE definition of "a unit" — kind = unit, not archived, under the
     // container or any of its phases (container-units.ts). The first cut
@@ -623,33 +628,22 @@ export async function updatePropertySection(
         savedAt: null,
       };
     }
-    const result = computeQualityScore({
-      isLand,
-      isContainer,
-      unitCount: units.unitCount,
-      pricedUnitCount: units.pricedUnitCount,
-      hasCoverPhoto: (media ?? []).some((m) => m.is_cover),
-      photoCount: (media ?? []).length,
-      titleEn: (merged.title as { en?: string } | null)?.en,
-      publicDescriptionEn: (merged.public_description as { en?: string } | null)?.en,
-      hasPrice: merged.asking_price != null || merged.rent_price_month != null,
-      hasArea: isLand ? merged.plot_area_sqm != null : merged.covered_area_sqm != null,
-      hasBedroomsAndBathrooms: merged.bedrooms != null && merged.bathrooms != null,
-      hasPlanningZoneAndDensity:
-        merged.planning_zone_code != null && merged.building_density_pct != null,
-      // 0054: a centroid stand-in is not an exact location. This mirrors
-      // quality-score.ts exactly; the two must agree or a save and a recompute
-      // produce different scores for the same row.
-      hasCoords: merged.location != null && !merged.location_approx,
-      titleDeedSet: merged.title_deed_status !== "unknown",
-      permitSet: merged.permit_status !== "unknown",
-      mandateActive: (activeMandates ?? []).length > 0,
-      // from `merged`, like every other input here: a parties save in the same
-      // submit must count toward the gate it is trying to clear
-      hasAssignedAgent: merged.assigned_agent_id != null,
-      hasOwnerOrDeveloper:
-        merged.owner_contact_id != null || merged.developer_contact_id != null,
-    });
+    // F03: through buildQualityInput — the ONE definition the stored score,
+    // the worklist, the dashboard and the detail page read. This used to be a
+    // hand-written copy of it (the third, beside the page's), kept in step by
+    // a comment; the page's copy had already drifted. Every column comes from
+    // `merged`, so the fields filled in THIS save — a parties save included —
+    // count toward the gate they are trying to clear, and a column the save
+    // spells as undefined counts as unset (buildQualityInput reads `!= null`).
+    const result = computeQualityScore(
+      buildQualityInput(merged as unknown as QualityScoreSource, {
+        hasCoverPhoto: (media ?? []).some((m) => m.is_cover),
+        photoCount: (media ?? []).length,
+        mandateActive: (activeMandates ?? []).length > 0,
+        unitCount: units.unitCount,
+        pricedUnitCount: units.pricedUnitCount,
+      }),
+    );
     const score = result.score;
     if (score < PUBLISH_THRESHOLD) {
       const wantsOverride = formData.get("publish_override") === "on";

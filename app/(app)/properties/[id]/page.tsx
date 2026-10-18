@@ -28,7 +28,11 @@ import {
 } from "@/components/features/properties/mandate-panel";
 import { EventTimeline } from "@/components/features/shared/event-timeline";
 import { QualityScoreRing } from "@/components/features/shared/quality-score-ring";
+import { ListingReadiness } from "@/components/features/properties/listing-readiness";
+import { PropertyTabs } from "@/components/features/properties/property-tabs";
 import { buildQualityInput, computeQualityScore } from "@/lib/services/quality-score";
+import { fetchBuildConflictSource } from "@/lib/queries/quality-worklist";
+import { propertyTabFrom } from "@/lib/services/property-tabs";
 import { landOverviewFacts } from "@/lib/services/property-layout";
 import { fetchSharedPhotoReferences } from "@/lib/services/shared-photos";
 import { countContainerUnits, EMPTY_CONTAINER_FACTS } from "@/lib/services/container-units";
@@ -41,7 +45,7 @@ import { publicMediaUrl } from "@/lib/utils/storage";
 import { MandateBadge, type MandateBadgeState } from "@/components/features/shared/mandate-badge";
 import { StatusBadge } from "@/components/features/shared/status-badge";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MatchingBuyersCard } from "@/components/features/properties/matching-buyers-card";
 import { PortalsCard } from "@/components/features/properties/portals-card";
 import {
@@ -61,27 +65,13 @@ import { formatArea, formatDate, formatDateTime, formatMoney } from "@/lib/utils
 import { readEntityTimeline } from "@/lib/services/entity-timeline";
 import { NOT_RECORDED_NOTICE } from "@/lib/services/optimistic-save";
 
-/** The tabs below, in order — what `?tab=` may name. */
-const PROPERTY_TABS = [
-  "overview",
-  "details",
-  "legal",
-  "marketing",
-  "media",
-  "mandate",
-  "documents",
-  "reservation",
-  "buyers",
-  "activity",
-] as const;
-
 export default async function PropertyDetailPage({
   params,
   searchParams,
 }: {
   params: Promise<{ id: string }>;
   /** `?recorded=failed` — the wizard created the listing but could not write its event (OPS-01) */
-  /** `?tab=` — open on that tab (a portal reason's "Fix" link); anything unknown opens Overview */
+  /** `?tab=` — open on that tab (a "Fix" link: portals, the worklist, the readiness panel); anything unknown opens Overview (lib/services/property-tabs.ts) */
   searchParams: Promise<{ recorded?: string; tab?: string }>;
 }) {
   const { id } = await params;
@@ -90,7 +80,7 @@ export default async function PropertyDetailPage({
   if (!isGuid(id)) notFound();
   const query = await searchParams;
   const notRecorded = query.recorded === "failed";
-  const initialTab = PROPERTY_TABS.find((t) => t === query.tab) ?? "overview";
+  const initialTab = propertyTabFrom(query.tab);
   const supabase = await createClient();
 
   // mandates via mandates_safe, NOT the base table: LM has no base-table
@@ -342,6 +332,13 @@ export default async function PropertyDetailPage({
       pricedUnitCount: unitFacts.pricedUnitCount,
       sharedPhotoWith,
     }),
+  );
+  // F03: a unit's (or phase's) build contradiction that is its project's, said
+  // where it is fixed — the worklist's grouping rule, asked of this one row
+  const buildSource = await fetchBuildConflictSource(
+    supabase,
+    p,
+    quality.warnings.find((w) => w.key === "build_conflict")?.label ?? null,
   );
 
   const changerIds = [...new Set((priceRows ?? []).map((r) => r.changed_by).filter(Boolean))];
@@ -602,18 +599,36 @@ export default async function PropertyDetailPage({
         {title ? <p className="mt-1 text-sm text-text-2">{title}</p> : null}
       </div>
 
-      <Tabs defaultValue={initialTab}>
+      {/* F03: the tab state is held by PropertyTabs (property-tabs.tsx), so
+          the readiness panel's "fix it here" links switch the tab in place */}
+      <PropertyTabs initialTab={initialTab}>
+        {/* F03: readiness in visible text — website essentials, completeness
+            and data warnings, each its own statement — where the ring's hover
+            tooltip was the only account of it */}
+        <ListingReadiness
+          propertyId={p.id}
+          visibility={p.visibility}
+          status={p.status}
+          container={isContainerRow}
+          quality={quality}
+          buildSource={buildSource}
+        />
+        {/* data-property-tab: where a TabLink moves focus */}
         <TabsList>
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="details">Details</TabsTrigger>
-          <TabsTrigger value="legal">Legal</TabsTrigger>
-          <TabsTrigger value="marketing">Marketing</TabsTrigger>
-          <TabsTrigger value="media">Media ({(mediaRows ?? []).length})</TabsTrigger>
-          <TabsTrigger value="mandate">Mandate &amp; Keys</TabsTrigger>
-          <TabsTrigger value="documents">Documents ({documents.length})</TabsTrigger>
-          <TabsTrigger value="reservation">Reservation</TabsTrigger>
-          <TabsTrigger value="buyers">Matching buyers</TabsTrigger>
-          <TabsTrigger value="activity">Activity</TabsTrigger>
+          <TabsTrigger value="overview" data-property-tab="overview">Overview</TabsTrigger>
+          <TabsTrigger value="details" data-property-tab="details">Details</TabsTrigger>
+          <TabsTrigger value="legal" data-property-tab="legal">Legal</TabsTrigger>
+          <TabsTrigger value="marketing" data-property-tab="marketing">Marketing</TabsTrigger>
+          <TabsTrigger value="media" data-property-tab="media">
+            Media ({(mediaRows ?? []).length})
+          </TabsTrigger>
+          <TabsTrigger value="mandate" data-property-tab="mandate">Mandate &amp; Keys</TabsTrigger>
+          <TabsTrigger value="documents" data-property-tab="documents">
+            Documents ({documents.length})
+          </TabsTrigger>
+          <TabsTrigger value="reservation" data-property-tab="reservation">Reservation</TabsTrigger>
+          <TabsTrigger value="buyers" data-property-tab="buyers">Matching buyers</TabsTrigger>
+          <TabsTrigger value="activity" data-property-tab="activity">Activity</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="mt-4">
@@ -894,7 +909,7 @@ export default async function PropertyDetailPage({
             <EventTimeline events={eventRows} />
           </div>
         </TabsContent>
-      </Tabs>
+      </PropertyTabs>
     </div>
   );
 }
