@@ -164,11 +164,14 @@ function StageColumn({
   stage,
   deals,
   canMove,
+  olderClosedHref,
 }: {
   stage: KanbanStage;
   deals: KanbanDeal[];
   /** the viewer's role may move deals at all (mayMoveDeals) */
   canMove: boolean;
+  /** a won/lost column: the /deals register pre-filtered to this type and outcome */
+  olderClosedHref: string | null;
 }) {
   // Won/lost are read-only endpoints: closing runs through the guarded flows
   // on the deal page, so their columns never accept a drop.
@@ -237,6 +240,15 @@ function StageColumn({
       {closedColumn ? (
         <p className="px-1 pb-1 text-[11px] leading-snug text-text-3">
           Last 30 days — close deals from the deal page
+          {/* the board keeps 30 days; the register keeps every closed deal (F05) */}
+          {olderClosedHref ? (
+            <>
+              {" · "}
+              <Link href={olderClosedHref} className="font-medium text-brand-700 hover:underline">
+                Older closed deals →
+              </Link>
+            </>
+          ) : null}
         </p>
       ) : null}
     </section>
@@ -247,6 +259,7 @@ export function KanbanBoard({
   stages,
   deals,
   canMove,
+  dealType,
 }: {
   stages: KanbanStage[];
   deals: KanbanDeal[];
@@ -256,6 +269,12 @@ export function KanbanBoard({
    * only — whether THIS deal may move is the server's answer.
    */
   canMove: boolean;
+  /**
+   * The board's deal-type tab. With it, the won and lost columns link to the
+   * deals closed before the board's 30-day window — /deals for this type and
+   * outcome. Without it they carry no link.
+   */
+  dealType?: string;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -370,6 +389,11 @@ export function KanbanBoard({
             stage={stage}
             deals={byStage.get(stage.id) ?? []}
             canMove={canMove}
+            olderClosedHref={
+              dealType && (stage.is_won || stage.is_lost)
+                ? `/deals?${new URLSearchParams({ type: dealType, status: stage.is_won ? "won" : "lost" })}`
+                : null
+            }
           />
         ))}
       </div>

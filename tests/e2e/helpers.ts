@@ -11,6 +11,7 @@ export const MODULES = [
   { name: "Dashboard", path: "/dashboard", heading: "Dashboard" },
   { name: "Leads", path: "/leads", heading: "Leads" },
   { name: "Pipeline", path: "/pipeline", heading: "Pipeline" },
+  { name: "Deals", path: "/deals", heading: "Deals" },
   { name: "Properties", path: "/properties", heading: "Properties" },
   { name: "Contacts", path: "/contacts", heading: "Contacts" },
   { name: "Viewings", path: "/viewings", heading: "Viewings" },

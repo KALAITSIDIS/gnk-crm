@@ -111,6 +111,7 @@ const FORM_PAGES = [
   { name: "Tasks (quick add)", path: "/tasks" },
   { name: "Keys (filters)", path: "/keys" },
   { name: "Leads (filters)", path: "/leads" },
+  { name: "Deals (filters)", path: "/deals" },
   { name: "Settings — organization", path: "/settings/organization" },
   { name: "Settings — users", path: "/settings/users" },
   { name: "Settings — Cyprus config", path: "/settings/cyprus-config" },

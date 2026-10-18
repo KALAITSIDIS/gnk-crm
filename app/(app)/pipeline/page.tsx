@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { List } from "lucide-react";
 import {
   KanbanBoard,
   type KanbanDeal,
@@ -11,6 +12,7 @@ import { getCurrentProfile } from "@/lib/services/auth";
 import { dealValue } from "@/lib/services/deal-value";
 import { mayMoveDeals } from "@/lib/services/pipeline-move";
 import { ExportCsvButton } from "@/components/features/shared/export-csv-button";
+import { Button } from "@/components/ui/button";
 
 export const dynamic = "force-dynamic";
 
@@ -109,7 +111,7 @@ export default async function PipelinePage({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-text-1">Pipeline</h1>
           <p className="text-sm text-text-2">
@@ -117,9 +119,17 @@ export default async function PipelinePage({
             {canMove ? " — drag between stages" : ""}
           </p>
         </div>
-        {/* Exports EVERY deal of this type (all statuses), not just the board's
-            30-day closed window. */}
-        <ExportCsvButton href={`/pipeline/export?type=${dealType}`} />
+        <div className="flex items-center gap-2">
+          {/* Exports EVERY deal of this type (all statuses), not just the board's
+              30-day closed window. */}
+          <ExportCsvButton href={`/pipeline/export?type=${dealType}`} />
+          {/* the register behind the board: every deal of this type, filterable (F05) */}
+          <Button asChild variant="outline">
+            <Link href={`/deals?type=${dealType}`}>
+              <List className="size-4" /> All deals
+            </Link>
+          </Button>
+        </div>
       </div>
 
       <div className="flex gap-1 border-b border-border">
@@ -152,7 +162,7 @@ export default async function PipelinePage({
           .
         </div>
       ) : (
-        <KanbanBoard stages={stages} deals={deals} canMove={canMove} />
+        <KanbanBoard stages={stages} deals={deals} canMove={canMove} dealType={dealType} />
       )}
     </div>
   );
