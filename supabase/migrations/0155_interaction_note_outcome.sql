@@ -53,19 +53,34 @@
 -- lock_timeout bounds the wait (5 s): a collision costs a clean 55P03 —
 -- apply again, and do NOT write the ledger row.
 --
--- DEPLOY ORDER: hosted BEFORE the application that sends p_outcome. The
--- deployed application calls log_conversation with the four NAMED arguments
--- p_entity_type, p_entity_id, p_channel and p_note; that call resolves to
--- the new function through the default, so applying this first breaks
--- nothing (pinned over PostgREST as a signed-in agent in
--- supabase/tests/interaction-note-outcome.test.ts). The other way round
--- fails CLOSED: the new application against a database without 0155 gets
--- PGRST202 for a call that names p_outcome and logs nothing (the dialog
--- shows the error). lib/supabase/database.types.ts: log_conversation's Args
--- gain p_outcome?: string; interaction_notes gains outcome.
+-- DEPLOY ORDER: hosted BEFORE the application that sends p_outcome — and
+-- that order is MANDATORY, not a preference. The deployed application calls
+-- log_conversation with the four NAMED arguments p_entity_type, p_entity_id,
+-- p_channel and p_note; that call resolves to the new function through the
+-- default, so applying this first breaks nothing (pinned over PostgREST as a
+-- signed-in agent in supabase/tests/interaction-note-outcome.test.ts).
+-- The other way round does NOT fail cleanly. The new application against a
+-- database without 0155 gets PGRST202 for every call that names p_outcome —
+-- and the dialogs always send one (Spoke is preselected) — so no note and no
+-- conversation_logged event are written and the dialog shows the error. But
+-- two of the three actions write a clock BEFORE that call (A06-b review):
+--   - the inbox's Log (logConversation, where a note is required) has
+--     already stamped the lead's first_response_at and moved a 'new' lead
+--     to 'contacted';
+--   - a deal's Log contact with a note (logDealContact) has already moved
+--     the deal's last_contact_at and last_activity_at.
+-- Each such failure leaves a lead marked answered, or a deal's no-contact
+-- nudge silenced, with no logged contact behind it — the state A06 exists
+-- to prevent. Only a contact's Log contact writes nothing (it has no
+-- clock), and a log with no note (contact or deal) works either way: it
+-- goes through logEvent. So: hosted first, then merge.
+-- lib/supabase/database.types.ts: log_conversation's Args gain
+-- p_outcome?: string; interaction_notes gains outcome.
 --
 -- ROLLBACK: the application first (to a release that does not send
--- p_outcome), then a FORWARD migration under the same bounded lock
+-- p_outcome — mandatory, for the reason above: the new application against
+-- the reverted database stamps those clocks and then fails), then a
+-- FORWARD migration under the same bounded lock
 -- (supabase/tests/revert-0155.ts holds the text): drop the five-argument
 -- function and re-create 0094's four-argument one with its comment and
 -- grants, restore 0094's two trigger bodies, drop the CHECK and the column.
