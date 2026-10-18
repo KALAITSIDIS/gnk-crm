@@ -49,9 +49,16 @@ const NOT_CONFIGURED: SenderReadiness = { state: "not_configured", missing: ["RE
 
 const policy = (over: Partial<LeadEscalationConfig> = {}): LeadEscalationConfig => ({ ...LEAD_ESCALATION_DEFAULTS, ...over });
 
+/**
+ * The default deployment arms the sweep (CRON_SECRET set) and nothing else:
+ * escalations leave only through the sweep, so a test of the escalation row's
+ * other answers needs it armed. The unarmed sweep has its own tests.
+ */
+const SWEEP_ONLY = { CRON_SECRET: "c" };
+
 function facts(over: Partial<ReadinessFacts> = {}): ReadinessFacts {
   return {
-    env: readEnvFlags(env({})),
+    env: readEnvFlags(env(SWEEP_ONLY)),
     routing: { ok: true, value: { mode: "off", agents: [] } },
     escalation: { ok: true, value: policy() },
     members: { ok: true, value: MEMBERS },
@@ -169,6 +176,88 @@ describe("Lead escalation — the policy and the sender together", () => {
     expect(
       rowOf(facts({ escalation: { ok: true, value: policy({ enabled: true, recipients: [ADMIN] }) } }), "lead-escalation", UNKNOWN_SENDER).state,
     ).toBe("unknown");
+  });
+
+  // review A07: one fault, one reason — the same words the desk-alert and acknowledgement rows give
+  const KEY_REJECTED: SenderReadiness = { state: "key_rejected" };
+  const INVALID_FROM: SenderReadiness = { state: "invalid_from" };
+  const REPLACE_KEY = "Replace RESEND_API_KEY in Vercel with a valid key, then redeploy.";
+
+  it("on with a rejected key says the key is rejected, and the next step replaces it — not 'verify the domain'", () => {
+    const f = facts({ escalation: { ok: true, value: policy({ enabled: true, recipients: [ADMIN, AGENT] }) } });
+    const r = rowOf(f, "lead-escalation", KEY_REJECTED);
+    expect(r.state).toBe("attention");
+    expect(r.summary).toMatch(/rejects this deployment's RESEND_API_KEY/);
+    expect(r.summary).not.toMatch(/not verified/);
+    expect(r.nextStep).toEqual({ who: "operator", text: REPLACE_KEY });
+    // and the other two e-mail rows give the same fix for the same fault
+    const armed = facts({
+      ...f,
+      env: readEnvFlags(env({ ...SWEEP_ONLY, RESEND_API_KEY: "re_k", ENQUIRY_ALERT_TO: "a@x.test", ENQUIRY_ALERT_FROM: "h@send.example.test" })),
+    });
+    for (const id of ["lead-escalation", "desk-alert", "visitor-ack", "sending-domain"]) {
+      expect(rowOf(armed, id, KEY_REJECTED).nextStep?.text, id).toBe(REPLACE_KEY);
+    }
+  });
+
+  it("on with an unusable From says the From holds no usable address — not 'not verified'", () => {
+    const r = rowOf(facts({ escalation: { ok: true, value: policy({ enabled: true, recipients: [ADMIN] }) } }), "lead-escalation", INVALID_FROM);
+    expect(r.state).toBe("attention");
+    expect(r.summary).toMatch(/ENQUIRY_ALERT_FROM holds no usable e-mail address/);
+    expect(r.summary).not.toMatch(/not verified/);
+    expect(r.nextStep?.text).toMatch(/set ENQUIRY_ALERT_FROM in Vercel/);
+  });
+
+  it("off with a rejected key, or an unusable From, waits for that fix — not for a verified domain", () => {
+    const key = rowOf(facts(), "lead-escalation", KEY_REJECTED);
+    expect(key.state).toBe("off");
+    expect(key.summary).toMatch(/waits for a valid RESEND_API_KEY/);
+    expect(key.summary).not.toMatch(/verified sending domain/);
+    expect(key.nextStep?.text).toMatch(/^Replace RESEND_API_KEY in Vercel with a valid key, then redeploy\./);
+    const from = rowOf(facts(), "lead-escalation", INVALID_FROM);
+    expect(from.state).toBe("off");
+    expect(from.summary).toMatch(/waits for a usable From: ENQUIRY_ALERT_FROM holds no usable e-mail address/);
+    expect(from.summary).not.toMatch(/verified sending domain/);
+  });
+
+  // review A07: only the CRON_SECRET-gated sweep sends an escalation
+  const unarmed = (over: Partial<ReadinessFacts> = {}) => facts({ env: readEnvFlags(env({})), ...over });
+
+  it("on, with the sweep unarmed, needs attention whatever the sender — escalations wait unsent", () => {
+    const on = { escalation: { ok: true as const, value: policy({ enabled: true, recipients: [ADMIN, AGENT] }) } };
+    for (const sender of [VERIFIED, UNKNOWN_SENDER, TEST_SENDER, KEY_REJECTED, null]) {
+      const r = rowOf(unarmed(on), "lead-escalation", sender);
+      expect(r.state, sender?.state ?? "checking").toBe("attention");
+      expect(r.summary).toMatch(/^On \(2 recipients, after 15 minutes of clock time without an answer\), but the sweep that sends escalations is not armed/);
+      expect(r.summary).toMatch(/CRON_SECRET not set\) — every escalation waits unsent/);
+      expect(r.nextStep).toEqual({ who: "operator", text: expect.stringMatching(/^Set CRON_SECRET in Vercel .*then redeploy\.$/) });
+    }
+    // a sender fault is not hidden behind the sweep's
+    expect(rowOf(unarmed(on), "lead-escalation", TEST_SENDER).summary).toMatch(/The mail service needs attention too — see Sending domain\./);
+    expect(rowOf(unarmed(on), "lead-escalation", VERIFIED).summary).not.toMatch(/needs attention too/);
+    // the armed sweep with a verified sender is the one "on"
+    expect(rowOf(facts(on), "lead-escalation", VERIFIED).state).toBe("on");
+  });
+
+  it("off, with the sweep unarmed, stays off but says switching it on would send nothing — the sweep comes first", () => {
+    const r = rowOf(unarmed(), "lead-escalation", VERIFIED);
+    expect(r.state).toBe("off");
+    expect(r.summary).toMatch(/^Off\./);
+    expect(r.summary).toMatch(/Even switched on, none would be sent: the sweep that sends escalations is not armed/);
+    expect(r.nextStep?.who).toBe("operator");
+    expect(r.nextStep?.text).toMatch(/^Set CRON_SECRET in Vercel/);
+    expect(r.nextStep?.text).toMatch(/preview, then Save\.$/);
+    // while the sender is still being asked, the sweep's step is already certain
+    expect(rowOf(unarmed(), "lead-escalation", null).nextStep?.text).toMatch(/^Set CRON_SECRET in Vercel/);
+    // and the armed sweep says nothing about it
+    expect(rowOf(facts(), "lead-escalation", VERIFIED).summary).not.toMatch(/CRON_SECRET/);
+  });
+
+  it("CRON_SECRET's technical line says escalations are never sent without it", () => {
+    const flag = technicalFlags(readEnvFlags(env({}))).find((t) => t.name === "CRON_SECRET");
+    expect(flag?.set).toBe(false);
+    expect(flag?.whenUnset).toMatch(/no lead escalation is ever sent/);
+    expect(flag?.whenUnset).toMatch(/a desk alert the enquiry missed waits/);
   });
 });
 

@@ -282,6 +282,18 @@ export interface ReadinessRow {
 const COULD_NOT_READ = "reload the page to ask again.";
 const SENDER_SETUP =
   "Verify the firm's sending domain in Resend (its DNS records go in at the DNS host), set ENQUIRY_ALERT_FROM in Vercel to an address on it, then redeploy.";
+/** The one fix for a key the provider answered `invalid_api_key` to — no domain step helps it. */
+const KEY_REPLACE = "Replace RESEND_API_KEY in Vercel with a valid key, then redeploy.";
+/**
+ * Escalations leave ONLY through the sweep (/api/internal/enquiry-alerts):
+ * the enquiry's accelerator runs before an escalation is due, and an admin's
+ * recovery refuses a job that is merely queued. The route answers 503 to
+ * every run while CRON_SECRET is unset, so an escalation job waits unsent.
+ * (A desk alert still leaves through the accelerator; only a missed one waits.)
+ */
+const SWEEP_UNARMED = "the sweep that sends escalations is not armed on this deployment (CRON_SECRET not set)";
+const CRON_SETUP =
+  "Set CRON_SECRET in Vercel to the same value as the database's Vault secret cron_secret, then redeploy.";
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
@@ -390,45 +402,57 @@ function escalationRow(facts: ReadinessFacts, sender: SenderReadiness | null): R
   }
   const policy = facts.escalation.value;
   const verdict = senderVerdict(sender);
+  const sweepArmed = facts.env.cronSecretSet;
 
   if (!policy.enabled) {
     const off =
       "Off. Nobody else is e-mailed when a website enquiry goes unanswered; the one-hour follow-up task still lands.";
-    if (verdict === "verified") {
+    const offRow = (summaryTail: string, nextStep: ReadinessRow["nextStep"]): ReadinessRow => {
+      if (sweepArmed) return { ...base, state: "off", summary: `${off}${summaryTail}`, nextStep };
+      // switching it on would send nothing yet: say so, and put the sweep first in the step
       return {
         ...base,
         state: "off",
-        summary: off,
-        nextStep: { who: "admin", text: "Switching it on is decided on Lead escalation: preview, then Save." },
+        summary: `${off}${summaryTail} Even switched on, none would be sent: ${SWEEP_UNARMED}.`,
+        nextStep: { who: "operator", text: nextStep === null ? CRON_SETUP : `${CRON_SETUP} ${nextStep.text}` },
       };
+    };
+    if (verdict === "verified") {
+      return offRow("", { who: "admin", text: "Switching it on is decided on Lead escalation: preview, then Save." });
     }
     if (verdict === "checking") {
-      return { ...base, state: "off", summary: `${off} Checking the sending domain…`, nextStep: null };
+      return offRow(" Checking the sending domain…", null);
     }
     if (verdict === "unknown") {
-      return {
-        ...base,
-        state: "off",
-        summary: `${off} Whether the sending domain is verified could not be checked — see Sending domain.`,
-        nextStep: { who: "operator", text: "Check the sending domain's status in Resend before it is switched on." },
-      };
+      return offRow(" Whether the sending domain is verified could not be checked — see Sending domain.", {
+        who: "operator",
+        text: "Check the sending domain's status in Resend before it is switched on.",
+      });
     }
     if (verdict === "unconfigured") {
-      return {
-        ...base,
-        state: "off",
-        summary: `${off} Switching it on waits for e-mail to be set up on this deployment — see Sending domain.`,
-        nextStep: { who: "operator", text: "Finish the e-mail setup first (see Sending domain); switching it on is then decided on Lead escalation." },
-      };
+      return offRow(" Switching it on waits for e-mail to be set up on this deployment — see Sending domain.", {
+        who: "operator",
+        text: "Finish the e-mail setup first (see Sending domain); switching it on is then decided on Lead escalation.",
+      });
     }
-    return {
-      ...base,
-      state: "off",
-      summary:
-        `${off} Switching it on waits for a verified sending domain: an escalation names all its recipients in one message, ` +
+    // refused — by the provider's actual reason: a rejected key or an unusable From is not an unverified domain
+    if (sender?.state === "key_rejected") {
+      return offRow(
+        " Switching it on waits for a valid RESEND_API_KEY: the mail service rejects this deployment's key and refuses every message.",
+        { who: "operator", text: `${KEY_REPLACE} Switching it on is then decided on Lead escalation.` },
+      );
+    }
+    if (sender?.state === "invalid_from") {
+      return offRow(
+        " Switching it on waits for a usable From: ENQUIRY_ALERT_FROM holds no usable e-mail address, so the mail service refuses every message.",
+        { who: "operator", text: "Finish the sending-domain setup first (see Sending domain); switching it on is then decided on Lead escalation." },
+      );
+    }
+    return offRow(
+      " Switching it on waits for a verified sending domain: an escalation names all its recipients in one message, " +
         "and until the domain is verified the mail service refuses a message to anyone but the account owner.",
-      nextStep: { who: "operator", text: "Finish the sending-domain setup first (see Sending domain); switching it on is then decided on Lead escalation." },
-    };
+      { who: "operator", text: "Finish the sending-domain setup first (see Sending domain); switching it on is then decided on Lead escalation." },
+    );
   }
 
   if (!facts.members.ok) {
@@ -446,6 +470,17 @@ function escalationRow(facts: ReadinessFacts, sender: SenderReadiness | null): R
   }
   const when = `after ${plural(policy.after_minutes, "minute", "minutes")} of ${policy.working_hours ? "working" : "clock"} time without an answer`;
   const who = plural(eligible, "recipient", "recipients");
+  if (!sweepArmed) {
+    // certain whatever the provider says: no run of the sweep, no escalation
+    const senderToo =
+      verdict === "refused" || verdict === "unconfigured" ? " The mail service needs attention too — see Sending domain." : "";
+    return {
+      ...base,
+      state: "attention",
+      summary: `On (${who}, ${when}), but ${SWEEP_UNARMED} — every escalation waits unsent.${senderToo}`,
+      nextStep: { who: "operator", text: CRON_SETUP },
+    };
+  }
   switch (verdict) {
     case "verified":
       return { ...base, state: "on", summary: `On: ${who} e-mailed about a website enquiry ${when}.`, nextStep: null };
@@ -466,6 +501,23 @@ function escalationRow(facts: ReadinessFacts, sender: SenderReadiness | null): R
         nextStep: { who: "operator", text: `${mailSetup(facts.env)} Then redeploy.`.trim() },
       };
     case "refused":
+      // by the provider's actual reason, as the desk-alert and acknowledgement rows give it
+      if (sender?.state === "key_rejected") {
+        return {
+          ...base,
+          state: "attention",
+          summary: `On (${who}), but the mail service rejects this deployment's RESEND_API_KEY — every escalation is refused until the key is replaced.`,
+          nextStep: { who: "operator", text: KEY_REPLACE },
+        };
+      }
+      if (sender?.state === "invalid_from") {
+        return {
+          ...base,
+          state: "attention",
+          summary: `On (${who}), but ENQUIRY_ALERT_FROM holds no usable e-mail address — the mail service refuses every escalation.`,
+          nextStep: { who: "operator", text: SENDER_SETUP },
+        };
+      }
       return {
         ...base,
         state: "attention",
@@ -534,7 +586,7 @@ function deskAlertRow(facts: ReadinessFacts, sender: SenderReadiness | null): Re
         ...base,
         state: "attention",
         summary: `Armed for ${to}, but the mail service refuses what this deployment sends — see Sending domain.`,
-        nextStep: { who: "operator", text: sender.state === "key_rejected" ? "Replace RESEND_API_KEY in Vercel with a valid key, then redeploy." : SENDER_SETUP },
+        nextStep: { who: "operator", text: sender.state === "key_rejected" ? KEY_REPLACE : SENDER_SETUP },
       };
   }
 }
@@ -561,7 +613,7 @@ function senderRow(facts: ReadinessFacts, sender: SenderReadiness | null): Readi
       case "domain_verified":
         return null;
       case "key_rejected":
-        return { who: "operator", text: "Replace RESEND_API_KEY in Vercel with a valid key, then redeploy." };
+        return { who: "operator", text: KEY_REPLACE };
       case "custom_unverified":
         return { who: "operator", text: "Check the domain's status in Resend." };
       case "not_configured":
@@ -612,7 +664,7 @@ function ackRow(facts: ReadinessFacts, sender: SenderReadiness | null): Readines
         ...base,
         state: "attention",
         summary: "Armed, but the mail service refuses what this deployment sends — every acknowledgement fails. See Sending domain.",
-        nextStep: { who: "operator", text: sender.state === "key_rejected" ? "Replace RESEND_API_KEY in Vercel with a valid key, then redeploy." : SENDER_SETUP },
+        nextStep: { who: "operator", text: sender.state === "key_rejected" ? KEY_REPLACE : SENDER_SETUP },
       };
   }
 }
@@ -751,7 +803,8 @@ export function technicalFlags(env: EnvFlags): TechnicalFlag[] {
     {
       name: "CRON_SECRET",
       set: env.cronSecretSet,
-      whenUnset: "the desk-alert sweep refuses every run, so an alert the enquiry missed waits.",
+      whenUnset:
+        "the sweep refuses every run: no lead escalation is ever sent (only the sweep sends them), and a desk alert the enquiry missed waits.",
     },
     {
       name: "ENQUIRY_FORWARD_KEY",
