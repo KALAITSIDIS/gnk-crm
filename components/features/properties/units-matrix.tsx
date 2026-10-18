@@ -13,6 +13,7 @@ import {
   type UnitActionState,
 } from "@/lib/actions/units";
 import { StatusBadge } from "@/components/features/shared/status-badge";
+import { HoldSummary } from "@/components/features/properties/availability-overview";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -35,6 +36,7 @@ import { formatArea, formatMoney } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { PROPERTY_STATUSES, PROPERTY_TYPES } from "@/lib/validators/properties";
 import type { PriceListComparison } from "@/lib/services/price-list";
+import type { HoldView } from "@/lib/queries/container-availability";
 import { newOperationId, settleOperation, stampOperationId, type OperationRef } from "@/lib/utils/operation-id";
 import { PRICES_UNCONFIRMED, replayedText } from "@/lib/validators/price-lists";
 import {
@@ -60,6 +62,11 @@ export interface UnitRow {
   asking_price: number | null;
   status: string;
   floor_number: number | null;
+  /**
+   * The unit's live hold, said beside its status (A05): the two are not
+   * coupled by decision, so the grid shows both. Absent when not read.
+   */
+  hold?: HoldView | null;
 }
 
 function useSavedToast(state: UnitActionState) {
@@ -176,10 +183,16 @@ function UnitStatusCell({ unit }: { unit: UnitRow }) {
 export function UnitsMatrix({
   units,
   canManage = true,
+  highlightId = null,
+  emptyText = "No units yet — add the first one below.",
 }: {
   units: UnitRow[];
   /** unit status/insert rights: admin & listing manager (properties RLS) */
   canManage?: boolean;
+  /** the unit a "Units matrix" link came for (`?unit=`): its row is marked */
+  highlightId?: string | null;
+  /** what an empty matrix says — a phased project's units live in its phases */
+  emptyText?: string;
 }) {
   return (
     <div className="overflow-x-auto rounded-[10px] border border-border bg-surface">
@@ -194,11 +207,19 @@ export function UnitsMatrix({
             <TableHead className="text-right">Area</TableHead>
             <TableHead className="text-right">List price</TableHead>
             <TableHead className="w-44">Status</TableHead>
+            <TableHead className="min-w-44">Hold</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {units.map((u) => (
-            <TableRow key={u.id} className="h-11 hover:bg-surface-2">
+            <TableRow
+              key={u.id}
+              // the anchor a unit page's "Units matrix" link lands on (A05);
+              // scroll-mt leaves the table's header row in view above it
+              id={`unit-${u.id}`}
+              aria-current={u.id === highlightId ? "true" : undefined}
+              className={cn("h-11 scroll-mt-24 hover:bg-surface-2", u.id === highlightId && "bg-brand-100/60")}
+            >
               <TableCell className="font-medium">
                 {[u.block, u.unit_number].filter(Boolean).join("") || "—"}
               </TableCell>
@@ -223,12 +244,15 @@ export function UnitsMatrix({
                   <StatusBadge status={u.status} />
                 )}
               </TableCell>
+              <TableCell>
+                <HoldSummary hold={u.hold} />
+              </TableCell>
             </TableRow>
           ))}
           {units.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={8} className="py-10 text-center text-sm text-text-3">
-                No units yet — add the first one below.
+              <TableCell colSpan={9} className="py-10 text-center text-sm text-text-3">
+                {emptyText}
               </TableCell>
             </TableRow>
           ) : null}

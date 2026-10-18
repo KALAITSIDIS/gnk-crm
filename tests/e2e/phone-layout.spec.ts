@@ -110,4 +110,49 @@ test.describe("phone layouts (CRM-06)", () => {
       expect(removed.count, "the fixture contact is gone").toBe(1);
     }
   });
+
+  /**
+   * A05: a unit's breadcrumb — Properties › project › phase › unit, with
+   * development references — wraps rather than widening the page, and a phased
+   * project's availability table stays inside the viewport, scrolling inside
+   * itself as the matrix does.
+   */
+  test("a unit's breadcrumb and a phased project's availability table do not widen a phone page", async ({ page }) => {
+    test.skip(!isLocal(), "seeding the hierarchy needs the local service key");
+    const svc = serviceClient();
+    const { orgId } = await fixtureProfile(svc);
+    // about as long as a real development reference (PAF0002-P1-A101): the
+    // heading is the unbroken reference and the breadcrumb is what is measured
+    const ref = `E2E-PH-${runTag().slice(-6)}`;
+    const insert = async (row: Record<string, unknown>) => {
+      const { data, error } = await svc
+        .from("properties")
+        .insert({ org_id: orgId, property_type: "apartment", status: "available", ...row })
+        .select("id")
+        .single();
+      expect(error, `seeding ${String(row.reference)}: ${error?.message}`).toBeNull();
+      return data!.id as string;
+    };
+    const project = await insert({ reference: ref, kind: "project", title: { en: "Phone layout development" } });
+    const phase = await insert({ reference: `${ref}-P1`, kind: "phase", parent_id: project, delivery_date: "2027-06-30" });
+    const unit = await insert({ reference: `${ref}-P1-A101`, kind: "unit", parent_id: phase, block: "A", unit_number: "101" });
+    try {
+      await page.goto(`/properties/${unit}`, { waitUntil: "networkidle" });
+      await expect(page.getByRole("navigation", { name: "Breadcrumb" })).toBeVisible();
+      await assertNoHorizontalOverflow(page, "unit detail with its breadcrumb");
+      await page.goto(`/properties/${project}/units`, { waitUntil: "networkidle" });
+      const overview = page.getByTestId("availability-overview");
+      await expect(overview).toBeVisible();
+      // the new table's own box, measured: it scrolls inside, it never pushes
+      // the page wider (the rest of this page is not measured at phone width)
+      const box = await overview.boundingBox();
+      const width = page.viewportSize()?.width ?? 0;
+      expect(box, "the availability table has a box").not.toBeNull();
+      expect(box!.x + box!.width, "the availability table ends inside the viewport").toBeLessThanOrEqual(width + 1);
+    } finally {
+      await svc.from("properties").delete().eq("id", unit);
+      await svc.from("properties").delete().eq("id", phase);
+      await svc.from("properties").delete().eq("id", project);
+    }
+  });
 });

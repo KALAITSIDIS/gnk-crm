@@ -234,63 +234,90 @@ export function isAvailability(resolved: ResolvedShareLink): resolved is Availab
   return (resolved as Availability).kind === "availability";
 }
 
-export interface AvailabilityGroup {
+/** A container's units, one phase's worth — or the ones directly under the container. */
+export interface PhaseGroup<P, U> {
   /** null = units hanging directly off the named project */
-  phase: AvailabilityPhase | null;
-  units: AvailabilityUnit[];
+  phase: P | null;
+  units: U[];
   availableCount: number;
 }
 
+export type AvailabilityGroup = PhaseGroup<AvailabilityPhase, AvailabilityUnit>;
+
 /**
- * Units grouped by the phase they belong to, direct children first.
+ * Units grouped by the phase they belong to, direct children first — the ONE
+ * grouping rule, for the public availability page and the staff units page's
+ * consolidated view (A05) alike.
  *
  * Grouping is not decoration. A phase carries its OWN delivery date, severed
  * from its project at creation, so a flat table would put a 2028 and a 2029
  * handover in one list with nothing to tell them apart — a wrong date in front
  * of the person deciding whether to sell the units.
  *
- * A phase the payload describes but that holds no units stays out: somebody
- * reading availability wants inventory, not an empty heading. A phase a unit
- * names but the payload does not describe still gets a group, keyed by its
- * reference with empty metadata — dropping the units would be worse than
- * showing them under a bare heading.
+ * A phase described but holding no units stays out: somebody reading
+ * availability wants inventory, not an empty heading. A phase a unit names but
+ * `phases` does not describe still gets a group, from `placeholder` — dropping
+ * the units would be worse than showing them under a bare heading.
+ *
+ * Direct units first, then phases by `sortLabel` (ties by key). Stated
+ * explicitly rather than relying on insertion order, so a page does not
+ * silently depend on how its read happened to sort. Units keep their order
+ * within a group.
  */
-export function groupUnitsByPhase(availability: Availability): AvailabilityGroup[] {
-  const meta = new Map(availability.phases.map((p) => [p.reference, p]));
-  const buckets = new Map<string | null, AvailabilityUnit[]>();
+export function groupByPhase<P, U extends { status: string }>(input: {
+  phases: readonly P[];
+  units: readonly U[];
+  /** how a phase is named by its units */
+  phaseKey: (phase: P) => string;
+  /** the key of the phase a unit belongs to; null = directly under the container */
+  unitPhaseKey: (unit: U) => string | null;
+  /** what phase groups sort by */
+  sortLabel: (phase: P) => string;
+  /** the heading for a key no described phase carries */
+  placeholder: (key: string) => P;
+}): PhaseGroup<P, U>[] {
+  const meta = new Map(input.phases.map((p) => [input.phaseKey(p), p]));
+  const buckets = new Map<string | null, U[]>();
 
-  for (const unit of availability.units) {
-    const key = unit.phase_reference;
+  for (const unit of input.units) {
+    const key = input.unitPhaseKey(unit);
     const bucket = buckets.get(key);
     if (bucket) bucket.push(unit);
     else buckets.set(key, [unit]);
   }
 
-  // Direct units first, then phases by reference. Stated explicitly rather than
-  // relying on insertion order, so the page does not silently depend on how the
-  // resolver happened to sort.
+  const phaseOf = (key: string): P => meta.get(key) ?? input.placeholder(key);
   const keys = [...buckets.keys()].sort((a, b) => {
     if (a === null) return -1;
     if (b === null) return 1;
-    return a.localeCompare(b);
+    return input.sortLabel(phaseOf(a)).localeCompare(input.sortLabel(phaseOf(b))) || a.localeCompare(b);
   });
 
   return keys.map((key) => {
     const units = buckets.get(key)!;
     return {
-      phase:
-        key === null
-          ? null
-          : (meta.get(key) ?? {
-              reference: key,
-              title: null,
-              status: "",
-              delivery_date: null,
-              construction_status: null,
-            }),
+      phase: key === null ? null : phaseOf(key),
       units,
       availableCount: units.filter((u) => u.status === "available").length,
     };
+  });
+}
+
+/** The public availability payload, grouped (`groupByPhase` keyed by phase reference). */
+export function groupUnitsByPhase(availability: Availability): AvailabilityGroup[] {
+  return groupByPhase({
+    phases: availability.phases,
+    units: availability.units,
+    phaseKey: (p) => p.reference,
+    unitPhaseKey: (u) => u.phase_reference,
+    sortLabel: (p) => p.reference,
+    placeholder: (reference) => ({
+      reference,
+      title: null,
+      status: "",
+      delivery_date: null,
+      construction_status: null,
+    }),
   });
 }
 
@@ -301,7 +328,7 @@ export function groupUnitsByPhase(availability: Availability): AvailabilityGroup
  * A status the enum grew and `AVAILABILITY_STATUS_ORDER` has not is appended
  * rather than dropped — an unstyled label is a smaller lie than a missing unit.
  */
-export function statusSummary(units: AvailabilityUnit[]): { status: string; count: number }[] {
+export function statusSummary(units: readonly { status: string }[]): { status: string; count: number }[] {
   const counts = new Map<string, number>();
   for (const unit of units) counts.set(unit.status, (counts.get(unit.status) ?? 0) + 1);
 

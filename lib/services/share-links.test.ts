@@ -5,6 +5,7 @@ import {
   DEFAULT_EXPIRY_DAYS,
   daysUntilExpiry,
   expiryFromNow,
+  groupByPhase,
   groupUnitsByPhase,
   isAvailability,
   isWellFormedShareToken,
@@ -322,6 +323,68 @@ describe("groupUnitsByPhase", () => {
     expect(groups[0].phase?.reference).toBe("PAF0002-P9");
     expect(groups[0].phase?.title).toBeNull();
     expect(groups[0].units).toHaveLength(1);
+  });
+});
+
+/**
+ * A05: the staff units page groups the SAME way, keyed by phase ID (its units
+ * name their parent by id, not by reference) and sorted by reference — the
+ * core the public wrapper above now calls.
+ */
+describe("groupByPhase (the core both pages use)", () => {
+  type StaffPhase = { id: string; reference: string; delivery_date: string | null };
+  type StaffUnit = { id: string; parent_id: string; status: string };
+  const PROJECT = "proj";
+  const staff = (phases: StaffPhase[], units: StaffUnit[]) =>
+    groupByPhase({
+      phases,
+      units,
+      phaseKey: (p) => p.id,
+      unitPhaseKey: (u) => (u.parent_id === PROJECT ? null : u.parent_id),
+      sortLabel: (p) => p.reference,
+      placeholder: (id) => ({ id, reference: id, delivery_date: null }),
+    });
+
+  it("puts the project's direct units first, then phases by REFERENCE — not by id", () => {
+    const groups = staff(
+      [
+        { id: "zzz", reference: "PAF0002-P1", delivery_date: "2027-06-30" },
+        { id: "aaa", reference: "PAF0002-P2", delivery_date: "2028-06-30" },
+      ],
+      [
+        { id: "u3", parent_id: "aaa", status: "available" },
+        { id: "u1", parent_id: "zzz", status: "sold" },
+        { id: "u0", parent_id: PROJECT, status: "available" },
+        { id: "u2", parent_id: "zzz", status: "available" },
+      ],
+    );
+    expect(groups.map((g) => g.phase?.reference ?? null)).toEqual([null, "PAF0002-P1", "PAF0002-P2"]);
+    // a unit keeps its read order inside its group
+    expect(groups[1].units.map((u) => u.id)).toEqual(["u1", "u2"]);
+    expect(groups[1].availableCount).toBe(1);
+    expect(groups[1].phase?.delivery_date).toBe("2027-06-30");
+  });
+
+  it("gives the public payload exactly what the wrapper always gave it", () => {
+    const payload = availability({
+      phases: [
+        { reference: "PAF0002-P2", title: "Phase 2", status: "available", delivery_date: "2029-09-30", construction_status: null },
+      ],
+      units: [
+        unit({ reference: "PAF0002-P2-B201", phase_reference: "PAF0002-P2" }),
+        unit({ reference: "PAF0002-A101", phase_reference: null, status: "sold" }),
+        unit({ reference: "PAF0002-P9-C1", phase_reference: "PAF0002-P9" }),
+      ],
+    });
+    expect(groupUnitsByPhase(payload)).toEqual([
+      { phase: null, units: [payload.units[1]], availableCount: 0 },
+      { phase: payload.phases[0], units: [payload.units[0]], availableCount: 1 },
+      {
+        phase: { reference: "PAF0002-P9", title: null, status: "", delivery_date: null, construction_status: null },
+        units: [payload.units[2]],
+        availableCount: 1,
+      },
+    ]);
   });
 });
 

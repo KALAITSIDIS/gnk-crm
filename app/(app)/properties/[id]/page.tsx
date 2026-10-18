@@ -1,6 +1,7 @@
+import { Fragment, type ReactNode } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Calculator, Copy } from "lucide-react";
+import { Calculator, Copy } from "lucide-react";
 import {
   DetailsForm,
   LegalForm,
@@ -30,6 +31,9 @@ import { EventTimeline } from "@/components/features/shared/event-timeline";
 import { QualityScoreRing } from "@/components/features/shared/quality-score-ring";
 import { ListingReadiness } from "@/components/features/properties/listing-readiness";
 import { PropertyTabs } from "@/components/features/properties/property-tabs";
+import { PropertyBreadcrumb } from "@/components/features/properties/property-breadcrumb";
+import { fetchLineage } from "@/lib/queries/property-lineage";
+import { kindLabel, matrixParent } from "@/lib/services/property-lineage";
 import { buildQualityInput, computeQualityScore } from "@/lib/services/quality-score";
 import { fetchBuildConflictSource } from "@/lib/queries/quality-worklist";
 import { propertyTabFrom } from "@/lib/services/property-tabs";
@@ -168,6 +172,7 @@ export default async function PropertyDetailPage({
     installmentsRes,
     plansRes,
     vatConfigRes,
+    lineage,
   ] = await Promise.all([
     supabase
       .from("price_history")
@@ -246,6 +251,10 @@ export default async function PropertyDetailPage({
       .select("value, verified_at")
       .eq("key", "vat_property")
       .maybeSingle(),
+    // A05: the trail back up — the parent, and a phase's project for a unit
+    // under a phase. At most two reads by primary key on this caller's client;
+    // never throws (an unreadable parent is said on the page, not guessed).
+    fetchLineage(supabase, { id: p.id, kind: p.kind, parent_id: p.parent_id }),
   ]);
   const priceRows = unwrapRows(priceRes, "price history");
   const propertyEventRows = unwrapRows(eventsRes, "events");
@@ -447,8 +456,45 @@ export default async function PropertyDetailPage({
   const district = (p.districts as { name?: { en?: string } } | null)?.name?.en;
   const area = (p.areas as { name?: { en?: string } } | null)?.name?.en;
 
-  const overviewFacts: [string, string][] = [
-    ["Kind", p.kind],
+  // A05: where this record sits — its recorded parent (and a phase's project),
+  // and for a unit, its row in the parent's matrix. Shown for any record that
+  // has a parent or must have one, so an anomaly is said here too.
+  const matrixNode = matrixParent(p, lineage);
+  const partOf: ReactNode =
+    p.parent_id !== null || p.kind === "unit" || p.kind === "phase" ? (
+      <span className="flex flex-col items-end gap-1">
+        {lineage.chain.length > 0 ? (
+          <span>
+            {[...lineage.chain].reverse().map((node, i) => (
+              <Fragment key={node.id}>
+                {i > 0 ? <span className="font-normal text-text-3"> in </span> : null}
+                <Link href={`/properties/${node.id}`} className="font-mono text-brand-700 hover:underline">
+                  {node.reference}
+                </Link>{" "}
+                <span className="text-xs font-normal text-text-3">{kindLabel(node.kind)}</span>
+              </Fragment>
+            ))}
+          </span>
+        ) : null}
+        {matrixNode ? (
+          <Link
+            href={`/properties/${matrixNode.id}/units?unit=${p.id}#unit-${p.id}`}
+            className="text-xs text-brand-700 hover:underline"
+          >
+            Its row in the units matrix
+          </Link>
+        ) : null}
+        {lineage.issue ? (
+          <span role="note" className="text-xs font-normal text-warning">
+            {lineage.issue.text}
+          </span>
+        ) : null}
+      </span>
+    ) : null;
+
+  const overviewFacts: [string, ReactNode][] = [
+    ["Kind", kindLabel(p.kind)],
+    ...(partOf ? ([["Part of", partOf]] as [string, ReactNode][]) : []),
     ["Type", p.property_type.replace(/_/g, " ")],
     ["Transaction", p.transaction_type.replace(/_/g, " ")],
     ["Location", [district, area, p.address].filter(Boolean).join(" · ") || "—"],
@@ -529,11 +575,9 @@ export default async function PropertyDetailPage({
         </div>
       ) : null}
       <div>
-        <Button asChild variant="ghost" size="sm" className="-ml-2 mb-2 text-text-2">
-          <Link href="/properties">
-            <ArrowLeft className="size-4" /> Properties
-          </Link>
-        </Button>
+        {/* A05: Properties (as the list was left) › project › phase › this
+            record, from parent_id and kind — never from the reference */}
+        <PropertyBreadcrumb lineage={lineage} current={{ label: p.reference, mono: true }} />
         <div className="flex flex-wrap items-center gap-3">
           <QualityScoreRing
             score={quality.score}
