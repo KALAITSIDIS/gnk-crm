@@ -63,8 +63,14 @@ const userIds: string[] = [];
 
 type Win = { p_from: string; p_to: string };
 
-/** The lead-source window: February 2024 (leads are not partitioned, so a back-dated window is safe). */
-const LEADS: Win = { p_from: "2024-02-01T00:00:00Z", p_to: "2024-03-01T00:00:00Z" };
+/**
+ * The lead-source window: February 2023 (leads are not partitioned, so a
+ * back-dated window is safe). Not 2024: rls.test.ts test 38 reads March 2024
+ * as the service role across EVERY organisation with exact counts, and this
+ * file's lead on the window's exclusive end must never land in it, even if a
+ * cleanup is cut short.
+ */
+const LEADS: Win = { p_from: "2023-02-01T00:00:00Z", p_to: "2023-03-01T00:00:00Z" };
 /** The window of section 2's moves through move_deal_to_stage (section 3 reads it again). */
 let live: Win;
 
@@ -208,7 +214,14 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // Tasks first: the cron sweeps attach them to these fixtures while the file
+  // runs (0098's lead-sla, every ten minutes, to the website enquiry nobody
+  // answered; 0020's follow-up nudges to an open deal), and tasks.lead_id /
+  // tasks.deal_id are NO ACTION — one such task refuses the leads delete and
+  // cuts the cleanup short, leaving this file's leads behind (F06 review).
+  // Then leads, which hold deals through converted_deal_id.
   for (const org of [ORG, OTHER_ORG]) {
+    await o.query("delete from tasks where org_id = $1", [org]);
     await o.query("delete from leads where org_id = $1", [org]);
     await o.query("delete from deals where org_id = $1", [org]);
   }
@@ -231,7 +244,7 @@ afterAll(async () => {
 // ---------------------------------------------------------------------------
 describe("1. lead sources: spam out of the convert rate, the win rate within the caller's scope", () => {
   beforeAll(async () => {
-    const at = (day: number) => `2024-02-${String(day).padStart(2, "0")}T10:00:00Z`;
+    const at = (day: number) => `2023-02-${String(day).padStart(2, "0")}T10:00:00Z`;
     // agent1's deals: one won (confirmed 300 000 over a stale estimate), one open
     const a1Won = await deal({
       deal_type: "sale", stage_id: S.new, agent_id: agent1.id, status: "won",
@@ -265,7 +278,7 @@ describe("1. lead sources: spam out of the convert rate, the win rate within the
     // another organisation's spam must change nothing here
     await lead(OTHER_ORG, { source: "website", status: "spam", received_at: at(13) });
     // outside the window: must not count
-    await lead(ORG, { source: "website", status: "spam", received_at: "2024-03-01T00:00:00Z" });
+    await lead(ORG, { source: "website", status: "spam", received_at: LEADS.p_to });
   });
 
   it("an admin: spam is counted, kept out of both sides of the convert rate; the win rate is won / converted", async () => {
@@ -316,6 +329,21 @@ describe("1. lead sources: spam out of the convert rate, the win rate within the
     const r = await aal1.rpc("report_source_roi", LEADS);
     expect(r.error).toBeNull();
     expect(r.data, "require_aal2 hides every lead").toEqual([]);
+  });
+
+  it("the lead-sla sweep's task on the unanswered enquiry changes no figure (and the cleanup removes it before the leads)", async () => {
+    const before = await sources(admin.client);
+    // what the every-ten-minutes cron does to this file's fixtures, made certain
+    // here rather than left to the clock: afterAll must delete tasks first, or
+    // tasks_org_lead_fkey refuses the leads delete and the cleanup stops there
+    const { error } = await svc.rpc("raise_lead_sla_tasks", { p_org: ORG });
+    expect(error, JSON.stringify(error)).toBeNull();
+    const { rows } = await o.query<{ n: number }>(
+      "select count(*)::int as n from tasks where org_id = $1 and kind = 'lead_unanswered'",
+      [ORG],
+    );
+    expect(rows[0]!.n, "the open website enquiry nobody answered").toBe(1);
+    expect(await sources(admin.client)).toEqual(before);
   });
 });
 

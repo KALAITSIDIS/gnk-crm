@@ -34,8 +34,21 @@ test.describe("Performance reports: definitions, not ROI", () => {
     expect(text).not.toMatch(/\bROI\b/);
     expect(text).not.toContain("renaming one splits its history");
     expect(text).not.toContain("your own records only");
-    // a healthy stack: no section reports a failure, and every export is offered
-    await expect(page.locator('[role="alert"]')).toHaveCount(0);
+    // a healthy stack: no section reports a failure, and every export is offered.
+    // Scoped to <main>: Next's route announcer is a role="alert" div on EVERY
+    // page (body > next-route-announcer, in an open shadow root that
+    // Playwright's CSS pierces), so a page-wide count is never 0.
+    await expect(page.locator('main [role="alert"]')).toHaveCount(0);
+    for (const id of [
+      "citation-error",
+      "agent-performance-error",
+      "lead-sources-error",
+      "time-to-close-error",
+      "stage-conversion-error",
+      "price-reductions-error",
+    ]) {
+      await expect(page.getByTestId(id), id).toHaveCount(0);
+    }
     for (const report of ["agent_performance", "source_roi", "time_to_close", "price_reductions"]) {
       await expect(page.locator(`a[href*="report=${report}"]`)).toHaveCount(1);
     }
