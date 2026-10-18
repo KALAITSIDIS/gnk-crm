@@ -365,6 +365,19 @@ describe("Settings → Cyprus config", () => {
     }
     expect(configLabel("toString")).toBeNull();
   });
+
+  it("no label calls the repealed stamp duty current — the repealed-tax guard scans .tsx, and these labels are a .ts", () => {
+    // Law 239(I)/2025, migration 0070: repealed for documents signed on or after 2026-01-01
+    const naming = Object.entries(CONFIG_LABELS).filter(([, l]) => /stamp duty/i.test(`${l.title} ${l.summary}`));
+    expect(naming.map(([k]) => k)).toEqual(["stamp_duty"]);
+    for (const [key, label] of naming) {
+      expect(label.summary, key).toMatch(/repeal/i);
+      expect(label.summary, key).toMatch(/no longer applies/);
+    }
+    // and the page's own intro names no tax at all (with or without the underscore), only what is checked
+    const page = readFileSync(join(root, "app", "(app)", "settings", "cyprus-config", "page.tsx"), "utf8");
+    expect(page).not.toMatch(/stamp[ _]duty/i);
+  });
 });
 
 describe("the escalation, routing and nudge panels name no machinery", () => {

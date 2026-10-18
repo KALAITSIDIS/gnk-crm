@@ -30,7 +30,11 @@ export const CONFIG_LABELS: Readonly<Record<string, ConfigLabel>> = {
   },
   stamp_duty: {
     title: "Stamp duty",
-    summary: "Stamp duty bands and cap on purchase contracts.",
+    // true whether or not the repeal is recorded: since 0070 the stored value
+    // carries an `abolished` block (from 2026-01-01, Law 239(I)/2025), and the
+    // calculators render its notice instead of a figure — never "current"
+    summary:
+      "The stamp duty bands and cap for contracts signed before the duty's repeal, and the date from which it no longer applies — once that date is stored, the calculators show the repeal notice instead of a figure.",
   },
   vat_property: {
     title: "VAT on property",

@@ -33,9 +33,9 @@ export default async function CyprusConfigSettingsPage() {
     <div className="flex flex-col gap-4">
       <p className="text-sm text-text-2">
         The rates and settings behind the calculators, documents and lead handling, exactly as stored. The calculators
-        read tax and fee rates from here every time — none are built in. Transfer fees and stamp duty are checked before
-        saving, so a typo cannot produce nonsense fees, and every save is recorded in the event log. Set &ldquo;Verified
-        on&rdquo; after checking the current law.
+        read tax and fee rates from here every time — none are built in. The fee and duty bands the calculators use are
+        checked before saving, so a typo cannot produce nonsense fees, and every save is recorded in the event log. Set
+        &ldquo;Verified on&rdquo; after checking the current law.
       </p>
       {configs.map((c) => (
         <ConfigCard key={c.key} row={c} />
