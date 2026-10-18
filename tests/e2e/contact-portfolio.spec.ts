@@ -43,6 +43,8 @@ test("a developer's project is one row with its units rolled up", async ({ page 
       property_type: "apartment" as const,
       status: "available" as const,
       title: { en: "E2E portfolio project" },
+      // a "from" price: F04 — it must NOT be added on top of the units
+      asking_price: 150000,
       developer_contact_id: contact!.id,
       // also the owner, which a developer is on everything unsold
       owner_contact_id: contact!.id,
@@ -77,6 +79,13 @@ test("a developer's project is one row with its units rolled up", async ({ page 
 
   // owner AND developer on the same property, named as both and counted once
   await expect(panel.getByText(/Owns & Built/)).toBeVisible();
+
+  // F04: the total is the units' 8 × 200,000 — not that plus the project's
+  // 150,000 "from" price (which read 1,750,000)
+  const total = panel
+    .locator("dt", { hasText: "Asking total (listings + units)" })
+    .locator("xpath=following-sibling::dd[1]");
+  await expect(total).toHaveText("€1.600.000");
 
   await admin.from("properties").delete().eq("parent_id", project!.id);
   await admin.from("properties").delete().eq("id", project!.id);
