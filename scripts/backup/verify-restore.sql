@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 149::bigint as migrations,
+    2::bigint as auth_users, 151::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -209,16 +209,21 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   ('report_citation',          false, false, true, true),
   ('published_below_threshold',false, false, true, true),
   -- the deliberate anon surface: share links (0023/0041, + the 0081
-  -- read-only budget peek), the public listing feed (0066/0073/0086) and
-  -- the portal feed (0095, the three rows below the enquiry door).
-  -- anon = TRUE is unique to these NINE rows, and nothing else in the
-  -- database — which is the point: a restore that DROPS these grants kills
-  -- every live proposal link, the marketing feed and every portal pull
-  -- silently, which is why they are pinned. (The count is stated because it
-  -- is checkable: grep this file for ^  \('.*true, true, true, true\) — the
-  -- row form, so this sentence is not itself a hit — and it must return
-  -- nine. It was six from 0088 to 0094; eight from 0084 to 0087, while the
-  -- enquiry door was anon-callable.)
+  -- read-only budget peek) and the public listing feed (0066/0073/0086) —
+  -- the SIX rows below, every one callable by all three API roles — and the
+  -- portal feed's two readers (0150, below the enquiry door), which anon and
+  -- service_role may call and a signed-in session may not. A restore that
+  -- DROPS these grants kills every live proposal link, the marketing feed and
+  -- every portal pull silently, which is why they are pinned. anon = TRUE
+  -- appears on NINE rows in all: these six, the two portal readers, and
+  -- forbid_srs_api_writes at the end (a trigger body: /rpc cannot call it).
+  -- (The counts are stated because they are checkable: grep this file for
+  -- ^  \('.*true, true, true, true\) and it must return six; for
+  -- ^  \('.*true, true, false, true\) and it must return two — the row
+  -- forms, so these sentences are not themselves hits. The first form was
+  -- nine from 0095 to 0150, while 0097's three portal functions were
+  -- callable by all three roles; six from 0088 to 0094; eight from 0084 to
+  -- 0087, while the enquiry door was anon-callable.)
   ('resolve_share_link',      true, true, true, true),
   ('share_link_over_budget',  true, true, true, true),
   ('note_share_link_miss',    true, true, true, true),
@@ -269,19 +274,24 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   ('lead_escalation_config',      true, false, false, true),
   ('lead_escalation_due_at',      true, false, false, true),
   ('raise_lead_escalations',      true, false, false, true),
-  -- the portal feed (0095): a portal PULLS over a tokenised URL, so these
-  -- three are anon-callable and the 64-hex token in the URL is the whole
-  -- gate — since 0097 the row holds only its sha256, and the functions take
-  -- the digest.
-  -- note_portal_pull WRITES (the last_pull* columns) and is still anon —
-  -- unlike the 0084 door it takes only two harmless caller values (a
-  -- user-agent string cut to 200 chars, a count clamped at 0), touches only
-  -- the one row named by the token, and the route needs no service key to
-  -- record a pull.
-  -- portal_supplement is the only place coordinates leave the database.
-  ('portal_connection_by_token', true, true, true, true),
-  ('portal_supplement',          true, true, true, true),
-  ('note_portal_pull',           true, true, true, true),
+  -- the portal feed (0095; 0150 / 0151): a portal PULLS over a tokenised
+  -- URL, so the two readers are anon-callable and the 64-hex token in the URL
+  -- is the whole gate. The row holds only sha256(token) (0097) and the
+  -- readers hash the token they are given (0150), so a copy of the column —
+  -- every export and dump — opens nothing; 0151 dropped 0097's three
+  -- digest-taking functions (portal_connection_by_token, portal_supplement,
+  -- note_portal_pull), whose rows left this table with them. authenticated
+  -- is revoked explicitly (hosted's default privileges grant it).
+  -- portal_feed_supplement is the only place coordinates leave the database.
+  ('portal_feed_connection',     true, true, false, true),
+  ('portal_feed_supplement',     true, true, false, true),
+  -- the route's two writes (0150): the pull record and the export revision,
+  -- service_role ONLY — the route calls them with the admin client (the 0087
+  -- enquiry door's precedent). This reverses 0095's anon note_portal_pull,
+  -- which let any token or digest holder write the telemetry; a restore that
+  -- re-grants anon or authenticated here re-opens that.
+  ('record_portal_pull',         true, false, false, true),
+  ('sync_portal_export',         true, false, false, true),
   -- trigger bodies: callable by nobody over PostgREST (0007/0021)
   ('trg_events_hash',              true, false, false, false),
   -- + the two invoker trigger bodies 0080 brought into the same posture,
@@ -1039,6 +1049,56 @@ misc as (
              and position('if p_ip_hash is null or p_ip_hash !~ ''^[0-9a-f]{32}$'' then' in p.prosrc) > 0
              and position('if p_ip_hash is null or p_ip_hash !~ ''^[0-9a-f]{32}$'' then' in p.prosrc)
                  < position('insert into' in p.prosrc))::text
+  union all
+  -- 0150 / 0151: a portal feed opens only with its URL's token. Five counts,
+  -- each named in the row:
+  --   1. anon-callable public functions that read feed_token_sha256 without
+  --      hashing what they were given (0151's postflight, comments stripped —
+  --      a comment is not a hash) — 0;
+  --   2. 0097's three digest-taking functions still present — 0;
+  --   3. the two readers that are definers, compare the column to the hash of
+  --      their p_token, and are callable by anon but not by a signed-in
+  --      session — 2;
+  --   4. the route's two writes (record_portal_pull, sync_portal_export) that
+  --      are definers callable by service_role and by neither anon nor
+  --      authenticated — 2;
+  --   5. the seven pull columns of portal_connections that exist and that a
+  --      session may neither INSERT nor UPDATE (0150's column grants) — 7.
+  -- A restore that brought back 0097's functions, a reader that compares the
+  -- column to its argument, an anon or authenticated grant on a write, or
+  -- 0095's table-wide INSERT / UPDATE for authenticated reads otherwise here.
+  select 'SECURITY: a portal feed opens only with its URL''s token — unhashed anon readers, 0097''s digest readers, hashing readers, service-role writes, session-proof pull columns (0150 / 0151)', '0 0 2 2 7',
+         (select count(*) from pg_proc p
+           where p.pronamespace = 'public'::regnamespace
+             and has_function_privilege('anon', p.oid, 'EXECUTE')
+             and position('feed_token_sha256' in regexp_replace(p.prosrc, '--[^\n]*', '', 'g')) > 0
+             and position('pg_catalog.sha256(convert_to(' in regexp_replace(p.prosrc, '--[^\n]*', '', 'g')) = 0)::text || ' ' ||
+         (select count(*) from (values ('public.portal_connection_by_token(text, text)'), ('public.portal_supplement(text)'),
+                                       ('public.note_portal_pull(text, text, integer)')) f(sig)
+           where to_regprocedure(f.sig) is not null)::text || ' ' ||
+         (select count(*) from pg_proc p
+           where p.oid in (to_regprocedure('public.portal_feed_connection(text, text)'),
+                           to_regprocedure('public.portal_feed_supplement(text)'))
+             and p.prosecdef
+             and position('c.feed_token_sha256 = encode(pg_catalog.sha256(convert_to(p_token, ''UTF8'')), ''hex'')'
+                          in regexp_replace(p.prosrc, '--[^\n]*', '', 'g')) > 0
+             and has_function_privilege('anon', p.oid, 'EXECUTE')
+             and not has_function_privilege('authenticated', p.oid, 'EXECUTE'))::text || ' ' ||
+         (select count(*) from pg_proc p
+           where p.oid in (to_regprocedure('public.record_portal_pull(text, text, text, integer, integer, integer, text, jsonb)'),
+                           to_regprocedure('public.sync_portal_export(text, jsonb)'))
+             and p.prosecdef
+             and has_function_privilege('service_role', p.oid, 'EXECUTE')
+             and not has_function_privilege('anon', p.oid, 'EXECUTE')
+             and not has_function_privilege('authenticated', p.oid, 'EXECUTE'))::text || ' ' ||
+         (select count(*) from pg_attribute a
+           where a.attrelid = 'public.portal_connections'::regclass and a.attnum > 0 and not a.attisdropped
+             and a.attname in ('last_pulled_at', 'last_pulled_ua', 'last_pull_count', 'last_pull_outcome',
+                               'last_success_at', 'last_error_at', 'last_error_reason')
+             and not has_column_privilege('authenticated', a.attrelid, a.attnum, 'INSERT')
+             and not has_column_privilege('authenticated', a.attrelid, a.attnum, 'UPDATE')
+             and not has_column_privilege('anon', a.attrelid, a.attnum, 'INSERT')
+             and not has_column_privilege('anon', a.attrelid, a.attnum, 'UPDATE'))::text
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.

@@ -323,6 +323,12 @@ describe("inviteUser — the one-time password", () => {
 /* ------------------------------------------------------------------ */
 
 const PORTAL_PATH = "/settings/portals";
+/**
+ * The connection is read as an ARRAY now (`.select().eq()`, no maybeSingle):
+ * [] is "no row yet", and a hollow null is an error rather than "none"
+ * (portals-write-outcomes.test.ts pins that half).
+ */
+const NO_CONNECTION: FakePage = { data: [], error: null };
 const portalWrites = (fake: ReturnType<typeof fakeClient>) =>
   fake.calls.filter((c) => c.table === "portal_connections" && ["insert", "update", "delete", "upsert"].includes(c.method));
 
@@ -332,7 +338,7 @@ describe("setPortalEnabled — a first enable's feed URL", () => {
     async (_label, answer, notice) => {
       const { session } = use({
         portal_connections: [
-          { data: null, error: null }, // no row yet
+          NO_CONNECTION,
           { data: [{ id: "conn-1" }], error: null }, // the INSERT that stores the digest
         ],
         events: [answer],
@@ -352,7 +358,7 @@ describe("setPortalEnabled — a first enable's feed URL", () => {
   it("a disable whose line fails is still a disable, with the notice (no token)", async () => {
     const { session } = use({
       portal_connections: [
-        { data: { id: "conn-1", settings: {}, feed_token_sha256: "b".repeat(64) }, error: null },
+        { data: [{ id: "conn-1", settings: {}, feed_token_sha256: "b".repeat(64) }], error: null },
         { data: [{ id: "conn-1" }], error: null },
       ],
       events: [UNSETTLED[0]![1]],
@@ -368,7 +374,7 @@ describe("setPortalEnabled — a first enable's feed URL", () => {
   it("control: the line lands — the token, no notice", async () => {
     use({
       portal_connections: [
-        { data: null, error: null },
+        NO_CONNECTION,
         { data: [{ id: "conn-1" }], error: null },
       ],
     });
@@ -381,7 +387,7 @@ describe("setPortalEnabled — a first enable's feed URL", () => {
   it("the write that would store the digest is REFUSED — before the secret is committed, it refuses as today", async () => {
     const { session } = use({
       portal_connections: [
-        { data: null, error: null },
+        NO_CONNECTION,
         { data: null, error: { message: "new row violates row-level security policy", code: "42501" } },
       ],
     });

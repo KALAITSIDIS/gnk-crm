@@ -366,11 +366,13 @@ const EXEMPT_FUNCTIONS: Record<string, string> = {
   "current_role_gnk()": "identity helper every policy calls; returns only the caller's own role",
   "mfa_satisfied()": "the check itself",
   "rls_bare_auth_calls()": "catalogue lint (0032 / 0100): policy names only, granted to authenticated on purpose and pinned by verify-restore",
-  "note_portal_pull(p_token_sha256 text, p_ua text, p_count integer)": "anon surface: portal feed telemetry (0100 / verify-restore anon=true)",
+  // 0151 dropped 0097's three portal functions (portal_connection_by_token,
+  // portal_supplement, note_portal_pull), so their exemptions went with them.
+  // 0150's replacements need none: the two readers are granted to anon and
+  // service_role only, the two writes to service_role only — authenticated
+  // reaches none of them, so this catalogue never lists them.
   "note_public_listing_hit(p_ip_hash text, p_limit integer)": "anon surface: public listing rate limit",
   "note_share_link_miss(p_ip_hash text, p_limit integer)": "anon surface: share-link rate limit",
-  "portal_connection_by_token(p_portal text, p_token_sha256 text)": "anon surface: the portal feed, authorised by its token",
-  "portal_supplement(p_token_sha256 text)": "anon surface: the portal feed, authorised by its token",
   "public_listings(p_org_slug text, p_limit integer, p_offset integer, p_reference text)": "anon surface: the public listing feed",
   "public_listings_etag(p_org_slug text)": "anon surface: the public listing feed",
   "resolve_share_link(p_token_sha256 text)": "anon surface: a share link, authorised by its token",
