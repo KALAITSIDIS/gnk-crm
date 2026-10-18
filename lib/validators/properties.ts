@@ -495,7 +495,9 @@ export const detailsSectionSchema = z.object({
   bathrooms: optInt,
   wc: optInt,
   parking_spaces: optInt,
-  has_storage: checkbox,
+  // No `has_storage` (F02, 0152): storage room is the Features key
+  // STORAGE_FEATURE, and the action mirrors the column from `features`. A
+  // stale form that still posts has_storage is ignored (zod strips it).
   floor_number: measuredFloor,
   total_floors: measuredTotalFloors,
   year_built: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1800).max(2100).optional()),

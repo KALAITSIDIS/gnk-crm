@@ -328,14 +328,10 @@ export function DetailsForm({
           options={ENERGY_CLASSES.map((e) => ({ value: e, label: e === "none" ? "—" : e }))}
           defaultValue={property.energy_class ?? "none"}
         />
-        <div className="flex items-end gap-2 pb-2">
-          <Checkbox
-            id="has_storage"
-            name="has_storage"
-            defaultChecked={property.has_storage === true}
-          />
-          <Label htmlFor="has_storage">Storage room</Label>
-        </div>
+        {/* F02: no Storage room box here. It was a second control for the
+            same fact as the Features box below (has_storage vs storage_room),
+            saved independently, and the two drifted apart; the feature is now
+            the one value and the column its derived mirror (0152). */}
       </div>
       </VatTreatment>
 

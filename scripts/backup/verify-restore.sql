@@ -45,7 +45,7 @@ with expected as (
     0::bigint as documents, 1::bigint as keys,       1::bigint as mandates,
     0::bigint as tasks,     8::bigint as cyprus_config,
     26::bigint as deal_stages, 5::bigint as districts,
-    2::bigint as auth_users, 149::bigint as migrations,
+    2::bigint as auth_users, 150::bigint as migrations,
     1::bigint as obj_documents, 0::bigint as obj_signatures, 0::bigint as obj_media,
     2::bigint as share_links, 2::bigint as share_link_properties,
     0::bigint as unit_types, 0::bigint as buyer_requirements,
@@ -312,6 +312,9 @@ grants_expected(fn, secdef, anon, auth, service) as (values
   -- 0145: a session may not delete a paid instalment line — an invoker
   -- trigger body, revoked from all four roles explicitly like the guards above
   ('trg_installment_paid_kept',        false, false, false, false),
+  -- 0152: has_storage is derived from the storage_room feature — an invoker
+  -- trigger body, revoked from all four roles explicitly like the guards above
+  ('trg_property_storage_from_features', false, false, false, false),
   -- 0101: erasure cancels a lead's pending desk alert — a trigger body that
   -- even service_role may not call (like the definer trigger bodies above)
   ('cancel_lead_notification_jobs', true, false, false, false),
@@ -1039,6 +1042,35 @@ misc as (
              and position('if p_ip_hash is null or p_ip_hash !~ ''^[0-9a-f]{32}$'' then' in p.prosrc) > 0
              and position('if p_ip_hash is null or p_ip_hash !~ ''^[0-9a-f]{32}$'' then' in p.prosrc)
                  < position('insert into' in p.prosrc))::text
+  union all
+  -- 0152: storage room has ONE value, the 'storage_room' key in
+  -- properties.features; has_storage is its mirror, kept for the public
+  -- feed's shape and derived on every write by properties_storage_from_features
+  -- — an enabled BEFORE INSERT OR UPDATE OF (features, has_storage) row
+  -- trigger calling the invoker body whose one assignment is the derived
+  -- value. A restore that lost or disabled the trigger, narrowed its columns,
+  -- brought back a body that keeps a written has_storage, or loaded rows whose
+  -- two values disagree (a replica-mode load fires no trigger) reads otherwise.
+  select 'INTEGRITY: storage room has one value — has_storage derived from the storage_room feature by its trigger, no row out of step (0152)', 'true 0',
+         (exists (select 1 from pg_trigger t
+                   where t.tgrelid = 'public.properties'::regclass and t.tgname = 'properties_storage_from_features'
+                     and t.tgfoid = to_regprocedure('public.trg_property_storage_from_features()')
+                     and not t.tgisinternal and t.tgenabled = 'O' and t.tgqual is null and t.tgnargs = 0
+                     and (t.tgtype & 1) = 1 and (t.tgtype & 2) = 2 and (t.tgtype & 4) = 4 and (t.tgtype & 16) = 16
+                     and (t.tgtype & (8 | 32 | 64)) = 0
+                     and (select array_agg(a order by a) from unnest(t.tgattr::int2[]) a)
+                         = (select array_agg(c.attnum order by c.attnum) from pg_attribute c
+                             where c.attrelid = 'public.properties'::regclass
+                               and c.attname in ('features', 'has_storage') and not c.attisdropped))
+          and coalesce((select not p.prosecdef
+                               and c.code ~ 'new\.has_storage := coalesce\(''storage_room'' = any\(new\.features\), false\);\s+return new;\s+end\s*$'
+                               and regexp_count(c.code, 'new\.has_storage') = 1
+                          from pg_proc p
+                          cross join lateral (select regexp_replace(p.prosrc, '--[^\n]*', '', 'g') as code) c
+                         where p.oid = to_regprocedure('public.trg_property_storage_from_features()')), false))::text
+         || ' ' ||
+         (select count(*) from public.properties p
+           where p.has_storage is distinct from coalesce('storage_room' = any(p.features), false))::text
   union all
   -- Every slip row must still have BOTH its files. Catches a DB-only restore (§1.2),
   -- where the row survives and asserts a signature whose bytes no longer exist.

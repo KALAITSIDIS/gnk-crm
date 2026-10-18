@@ -17,6 +17,7 @@ import { generateReference } from "@/lib/services/reference";
 import { createClient } from "@/lib/supabase/server";
 import { changesForChain, isNoteField } from "@/lib/services/event-changes";
 import { changedValue } from "@/lib/utils/diff";
+import { hasStorageRoom } from "@/lib/constants/features";
 import { createPropertySchema } from "@/lib/validators/properties";
 import { isGuid } from "@/lib/validators/ids";
 import type { PropertyDuplicateMatch } from "@/lib/services/property-duplicate";
@@ -452,7 +453,11 @@ export async function updatePropertySection(
       bathrooms: d.bathrooms ?? null,
       wc: d.wc ?? null,
       parking_spaces: d.parking_spaces ?? null,
-      has_storage: d.has_storage,
+      // F02: storage room has one value, the Features key. The column is its
+      // mirror (0152's trigger derives it for every writer); written here as
+      // well so the `updated` event records it moving with `features`, and so
+      // this save is right on a database without the trigger.
+      has_storage: hasStorageRoom(d.features),
       floor_number: d.floor_number ?? null,
       total_floors: d.total_floors ?? null,
       year_built: d.year_built ?? null,
