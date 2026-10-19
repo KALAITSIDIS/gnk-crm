@@ -166,14 +166,17 @@ export default async function LeadsPage({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between gap-4">
-        <div>
+      {/* On a phone the filter, Export CSV and Add lead wrap under the heading:
+          in one row they ran past 390 px whenever there was a lead to export,
+          and the page scrolled sideways with Add lead off screen. */}
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="min-w-0 grow basis-64">
           <h1 className="text-xl font-semibold text-text-1">Leads</h1>
           <p className="text-sm text-text-2">
             {openCount.count ?? 0} open · {awaitingCount.count ?? 0} awaiting first response
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <LeadsFilters />
           {scopedTotal > 0 ? (
             <ExportCsvButton href={exportHref} />

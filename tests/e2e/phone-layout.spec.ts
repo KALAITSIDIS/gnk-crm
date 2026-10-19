@@ -38,6 +38,15 @@ test.describe("phone layouts (CRM-06)", () => {
     } else {
       await expect(table).toBeVisible();
     }
+    // the header: the heading keeps its width and the four actions wrap under
+    // it on a phone — the h1 was squeezed to zero width at 390 px (a
+    // `min-w-0` column in a row that did not wrap), and before that the row
+    // pushed the page sideways
+    const heading = page.getByRole("heading", { level: 1, name: "Properties" });
+    await expect(heading).toBeVisible();
+    expect((await heading.boundingBox())!.width, "the h1 has its word's width").toBeGreaterThan(50);
+    await expect(page.getByRole("link", { name: "Add property" }).first()).toBeInViewport();
+    await assertNoHorizontalOverflow(page, "properties list");
     // an explicit choice is honoured everywhere
     await page.goto("/properties?view=table", { waitUntil: "networkidle" });
     await expect(page.getByRole("table").first()).toBeVisible();
@@ -117,6 +126,11 @@ test.describe("phone layouts (CRM-06)", () => {
     const phone = isPhone(testInfo.project.use.viewport?.width ?? 1280);
     const card = page.locator("li, article, div").filter({ has: page.getByRole("button", { name: /^Log$/ }) }).first();
     test.skip(!(await page.getByRole("button", { name: /^Log$/ }).count()), "no open lead on this database");
+    // with a lead on the list Export CSV joins the filter and Add lead in the
+    // header: on a phone they wrap under the heading rather than pushing Add
+    // lead off screen and the page sideways
+    await expect(page.getByRole("button", { name: /add lead/i })).toBeInViewport();
+    await assertNoHorizontalOverflow(page, "leads list");
     const more = card.getByRole("button", { name: /More…|Less/ }).first();
     const secondary = card.getByRole("button", { name: /^Close$/ }).first();
     if (phone) {

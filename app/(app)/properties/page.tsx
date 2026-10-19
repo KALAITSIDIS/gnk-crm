@@ -216,8 +216,12 @@ export default async function PropertiesPage({
     <div className="flex flex-col gap-4">
       {/* the tab's name after a client-side filter change, sort or Back */}
       <DocumentTitle words={listViewTitle(filters, places)} />
-      <div className="flex items-center justify-between gap-4">
-        <div className="min-w-0">
+      {/* The heading and the four actions share a row while both fit; on a
+          phone the actions wrap under the heading. Without the wrap the
+          `min-w-0` title column was squeezed to nothing at 390 px — the h1 had
+          no width — and before it the row pushed the page sideways. */}
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="min-w-0 grow basis-64">
           <h1 className="text-xl font-semibold text-text-1">Properties</h1>
           <p className="text-sm text-text-2">
             {total} {filters.scope === "archived" ? "archived " : ""}
@@ -242,7 +246,7 @@ export default async function PropertiesPage({
             </p>
           ) : null}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* Deliberately NOT filter-aware, unlike Map and Export below: the
               worklist answers "what should I go fix across everything", which a
               filtered subset cannot. */}
