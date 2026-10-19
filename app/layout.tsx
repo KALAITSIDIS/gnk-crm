@@ -5,6 +5,7 @@ import { getLocale, getMessages } from "next-intl/server";
 import "./globals.css";
 import { ServiceWorkerRegistrar } from "@/components/features/shared/pwa";
 import { ZodConfig } from "@/components/features/shared/zod-config";
+import { DEFAULT_TITLE, TITLE_TEMPLATE } from "@/lib/constants/page-title";
 import { cn } from "@/lib/utils";
 // server-side half of the same setting (the import above covers the browser)
 import "@/lib/validators/zod-jitless";
@@ -20,9 +21,10 @@ export const metadata: Metadata = {
   // GN REOS" — so a row of tabs, the history and a bookmark say which screen
   // each is. A page sets only its own words (a static `metadata`, or the
   // property pages' generateMetadata); the suffix is added here, once. A page
-  // with no title of its own keeps the default. tests/unit/page-titles.test.ts
-  // pins both halves.
-  title: { default: "GN Real Estate OS", template: "%s · GN REOS" },
+  // with no title of its own keeps the default. The template is shared with
+  // DocumentTitle, which keeps the properties list's tab in step on the client
+  // (lib/constants/page-title.ts). tests/unit/page-titles.test.ts pins both halves.
+  title: { default: DEFAULT_TITLE, template: TITLE_TEMPLATE },
   description: "Internal real estate CRM — Kalaitsidis Capital",
   // B8: installable on an agent's phone. `apple-touch-icon` is a separate
   // mechanism from the manifest — iOS reads it and ignores manifest icons.

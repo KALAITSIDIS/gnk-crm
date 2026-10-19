@@ -11,7 +11,7 @@ import type { MandateBadgeState } from "@/components/features/shared/mandate-bad
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/server";
 import { unwrapCount, unwrapRows } from "@/lib/supabase/unwrap";
-import { PROPERTIES_PAGE_SIZE } from "@/lib/validators/properties";
+import { PROPERTIES_PAGE_SIZE, type PropertyFilters } from "@/lib/validators/properties";
 import {
   applyPropertyListFilters,
   applyPropertyListOrder,
@@ -25,10 +25,12 @@ import {
   propertiesViewTitle,
   propertyCountNoun,
   type ColumnSort,
+  type PlaceNames,
   type SortableColumn,
 } from "@/lib/queries/properties-list";
 import { readPropertyPlaces } from "@/lib/queries/property-places";
 import { ExportCsvButton } from "@/components/features/shared/export-csv-button";
+import { DocumentTitle } from "@/components/features/shared/document-title";
 
 type SearchParams = { [key: string]: string | string[] | undefined };
 
@@ -53,6 +55,10 @@ function deriveMandateState(mandates: MandateEmbed[]): MandateBadgeState {
  * · Paphos · Land · plot 1.500–6.000 m² · density ≥ 90% · sorted by plot ↓".
  * The URL is the saved view; this is its name. The district and area names
  * come from the same per-request read the page makes (`readPropertyPlaces`).
+ *
+ * Next sets it on a full load only: a filter change, a sort header and Back
+ * keep the route and change the search params, and the tab kept its first
+ * name. The page renders `DocumentTitle` with these same words for those.
  */
 export async function generateMetadata({
   searchParams,
@@ -60,7 +66,12 @@ export async function generateMetadata({
   searchParams: Promise<SearchParams>;
 }): Promise<Metadata> {
   const filters = parsePropertyFilters(await searchParams);
-  return { title: propertiesViewTitle("Properties", filters, await readPropertyPlaces()) };
+  return { title: listViewTitle(filters, await readPropertyPlaces()) };
+}
+
+/** The view's name — generateMetadata's title and the page's DocumentTitle, one function. */
+function listViewTitle(filters: PropertyFilters, places: PlaceNames): string {
+  return propertiesViewTitle("Properties", filters, places);
 }
 
 export default async function PropertiesPage({
@@ -203,6 +214,8 @@ export default async function PropertiesPage({
 
   return (
     <div className="flex flex-col gap-4">
+      {/* the tab's name after a client-side filter change, sort or Back */}
+      <DocumentTitle words={listViewTitle(filters, places)} />
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
           <h1 className="text-xl font-semibold text-text-1">Properties</h1>

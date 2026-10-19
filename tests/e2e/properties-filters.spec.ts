@@ -175,6 +175,8 @@ test.describe("properties filters (A03)", () => {
     await expect.poll(() => `${new URL(page.url()).pathname}${new URL(page.url()).search}`).toBe(listUrl);
     await expect(page.getByRole("spinbutton", { name: /plot area from/i })).toHaveValue("1500");
     await expect(page.getByRole("combobox", { name: "Property type", exact: true })).toHaveText(/Land/);
+    // ...and the tab is named for it again (the record page had renamed it)
+    await expect(page).toHaveTitle(`Properties · ${words} · GN REOS`);
 
     // the record page's "Properties" link returns to the same view (its reading
     // half is the record page's back link, built in the same review)
@@ -214,6 +216,18 @@ test.describe("properties filters (A03)", () => {
     await expect(page.getByRole("columnheader", { name: /^Price/ })).toHaveAttribute("aria-sort", "descending");
     // the Sort select shows the same sort
     await expect(page.getByRole("combobox", { name: "Sort", exact: true })).toHaveText(/Asking price: high to low/);
+    // the tab follows each client-side step: the second sort, a reload, Back.
+    // Next re-applies generateMetadata's title on a full load only; a same-route
+    // navigation keeps it in step through DocumentTitle (A08).
+    await expect(page).toHaveTitle(/sorted by asking price ↓/);
+    await page.reload({ waitUntil: "networkidle" });
+    await expect(page).toHaveTitle(/sorted by asking price ↓/);
+    await page.goBack();
+    await expect.poll(param(page, "sort")).toBe("price_asc");
+    await expect(page).toHaveTitle(/sorted by asking price ↑/);
+    await page.goBack();
+    await expect.poll(param(page, "sort")).toBeNull();
+    await expect(page).toHaveTitle("Properties · GN REOS");
   });
 
   /*

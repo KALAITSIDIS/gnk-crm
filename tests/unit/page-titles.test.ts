@@ -3,6 +3,7 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { DEFAULT_TITLE, TITLE_TEMPLATE, templatedTitle } from "@/lib/constants/page-title";
 import { parsePropertyFilters, propertiesViewTitle } from "@/lib/queries/properties-list";
 
 /**
@@ -90,18 +91,30 @@ const DETAIL_PAGES: [string, string][] = [
 ];
 
 describe("the root layout owns the suffix", () => {
-  it('title is { default: "GN Real Estate OS", template: "%s · GN REOS" }', () => {
+  it('title is { default: "GN Real Estate OS", template: "%s · GN REOS" }, from the constants DocumentTitle shares', () => {
     const meta = metadataOf(parse("app/layout.tsx"));
     expect(meta, "app/layout.tsx exports metadata").not.toBeNull();
     const title = prop(meta!, "title");
     expect(title && ts.isObjectLiteralExpression(title), "the title is an object, not a plain string").toBe(true);
     const obj = title as ts.ObjectLiteralExpression;
-    const text = (name: string) => {
-      const v = prop(obj, name);
-      return v && ts.isStringLiteral(v) ? v.text : null;
+    // the layout names the shared constants (a literal here could drift from
+    // the copy the client-side DocumentTitle applies)
+    const name = (key: string) => {
+      const v = prop(obj, key);
+      return v && ts.isIdentifier(v) ? v.text : null;
     };
-    expect(text("default")).toBe("GN Real Estate OS");
-    expect(text("template")).toBe("%s · GN REOS");
+    expect(name("default")).toBe("DEFAULT_TITLE");
+    expect(name("template")).toBe("TITLE_TEMPLATE");
+    expect(read("app/layout.tsx")).toMatch(
+      /import \{ DEFAULT_TITLE, TITLE_TEMPLATE \} from "@\/lib\/constants\/page-title";/,
+    );
+    expect(DEFAULT_TITLE).toBe("GN Real Estate OS");
+    expect(TITLE_TEMPLATE).toBe("%s · GN REOS");
+  });
+
+  it("DocumentTitle's template is the layout's: the page's words, then the suffix — and a $ in the words is text", () => {
+    expect(templatedTitle("Properties · Land")).toBe("Properties · Land · GN REOS");
+    expect(templatedTitle("Properties · $& · $'")).toBe("Properties · $& · $' · GN REOS");
   });
 });
 
